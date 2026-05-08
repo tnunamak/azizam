@@ -1,0 +1,22 @@
+[Unit]
+Description=OpenAI Proxy - Unified OpenAI-compatible API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tnunamak/applications/openai-proxy
+ExecStart=/home/tnunamak/applications/openai-proxy/start.sh
+Restart=on-failure
+RestartSec=10
+
+# Environment
+Environment="OPENAI_PROXY_PORT=5000"
+Environment="TABBY_IDLE_TIMEOUT=300"
+Environment="TTS_ENABLED=true"
+Environment="TTS_HOST=http://127.0.0.1:8001"
+
+# Resource limits
+LimitNOFILE=65535
+
+[Install]
+WantedBy=default.target

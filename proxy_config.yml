@@ -1,0 +1,196 @@
+proxy:
+  host: 0.0.0.0
+  port: 5000
+llm:
+  pin_loaded_model: false
+backends:
+  openai-proxy:
+    name: openai-proxy (self)
+    host: 127.0.0.1
+    port: 5000
+    health_endpoint: /health
+    role: required
+    managed: false
+  tabby:
+    name: TabbyAPI (Qwen3-VL)
+    host: 127.0.0.1
+    port: 5050
+    model_id: qwen3-vl-30b
+    health_endpoint: /v1/models
+    load_timeout: 300
+    idle_timeout: 0
+    role: standby
+    note: "On-demand vision backend; cold-started by ensure_target() when a vision-capable role is invoked. Down at idle is expected."
+    capabilities:
+    - vision
+    - chat
+    - completions
+    managed: false
+  kobold:
+    name: llama-turbo / kobold (LLM)
+    host: 127.0.0.1
+    port: 5051
+    health_endpoint: /v1/models
+    role: required
+    capabilities:
+    - chat
+    - completions
+    managed: false
+  tts:
+    name: voxtral-int4-tts
+    host: 127.0.0.1
+    port: 8001
+    health_endpoint: /health
+    timeout: 86400
+    role: required
+    capabilities:
+    - audio
+    - speech
+    managed: false
+  stt:
+    name: parakeet-stt
+    host: 127.0.0.1
+    port: 5092
+    health_endpoint: /health
+    timeout: 120
+    role: required
+    capabilities:
+    - audio
+    - transcriptions
+    managed: false
+  comfyui:
+    name: ComfyUI (Image + Video Generation)
+    host: 127.0.0.1
+    port: 7890
+    health_endpoint: /system_stats
+    timeout: 300
+    workflows_dir: ./workflows/images
+    default_model: flux2-klein-4b
+    video_workflows_dir: ./workflows
+    video_timeout: 1800
+    role: required
+    capabilities:
+    - images
+    - generations
+    - videos
+    managed: false
+images:
+  # Cache for `response_format: "url"` and content-addressed image storage.
+  cache_dir: /home/tnunamak/applications/openai-proxy/cache/images
+  # Persistent VRAM-per-(workflow,size) measurements used for adaptive batching.
+  vram_estimates_file: /home/tnunamak/applications/openai-proxy/cache/vram_estimates.json
+  # Signed URL TTL (seconds). Default 1 hour.
+  signed_url_ttl: 3600
+  # HMAC secret for signed URLs. If unset/empty, generated at first run and persisted
+  # to <cache_dir>/.url_signing_secret with mode 0600.
+  signed_url_secret: ''
+  # Background eviction TTL for cached image bytes (seconds).
+  cache_ttl: 86400
+  # How often the eviction task runs (seconds).
+  cache_eviction_interval: 3600
+  # Reserve this many bytes of free VRAM as a safety margin when computing batch size.
+  vram_reserve_bytes: 1073741824   # 1 GiB
+  # Hard ceiling on batch_size per ComfyUI prompt regardless of VRAM headroom.
+  max_batch_size: 4
+model_routing:
+  model_dir: /media/windows/AI Models/LLMs
+  gguf_dir: /media/windows/AI Models/LLMs/GGUF
+  tabby_service: tabbyapi.service
+  kobold_service: llama-turbo.service
+  switch_timeout: 60
+routing:
+  default_backend: kobold
+  audio_backend: tts
+  check_interval: 30
+roles:
+  default:
+    backend: kobold
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+    description: Default LLM (Qwen3.6-27B UD-Q4_K_XL via llama-turbo on :5051)
+  vision:
+    backend: tabby
+    description: Vision-capable EXL3 model (when tabbyapi.service is active on :5050)
+  rp:
+    backend: kobold
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-Uncensored-HauhauCS-Balanced-Q4_K_P.gguf
+    description: Roleplay LLM (Qwen3.6-27B Uncensored HauhauCS-Balanced Q4_K_P via
+      llama-turbo)
+  coder:
+    backend: kobold
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+    description: Coding LLM (Qwen3.6-27B UD-Q4_K_XL via llama-turbo)
+videos:
+  default_workflow: video-ltx-2.3-distilled
+  workflows:
+    video-ltx-2.3-distilled:
+      file: workflows/video-ltx-2.3-distilled.json
+      min_seconds: 1
+      max_seconds: 8
+      max_size: 1280x720
+      frame_rate: 24
+      # Duration granularity ~0.333s (LTX 8N+1 latent stride at 24 fps).
+      # Proxy rounds requested seconds to the nearest representable length and
+      # surfaces any drift via the X-Duration-Adjusted response header.
+    video-ltx-2.3-detail:
+      file: workflows/video-ltx-2.3-detail.json
+      min_seconds: 1
+      max_seconds: 8
+      max_size: 1280x720
+      frame_rate: 24
+    video-ltx-2.3-pure-distilled:
+      file: workflows/video-ltx-2.3-pure-distilled.json
+      min_seconds: 1
+      max_seconds: 8
+      max_size: 1280x720
+      frame_rate: 24
+    video-wan-2.2-ti2v-5b-q8:
+      file: workflows/video-wan-2.2-ti2v-5b-q8.json
+      min_seconds: 1
+      max_seconds: 5
+      max_size: 1280x704
+      frame_rate: 24
+      # Same 8N+1 latent stride as LTX. Granularity ~0.333s at 24 fps.
+    video-ltx-2.3-long:
+      file: workflows/video-ltx-2.3-long.json
+      # Long-form is intrinsically ≥2 chunks (the easy forLoopStart body runs
+      # once even when LOOPS=0, so actual_seconds = chunk_seconds * (LOOPS + 2)).
+      # Minimum at LENGTH=1, LOOPS=0 is ~2.08s. Use ltx-2.3-distilled for <2s.
+      min_seconds: 2
+      max_seconds: 50
+      max_size: 1280x720
+      frame_rate: 24
+      # Multi-chunk granularity. Drift typically <0.21s; surfaced via
+      # X-Duration-Adjusted header.
+  aliases:
+    ltx-2.3: video-ltx-2.3-distilled
+    ltx-2.3-distilled: video-ltx-2.3-distilled
+    ltx-2.3-fast: video-ltx-2.3-pure-distilled
+    ltx-2.3-distilled-fast: video-ltx-2.3-pure-distilled
+    ltx-2.3-pure-distilled: video-ltx-2.3-pure-distilled
+    ltx-2.3-22b: video-ltx-2.3-distilled
+    ltx-2.3-detail: video-ltx-2.3-detail
+    ltx-2.3-long: video-ltx-2.3-long
+    ltx-2.3-long-form: video-ltx-2.3-long
+    wan-2.2: video-wan-2.2-ti2v-5b-q8
+    wan-2.2-ti2v-5b: video-wan-2.2-ti2v-5b-q8
+    sora-2: video-ltx-2.3-distilled
+    sora-2-pro: video-ltx-2.3-distilled
+model_compatibility:
+  enabled: true
+  generated_aliases_file: openai_model_aliases.generated.yml
+  openai_models_api_url: https://api.openai.com/v1/models
+  include_private: false
+  defaults:
+    chat: ''
+    completions: ''
+    speech: mistralai/Voxtral-4B-TTS-2603
+    transcriptions: parakeet-tdt-0.6b-v3
+    images: flux2-klein-4b
+    image_edits: flux2-klein-4b-edit
+auth:
+  enabled: true
+  keys_file: proxy_api_keys.yml
+  public_paths:
+  - /health
+  api_key_env: TABBY_API_KEY
+  admin_key_env: TABBY_ADMIN_KEY

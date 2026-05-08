@@ -1,0 +1,73 @@
+# =============================================================================
+# Secrets and runtime state — NEVER commit
+# =============================================================================
+proxy_api_keys.yml
+cache/
+*.url_signing_secret
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+venv/
+.venv/
+env/
+ENV/
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+*.egg
+
+# =============================================================================
+# Status page (Next.js)
+# =============================================================================
+status-page/node_modules/
+status-page/.next/
+status-page/out/
+status-page/next-env.d.ts
+status-page/*.tsbuildinfo
+
+# =============================================================================
+# Editor / OS
+# =============================================================================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-*
+
+# =============================================================================
+# Logs and ephemera
+# =============================================================================
+*.log
+*.bak
+*.orig
+*.orig.bak
+*.obsolete
+proxy_config.yml.bak
+
+# Workflow scratch — backups, drafts, and obsolete files are non-canonical
+workflows/.backup-*/
+workflows/_drafts/
+workflows/*.obsolete
+
+# =============================================================================
+# Local config / overrides
+# =============================================================================
+.env
+.env.local
+*.local.yml

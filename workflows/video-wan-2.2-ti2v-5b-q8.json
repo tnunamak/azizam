@@ -1,0 +1,247 @@
+{
+  "_meta": {
+    "name": "video-wan-2.2-ti2v-5b-q8",
+    "description": "Wan 2.2 TI2V-5B Q8 GGUF \u2014 photoreal T2V/I2V, no audio. Source: QuantStack/Wan2.2-TI2V-5B-GGUF (5.4 GB) + Comfy-Org/Wan_2.2_ComfyUI_Repackaged VAE (wan2.2_vae.safetensors). Single-stage 20-step uni_pc CFG=5 with ModelSamplingSD3 shift=8 (per ComfyUI's official template). Custom nodes required: ComfyUI-GGUF (UnetLoaderGGUF). Models required: wan2.2-ti2v-5b-Q8_0.gguf, umt5_xxl_fp8_e4m3fn_scaled.safetensors, wan2.2_vae.safetensors. License: Apache-2.0.",
+    "model_file": "wan2.2-ti2v-5b-Q8_0.gguf",
+    "frame_rate": 24,
+    "default_steps": 20,
+    "max_seconds": 5,
+    "default_size": "1280x704",
+    "prompt_node": "10",
+    "negative_prompt_node": "11",
+    "size_node": ["9005", "9006"],
+    "length_nodes": [
+      "20"
+    ],
+    "frame_rate_nodes": [
+      "38"
+    ],
+    "seed_nodes": [
+      "31"
+    ],
+    "image_node": "9001",
+    "save_node": "40",
+    "image_target_node": "20",
+    "image_target_field": "start_image"
+  },
+  "1": {
+    "class_type": "UnetLoaderGGUF",
+    "inputs": {
+      "unet_name": "wan2.2-ti2v-5b-Q8_0.gguf"
+    },
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "CLIP Loader (umt5 XXL fp8)"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "wan2.2_vae.safetensors"
+    },
+    "_meta": {
+      "title": "VAE Loader (Wan 2.2 VAE)"
+    }
+  },
+  "4": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "shift": 8.0
+    },
+    "_meta": {
+      "title": "ModelSamplingSD3 shift=8"
+    }
+  },
+  "10": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "A cinematic shot of a goldfish swimming in clear water",
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Positive Prompt"
+    }
+  },
+  "11": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "low quality, worst quality, deformed, distorted, watermark, text, blurry, static, motionless, jpeg artifacts, ugly, poorly drawn",
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Negative Prompt"
+    }
+  },
+  "20": {
+    "class_type": "Wan22ImageToVideoLatent",
+    "inputs": {
+      "vae": [
+        "3",
+        0
+      ],
+      "width": [
+        "9008",
+        0
+      ],
+      "height": [
+        "9008",
+        1
+      ],
+      "length": 121,
+      "batch_size": 1
+    },
+    "_meta": {
+      "title": "Wan22 Empty TI2V Latent (T2V mode)"
+    }
+  },
+  "31": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "4",
+        0
+      ],
+      "positive": [
+        "10",
+        0
+      ],
+      "negative": [
+        "11",
+        0
+      ],
+      "latent_image": [
+        "20",
+        0
+      ],
+      "seed": 0,
+      "steps": 20,
+      "cfg": 5.0,
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1.0
+    },
+    "_meta": {
+      "title": "KSampler (uni_pc, 20 steps)"
+    }
+  },
+  "35": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "31",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "38": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "35",
+        0
+      ],
+      "fps": 24.0
+    }
+  },
+  "40": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "38",
+        0
+      ],
+      "filename_prefix": "video/wan-2.2-ti2v-5b",
+      "format": "mp4",
+      "codec": "auto"
+    }
+  },
+  "9001": {
+    "inputs": {
+      "image": "placeholder_black_1920x1080.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "I2V Load Image (T2V passthrough placeholder, 1920x1080)"
+    }
+  },
+  "9005": {
+    "inputs": {
+      "value": 1280
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "Output Width Cap"
+    }
+  },
+  "9006": {
+    "inputs": {
+      "value": 704
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "Output Height Cap"
+    }
+  },
+  "9007": {
+    "inputs": {
+      "width": [
+        "9005",
+        0
+      ],
+      "height": [
+        "9006",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "keep_proportion": "resize",
+      "pad_color": "0, 0, 0",
+      "crop_position": "center",
+      "divisible_by": 16,
+      "device": "cpu",
+      "image": [
+        "9001",
+        0
+      ]
+    },
+    "class_type": "ImageResizeKJv2",
+    "_meta": {
+      "title": "Aspect-fit + /16 (drives output dims, Wan VAE)"
+    }
+  },
+  "9008": {
+    "inputs": {
+      "image": [
+        "9007",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size (post-resize)"
+    }
+  }
+}

@@ -1,0 +1,99 @@
+{
+    "_meta": {
+        "name": "video-wan-5b-q8",
+        "description": "Wan 2.2 TI2V-5B Q8 GGUF — tertiary fallback workflow for cinematic / texture-heavy prompts. ~5-10 min on 3090 for 720p / 5 s. Models required: wan2.2-ti2v-5b-Q8_0.gguf, umt5_xxl_fp8_e4m3fn_scaled.safetensors (already present), wan_2.1_vae.safetensors (already present). License: Apache-2.0. NOT WIRED INTO DEFAULT ALIASES IN v1; opt-in via model name 'wan-2.2-ti2v-5b'.",
+        "model_file": "wan2.2-ti2v-5b-Q8_0.gguf",
+        "frame_rate": 24,
+        "default_steps": 30,
+        "max_seconds": 8,
+        "default_size": "1280x720",
+        "prompt_node": "10",
+        "negative_prompt_node": "11",
+        "size_node": "20",
+        "length_node": "20",
+        "seed_node": "31",
+        "frame_rate_node": null,
+        "image_node": null,
+        "save_node": "40"
+    },
+    "1": {
+        "class_type": "UnetLoaderGGUF",
+        "inputs": {
+            "unet_name": "wan2.2-ti2v-5b-Q8_0.gguf"
+        }
+    },
+    "2": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+            "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "type": "wan"
+        }
+    },
+    "3": {
+        "class_type": "VAELoader",
+        "inputs": {
+            "vae_name": "wan_2.1_vae.safetensors"
+        }
+    },
+    "10": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+            "text": "A cinematic shot of a goldfish swimming in clear water",
+            "clip": ["2", 0]
+        }
+    },
+    "11": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+            "text": "low quality, worst quality, deformed, distorted, watermark, text, blurry, static, motionless",
+            "clip": ["2", 0]
+        }
+    },
+    "20": {
+        "class_type": "EmptyHunyuanLatentVideo",
+        "inputs": {
+            "width": 1280,
+            "height": 720,
+            "length": 121,
+            "batch_size": 1
+        }
+    },
+    "31": {
+        "class_type": "KSampler",
+        "inputs": {
+            "model": ["1", 0],
+            "positive": ["10", 0],
+            "negative": ["11", 0],
+            "latent_image": ["20", 0],
+            "seed": 0,
+            "steps": 30,
+            "cfg": 5.0,
+            "sampler_name": "uni_pc",
+            "scheduler": "simple",
+            "denoise": 1
+        }
+    },
+    "35": {
+        "class_type": "VAEDecode",
+        "inputs": {
+            "samples": ["31", 0],
+            "vae": ["3", 0]
+        }
+    },
+    "38": {
+        "class_type": "CreateVideo",
+        "inputs": {
+            "images": ["35", 0],
+            "fps": 24.0
+        }
+    },
+    "40": {
+        "class_type": "SaveVideo",
+        "inputs": {
+            "video": ["38", 0],
+            "filename_prefix": "video/wan-2.2-5b",
+            "format": "mp4",
+            "codec": "h264"
+        }
+    }
+}

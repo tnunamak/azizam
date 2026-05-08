@@ -1,0 +1,28 @@
+# Proxy API keys — copy to proxy_api_keys.yml (which is gitignored).
+#
+# Generate keys with:
+#   ./venv/bin/python proxy.py generate-key <name>
+#
+# This stores only a sha256 hash; the printed `opk_...` value is the bearer key
+# clients must send as `Authorization: Bearer opk_...`.
+#
+# Per-key downstream overrides allow mapping a proxy key to different upstream
+# credentials (e.g. send Tabby a different api key for one client).
+
+keys:
+  - name: example-client
+    key_hash: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    downstream:
+      tabby: {}
+
+  # Per-key downstream override example:
+  # - name: simon
+  #   key_hash: sha256:...
+  #   downstream:
+  #     tabby:
+  #       api_key_env: SIMON_TABBY_API_KEY
+  #     tts:
+  #       headers:
+  #         Authorization:
+  #           env: SIMON_TTS_API_KEY
+  #           prefix: Bearer
