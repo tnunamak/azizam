@@ -4300,14 +4300,19 @@ app = FastAPI(lifespan=lifespan)
 
 
 # Endpoint paths excluded from the firehose per-key request counter.
-# These are health/status probes hammered by the dashboard itself.
+# These are health/status probes hammered by the dashboard itself or
+# routes that don't represent real "API caller" activity.
 _FIREHOSE_NO_RECORD_PREFIXES = (
     "/health",
     "/v1/status",
     "/_next/",
     "/firehose",
     "/favicon.ico",
+    "/static/",
+    "/SKILL.md",
 )
+# Exact paths (not prefixes) that should be excluded too.
+_FIREHOSE_NO_RECORD_EXACT = {"/"}
 
 
 @app.middleware("http")
@@ -4318,7 +4323,10 @@ async def _firehose_request_counter(request: Request, call_next):
     AUTH_REGISTRY. Body is never read; this only inspects path + status.
     """
     path = request.url.path
-    skip = any(path == p or path.startswith(p) for p in _FIREHOSE_NO_RECORD_PREFIXES)
+    skip = (
+        path in _FIREHOSE_NO_RECORD_EXACT
+        or any(path == p or path.startswith(p) for p in _FIREHOSE_NO_RECORD_PREFIXES)
+    )
     t0 = time.monotonic()
     response = None
     try:
@@ -4610,82 +4618,63 @@ async def v1_status(request: Request):
     )
 
 
-@app.get("/firehose")
-async def firehose_html(request: Request):
-    """Server-rendered HTML dashboard exposing every signal in /v1/status.
+# -----------------------------------------------------------------------------
+# Status dashboard
+#
+# One page only: the maximalist server-rendered HTML lives at `/`. The old
+# `/firehose` URL is kept as a 301 → `/` for backwards compatibility. The
+# previous Next.js page under status-page/out is no longer served.
+# -----------------------------------------------------------------------------
 
-    Maximalist mode: every section is rendered as a labeled block with all
-    fields visible. Auth follows the same loopback-bypass rule as /v1/status.
-    """
+async def _render_status_html(request: Request) -> Response:
+    """Build a payload from /v1/status and render the dashboard HTML."""
     client_host = (request.client.host if request.client else "") or ""
     is_loopback = client_host in ("127.0.0.1", "::1", "localhost")
     if not is_loopback:
-        auth_context = authenticate_request(request, "/firehose")
+        auth_context = authenticate_request(request, request.url.path)
         if isinstance(auth_context, Response):
             return auth_context
-
     try:
         payload = await status_endpoint.get_cached_status(config)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] /firehose fatal: {e}", flush=True)
+        print(f"[proxy] status render fatal: {e}", flush=True)
         payload = {"error": "status build failed"}
-
     try:
         from firehose_render import render_html
-        html = render_html(payload)
+        body = render_html(payload)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] /firehose render error: {e}", flush=True)
-        html = (
-            "<html><body><pre>firehose render failed: "
+        print(f"[proxy] status render error: {e}", flush=True)
+        body = (
+            "<html><body><pre>status render failed: "
             + str(e)[:200]
             + "</pre></body></html>"
         )
     return Response(
-        content=html,
+        content=body,
         status_code=200,
         media_type="text/html; charset=utf-8",
         headers={"cache-control": "no-store"},
     )
 
 
-# -----------------------------------------------------------------------------
-# Static dashboard (Next.js export under status-page/out)
-#
-# Order matters: explicit routes for "/" and the "/_next" mount live BEFORE the
-# /{path:path} catch-all proxy below so they take precedence. Build with:
-#   cd status-page && npm install && npx next build
-# -----------------------------------------------------------------------------
-
-STATUS_PAGE_OUT = Path(__file__).parent / "status-page" / "out"
-
-
 @app.get("/", include_in_schema=False)
-async def status_dashboard_index():
-    index = STATUS_PAGE_OUT / "index.html"
-    if index.exists():
-        return FileResponse(str(index), media_type="text/html")
+async def status_dashboard_index(request: Request):
+    return await _render_status_html(request)
+
+
+@app.get("/firehose", include_in_schema=False)
+async def status_dashboard_firehose(request: Request):
+    """Backwards compatibility: redirect old `/firehose` URL to `/`."""
     return Response(
-        content=json.dumps({"error": "status dashboard not built", "hint": "cd status-page && npx next build"}),
-        status_code=404,
-        media_type="application/json",
+        status_code=301,
+        headers={"location": "/", "cache-control": "no-store"},
     )
 
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def status_favicon():
-    fav = STATUS_PAGE_OUT / "favicon.ico"
-    if fav.exists():
-        return FileResponse(str(fav), media_type="image/x-icon")
+    # No bundled favicon now that the Next.js export is gone. 204 No Content.
     return Response(status_code=204)
-
-
-if STATUS_PAGE_OUT.is_dir():
-    # Static asset prefix used by Next.js. Auth-free (no secrets in the bundle).
-    app.mount(
-        "/_next",
-        StaticFiles(directory=str(STATUS_PAGE_OUT / "_next"), html=False, check_dir=True),
-        name="next-static",
-    )
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])

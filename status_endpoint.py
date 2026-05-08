@@ -888,21 +888,36 @@ def _journal_xids() -> dict:
 
 
 def _kernel_recent_events(n: int = 5) -> list[str]:
+    """Return the last N kernel events that look NVIDIA/GPU/MCE-related.
+
+    Earlier version used `-n 200` which filtered the *last 200 lines* of any
+    kernel output and dropped Xid bursts that scrolled off when the kernel
+    log was chatty. We now scan the full last-24h window and grep first.
+    """
     rc, out, _ = _run(
-        ["journalctl", "-k", "-n", "200", "--no-pager", "--since", "24 hours ago"],
-        timeout=2.0,
+        ["journalctl", "-k", "--no-pager", "--since", "24 hours ago"],
+        timeout=2.5,
     )
     if rc != 0 or not out:
         return []
     keep = []
     for line in out.splitlines():
         l = line.lower()
-        if any(s in l for s in ("nvidia", "nvrm", "xid", "gpu", "amdgpu", "iommu", "mce")):
+        if any(s in l for s in ("nvidia", "nvrm", "xid", "amdgpu", "iommu", " mce")):
             keep.append(line[:200])
     return keep[-n:]
 
 
 def _reboot_history(n: int = 5) -> list[str]:
+    """Return up to N most recent boots. Uses `journalctl --list-boots`
+    because `last` is not present on minimal installs (e.g. this host has
+    no util-linux `last`)."""
+    rc, out, _ = _run(["journalctl", "--list-boots", "--no-pager"], timeout=1.5)
+    if rc == 0 and out:
+        lines = [l.strip() for l in out.splitlines() if l.strip()]
+        # journalctl prints oldest→newest; reverse to most-recent-first.
+        return [l[:160] for l in lines[-n:][::-1]]
+    # Fallback to `last` if available.
     rc, out, _ = _run(["last", "-x", "-n", str(n + 5), "reboot"], timeout=1.0)
     if rc != 0 or not out:
         return []
@@ -967,23 +982,30 @@ def _disk_partitions() -> list[dict]:
             avail = int(parts[3])
         except ValueError:
             continue
+        # Match `df` semantics: pct = used / (used + avail). The naive
+        # used/size form ignores reserved blocks and underreports fullness
+        # by ~5 percentage points, hiding banner escalation.
+        denom = used + avail
         out_rows.append({
             "source": parts[0],
             "target": parts[5],
             "size_bytes": size,
             "used_bytes": used,
             "avail_bytes": avail,
-            "pct_used": round((used / size) * 100.0, 1) if size > 0 else 0.0,
+            "pct_used": round((used / denom) * 100.0, 1) if denom > 0 else 0.0,
         })
-    # Dedup if root and /var/log are same partition.
-    seen_targets = set()
-    deduped = []
+    # Dedup if /home and /var/log are bind-mounts of the same source as /.
+    seen_sources: set[str] = set()
+    deduped: list[dict] = []
+    # Prefer to keep "/" (root) when duplicates appear.
+    out_rows.sort(key=lambda r: 0 if r["target"] == "/" else 1)
     for r in out_rows:
-        if r["source"] in seen_targets and r["target"] != "/":
+        if r["source"] in seen_sources:
             continue
         deduped.append(r)
-        seen_targets.add(r["source"])
-    return out_rows
+        seen_sources.add(r["source"])
+    deduped.sort(key=lambda r: r["target"])
+    return deduped
 
 
 def _dir_summary(name: str, path: Path) -> dict:
@@ -1249,26 +1271,36 @@ async def _enriched_aux_health() -> dict:
     return out
 
 
-async def _voices_summary() -> Optional[dict]:
-    """Summary of /v1/audio/voices: count + language coverage."""
+def _voices_summary(proxy_module) -> Optional[dict]:
+    """Summary of /v1/audio/voices: count + language coverage.
+
+    Reads VOICE_MAP + _voice_metadata directly from the proxy module to
+    avoid a self-loopback HTTP call (the /v1/audio/voices endpoint requires
+    bearer auth, so the previous httpx call returned 401).
+    """
+    if proxy_module is None:
+        return None
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            r = await client.get("http://127.0.0.1:5000/v1/audio/voices")
-            if r.status_code != 200:
-                return None
-            j = r.json()
-            voices = j.get("voices") or []
-            langs: Counter = Counter()
-            genders: Counter = Counter()
-            for v in voices:
-                if isinstance(v, dict):
-                    langs[v.get("language") or "unknown"] += 1
-                    genders[v.get("gender") or "unknown"] += 1
-            return {
-                "count": len(voices),
-                "languages": dict(langs),
-                "genders": dict(genders),
-            }
+        voice_map = getattr(proxy_module, "VOICE_MAP", None) or {}
+        meta_fn = getattr(proxy_module, "_voice_metadata", None)
+        if not voice_map or not callable(meta_fn):
+            return None
+        langs: Counter = Counter()
+        genders: Counter = Counter()
+        count = 0
+        for voice_id in voice_map.keys():
+            try:
+                meta = meta_fn(voice_id, voice_map[voice_id]) or {}
+            except Exception:
+                meta = {}
+            langs[meta.get("language") or "unknown"] += 1
+            genders[meta.get("gender") or "unknown"] += 1
+            count += 1
+        return {
+            "count": count,
+            "languages": dict(langs),
+            "genders": dict(genders),
+        }
     except Exception:
         return None
 
@@ -1298,11 +1330,30 @@ def _daisy_audit_summary() -> dict:
                 rec = json.loads(line)
             except Exception:
                 continue
-            recent.append({
+            # Daisy's audit log shape (current): {ts, tool, cwd, command,
+            # risk_rule, decision, decision_ts, ...}. Older shapes used
+            # {timestamp, kind|type, summary|prompt|action}. Try both.
+            kind = (
+                rec.get("kind")
+                or rec.get("type")
+                or rec.get("tool")
+                or rec.get("risk_rule")
+            )
+            summary = (
+                rec.get("summary")
+                or rec.get("prompt")
+                or rec.get("action")
+                or rec.get("command")
+                or ""
+            )
+            entry = {
                 "ts": rec.get("timestamp") or rec.get("ts"),
-                "kind": rec.get("kind") or rec.get("type"),
-                "summary": _truncate(str(rec.get("summary") or rec.get("prompt") or rec.get("action") or ""), 160),
-            })
+                "kind": kind,
+                "summary": _truncate(str(summary), 160),
+            }
+            if rec.get("decision"):
+                entry["decision"] = rec["decision"]
+            recent.append(entry)
         info["recent_entries"] = recent
     except Exception as e:
         info["error"] = _safe_err(e)
@@ -1436,9 +1487,18 @@ async def build_status_payload(config: dict) -> dict:
             errors[name] = _safe_err(e)
             return None
 
-    # Lazy import to avoid circular dep at module load.
+    # The proxy is launched via `python3 proxy.py`, which means its module
+    # name at runtime is `__main__` rather than `proxy`. Reach for that first
+    # so we share the live `_video_progress` / `AUTH_REGISTRY` dicts; fall back
+    # to a regular import only when this module is exercised in isolation.
+    proxy_module = None
     try:
-        import proxy as proxy_module  # noqa: WPS433
+        import sys as _sys
+        candidate = _sys.modules.get("__main__")
+        if candidate is not None and hasattr(candidate, "_video_progress"):
+            proxy_module = candidate
+        else:
+            import proxy as proxy_module  # noqa: WPS433
     except Exception:
         proxy_module = None  # type: ignore
 
@@ -1452,11 +1512,11 @@ async def build_status_payload(config: dict) -> dict:
     queue_task = section("comfy_queue", _comfy_queue_and_stats())
     llama_task = section("llama_props_slots", _llama_props_and_slots())
     aux_task = section("aux_health", _enriched_aux_health())
-    voices_task = section("voices_summary", _voices_summary())
 
-    backends, queue_result, llama_result, aux_health, voices_summary = await asyncio.gather(
-        backends_task, queue_task, llama_task, aux_task, voices_task,
+    backends, queue_result, llama_result, aux_health = await asyncio.gather(
+        backends_task, queue_task, llama_task, aux_task,
     )
+    voices_summary = sync_section("voices_summary", lambda: _voices_summary(proxy_module))
     comfy_queue, comfy_stats = (queue_result or (None, None))
     props, slots = (llama_result or (None, None))
 
@@ -1619,10 +1679,16 @@ async def build_status_payload(config: dict) -> dict:
             config_snapshot["openai_aliases_file_mtime"] = int(st.st_mtime)
             try:
                 aliases_yaml = yaml.safe_load(aliases_file.read_text(encoding="utf-8")) or {}
+                # The generator emits {generated_at, source, models: [...]}.
+                # Older variants keyed by category-dict. Handle both.
                 if isinstance(aliases_yaml, dict):
-                    config_snapshot["openai_aliases_count"] = sum(
-                        len(v) if isinstance(v, dict) else 0 for v in aliases_yaml.values()
-                    )
+                    total = 0
+                    for v in aliases_yaml.values():
+                        if isinstance(v, (list, tuple, set)):
+                            total += len(v)
+                        elif isinstance(v, dict):
+                            total += len(v)
+                    config_snapshot["openai_aliases_count"] = total
             except Exception:
                 pass
     except Exception:
