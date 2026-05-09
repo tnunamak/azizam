@@ -1,0 +1,413 @@
+/* vivid.fish habitat design system — status page adaptation
+   Subnautica/scuba HUD energy, bioluminescent signals, deep ocean grounding
+   with warm sand/foam accents. */
+
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,300;1,6..72,400;1,6..72,500;1,6..72,600&display=swap');
+
+:root {
+  --dive-abyss: #040912;
+  --dive-deep: #08182C;
+  --dive-hull: #0F2742;
+  --dive-marine: #1B3A6B;
+  --dive-rule: #2A4F75;
+  --dive-fog: #8FB6D9;
+  --dive-surf: #5DC1E0;
+  --dive-shoal: #A6E3DE;
+  --dive-foam: #F4F1E6;
+  --dive-sand: #EAD9A8;
+  --dive-sun: #FFCB47;
+  --dive-biolum: #2DE0E6;
+  --dive-biolum2: #9CFCD7;
+  --dive-coral: #FF4B8C;
+  --dive-amber: #FF8C42;
+  --dive-octopus: #C84B6E;
+  --dive-kelp: #4A7860;
+
+  color-scheme: dark;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--dive-abyss);
+  font-family: 'Geist', -apple-system, system-ui, sans-serif;
+  color: var(--dive-foam);
+  line-height: 1.45;
+}
+
+body {
+  padding: 24px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+h1 {
+  font-size: 18px;
+  margin: 0 0 4px;
+  color: var(--dive-foam);
+  font-weight: 600;
+}
+
+h2 {
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dive-shoal);
+  margin: 32px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--dive-rule);
+  font-weight: 600;
+}
+
+h3 {
+  font-size: 12px;
+  color: var(--dive-fog);
+  margin: 14px 0 6px;
+  font-weight: 500;
+}
+
+section {
+  margin-bottom: 8px;
+}
+
+table {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+  margin: 4px 0 12px;
+  background: var(--dive-hull);
+  border: 1px solid var(--dive-marine);
+}
+
+th, td {
+  border: 1px solid var(--dive-marine);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: var(--dive-sand);
+  font-weight: 600;
+  background: var(--dive-deep);
+}
+
+table.kv th {
+  width: 200px;
+}
+
+td.mono, th.mono, code, pre {
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--dive-biolum);
+}
+
+pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--dive-deep);
+  border: 1px solid var(--dive-marine);
+  padding: 8px;
+}
+
+/* Banner: health indicator */
+.banner {
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  background: var(--dive-hull);
+  border: 1px solid var(--dive-marine);
+}
+
+.banner.ok {
+  background: linear-gradient(135deg, rgba(45, 224, 230, 0.08), rgba(154, 227, 222, 0.06));
+  border: 1px solid var(--dive-biolum);
+}
+
+.banner.warn {
+  background: linear-gradient(135deg, rgba(255, 203, 71, 0.08), rgba(255, 140, 66, 0.06));
+  border: 1px solid var(--dive-amber);
+}
+
+.banner.bad {
+  background: linear-gradient(135deg, rgba(255, 75, 140, 0.08), rgba(200, 75, 110, 0.06));
+  border: 1px solid var(--dive-coral);
+}
+
+/* Pills / badges */
+.banner-badge.ok {
+  background: rgba(45, 224, 230, 0.15);
+  border: 1px solid var(--dive-biolum);
+  color: var(--dive-biolum);
+}
+
+.banner-badge.warn {
+  background: rgba(255, 203, 71, 0.15);
+  border: 1px solid var(--dive-sun);
+  color: var(--dive-sun);
+}
+
+.banner-badge.bad {
+  background: rgba(255, 75, 140, 0.15);
+  border: 1px solid var(--dive-coral);
+  color: var(--dive-coral);
+}
+
+.pill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 99px;
+  font-size: 10.5px;
+  border: 1px solid var(--dive-marine);
+  background: var(--dive-hull);
+  color: var(--dive-shoal);
+  margin-right: 4px;
+}
+
+.pill.ok {
+  background: rgba(154, 227, 222, 0.1);
+  color: var(--dive-biolum);
+  border-color: var(--dive-shoal);
+}
+
+.pill.warn {
+  background: rgba(255, 203, 71, 0.1);
+  color: var(--dive-sun);
+  border-color: var(--dive-amber);
+}
+
+.pill.bad {
+  background: rgba(255, 75, 140, 0.1);
+  color: var(--dive-coral);
+  border-color: var(--dive-octopus);
+}
+
+.pill.muted {
+  color: var(--dive-fog);
+}
+
+/* Progress bars */
+.bar {
+  background: var(--dive-marine);
+  height: 6px;
+  border-radius: 99px;
+  overflow: hidden;
+  margin: 4px 0;
+  border: 1px solid var(--dive-rule);
+}
+
+.bar > span {
+  display: block;
+  height: 100%;
+  background: var(--dive-biolum);
+}
+
+.bar.warn > span {
+  background: var(--dive-sun);
+}
+
+.bar.bad > span {
+  background: var(--dive-coral);
+}
+
+.bar.ok > span {
+  background: var(--dive-biolum2);
+}
+
+/* Grid layout for cards */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+/* Cards */
+.card {
+  background: var(--dive-hull);
+  border: 1px solid var(--dive-marine);
+  padding: 8px 10px;
+  border-radius: 4px;
+}
+
+.card:hover {
+  border-color: var(--dive-rule);
+  background: linear-gradient(135deg, rgba(45, 224, 230, 0.05), transparent);
+}
+
+.muted {
+  color: var(--dive-fog);
+}
+
+.err {
+  color: var(--dive-coral);
+}
+
+a {
+  color: var(--dive-biolum);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--dive-biolum2);
+  text-decoration: underline;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--dive-marine);
+  margin: 8px 0;
+}
+
+details {
+  margin: 4px 0;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--dive-shoal);
+  font-size: 12px;
+  list-style: revert;
+  user-select: none;
+}
+
+summary.h2-summary {
+  color: var(--dive-shoal);
+}
+
+summary.h2-summary h2 {
+  display: inline-block !important;
+  border: 0 !important;
+  padding-bottom: 0 !important;
+  margin: 0 !important;
+}
+
+summary.h2-summary::after {
+  content: " (click to expand)";
+  color: var(--dive-fog);
+  font-size: 10.5px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+details[open] summary.h2-summary::after {
+  content: " (click to collapse)";
+}
+
+details > .details-body {
+  padding-top: 6px;
+  padding-left: 6px;
+  border-left: 2px solid var(--dive-biolum);
+  margin-left: 4px;
+  margin-top: 6px;
+}
+
+/* Section grouping labels */
+.group-label {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dive-fog);
+  margin: 24px 0 4px;
+  padding: 4px 8px;
+  background: rgba(45, 224, 230, 0.05);
+  border-radius: 4px;
+  border-left: 3px solid var(--dive-biolum);
+  font-weight: 600;
+}
+
+/* Alert / critical events box */
+.alert-box {
+  margin: 0 0 16px;
+  border: 1px solid var(--dive-coral);
+  background: rgba(255, 75, 140, 0.08);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.alert-row {
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--dive-foam);
+}
+
+.alert-row.bad {
+  color: var(--dive-coral);
+}
+
+.alert-row.warn {
+  color: var(--dive-sun);
+}
+
+.alert-row + .alert-row {
+  border-top: 1px dashed var(--dive-marine);
+  padding-top: 6px;
+  margin-top: 4px;
+}
+
+/* Utility classes */
+.small {
+  font-size: 10.5px;
+}
+
+.right {
+  float: right;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+/* Bioluminescent glow effect for status indicators */
+@keyframes biolum-pulse {
+  0%, 100% {
+    text-shadow: 0 0 10px var(--dive-biolum), 0 0 20px rgba(45, 224, 230, 0.5);
+    opacity: 1;
+  }
+  50% {
+    text-shadow: 0 0 20px var(--dive-biolum), 0 0 40px rgba(45, 224, 230, 0.7);
+    opacity: 0.95;
+  }
+}
+
+.banner.ok h1 {
+  animation: biolum-pulse 4s ease-in-out infinite;
+}
+
+/* Footer */
+footer {
+  margin-top: 32px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dive-marine);
+  color: var(--dive-fog);
+  font-size: 11px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  body {
+    padding: 16px;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  h2 {
+    margin: 24px 0 8px;
+  }
+}
+
+/* Print styles */
+@media print {
+  body {
+    background: white;
+    color: black;
+  }
+
+  a {
+    color: #0066cc;
+  }
+}
