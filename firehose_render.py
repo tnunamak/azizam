@@ -261,6 +261,7 @@ def render_html(payload: dict, *, host: Optional[str] = None) -> str:
 
     parts.append('<div class="group-label">Resources</div>')
     parts.append(_section("Per-service VRAM attribution", _render_vram_attribution(payload.get("vram_attribution") or {})))
+    parts.append(_section("Per-service RAM attribution", _render_ram_attribution(payload.get("ram_attribution") or {})))
     parts.append(_section("Budgets", _render_budgets(payload.get("budgets") or {})))
     parts.append(_section("Disk pressure", _render_disk(payload.get("disk") or {})))
     parts.append(_section("Image cache", _render_image_cache(payload.get("image_cache"))))
@@ -283,6 +284,12 @@ def render_html(payload: dict, *, host: Optional[str] = None) -> str:
         _render_auth_keys(payload.get("auth_keys") or [], window=payload.get("auth_keys_window") or {}),
     ))
     parts.append(_section("Recent activity timeline", _render_recent_events(payload.get("recent_events") or [])))
+
+    parts.append(_section("Repo state", _render_repo_state(payload.get("repo_state") or {})))
+    parts.append(_section("Backend readiness", _render_backend_readiness(payload)))
+    parts.append(_section("Recent errors (4xx/5xx)", _render_recent_errors(payload.get("recent_events") or []), collapsed=True))
+    parts.append(_section("Quick test endpoints", _render_quick_test(), collapsed=True))
+    parts.append(_section("ComfyUI custom nodes", _render_comfy_custom_nodes(payload.get("comfy_custom_nodes") or []), collapsed=True))
 
     parts.append('<div class="group-label">Diagnostics</div>')
     parts.append(_section("Driver & kernel events", _render_driver(payload.get("driver") or {}), collapsed=True))
@@ -504,6 +511,53 @@ def _render_critical_strip(p: dict) -> str:
             return None
 
     xid_latest = _xid_latest_epoch()
+
+    def _xid_evt_epoch(ts_str: str) -> Optional[float]:
+        if not ts_str:
+            return None
+        try:
+            import datetime as _d
+            year = _d.datetime.now().year
+            return _d.datetime.strptime(f"{year} {ts_str}", "%Y %b %d %H:%M:%S").timestamp()
+        except Exception:
+            return None
+
+    # Xid 109: emit one entry per occurrence in the last 60 min so each
+    # individual fault is distinguishable in the strip; older 109s and
+    # non-109 codes still aggregate into a single per-code summary so the
+    # strip doesn't drown in repeats.
+    cutoff_60 = now - 3600.0
+    xid_109_recent: list[tuple[float, dict]] = []
+    for evt in last5_xid:
+        try:
+            if int(evt.get("code") or 0) != 109:
+                continue
+        except Exception:
+            continue
+        ep = _xid_evt_epoch(evt.get("ts") or "")
+        if ep is None or ep < cutoff_60:
+            continue
+        xid_109_recent.append((ep, evt))
+    for ep, evt in xid_109_recent:
+        line = (evt.get("line") or "").strip()
+        # Extract a short signature (errorString + name) for the summary
+        sig = "Xid 109"
+        for tok in ("errorString ", "name="):
+            idx = line.find(tok)
+            if idx >= 0:
+                tail = line[idx + len(tok):].split(",")[0].strip()
+                if tok == "errorString ":
+                    sig = f"{tail}"
+                    break
+        proc = ""
+        idx = line.find("name=")
+        if idx >= 0:
+            proc = line[idx + 5:].split(",")[0].strip()
+        ts_label = evt.get("ts") or ""
+        summary = sig + (f" ({proc})" if proc else "") + (f" @ {ts_label}" if ts_label else "")
+        _add("xid_109", ep, "Xid 109", summary[:160], "bad",
+             abs_when=ts_label)
+
     if isinstance(by24, dict):
         for code, count in by24.items():
             try:
@@ -512,12 +566,21 @@ def _render_critical_strip(p: dict) -> str:
                 continue
             if not count:
                 continue
-            key = "xid_109" if code_int == 109 else "xid_other"
             in_60 = by60.get(code) or by60.get(str(code)) or by60.get(code_int) or 0
+            # Xid 109 in last 60min already rendered as individual events above;
+            # only emit the aggregate when we have older 109 events to mention.
+            if code_int == 109 and len(xid_109_recent) >= int(count or 0):
+                continue
+            key = "xid_109" if code_int == 109 else "xid_other"
             window = "60min" if in_60 else "24h"
             label = f"Xid {code_int}"
-            shown = in_60 if in_60 else count
-            summary = f"{shown} event(s) in last {window}"
+            if code_int == 109 and xid_109_recent:
+                # mention only the older 24h tail
+                shown = max(0, int(count) - len(xid_109_recent))
+                summary = f"{shown} older event(s) in last 24h"
+            else:
+                shown = in_60 if in_60 else count
+                summary = f"{shown} event(s) in last {window}"
             css = "bad" if (code_int == 109 or in_60) else "warn"
             _add(key, xid_latest, label, summary, css)
 
@@ -1015,6 +1078,52 @@ def _render_vram_attribution(va: dict) -> str:
         + '</pre></details>'
     )
     return "".join(parts)
+
+
+def _render_ram_attribution(r: dict) -> str:
+    """Mirror VRAM attribution but for system RAM. Informational only — no
+    budget column wiring yet, so the budget cell stays muted/—.
+    """
+    if not r:
+        return '<div class="muted">unavailable</div>'
+    err = r.get("error")
+    err_html = (
+        f'<div class="muted small">probe error: {_esc(err)}</div>' if err else ""
+    )
+
+    def _kb(n: Optional[int]) -> str:
+        if n is None:
+            return "—"
+        return _bytes(int(n) * 1024)
+
+    total_kb = r.get("total_kb")
+    free_kb = r.get("free_kb")
+    avail_kb = r.get("available_kb")
+
+    head = _kv_table([
+        ("Total", _kb(total_kb)),
+        ("Free", _kb(free_kb)),
+        ("Available", _kb(avail_kb)),
+    ])
+    rows = r.get("rows") or []
+    if not rows:
+        return head + err_html + '<div class="muted">no per-service rows</div>'
+
+    body = ['<table><thead><tr><th>Service</th><th>RSS</th>'
+            '<th>% of total</th><th>Budget</th></tr></thead><tbody>']
+    for row in rows:
+        rss_kb = row.get("rss_kb") or 0
+        pct = (rss_kb / total_kb * 100.0) if total_kb else 0.0
+        body.append(
+            f'<tr>'
+            f'<td>{_esc(row.get("service"))}</td>'
+            f'<td class="mono">{_kb(rss_kb)}</td>'
+            f'<td class="mono">{pct:.1f}%</td>'
+            f'<td class="muted">—</td>'
+            f'</tr>'
+        )
+    body.append("</tbody></table>")
+    return head + err_html + "".join(body)
 
 
 def _render_budgets(b: dict) -> str:
@@ -1563,6 +1672,37 @@ def _render_auth_keys(keys: list[dict], *, window: Optional[dict] = None) -> str
             f'· max window {(window.get("window_max_s") or 0) // 3600}h'
             '</div>'
         )
+    def _fmt_latency(v: Any) -> str:
+        if v is None or v == "":
+            return "—"
+        try:
+            ms = float(v)
+        except Exception:
+            return _esc(v)
+        if ms < 1000:
+            return f"{int(round(ms))} ms"
+        return f"{ms / 1000.0:.2f} s"
+
+    def _fmt_top_endpoints(eps: Any) -> str:
+        if not eps:
+            return '<span class="muted">—</span>'
+        pieces: list[str] = []
+        for e in eps:
+            if isinstance(e, dict):
+                path = e.get("path") or e.get("endpoint") or "?"
+                count = (
+                    e.get("count") or e.get("requests") or e.get("hits") or e.get("n")
+                )
+                if count is None:
+                    pieces.append(_esc(path))
+                else:
+                    pieces.append(f"{_esc(path)} ×{_esc(count)}")
+            elif isinstance(e, (list, tuple)) and len(e) >= 2:
+                pieces.append(f"{_esc(e[0])} ×{_esc(e[1])}")
+            else:
+                pieces.append(_esc(e))
+        return ", ".join(pieces)
+
     rows = [
         header,
         '<table><thead><tr><th>Key name</th><th>Active?</th><th>Last seen</th>'
@@ -1580,9 +1720,9 @@ def _render_auth_keys(keys: list[dict], *, window: Optional[dict] = None) -> str
             f'<td class="mono">{_esc(k.get("requests_24h"))}</td>'
             f'<td class="mono">{_esc(k.get("errors_4xx_24h"))}</td>'
             f'<td class="mono">{_esc(k.get("errors_5xx_24h"))}</td>'
-            f'<td class="mono">{_esc(k.get("latency_ms_p50"))}</td>'
-            f'<td class="mono">{_esc(k.get("latency_ms_p95"))}</td>'
-            f'<td class="small mono">{_esc(json.dumps(k.get("top_endpoints") or []))}</td>'
+            f'<td class="mono">{_fmt_latency(k.get("latency_ms_p50"))}</td>'
+            f'<td class="mono">{_fmt_latency(k.get("latency_ms_p95"))}</td>'
+            f'<td class="small">{_fmt_top_endpoints(k.get("top_endpoints"))}</td>'
             f'</tr>'
         )
     rows.append("</tbody></table>")
@@ -1596,15 +1736,61 @@ def _render_recent_events(events: list[dict]) -> str:
     # be defensive: replayed events may have arrived out of order).
     events_sorted = sorted(events, key=lambda e: -(e.get("ts") or 0))
     rows = ['<table><thead><tr><th>Time</th><th>Type</th><th>Summary</th><th>Detail</th></tr></thead><tbody>']
+
+    def _humanize_detail(e: dict) -> str:
+        # Standard request shape: status · latency · key · model. Drop fields
+        # that are missing/null/empty so the row stays scannable.
+        bits: list[str] = []
+        status = e.get("status")
+        if status is not None:
+            try:
+                code = int(status)
+                phrase = {
+                    200: "OK", 201: "Created", 204: "No Content",
+                    301: "Moved", 302: "Found", 304: "Not Modified",
+                    400: "Bad Request", 401: "Unauthorized", 403: "Forbidden",
+                    404: "Not Found", 408: "Timeout", 409: "Conflict",
+                    422: "Unprocessable", 429: "Too Many Requests",
+                    500: "Server Error", 502: "Bad Gateway",
+                    503: "Service Unavailable", 504: "Gateway Timeout",
+                }.get(code, "")
+                bits.append(f"{code} {phrase}".strip())
+            except Exception:
+                bits.append(str(status))
+        lat = e.get("latency_ms")
+        if lat is not None:
+            try:
+                ms = float(lat)
+                if ms < 1000:
+                    bits.append(f"{int(round(ms))}ms")
+                else:
+                    bits.append(f"{ms/1000.0:.2f}s")
+            except Exception:
+                bits.append(f"{lat}ms")
+        key_name = e.get("key")
+        if key_name:
+            bits.append(str(key_name))
+        model = e.get("model")
+        if model:  # explicitly drop None/empty/null
+            bits.append(f"model={model}")
+        # Surface unknown extras (anything that's not a standard field) so
+        # we don't silently drop information for new event types.
+        STANDARD = {"ts", "type", "summary", "path", "status",
+                    "latency_ms", "key", "model"}
+        extras = {k: v for k, v in e.items()
+                  if k not in STANDARD and v not in (None, "", [], {})}
+        if extras:
+            bits.append(", ".join(f"{k}={v}" for k, v in extras.items()))
+        return " · ".join(bits) if bits else ""
+
     for e in events_sorted:
         ts = e.get("ts")
-        details = {k: v for k, v in e.items() if k not in ("ts", "type", "summary")}
         rows.append(
             f'<tr>'
             f'<td title="{_esc(_abs_utc(ts))}">{_ago(ts)}</td>'
             f'<td><span class="pill">{_esc(e.get("type"))}</span></td>'
             f'<td>{_esc(e.get("summary"))}</td>'
-            f'<td class="small mono">{_esc(json.dumps(details, default=str))}</td>'
+            f'<td class="small">{_esc(_humanize_detail(e))}</td>'
             f'</tr>'
         )
     rows.append("</tbody></table>")
@@ -1903,6 +2089,20 @@ def _render_daisy(d: dict) -> str:
         f'<tr><th>Tail line count</th><td class="mono">{_esc(d.get("line_count_tail"))}</td></tr>'
         '</table>'
     ]
+    tmux_state = d.get("tmux_state")
+    if tmux_state is not None:
+        cls = {"working": "warn", "idle": "muted"}.get(tmux_state, "muted")
+        last_u = d.get("tmux_last_user_at")
+        last_a = d.get("tmux_last_assistant_at")
+        parts.append('<h3>Live activity (tmux peek)</h3>')
+        parts.append(
+            '<table class="kv">'
+            f'<tr><th>State</th><td><span class="pill {cls}">{_esc(tmux_state)}</span></td></tr>'
+            f'<tr><th>Last user message at</th><td>{_ago(last_u) if last_u else "—"}</td></tr>'
+            f'<tr><th>Last assistant response at</th><td>{_ago(last_a) if last_a else "—"}</td></tr>'
+            '</table>'
+        )
+
     pi_ctx = d.get("pi_context")
     if pi_ctx:
         parts.append('<h3>Pi context utilization</h3>')
@@ -2013,6 +2213,244 @@ def _render_config_snapshot(c: dict) -> str:
         rows.append('</tbody></table></details>')
         parts.append("".join(rows))
     return "".join(parts)
+
+
+def _render_repo_state(r: dict) -> str:
+    if not r:
+        return '<div class="muted">unavailable</div>'
+    branch = r.get("branch") or "?"
+    dirty = r.get("dirty")
+    ahead = r.get("ahead")
+    behind = r.get("behind")
+    latest = r.get("latest_commit") or {}
+    files = r.get("modified_files") or []
+    count = r.get("modified_count") or 0
+
+    dirty_pill = (
+        '<span class="pill warn">dirty</span>' if dirty
+        else '<span class="pill ok">clean</span>' if dirty is False
+        else '<span class="pill muted">?</span>'
+    )
+    ahead_str = ""
+    if ahead is not None and behind is not None:
+        ahead_str = f"ahead {ahead}, behind {behind} vs origin/main"
+    rows = [
+        ("Branch", f'<span class="mono">{_esc(branch)}</span> {dirty_pill}'),
+        ("Tracking", _esc(ahead_str) if ahead_str else "—"),
+    ]
+    if latest:
+        sha = latest.get("sha") or "?"
+        subj = latest.get("subject") or ""
+        ago = latest.get("ago") or ""
+        rows.append(("Latest commit",
+                     f'<span class="mono">{_esc(sha)}</span> {_esc(subj)} '
+                     f'<span class="muted small">({_esc(ago)})</span>'))
+    body = ['<table class="kv">']
+    for k, v in rows:
+        body.append(f'<tr><th>{_esc(k)}</th><td>{v}</td></tr>')
+    body.append('</table>')
+    if files:
+        body.append('<details><summary class="muted small">'
+                    f'Modified files ({count})</summary>'
+                    '<ul style="margin:.25em 0 .25em 1.25em">')
+        for f in files:
+            body.append(f'<li class="mono small">{_esc(f)}</li>')
+        if count > len(files):
+            body.append(f'<li class="muted small">…and {count - len(files)} more</li>')
+        body.append('</ul></details>')
+    return "".join(body)
+
+
+def _render_backend_readiness(payload: dict) -> str:
+    """Digest existing backend/aux/llama state into a single warmth grid.
+
+    Pure presentation — no new probes. Helps the user see at a glance which
+    backends are warm vs cold-by-design (TabbyAPI is intentionally cold at idle).
+    """
+    cards: list[tuple[str, str, str, str]] = []  # (name, state_pill, detail, hint)
+
+    def _pill(state: str) -> str:
+        cls = {"warm": "ok", "cold": "warn", "down": "bad"}.get(state, "muted")
+        return f'<span class="pill {cls}">{_esc(state)}</span>'
+
+    # llama-turbo: warm if model loaded + slots present
+    models = payload.get("models") or {}
+    slots = models.get("slots") or []
+    loaded = bool(models.get("loaded_model_path") or models.get("loaded_model"))
+    if loaded and slots:
+        cards.append(("llama-turbo", _pill("warm"),
+                      f"{len(slots)} slot(s), model loaded", ""))
+    elif loaded:
+        cards.append(("llama-turbo", _pill("warm"), "model loaded", ""))
+    else:
+        cards.append(("llama-turbo", _pill("cold"), "no model loaded",
+                      "first chat will load weights"))
+
+    # TabbyAPI: cold-by-design at idle. Look at backends list.
+    backends = payload.get("backends") or []
+    bmap = {b.get("name"): b for b in backends if isinstance(b, dict)}
+    tabby = bmap.get("tabbyapi") or bmap.get("tabby")
+    if tabby:
+        live = tabby.get("live_status") or tabby.get("status")
+        if live == "up":
+            cards.append(("TabbyAPI", _pill("warm"), "responding", ""))
+        else:
+            cards.append(("TabbyAPI", _pill("cold"),
+                          str(live or "down"),
+                          "cold-start ~30-60s on first request"))
+
+    # ComfyUI: warm if backend up
+    comfy = bmap.get("comfyui") or bmap.get("comfy")
+    if comfy:
+        live = comfy.get("live_status") or comfy.get("status")
+        if live == "up":
+            cards.append(("ComfyUI", _pill("warm"), "responding to /system_stats", ""))
+        else:
+            cards.append(("ComfyUI", _pill("down"), str(live or "?"), ""))
+
+    # Voxtral
+    aux = payload.get("aux_health") or {}
+    vox = aux.get("voxtral") or {}
+    if isinstance(vox, dict):
+        vram = vox.get("vram_gb")
+        try:
+            vram_n = float(vram) if vram is not None else 0.0
+        except Exception:
+            vram_n = 0.0
+        if vram_n > 3.0:
+            cards.append(("Voxtral (TTS)", _pill("warm"),
+                          f"{vram} GB VRAM resident", ""))
+        elif (vox.get("status") or "").lower() in ("ok", "healthy", "up"):
+            cards.append(("Voxtral (TTS)", _pill("cold"),
+                          "service up, model not resident",
+                          "first TTS warms cache"))
+        else:
+            cards.append(("Voxtral (TTS)", _pill("down"),
+                          str(vox.get("status") or "?"), ""))
+
+    # Parakeet
+    para = aux.get("parakeet") or {}
+    if isinstance(para, dict):
+        st = (para.get("status") or "").lower()
+        if st in ("ok", "healthy", "up"):
+            cards.append(("Parakeet (STT)", _pill("warm"),
+                          str(para.get("default_model") or ""), ""))
+        else:
+            cards.append(("Parakeet (STT)", _pill("down"),
+                          str(para.get("status") or "?"), ""))
+
+    if not cards:
+        return '<div class="muted">no backend data</div>'
+
+    out = ['<table><thead><tr><th>Backend</th><th>State</th>'
+           '<th>Detail</th><th>Note</th></tr></thead><tbody>']
+    for name, pill, detail, hint in cards:
+        out.append(
+            f'<tr><td>{_esc(name)}</td><td>{pill}</td>'
+            f'<td class="small">{_esc(detail)}</td>'
+            f'<td class="muted small">{_esc(hint)}</td></tr>'
+        )
+    out.append('</tbody></table>')
+    return "".join(out)
+
+
+def _render_recent_errors(events: list[dict]) -> str:
+    """Filter recent_events to status >= 400 and show the last 10. Hidden
+    section already collapses; if none, render an explicit none-found note
+    (still inside the collapsed details)."""
+    errs: list[dict] = []
+    for e in events:
+        try:
+            st = int(e.get("status") or 0)
+        except Exception:
+            continue
+        if st >= 400:
+            errs.append(e)
+    errs.sort(key=lambda e: -(e.get("ts") or 0))
+    errs = errs[:10]
+    if not errs:
+        return '<div class="muted">no 4xx/5xx events in window</div>'
+    rows = ['<table><thead><tr><th>When</th><th>Path</th><th>Status</th>'
+            '<th>Key</th><th>Error</th></tr></thead><tbody>']
+    for e in errs:
+        ts = e.get("ts")
+        st = e.get("status")
+        cls = "warn" if isinstance(st, int) and st < 500 else "bad"
+        err_excerpt = e.get("error") or e.get("error_excerpt") or ""
+        rows.append(
+            f'<tr>'
+            f'<td title="{_esc(_abs_utc(ts))}">{_ago(ts)}</td>'
+            f'<td class="mono small">{_esc(e.get("path"))}</td>'
+            f'<td><span class="pill {cls}">{_esc(st)}</span></td>'
+            f'<td>{_esc(e.get("key"))}</td>'
+            f'<td class="small mono">{_esc(str(err_excerpt)[:200])}</td>'
+            f'</tr>'
+        )
+    rows.append('</tbody></table>')
+    return "".join(rows)
+
+
+def _render_quick_test() -> str:
+    """Static copy-pasteable curl examples. Kept inside collapsed <details> by
+    the caller so it doesn't dominate the main view."""
+    examples = [
+        ("Chat completion",
+         'curl -s https://openai.vivid.fish/v1/chat/completions \\\n'
+         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Content-Type: application/json" \\\n'
+         '  -d \'{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}\''),
+        ("Image generation",
+         'curl -s https://openai.vivid.fish/v1/images/generations \\\n'
+         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Content-Type: application/json" \\\n'
+         '  -d \'{"model":"dall-e-3","prompt":"a calico cat","size":"1024x1024"}\''),
+        ("Text-to-speech",
+         'curl -s https://openai.vivid.fish/v1/audio/speech \\\n'
+         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Content-Type: application/json" \\\n'
+         '  -d \'{"model":"tts-1","voice":"alloy","input":"hello"}\' --output out.mp3'),
+        ("Speech-to-text",
+         'curl -s https://openai.vivid.fish/v1/audio/transcriptions \\\n'
+         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -F "file=@audio.mp3" -F "model=whisper-1"'),
+        ("Video — text-to-video",
+         'curl -s https://openai.vivid.fish/v1/videos \\\n'
+         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Content-Type: application/json" \\\n'
+         '  -d \'{"model":"sora","prompt":"a calico cat playing chess","seconds":5}\''),
+        ("Video — image-to-video",
+         'curl -s https://openai.vivid.fish/v1/videos \\\n'
+         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Content-Type: application/json" \\\n'
+         '  -d \'{"model":"sora","prompt":"camera dolly in","input_image_url":"…"}\''),
+    ]
+    parts: list[str] = ['<div class="muted small" style="margin-bottom:6px;">'
+                        'Set <code>VIVID_OPENAI_API_KEY</code> in your shell '
+                        '(get a key from the proxy admin).</div>']
+    for title, body in examples:
+        parts.append(
+            f'<details><summary>{_esc(title)}</summary>'
+            f'<pre class="small">{_esc(body)}</pre></details>'
+        )
+    return "".join(parts)
+
+
+def _render_comfy_custom_nodes(nodes: list[dict]) -> str:
+    if not nodes:
+        return '<div class="muted">none discovered</div>'
+    rows = ['<table><thead><tr><th>Name</th><th>Last touched</th>'
+            '<th>Source</th></tr></thead><tbody>']
+    for n in nodes:
+        ts = n.get("mtime")
+        rows.append(
+            f'<tr>'
+            f'<td class="mono small">{_esc(n.get("name"))}</td>'
+            f'<td title="{_esc(_abs_utc(ts))}">{_ago(ts)}</td>'
+            f'<td class="muted small">{_esc(n.get("source") or "")}</td>'
+            f'</tr>'
+        )
+    rows.append('</tbody></table>')
+    return "".join(rows)
 
 
 def _render_errors(errs: dict) -> str:

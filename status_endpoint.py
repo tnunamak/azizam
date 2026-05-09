@@ -711,6 +711,159 @@ def _read_proc_comm(pid: int) -> Optional[str]:
         return None
 
 
+_REPO_PATH = "/home/tnunamak/applications/openai-proxy"
+_COMFY_CUSTOM_NODES = Path("/home/tnunamak/applications/ComfyUI/custom_nodes")
+
+
+def _ram_attribution() -> dict:
+    """RAM analogue of _vram_attribution: per-service RSS plus a desktop bucket.
+
+    No RAM budgets configured yet, so the budget column stays null and this is
+    purely informational. Walks the same systemd cgroup PID sets as VRAM, sums
+    RSS from /proc/<pid>/statm pages, and bins everything else as "desktop".
+    Returns total_kb, free_kb, available_kb, and per-service rows. Degrades
+    gracefully: unreadable /proc entries are skipped silently.
+    """
+    page_kb = 4
+    try:
+        import os as _os
+        page_kb = int(_os.sysconf("SC_PAGESIZE")) // 1024
+    except Exception:
+        pass
+    total_kb = free_kb = available_kb = None
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            for raw in f:
+                if raw.startswith("MemTotal:"):
+                    total_kb = int(raw.split()[1])
+                elif raw.startswith("MemFree:"):
+                    free_kb = int(raw.split()[1])
+                elif raw.startswith("MemAvailable:"):
+                    available_kb = int(raw.split()[1])
+    except Exception:
+        pass
+    svc_pids = _service_pids()
+    pid_to_service: dict[int, str] = {}
+    for svc, pids in svc_pids.items():
+        for pid in pids:
+            pid_to_service[pid] = svc
+    svc_rss_kb: dict[str, int] = {svc: 0 for svc in _SERVICE_UNITS}
+    desktop_kb = 0
+    try:
+        for entry in Path("/proc").iterdir():
+            n = entry.name
+            if not n.isdigit():
+                continue
+            pid = int(n)
+            try:
+                parts = (entry / "statm").read_text().split()
+                rss_kb = int(parts[1]) * page_kb
+            except Exception:
+                continue
+            svc = pid_to_service.get(pid)
+            if svc:
+                svc_rss_kb[svc] = svc_rss_kb.get(svc, 0) + rss_kb
+            else:
+                desktop_kb += rss_kb
+    except Exception as e:  # noqa: BLE001
+        return {"total_kb": total_kb, "free_kb": free_kb,
+                "available_kb": available_kb, "rows": [],
+                "error": _safe_err(e)}
+    rows: list[dict] = []
+    for svc, kb in sorted(svc_rss_kb.items(), key=lambda kv: -kv[1]):
+        if kb <= 0:
+            continue
+        rows.append({"service": svc, "rss_kb": kb, "budget_kb": None})
+    rows.append({"service": "desktop", "rss_kb": desktop_kb, "budget_kb": None})
+    return {"total_kb": total_kb, "free_kb": free_kb,
+            "available_kb": available_kb, "rows": rows}
+
+
+def _repo_state() -> dict:
+    """Snapshot the openai-proxy git repo: branch, dirty/clean, ahead/behind
+    origin/main, latest commit subject + age, and up to 5 modified files.
+    All git invocations have a 2s timeout and the function never raises.
+    """
+    out: dict[str, Any] = {}
+
+    def _git(*args: str) -> tuple[int, str, str]:
+        return _run(["git", "-C", _REPO_PATH, *args], timeout=2.0)
+
+    rc, branch, _ = _git("rev-parse", "--abbrev-ref", "HEAD")
+    out["branch"] = branch.strip() if rc == 0 else None
+    rc, porcelain, _ = _git("status", "--porcelain")
+    if rc == 0:
+        lines = [l for l in porcelain.splitlines() if l.strip()]
+        out["dirty"] = bool(lines)
+        out["modified_files"] = [l[3:] if len(l) > 3 else l for l in lines[:5]]
+        out["modified_count"] = len(lines)
+    else:
+        out["dirty"] = None
+        out["modified_files"] = []
+        out["modified_count"] = 0
+    rc, counts, _ = _git("rev-list", "--left-right", "--count",
+                         "HEAD...origin/main")
+    if rc == 0 and counts.strip():
+        try:
+            ahead, behind = counts.strip().split()
+            out["ahead"] = int(ahead)
+            out["behind"] = int(behind)
+        except Exception:
+            out["ahead"] = out["behind"] = None
+    else:
+        out["ahead"] = out["behind"] = None
+    rc, log_line, _ = _git("log", "-1", "--format=%h\t%s\t%ar\t%at")
+    if rc == 0 and log_line.strip():
+        try:
+            sha, subj, ago, at = log_line.strip().split("\t", 3)
+            out["latest_commit"] = {"sha": sha, "subject": subj,
+                                    "ago": ago, "ts": int(at)}
+        except Exception:
+            out["latest_commit"] = None
+    else:
+        out["latest_commit"] = None
+    return out
+
+
+def _comfy_custom_nodes() -> list[dict]:
+    """List immediate child dirs of ComfyUI/custom_nodes with the latest
+    activity timestamp we can reach (.git/HEAD mtime if it's a git checkout,
+    falling back to the dir's own mtime). Cheap: just stats — no git fork.
+    """
+    if not _COMFY_CUSTOM_NODES.is_dir():
+        return []
+    out: list[dict] = []
+    for child in _COMFY_CUSTOM_NODES.iterdir():
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        head = child / ".git" / "HEAD"
+        if head.exists():
+            try:
+                mtime = int(head.stat().st_mtime)
+            except Exception:
+                mtime = None
+        else:
+            try:
+                mtime = int(child.stat().st_mtime)
+            except Exception:
+                mtime = None
+        source = ""
+        cfg = child / ".git" / "config"
+        if cfg.is_file():
+            try:
+                txt = cfg.read_text(encoding="utf-8", errors="replace")
+                for line in txt.splitlines():
+                    line = line.strip()
+                    if line.startswith("url ="):
+                        source = line.split("=", 1)[1].strip()
+                        break
+            except Exception:
+                pass
+        out.append({"name": child.name, "mtime": mtime, "source": source})
+    out.sort(key=lambda n: -(n.get("mtime") or 0))
+    return out
+
+
 def _vram_attribution(gpus: Optional[list[dict]]) -> dict:
     """Per-GPU per-service VRAM usage with budget comparison.
 
@@ -1323,15 +1476,10 @@ def _kernel_recent_events(n: int = 5) -> list[dict]:
         if WARN_LEAD.search(line):
             _flush_pending()
             ts, summary = _split_kernel_line(line)
-            # Benign WARNING from nvidia-smi about its own bp value: keep
-            # only if accompanied by an actual oops trace.
-            benign_warn_re = re.compile(
-                r"WARNING:.*nvidia-smi.*bad 'bp' value", re.IGNORECASE
-            )
-            if benign_warn_re.search(line):
-                pending_warn = {"ts": ts, "summary": summary, "_benign": True}
-            else:
-                pending_warn = {"ts": ts, "summary": summary}
+            # All WARNING lines are treated as benign-by-default: only keep
+            # them when followed by oops/trace context. Lone WARNINGs are
+            # almost always sticky-on-driver-load noise and waste a slot.
+            pending_warn = {"ts": ts, "summary": summary, "_benign": True}
             continue
         if any(s in l for s in HW_KEYWORDS) or any(
             s in l for s in NVIDIA_HW_KEYWORDS
@@ -1449,7 +1597,22 @@ def _reboot_history(n: int = 5) -> list[dict]:
         })
     # journalctl prints oldest→newest; reverse and trim.
     rows.reverse()
-    return rows[:n]
+    # Filter out boot loops / recovery cycles: any historical boot that
+    # lasted < 60s is almost always a kernel-panic-restart, an emergency
+    # initramfs prompt, or a `systemctl reboot` that fired during early
+    # boot. Including them in the table makes the user think the host is
+    # unstable when really the previous boot just didn't complete. We keep
+    # the current boot (index 0) regardless so a freshly-booted host still
+    # shows up. duration_s=None is also kept (we don't know it failed).
+    filtered: list[dict] = []
+    for r in rows:
+        if r.get("is_current"):
+            filtered.append(r)
+            continue
+        d = r.get("duration_s")
+        if d is None or d >= 60:
+            filtered.append(r)
+    return filtered[:n]
 
 
 def _proxy_restart_count() -> Optional[int]:
@@ -2310,6 +2473,38 @@ def _daisy_audit_summary() -> dict:
         info["recent_entries"] = recent
     except Exception as e:
         info["error"] = _safe_err(e)
+
+    # Live tmux scrollback peek: surface "are we currently working" by
+    # scanning the daisy pane for the spinner glyph. 1s timeout; failure is
+    # silent (most hosts won't have the pane). Distinct keys so it's clear
+    # this is a live activity probe vs the audit-log summary above.
+    try:
+        rc, out, _ = _run(
+            ["tmux", "capture-pane", "-t", "main:daisy", "-p", "-S", "-100"],
+            timeout=1.0,
+        )
+        if rc == 0 and out:
+            text = out
+            working = (
+                "⠸ Working" in text
+                or "⠹ Working" in text
+                or "⠴ Working" in text
+                or "Working..." in text
+            )
+            info["tmux_state"] = "working" if working else "idle"
+            last_user_at = last_assistant_at = None
+            for line in text.splitlines():
+                low = line.lower()
+                if "user:" in low or low.startswith(">"):
+                    last_user_at = int(time.time())
+                if "assistant:" in low or "claude:" in low:
+                    last_assistant_at = int(time.time())
+            info["tmux_last_user_at"] = last_user_at
+            info["tmux_last_assistant_at"] = last_assistant_at
+        else:
+            info["tmux_state"] = None
+    except Exception:
+        info["tmux_state"] = None
     return info
 
 
@@ -2487,6 +2682,9 @@ async def build_status_payload(config: dict) -> dict:
         gpus = gpus_raw
 
     vram_attr = sync_section("vram_attribution", lambda: _vram_attribution(gpus_raw))
+    ram_attr = sync_section("ram_attribution", _ram_attribution)
+    repo_state = sync_section("repo_state", _repo_state)
+    comfy_custom_nodes = sync_section("comfy_custom_nodes", _comfy_custom_nodes) or []
     capabilities = sync_section("capabilities", lambda: _capabilities(config)) or []
     image_capabilities = sync_section("image_capabilities", lambda: _image_capabilities(config)) or []
 
@@ -2869,6 +3067,9 @@ async def build_status_payload(config: dict) -> dict:
         "backends": backends or [],
         "gpus": gpus,
         "vram_attribution": vram_attr,
+        "ram_attribution": ram_attr,
+        "repo_state": repo_state,
+        "comfy_custom_nodes": comfy_custom_nodes,
         "comfy_queue": comfy_queue,
         "comfy_view": comfy_view,
         "comfy_ws_state": comfy_ws_state,
