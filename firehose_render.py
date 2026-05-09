@@ -268,7 +268,7 @@ def render_html(payload: dict, *, host: Optional[str] = None) -> str:
     parts.append(_section("CPU & system load", _render_cpu(payload.get("cpu") or {})))
 
     parts.append('<div class="group-label">Capabilities</div>')
-    parts.append(_section("Models / LLM", _render_models(payload.get("models") or {})))
+    parts.append(_section("Models / LLM", _render_models(payload.get("models") or {}, gpus=payload.get("gpus") or [])))
     parts.append(_section("Video capabilities", _render_video_caps(payload.get("capabilities") or [])))
     parts.append(_section("Image capabilities", _render_image_caps(payload.get("image_capabilities") or [])))
     parts.append(_section("Voices summary", _render_voices(payload.get("voices_summary"))))
@@ -291,9 +291,12 @@ def render_html(payload: dict, *, host: Optional[str] = None) -> str:
     parts.append(_section("Workflow drift", _render_workflow_drift(payload.get("workflow_drift")), collapsed=True))
     parts.append(_section("VRAM measurements (image batcher)", _render_vram_estimates(payload.get("budgets") or {}), collapsed=True))
     parts.append(_section("Configuration snapshot", _render_config_snapshot(payload.get("config_snapshot") or {}), collapsed=True))
-    # Always show errors un-collapsed when present so misbehaving probes surface.
+    # Show errors un-collapsed when present so misbehaving probes surface.
+    # Hide the section entirely when there are no errors — an empty "none"
+    # row is just visual noise.
     errs = payload.get("errors") or {}
-    parts.append(_section("Errors during status build", _render_errors(errs), collapsed=not errs))
+    if errs:
+        parts.append(_section("Errors during status build", _render_errors(errs)))
 
     commit = payload.get("commit_hash")
     version_html = (
@@ -408,27 +411,12 @@ def _render_banner(p: dict, *, host: Optional[str] = None) -> str:
             + '</div>'
         )
 
-    # Secondary badge — system-health (disk/thermal/audit). Renders only
-    # when host conditions are non-OK so the API banner stays visually clean.
-    sh = p.get("system_health") or "ok"
-    sh_cls = sh if sh in ("ok", "warn", "bad") else "ok"
-    sh_reasons = p.get("system_health_reasons") or []
+    # The proxy is not responsible for monitoring host machine state. The
+    # underlying signals (disk fill, Xid surge, daisy audit staleness, thermal)
+    # remain visible in their respective sections of the page. `system_health`
+    # and `system_health_reasons` are still emitted in the JSON for clients,
+    # but no top-level badge is rendered here.
     sh_html = ""
-    if sh_cls != "ok" or sh_reasons:
-        sh_label = {
-            "ok": "System health: nominal",
-            "warn": "System health: attention",
-            "bad": "System health: critical",
-        }[sh_cls]
-        sh_pills = "".join(
-            f'<span class="pill {sh_cls}">{_esc(r)}</span>' for r in sh_reasons
-        )
-        sh_html = (
-            f'<div class="banner-badge {sh_cls}" style="margin-top:8px;padding:8px 12px;border-radius:4px;font-size:13px;">'
-            f'<b>{_esc(sh_label)}</b>'
-            + (f'<div style="margin-top:4px;">{sh_pills}</div>' if sh_pills else "")
-            + '</div>'
-        )
     commit = p.get("commit_hash")
     commit_html = (
         f' · version <code>{_esc(commit)}</code>' if commit else ""
@@ -461,43 +449,179 @@ def _render_export_links(p: dict) -> str:
 
 def _render_critical_strip(p: dict) -> str:
     """A thin strip just below the banner highlighting events the user almost
-    certainly cares about: recent Xid 109s, swap-in-progress, and recent daisy
-    denials. Renders nothing when no critical events are present."""
-    rows: list[str] = []
-    by60 = ((p.get("driver") or {}).get("by_code_60min") or {})
-    if isinstance(by60, dict):
-        xid_109 = by60.get("109") or by60.get(109)
-        if xid_109:
-            rows.append(
-                f'<span class="pill bad">Xid 109 in last 60min: {_esc(xid_109)}</span>'
-            )
+    certainly cares about. Pulls candidate signals from multiple sources
+    (driver Xid bursts, daisy denials, swap state, model swaps, llama crashes),
+    dedups by ``(type_label, summary)`` keeping the most recent timestamp,
+    ranks by ``severity * log-recency``, and caps at 5 entries.
+
+    When nothing critical has surfaced in the last 24h, renders an explicit
+    "no critical events in last 24h" line (green) so the user knows the strip
+    is intentional and not a render bug.
+    """
+    import math
+
+    now = time.time()
+    # Severity weights: tune in one place, not scattered through branches.
+    SEV: dict[str, float] = {
+        "xid_109": 100.0,
+        "xid_other": 60.0,
+        "llama_crash": 80.0,
+        "daisy_denied": 40.0,
+        "swap_in_progress": 25.0,
+        "model_swap": 10.0,
+    }
+
+    candidates: list[dict] = []
+
+    def _add(key: str, ts: Optional[float], label: str, summary: str, css: str,
+             abs_when: str = "") -> None:
+        candidates.append({
+            "key": key,
+            "ts": ts,
+            "label": label,
+            "summary": summary,
+            "css": css,
+            "abs_when": abs_when,
+        })
+
+    driver = p.get("driver") or {}
+    by24 = driver.get("by_code_24h") or {}
+    by60 = driver.get("by_code_60min") or {}
+    last5_xid = driver.get("last_5_events") or []
+
+    def _xid_latest_epoch() -> Optional[float]:
+        """Best-effort epoch from the most-recent parsed Xid entry's ``ts``
+        (journalctl format like ``May 08 15:37:09``)."""
+        if not last5_xid:
+            return None
+        try:
+            ts_str = last5_xid[-1].get("ts") or ""
+            import datetime as _d
+            year = _d.datetime.now().year
+            dt = _d.datetime.strptime(f"{year} {ts_str}", "%Y %b %d %H:%M:%S")
+            return dt.timestamp()
+        except Exception:
+            return None
+
+    xid_latest = _xid_latest_epoch()
+    if isinstance(by24, dict):
+        for code, count in by24.items():
+            try:
+                code_int = int(code)
+            except Exception:
+                continue
+            if not count:
+                continue
+            key = "xid_109" if code_int == 109 else "xid_other"
+            in_60 = by60.get(code) or by60.get(str(code)) or by60.get(code_int) or 0
+            window = "60min" if in_60 else "24h"
+            label = f"Xid {code_int}"
+            shown = in_60 if in_60 else count
+            summary = f"{shown} event(s) in last {window}"
+            css = "bad" if (code_int == 109 or in_60) else "warn"
+            _add(key, xid_latest, label, summary, css)
+
     swap = p.get("swap_state") or {}
     if swap.get("tabby_swap_in_progress"):
-        rows.append('<span class="pill warn">tabby model swap in progress</span>')
+        _add("swap_in_progress", now, "swap", "tabby model swap in progress", "warn")
     if swap.get("kobold_swap_in_progress"):
-        rows.append('<span class="pill warn">kobold model swap in progress</span>')
+        _add("swap_in_progress", now, "swap", "kobold model swap in progress", "warn")
+
     daisy = p.get("daisy") or {}
-    for entry in (daisy.get("recent_entries") or [])[-3:]:
+    for entry in (daisy.get("recent_entries") or []):
         decision = (entry.get("decision") or "").lower()
-        if decision in ("denied", "blocked", "rejected"):
-            rows.append(
-                f'<span class="pill bad">daisy {_esc(decision)}: '
-                f'{_esc((entry.get("summary") or "")[:80])}</span>'
-            )
-    # Last 5 model swaps from the recent-events ring.
-    for evt in (p.get("recent_events") or [])[:5]:
+        if decision not in ("denied", "blocked", "rejected"):
+            continue
+        ts_raw = entry.get("ts")
+        ts_epoch: Optional[float] = None
+        if ts_raw:
+            try:
+                import datetime as _d
+                s = str(ts_raw).replace("Z", "+00:00")
+                ts_epoch = _d.datetime.fromisoformat(s).timestamp()
+            except Exception:
+                ts_epoch = None
+        summary = (entry.get("summary") or "")[:120]
+        _add("daisy_denied", ts_epoch, f"daisy {decision}", summary, "bad",
+             abs_when=str(ts_raw) if ts_raw else "")
+
+    # llama-server crashes — recent_events ring, hook for future entries.
+    for evt in (p.get("recent_events") or []):
+        if evt.get("type") == "llama_crash":
+            _add("llama_crash", evt.get("ts"), "llama crash",
+                 (evt.get("summary") or "")[:120], "bad")
+
+    # Most recent model_swap from the events ring.
+    for evt in (p.get("recent_events") or []):
         if evt.get("type") == "model_swap":
-            rows.append(
-                f'<span class="pill warn">recent model swap · {_esc(evt.get("summary"))}</span>'
-            )
+            _add("model_swap", evt.get("ts"), "model swap",
+                 (evt.get("summary") or "")[:120], "warn")
             break
-    if not rows:
-        return ""
+
+    # Dedup by (label, summary): keep the candidate with the most recent ts.
+    dedup: dict[tuple[str, str], dict] = {}
+    for c in candidates:
+        k = (c["label"], c["summary"])
+        prev = dedup.get(k)
+        if prev is None or (c.get("ts") or 0) > (prev.get("ts") or 0):
+            dedup[k] = c
+    deduped = list(dedup.values())
+
+    # Strip is for *recent* signals — drop anything older than 24h.
+    fresh = [
+        c for c in deduped
+        if (c.get("ts") is None) or (now - float(c["ts"]) <= 86400)
+    ]
+
+    if not fresh:
+        return (
+            '<div style="margin:0 0 12px; padding:8px 12px; border:1px solid #1d4d2c;'
+            ' background:#0d2417; border-radius:4px;">'
+            '<b style="color:#7ed29a; font-size:11px; letter-spacing:.08em; text-transform:uppercase;">'
+            'Recent critical events</b>'
+            ' <span class="muted small">no critical events in last 24h</span>'
+            '</div>'
+        )
+
+    def _score(c: dict) -> float:
+        """severity × log(1 + recency). Recency saturates at ~1.0 for fresh
+        events and decays toward 0 over 24h."""
+        sev = SEV.get(c["key"], 5.0)
+        ts = c.get("ts")
+        if ts is None:
+            recency = 0.5
+        else:
+            age_h = max(0.0, (now - float(ts)) / 3600.0)
+            recency = 1.0 / (1.0 + age_h)
+        return sev * (math.log1p(recency * 10) + 0.1)
+
+    fresh.sort(key=_score, reverse=True)
+    capped = fresh[:5]
+
+    rows: list[str] = []
+    for c in capped:
+        ts = c.get("ts")
+        when_html = ""
+        if ts:
+            rel = _ago(ts)
+            abs_w = c.get("abs_when") or _abs_utc(ts)
+            when_html = (
+                f' <span class="muted small" title="{_esc(abs_w)}">'
+                f'({_esc(rel)})</span>'
+            )
+        elif c.get("abs_when"):
+            when_html = f' <span class="muted small">({_esc(c["abs_when"])})</span>'
+        rows.append(
+            f'<span class="pill {c["css"]}">{_esc(c["label"])}: '
+            f'{_esc(c["summary"])}</span>{when_html}'
+        )
+
     return (
         '<div style="margin:0 0 12px; padding:8px 12px; border:1px solid #5e2222;'
         ' background:#1a0e0e; border-radius:4px;">'
         '<b style="color:#f4a0a0; font-size:11px; letter-spacing:.08em; text-transform:uppercase;">'
-        'Recent critical events</b><div style="margin-top:6px;">'
+        'Recent critical events</b><div style="margin-top:6px; display:flex;'
+        ' flex-wrap:wrap; gap:6px 10px; align-items:center;">'
         + " ".join(rows) +
         '</div></div>'
     )
@@ -642,14 +766,39 @@ def _render_comfy_queue(p: dict) -> str:
 
 
 def _render_swap_state(p: dict) -> str:
+    """Collapse the swap-locks + ComfyUI websocket state to a single one-line
+    summary when everything is quiet. Only spell out the rows when something
+    is actually in-progress or disconnected — a status page should reward the
+    common-case glance.
+    """
     s = p.get("swap_state") or {}
     ws = p.get("comfy_ws_state") or {}
-    return _kv_table([
-        ("Tabby model swap in progress", s.get("tabby_swap_in_progress")),
-        ("Kobold model swap in progress", s.get("kobold_swap_in_progress")),
-        ("ComfyUI websocket connected", ws.get("connected")),
-        ("ComfyUI client_id", ws.get("client_id")),
-    ])
+    tabby = bool(s.get("tabby_swap_in_progress"))
+    kobold = bool(s.get("kobold_swap_in_progress"))
+    ws_connected = bool(ws.get("connected"))
+    all_quiet = (not tabby) and (not kobold) and ws_connected
+
+    if all_quiet:
+        client_id = ws.get("client_id")
+        cid_html = (
+            f' <span class="muted small" title="ComfyUI client_id">'
+            f'(ws client {_esc(str(client_id)[:12])}…)</span>'
+            if client_id else ""
+        )
+        return (
+            '<div><span class="pill ok">all swap locks idle, ComfyUI ws '
+            f'connected</span>{cid_html}</div>'
+        )
+
+    rows: list[tuple[str, Any]] = []
+    if tabby:
+        rows.append(("Tabby model swap", "in progress"))
+    if kobold:
+        rows.append(("Kobold model swap", "in progress"))
+    if not ws_connected:
+        rows.append(("ComfyUI websocket", "disconnected"))
+    rows.append(("ComfyUI client_id", ws.get("client_id")))
+    return _kv_table(rows)
 
 
 def _render_gpus(gpus: list[dict]) -> str:
@@ -688,8 +837,10 @@ def _vram_row_label(s: dict) -> str:
     name = s.get("service") or "?"
     if name == "__unattributed":
         return (
-            '<span class="muted" title="kernel/driver/display surfaces — '
-            'memory.used minus the sum of compute-apps">[unattributed]</span>'
+            '<span class="muted" title="processes hold /dev/nvidia* via DRM '
+            "(Xwayland, plasmashell, browsers, etc.) but don't appear in "
+            'nvidia-smi --query-compute-apps because they have no CUDA '
+            'context">[graphics + system, no CUDA context]</span>'
         )
     if name == "__headroom":
         cls = "bad" if s.get("headroom_short") else "muted"
@@ -734,9 +885,40 @@ def _render_vram_attribution(va: dict) -> str:
     parts = []
     for g in per_gpu:
         services = g.get("services") or []
+        used_mb = g.get("memory_used_mb")
+        total_mb = g.get("memory_total_mb")
+
+        # Compute overall GPU utilization for the header (replaces the
+        # redundant __total table row).
+        try:
+            util_pct = (float(used_mb) / float(total_mb) * 100.0) if total_mb else None
+        except Exception:
+            util_pct = None
+        if util_pct is None:
+            util_html = ""
+        else:
+            if util_pct >= 90:
+                util_cls = "bad"
+            elif util_pct >= 70:
+                util_cls = "warn"
+            else:
+                util_cls = "ok"
+            try:
+                used_gb = float(used_mb) / 1024.0
+                total_gb = float(total_mb) / 1024.0
+                util_html = (
+                    f' <span class="pill {util_cls}" title="overall GPU memory utilization">'
+                    f'{used_gb:.2f} / {total_gb:.0f} GiB · {util_pct:.0f}%'
+                    f'</span>'
+                )
+            except Exception:
+                util_html = (
+                    f' <span class="pill {util_cls}">{util_pct:.0f}%</span>'
+                )
+
         rows = [
             f'<h3>GPU{_esc(g.get("index"))} '
-            f'({_esc(g.get("memory_used_mb"))}/{_esc(g.get("memory_total_mb"))} MiB)</h3>',
+            f'({_esc(used_mb)}/{_esc(total_mb)} MiB){util_html}</h3>',
             '<table><thead><tr>'
             '<th>Service</th><th>Used MiB</th><th>Used GiB</th>'
             '<th>Budget GB</th><th>% of budget</th><th>Over?</th>'
@@ -744,11 +926,14 @@ def _render_vram_attribution(va: dict) -> str:
         ]
         for s in services:
             name = s.get("service") or ""
+            # __total is redundant with the GPU section header — skip it.
+            if name == "__total":
+                continue
             over = s.get("over_budget")
             pct = s.get("pct_of_budget") or 0
 
             row_classes: list[str] = []
-            if name in ("__total", "__unattributed"):
+            if name == "__unattributed":
                 row_classes.append("muted")
             row_attr = (
                 f' class="{" ".join(row_classes)}"' if row_classes else ""
@@ -756,33 +941,44 @@ def _render_vram_attribution(va: dict) -> str:
 
             # Pill class:
             #  - real services: bad if over_budget, warn if >80% of budget, else ok.
-            #  - __headroom: bad if short of budget; ok otherwise; muted if no budget.
-            #  - synthesized totals: muted (no budget meaning).
-            if name == "__headroom":
-                if s.get("headroom_short"):
-                    pill_cls = "bad"
-                elif s.get("budget_gb"):
-                    pill_cls = "ok"
-                else:
-                    pill_cls = "muted"
-            elif name in ("__total", "__unattributed"):
+            #  - __headroom: % is meaningless against a reserve floor; suppressed.
+            #  - __unattributed: muted (no budget meaning).
+            if name == "__unattributed":
+                pill_cls = "muted"
+            elif name == "__headroom":
                 pill_cls = "muted"
             else:
                 pill_cls = "bad" if over else ("warn" if pct > 80 else "ok")
 
-            pct_cell = (
-                f'<span class="pill {pill_cls}">{_esc(s.get("pct_of_budget"))}%</span>'
-                if s.get("pct_of_budget") is not None
-                else '<span class="pill muted">—</span>'
-            )
+            # Drop the % cell entirely for __headroom — comparing free VRAM
+            # to a reserve-minimum floor produces nonsense like 539%. The
+            # absolute MiB/GiB columns already carry the signal.
+            if name == "__headroom":
+                pct_cell = '<span class="muted small">n/a</span>'
+            elif s.get("pct_of_budget") is not None:
+                pct_cell = (
+                    f'<span class="pill {pill_cls}">{_esc(s.get("pct_of_budget"))}%</span>'
+                )
+            else:
+                pct_cell = '<span class="pill muted">—</span>'
 
             over_cell = ""
-            if name in ("__total", "__unattributed"):
+            if name == "__unattributed":
                 over_cell = ""
             elif name == "__headroom" and s.get("headroom_short"):
                 over_cell = '<span class="bad">SHORT</span>'
             elif over:
                 over_cell = '<span class="bad">YES</span>'
+
+            # Headroom's "budget" is actually a reserve floor — relabel
+            # inline so it isn't read as a ceiling.
+            budget_html = _esc(s.get("budget_gb"))
+            if name == "__headroom" and s.get("budget_gb") is not None:
+                budget_html = (
+                    f'{_esc(s.get("budget_gb"))} '
+                    '<span class="muted small" title="floor, not a ceiling">'
+                    '(reserved minimum)</span>'
+                )
 
             label_html = _vram_row_label(s)
             sub = ""
@@ -794,7 +990,7 @@ def _render_vram_attribution(va: dict) -> str:
                 f"<td>{label_html}{sub}</td>"
                 f'<td class="mono">{_esc(s.get("used_mb"))}</td>'
                 f'<td class="mono">{_esc(s.get("used_gb"))}</td>'
-                f'<td class="mono">{_esc(s.get("budget_gb"))}</td>'
+                f'<td class="mono">{budget_html}</td>'
                 f'<td class="mono">{pct_cell}</td>'
                 f"<td>{over_cell}</td>"
                 f"</tr>"
@@ -802,6 +998,9 @@ def _render_vram_attribution(va: dict) -> str:
         rows.append("</tbody></table>")
         parts.append("".join(rows))
 
+    # Multi-GPU PIDs (tensor-split / NVLink): only render when populated.
+    # The tensor-split spillover row inside each GPU table already annotates
+    # the same fact for the common single-PID case.
     multi = va.get("multi_gpu_pids") or {}
     if multi:
         parts.append(
@@ -877,18 +1076,55 @@ def _render_vram_estimates(b: dict) -> str:
     return "".join(parts)
 
 
-def _render_models(m: dict) -> str:
-    # Tensor-split: prefer the structured info ({raw, weights, summary}).
+def _render_models(m: dict, gpus: Optional[list] = None) -> str:
+    # Tensor-split: the raw value is a *layer count* split (e.g. "52,12" =
+    # 52 layers on GPU0, 12 on GPU1). It does NOT translate directly to
+    # VRAM share — KV cache, embeddings, and per-layer sizes vary. Show the
+    # raw split with an explicit layer-count interpretation, then the live
+    # per-GPU VRAM (if available) so the reader doesn't conflate the two.
     tensor_split_info = m.get("tensor_split_info") or {}
-    if tensor_split_info:
-        ts_display = (
-            f"{_esc(tensor_split_info.get('raw'))} "
-            f'<span class="muted">({_esc(tensor_split_info.get("summary"))})</span> '
-            f'<span class="muted small">'
-            f'{_esc(tensor_split_info.get("interpretation"))}</span>'
+    raw_split = (tensor_split_info.get("raw") if tensor_split_info else None) or m.get("tensor_split")
+    weights = (tensor_split_info.get("weights") if tensor_split_info else None) or []
+    if raw_split:
+        try:
+            parts_int = [int(round(float(w))) for w in (weights or [])]
+        except Exception:
+            parts_int = []
+        if parts_int:
+            layer_breakdown = ", ".join(
+                f"{n} layers on GPU{i}" for i, n in enumerate(parts_int)
+            )
+        else:
+            layer_breakdown = ""
+        # Live per-GPU VRAM (used by the LLM PID, when available). We
+        # compute total memory.used per GPU as a proxy — this overstates a
+        # bit if other services share a card, but it's the directionally
+        # correct number for "where is the LLM weight today".
+        live_bits: list[str] = []
+        for g in (gpus or []):
+            try:
+                idx = g.get("index")
+                used_mb = float(g.get("memory_used_mb") or 0)
+                live_bits.append(f"GPU{idx} {used_mb / 1024.0:.1f} GiB")
+            except Exception:
+                continue
+        live_html = (
+            f'<div class="muted small">Effective VRAM (live): '
+            f'{_esc(" / ".join(live_bits))}</div>'
+            if live_bits else ""
         )
-    elif m.get("tensor_split"):
-        ts_display = _esc(m.get("tensor_split"))
+        layer_html = (
+            f'<div class="muted small">{_esc(layer_breakdown)}</div>'
+            if layer_breakdown else ""
+        )
+        ts_display = (
+            f'<span class="mono">{_esc(raw_split)}</span>'
+            f'{layer_html}'
+            f'{live_html}'
+            '<div class="muted small">'
+            'Note: layer-count split &ne; VRAM split (KV cache, embeddings vary)'
+            '</div>'
+        )
     else:
         ts_display = "—"
 
@@ -999,12 +1235,90 @@ def _render_slots(slots: list[dict]) -> str:
 
 
 def _render_aux_health(aux: dict) -> str:
-    return (
-        '<h3>Voxtral (TTS)</h3>'
-        + f'<pre>{_esc(json.dumps(aux.get("voxtral"), indent=2))}</pre>'
-        + '<h3>Parakeet (STT)</h3>'
-        + f'<pre>{_esc(json.dumps(aux.get("parakeet"), indent=2))}</pre>'
-    )
+    """Render Voxtral (TTS) and Parakeet (STT) as small cards with labeled
+    rows instead of dumping raw JSON. Falls back to a JSON pre-block when
+    a payload doesn't fit the expected schema (forward-compatibility).
+    """
+
+    def _status_pill(status: Any) -> str:
+        s = str(status or "").lower()
+        cls = {"ok": "ok", "healthy": "ok", "degraded": "warn",
+               "down": "bad", "error": "bad"}.get(s, "muted")
+        return f'<span class="pill {cls}">{_esc(status or "—")}</span>'
+
+    def _card(title: str, body: str) -> str:
+        return (
+            f'<div class="card" style="display:inline-block; vertical-align:top; '
+            f'min-width:280px; margin-right:8px; margin-bottom:8px;">'
+            f'<h3 style="margin-top:0">{_esc(title)}</h3>{body}</div>'
+        )
+
+    parts: list[str] = []
+
+    vox = aux.get("voxtral")
+    if isinstance(vox, dict):
+        rows = [
+            f'<tr><th>Status</th><td>{_status_pill(vox.get("status"))}</td></tr>',
+            f'<tr><th>Model</th><td class="mono small">{_esc(vox.get("model") or "—")}</td></tr>',
+        ]
+        vram = vox.get("vram_gb")
+        if vram is not None:
+            rows.append(
+                f'<tr><th>VRAM</th><td class="mono small">{_esc(vram)} GB</td></tr>'
+            )
+        for k, v in vox.items():
+            if k in ("status", "model", "vram_gb"):
+                continue
+            rows.append(
+                f'<tr><th>{_esc(k)}</th>'
+                f'<td class="mono small">{_esc(v)}</td></tr>'
+            )
+        parts.append(_card("Voxtral (TTS)",
+                          f'<table class="kv">{"".join(rows)}</table>'))
+    elif vox is not None:
+        parts.append(_card("Voxtral (TTS)",
+                          f'<pre class="small">{_esc(json.dumps(vox, indent=2))}</pre>'))
+
+    pk = aux.get("parakeet")
+    if isinstance(pk, dict):
+        rows = [
+            f'<tr><th>Status</th><td>{_status_pill(pk.get("status"))}</td></tr>',
+            f'<tr><th>Default model</th>'
+            f'<td class="mono small">{_esc(pk.get("default_model") or "—")}</td></tr>',
+        ]
+        if pk.get("speedup") is not None:
+            rows.append(
+                f'<tr><th>Speedup</th>'
+                f'<td class="mono small">{_esc(pk.get("speedup"))}</td></tr>'
+            )
+        models = pk.get("models") or []
+        if isinstance(models, list) and models:
+            rows.append(
+                f'<tr><th>Available models</th><td>'
+                f'<details><summary class="muted small">'
+                f'{len(models)} model(s)</summary>'
+                f'<ul style="margin:.25em 0 .25em 1em">'
+                + "".join(
+                    f'<li class="mono small">{_esc(m)}</li>' for m in models
+                )
+                + '</ul></details></td></tr>'
+            )
+        for k, v in pk.items():
+            if k in ("status", "default_model", "speedup", "models"):
+                continue
+            rows.append(
+                f'<tr><th>{_esc(k)}</th>'
+                f'<td class="mono small">{_esc(v)}</td></tr>'
+            )
+        parts.append(_card("Parakeet (STT)",
+                          f'<table class="kv">{"".join(rows)}</table>'))
+    elif pk is not None:
+        parts.append(_card("Parakeet (STT)",
+                          f'<pre class="small">{_esc(json.dumps(pk, indent=2))}</pre>'))
+
+    if not parts:
+        return '<div class="muted">unavailable</div>'
+    return '<div>' + "".join(parts) + '</div>'
 
 
 def _render_voices(v: Optional[dict]) -> str:
@@ -1141,13 +1455,27 @@ def _render_image_caps(caps: list[dict]) -> str:
     return "".join(rows)
 
 
+def _render_prompt_cell(text: Optional[str], *, max_len: int = 80) -> str:
+    """Render a prompt cell: truncated display, full prompt on hover.
+
+    Empty/None renders as a muted em-dash so the column stays aligned.
+    """
+    if not text or not isinstance(text, str):
+        return '<span class="muted">—</span>'
+    text = text.strip()
+    if not text:
+        return '<span class="muted">—</span>'
+    short = text if len(text) <= max_len else (text[: max_len - 1] + "…")
+    return f'<span class="small" title="{_esc(text)}">{_esc(short)}</span>'
+
+
 def _render_recent_videos(v: list[dict]) -> str:
     if not v:
         return '<div class="muted">no videos</div>'
     rows = [
         '<table><thead><tr>'
         '<th>Filename</th><th>Alias</th><th>Duration</th><th>Dimensions</th>'
-        '<th>Audio</th><th>Size</th><th>Age</th>'
+        '<th>Audio</th><th>Size</th><th>Age</th><th>Prompt</th>'
         '</tr></thead><tbody>'
     ]
     for r in v:
@@ -1170,6 +1498,7 @@ def _render_recent_videos(v: list[dict]) -> str:
             if err else ""
         )
         path_attr = _esc(r.get("path") or "")
+        prompt_html = _render_prompt_cell(r.get("prompt"))
         rows.append(
             f'<tr>'
             f'<td class="mono" title="{path_attr}">{_esc(r.get("filename"))}{err_html}</td>'
@@ -1179,6 +1508,7 @@ def _render_recent_videos(v: list[dict]) -> str:
             f'<td>{audio_html}</td>'
             f'<td class="mono">{_bytes(r.get("size_bytes"))}</td>'
             f'<td title="{_esc(_abs_utc(r.get("mtime")))}">{_ago(r.get("mtime"))}</td>'
+            f'<td>{prompt_html}</td>'
             f'</tr>'
         )
     rows.append("</tbody></table>")
@@ -1190,7 +1520,7 @@ def _render_recent_images(v: list[dict]) -> str:
         return '<div class="muted">no images</div>'
     rows = [
         '<table><thead><tr>'
-        '<th>Filename</th><th>Dimensions</th><th>Size</th><th>Age</th>'
+        '<th>Filename</th><th>Dimensions</th><th>Size</th><th>Age</th><th>Prompt</th>'
         '</tr></thead><tbody>'
     ]
     for r in v:
@@ -1204,12 +1534,14 @@ def _render_recent_images(v: list[dict]) -> str:
             if err else ""
         )
         path_attr = _esc(r.get("path") or "")
+        prompt_html = _render_prompt_cell(r.get("prompt"))
         rows.append(
             f'<tr>'
             f'<td class="mono" title="{path_attr}">{_esc(r.get("filename"))}{err_html}</td>'
             f'<td class="mono">{dims_html}</td>'
             f'<td class="mono">{_bytes(r.get("size_bytes"))}</td>'
             f'<td title="{_esc(_abs_utc(r.get("mtime")))}">{_ago(r.get("mtime"))}</td>'
+            f'<td>{prompt_html}</td>'
             f'</tr>'
         )
     rows.append("</tbody></table>")
@@ -1418,12 +1750,43 @@ def _render_driver(d: dict) -> str:
             )
         parts.append('</tbody></table>')
     # Non-Xid kernel events only — Xid bursts surface above. This complements
-    # with MCE / IOMMU / PCIe-AER / amdgpu lines.
+    # with MCE / IOMMU / PCIe-AER / amdgpu lines + the lead WARNING of any
+    # actual oops trace.
     parts.append('<h3>Recent kernel events (non-Xid: MCE / IOMMU / AER / amdgpu)</h3>')
-    if d.get("kernel_recent"):
-        parts.append('<pre>' + _esc("\n".join(d.get("kernel_recent") or [])) + '</pre>')
-    else:
+    kr = d.get("kernel_recent") or []
+    if not kr:
         parts.append('<div class="muted">none in 24h</div>')
+    elif isinstance(kr[0], str):
+        # Legacy shape preserved for backward compatibility.
+        parts.append('<pre>' + _esc("\n".join(kr)) + '</pre>')
+    else:
+        # Structured shape: list[dict] with ``ts``, ``summary`` and optional
+        # ``context`` (full register dump from an oops, hidden behind details).
+        rows_html = [
+            '<table><thead><tr>'
+            '<th>When</th><th>Summary</th><th></th>'
+            '</tr></thead><tbody>'
+        ]
+        for evt in kr:
+            ts = evt.get("ts") or ""
+            summ = evt.get("summary") or ""
+            ctx = evt.get("context") or ""
+            ctx_html = ""
+            if ctx:
+                ctx_html = (
+                    '<details><summary class="muted small">full kernel '
+                    'context</summary>'
+                    f'<pre class="small">{_esc(ctx)}</pre></details>'
+                )
+            rows_html.append(
+                f'<tr>'
+                f'<td class="mono small">{_esc(ts)}</td>'
+                f'<td class="small mono">{_esc(summ)}</td>'
+                f'<td>{ctx_html}</td>'
+                f'</tr>'
+            )
+        rows_html.append('</tbody></table>')
+        parts.append("".join(rows_html))
     parts.append('<h3>Reboot history</h3>')
     parts.append(_render_reboot_history(d.get("reboot_history")))
     return "".join(parts)
@@ -1461,10 +1824,19 @@ def _render_reboot_history(history: Any) -> str:
         (r for r in history if isinstance(r, dict) and r.get("is_current")),
         None,
     )
-    others = [
+    # Filter out boot-loop / recovery-cycle entries: any boot that lasted
+    # less than 60s isn't normal operation. We keep a count of suppressed
+    # entries so the user knows the table isn't lying.
+    BOOT_LOOP_THRESHOLD_S = 60
+    raw_others = [
         r for r in history
         if isinstance(r, dict) and not r.get("is_current")
     ]
+    others = [
+        r for r in raw_others
+        if (r.get("duration_s") is None) or r.get("duration_s") >= BOOT_LOOP_THRESHOLD_S
+    ]
+    suppressed = len(raw_others) - len(others)
 
     if current:
         first = current.get("first_msg_ts") or "?"
@@ -1502,6 +1874,14 @@ def _render_reboot_history(history: Any) -> str:
                 f'</tr>'
             )
         rows.append('</tbody></table>')
+
+    if suppressed:
+        rows.append(
+            f'<div class="muted small">'
+            f'{suppressed} short boot(s) (&lt; {BOOT_LOOP_THRESHOLD_S}s) hidden — '
+            f'likely boot loop / recovery cycles.'
+            f'</div>'
+        )
 
     return "".join(rows) if rows else '<div class="muted">unavailable</div>'
 

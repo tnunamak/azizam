@@ -1242,13 +1242,19 @@ def _journal_xids() -> dict:
     }
 
 
-def _kernel_recent_events(n: int = 5) -> list[str]:
-    """Return the last N *non-Xid* kernel events that look NVIDIA/GPU/MCE-related.
+def _kernel_recent_events(n: int = 5) -> list[dict]:
+    """Return the last N *non-Xid* kernel events that look like real
+    hardware/driver issues — and the lead WARNING line of any kernel oops,
+    with the full register dump tucked into a ``context`` block.
 
-    Xid bursts are already surfaced as their own structured section
-    ("Last 5 Xid events"), so duplicating them here was redundant. This
-    section now complements that one with MCE / IOMMU / PCIe-AER / amdgpu
-    events that wouldn't otherwise be visible.
+    Xid bursts are surfaced separately, so we skip them here. We also drop
+    benign info dumps and oops-trace continuation lines (``Modules linked in:``
+    and the leading-whitespace module-name continuations,
+    ``NVRM: GPU at PCI:``, ``NVRM: GPU Board Serial Number``, register
+    dumps) that would otherwise drown the signal.
+
+    Returns ``list[dict]`` with ``ts``, ``summary``, and optional ``context``.
+    The renderer treats string entries as legacy and dicts as the new shape.
     """
     rc, out, _ = _run(
         ["journalctl", "-k", "--no-pager", "--since", "24 hours ago"],
@@ -1256,22 +1262,115 @@ def _kernel_recent_events(n: int = 5) -> list[str]:
     )
     if rc != 0 or not out:
         return []
-    keep = []
+
+    NOISE_PATTERNS = (
+        re.compile(r"\bModules linked in:\b"),
+        re.compile(r"\bNVRM: GPU at PCI:"),
+        re.compile(r"\bNVRM: GPU Board Serial Number"),
+        re.compile(r"\b(RIP|RSP|RBP|RAX|RBX|RCX|RDX|RSI|RDI|FS:|GS:|CR\d|DR\d|Code:):"),
+        re.compile(r"\b(Call Trace:|Hardware name:|Stack:)"),
+    )
+    WARN_LEAD = re.compile(r"\b(WARNING:|BUG:|Oops:|kernel BUG at|panic:)")
+    HW_KEYWORDS = (
+        "amdgpu", "iommu", " mce", "mce:", "pcieport", " aer ",
+        "thermal_zone", "edac", "nvme: ", "nvme0", "io error",
+        "i/o error", "hardware error",
+    )
+    NVIDIA_HW_KEYWORDS = ("nvrm:", "nvidia-")
+
+    def _is_module_continuation(raw_line: str) -> bool:
+        idx = raw_line.find("kernel:")
+        body = raw_line[idx + len("kernel:"):] if idx >= 0 else raw_line
+        if not body.startswith(" "):
+            return False
+        body_stripped = body.strip()
+        if not body_stripped:
+            return False
+        tokens = body_stripped.split()
+        if len(tokens) < 6:
+            return False
+        # Cheap module-name heuristic: identifier-ish tokens with optional
+        # "(POE)"/"(O)" markings, no normal sentence punctuation.
+        mod_re = re.compile(r"^[a-zA-Z][\w\-]*(?:\([A-Z]+\))?$")
+        return sum(1 for t in tokens if mod_re.match(t)) >= len(tokens) * 0.85
+
+    keep: list[dict] = []
+    pending_warn: Optional[dict] = None
+    pending_context: list[str] = []
+
+    def _flush_pending() -> None:
+        nonlocal pending_warn, pending_context
+        if pending_warn is not None:
+            if pending_context:
+                pending_warn["context"] = "\n".join(pending_context)
+            keep.append(pending_warn)
+        pending_warn = None
+        pending_context = []
+
     for line in out.splitlines():
         l = line.lower()
-        # Skip Xid lines — surfaced separately. Keep MCE, IOMMU, PCIe AER,
-        # amdgpu, and other non-Xid NVIDIA/NVRM messages.
         if "xid" in l or _XID_RE.search(line):
+            _flush_pending()
             continue
-        if any(
-            s in l
-            for s in (
-                "nvidia", "nvrm", "amdgpu", "iommu", " mce", "mce:",
-                "pcieport", "aer", "thermal_zone", "edac",
+        if any(p.search(line) for p in NOISE_PATTERNS):
+            if pending_warn is not None:
+                pending_context.append(line)
+            continue
+        if _is_module_continuation(line):
+            if pending_warn is not None:
+                pending_context.append(line)
+            continue
+        if WARN_LEAD.search(line):
+            _flush_pending()
+            ts, summary = _split_kernel_line(line)
+            # Benign WARNING from nvidia-smi about its own bp value: keep
+            # only if accompanied by an actual oops trace.
+            benign_warn_re = re.compile(
+                r"WARNING:.*nvidia-smi.*bad 'bp' value", re.IGNORECASE
             )
+            if benign_warn_re.search(line):
+                pending_warn = {"ts": ts, "summary": summary, "_benign": True}
+            else:
+                pending_warn = {"ts": ts, "summary": summary}
+            continue
+        if any(s in l for s in HW_KEYWORDS) or any(
+            s in l for s in NVIDIA_HW_KEYWORDS
         ):
-            keep.append(line[:200])
+            _flush_pending()
+            ts, summary = _split_kernel_line(line)
+            keep.append({"ts": ts, "summary": summary[:200]})
+            continue
+        # Resolve any pending benign WARNING: keep only if oops context
+        # accumulated; otherwise drop.
+        if pending_warn is not None and pending_warn.get("_benign"):
+            if not pending_context:
+                pending_warn = None
+                pending_context = []
+            else:
+                pending_warn.pop("_benign", None)
+                _flush_pending()
+        else:
+            _flush_pending()
+
+    _flush_pending()
+    keep = [k for k in keep if not k.get("_benign") or k.get("context")]
+    for k in keep:
+        k.pop("_benign", None)
     return keep[-n:]
+
+
+def _split_kernel_line(line: str) -> tuple[str, str]:
+    """Split a journalctl line into ``(timestamp, body)``. Returns the raw
+    line as body if the prefix can't be located."""
+    idx = line.find("kernel:")
+    if idx < 0:
+        return ("", line[:200])
+    prefix = line[:idx].strip().rstrip(":")
+    parts = prefix.split()
+    # ["May", "08", "10:21:00", "peregrine"] → first three are the timestamp.
+    ts = " ".join(parts[:3]) if len(parts) >= 4 else prefix
+    body = line[idx + len("kernel:"):].strip()
+    return (ts, body[:200])
 
 
 def _reboot_history(n: int = 5) -> list[dict]:
@@ -1643,6 +1742,9 @@ _IMAGE_DIR = Path("/home/tnunamak/applications/ComfyUI/output")
 # re-open Pillow on every status poll. Bounded by the n we ever look at.
 _FFPROBE_CACHE: dict[tuple[str, int], dict] = {}
 _IMG_DIMS_CACHE: dict[tuple[str, int], dict] = {}
+# Cached extracted positive-prompt text per image file. Keyed by (path, mtime)
+# so a re-encode of the same filename invalidates the cache. Bounded.
+_IMG_PROMPT_CACHE: dict[tuple[str, int], Optional[str]] = {}
 
 
 def _ffprobe_video(path: Path, mtime: int) -> dict:
@@ -1730,7 +1832,112 @@ def _image_dims(path: Path, mtime: int) -> dict:
     return info
 
 
-def _recent_renders_videos(n: int = 20) -> list[dict]:
+def _extract_image_prompt(path: Path, mtime: int) -> Optional[str]:
+    """Return the positive-prompt text embedded in a ComfyUI PNG, or None.
+
+    ComfyUI stores the full submitted graph in the ``prompt`` PNG-info chunk.
+    We pick the first non-empty ``CLIPTextEncode.inputs.text`` (the positive
+    prompt). Falls back to a sidecar JSON next to the file if the PNG chunk
+    isn't there.
+
+    Cached per (path, mtime). Returns truncated to 240 chars; the caller can
+    further trim for display. Best-effort: any error returns None silently.
+    """
+    key = (str(path), mtime)
+    if key in _IMG_PROMPT_CACHE:
+        return _IMG_PROMPT_CACHE[key]
+    text: Optional[str] = None
+    try:
+        # 1) PNG-info chunk via Pillow (lazy header read).
+        try:
+            from PIL import Image  # type: ignore
+            with Image.open(path) as im:
+                raw = im.info.get("prompt")
+            if raw:
+                graph = json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(graph, dict):
+                    for _, node in graph.items():
+                        if not isinstance(node, dict):
+                            continue
+                        ct = node.get("class_type") or ""
+                        if "CLIPText" not in ct and "TextEncode" not in ct:
+                            continue
+                        t = (node.get("inputs") or {}).get("text")
+                        if isinstance(t, str) and t.strip():
+                            text = t.strip()
+                            break
+        except Exception:
+            pass
+        # 2) Sidecar JSON fallback (`<file>.json` next to the image).
+        if not text:
+            sidecar = path.with_suffix(path.suffix + ".json")
+            if not sidecar.is_file():
+                sidecar = path.with_suffix(".json")
+            if sidecar.is_file():
+                try:
+                    data = json.loads(sidecar.read_text(encoding="utf-8"))
+                except Exception:
+                    data = None
+                if isinstance(data, dict):
+                    # Common shapes: {"prompt": "..."} or {"positive": "..."}
+                    for k in ("prompt", "positive", "text"):
+                        v = data.get(k)
+                        if isinstance(v, str) and v.strip():
+                            text = v.strip()
+                            break
+    except Exception:
+        text = None
+    if text is not None and len(text) > 240:
+        text = text[:240]
+    _IMG_PROMPT_CACHE[key] = text
+    if len(_IMG_PROMPT_CACHE) > 200:
+        for k in list(_IMG_PROMPT_CACHE.keys())[:50]:
+            _IMG_PROMPT_CACHE.pop(k, None)
+    return text
+
+
+def _video_prompt_for(
+    *,
+    alias: Optional[str],
+    mtime: int,
+    video_meta: dict[str, dict],
+    recent_events: list[dict],
+) -> Optional[str]:
+    """Best-effort lookup of the prompt text that produced a recent video.
+
+    Strategy: find the most-recent ``video_submit`` event whose ``alias``
+    matches and whose ``ts`` is just before this file's mtime. Then resolve
+    its ``prompt_id`` against ``firehose_metrics._VIDEO_META`` (which holds
+    the truncated prompt for ~6h after submission). Older renders return
+    None — the in-memory window has GCed.
+    """
+    if not alias or not isinstance(recent_events, list):
+        return None
+    candidates = [
+        e for e in recent_events
+        if e.get("type") == "video_submit"
+        and e.get("alias") == alias
+        and e.get("prompt_id")
+        and (e.get("ts") or 0) <= float(mtime) + 5  # 5s slack: event before save
+    ]
+    if not candidates:
+        return None
+    # Closest event with ts <= mtime (latest before).
+    candidates.sort(key=lambda e: float(e.get("ts") or 0), reverse=True)
+    pid = candidates[0].get("prompt_id")
+    meta = (video_meta or {}).get(pid) or {}
+    pt = meta.get("prompt_truncated")
+    if isinstance(pt, str) and pt.strip():
+        return pt.strip()
+    return None
+
+
+def _recent_renders_videos(
+    n: int = 20,
+    *,
+    video_meta: Optional[dict[str, dict]] = None,
+    recent_events: Optional[list[dict]] = None,
+) -> list[dict]:
     if not _VIDEO_DIR.is_dir():
         return []
     try:
@@ -1739,6 +1946,8 @@ def _recent_renders_videos(n: int = 20) -> list[dict]:
         return []
     files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
     out: list[dict] = []
+    meta = video_meta or {}
+    events = recent_events or []
     for f in files[:n]:
         try:
             st = f.stat()
@@ -1751,6 +1960,12 @@ def _recent_renders_videos(n: int = 20) -> list[dict]:
         # at submission time. We surface the bare filename so the renderer can
         # build a static content URL (proxy serves cached files).
         probe = _ffprobe_video(f, int(st.st_mtime))
+        prompt = _video_prompt_for(
+            alias=alias,
+            mtime=int(st.st_mtime),
+            video_meta=meta,
+            recent_events=events,
+        )
         out.append({
             "filename": f.name,
             "path": str(f),
@@ -1762,6 +1977,7 @@ def _recent_renders_videos(n: int = 20) -> list[dict]:
             "height": probe.get("height"),
             "has_audio": probe.get("has_audio"),
             "probe_error": probe.get("error"),
+            "prompt": prompt,
         })
     return out
 
@@ -1784,6 +2000,7 @@ def _recent_renders_images(n: int = 10) -> list[dict]:
         except OSError:
             continue
         dims = _image_dims(f, int(st.st_mtime))
+        prompt = _extract_image_prompt(f, int(st.st_mtime))
         out.append({
             "filename": f.name,
             "path": str(f),
@@ -1792,6 +2009,7 @@ def _recent_renders_images(n: int = 10) -> list[dict]:
             "width": dims.get("width"),
             "height": dims.get("height"),
             "probe_error": dims.get("error"),
+            "prompt": prompt,
         })
     return out
 
@@ -2314,7 +2532,29 @@ async def build_status_payload(config: dict) -> dict:
     thermal = sync_section("sensors", _read_sensors) or {}
     cpu = sync_section("cpu_usage", _cpu_usage_quick) or {}
 
-    recent_videos = sync_section("recent_videos", lambda: _recent_renders_videos(20)) or []
+    # Pull video submit metadata + recent events early so recent_videos can
+    # join filenames against the prompt_text recorded at submission time. Both
+    # are best-effort; failures degrade to "no prompt" rather than blocking
+    # the whole panel.
+    _video_meta_for_join: dict[str, dict] = {}
+    _events_for_join: list[dict] = []
+    if firehose_metrics is not None:
+        try:
+            _video_meta_for_join = firehose_metrics.snapshot_video_meta() or {}
+        except Exception:
+            _video_meta_for_join = {}
+        try:
+            _events_for_join = firehose_metrics.snapshot_recent_events(200) or []
+        except Exception:
+            _events_for_join = []
+    recent_videos = sync_section(
+        "recent_videos",
+        lambda: _recent_renders_videos(
+            20,
+            video_meta=_video_meta_for_join,
+            recent_events=_events_for_join,
+        ),
+    ) or []
     recent_images = sync_section("recent_images", lambda: _recent_renders_images(10)) or []
 
     budgets = {

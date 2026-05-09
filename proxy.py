@@ -4836,7 +4836,9 @@ async def _render_status_html(request: Request) -> Response:
         host_hdr = request.headers.get("host") or ""
         body = render_html(payload, host=host_hdr)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] status render error: {e}", flush=True)
+        import traceback as _tb
+        _tb_str = _tb.format_exc()
+        print(f"[proxy] status render error: {e}\n{_tb_str}", flush=True)
         body = (
             "<html><body><pre>status render failed: "
             + str(e)[:200]
