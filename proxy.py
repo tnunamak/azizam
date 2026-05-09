@@ -33,6 +33,7 @@ import secrets
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+import contextlib
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
@@ -452,6 +453,16 @@ async def swap_kobold_model(target_path: str) -> bool:
                     if resp.status_code == 200:
                         elapsed = time.time() - start
                         print(f"[proxy] swap complete in {elapsed:.1f}s", flush=True)
+                        try:
+                            firehose_metrics.record_event(
+                                "model_swap",
+                                f"kobold {current or '—'} → {target_path}",
+                                backend="kobold",
+                                elapsed_s=round(elapsed, 2),
+                                target=target_path,
+                            )
+                        except Exception:
+                            pass
                         return True
             except Exception:
                 pass
@@ -566,6 +577,16 @@ async def swap_tabby_model(target_model: str) -> bool:
                 if resp.status_code == 200 and '"status":"finished"' in response_text:
                     elapsed = time.time() - start
                     print(f"[proxy] swap_tabby_model: success in {elapsed:.1f}s", flush=True)
+                    try:
+                        firehose_metrics.record_event(
+                            "model_swap",
+                            f"tabby {current or '—'} → {target_model}",
+                            backend="tabby",
+                            elapsed_s=round(elapsed, 2),
+                            target=target_model,
+                        )
+                    except Exception:
+                        pass
                     return True
 
                 if '"status":"error"' in response_text or '"error":' in response_text:
@@ -577,6 +598,17 @@ async def swap_tabby_model(target_model: str) -> bool:
                 if loaded_now == target_model:
                     elapsed = time.time() - start
                     print(f"[proxy] swap_tabby_model: success (verified) in {elapsed:.1f}s", flush=True)
+                    try:
+                        firehose_metrics.record_event(
+                            "model_swap",
+                            f"tabby {current or '—'} → {target_model}",
+                            backend="tabby",
+                            elapsed_s=round(elapsed, 2),
+                            target=target_model,
+                            verified=True,
+                        )
+                    except Exception:
+                        pass
                     return True
 
                 print(f"[proxy] swap_tabby_model: outcome unclear, loaded={loaded_now}, response={response_text[-200:]}", flush=True)
@@ -4219,6 +4251,97 @@ async def maintenance_loop():
 # FastAPI app
 # =============================================================================
 
+_DRIFT_CACHE_PATH = Path(__file__).parent / "cache" / "drift_status.json"
+_DRIFT_SCRIPT_PATH = Path(__file__).parent / "scripts" / "check_workflow_drift.py"
+# Match status_endpoint._DRIFT_REPORT_PATH so the renderer reads the same file.
+_DRIFT_REPORT_PATH = Path(__file__).parent / "cache" / "drift_status.json"
+
+
+async def _run_workflow_drift_once() -> dict:
+    """Run check_workflow_drift.py once with a hard timeout. Returns a status
+    dict suitable for serialising into ``cache/drift_status.json``.
+
+    Uses the proxy's own venv interpreter so playwright is reachable. If the
+    script isn't present, ComfyUI is offline, or playwright errors out, the
+    failure is recorded as ``{"status": "error", "reason": ...}`` and the
+    proxy keeps running."""
+    if not _DRIFT_SCRIPT_PATH.is_file():
+        return {
+            "status": "error",
+            "reason": f"drift script missing: {_DRIFT_SCRIPT_PATH}",
+            "checked_at": int(time.time()),
+        }
+    interpreter = sys.executable or "python3"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            interpreter, str(_DRIFT_SCRIPT_PATH), "--verbose",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(Path(__file__).parent),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            return {
+                "status": "error",
+                "reason": "drift script timed out after 120s",
+                "checked_at": int(time.time()),
+            }
+        rc = proc.returncode
+        out = (stdout or b"").decode("utf-8", errors="replace")
+        err = (stderr or b"").decode("utf-8", errors="replace")
+        return {
+            "status": "ok" if rc == 0 else "drift" if rc == 1 else "error",
+            "exit_code": rc,
+            "checked_at": int(time.time()),
+            "stdout_tail": out[-2000:],
+            "stderr_tail": err[-2000:],
+        }
+    except FileNotFoundError as e:
+        return {
+            "status": "error",
+            "reason": f"interpreter not found: {e}",
+            "checked_at": int(time.time()),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "status": "error",
+            "reason": f"{type(e).__name__}: {str(e)[:200]}",
+            "checked_at": int(time.time()),
+        }
+
+
+async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
+    """Refresh the drift cache every 6h. First run after a 30s grace period
+    so we don't compete with backend warm-up."""
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=30)
+        return
+    except asyncio.TimeoutError:
+        pass
+    while not stop_event.is_set():
+        result = await _run_workflow_drift_once()
+        try:
+            _DRIFT_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _DRIFT_CACHE_PATH.write_text(
+                json.dumps(result, indent=2), encoding="utf-8"
+            )
+            print(
+                f"[proxy] drift cache refreshed: status={result.get('status')} "
+                f"exit_code={result.get('exit_code')}",
+                flush=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[proxy] drift cache write failed: {e}", flush=True)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=6 * 3600)
+            return
+        except asyncio.TimeoutError:
+            continue
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
@@ -4231,6 +4354,19 @@ async def lifespan(app: FastAPI):
     print(f"[proxy] Model compatibility: {'enabled' if MODEL_COMPAT_ENABLED else 'disabled'}", flush=True)
     if AUTH_ENABLED and not AUTH_REGISTRY:
         print(f"[proxy] WARNING: No proxy API keys configured; proxied requests will be rejected", flush=True)
+
+    # Replay persisted firehose metrics so per-key counters and the recent-event
+    # timeline survive proxy restarts. The window stays bounded at 24h; older
+    # records are filtered out at replay time.
+    try:
+        replay_stats = firehose_metrics.replay_persisted()
+        print(
+            f"[proxy] firehose replay: requests={replay_stats.get('requests_replayed')} "
+            f"events={replay_stats.get('events_replayed')} skipped={replay_stats.get('skipped')}",
+            flush=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] firehose replay failed: {e}", flush=True)
 
     if TABBY_MANAGED:
         print(f"[proxy] Starting TabbyAPI...", flush=True)
@@ -4267,6 +4403,14 @@ async def lifespan(app: FastAPI):
         flush=True,
     )
 
+    # Workflow drift cache: run scripts/check_workflow_drift.py every 6h and
+    # write the structured outcome to cache/drift_status.json. The script
+    # depends on Playwright + a live ComfyUI; failures are recorded into the
+    # cache (status=error, reason=...) instead of crashing.
+    drift_stop = asyncio.Event()
+    drift_task = asyncio.create_task(_workflow_drift_loop(drift_stop))
+    print("[proxy] Workflow drift periodic task started (every 6h)", flush=True)
+
     yield
 
     state.shutdown_requested = True
@@ -4292,6 +4436,14 @@ async def lifespan(app: FastAPI):
         pass
     except Exception:
         pass
+    drift_stop.set()
+    drift_task.cancel()
+    try:
+        await drift_task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
     if TABBY_MANAGED:
         stop_tabby_process()
 
@@ -4305,14 +4457,29 @@ app = FastAPI(lifespan=lifespan)
 _FIREHOSE_NO_RECORD_PREFIXES = (
     "/health",
     "/v1/status",
+    "/v1/audio/health",
     "/_next/",
     "/firehose",
     "/favicon.ico",
     "/static/",
     "/SKILL.md",
+    "/robots.txt",
 )
 # Exact paths (not prefixes) that should be excluded too.
 _FIREHOSE_NO_RECORD_EXACT = {"/"}
+
+# Map known successful-response paths to a synthesized event-type for the
+# Recent activity timeline. We don't peek at request bodies — the path tells
+# us enough ("chat completion happened") and the middleware already has the
+# key name. Token counts are not visible here; we just stamp the path & status.
+_FIREHOSE_EVENT_TYPES = {
+    "/v1/chat/completions": "chat_completion",
+    "/v1/completions": "chat_completion",
+    "/v1/images/generations": "image_submit",
+    "/v1/images/edits": "image_submit",
+    "/v1/audio/speech": "tts_synthesize",
+    "/v1/audio/transcriptions": "stt_transcribe",
+}
 
 
 @app.middleware("http")
@@ -4345,6 +4512,29 @@ async def _firehose_request_counter(request: Request, call_next):
                 latency_ms = (time.monotonic() - t0) * 1000.0
                 status_code = getattr(response, "status_code", 0) or 0
                 firehose_metrics.record_request(key_name, path, status_code, latency_ms)
+                # Synthesize a timeline event for known content endpoints when
+                # the response was a success. Skip videos here — capture for
+                # those happens deeper in the handler with workflow/size/seconds
+                # metadata that isn't visible at the middleware boundary.
+                if status_code and status_code < 400:
+                    evt_type = _FIREHOSE_EVENT_TYPES.get(path)
+                    if evt_type:
+                        # Pull a model id from the response header if the
+                        # downstream handler stamped one (chat completions do).
+                        model_hdr = (
+                            response.headers.get("x-model-resolved")
+                            if response is not None and hasattr(response, "headers")
+                            else None
+                        )
+                        firehose_metrics.record_event(
+                            evt_type,
+                            f"{path} · {model_hdr or '—'}",
+                            path=path,
+                            status=status_code,
+                            latency_ms=round(latency_ms, 2),
+                            key=key_name or "anonymous",
+                            model=model_hdr,
+                        )
             except Exception:
                 pass
 
@@ -4641,7 +4831,10 @@ async def _render_status_html(request: Request) -> Response:
         payload = {"error": "status build failed"}
     try:
         from firehose_render import render_html
-        body = render_html(payload)
+        # Use the request's Host header so the page header reflects the
+        # address bar (loopback dev vs. external openai.vivid.fish).
+        host_hdr = request.headers.get("host") or ""
+        body = render_html(payload, host=host_hdr)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] status render error: {e}", flush=True)
         body = (

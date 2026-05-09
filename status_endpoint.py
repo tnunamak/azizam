@@ -31,6 +31,25 @@ import yaml
 # Module-level cache (single in-process consumer is fine).
 _CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 _CACHE_TTL_S = 12.0
+
+
+def _resolve_commit_hash() -> Optional[str]:
+    """Resolve the proxy's git short SHA once at import time. Used for the
+    page footer so the user knows which build is rendering."""
+    try:
+        repo_dir = Path(__file__).parent
+        out = subprocess.run(
+            ["git", "-C", str(repo_dir), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=1.0,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip() or None
+    except Exception:
+        pass
+    return None
+
+
+_COMMIT_HASH: Optional[str] = _resolve_commit_hash()
 _HTTP_TIMEOUT = httpx.Timeout(2.0, connect=1.0)
 _SUBPROC_TIMEOUT = 1.5  # seconds per shell probe
 
@@ -52,7 +71,11 @@ _HOTSPOT_DIRS = [
 ]
 
 # Service units we want to attribute VRAM to. Anything outside this list is
-# bucketed into "desktop" (Plasma/Xorg/Chromium/etc.).
+# bucketed into "desktop" (Plasma/Xorg/Chromium/Sunshine/etc.).
+#
+# Sunshine is intentionally NOT a service here — it's a streaming front-end for
+# the desktop session and shares the desktop's compositor surfaces. Bucketing
+# its VRAM under "desktop" matches GPU0_DESKTOP budget intent.
 _SERVICE_UNITS = [
     "comfyui",
     "llama-turbo",
@@ -62,7 +85,6 @@ _SERVICE_UNITS = [
     "tabbyapi",
     "openai-proxy",
     "daisy",
-    "sunshine",
 ]
 
 
@@ -224,6 +246,126 @@ def _extract_arg(tokens: list[str], flag: str) -> Optional[str]:
     return " ".join(out) if out else None
 
 
+def _annotate_tensor_split(raw: Optional[str]) -> Optional[dict]:
+    """Compute human-friendly explanation for ``--tensor-split`` value.
+
+    llama.cpp interprets a comma-separated list as a per-GPU ratio: each value
+    is a relative weight, llama-server normalizes them to fractions and uses
+    them to split layers across devices. So ``52,12`` means "GPU0 gets
+    52/(52+12) ≈ 81% of layers, GPU1 gets 12/64 ≈ 19%".
+
+    Returns ``{"raw": "52,12", "weights": [52,12], "fractions": [0.8125,
+    0.1875], "summary": "≈81% GPU0 / 19% GPU1", "interpretation":
+    "ratio (llama.cpp default)"}`` or ``None`` if the value can't be parsed.
+    """
+    if not raw:
+        return None
+    try:
+        parts = [p.strip() for p in raw.replace(" ", ",").split(",") if p.strip()]
+        weights = [float(p) for p in parts]
+    except (ValueError, AttributeError):
+        return None
+    if not weights:
+        return None
+    total = sum(weights)
+    if total <= 0:
+        return None
+    fractions = [w / total for w in weights]
+    summary = " / ".join(
+        f"≈{round(f * 100):d}% GPU{i}" for i, f in enumerate(fractions)
+    )
+    return {
+        "raw": raw,
+        "weights": weights,
+        "fractions": [round(f, 4) for f in fractions],
+        "summary": summary,
+        "interpretation": "ratio (llama.cpp default; values are relative weights)",
+    }
+
+
+def _resolve_parallel_arg(
+    cmdline_arg: Optional[str], props_total_slots: Optional[int]
+) -> dict:
+    """Resolve the effective ``--parallel`` value.
+
+    llama.cpp defaults to ``--parallel 4`` when the flag is omitted and uses
+    that to size the slot pool. ``/props.total_slots`` is the authoritative
+    runtime value. Returns a dict shape so the renderer can display both the
+    effective number and where it came from.
+    """
+    if cmdline_arg:
+        try:
+            return {
+                "value": int(cmdline_arg.strip().split()[0]),
+                "source": "cmdline",
+            }
+        except (ValueError, IndexError):
+            return {"value": None, "source": "cmdline-unparsable", "raw": cmdline_arg}
+    if isinstance(props_total_slots, int):
+        return {
+            "value": props_total_slots,
+            "source": "props.total_slots (default; --parallel not set on cmdline)",
+        }
+    return {"value": None, "source": "unknown"}
+
+
+def _resolve_tts_engine(
+    cmdline_args: Optional[list[str]], voxtral_health: Optional[dict]
+) -> dict:
+    """Return labeled service-unit / engine framework / model triple for TTS.
+
+    The previous status payload conflated these three things ("Active TTS
+    engine: voxtral-int4-tts" was actually the *systemd unit name*, while the
+    Voxtral health endpoint reports the *model* name). Surface each
+    independently so the dashboard can render three rows.
+
+    - ``unit`` — systemd unit (without ``.service`` suffix), if any is active.
+    - ``engine`` — the framework actually loading the model, derived from the
+      unit's ExecStart (``vllm``, ``serve.py`` int4 server, etc.).
+    - ``model`` — the model name reported by the backend's ``/health``.
+    """
+    unit: Optional[str] = None
+    engine: Optional[str] = None
+    exec_start: Optional[str] = None
+    candidates = ("voxtral-int4-tts.service", "voxtral-tts.service", "tts.service")
+    for u in candidates:
+        rc, out, _ = _run(["systemctl", "--user", "is-active", u], timeout=1.0)
+        if rc == 0 and out.strip() == "active":
+            unit = u.removesuffix(".service")
+            # Inspect ExecStart so we can name the framework honestly.
+            rc2, out2, _ = _run(
+                ["systemctl", "--user", "show", u, "-p", "ExecStart", "--value"],
+                timeout=1.0,
+            )
+            if rc2 == 0 and out2:
+                raw = out2.strip().split("\n", 1)[0]
+                # systemd-show emits a structured one-liner like
+                #   { path=... ; argv[]=cmd arg1 arg2 ; ... }
+                # We just want the human-readable argv portion.
+                m = re.search(r"argv\[\]=([^;]+)", raw)
+                exec_start = m.group(1).strip() if m else raw
+            break
+    if exec_start:
+        es_lower = exec_start.lower()
+        if "vllm" in es_lower:
+            engine = "vLLM"
+        elif "voxtral-int4" in es_lower or "/voxtral-int4/" in exec_start:
+            engine = "voxtral-int4 (custom serve.py, flow-matching)"
+        elif "voxtral" in es_lower:
+            engine = "Voxtral (vLLM-Omni)"
+        elif "tts" in es_lower:
+            engine = "tts (custom)"
+    model: Optional[str] = None
+    if isinstance(voxtral_health, dict):
+        model = voxtral_health.get("model")
+    return {
+        "unit": unit,
+        "engine": engine,
+        "model": model,
+        "exec_start": exec_start,
+    }
+
+
 async def _models_section(config: dict, props: Optional[dict], slots: Optional[list[dict]]) -> dict:
     args = _llama_server_args()
     loaded_path = _extract_arg(args, "--model") if args else None
@@ -358,14 +500,20 @@ async def _models_section(config: dict, props: Optional[dict], slots: Optional[l
 # --- GPU / queue ----------------------------------------------------------
 
 def _gpus_raw() -> Optional[list[dict]]:
-    """nvidia-smi snapshot incl. temp, power, clocks, pcie, throttle."""
+    """nvidia-smi snapshot incl. temp, power, clocks, pcie, throttle.
+
+    memory_used_mb comes from per-GPU `memory.used` (authoritative total —
+    includes kernel/driver overhead and display surfaces, not just compute
+    apps), so attribution can compute unattributed = total − sum(apps).
+    """
     rc, out, _err = _run([
         "nvidia-smi",
         "--query-gpu="
         "index,uuid,name,memory.used,memory.total,utilization.gpu,"
-        "temperature.gpu,power.draw,power.limit,clocks.gr,clocks.mem,"
-        "fan.speed,clocks_throttle_reasons.active,"
-        "pcie.link.gen.current,pcie.link.width.current",
+        "temperature.gpu,power.draw,power.limit,power.default_limit,power.max_limit,"
+        "clocks.gr,clocks.mem,fan.speed,clocks_throttle_reasons.active,"
+        "pcie.link.gen.current,pcie.link.gen.max,"
+        "pcie.link.width.current,pcie.link.width.max",
         "--format=csv,noheader,nounits",
     ])
     if rc != 0 or not out.strip():
@@ -373,7 +521,7 @@ def _gpus_raw() -> Optional[list[dict]]:
     gpus: list[dict] = []
     for line in out.strip().splitlines():
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 15:
+        if len(parts) < 19:
             continue
         try:
             gpus.append({
@@ -386,12 +534,16 @@ def _gpus_raw() -> Optional[list[dict]]:
                 "temp_c": _safe_int(parts[6]),
                 "power_draw_w": _safe_float(parts[7]),
                 "power_limit_w": _safe_float(parts[8]),
-                "clocks_gr_mhz": _safe_int(parts[9]),
-                "clocks_mem_mhz": _safe_int(parts[10]),
-                "fan_speed_pct": _safe_int(parts[11]),
-                "throttle_reasons_hex": parts[12],
-                "pcie_link_gen": _safe_int(parts[13]),
-                "pcie_link_width": _safe_int(parts[14]),
+                "power_default_limit_w": _safe_float(parts[9]),
+                "power_max_limit_w": _safe_float(parts[10]),
+                "clocks_gr_mhz": _safe_int(parts[11]),
+                "clocks_mem_mhz": _safe_int(parts[12]),
+                "fan_speed_pct": _safe_int(parts[13]),
+                "throttle_reasons_hex": parts[14],
+                "pcie_link_gen": _safe_int(parts[15]),
+                "pcie_link_gen_max": _safe_int(parts[16]),
+                "pcie_link_width": _safe_int(parts[17]),
+                "pcie_link_width_max": _safe_int(parts[18]),
             })
         except ValueError:
             continue
@@ -551,12 +703,40 @@ def _service_pids() -> dict[str, set[int]]:
     return out
 
 
+def _read_proc_comm(pid: int) -> Optional[str]:
+    """Read /proc/<pid>/comm — short, stable kernel-level process name. Best-effort."""
+    try:
+        return Path(f"/proc/{pid}/comm").read_text(encoding="utf-8", errors="replace").strip() or None
+    except Exception:
+        return None
+
+
 def _vram_attribution(gpus: Optional[list[dict]]) -> dict:
-    """Per-GPU per-service VRAM usage with budget comparison."""
+    """Per-GPU per-service VRAM usage with budget comparison.
+
+    Synthesized rows (prefixed with `__`) are appended after real services so
+    every visible MiB is accounted for:
+      - __unattributed: total_used_mb − sum(compute-apps on this GPU). Captures
+        kernel/driver overhead and display surfaces nvidia-smi doesn't itemize
+        (e.g. KMS framebuffers, EGLStreams). No budget comparison.
+      - __headroom:     total_mb − total_used_mb (free VRAM). Compared against
+        the per-GPU headroom budget when configured (under-budget = bad).
+      - __total:        total_used_mb (table footer).
+
+    Tensor-split spillover: when a single PID maps to multiple GPUs (e.g.
+    llama-server with --tensor-split 52,12), the row on the smaller share is
+    flagged so the budget question stays meaningful — the PID's full VRAM
+    is governed by its primary GPU's budget, not split per-card.
+
+    Desktop bucket: any compute-app whose PID isn't owned by a tracked
+    service systemd cgroup is bucketed under "desktop" (Plasma, Xorg,
+    Chromium, Sunshine, kwin, etc.). Top contributing PIDs are returned as
+    `top_contributors` for tooltip/sub-table rendering.
+    """
     if not gpus:
         return {"per_gpu": [], "errors": ["gpus unavailable"]}
     apps = _get_compute_apps()
-    pid_to_service = {}
+    pid_to_service: dict[int, str] = {}
     svc_pids = _service_pids()
     for svc, pids in svc_pids.items():
         for pid in pids:
@@ -564,16 +744,48 @@ def _vram_attribution(gpus: Optional[list[dict]]) -> dict:
 
     # Build uuid -> index map.
     uuid_to_index = {g.get("uuid"): g.get("index") for g in gpus}
-    # gpu_index -> {service: mb}
-    per_gpu_svc: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    pids_seen: set[int] = set()
+
+    # Pre-pass: per-PID per-GPU usage (detect multi-GPU spread).
+    pid_gpu_usage: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
     for app in apps:
         idx = uuid_to_index.get(app["gpu_uuid"])
         if idx is None:
             continue
-        svc = pid_to_service.get(app["pid"], "desktop")
+        pid_gpu_usage[app["pid"]][idx] += app["used_mb"]
+
+    # PID's primary GPU = whichever has the most VRAM for that PID.
+    pid_primary_gpu: dict[int, int] = {}
+    for pid, gpu_map in pid_gpu_usage.items():
+        if len(gpu_map) >= 2:
+            pid_primary_gpu[pid] = max(gpu_map.items(), key=lambda kv: kv[1])[0]
+
+    per_gpu_svc: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    spillover_flags: dict[int, dict[str, bool]] = defaultdict(dict)
+    spillover_primary: dict[int, dict[str, int]] = defaultdict(dict)
+    desktop_top: dict[int, list[dict]] = defaultdict(list)
+
+    for app in apps:
+        idx = uuid_to_index.get(app["gpu_uuid"])
+        if idx is None:
+            continue
+        pid = app["pid"]
+        svc = pid_to_service.get(pid, "desktop")
         per_gpu_svc[idx][svc] += app["used_mb"]
-        pids_seen.add(app["pid"])
+
+        if (
+            svc != "desktop"
+            and pid in pid_primary_gpu
+            and pid_primary_gpu[pid] != idx
+        ):
+            spillover_flags[idx][svc] = True
+            spillover_primary[idx][svc] = pid_primary_gpu[pid]
+
+        if svc == "desktop":
+            desktop_top[idx].append({
+                "pid": pid,
+                "used_mb": app["used_mb"],
+                "comm": _read_proc_comm(pid) or app.get("process_name") or "?",
+            })
 
     # Pull budget for comparison.
     budget = _read_gpu_budget()
@@ -588,46 +800,124 @@ def _vram_attribution(gpus: Optional[list[dict]]) -> dict:
                 "voxtral-int4-tts": raw.get("GPU0_TTS"),
                 "voxtral-tts": raw.get("GPU0_TTS"),
                 "desktop": raw.get("GPU0_DESKTOP"),
+                "__headroom": raw.get("GPU0_HEADROOM"),
             }
             return mapping.get(svc)
         if idx == 1:
-            mapping = {"llama-turbo": raw.get("GPU1_LLM")}
+            mapping = {
+                "llama-turbo": raw.get("GPU1_LLM"),
+                "__headroom": raw.get("GPU1_HEADROOM"),
+            }
             return mapping.get(svc)
         return None
 
     out_gpus: list[dict] = []
     for g in gpus:
         idx = g.get("index")
+        total_used_mb = int(g.get("memory_used_mb") or 0)
+        total_mb = int(g.get("memory_total_mb") or 0)
         svc_map = per_gpu_svc.get(idx, {})
-        services = []
+        services: list[dict] = []
+
+        accounted_mb = 0
         for svc, mb in sorted(svc_map.items(), key=lambda x: -x[1]):
-            budget_gb = budget_for(idx, svc)
+            is_spillover = spillover_flags.get(idx, {}).get(svc, False)
+            # Spillover rows aren't compared against the local-GPU budget —
+            # the PID's allocation is governed by its primary GPU's budget.
+            budget_gb = None if is_spillover else budget_for(idx, svc)
             used_gb = mb / 1024.0
             over_budget = (
                 budget_gb is not None and used_gb > float(budget_gb) + 0.5
             )
             pct_of_budget = (
-                (used_gb / float(budget_gb) * 100.0) if (budget_gb and budget_gb > 0) else None
+                (used_gb / float(budget_gb) * 100.0)
+                if (budget_gb and budget_gb > 0) else None
             )
-            services.append({
+            row: dict[str, Any] = {
                 "service": svc,
                 "used_mb": mb,
                 "used_gb": round(used_gb, 2),
                 "budget_gb": budget_gb,
                 "pct_of_budget": round(pct_of_budget, 1) if pct_of_budget is not None else None,
                 "over_budget": bool(over_budget),
-            })
+                "spillover": is_spillover,
+            }
+            if is_spillover:
+                row["spillover_from_gpu"] = spillover_primary.get(idx, {}).get(svc)
+                row["note"] = "tensor-split spillover"
+            if svc == "desktop":
+                tops = sorted(desktop_top.get(idx, []), key=lambda x: -x["used_mb"])[:5]
+                row["top_contributors"] = tops
+            services.append(row)
+            accounted_mb += mb
+
+        # Synthesized rows.
+        unattributed_mb = max(0, total_used_mb - accounted_mb)
+        services.append({
+            "service": "__unattributed",
+            "used_mb": unattributed_mb,
+            "used_gb": round(unattributed_mb / 1024.0, 2),
+            "budget_gb": None,
+            "pct_of_budget": None,
+            "over_budget": False,
+            "spillover": False,
+            "note": "kernel/driver/display surfaces (not in compute-apps)",
+        })
+
+        headroom_mb = max(0, total_mb - total_used_mb)
+        headroom_budget_gb = budget_for(idx, "__headroom")
+        headroom_pct = (
+            ((headroom_mb / 1024.0) / float(headroom_budget_gb) * 100.0)
+            if (headroom_budget_gb and headroom_budget_gb > 0) else None
+        )
+        # Under-budget headroom = bad (less free than planned).
+        headroom_short = (
+            headroom_budget_gb is not None
+            and (headroom_mb / 1024.0) < float(headroom_budget_gb) - 0.5
+        )
+        services.append({
+            "service": "__headroom",
+            "used_mb": headroom_mb,
+            "used_gb": round(headroom_mb / 1024.0, 2),
+            "budget_gb": headroom_budget_gb,
+            "pct_of_budget": round(headroom_pct, 1) if headroom_pct is not None else None,
+            "over_budget": False,
+            "headroom_short": bool(headroom_short),
+            "spillover": False,
+            "note": "free VRAM (total − used)",
+        })
+
+        total_budget_gb = None
+        if budget:
+            scope = budget.get("gpu0" if idx == 0 else "gpu1") or {}
+            total_budget_gb = scope.get("total_gb")
+        services.append({
+            "service": "__total",
+            "used_mb": total_used_mb,
+            "used_gb": round(total_used_mb / 1024.0, 2),
+            "budget_gb": total_budget_gb,
+            "pct_of_budget": None,
+            "over_budget": False,
+            "spillover": False,
+            "note": "GPU memory.used (authoritative)",
+        })
+
         out_gpus.append({
             "index": idx,
             "uuid": g.get("uuid"),
-            "memory_used_mb": g.get("memory_used_mb"),
-            "memory_total_mb": g.get("memory_total_mb"),
+            "memory_used_mb": total_used_mb,
+            "memory_total_mb": total_mb,
             "services": services,
         })
     return {
         "per_gpu": out_gpus,
         "raw_compute_apps": apps,
         "service_pids": {k: sorted(v) for k, v in svc_pids.items()},
+        "multi_gpu_pids": {
+            str(pid): {str(idx): mb for idx, mb in gmap.items()}
+            for pid, gmap in pid_gpu_usage.items()
+            if len(gmap) >= 2
+        },
     }
 
 
@@ -691,6 +981,21 @@ def _read_gpu_budget() -> Optional[dict]:
 
 
 def _read_vram_estimates() -> Optional[dict]:
+    """Read cached per-workflow per-image VRAM estimates.
+
+    Known issue: the persisted estimates are computed as
+    ``free_before_round - free_after_round`` from ComfyUI's free-VRAM
+    endpoint at *round boundaries* — i.e. NOT the in-run peak. When a model
+    is already resident (warm cache), free VRAM at end-of-round can be
+    nearly identical to start-of-round, yielding MiB-scale "estimates" for
+    workflows whose true peak is GiB-scale (flux2-klein-4b @ 512×512
+    persists as ~5 MiB despite peaking ~3-4 GiB).
+
+    Until the proxy tracks peak across the run (sample free VRAM during
+    inference, not just endpoints), we surface the entries with an explicit
+    ``unavailable_reason`` so consumers know not to plan capacity off them.
+    See ``record_vram_estimate`` in proxy.py.
+    """
     try:
         if not _VRAM_ESTIMATES_PATH.is_file():
             return None
@@ -704,10 +1009,25 @@ def _read_vram_estimates() -> Optional[dict]:
                 continue
             entries.append({"key": k, "peak_bytes": int(v)})
         entries.sort(key=lambda e: e["peak_bytes"], reverse=True)
+        # Heuristic check: if every persisted entry is < 64 MiB, the
+        # measurement is almost certainly the warm-cache endpoint diff
+        # rather than a true peak — flag the whole section.
+        endpoint_diff_only = bool(entries) and all(
+            e["peak_bytes"] < 64 * 1024 * 1024 for e in entries
+        )
         return {
             "last_modified": int(st.st_mtime),
-            "entries": entries,  # full list; design layer can crop.
+            "entries": entries,
             "total_entries": len(entries),
+            "unavailable_reason": (
+                "VRAM peak measurement broken: persisted values are the "
+                "endpoint diff (free_before − free_after_round), not the "
+                "true in-run peak. With warm-cached models this reads "
+                "MiB-scale even when peak is GiB-scale. Fix in proxy.py "
+                "record_vram_estimate to sample free VRAM during inference."
+                if endpoint_diff_only else None
+            ),
+            "trustworthy": not endpoint_diff_only,
         }
     except Exception:
         return None
@@ -727,6 +1047,70 @@ def _images_budget(config: dict) -> dict:
 
 # --- capabilities matrix --------------------------------------------------
 
+# Per-workflow-file capability cache keyed by (path, mtime). Re-reads
+# automatically on file edit so capability rows stay honest (e.g. removing
+# the ImageScaleBy chain from a workflow is reflected on the next request,
+# not whenever the longer-lived 12s status cache rolls over).
+_WORKFLOW_CAPS_CACHE: dict[tuple[str, int], dict] = {}
+
+
+def _read_workflow_caps(path: Path) -> dict:
+    """Parse a ComfyUI workflow JSON; cached per (path, mtime).
+
+    Returns a dict with class-type counts pre-computed at multiple cardinalities
+    so the renderer can show a compact row plus an expandable full breakdown.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return {
+            "supports_i2v": False, "supports_audio": False, "two_stage": False,
+            "node_count": 0, "top_class_types": {}, "all_class_types": {},
+        }
+    key = (str(path), int(st.st_mtime))
+    cached = _WORKFLOW_CAPS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    supports_i2v = False
+    supports_audio = False
+    two_stage = False
+    class_types: Counter = Counter()
+    try:
+        wf_json = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        wf_json = {}
+    if isinstance(wf_json, dict):
+        for v in wf_json.values():
+            if not isinstance(v, dict):
+                continue
+            ct = v.get("class_type")
+            if ct:
+                class_types[str(ct)] += 1
+            meta = v.get("_meta")
+            if isinstance(meta, dict) and "image_node" in meta:
+                supports_i2v = True
+            if ct == "LoadImage":
+                supports_i2v = True
+            if ct == "LTXVAudioVAEDecode":
+                supports_audio = True
+            if ct == "LTXVCropGuides":
+                two_stage = True
+    result = {
+        "supports_i2v": supports_i2v,
+        "supports_audio": supports_audio,
+        "two_stage": two_stage,
+        "node_count": sum(class_types.values()),
+        "top_class_types": dict(class_types.most_common(3)),
+        "all_class_types": dict(class_types.most_common(50)),
+        "mtime": int(st.st_mtime),
+    }
+    _WORKFLOW_CAPS_CACHE[key] = result
+    if len(_WORKFLOW_CAPS_CACHE) > 64:
+        for k in list(_WORKFLOW_CAPS_CACHE.keys())[:16]:
+            _WORKFLOW_CAPS_CACHE.pop(k, None)
+    return result
+
+
 def _capabilities(config: dict) -> list[dict]:
     out: list[dict] = []
     videos_cfg = config.get("videos", {})
@@ -740,40 +1124,17 @@ def _capabilities(config: dict) -> list[dict]:
         try:
             file_rel = wf_spec.get("file", "")
             wf_path = (base_dir / file_rel).resolve()
-            supports_i2v = False
-            supports_audio = False
-            two_stage = False
-            class_types: Counter = Counter()
             if wf_path.is_file():
-                try:
-                    wf_json = json.loads(wf_path.read_text(encoding="utf-8"))
-                except Exception:
-                    wf_json = {}
-                if isinstance(wf_json, dict):
-                    for v in wf_json.values():
-                        if not isinstance(v, dict):
-                            continue
-                        ct = v.get("class_type")
-                        if ct:
-                            class_types[str(ct)] += 1
-                        meta = v.get("_meta")
-                        if isinstance(meta, dict) and "image_node" in meta:
-                            supports_i2v = True
-                        if ct == "LoadImage":
-                            supports_i2v = True
-                        if ct == "LTXVAudioVAEDecode":
-                            supports_audio = True
-                        if ct == "LTXVCropGuides":
-                            two_stage = True
-            workflow_caps[wf_name] = {
-                "supports_i2v": supports_i2v,
-                "supports_audio": supports_audio,
-                "two_stage": two_stage,
-                "class_types": dict(class_types.most_common(10)),
-            }
+                workflow_caps[wf_name] = _read_workflow_caps(wf_path)
+            else:
+                workflow_caps[wf_name] = {
+                    "supports_i2v": False, "supports_audio": False, "two_stage": False,
+                    "node_count": 0, "top_class_types": {}, "all_class_types": {},
+                }
         except Exception:
             workflow_caps[wf_name] = {
-                "supports_i2v": False, "supports_audio": False, "two_stage": False, "class_types": {},
+                "supports_i2v": False, "supports_audio": False, "two_stage": False,
+                "node_count": 0, "top_class_types": {}, "all_class_types": {},
             }
 
     for alias, target_wf in sorted(aliases.items()):
@@ -789,7 +1150,11 @@ def _capabilities(config: dict) -> list[dict]:
             "supports_i2v": bool(caps.get("supports_i2v")),
             "supports_audio": bool(caps.get("supports_audio")),
             "two_stage": bool(caps.get("two_stage")),
-            "class_types": caps.get("class_types") or {},
+            "node_count": caps.get("node_count", 0),
+            "top_class_types": caps.get("top_class_types") or {},
+            "all_class_types": caps.get("all_class_types") or {},
+            # Back-compat for any consumers still reading ``class_types``.
+            "class_types": caps.get("top_class_types") or {},
         })
     return out
 
@@ -806,25 +1171,15 @@ def _image_capabilities(config: dict) -> list[dict]:
             return out
         for f in sorted(p.glob("*.json")):
             name = f.name
-            if name.endswith(".ui.json"):
+            if name.endswith(".ui.json") or ".obsolete" in name or ".bak" in name:
                 continue
-            if ".obsolete" in name or ".bak" in name:
-                continue
-            try:
-                wf = json.loads(f.read_text(encoding="utf-8"))
-            except Exception:
-                wf = {}
-            supports_edit = "-edit" in f.stem
-            class_types: Counter = Counter()
-            if isinstance(wf, dict):
-                for v in wf.values():
-                    if isinstance(v, dict) and v.get("class_type"):
-                        class_types[str(v["class_type"])] += 1
+            caps = _read_workflow_caps(f)
             out.append({
                 "name": f.stem,
-                "supports_edit": supports_edit,
-                "class_type_count": sum(class_types.values()),
-                "top_class_types": dict(class_types.most_common(5)),
+                "supports_edit": "-edit" in f.stem,
+                "class_type_count": caps.get("node_count", 0),
+                "top_class_types": caps.get("top_class_types") or {},
+                "all_class_types": caps.get("all_class_types") or {},
             })
     except Exception:
         pass
@@ -888,11 +1243,12 @@ def _journal_xids() -> dict:
 
 
 def _kernel_recent_events(n: int = 5) -> list[str]:
-    """Return the last N kernel events that look NVIDIA/GPU/MCE-related.
+    """Return the last N *non-Xid* kernel events that look NVIDIA/GPU/MCE-related.
 
-    Earlier version used `-n 200` which filtered the *last 200 lines* of any
-    kernel output and dropped Xid bursts that scrolled off when the kernel
-    log was chatty. We now scan the full last-24h window and grep first.
+    Xid bursts are already surfaced as their own structured section
+    ("Last 5 Xid events"), so duplicating them here was redundant. This
+    section now complements that one with MCE / IOMMU / PCIe-AER / amdgpu
+    events that wouldn't otherwise be visible.
     """
     rc, out, _ = _run(
         ["journalctl", "-k", "--no-pager", "--since", "24 hours ago"],
@@ -903,31 +1259,98 @@ def _kernel_recent_events(n: int = 5) -> list[str]:
     keep = []
     for line in out.splitlines():
         l = line.lower()
-        if any(s in l for s in ("nvidia", "nvrm", "xid", "amdgpu", "iommu", " mce")):
+        # Skip Xid lines — surfaced separately. Keep MCE, IOMMU, PCIe AER,
+        # amdgpu, and other non-Xid NVIDIA/NVRM messages.
+        if "xid" in l or _XID_RE.search(line):
+            continue
+        if any(
+            s in l
+            for s in (
+                "nvidia", "nvrm", "amdgpu", "iommu", " mce", "mce:",
+                "pcieport", "aer", "thermal_zone", "edac",
+            )
+        ):
             keep.append(line[:200])
     return keep[-n:]
 
 
-def _reboot_history(n: int = 5) -> list[str]:
-    """Return up to N most recent boots. Uses `journalctl --list-boots`
-    because `last` is not present on minimal installs (e.g. this host has
-    no util-linux `last`)."""
+def _reboot_history(n: int = 5) -> list[dict]:
+    """Return up to N most recent boots as structured records.
+
+    `journalctl --list-boots` prints rows of:
+        <index> <boot_id> <first_msg_ts> <last_msg_ts>
+    where index 0 is the current boot and last_msg_ts for the current boot is
+    "now" (last journal entry). For older boots, last_msg_ts approximates the
+    shutdown moment.
+
+    Returns dicts with parsed timestamps so the renderer can compute deltas
+    (and tooltip the boot_id rather than dump it inline).
+    """
     rc, out, _ = _run(["journalctl", "--list-boots", "--no-pager"], timeout=1.5)
-    if rc == 0 and out:
-        lines = [l.strip() for l in out.splitlines() if l.strip()]
-        # journalctl prints oldest→newest; reverse to most-recent-first.
-        return [l[:160] for l in lines[-n:][::-1]]
-    # Fallback to `last` if available.
-    rc, out, _ = _run(["last", "-x", "-n", str(n + 5), "reboot"], timeout=1.0)
     if rc != 0 or not out:
         return []
-    rows = []
+    rows: list[dict] = []
+    # journalctl format: "<idx> <boot_id> <first> — <last>" (some versions
+    # use an em-dash separator) or whitespace-only between the two timestamps.
+    # Be permissive: capture index, boot_id, then split the rest into two
+    # halves by " — " or " - " or by a recognizable date prefix.
     for line in out.splitlines():
-        if line.lower().startswith("reboot"):
-            rows.append(line[:160])
-        if len(rows) >= n:
-            break
-    return rows
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            idx = int(parts[0])
+        except ValueError:
+            continue
+        boot_id = parts[1]
+        rest = parts[2]
+        # Split timestamps. They look like "Fri 2026-05-08 10:16:07 CDT".
+        # Use the position of the second weekday token to find the split.
+        m = re.match(
+            r"^(?P<first>[A-Za-z]{3}\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\S+)"
+            r"\s*[—\-]?\s*"
+            r"(?P<last>[A-Za-z]{3}\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\S+)?",
+            rest,
+        )
+        first_ts = last_ts = None
+        first_epoch = last_epoch = None
+        if m:
+            first_ts = m.group("first")
+            last_ts = m.group("last")
+            for label, value in (("first", first_ts), ("last", last_ts)):
+                if not value:
+                    continue
+                try:
+                    # Strip TZ for strptime; record raw string as-is.
+                    bare, _, _tz = value.rpartition(" ")
+                    parsed = time.strptime(bare, "%a %Y-%m-%d %H:%M:%S")
+                    epoch = int(time.mktime(parsed))
+                    if label == "first":
+                        first_epoch = epoch
+                    else:
+                        last_epoch = epoch
+                except Exception:
+                    pass
+        rows.append({
+            "index": idx,
+            "boot_id": boot_id,
+            "first_msg_ts": first_ts,
+            "last_msg_ts": last_ts,
+            "first_msg_epoch": first_epoch,
+            "last_msg_epoch": last_epoch,
+            "duration_s": (
+                last_epoch - first_epoch
+                if first_epoch and last_epoch and last_epoch >= first_epoch
+                else None
+            ),
+            "is_current": idx == 0,
+        })
+    # journalctl prints oldest→newest; reverse and trim.
+    rows.reverse()
+    return rows[:n]
 
 
 def _proxy_restart_count() -> Optional[int]:
@@ -1133,15 +1556,22 @@ def _read_sensors() -> dict:
     cpu_max = max((c["temp_c"] for c in cpu_temps), default=None)
     dimm_max = max((d["temp_c"] for d in dimm_temps), default=None)
 
+    # Per-component thresholds (research-backed defaults):
+    #   CPU (Zen 4 Ryzen): Tjmax 95C; warn at 90 (sustained), critical at 95.
+    #   DDR5 DIMM:         Tcasemax ~85C, critical ~95C; warn 80, crit 90.
+    #   NVMe SSD:          most controllers throttle 70-75C, critical 80C+;
+    #                      warn 70, crit 80.
     return {
         "cpu_temps": cpu_temps,
         "cpu_max_c": cpu_max,
-        "cpu_thermal_state": _thermal_state(cpu_max, warn=85, crit=95),
+        "cpu_thermal_state": _thermal_state(cpu_max, warn=90, crit=95),
         "dimm_temps": dimm_temps,
         "dimm_max_c": dimm_max,
-        "dimm_thermal_state": _thermal_state(dimm_max, warn=70, crit=85),
+        "dimm_thermal_state": _thermal_state(dimm_max, warn=80, crit=90),
         "nvme_max_c": nvme_temp,
+        "nvme_thermal_state": _thermal_state(nvme_temp, warn=70, crit=80),
         "amdgpu_edge_c": amdgpu_edge_temp,
+        "amdgpu_thermal_state": _thermal_state(amdgpu_edge_temp, warn=90, crit=100),
     }
 
 
@@ -1156,36 +1586,51 @@ def _thermal_state(temp: Optional[float], warn: float, crit: float) -> str:
 
 
 def _cpu_usage_quick() -> dict:
-    """Top-N processes by CPU/memory plus a load summary. ~200ms."""
+    """Top-N processes by CPU/memory plus a load summary. ~200ms.
+
+    Filter rules (avoid noise from idle kernel threads):
+      - Drop rows with cpu_pct < 0.5 AND mem_pct < 0.1.
+      - Sort by cpu_pct desc, then mem_pct desc.
+      - Cap at 10 visible rows.
+    """
     rc, out, _ = _run(["top", "-b", "-n", "1", "-w", "200"], timeout=1.0)
     info: dict[str, Any] = {"top_procs": [], "load": _load_average()}
     if rc != 0 or not out:
         return info
     lines = out.splitlines()
-    # Skip the top header until the column header line, then take next 8 rows.
     in_table = False
-    procs: list[dict] = []
+    candidates: list[dict] = []
+    # Pull a generous number of candidates from `top` so the filter still
+    # gives us 10 substantive rows after dropping idle kworkers.
     for line in lines:
         if line.strip().startswith("PID"):
             in_table = True
             continue
-        if in_table:
-            parts = line.split()
-            if len(parts) < 12:
-                continue
-            try:
-                procs.append({
-                    "pid": int(parts[0]),
-                    "user": parts[1],
-                    "cpu_pct": float(parts[8]),
-                    "mem_pct": float(parts[9]),
-                    "command": " ".join(parts[11:])[:120],
-                })
-            except (ValueError, IndexError):
-                continue
-            if len(procs) >= 12:
-                break
-    info["top_procs"] = procs
+        if not in_table:
+            continue
+        parts = line.split()
+        if len(parts) < 12:
+            continue
+        try:
+            row = {
+                "pid": int(parts[0]),
+                "user": parts[1],
+                "cpu_pct": float(parts[8]),
+                "mem_pct": float(parts[9]),
+                "command": " ".join(parts[11:])[:120],
+            }
+        except (ValueError, IndexError):
+            continue
+        candidates.append(row)
+        if len(candidates) >= 60:
+            break
+
+    procs = [
+        p for p in candidates
+        if not (p["cpu_pct"] < 0.5 and p["mem_pct"] < 0.1)
+    ]
+    procs.sort(key=lambda p: (-p["cpu_pct"], -p["mem_pct"]))
+    info["top_procs"] = procs[:10]
     return info
 
 
@@ -1193,6 +1638,96 @@ def _cpu_usage_quick() -> dict:
 
 _VIDEO_DIR = Path("/home/tnunamak/applications/ComfyUI/output/video")
 _IMAGE_DIR = Path("/home/tnunamak/applications/ComfyUI/output")
+
+# In-memory probe cache keyed by (path, mtime) so we don't re-shell ffprobe /
+# re-open Pillow on every status poll. Bounded by the n we ever look at.
+_FFPROBE_CACHE: dict[tuple[str, int], dict] = {}
+_IMG_DIMS_CACHE: dict[tuple[str, int], dict] = {}
+
+
+def _ffprobe_video(path: Path, mtime: int) -> dict:
+    """Return ``{duration_s, width, height, has_audio}`` or ``{error}``."""
+    key = (str(path), mtime)
+    cached = _FFPROBE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    rc, out, err = _run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-print_format", "json",
+            "-show_format",
+            "-show_streams",
+            str(path),
+        ],
+        timeout=1.0,
+    )
+    info: dict = {}
+    if rc != 0 or not out:
+        info = {"error": (err or "ffprobe failed")[:80]}
+    else:
+        try:
+            data = json.loads(out)
+            streams = data.get("streams") or []
+            fmt = data.get("format") or {}
+            dur = fmt.get("duration")
+            try:
+                info["duration_s"] = round(float(dur), 2) if dur is not None else None
+            except (TypeError, ValueError):
+                info["duration_s"] = None
+            v_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+            if v_stream:
+                info["width"] = v_stream.get("width")
+                info["height"] = v_stream.get("height")
+            info["has_audio"] = any(s.get("codec_type") == "audio" for s in streams)
+        except Exception as e:  # noqa: BLE001
+            info = {"error": _safe_err(e)[:80]}
+    _FFPROBE_CACHE[key] = info
+    # Bound cache to last 200 entries.
+    if len(_FFPROBE_CACHE) > 200:
+        for k in list(_FFPROBE_CACHE.keys())[:50]:
+            _FFPROBE_CACHE.pop(k, None)
+    return info
+
+
+def _image_dims(path: Path, mtime: int) -> dict:
+    """Return ``{width, height}`` from PNG/WEBP/JPG header without decoding."""
+    key = (str(path), mtime)
+    cached = _IMG_DIMS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    info: dict = {}
+    try:
+        # Use Pillow if available — it lazy-reads the header. Falls back to
+        # ffprobe (always present) if Pillow isn't on the path.
+        try:
+            from PIL import Image  # type: ignore
+            with Image.open(path) as im:
+                info["width"], info["height"] = im.size
+        except Exception:
+            rc, out, _ = _run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height",
+                    "-of", "csv=p=0:s=,",
+                    str(path),
+                ],
+                timeout=1.0,
+            )
+            if rc == 0 and out.strip():
+                w, _, h = out.strip().partition(",")
+                try:
+                    info["width"], info["height"] = int(w), int(h)
+                except ValueError:
+                    pass
+    except Exception as e:  # noqa: BLE001
+        info["error"] = _safe_err(e)[:80]
+    _IMG_DIMS_CACHE[key] = info
+    if len(_IMG_DIMS_CACHE) > 200:
+        for k in list(_IMG_DIMS_CACHE.keys())[:50]:
+            _IMG_DIMS_CACHE.pop(k, None)
+    return info
 
 
 def _recent_renders_videos(n: int = 20) -> list[dict]:
@@ -1211,12 +1746,22 @@ def _recent_renders_videos(n: int = 20) -> list[dict]:
             continue
         m = re.match(r"^([A-Za-z0-9.\-]+?)_\d{4,}_", f.name)
         alias = m.group(1) if m else None
+        # Derive video_id from filename: ComfyUI emits `<alias>_<seq>_.mp4`,
+        # but the proxy's /v1/videos/{id}/content uses opaque IDs registered
+        # at submission time. We surface the bare filename so the renderer can
+        # build a static content URL (proxy serves cached files).
+        probe = _ffprobe_video(f, int(st.st_mtime))
         out.append({
             "filename": f.name,
             "path": str(f),
             "size_bytes": st.st_size,
             "mtime": int(st.st_mtime),
             "alias": alias,
+            "duration_s": probe.get("duration_s"),
+            "width": probe.get("width"),
+            "height": probe.get("height"),
+            "has_audio": probe.get("has_audio"),
+            "probe_error": probe.get("error"),
         })
     return out
 
@@ -1238,11 +1783,15 @@ def _recent_renders_images(n: int = 10) -> list[dict]:
             st = f.stat()
         except OSError:
             continue
+        dims = _image_dims(f, int(st.st_mtime))
         out.append({
             "filename": f.name,
             "path": str(f),
             "size_bytes": st.st_size,
             "mtime": int(st.st_mtime),
+            "width": dims.get("width"),
+            "height": dims.get("height"),
+            "probe_error": dims.get("error"),
         })
     return out
 
@@ -1272,40 +1821,226 @@ async def _enriched_aux_health() -> dict:
 
 
 def _voices_summary(proxy_module) -> Optional[dict]:
-    """Summary of /v1/audio/voices: count + language coverage.
+    """Summary of /v1/audio/voices: count + language coverage + alias breakdown.
 
     Reads VOICE_MAP + _voice_metadata directly from the proxy module to
     avoid a self-loopback HTTP call (the /v1/audio/voices endpoint requires
     bearer auth, so the previous httpx call returned 401).
+
+    Adds per-voice classification (alias vs native) and the OpenAI alias
+    mapping table so the renderer can show "alloy → neutral_female" etc.
     """
     if proxy_module is None:
         return None
     try:
         voice_map = getattr(proxy_module, "VOICE_MAP", None) or {}
         meta_fn = getattr(proxy_module, "_voice_metadata", None)
+        openai_alias_names = getattr(proxy_module, "_OPENAI_VOICE_NAMES", None) or {}
         if not voice_map or not callable(meta_fn):
             return None
         langs: Counter = Counter()
         genders: Counter = Counter()
+        sources: Counter = Counter()
+        openai_alias_map: dict[str, str] = {}
+        native_voices: list[str] = []
         count = 0
-        for voice_id in voice_map.keys():
+        for voice_id, mapped in voice_map.items():
             try:
-                meta = meta_fn(voice_id, voice_map[voice_id]) or {}
+                meta = meta_fn(voice_id, mapped) or {}
             except Exception:
                 meta = {}
             langs[meta.get("language") or "unknown"] += 1
             genders[meta.get("gender") or "unknown"] += 1
             count += 1
+            # Classify: an "OpenAI alias" is anything in _OPENAI_VOICE_NAMES;
+            # everything else is treated as a native Voxtral voice.
+            if voice_id in openai_alias_names:
+                sources["openai_alias"] += 1
+                openai_alias_map[voice_id] = mapped
+            else:
+                sources["voxtral_native"] += 1
+                native_voices.append(voice_id)
         return {
             "count": count,
             "languages": dict(langs),
             "genders": dict(genders),
+            "sources": dict(sources),
+            "openai_alias_map": dict(sorted(openai_alias_map.items())),
+            "native_voices": sorted(native_voices),
+            "example_curl": (
+                "curl -s http://127.0.0.1:5000/v1/audio/speech "
+                "-H 'Authorization: Bearer $OPENAI_PROXY_KEY' "
+                "-H 'Content-Type: application/json' "
+                "-d '{\"model\":\"tts-1\",\"voice\":\"alloy\",\"input\":\"hello\"}' "
+                "--output out.mp3"
+            ),
+            "list_endpoint": "/v1/audio/voices",
         }
     except Exception:
         return None
 
 
 # --- daisy ---------------------------------------------------------------
+
+_DAISY_MODELS_JSON = Path("/home/tnunamak/applications/daisy/.pi/agent/models.json")
+_DAISY_TMUX_TARGET = "main:daisy"
+
+
+def _daisy_pi_context() -> dict:
+    """Read pi context budget from daisy's models.json and estimate current
+    usage from the daisy tmux pane status line.
+
+    Both lookups are best-effort. If models.json is missing the section is
+    returned with ``unavailable_reason``; if tmux is unreachable we still
+    return the configured ``context_window`` and stamp ``tmux_unavailable_reason``.
+    """
+    info: dict[str, Any] = {}
+    try:
+        if _DAISY_MODELS_JSON.is_file():
+            data = json.loads(_DAISY_MODELS_JSON.read_text(encoding="utf-8")) or {}
+            ctx_window = None
+            for prov in (data.get("providers") or {}).values():
+                if not isinstance(prov, dict):
+                    continue
+                models = prov.get("models") or []
+                if models and isinstance(models[0], dict):
+                    ctx_window = models[0].get("contextWindow")
+                    break
+            info["context_window"] = ctx_window
+        else:
+            info["unavailable_reason"] = f"models.json not found: {_DAISY_MODELS_JSON}"
+            return info
+    except Exception as e:
+        info["unavailable_reason"] = _safe_err(e)
+        return info
+
+    # tmux pane status — daisy renders something like "0.5%/131k (auto)" on
+    # one of the bottom lines. We look for that pattern in the pane tail.
+    try:
+        proc = subprocess.run(
+            ["tmux", "capture-pane", "-t", _DAISY_TMUX_TARGET, "-p"],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROC_TIMEOUT,
+        )
+        if proc.returncode == 0 and proc.stdout:
+            tail = proc.stdout.rstrip().splitlines()[-12:]
+            pct_used = None
+            status_line = None
+            for line in tail:
+                m = re.search(r"(\d+(?:\.\d+)?)\s*%/(\d+(?:\.\d+)?)\s*([kKmM])\b", line)
+                if m:
+                    pct_used = float(m.group(1))
+                    status_line = m.group(0)
+                    break
+            info["percent_used"] = pct_used
+            info["status_line"] = status_line
+            ctx_w = info.get("context_window")
+            if isinstance(ctx_w, (int, float)) and pct_used is not None:
+                info["current_estimated"] = int(ctx_w * pct_used / 100.0)
+        else:
+            info["tmux_unavailable_reason"] = (
+                f"tmux capture-pane returned rc={proc.returncode}"
+            )
+    except FileNotFoundError:
+        info["tmux_unavailable_reason"] = "tmux not on PATH"
+    except subprocess.TimeoutExpired:
+        info["tmux_unavailable_reason"] = "tmux capture timed out"
+    except Exception as e:  # noqa: BLE001
+        info["tmux_unavailable_reason"] = _safe_err(e)
+    return info
+
+
+def _daisy_telegram_bridge() -> dict:
+    """Inspect daisy's tmux pane and ``daisy.service`` journal for the most
+    recent Telegram bridge transition. Returns
+    ``{state, last_seen, last_line, source, unavailable_reason}``.
+
+    Tmux is preferred because daisy's status line ("telegram connected") is
+    the freshest signal — the journal often only carries the original failed
+    start from a previous boot.
+    """
+    info: dict[str, Any] = {}
+    # 1) Tmux pane — freshest signal when daisy is actively running.
+    try:
+        proc = subprocess.run(
+            ["tmux", "capture-pane", "-t", _DAISY_TMUX_TARGET, "-p"],
+            capture_output=True, text=True, timeout=_SUBPROC_TIMEOUT,
+        )
+        if proc.returncode == 0 and proc.stdout:
+            for line in proc.stdout.rstrip().splitlines()[-12:]:
+                low = line.lower()
+                if "telegram connected" in low:
+                    info["state"] = "connected"
+                    info["source"] = "tmux"
+                    info["last_line"] = line.strip()[:300]
+                    return info
+                if "telegram disconnected" in low or "telegram error" in low:
+                    info["state"] = "disconnected"
+                    info["source"] = "tmux"
+                    info["last_line"] = line.strip()[:300]
+                    return info
+    except FileNotFoundError:
+        pass
+    except subprocess.TimeoutExpired:
+        pass
+    except Exception:
+        pass
+
+    # 2) Fallback: scan journal for the most recent transition.
+    try:
+        proc = subprocess.run(
+            [
+                "journalctl",
+                "--user",
+                "-u", "daisy.service",
+                "-n", "200",
+                "--no-pager",
+                "-o", "short-iso",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROC_TIMEOUT,
+        )
+        if proc.returncode != 0:
+            info["unavailable_reason"] = (
+                f"journalctl rc={proc.returncode}: {(proc.stderr or '')[:160]}"
+            )
+            return info
+        last_relevant: Optional[str] = None
+        for line in proc.stdout.splitlines():
+            ll = line.lower()
+            if "telegram" in ll and (
+                "connect" in ll or "disconnect" in ll or "error" in ll or "fail" in ll
+            ):
+                last_relevant = line
+        if not last_relevant:
+            info["state"] = "unknown"
+            info["last_line"] = None
+            return info
+        info["last_line"] = last_relevant[-300:]
+        info["source"] = "journal"
+        ll = last_relevant.lower()
+        if "disconnect" in ll or "fail" in ll or "error" in ll:
+            info["state"] = "disconnected"
+        elif "connected" in ll:
+            info["state"] = "connected"
+        else:
+            info["state"] = "unknown"
+        m = re.match(
+            r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-]\d{2}:?\d{2})",
+            last_relevant,
+        )
+        if m:
+            info["last_seen"] = m.group(1)
+    except FileNotFoundError:
+        info["unavailable_reason"] = "journalctl not on PATH"
+    except subprocess.TimeoutExpired:
+        info["unavailable_reason"] = "journalctl timed out"
+    except Exception as e:  # noqa: BLE001
+        info["unavailable_reason"] = _safe_err(e)
+    return info
+
 
 def _daisy_audit_summary() -> dict:
     """Read the last few audit entries from daisy's audit log."""
@@ -1520,9 +2255,10 @@ async def build_status_payload(config: dict) -> dict:
     comfy_queue, comfy_stats = (queue_result or (None, None))
     props, slots = (llama_result or (None, None))
 
+    voxtral_health = (aux_health or {}).get("voxtral") if isinstance(aux_health, dict) else None
     models = sync_section(
         "models",
-        lambda: _build_models(config, props, slots),
+        lambda: _build_models(config, props, slots, voxtral_health=voxtral_health),
     )
 
     gpus_raw = sync_section("gpus", _gpus_raw)
@@ -1553,6 +2289,27 @@ async def build_status_payload(config: dict) -> dict:
         "journal_disk_usage_bytes": sync_section("journal_disk", _journal_disk_usage),
     }
     disk["hotspots"] = [h for h in disk["hotspots"] if h]
+    # Compute deduped (non-overlapping) hot-spot total. When one path is a
+    # subdirectory of another we attribute its bytes only to the deepest
+    # ancestor present, so the total reflects unique on-disk bytes.
+    try:
+        hotspot_paths = [(h.get("path") or "", int(h.get("size_bytes") or 0)) for h in disk["hotspots"] if h.get("exists")]
+        non_overlap = 0
+        for path, size in hotspot_paths:
+            # If another hotspot is a strict prefix (ancestor) of this one, it
+            # already accounts for these bytes — skip the child to avoid
+            # double-counting.
+            is_child = any(
+                other_path
+                and other_path != path
+                and (path == other_path or path.startswith(other_path.rstrip("/") + "/"))
+                for other_path, _ in hotspot_paths
+            )
+            if not is_child:
+                non_overlap += size
+        disk["hotspots_total_non_overlapping_bytes"] = non_overlap
+    except Exception:
+        disk["hotspots_total_non_overlapping_bytes"] = None
 
     thermal = sync_section("sensors", _read_sensors) or {}
     cpu = sync_section("cpu_usage", _cpu_usage_quick) or {}
@@ -1600,6 +2357,7 @@ async def build_status_payload(config: dict) -> dict:
 
     # Per-key activity from in-process counters.
     auth_keys: list[dict] = []
+    auth_keys_window: dict[str, Any] = {}
     known_names: list[str] = []
     if proxy_module is not None:
         try:
@@ -1613,6 +2371,12 @@ async def build_status_payload(config: dict) -> dict:
         except Exception as e:
             errors["auth_keys"] = _safe_err(e)
             auth_keys = []
+        try:
+            # Tells the renderer how far back the counters actually cover so
+            # the section title can be honest after a restart.
+            auth_keys_window = firehose_metrics.snapshot_window() or {}
+        except Exception:
+            auth_keys_window = {}
     else:
         auth_keys = [
             {
@@ -1683,23 +2447,70 @@ async def build_status_payload(config: dict) -> dict:
                 # Older variants keyed by category-dict. Handle both.
                 if isinstance(aliases_yaml, dict):
                     total = 0
-                    for v in aliases_yaml.values():
-                        if isinstance(v, (list, tuple, set)):
-                            total += len(v)
-                        elif isinstance(v, dict):
-                            total += len(v)
+                    sample: list[dict] = []
+                    by_category: Counter = Counter()
+                    # New shape: {generated_at, source, models: [{id, category, ...}]}
+                    models_list = aliases_yaml.get("models")
+                    if isinstance(models_list, list):
+                        total = len(models_list)
+                        for item in models_list:
+                            if not isinstance(item, dict):
+                                continue
+                            by_category[item.get("category") or "unknown"] += 1
+                        # Sample first 20 alphabetically by id for the dashboard.
+                        sorted_models = sorted(
+                            (m for m in models_list if isinstance(m, dict)),
+                            key=lambda m: str(m.get("id") or ""),
+                        )
+                        sample = [
+                            {"id": m.get("id"), "category": m.get("category")}
+                            for m in sorted_models[:20]
+                        ]
+                    else:
+                        # Legacy shape: top-level keys map to lists/dicts of ids.
+                        for v in aliases_yaml.values():
+                            if isinstance(v, (list, tuple, set)):
+                                total += len(v)
+                            elif isinstance(v, dict):
+                                total += len(v)
                     config_snapshot["openai_aliases_count"] = total
+                    config_snapshot["openai_aliases_by_category"] = dict(by_category)
+                    config_snapshot["openai_aliases_sample"] = sample
             except Exception:
                 pass
     except Exception:
         pass
 
-    daisy = sync_section("daisy_audit", _daisy_audit_summary)
+    daisy = sync_section("daisy_audit", _daisy_audit_summary) or {}
+    # Augment the daisy summary with two extra signals the audit identified.
+    # Both are synchronous + cheap; sync_section guarantees they never escape.
+    pi_ctx = sync_section("daisy_pi_context", _daisy_pi_context)
+    if pi_ctx is not None:
+        daisy["pi_context"] = pi_ctx
+    bridge = sync_section("daisy_telegram_bridge", _daisy_telegram_bridge)
+    if bridge is not None:
+        daisy["telegram_bridge"] = bridge
     drift = sync_section("workflow_drift", _workflow_drift_status)
 
+    # ------------------------------------------------------------------
     # Banner severity.
+    #
+    # Two independent tiers, scored separately:
+    #   `banner` (primary)        — API health: can /v1/* serve traffic?
+    #   `system_health` (secondary) — host health: disk/thermal/audit/etc.
+    #
+    # An overflowing disk does not break /v1/chat/completions, so it should
+    # NOT turn the API banner red. The system-health badge surfaces those
+    # concerns without conflating them with API outages.
+    # ------------------------------------------------------------------
+    sev_rank = {"ok": 0, "warn": 1, "bad": 2}
+
+    def _bump(current: str, new: str) -> str:
+        return new if sev_rank.get(new, 0) > sev_rank.get(current, 0) else current
+
+    # --- API banner (primary) ---
     banner = "ok"
-    banner_reasons: list[str] = []
+    api_reasons: list[tuple[str, str]] = []  # (severity, message)
     if backends:
         any_required_down = any(
             b.get("role") == "required" and b.get("live_status") == "down" for b in backends
@@ -1711,53 +2522,110 @@ async def build_status_payload(config: dict) -> dict:
             b.get("role") == "optional" and b.get("live_status") == "down" for b in backends
         )
         if any_required_down:
-            banner = "bad"
-            banner_reasons.append("required backend down")
-        elif any_required_degraded or any_optional_down:
-            banner = "warn"
-            banner_reasons.append("backend degraded or optional down")
+            banner = _bump(banner, "bad")
+            api_reasons.append(("bad", "required backend down"))
+        elif any_required_degraded:
+            banner = _bump(banner, "warn")
+            api_reasons.append(("warn", "required backend degraded"))
+        elif any_optional_down:
+            banner = _bump(banner, "warn")
+            api_reasons.append(("warn", "optional backend down"))
     else:
-        banner = "bad"
+        banner = _bump(banner, "bad")
         errors.setdefault("backends", "no probe results")
-        banner_reasons.append("no backend probes")
+        api_reasons.append(("bad", "no backend probes"))
 
-    # Disk pressure → banner escalation.
-    for part in disk.get("partitions") or []:
-        pct = part.get("pct_used") or 0
-        if pct >= 95 and banner != "bad":
-            banner = "bad"
-            banner_reasons.append(f"disk {part['target']} {pct}% full")
-        elif pct >= 85 and banner == "ok":
-            banner = "warn"
-            banner_reasons.append(f"disk {part['target']} {pct}% full")
-
-    # Thermal escalation.
-    if thermal.get("cpu_thermal_state") == "critical" and banner != "bad":
-        banner = "bad"
-        banner_reasons.append(f"CPU temp critical ({thermal.get('cpu_max_c')}C)")
-    elif thermal.get("cpu_thermal_state") == "warn" and banner == "ok":
-        banner = "warn"
-        banner_reasons.append(f"CPU temp warn ({thermal.get('cpu_max_c')}C)")
-
-    # Xid surge.
+    # Xid 109 surge in last 60min affects request reliability — API tier.
     by60 = (driver or {}).get("by_code_60min") or {}
     if by60:
         total_60 = sum(by60.values())
-        if total_60 >= 5 and banner != "bad":
-            banner = "warn" if banner == "ok" else banner
-            banner_reasons.append(f"Xid surge: {total_60} in last 60min")
+        if total_60 >= 5:
+            banner = _bump(banner, "warn")
+            api_reasons.append(("warn", f"Xid surge: {total_60} in last 60min"))
 
-    # Swap-in-progress note.
+    # Model swap in progress → transient unavailability for one provider.
     if swap_state and (swap_state.get("tabby_swap_in_progress") or swap_state.get("kobold_swap_in_progress")):
-        if banner == "ok":
-            banner = "warn"
-        banner_reasons.append("model swap in progress")
+        banner = _bump(banner, "warn")
+        api_reasons.append(("warn", "model swap in progress"))
+
+    # Sort API reasons by severity (bad first), preserve insertion order
+    # within the same severity.
+    api_reasons.sort(key=lambda r: -sev_rank.get(r[0], 0))
+    banner_reasons: list[str] = [m for _s, m in api_reasons]
+
+    # --- system_health badge (secondary) ---
+    system_health = "ok"
+    sh_reasons: list[tuple[str, str]] = []
+
+    # Disk pressure (warn 85, bad 95).
+    for part in disk.get("partitions") or []:
+        pct = part.get("pct_used") or 0
+        if pct >= 95:
+            system_health = _bump(system_health, "bad")
+            sh_reasons.append(("bad", f"disk {part['target']} {pct}% full"))
+        elif pct >= 85:
+            system_health = _bump(system_health, "warn")
+            sh_reasons.append(("warn", f"disk {part['target']} {pct}% full"))
+
+    # Thermal — CPU.
+    cpu_state = thermal.get("cpu_thermal_state")
+    if cpu_state == "critical":
+        system_health = _bump(system_health, "bad")
+        sh_reasons.append(("bad", f"CPU temp critical ({thermal.get('cpu_max_c')}C)"))
+    elif cpu_state == "warn":
+        system_health = _bump(system_health, "warn")
+        sh_reasons.append(("warn", f"CPU temp warn ({thermal.get('cpu_max_c')}C)"))
+
+    # Thermal — DIMM.
+    dimm_state = thermal.get("dimm_thermal_state")
+    if dimm_state == "critical":
+        system_health = _bump(system_health, "bad")
+        sh_reasons.append(("bad", f"DIMM temp critical ({thermal.get('dimm_max_c')}C)"))
+    elif dimm_state == "warn":
+        system_health = _bump(system_health, "warn")
+        sh_reasons.append(("warn", f"DIMM temp warn ({thermal.get('dimm_max_c')}C)"))
+
+    # Thermal — NVMe.
+    nvme_state = thermal.get("nvme_thermal_state")
+    if nvme_state == "critical":
+        system_health = _bump(system_health, "bad")
+        sh_reasons.append(("bad", f"NVMe temp critical ({thermal.get('nvme_max_c')}C)"))
+    elif nvme_state == "warn":
+        system_health = _bump(system_health, "warn")
+        sh_reasons.append(("warn", f"NVMe temp warn ({thermal.get('nvme_max_c')}C)"))
+
+    # Xid 24h history (any code) — ambient hardware-instability signal.
+    by24 = (driver or {}).get("by_code_24h") or {}
+    if isinstance(by24, dict):
+        total_24 = sum(v for v in by24.values() if isinstance(v, int))
+        if total_24 >= 1:
+            # Recent history without a 60-min surge is just info, surface as warn.
+            if not by60 or sum(by60.values()) < 5:
+                system_health = _bump(system_health, "warn")
+                sh_reasons.append(("warn", f"Xid events in last 24h: {total_24}"))
+
+    # Daisy audit stale → informational, only escalate to warn if very stale.
+    try:
+        last_mod = (daisy or {}).get("last_modified")
+        if last_mod:
+            age_s = max(0, int(time.time()) - int(last_mod))
+            # >24h of no audit activity → warn.
+            if age_s > 86400:
+                system_health = _bump(system_health, "warn")
+                sh_reasons.append(("warn", f"daisy audit stale ({age_s // 3600}h)"))
+    except Exception:
+        pass
+
+    sh_reasons.sort(key=lambda r: -sev_rank.get(r[0], 0))
+    system_health_reasons: list[str] = [m for _s, m in sh_reasons]
 
     return {
         "generated_at": int(time.time()),
         "cache_age_s": 0,
         "banner": banner,
         "banner_reasons": banner_reasons,
+        "system_health": system_health,
+        "system_health_reasons": system_health_reasons,
         "backends": backends or [],
         "gpus": gpus,
         "vram_attribution": vram_attr,
@@ -1782,15 +2650,22 @@ async def build_status_payload(config: dict) -> dict:
         "budgets": budgets,
         "image_cache": image_cache,
         "auth_keys": auth_keys,
+        "auth_keys_window": auth_keys_window,
         "recent_events": recent_events,
         "daisy": daisy,
         "workflow_drift": drift,
         "config_snapshot": config_snapshot,
         "errors": errors,
+        "commit_hash": _COMMIT_HASH,
     }
 
 
-def _build_models(config: dict, props: Optional[dict], slots: Optional[list[dict]]) -> dict:
+def _build_models(
+    config: dict,
+    props: Optional[dict],
+    slots: Optional[list[dict]],
+    voxtral_health: Optional[dict] = None,
+) -> dict:
     """Synchronous wrapper around the async-friendly _models_section."""
     # The function above is async; we re-implement the sync portion since props/slots
     # already came in. Keep the body identical to _models_section.
@@ -1800,8 +2675,8 @@ def _build_models(config: dict, props: Optional[dict], slots: Optional[list[dict
     ctx_size_str = _extract_arg(args, "--ctx-size") if args else None
     cache_k_arg = _extract_arg(args, "--cache-type-k") if args else None
     cache_v_arg = _extract_arg(args, "--cache-type-v") if args else None
-    tensor_split = _extract_arg(args, "--tensor-split") if args else None
-    parallel_arg = _extract_arg(args, "--parallel") if args else None
+    tensor_split_raw = _extract_arg(args, "--tensor-split") if args else None
+    parallel_cmdline = _extract_arg(args, "--parallel") if args else None
 
     try:
         ctx_size = int(ctx_size_str) if ctx_size_str else None
@@ -1876,22 +2751,19 @@ def _build_models(config: dict, props: Optional[dict], slots: Optional[list[dict
     except Exception:
         pass
 
-    tts_engine: Optional[str] = None
-    rc, out, _ = _run(["systemctl", "--user", "is-active", "voxtral-int4-tts.service"])
-    if rc == 0 and out.strip() == "active":
-        tts_engine = "voxtral-int4-tts"
-    else:
-        for unit in ("voxtral-tts.service", "tts.service"):
-            rc2, out2, _ = _run(["systemctl", "--user", "is-active", unit])
-            if rc2 == 0 and out2.strip() == "active":
-                tts_engine = unit.removesuffix(".service")
-                break
+    tts = _resolve_tts_engine(args, voxtral_health)
 
     loaded_name = props_model_alias or (Path(loaded_path).name if loaded_path else None)
     if vision_modality is not None:
         vision_capable = bool(vision_modality)
     else:
         vision_capable = bool(mmproj)
+
+    total_slots_value = (
+        props_total_slots if props_total_slots is not None else len(slot_details)
+    )
+    parallel = _resolve_parallel_arg(parallel_cmdline, props_total_slots)
+    tensor_split_info = _annotate_tensor_split(tensor_split_raw)
 
     return {
         "loaded_llm_path": props_model_path or loaded_path,
@@ -1901,17 +2773,26 @@ def _build_models(config: dict, props: Optional[dict], slots: Optional[list[dict
         "vision_source": "props" if vision_modality is not None else ("cmdline" if mmproj else "unknown"),
         "ctx_size": props_n_ctx or ctx_size,
         "ctx_used": ctx_used,
-        "active_tts_engine": tts_engine,
+        # Back-compat: keep flat field for any consumers still reading the
+        # legacy unit name. Renderer prefers the structured ``tts`` block.
+        "active_tts_engine": tts.get("unit"),
+        "tts": tts,
         "image_workflows": image_workflows,
         "video_aliases": aliases,
-        "total_slots": props_total_slots if props_total_slots is not None else len(slot_details),
+        "total_slots": total_slots_value,
         "active_slots": active_slots,
         "slots": slot_details,
         "speculative_type": speculative_type,
         "cache_type_k": cache_k_arg,
         "cache_type_v": cache_v_arg,
-        "tensor_split": tensor_split,
-        "parallel_arg": parallel_arg,
+        # ``tensor_split`` retained as raw string for back-compat; structured
+        # info (weights/fractions/summary) lives under ``tensor_split_info``.
+        "tensor_split": tensor_split_raw,
+        "tensor_split_info": tensor_split_info,
+        # ``parallel_arg`` is now an effective value (defaults to props.total_slots
+        # when --parallel is absent on the cmdline) wrapped with provenance.
+        "parallel_arg": parallel.get("value"),
+        "parallel_arg_source": parallel.get("source"),
     }
 
 
