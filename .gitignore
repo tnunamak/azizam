@@ -5,6 +5,13 @@ proxy_api_keys.yml
 cache/
 *.url_signing_secret
 
+# Metrics persistence: schema is committed via .gitkeep; the DB itself
+# is ephemeral runtime state.
+data/metrics.db
+data/metrics.db-wal
+data/metrics.db-shm
+data/metrics.db.broken-*
+
 # =============================================================================
 # Python
 # =============================================================================

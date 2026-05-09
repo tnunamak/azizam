@@ -155,6 +155,30 @@ npm run build  # outputs to ./out
 
 Serve `status-page/out/` from any static host or behind the proxy.
 
+## Metrics persistence
+
+Time-series metrics are written into `data/metrics.db` (SQLite, WAL). The DB is host-local runtime state and is gitignored; the schema lives entirely in `metrics_store.py`.
+
+Layout:
+
+| Table | Retention | Sample rate |
+|---|---|---|
+| `samples` | 7 days | every 10 s (fast tier) / 60 s (slow tier) |
+| `samples_1min` | 30 days | rolled up at the top of each minute |
+| `samples_1hour` | 365 days | rolled up at the top of each hour |
+
+Each row is `(ts, metric, tags_json, value)` plus rollup columns `(avg_value, min_value, max_value, count)` on the aggregated tables. Tag dicts (e.g. `{"gpu":0}`, `{"key":"alpha","path":"/v1/chat/completions","status":200}`) serialize deterministically with sorted keys.
+
+Sampling cadence is driven by a single `asyncio` task in `metrics_sampler.py`:
+
+- **Fast tier (10 s):** GPU util / VRAM / temp / clocks / fan, CPU/NVMe/DIMM temps, load avg, RAM totals, ComfyUI queue depth, llama-server slots active count.
+- **Slow tier (60 s):** disk avail+pct per mount, per-service RSS, per-GPU per-service VRAM attribution, Xid-109 / total Xid 60-min and 24-h counts.
+- **Per-request samples:** the auth middleware writes one `request` sample per non-skip path with `{key, path, status}` tags so per-key request-rate sparklines survive proxy restarts.
+
+A WAL checkpoint is performed on shutdown. On startup the file is `PRAGMA integrity_check`-ed; a corrupt DB is renamed to `metrics.db.broken-{ts}` and a fresh one is created.
+
+The `/v1/status` payload exposes a `metrics` block with windowed aggregates (5 min / 1 h / 24 h) and 24-hour series suitable for sparklines, and the firehose status page renders a "Trends" section using inline-SVG sparklines (no JavaScript).
+
 ## Operational notes
 
 `inbox/` holds dated audits, proposals, and "final state" snapshots from incremental work on the proxy — these are running notes rather than canonical docs. Treat the README and the top-level `*.md` files as the authoritative reference; the inbox is operational history.

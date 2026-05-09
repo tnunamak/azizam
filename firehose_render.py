@@ -309,6 +309,9 @@ def render_html(payload: dict, *, host: Optional[str] = None) -> str:
     parts.append(_section("Quick test endpoints", _render_quick_test(), collapsed=True))
     parts.append(_section("ComfyUI custom nodes", _render_comfy_custom_nodes(payload.get("comfy_custom_nodes") or []), collapsed=True))
 
+    parts.append('<div class="group-label">Trends</div>')
+    parts.append(_section("Time-series trends", _render_trends(payload.get("metrics") or {})))
+
     parts.append('<div class="group-label">Diagnostics</div>')
     parts.append(_section("Driver & kernel events", _render_driver(payload.get("driver") or {}), collapsed=True))
     parts.append(_section("ComfyUI view (system_stats)", _render_comfy_view(payload.get("comfy_view")), collapsed=True))
@@ -2579,3 +2582,262 @@ def _render_errors(errs: dict) -> str:
         rows.append(f'<tr><td>{_esc(k)}</td><td class="err mono">{_esc(v)}</td></tr>')
     rows.append("</tbody></table>")
     return "".join(rows)
+
+
+# --- Trends (time-series-derived) ----------------------------------------
+
+def _sparkline(
+    points: list,
+    *,
+    width: int = 120,
+    height: int = 24,
+    color: str = "var(--dive-biolum)",
+    fill: bool = False,
+) -> str:
+    """Stateless inline SVG sparkline. Each datum is (ts, value)."""
+    if not points or len(points) < 2:
+        return '<span class="muted small">(no data)</span>'
+    values = [v for _, v in points]
+    vmin, vmax = min(values), max(values)
+    if vmax == vmin:
+        vmax = vmin + 1
+    n = len(points)
+    coords = []
+    for i, (_, v) in enumerate(points):
+        x = i * (width / (n - 1))
+        y = height - ((v - vmin) / (vmax - vmin)) * height
+        coords.append(f"{x:.1f},{y:.1f}")
+    path = "M " + " L ".join(coords)
+    fill_attr = ""
+    if fill:
+        fill_attr = (
+            f'<path d="{path} L {width:.1f},{height} L 0,{height} Z" '
+            f'fill="{color}" opacity="0.15"/>'
+        )
+    return (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'style="vertical-align:middle">'
+        f'{fill_attr}'
+        f'<path d="{path}" stroke="{color}" stroke-width="1.5" fill="none"/>'
+        f'</svg>'
+    )
+
+
+def _bar_sparkline(
+    points: list,
+    *,
+    width: int = 120,
+    height: int = 24,
+    color: str = "var(--dive-amber)",
+) -> str:
+    """Bar-chart sparkline for discrete-event counts (e.g. Xid 109 hourly)."""
+    if not points:
+        return '<span class="muted small">(no data)</span>'
+    values = [v for _, v in points]
+    vmax = max(values) if values else 0
+    if vmax <= 0:
+        return '<span class="muted small">0 events</span>'
+    n = len(points)
+    bar_w = width / n
+    bars: list[str] = []
+    for i, (_, v) in enumerate(points):
+        h = (v / vmax) * height if vmax > 0 else 0
+        x = i * bar_w
+        y = height - h
+        bars.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{max(0.5, bar_w - 1):.1f}" '
+            f'height="{h:.1f}" fill="{color}"/>'
+        )
+    return (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'style="vertical-align:middle">'
+        f'{"".join(bars)}'
+        f'</svg>'
+    )
+
+
+def _format_hours(h: Optional[float]) -> str:
+    if h is None:
+        return "—"
+    if h < 1:
+        return f"{h * 60:.0f} min"
+    if h < 48:
+        return f"{h:.1f} h"
+    return f"{h / 24:.1f} d"
+
+
+def _format_gb(b: Optional[float]) -> str:
+    if b is None:
+        return "—"
+    return f"{b:+.1f} GB"
+
+
+def _render_trends(metrics: dict) -> str:
+    """Render the Trends section. Pulls everything from the `metrics` block."""
+    if not metrics or not metrics.get("available", True):
+        return '<div class="muted">metrics layer unavailable</div>'
+
+    parts: list[str] = []
+
+    # CPU + GPU thermal table.
+    rows: list[str] = [
+        '<table><thead><tr>'
+        '<th>Sensor</th><th>5 min max</th><th>1 h max</th><th>24 h max</th>'
+        '</tr></thead><tbody>'
+    ]
+    cpu = metrics.get("cpu") or {}
+    rows.append(
+        f'<tr><td>CPU</td>'
+        f'<td>{_fmt_temp(cpu.get("temp_max_5min_c"))}</td>'
+        f'<td>{_fmt_temp(cpu.get("temp_max_1h_c"))}</td>'
+        f'<td>{_fmt_temp(cpu.get("temp_max_24h_c"))}</td></tr>'
+    )
+    for g in metrics.get("gpus") or []:
+        idx = g.get("index")
+        rows.append(
+            f'<tr><td>GPU {_esc(idx)}</td>'
+            f'<td>{_fmt_temp(g.get("temp_max_5min_c"))}</td>'
+            f'<td>{_fmt_temp(g.get("temp_max_1h_c"))}</td>'
+            f'<td>{_fmt_temp(g.get("temp_max_24h_c"))}</td></tr>'
+        )
+    rows.append('</tbody></table>')
+    parts.append('<h3>Thermal max over time</h3>')
+    parts.append("".join(rows))
+
+    # GPU VRAM% over 24h sparklines.
+    parts.append('<h3>GPU VRAM utilization (last 24 h)</h3>')
+    vram_rows = [
+        '<table><thead><tr><th>GPU</th><th>5 min max</th><th>1 h max</th>'
+        '<th>24 h max</th><th>24 h trend</th></tr></thead><tbody>'
+    ]
+    for g in metrics.get("gpus") or []:
+        idx = g.get("index")
+        spark = _sparkline(g.get("vram_pct_24h_series") or [], color="var(--dive-biolum)", fill=True)
+        vram_rows.append(
+            f'<tr><td>GPU {_esc(idx)}</td>'
+            f'<td>{_fmt_pct(g.get("vram_pct_max_5min"))}</td>'
+            f'<td>{_fmt_pct(g.get("vram_pct_max_1h"))}</td>'
+            f'<td>{_fmt_pct(g.get("vram_pct_max_24h"))}</td>'
+            f'<td>{spark}</td></tr>'
+        )
+    vram_rows.append('</tbody></table>')
+    parts.append("".join(vram_rows))
+
+    # Disk free over 24h with time-to-full estimate.
+    disk = metrics.get("disk") or {}
+    if disk:
+        parts.append('<h3>Disk free trend (last 24 h)</h3>')
+        disk_rows = [
+            '<table><thead><tr><th>Mount</th><th>Δ avail (24 h)</th>'
+            '<th>Time to full</th><th>24 h trend</th></tr></thead><tbody>'
+        ]
+        for mount, info in sorted((disk or {}).items()):
+            if not isinstance(info, dict):
+                continue
+            change_gb = info.get("avail_change_24h_gb")
+            ttf = info.get("time_to_full_estimate_hours")
+            change_color = "var(--dive-biolum)"
+            if isinstance(change_gb, (int, float)):
+                if change_gb < -1.0:
+                    change_color = "var(--dive-coral)"
+                elif change_gb > 1.0:
+                    change_color = "var(--dive-biolum2)"
+            spark = _sparkline(info.get("series_24h") or [], color=change_color, fill=True)
+            ttf_html = ""
+            if isinstance(ttf, (int, float)):
+                if ttf < 168:  # < 7 days
+                    ttf_html = f'<span class="pill bad">{_format_hours(ttf)}</span>'
+                else:
+                    ttf_html = f'<span class="muted small">{_format_hours(ttf)}</span>'
+            else:
+                ttf_html = '<span class="muted small">stable / freeing</span>'
+            disk_rows.append(
+                f'<tr><td class="mono">{_esc(mount)}</td>'
+                f'<td>{_format_gb(change_gb)}</td>'
+                f'<td>{ttf_html}</td>'
+                f'<td>{spark}</td></tr>'
+            )
+        disk_rows.append('</tbody></table>')
+        parts.append("".join(disk_rows))
+
+    # Per-key requests / minute.
+    trends = metrics.get("trends") or {}
+    per_key_rpm = trends.get("per_key_rpm_5min") or {}
+    per_key_series = trends.get("per_key_request_series_1h") or {}
+    if per_key_rpm:
+        parts.append('<h3>Per-key request rate (last hour)</h3>')
+        key_rows = [
+            '<table><thead><tr><th>Key</th><th>Req / min (5 min avg)</th>'
+            '<th>Last hour</th></tr></thead><tbody>'
+        ]
+        for k in sorted(per_key_rpm.keys()):
+            rpm = per_key_rpm.get(k)
+            spark = _sparkline(per_key_series.get(k) or [], color="var(--dive-biolum)")
+            rpm_str = f"{rpm:.2f}" if isinstance(rpm, (int, float)) else "—"
+            key_rows.append(
+                f'<tr><td class="mono">{_esc(k)}</td>'
+                f'<td>{rpm_str}</td>'
+                f'<td>{spark}</td></tr>'
+            )
+        key_rows.append('</tbody></table>')
+        parts.append("".join(key_rows))
+
+    # Xid 109 hourly bar chart.
+    xid_hourly = trends.get("xid_109_hourly_24h") or []
+    if xid_hourly:
+        bars = _bar_sparkline(xid_hourly, color="var(--dive-coral)", width=240, height=32)
+        total = trends.get("xid_109_24h_count")
+        last_hour = trends.get("xid_109_60min_count")
+        parts.append('<h3>Xid 109 events (hourly, last 24 h)</h3>')
+        parts.append(
+            f'<div>{bars} '
+            f'<span class="muted small">'
+            f'24h total: {_esc(total if total is not None else 0)}, '
+            f'last hour: {_esc(last_hour if last_hour is not None else 0)}'
+            f'</span></div>'
+        )
+
+    # DB health footer.
+    db_health = metrics.get("db_health") or {}
+    if db_health:
+        size_b = db_health.get("size_bytes")
+        size_str = _bytes(size_b) if isinstance(size_b, int) else "—"
+        oldest = db_health.get("oldest_sample_ts")
+        if isinstance(oldest, (int, float)) and oldest > 0:
+            oldest_str = _ago(oldest)
+        else:
+            oldest_str = "—"
+        rows_total = db_health.get("total_rows")
+        ok = db_health.get("recent_write_ok")
+        ok_pill = (
+            '<span class="pill ok">writing</span>' if ok
+            else '<span class="pill warn">stale</span>'
+        )
+        parts.append(
+            f'<div class="small muted" style="margin-top:8px">'
+            f'metrics.db: {size_str}, {rows_total or 0} raw rows, '
+            f'oldest sample {oldest_str} {ok_pill}</div>'
+        )
+    return "".join(parts) or '<div class="muted">no data yet</div>'
+
+
+def _fmt_temp(v: Optional[float]) -> str:
+    if v is None:
+        return '<span class="muted">—</span>'
+    cls = "ok"
+    if v >= 90:
+        cls = "bad"
+    elif v >= 80:
+        cls = "warn"
+    return f'<span class="pill {cls}">{v:.1f} C</span>'
+
+
+def _fmt_pct(v: Optional[float]) -> str:
+    if v is None:
+        return '<span class="muted">—</span>'
+    cls = "ok"
+    if v >= 95:
+        cls = "bad"
+    elif v >= 85:
+        cls = "warn"
+    return f'<span class="pill {cls}">{v:.1f}%</span>'

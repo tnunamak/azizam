@@ -46,6 +46,8 @@ from fastapi.staticfiles import StaticFiles
 # Local: status dashboard backend.
 import status_endpoint
 import firehose_metrics
+import metrics_store
+import metrics_sampler
 
 # =============================================================================
 # Configuration
@@ -4411,6 +4413,17 @@ async def lifespan(app: FastAPI):
     drift_task = asyncio.create_task(_workflow_drift_loop(drift_stop))
     print("[proxy] Workflow drift periodic task started (every 6h)", flush=True)
 
+    # Metrics persistence: SQLite-backed time-series for the status page.
+    # The sampler writes; readers (status_endpoint, firehose_render) open
+    # short-lived connections via metrics_store.reader().
+    metrics_task = None
+    try:
+        metrics_store.init_db()
+        metrics_task = asyncio.create_task(metrics_sampler.sampler_loop())
+        print(f"[proxy] Metrics sampler started (db={metrics_store.DB_PATH})", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Metrics sampler failed to start: {e}", flush=True)
+
     yield
 
     state.shutdown_requested = True
@@ -4442,6 +4455,18 @@ async def lifespan(app: FastAPI):
         await drift_task
     except asyncio.CancelledError:
         pass
+    except Exception:
+        pass
+    if metrics_task is not None:
+        metrics_task.cancel()
+        try:
+            await metrics_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+    try:
+        metrics_sampler.close_writer()
     except Exception:
         pass
     if TABBY_MANAGED:
@@ -4512,6 +4537,15 @@ async def _firehose_request_counter(request: Request, call_next):
                 latency_ms = (time.monotonic() - t0) * 1000.0
                 status_code = getattr(response, "status_code", 0) or 0
                 firehose_metrics.record_request(key_name, path, status_code, latency_ms)
+                # Mirror into the SQLite time-series so the status page can
+                # render historical request rates / latencies. Best-effort.
+                metrics_sampler.record_request(
+                    "request",
+                    latency_ms,
+                    key=key_name,
+                    path=path,
+                    status=status_code,
+                )
                 # Synthesize a timeline event for known content endpoints when
                 # the response was a success. Skip videos here — capture for
                 # those happens deeper in the handler with workflow/size/seconds

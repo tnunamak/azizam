@@ -2753,6 +2753,205 @@ def _live_video_jobs(proxy_module, video_meta: dict[str, dict]) -> list[dict]:
 
 # --- top-level builder ----------------------------------------------------
 
+def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict]) -> dict:
+    """Build the time-series-derived `metrics` block.
+
+    Reads from ``metrics_store`` (SQLite). Each query opens a short-lived
+    connection — WAL makes that essentially free. Failures degrade silently;
+    the section returns whatever we could compute.
+    """
+    try:
+        import metrics_store  # local import; metrics_store is in the same package
+    except Exception as e:  # noqa: BLE001
+        return {"available": False, "error": _safe_err(e)}
+
+    out: dict[str, Any] = {"available": True, "gpus": [], "cpu": {}, "disk": {}, "trends": {}}
+
+    def _agg_fallback(metric: str, since_s: int, op: str, tags: Optional[dict] = None):
+        """Try samples_1min first; fall back to raw samples if rollup is empty.
+
+        New install / first 60s of operation: the rollup table is empty but
+        the raw table already has data. Without this fallback, every 24h
+        widget would render '—' for a full minute on a fresh proxy.
+        """
+        try:
+            v = metrics_store.query_aggregate(
+                metric, since_s=since_s, tags_filter=tags, op=op, table="samples_1min"
+            )
+            if v is not None:
+                return v
+        except Exception:
+            pass
+        try:
+            return metrics_store.query_aggregate(
+                metric, since_s=since_s, tags_filter=tags, op=op
+            )
+        except Exception:
+            return None
+
+    def _series_fallback(metric: str, since_s: int, points: int, op: str = "avg",
+                         tags: Optional[dict] = None):
+        try:
+            s = metrics_store.query_series(
+                metric, since_s=since_s, points=points, tags_filter=tags,
+                table="samples_1min", op=op,
+            )
+            if s:
+                return s
+        except Exception:
+            pass
+        try:
+            return metrics_store.query_series(
+                metric, since_s=since_s, points=points, tags_filter=tags, op=op,
+            )
+        except Exception:
+            return []
+
+    # Per-GPU thermal + VRAM-pct windows.
+    for g in gpus or []:
+        idx = g.get("index")
+        if idx is None:
+            continue
+        gpu_tag = {"gpu": int(idx)}
+        gpu_entry = {"index": idx}
+        try:
+            gpu_entry["temp_max_5min_c"] = metrics_store.query_aggregate(
+                "gpu_temp_c", since_s=300, tags_filter=gpu_tag, op="max"
+            )
+            gpu_entry["temp_max_1h_c"] = metrics_store.query_aggregate(
+                "gpu_temp_c", since_s=3600, tags_filter=gpu_tag, op="max"
+            )
+            gpu_entry["temp_max_24h_c"] = _agg_fallback(
+                "gpu_temp_c", since_s=86400, op="max", tags=gpu_tag,
+            )
+            gpu_entry["vram_pct_max_5min"] = metrics_store.query_aggregate(
+                "vram_pct", since_s=300, tags_filter=gpu_tag, op="max"
+            )
+            gpu_entry["vram_pct_max_1h"] = metrics_store.query_aggregate(
+                "vram_pct", since_s=3600, tags_filter=gpu_tag, op="max"
+            )
+            gpu_entry["vram_pct_max_24h"] = _agg_fallback(
+                "vram_pct", since_s=86400, op="max", tags=gpu_tag,
+            )
+            # Sparkline series for the dashboard (24h, 96 points).
+            gpu_entry["vram_pct_24h_series"] = _series_fallback(
+                "vram_pct", since_s=86400, points=96, tags=gpu_tag, op="avg",
+            )
+            gpu_entry["temp_24h_series"] = _series_fallback(
+                "gpu_temp_c", since_s=86400, points=96, tags=gpu_tag, op="max",
+            )
+        except Exception as e:  # noqa: BLE001
+            gpu_entry["error"] = _safe_err(e)
+        out["gpus"].append(gpu_entry)
+
+    # CPU thermal windows.
+    try:
+        out["cpu"] = {
+            "temp_max_5min_c": metrics_store.query_aggregate("cpu_temp_c", since_s=300, op="max"),
+            "temp_max_1h_c": metrics_store.query_aggregate("cpu_temp_c", since_s=3600, op="max"),
+            "temp_max_24h_c": _agg_fallback("cpu_temp_c", since_s=86400, op="max"),
+            "load_avg_24h_series": _series_fallback("load_avg_1min", since_s=86400, points=96),
+        }
+    except Exception as e:  # noqa: BLE001
+        out["cpu"] = {"error": _safe_err(e)}
+
+    # Disk: change over 24h for root + time-to-full estimate when filling.
+    disk_entry: dict[str, Any] = {}
+    try:
+        # Identify root partition and synth a per-mount block for each known mount.
+        partitions = (disk or {}).get("partitions") or []
+        for part in partitions:
+            tgt = part.get("target")
+            if not tgt:
+                continue
+            tag_filter = {"mount": tgt}
+            cur = part.get("avail_bytes")
+            avail_24h_ago = _agg_fallback(
+                "disk_avail_bytes", since_s=86400, op="min", tags=tag_filter,
+            )
+            change_b = None
+            ttf_hours: Optional[float] = None
+            if isinstance(cur, (int, float)) and isinstance(avail_24h_ago, (int, float)):
+                # Use min over 24h as a conservative "earliest" baseline.
+                change_b = float(cur) - float(avail_24h_ago)
+                if change_b < -1024 * 1024:
+                    # Filling: linear extrapolation.
+                    rate_per_h = abs(change_b) / 24.0
+                    if rate_per_h > 0:
+                        ttf_hours = float(cur) / rate_per_h
+            avail_series = _series_fallback(
+                "disk_avail_bytes", since_s=86400, points=96, tags=tag_filter,
+            )
+            disk_entry[tgt] = {
+                "avail_change_24h_bytes": change_b,
+                "avail_change_24h_gb": (change_b / (1024 ** 3)) if isinstance(change_b, float) else None,
+                "time_to_full_estimate_hours": ttf_hours,
+                "series_24h": avail_series,
+            }
+    except Exception as e:  # noqa: BLE001
+        disk_entry = {"error": _safe_err(e)}
+    out["disk"] = disk_entry
+
+    # Trends used by the renderer.
+    trends: dict[str, Any] = {}
+    try:
+        trends["xid_109_24h_count"] = _agg_fallback("xid_109_24h", since_s=86400, op="max")
+        trends["xid_109_60min_count"] = metrics_store.query_aggregate(
+            "xid_109_60min", since_s=3600, op="max",
+        )
+        # Bar chart: hourly Xid 109 counts over last 24h.
+        trends["xid_109_hourly_24h"] = _series_fallback(
+            "xid_109_60min", since_s=86400, points=24, op="max",
+        )
+        # Per-key request rate over last hour.
+        # Unique keys come from samples directly.
+        try:
+            with metrics_store.reader() as rconn:
+                rows = rconn.execute(
+                    "SELECT DISTINCT tags FROM samples WHERE metric='request' AND ts >= ?",
+                    (int(time.time()) - 3600,),
+                ).fetchall()
+            keys_seen: set[str] = set()
+            per_key: dict[str, list[tuple[int, float]]] = {}
+            per_key_rpm: dict[str, Optional[float]] = {}
+            for (tags_json,) in rows:
+                if not tags_json:
+                    continue
+                try:
+                    tag_dict = json.loads(tags_json)
+                except Exception:
+                    continue
+                k = tag_dict.get("key")
+                if not k or k in keys_seen:
+                    continue
+                keys_seen.add(k)
+                # rpm over last 5 minutes (mean count per minute).
+                count_5min = metrics_store.query_aggregate(
+                    "request", since_s=300, tags_filter={"key": k}, op="count",
+                )
+                per_key_rpm[k] = (count_5min / 5.0) if isinstance(count_5min, (int, float)) else None
+                series = metrics_store.query_series(
+                    "request", since_s=3600, points=60,
+                    tags_filter={"key": k}, op="count",
+                )
+                per_key[k] = series
+            trends["per_key_rpm_5min"] = per_key_rpm
+            trends["per_key_request_series_1h"] = per_key
+        except Exception as e:  # noqa: BLE001
+            trends["per_key_error"] = _safe_err(e)
+    except Exception as e:  # noqa: BLE001
+        trends["error"] = _safe_err(e)
+    out["trends"] = trends
+
+    # DB health.
+    try:
+        out["db_health"] = metrics_store.db_health()
+    except Exception as e:  # noqa: BLE001
+        out["db_health"] = {"error": _safe_err(e)}
+
+    return out
+
+
 async def build_status_payload(config: dict) -> dict:
     errors: dict[str, str] = {}
 
@@ -3054,6 +3253,7 @@ async def build_status_payload(config: dict) -> dict:
     except Exception:
         pass
 
+    metrics_block = sync_section("metrics", lambda: _metrics_section(gpus_raw, disk)) or {}
     daisy = sync_section("daisy_audit", _daisy_audit_summary) or {}
     # Augment the daisy summary with two extra signals the audit identified.
     # Both are synchronous + cheap; sync_section guarantees they never escape.
@@ -3231,6 +3431,7 @@ async def build_status_payload(config: dict) -> dict:
         "daisy": daisy,
         "workflow_drift": drift,
         "config_snapshot": config_snapshot,
+        "metrics": metrics_block,
         "errors": errors,
         "commit_hash": _COMMIT_HASH,
     }
