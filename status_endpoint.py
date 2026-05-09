@@ -1409,8 +1409,9 @@ def _kernel_recent_events(n: int = 5) -> list[dict]:
     Returns ``list[dict]`` with ``ts``, ``summary``, and optional ``context``.
     The renderer treats string entries as legacy and dicts as the new shape.
     """
+    # Bound to the current boot — older entries are stale and dilute the signal.
     rc, out, _ = _run(
-        ["journalctl", "-k", "--no-pager", "--since", "24 hours ago"],
+        ["journalctl", "-k", "-b", "0", "--no-pager", "--since", "24 hours ago"],
         timeout=2.5,
     )
     if rc != 0 or not out:
@@ -1422,6 +1423,28 @@ def _kernel_recent_events(n: int = 5) -> list[dict]:
         re.compile(r"\bNVRM: GPU Board Serial Number"),
         re.compile(r"\b(RIP|RSP|RBP|RAX|RBX|RCX|RDX|RSI|RDI|FS:|GS:|CR\d|DR\d|Code:):"),
         re.compile(r"\b(Call Trace:|Hardware name:|Stack:)"),
+        # Boot-time benign noise that recurs on every boot — filter aggressively.
+        re.compile(r"amdgpu.*Cannot find any crtc or sizes", re.IGNORECASE),
+        re.compile(r"nvme.*using unchecked data buffer", re.IGNORECASE),
+        re.compile(r"path_noexec\+0x"),
+        re.compile(r"\bfs/exec\.c:\d+ path_noexec"),
+        re.compile(r"\[drm\] Initialized amdgpu"),
+        re.compile(r"\[drm\] Registered \d+ planes"),
+        # Benign amdgpu init messages (driver coming up; not a hardware concern).
+        re.compile(r"amdgpu.*ring \S+ uses VM inv eng", re.IGNORECASE),
+        re.compile(r"amdgpu.*Runtime PM not available", re.IGNORECASE),
+        re.compile(r"amdgpu.*SE \d+,?\s+SH per SE", re.IGNORECASE),
+        re.compile(r"amdgpu.*RAS:.*supported", re.IGNORECASE),
+        re.compile(r"amdgpu.*VRAM:.*\d+M", re.IGNORECASE),
+        re.compile(r"amdgpu.*GTT:.*\d+M", re.IGNORECASE),
+        re.compile(r"amdgpu.*will run gpu_recover", re.IGNORECASE),
+        re.compile(r"amdgpu.*PSP runtime database", re.IGNORECASE),
+        re.compile(r"amdgpu.*HMM registered", re.IGNORECASE),
+        re.compile(r"amdgpu.*kfd device", re.IGNORECASE),
+        # KFD / amdgpu topology init noise.
+        re.compile(r"\bkfd kfd: amdgpu:", re.IGNORECASE),
+        re.compile(r"amdgpu: Topology:", re.IGNORECASE),
+        re.compile(r"amdgpu.*active_cu_number", re.IGNORECASE),
     )
     WARN_LEAD = re.compile(r"\b(WARNING:|BUG:|Oops:|kernel BUG at|panic:)")
     HW_KEYWORDS = (
@@ -1484,6 +1507,36 @@ def _kernel_recent_events(n: int = 5) -> list[dict]:
         if any(s in l for s in HW_KEYWORDS) or any(
             s in l for s in NVIDIA_HW_KEYWORDS
         ):
+            # Only keep if the line carries an error-class signal — bare amdgpu
+            # init prints don't qualify per the user's spec.
+            # Use word-boundary regex — substrings match too liberally
+            # (e.g. "default" contains "fault", "panic_on_warn=0" contains "panic").
+            ERROR_PATTERNS = (
+                re.compile(r"\b(error|errors)\b", re.IGNORECASE),
+                re.compile(r"\bfail(?:ed|ure|s)?\b", re.IGNORECASE),
+                re.compile(r"\bfault(?:s)?\b", re.IGNORECASE),
+                re.compile(r"\btimeout(?:s|ed)?\b", re.IGNORECASE),
+                re.compile(r"\bpanic(?:ked|king)?\b", re.IGNORECASE),
+                re.compile(r"\boops\b", re.IGNORECASE),
+                re.compile(r"\bbug(?:s)?\b", re.IGNORECASE),
+                re.compile(r"uncorrect", re.IGNORECASE),
+                re.compile(r"correctable", re.IGNORECASE),
+                re.compile(r"machine check", re.IGNORECASE),
+                re.compile(r"thermal trip", re.IGNORECASE),
+                re.compile(r"\bthrottle(?:d)?\b", re.IGNORECASE),
+                re.compile(r"i/o error", re.IGNORECASE),
+                re.compile(r"\bio error\b", re.IGNORECASE),
+                re.compile(r"controller failed", re.IGNORECASE),
+                re.compile(r"pcie bus error", re.IGNORECASE),
+                re.compile(r"pcie[\s\-]?aer", re.IGNORECASE),
+                re.compile(r"edac (?:mc\d+|m\d+):.*(error|csrow)", re.IGNORECASE),
+            )
+            # Skip if the line contains kernel cmdline syntax (panic_on_warn,
+            # oops=continue, etc.) which matches our error words but is config.
+            if "command line:" in l or "boot_image=" in l:
+                continue
+            if not any(p.search(line) for p in ERROR_PATTERNS):
+                continue
             _flush_pending()
             ts, summary = _split_kernel_line(line)
             keep.append({"ts": ts, "summary": summary[:200]})
@@ -1818,15 +1871,15 @@ def _read_sensors() -> dict:
     cpu_max = max((c["temp_c"] for c in cpu_temps), default=None)
     dimm_max = max((d["temp_c"] for d in dimm_temps), default=None)
 
-    # Per-component thresholds (research-backed defaults):
-    #   CPU (Zen 4 Ryzen): Tjmax 95C; warn at 90 (sustained), critical at 95.
+    # Per-component thresholds (tightened for desktop AMD CPUs):
+    #   CPU (AMD desktop): warn 80, critical 90 (sustained 86C+ is concerning).
     #   DDR5 DIMM:         Tcasemax ~85C, critical ~95C; warn 80, crit 90.
     #   NVMe SSD:          most controllers throttle 70-75C, critical 80C+;
     #                      warn 70, crit 80.
     return {
         "cpu_temps": cpu_temps,
         "cpu_max_c": cpu_max,
-        "cpu_thermal_state": _thermal_state(cpu_max, warn=90, crit=95),
+        "cpu_thermal_state": _thermal_state(cpu_max, warn=80, crit=90),
         "dimm_temps": dimm_temps,
         "dimm_max_c": dimm_max,
         "dimm_thermal_state": _thermal_state(dimm_max, warn=80, crit=90),
@@ -1892,7 +1945,41 @@ def _cpu_usage_quick() -> dict:
         if not (p["cpu_pct"] < 0.5 and p["mem_pct"] < 0.1)
     ]
     procs.sort(key=lambda p: (-p["cpu_pct"], -p["mem_pct"]))
-    info["top_procs"] = procs[:10]
+
+    # Bucket: surface proxy-managed services first, lump desktop/UI noise into
+    # one combined row. The user cares about which AI service is busy, not
+    # which Brave window is on top.
+    SERVICE_PATTERNS = (
+        "proxy.py", "llama-server", "comfyui", "comfy_server",
+        "voxtral", "parakeet", "daisy", "claude", "tabby",
+        "main.py", "uvicorn",
+    )
+
+    def _is_service(cmd: str) -> bool:
+        c = cmd.lower()
+        return any(pat in c for pat in SERVICE_PATTERNS)
+
+    services: list[dict] = []
+    desktop: list[dict] = []
+    for p in procs:
+        if _is_service(p.get("command") or ""):
+            services.append(p)
+        else:
+            desktop.append(p)
+
+    # Cap services at 10. If desktop is non-empty, append a bucketed row.
+    visible = services[:10]
+    if desktop:
+        cpu_sum = round(sum(p["cpu_pct"] for p in desktop), 1)
+        mem_sum = round(sum(p["mem_pct"] for p in desktop), 1)
+        visible.append({
+            "pid": 0,
+            "user": "—",
+            "cpu_pct": cpu_sum,
+            "mem_pct": mem_sum,
+            "command": f"desktop (combined: {len(desktop)} procs — brave/neko/codex/etc.)",
+        })
+    info["top_procs"] = visible
     return info
 
 
@@ -2252,7 +2339,7 @@ def _voices_summary(proxy_module) -> Optional[dict]:
                 "curl -s http://127.0.0.1:5000/v1/audio/speech "
                 "-H 'Authorization: Bearer $OPENAI_PROXY_KEY' "
                 "-H 'Content-Type: application/json' "
-                "-d '{\"model\":\"tts-1\",\"voice\":\"alloy\",\"input\":\"hello\"}' "
+                "-d '{\"model\":\"voxtral-4b-tts\",\"voice\":\"nova\",\"input\":\"hello\"}' "
                 "--output out.mp3"
             ),
             "list_endpoint": "/v1/audio/voices",
@@ -2332,6 +2419,38 @@ def _daisy_pi_context() -> dict:
     return info
 
 
+def _journal_last_telegram_ts() -> Optional[str]:
+    """Return the ISO timestamp of the most recent daisy telegram-related
+    journal line, or None on failure. 1.5s timeout."""
+    try:
+        proc = subprocess.run(
+            [
+                "journalctl",
+                "--user",
+                "-u", "daisy.service",
+                "-n", "200",
+                "--no-pager",
+                "-o", "short-iso",
+            ],
+            capture_output=True, text=True, timeout=1.5,
+        )
+        if proc.returncode != 0:
+            return None
+        last_ts: Optional[str] = None
+        for line in proc.stdout.splitlines():
+            if "telegram" not in line.lower():
+                continue
+            m = re.match(
+                r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-]\d{2}:?\d{2})",
+                line,
+            )
+            if m:
+                last_ts = m.group(1)
+        return last_ts
+    except Exception:
+        return None
+
+
 def _daisy_telegram_bridge() -> dict:
     """Inspect daisy's tmux pane and ``daisy.service`` journal for the most
     recent Telegram bridge transition. Returns
@@ -2355,11 +2474,13 @@ def _daisy_telegram_bridge() -> dict:
                     info["state"] = "connected"
                     info["source"] = "tmux"
                     info["last_line"] = line.strip()[:300]
+                    info["last_seen"] = _journal_last_telegram_ts() or None
                     return info
                 if "telegram disconnected" in low or "telegram error" in low:
                     info["state"] = "disconnected"
                     info["source"] = "tmux"
                     info["last_line"] = line.strip()[:300]
+                    info["last_seen"] = _journal_last_telegram_ts() or None
                     return info
     except FileNotFoundError:
         pass
@@ -2493,18 +2614,32 @@ def _daisy_audit_summary() -> dict:
             )
             info["tmux_state"] = "working" if working else "idle"
             last_user_at = last_assistant_at = None
+            now = int(time.time())
+            user_markers = ("[telegram]", "[user]", "user:")
+            assistant_markers = ("[assistant]", "<!--", "assistant:", "claude:")
+            matched_any = False
             for line in text.splitlines():
                 low = line.lower()
-                if "user:" in low or low.startswith(">"):
-                    last_user_at = int(time.time())
-                if "assistant:" in low or "claude:" in low:
-                    last_assistant_at = int(time.time())
+                if any(m in low for m in user_markers) or low.lstrip().startswith(">"):
+                    last_user_at = now
+                    matched_any = True
+                if any(m in low for m in assistant_markers):
+                    last_assistant_at = now
+                    matched_any = True
             info["tmux_last_user_at"] = last_user_at
             info["tmux_last_assistant_at"] = last_assistant_at
+            if not matched_any:
+                info["tmux_unavailable_reason"] = (
+                    "tmux scrollback parse: no recognizable activity markers"
+                )
         else:
             info["tmux_state"] = None
-    except Exception:
+            info["tmux_unavailable_reason"] = (
+                f"tmux capture-pane rc={rc}" if rc != 0 else "tmux capture-pane empty"
+            )
+    except Exception as e:
         info["tmux_state"] = None
+        info["tmux_unavailable_reason"] = f"tmux peek failed: {_safe_err(e)}"
     return info
 
 

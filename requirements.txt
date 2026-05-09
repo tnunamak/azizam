@@ -4,3 +4,4 @@ httpx>=0.24.0
 pyyaml>=6.0
 python-multipart
 websockets>=12.0
+Pillow>=10.0
