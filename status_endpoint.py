@@ -1136,11 +1136,19 @@ def _read_gpu_budget() -> Optional[dict]:
 def _read_vram_estimates() -> Optional[dict]:
     """Read cached per-workflow per-image VRAM estimates.
 
-    Schema v2: ``{"version": 2, "entries": {key: {"peak_bytes", "trusted",
-    "measured_at", "source"}}}``. Trusted entries come from the in-run
-    asyncio probe (peak = vram_total - min_free_observed). Untrusted
-    entries are either legacy v1 (flat int = endpoint diff) or v2 fallback
-    where the probe failed and we recorded the endpoint diff anyway.
+    Schema v3: ``{"version": 3, "entries": {key: {"peak_bytes",
+    "marginal_bytes", "comfy_baseline_bytes", "model_state",
+    "samples_count", "trusted", "measured_at", "source"}}}``.
+
+    Trusted entries come from the in-run per-process probe, which samples
+    ComfyUI's GPU0 VRAM via ``nvidia-smi --query-compute-apps`` filtered to
+    the ComfyUI PID set. ``marginal_bytes`` is flux's *contribution* to
+    ComfyUI's allocation (peak - before for warm runs, peak - baseline for
+    cold runs) — insensitive to concurrent voxtral / desktop activity.
+
+    v2 entries (whole-GPU ``total - min_free``) and v1 entries (flat int =
+    endpoint diff) are surfaced for visibility but marked untrusted so the
+    batcher re-measures.
 
     The status renderer reads ``trustworthy`` to decide whether to surface
     the "Measurement unavailable" banner: only when *no* entries are
@@ -1154,8 +1162,8 @@ def _read_vram_estimates() -> Optional[dict]:
             return None
         st = _VRAM_ESTIMATES_PATH.stat()
 
-        # Accept both v2 (wrapped) and v1 (flat) shapes; migrate v1 on the
-        # fly to the same display structure used by v2.
+        # Accept v3 (wrapped, with marginal_bytes), v2 (wrapped, peak only),
+        # and v1 (flat) shapes; migrate v1/v2 on the fly to display shape.
         version = raw.get("version") if isinstance(raw.get("version"), int) else 1
         entries_blob = (
             raw.get("entries") if version >= 2 and isinstance(raw.get("entries"), dict)
@@ -1171,7 +1179,25 @@ def _read_vram_estimates() -> Optional[dict]:
                     peak = int(v.get("peak_bytes", 0))
                 except (TypeError, ValueError):
                     peak = 0
-                trusted = bool(v.get("trusted", False))
+                # v3 fields (present on records written by the per-process probe).
+                # v2 records lack these; we synthesize defaults.
+                has_v3 = "marginal_bytes" in v and "model_state" in v
+                try:
+                    marginal = int(v.get("marginal_bytes", peak))
+                except (TypeError, ValueError):
+                    marginal = peak
+                try:
+                    baseline = int(v.get("comfy_baseline_bytes", 0))
+                except (TypeError, ValueError):
+                    baseline = 0
+                try:
+                    samples_count = int(v.get("samples_count", 0))
+                except (TypeError, ValueError):
+                    samples_count = 0
+                model_state = str(v.get("model_state", "unknown"))
+                # v2 records used whole-GPU semantics — force untrusted so
+                # callers don't plan against the old absolute numbers.
+                trusted = bool(v.get("trusted", False)) and has_v3
                 source = str(v.get("source", "unknown"))
                 measured_at = int(v.get("measured_at", 0) or 0)
             elif isinstance(v, (int, float)):
@@ -1181,14 +1207,22 @@ def _read_vram_estimates() -> Optional[dict]:
                 # table.
                 peak_raw = int(v)
                 peak = peak_raw if peak_raw >= 64 * 1024 * 1024 else 0
+                marginal = peak
+                baseline = 0
+                samples_count = 0
+                model_state = "unknown"
                 trusted = False
-                source = "endpoint_diff"
+                source = "endpoint_diff_v1"
                 measured_at = 0
             else:
                 continue
             entries.append({
                 "key": k,
                 "peak_bytes": peak,
+                "marginal_bytes": marginal,
+                "comfy_baseline_bytes": baseline,
+                "model_state": model_state,
+                "samples_count": samples_count,
                 "trusted": trusted,
                 "source": source,
                 "measured_at": measured_at,
@@ -1204,12 +1238,12 @@ def _read_vram_estimates() -> Optional[dict]:
             "schema_version": version,
             "unavailable_reason": (
                 None if any_trusted else (
-                    "No trusted VRAM peak measurements yet. The in-run "
-                    "probe records `vram_total - min(vram_free)` during "
-                    "inference; entries appear here after the next image "
-                    "generation completes. Untrusted rows (if any) are "
-                    "legacy endpoint-diff values or probe-fallback values "
-                    "and should not be used for capacity planning."
+                    "No trusted VRAM marginal measurements yet. The in-run "
+                    "probe samples ComfyUI's per-process VRAM on GPU0 via "
+                    "nvidia-smi during inference; entries appear here after "
+                    "the next image generation completes. Untrusted rows "
+                    "(if any) are legacy v1/v2 values or probe-fallback "
+                    "values and should not be used for capacity planning."
                 )
             ),
             "trustworthy": any_trusted,

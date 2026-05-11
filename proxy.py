@@ -2044,28 +2044,51 @@ def parse_size(size_str: str) -> tuple[int, int]:
 #     the per-image cost to disk so subsequent restarts inherit the cache.
 
 _vram_estimates_lock = threading.Lock()
-# Schema v2 entry shape:
-#   {"peak_bytes": int, "trusted": bool, "measured_at": int (unix s),
-#    "source": "probe" | "endpoint_diff"}
-# Schema v1 (legacy) was a flat dict {key: int_bytes} where the int was
-# computed as `free_before - free_after_round` — the residual, not the
-# peak. With warm caches this read as MiB even when true peak was GiB.
-# On read we migrate v1 → v2, marking every migrated entry trusted=False
-# and (if the value is < 64 MiB) clamping peak_bytes to 0 so the batcher
-# ignores it and re-measures on the next run.
-_VRAM_ESTIMATES_SCHEMA_VERSION = 2
+# Schema v3 entry shape:
+#   {
+#     "peak_bytes": int,            # == marginal_bytes; kept for status-page compat
+#     "marginal_bytes": int,        # comfy_used_peak - comfy_used_before (or - baseline)
+#     "comfy_baseline_bytes": int,  # min ComfyUI per-process VRAM in the 2s pre-run window
+#     "model_state": "warm" | "cold",
+#     "samples_count": int,
+#     "trusted": bool,
+#     "measured_at": int (unix s),
+#     "source": "probe" | "probe_unloaded" | "endpoint_diff",
+#   }
+#
+# Schema v2 (legacy) stored `peak_bytes = vram_total - min(vram_free)` — i.e.
+# whole-GPU peak occupancy during the run. That captured voxtral, desktop, and
+# the resident ComfyUI baseline in addition to flux's actual contribution,
+# yielding numbers ~4x too high. v2 entries are migrated to v3 on read but
+# marked trusted=False so the batcher ignores them and re-measures.
+#
+# Schema v1 (older) was a flat dict {key: int_bytes} where the int was
+# `free_before - free_after_round` — the residual, not the peak. Also migrated
+# to v3 untrusted.
+_VRAM_ESTIMATES_SCHEMA_VERSION = 3
 _VRAM_LEGACY_TRUST_FLOOR = 64 * 1024 * 1024  # 64 MiB
+# Sanity bounds for marginal measurements. Anything outside is rejected and
+# logged loudly — it indicates a probe bug or extraordinary external pressure
+# (concurrent allocation by another process race-conditioning the diff).
+_VRAM_MARGINAL_MIN_BYTES = 100 * 1024 * 1024       # 100 MiB
+_VRAM_MARGINAL_MAX_BYTES = 20 * 1024 * 1024 * 1024  # 20 GiB
+# Cold-path detection threshold: if ComfyUI's per-process VRAM rose by more
+# than this between the 2s pre-run baseline and the moment of submit, treat
+# the run as a cold (first-load) measurement and use `peak - baseline` as the
+# marginal cost instead of `peak - before`.
+_VRAM_COLD_LOAD_THRESHOLD_BYTES = 3 * 1024 * 1024 * 1024  # 3 GiB
 _vram_estimates_cache: dict[str, dict] = {}
 _vram_estimates_loaded = False
 _image_url_signing_secret: Optional[bytes] = None
 
 
 def _normalize_vram_entry(value) -> Optional[dict]:
-    """Coerce a raw cache value (legacy int or v2 dict) into the v2 shape.
+    """Coerce a raw cache value (legacy int, v2 dict, or v3 dict) into v3 shape.
 
-    Legacy ints are marked untrusted, since they were `free_before - free_after`
-    rather than an in-run peak. Sub-64-MiB legacy values are clamped to zero so
-    they're effectively absent from the trusted hot path.
+    Legacy v1 ints (`free_before - free_after`) and v2 dicts (`total - min_free`,
+    i.e. whole-GPU peak occupancy) record the wrong semantics for the batcher.
+    Both are migrated forward with trusted=False so the cache surfaces them on
+    the status page but the batcher re-measures on the next run.
     """
     if isinstance(value, (int, float)):
         peak = int(value)
@@ -2073,20 +2096,55 @@ def _normalize_vram_entry(value) -> Optional[dict]:
             peak = 0
         return {
             "peak_bytes": peak,
+            "marginal_bytes": peak,
+            "comfy_baseline_bytes": 0,
+            "model_state": "unknown",
+            "samples_count": 0,
             "trusted": False,
             "measured_at": 0,
-            "source": "endpoint_diff",
+            "source": "endpoint_diff_v1",
         }
     if isinstance(value, dict):
         try:
             peak = int(value.get("peak_bytes", 0))
         except (TypeError, ValueError):
             peak = 0
+        # Detect schema version by the presence of v3-only fields.
+        has_v3 = "marginal_bytes" in value and "model_state" in value
+        if has_v3:
+            try:
+                marginal = int(value.get("marginal_bytes", 0))
+            except (TypeError, ValueError):
+                marginal = 0
+            try:
+                baseline = int(value.get("comfy_baseline_bytes", 0))
+            except (TypeError, ValueError):
+                baseline = 0
+            try:
+                samples = int(value.get("samples_count", 0))
+            except (TypeError, ValueError):
+                samples = 0
+            state = str(value.get("model_state", "unknown"))
+            trusted = bool(value.get("trusted", False))
+            source = str(value.get("source", "unknown"))
+        else:
+            # v2 entry: peak_bytes was whole-GPU peak. Force untrusted so the
+            # batcher won't plan against the old absolute semantics.
+            marginal = peak
+            baseline = 0
+            samples = 0
+            state = "unknown"
+            trusted = False
+            source = "v2_absolute"
         return {
-            "peak_bytes": peak,
-            "trusted": bool(value.get("trusted", False)),
+            "peak_bytes": marginal if has_v3 else peak,
+            "marginal_bytes": marginal,
+            "comfy_baseline_bytes": baseline,
+            "model_state": state,
+            "samples_count": samples,
+            "trusted": trusted,
             "measured_at": int(value.get("measured_at", 0) or 0),
-            "source": str(value.get("source", "unknown")),
+            "source": source,
         }
     return None
 
@@ -2162,19 +2220,49 @@ def record_vram_estimate(
     *,
     trusted: bool = True,
     source: str = "probe",
+    model_state: str = "unknown",
+    comfy_baseline_bytes: int = 0,
+    samples_count: int = 0,
 ) -> None:
     """Persist a measured VRAM-per-image cost so restarts inherit the calibration.
 
-    We keep a lower-bound (the measured peak), since under-estimating leads to
-    OOM. Adopt a 10% safety margin baked into the stored value when trusted.
+    ``bytes_per_image`` is flux's *marginal* per-image contribution (the
+    per-image slice of ``comfy_used_peak - comfy_used_before`` or
+    ``comfy_used_peak - comfy_baseline``), NOT whole-GPU peak occupancy. This
+    is insensitive to concurrent voxtral / desktop / TTS activity because the
+    sample stream is per-process (filtered to ComfyUI PID(s) on GPU0 via
+    ``nvidia-smi --query-compute-apps``).
 
-    Trusted measurements come from the in-run probe (peak = total -
-    min_free_observed). Untrusted measurements (probe failed, fell back to
-    endpoint diff) are persisted with trusted=False so the status page can
-    surface them but the batcher won't plan against them.
+    We keep a lower-bound (the measured marginal), since under-estimating
+    leads to OOM. Adopt a 10% safety margin baked into the stored value when
+    trusted.
+
+    Trusted measurements come from the in-run per-process probe. Untrusted
+    measurements (probe failed, sanity bounds violated, fell back to endpoint
+    diff) are persisted with trusted=False so the status page can surface
+    them but the batcher won't plan against them.
     """
     if bytes_per_image <= 0:
         return
+    # Hard sanity gate for trusted writes. Loud rejection — caller should see
+    # this in journal and investigate. Untrusted writes bypass the bound check
+    # (they're informational only).
+    if trusted and (
+        bytes_per_image < _VRAM_MARGINAL_MIN_BYTES
+        or bytes_per_image > _VRAM_MARGINAL_MAX_BYTES
+    ):
+        print(
+            f"[proxy] record_vram_estimate: REJECTING out-of-bounds marginal "
+            f"for {workflow_name} {width}x{height}: "
+            f"{bytes_per_image / (1024**2):.1f} MiB "
+            f"(allowed range "
+            f"{_VRAM_MARGINAL_MIN_BYTES / (1024**2):.0f} MiB .. "
+            f"{_VRAM_MARGINAL_MAX_BYTES / (1024**3):.0f} GiB). "
+            f"Recording untrusted.",
+            flush=True,
+        )
+        trusted = False
+        source = source + "_oob"
     safe_value = int(bytes_per_image * 1.1) if trusted else int(bytes_per_image)
     key = _vram_cache_key(workflow_name, width, height)
     cache = _load_vram_estimates()
@@ -2194,6 +2282,10 @@ def record_vram_estimate(
         new_trusted = False
     cache[key] = {
         "peak_bytes": new_peak,
+        "marginal_bytes": new_peak,
+        "comfy_baseline_bytes": int(comfy_baseline_bytes or 0),
+        "model_state": str(model_state or "unknown"),
+        "samples_count": int(samples_count or 0),
         "trusted": new_trusted,
         "measured_at": int(time.time()),
         "source": source,
@@ -2233,14 +2325,178 @@ async def comfy_free_vram_bytes(client: httpx.AsyncClient) -> Optional[int]:
 # Sample cadence for the in-run VRAM probe. Spec floor is 250ms; default 500ms.
 _VRAM_PROBE_INTERVAL_S = 0.5
 _VRAM_PROBE_INTERVAL_MIN_S = 0.25
+# How long the "pre-run baseline" window stays open after probe start. Used to
+# compute ``comfy_baseline_bytes`` = min of ComfyUI per-process VRAM in this
+# window. With 500 ms cadence we get ~4 samples in 2 s.
+_VRAM_BASELINE_WINDOW_S = 2.0
+
+# GPU0 is the inference card (per the project's NAS+RTX layout). nvidia-smi
+# exposes UUIDs in its ``--query-compute-apps`` output; we filter by GPU0's
+# UUID so that any GPU1 (LLM card) allocations from the same process are
+# correctly excluded.
+_gpu0_uuid_cache: Optional[str] = None
+_gpu0_uuid_lock = threading.Lock()
+
+
+def _resolve_gpu0_uuid() -> Optional[str]:
+    """Return the GPU0 UUID string from ``nvidia-smi``. Cached after first call."""
+    global _gpu0_uuid_cache
+    with _gpu0_uuid_lock:
+        if _gpu0_uuid_cache is not None:
+            return _gpu0_uuid_cache or None
+        try:
+            p = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,uuid",
+                    "--format=csv,noheader",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+        except Exception as e:  # FileNotFoundError, TimeoutExpired, etc.
+            print(f"[proxy] _resolve_gpu0_uuid: nvidia-smi failed: {e}", flush=True)
+            _gpu0_uuid_cache = ""
+            return None
+        if p.returncode != 0:
+            _gpu0_uuid_cache = ""
+            return None
+        for line in p.stdout.strip().splitlines():
+            parts = [x.strip() for x in line.split(",", 1)]
+            if len(parts) == 2 and parts[0] == "0":
+                _gpu0_uuid_cache = parts[1]
+                return parts[1]
+        _gpu0_uuid_cache = ""
+        return None
+
+
+def _resolve_comfy_pids() -> set[int]:
+    """Identify all ComfyUI processes by scanning /proc.
+
+    A process is considered "ComfyUI" if its cmdline contains ``main.py`` AND
+    its cwd resolves to a path containing ``ComfyUI``. Then we expand the set
+    to include all descendant tasks via /proc/<pid>/task/*/children, because
+    ComfyUI occasionally spawns short-lived worker subprocesses that hold
+    their own VRAM allocations.
+
+    Returns an empty set on any error (callers handle gracefully).
+    """
+    roots: set[int] = set()
+    try:
+        proc_entries = os.listdir("/proc")
+    except Exception:
+        return roots
+    for name in proc_entries:
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                cmdline = f.read().decode("utf-8", errors="replace").split("\x00")
+            if not any("main.py" in part for part in cmdline if part):
+                continue
+            cwd = os.readlink(f"/proc/{pid}/cwd")
+        except Exception:
+            continue
+        if "ComfyUI" in cwd:
+            roots.add(pid)
+    if not roots:
+        return roots
+    # Walk descendants. /proc/<pid>/task/<tid>/children lists immediate child
+    # PIDs whitespace-separated. We BFS to catch grandchildren too.
+    all_pids = set(roots)
+    frontier = list(roots)
+    while frontier:
+        pid = frontier.pop()
+        try:
+            tasks = os.listdir(f"/proc/{pid}/task")
+        except Exception:
+            continue
+        for tid in tasks:
+            try:
+                with open(f"/proc/{pid}/task/{tid}/children", "r") as f:
+                    children_raw = f.read().split()
+            except Exception:
+                continue
+            for child in children_raw:
+                if not child.isdigit():
+                    continue
+                cpid = int(child)
+                if cpid not in all_pids:
+                    all_pids.add(cpid)
+                    frontier.append(cpid)
+    return all_pids
+
+
+def _sample_comfy_vram_bytes(comfy_pids: set[int], gpu0_uuid: Optional[str]) -> Optional[int]:
+    """Return ComfyUI's per-process VRAM occupancy on GPU0, in bytes.
+
+    Sums ``used_memory`` rows from ``nvidia-smi --query-compute-apps`` where
+    the PID is in ``comfy_pids`` and (if ``gpu0_uuid`` is known) the gpu_uuid
+    matches GPU0. Returns None on nvidia-smi failure so the probe can flag
+    the run as untrusted.
+    """
+    try:
+        p = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,gpu_uuid,used_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+    except Exception as e:
+        print(f"[proxy] _sample_comfy_vram_bytes: nvidia-smi failed: {e}", flush=True)
+        return None
+    if p.returncode != 0:
+        return None
+    total_mb = 0
+    matched = False
+    for line in p.stdout.strip().splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            pid = int(parts[0])
+            used_mb = int(parts[2])
+        except ValueError:
+            continue
+        if pid not in comfy_pids:
+            continue
+        if gpu0_uuid and parts[1] != gpu0_uuid:
+            continue
+        total_mb += used_mb
+        matched = True
+    if not matched:
+        # ComfyUI is in our PID set but holds no compute context on GPU0 yet.
+        # That's a legitimate 0 (model unloaded), not a failure.
+        return 0
+    return total_mb * 1024 * 1024
 
 
 class _VramProbe:
-    """Tracks min free VRAM across a single ComfyUI round.
+    """Tracks ComfyUI's per-process VRAM contribution across a single round.
 
-    `peak_used = vram_total - min_free_observed`, which is the true in-run
-    peak (not the residual endpoint diff). Runs as an asyncio task while the
-    caller awaits the round. Caller signals completion via `stop()`.
+    Marginal cost semantics (replacing the older whole-GPU ``total - min_free``):
+
+      - ``comfy_used_before``    = first sample, taken before the /prompt POST.
+      - ``comfy_used_baseline``  = min comfy_used during the first ~2 s window.
+      - ``comfy_used_peak``      = max comfy_used across all samples.
+
+    Marginal = ``peak - before`` for a warm run. When the run is cold (the
+    model loaded for the first time), ``before`` already includes the loaded
+    weights, so the marginal underestimates the real round cost; we detect
+    this via ``before - baseline > _VRAM_COLD_LOAD_THRESHOLD_BYTES`` and use
+    ``peak - baseline`` instead.
+
+    Per-process sampling makes the measurement insensitive to concurrent
+    voxtral / desktop / TTS activity — those PIDs are filtered out of the
+    ``nvidia-smi --query-compute-apps`` row stream. The legacy ``total -
+    min_free`` figure is also retained (as ``system_peak_used_bytes``) so the
+    status page can still report whole-GPU pressure.
     """
 
     def __init__(
@@ -2252,24 +2508,71 @@ class _VramProbe:
         self._interval = max(_VRAM_PROBE_INTERVAL_MIN_S, float(interval))
         self._stop = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
+        self._gpu0_uuid: Optional[str] = None
+        self._comfy_pids: set[int] = set()
+        self._t_start: float = 0.0
         self.samples = 0
+        # Whole-GPU view (legacy): retained for "system pressure" reporting.
         self.min_free: Optional[int] = None
         self.total: Optional[int] = None
+        # Per-ComfyUI-process view: the new source of truth for the batcher.
+        self.comfy_before: Optional[int] = None
+        self.comfy_baseline_min: Optional[int] = None  # min within baseline window
+        self.comfy_peak: Optional[int] = None
         self.error: Optional[str] = None
+        # Set to True if at least one per-process sample succeeded.
+        self.have_per_process_data = False
 
     async def _record_sample(self) -> None:
+        # Whole-GPU side: keep populating min_free / total via ComfyUI's
+        # /system_stats. Cheap, async, and feeds the legacy "system pressure"
+        # metric (NOT used by the batcher).
         free, total = await comfy_vram_snapshot(self._client)
         if isinstance(total, int) and self.total is None:
             self.total = total
         if isinstance(free, int):
             if self.min_free is None or free < self.min_free:
                 self.min_free = free
-            self.samples += 1
+
+        # Per-process side: poll nvidia-smi in a worker thread so we don't
+        # block the event loop. ~5-15 ms per call on this box.
+        try:
+            comfy_used = await asyncio.to_thread(
+                _sample_comfy_vram_bytes, self._comfy_pids, self._gpu0_uuid
+            )
+        except Exception as e:
+            self.error = f"{type(e).__name__}: {e}"
+            comfy_used = None
+
+        if isinstance(comfy_used, int):
+            self.have_per_process_data = True
+            if self.comfy_before is None:
+                self.comfy_before = comfy_used
+            if self.comfy_peak is None or comfy_used > self.comfy_peak:
+                self.comfy_peak = comfy_used
+            # Baseline window: only the first ~2 s after probe start. We
+            # specifically want the MIN here (model may already be in the
+            # process of loading on the very first sample of a cold run).
+            if (time.monotonic() - self._t_start) <= _VRAM_BASELINE_WINDOW_S:
+                if self.comfy_baseline_min is None or comfy_used < self.comfy_baseline_min:
+                    self.comfy_baseline_min = comfy_used
+
+        self.samples += 1
 
     async def _run(self) -> None:
         try:
-            # Capture an immediate baseline so we have at least one data
-            # point even on very short rounds.
+            # Resolve identifiers once. Cheap; both calls are short subprocess
+            # invocations gated by 2s timeouts.
+            self._gpu0_uuid = await asyncio.to_thread(_resolve_gpu0_uuid)
+            self._comfy_pids = await asyncio.to_thread(_resolve_comfy_pids)
+            if not self._comfy_pids:
+                self.error = "no ComfyUI PIDs resolved"
+                # Continue sampling anyway — at least the whole-GPU fields
+                # will be populated for the legacy fallback path.
+
+            # Capture an immediate "before" baseline so we have at least one
+            # data point even on very short rounds. This sample becomes
+            # ``comfy_before``.
             await self._record_sample()
             while not self._stop.is_set():
                 try:
@@ -2284,6 +2587,7 @@ class _VramProbe:
 
     def start(self) -> None:
         if self._task is None:
+            self._t_start = time.monotonic()
             self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
@@ -2294,17 +2598,73 @@ class _VramProbe:
             except Exception as e:
                 self.error = f"{type(e).__name__}: {e}"
 
-    def peak_used_bytes(self) -> Optional[int]:
+    # ----- whole-GPU view (legacy, for status "system pressure") -----------
+
+    def system_peak_used_bytes(self) -> Optional[int]:
+        """Legacy ``total - min_free``: whole-GPU peak occupancy during the run.
+
+        Kept for the status page's system-pressure reporting. NOT used by the
+        batcher — it conflates concurrent allocations from other processes.
+        """
         if not isinstance(self.total, int) or not isinstance(self.min_free, int):
             return None
         peak = self.total - self.min_free
         return peak if peak > 0 else None
 
+    # ----- per-process view (new, used by the batcher) ---------------------
+
+    def marginal_and_state(self) -> tuple[Optional[int], str]:
+        """Compute flux's marginal VRAM contribution and the model_state tag.
+
+        Returns ``(marginal_bytes, model_state)``:
+          - ``model_state="warm"``: ``before`` was already at steady state, so
+            marginal = ``peak - before``.
+          - ``model_state="cold"``: ``before`` jumped > 3 GiB above the 2s
+            baseline minimum during the probe window, indicating a first-load
+            run. Use ``peak - baseline_min`` so the recorded cost includes
+            the model weights, otherwise we'd persist an unrealistically low
+            value (steady-state activations only).
+          - Returns ``(None, "unknown")`` if we lack the inputs.
+        """
+        if not self.have_per_process_data:
+            return None, "unknown"
+        if not isinstance(self.comfy_before, int) or not isinstance(self.comfy_peak, int):
+            return None, "unknown"
+        baseline = (
+            self.comfy_baseline_min
+            if isinstance(self.comfy_baseline_min, int)
+            else self.comfy_before
+        )
+        cold = (self.comfy_before - baseline) > _VRAM_COLD_LOAD_THRESHOLD_BYTES
+        if cold:
+            marginal = self.comfy_peak - baseline
+            state = "cold"
+        else:
+            marginal = self.comfy_peak - self.comfy_before
+            state = "warm"
+        if marginal <= 0:
+            return None, state
+        return marginal, state
+
     def trustworthy(self) -> bool:
         # Require at least two samples (otherwise we may have caught only the
-        # idle baseline). Single-sample mid-inference probes can still be
-        # informative but we mark them untrusted to be safe.
-        return self.samples >= 2 and self.peak_used_bytes() is not None
+        # idle baseline) AND a usable per-process marginal.
+        if self.samples < 2:
+            return False
+        marginal, _ = self.marginal_and_state()
+        return isinstance(marginal, int) and marginal > 0
+
+    # ----- backward-compatibility shim ------------------------------------
+
+    def peak_used_bytes(self) -> Optional[int]:
+        """Deprecated: returns the per-process marginal (NOT whole-GPU peak).
+
+        Old call sites referred to this as "peak"; the field name now means
+        flux's marginal contribution to ComfyUI's allocation. Whole-GPU peak
+        is available via :meth:`system_peak_used_bytes`.
+        """
+        marginal, _ = self.marginal_and_state()
+        return marginal
 
 
 def compute_max_batch(free_vram: Optional[int], per_image: Optional[int]) -> int:
@@ -2481,9 +2841,10 @@ async def _comfy_run_round(
     Caller is responsible for any retry / batch-splitting strategy.
 
     If ``vram_probe`` is provided, it is started before the prompt is
-    submitted and stopped after the round completes (including on error),
-    populating the probe's min_free / total fields. Callers compute
-    `peak_used = total - min_free` from the probe.
+    submitted and stopped after the round completes (including on error).
+    The probe samples ComfyUI's per-process VRAM via nvidia-smi (filtered to
+    the ComfyUI PID set on GPU0); callers read ``marginal_and_state()`` to
+    get flux's marginal contribution and whether the run was warm or cold.
     """
     if vram_probe is not None:
         vram_probe.start()
@@ -2735,26 +3096,43 @@ async def _generate_images_with_adaptive_batching(
         images_remaining -= len(round_images)
 
         # VRAM measurement after the first successful round.
-        # Preferred: use the in-run probe (peak_used = total - min_free).
-        # This captures the real GiB-scale peak even when the model is
-        # warm-cached (where end-of-round free VRAM equals start-of-round).
+        # Preferred: in-run per-process probe measures flux's MARGINAL
+        # contribution to ComfyUI's GPU0 allocation (peak_comfy_used -
+        # before_comfy_used). Insensitive to concurrent voxtral / desktop /
+        # TTS activity, unlike the old `total - min_free` approach which
+        # captured whole-GPU pressure at peak.
         # Fallback: endpoint diff `free_before - free_after`, tagged as
         # untrusted so the batcher doesn't plan against it.
         if estimate is None and rounds_run == 1:
             per_image_cost = 0
             measurement_trusted = False
             source = "probe"
+            model_state = "unknown"
+            comfy_baseline = 0
+            samples_count = probe.samples if probe is not None else 0
             free_after, _ = await comfy_vram_snapshot(client)
 
             if probe is not None and probe.trustworthy():
-                peak = probe.peak_used_bytes()
-                if isinstance(peak, int) and peak > 0:
-                    # peak is total round usage; divide by batch_target to
-                    # get per-image cost (the cache key is per-image).
+                marginal, model_state = probe.marginal_and_state()
+                if isinstance(marginal, int) and marginal > 0:
+                    # marginal is the per-batch-round delta; divide by
+                    # batch_target to get per-image cost (cache key is
+                    # per-image).
                     divisor = max(1, batch_target)
-                    per_image_cost = peak // divisor
+                    per_image_cost = marginal // divisor
                     measurement_trusted = True
                     source = "probe"
+                comfy_baseline = (
+                    probe.comfy_baseline_min
+                    if isinstance(probe.comfy_baseline_min, int)
+                    else 0
+                )
+            elif probe is not None and probe.error:
+                print(
+                    f"[proxy] VRAM probe error for {workflow_name} "
+                    f"{width}x{height}: {probe.error}",
+                    flush=True,
+                )
 
             if per_image_cost <= 0:
                 # Probe failed or returned nothing useful. Fall back to the
@@ -2766,6 +3144,8 @@ async def _generate_images_with_adaptive_batching(
                     per_image_cost = 4 * 1024 * 1024  # synthetic floor: 4 MiB
                 measurement_trusted = False
                 source = "endpoint_diff"
+                if model_state == "unknown":
+                    model_state = "unknown"
 
             record_vram_estimate(
                 workflow_name,
@@ -2774,16 +3154,34 @@ async def _generate_images_with_adaptive_batching(
                 per_image_cost,
                 trusted=measurement_trusted,
                 source=source,
+                model_state=model_state,
+                comfy_baseline_bytes=comfy_baseline,
+                samples_count=samples_count,
             )
             # Re-read; will be None if measurement was untrusted (so we
             # don't make scheduling decisions off it).
             estimate = get_vram_estimate(workflow_name, width, height)
-            samples = probe.samples if probe is not None else 0
+            sys_peak = probe.system_peak_used_bytes() if probe is not None else None
+            sys_peak_str = (
+                f"{sys_peak / (1024**3):.2f} GiB" if isinstance(sys_peak, int) else "n/a"
+            )
+            before_str = (
+                f"{probe.comfy_before / (1024**3):.2f} GiB"
+                if probe is not None and isinstance(probe.comfy_before, int)
+                else "n/a"
+            )
+            peak_str = (
+                f"{probe.comfy_peak / (1024**3):.2f} GiB"
+                if probe is not None and isinstance(probe.comfy_peak, int)
+                else "n/a"
+            )
             print(
                 f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: "
-                f"{per_image_cost / (1024**2):.1f} MiB/image "
+                f"{per_image_cost / (1024**2):.1f} MiB/image marginal "
                 f"(trusted={measurement_trusted}, source={source}, "
-                f"probe_samples={samples})",
+                f"model_state={model_state}, probe_samples={samples_count}, "
+                f"comfy_before={before_str}, comfy_peak={peak_str}, "
+                f"system_peak={sys_peak_str})",
                 flush=True,
             )
 
@@ -3287,10 +3685,12 @@ async def _record_event(event: dict) -> None:
             entry["status"] = "succeeded"
             entry["percent"] = 100
             entry["phase"] = "done"
+            entry["ended_at"] = time.time()
         elif etype == "execution_error":
             entry["status"] = "failed"
             err = {k: data.get(k) for k in ("exception_message", "exception_type", "node_id", "node_type") if k in data}
             entry["error"] = err or "execution_error"
+            entry["ended_at"] = time.time()
 
         entry["updated_at"] = time.time()
 
@@ -3302,6 +3702,174 @@ async def _gc_video_progress() -> None:
         for pid in stale:
             _video_progress.pop(pid, None)
             _video_workflows.pop(pid, None)
+
+
+# How often the reconciliation loop polls ComfyUI for authoritative state.
+_VIDEO_RECONCILE_INTERVAL = 15
+# How long to keep entries with a terminal status after ended_at before GC.
+_VIDEO_RECONCILE_RETAIN = 5 * 60
+# How many recent /history items to consider when reconciling.
+_VIDEO_RECONCILE_HISTORY_LIMIT = 200
+
+
+def _extract_prompt_ids(queue_block: list) -> set[str]:
+    """ComfyUI /queue entries are tuple-like lists: [priority, prompt_id, ...]."""
+    out: set[str] = set()
+    if not isinstance(queue_block, list):
+        return out
+    for entry in queue_block:
+        if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+            pid = entry[1]
+            if isinstance(pid, str) and pid:
+                out.add(pid)
+    return out
+
+
+def _history_terminal_state(job: dict) -> tuple[str, Optional[str]]:
+    """Return (terminal_status, error_text) for a /history entry.
+
+    terminal_status is 'succeeded', 'failed', or 'running' (not yet terminal).
+    """
+    status_block = (job or {}).get("status", {}) or {}
+    if not status_block.get("completed"):
+        return ("running", None)
+    messages = status_block.get("messages", []) or []
+    for msg in messages:
+        if isinstance(msg, (list, tuple)) and msg and msg[0] == "execution_error":
+            err_text = ""
+            try:
+                err_text = json.dumps(msg[1])[:500] if len(msg) > 1 else "execution_error"
+            except Exception:
+                err_text = "execution_error"
+            return ("failed", err_text or "execution_error")
+    return ("succeeded", None)
+
+
+async def _fetch_comfy_state() -> tuple[Optional[set[str]], Optional[dict]]:
+    """Fetch ComfyUI authoritative state: (active_prompt_ids, history_map).
+
+    Returns (None, None) on any error. Uses 2s timeouts per the spec.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=2.0)) as client:
+            q_resp = await client.get(f"{COMFY_HOST}/queue")
+            h_resp = await client.get(f"{COMFY_HOST}/history?max_items={_VIDEO_RECONCILE_HISTORY_LIMIT}")
+    except Exception as e:
+        print(f"[proxy] video reconcile: ComfyUI fetch failed ({e})", flush=True)
+        return (None, None)
+    if q_resp.status_code != 200 or h_resp.status_code != 200:
+        return (None, None)
+    try:
+        q_data = q_resp.json() or {}
+    except Exception:
+        q_data = {}
+    try:
+        h_data = h_resp.json() or {}
+    except Exception:
+        h_data = {}
+    active: set[str] = set()
+    active |= _extract_prompt_ids(q_data.get("queue_running") or [])
+    active |= _extract_prompt_ids(q_data.get("queue_pending") or [])
+    return (active, h_data if isinstance(h_data, dict) else {})
+
+
+async def _reconcile_video_progress() -> None:
+    """Reconcile _video_progress against ComfyUI's /queue and /history.
+
+    - In /queue (running or pending): leave as-is.
+    - In /history: mark succeeded/failed with terminal info.
+    - In neither: mark failed/orphaned (ComfyUI does not know the prompt_id).
+    - Entries with ended_at older than _VIDEO_RECONCILE_RETAIN: garbage-collect.
+    """
+    active, history = await _fetch_comfy_state()
+    now = time.time()
+
+    async with _video_progress_lock:
+        if not _video_progress:
+            return
+
+        if active is None or history is None:
+            # ComfyUI unreachable: only run the time-based GC, do not mutate
+            # statuses (could be a transient blip).
+            _gc_video_progress_terminal_locked(now)
+            return
+
+        for prompt_id in list(_video_progress.keys()):
+            entry = _video_progress.get(prompt_id)
+            if not isinstance(entry, dict):
+                continue
+            current_status = entry.get("status")
+
+            if prompt_id in active:
+                # Real job in flight; touch updated_at so it doesn't look stale
+                # but otherwise let the ws listener drive it.
+                continue
+
+            if prompt_id in history:
+                job = history.get(prompt_id) or {}
+                terminal, err_text = _history_terminal_state(job)
+                if terminal == "succeeded" and current_status != "succeeded":
+                    entry["status"] = "succeeded"
+                    entry["percent"] = 100
+                    entry["phase"] = "done"
+                    entry.setdefault("ended_at", now)
+                    entry["updated_at"] = now
+                elif terminal == "failed" and current_status != "failed":
+                    entry["status"] = "failed"
+                    if err_text and not entry.get("error"):
+                        entry["error"] = err_text
+                    entry.setdefault("ended_at", now)
+                    entry["updated_at"] = now
+                continue
+
+            # Not in queue, not in history => orphaned. Only mark non-terminal
+            # entries; leave existing succeeded/failed alone (they may already
+            # have been GC'd from /history but already terminal locally).
+            if current_status in ("queued", "running", None):
+                entry["status"] = "failed"
+                entry["error"] = "orphaned: ComfyUI does not report this prompt_id"
+                entry.setdefault("ended_at", now)
+                entry["updated_at"] = now
+
+        _gc_video_progress_terminal_locked(now)
+
+
+def _gc_video_progress_terminal_locked(now: float) -> None:
+    """Drop terminal entries whose ended_at is older than retain window.
+
+    Caller must hold _video_progress_lock.
+    """
+    cutoff = now - _VIDEO_RECONCILE_RETAIN
+    drop: list[str] = []
+    for pid, e in _video_progress.items():
+        if not isinstance(e, dict):
+            drop.append(pid)
+            continue
+        if e.get("status") in ("succeeded", "failed"):
+            ended = e.get("ended_at")
+            # If terminal but no ended_at (legacy entry), seed it so it has
+            # a fair retention window starting now instead of being dropped.
+            if not ended:
+                e["ended_at"] = now
+                continue
+            if ended < cutoff:
+                drop.append(pid)
+    for pid in drop:
+        _video_progress.pop(pid, None)
+        _video_workflows.pop(pid, None)
+
+
+async def _reconcile_video_progress_loop(stop_event: asyncio.Event) -> None:
+    """Long-running reconciliation loop. Never crashes on transient errors."""
+    while not stop_event.is_set():
+        try:
+            await _reconcile_video_progress()
+        except Exception as e:  # noqa: BLE001
+            print(f"[proxy] video reconcile loop error: {e}", flush=True)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=_VIDEO_RECONCILE_INTERVAL)
+        except asyncio.TimeoutError:
+            continue
 
 
 # Listener state (so handlers can tell whether the ws is up).
@@ -4029,14 +4597,23 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
                 json=_build_comfy_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
             )
             if resp.status_code != 200:
+                # Do NOT record _video_progress here: no prompt_id means there
+                # is nothing to reconcile against, and a partial entry would
+                # leak as a stale "running" job. Surface the error instead.
                 return Response(
                     content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text[:500]}", "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json"
                 )
-            result = resp.json()
-            prompt_id = result.get("prompt_id")
-            if not prompt_id:
+            try:
+                result = resp.json()
+            except Exception:
+                result = {}
+            prompt_id = result.get("prompt_id") if isinstance(result, dict) else None
+            if not prompt_id or not isinstance(prompt_id, str):
+                # Same rationale: never seed _video_progress without a valid
+                # prompt_id from ComfyUI, otherwise the entry can never be
+                # reconciled and will show forever as a phantom job.
                 return Response(
                     content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
                     status_code=502,
@@ -4673,9 +5250,34 @@ async def lifespan(app: FastAPI):
     # /v1/videos/{id} falls back to /history polling if this can't connect.
     comfy_ws_stop = asyncio.Event()
     comfy_ws_task = None
+    video_reconcile_stop = asyncio.Event()
+    video_reconcile_task = None
     if COMFY_ENABLED:
         comfy_ws_task = asyncio.create_task(_comfy_ws_listener(comfy_ws_stop))
         print(f"[proxy] ComfyUI ws listener started (client_id={COMFY_CLIENT_ID})", flush=True)
+
+        # Startup reconciliation: safety net for any persisted/hydrated
+        # _video_progress (currently in-memory only, so this is usually a
+        # no-op, but the hook is wired for future persistence).
+        if _video_progress:
+            try:
+                await _reconcile_video_progress()
+                print(
+                    f"[proxy] video progress startup reconcile complete "
+                    f"({len(_video_progress)} entries remain)",
+                    flush=True,
+                )
+            except Exception as e:  # noqa: BLE001
+                print(f"[proxy] video progress startup reconcile failed: {e}", flush=True)
+
+        video_reconcile_task = asyncio.create_task(
+            _reconcile_video_progress_loop(video_reconcile_stop)
+        )
+        print(
+            f"[proxy] video progress reconciliation started "
+            f"(every {_VIDEO_RECONCILE_INTERVAL}s, retain terminal {_VIDEO_RECONCILE_RETAIN}s)",
+            flush=True,
+        )
 
     # Image cache eviction (Fix 2): periodically delete cache files past TTL.
     image_cache_stop = asyncio.Event()
@@ -4718,6 +5320,15 @@ async def lifespan(app: FastAPI):
         comfy_ws_task.cancel()
         try:
             await comfy_ws_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+    if video_reconcile_task is not None:
+        video_reconcile_stop.set()
+        video_reconcile_task.cancel()
+        try:
+            await video_reconcile_task
         except asyncio.CancelledError:
             pass
         except Exception:

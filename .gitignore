@@ -12,6 +12,10 @@ data/metrics.db-wal
 data/metrics.db-shm
 data/metrics.db.broken-*
 
+# GPU incident snapshots — ephemeral diagnostic captures written by
+# ~/.local/bin/gpu-incident-watcher
+data/incidents/
+
 # =============================================================================
 # Python
 # =============================================================================
