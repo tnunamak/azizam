@@ -2008,13 +2008,55 @@ def parse_size(size_str: str) -> tuple[int, int]:
 #     the per-image cost to disk so subsequent restarts inherit the cache.
 
 _vram_estimates_lock = threading.Lock()
-_vram_estimates_cache: dict[str, int] = {}
+# Schema v2 entry shape:
+#   {"peak_bytes": int, "trusted": bool, "measured_at": int (unix s),
+#    "source": "probe" | "endpoint_diff"}
+# Schema v1 (legacy) was a flat dict {key: int_bytes} where the int was
+# computed as `free_before - free_after_round` — the residual, not the
+# peak. With warm caches this read as MiB even when true peak was GiB.
+# On read we migrate v1 → v2, marking every migrated entry trusted=False
+# and (if the value is < 64 MiB) clamping peak_bytes to 0 so the batcher
+# ignores it and re-measures on the next run.
+_VRAM_ESTIMATES_SCHEMA_VERSION = 2
+_VRAM_LEGACY_TRUST_FLOOR = 64 * 1024 * 1024  # 64 MiB
+_vram_estimates_cache: dict[str, dict] = {}
 _vram_estimates_loaded = False
 _image_url_signing_secret: Optional[bytes] = None
 
 
-def _load_vram_estimates() -> dict[str, int]:
-    """Lazy-load the on-disk VRAM-per-image estimates."""
+def _normalize_vram_entry(value) -> Optional[dict]:
+    """Coerce a raw cache value (legacy int or v2 dict) into the v2 shape.
+
+    Legacy ints are marked untrusted, since they were `free_before - free_after`
+    rather than an in-run peak. Sub-64-MiB legacy values are clamped to zero so
+    they're effectively absent from the trusted hot path.
+    """
+    if isinstance(value, (int, float)):
+        peak = int(value)
+        if peak < _VRAM_LEGACY_TRUST_FLOOR:
+            peak = 0
+        return {
+            "peak_bytes": peak,
+            "trusted": False,
+            "measured_at": 0,
+            "source": "endpoint_diff",
+        }
+    if isinstance(value, dict):
+        try:
+            peak = int(value.get("peak_bytes", 0))
+        except (TypeError, ValueError):
+            peak = 0
+        return {
+            "peak_bytes": peak,
+            "trusted": bool(value.get("trusted", False)),
+            "measured_at": int(value.get("measured_at", 0) or 0),
+            "source": str(value.get("source", "unknown")),
+        }
+    return None
+
+
+def _load_vram_estimates() -> dict[str, dict]:
+    """Lazy-load the on-disk VRAM-per-image estimates (schema v2)."""
     global _vram_estimates_loaded
     with _vram_estimates_lock:
         if _vram_estimates_loaded:
@@ -2022,8 +2064,20 @@ def _load_vram_estimates() -> dict[str, int]:
         if VRAM_ESTIMATES_FILE.exists():
             try:
                 raw = json.loads(VRAM_ESTIMATES_FILE.read_text())
-                if isinstance(raw, dict):
-                    _vram_estimates_cache.update({str(k): int(v) for k, v in raw.items() if isinstance(v, (int, float))})
+                entries_blob = None
+                if isinstance(raw, dict) and isinstance(raw.get("entries"), dict):
+                    # v2 wrapped shape.
+                    entries_blob = raw.get("entries")
+                elif isinstance(raw, dict):
+                    # v1 flat shape — migrate.
+                    entries_blob = raw
+                if isinstance(entries_blob, dict):
+                    for k, v in entries_blob.items():
+                        if not isinstance(k, str):
+                            continue
+                        entry = _normalize_vram_entry(v)
+                        if entry is not None:
+                            _vram_estimates_cache[k] = entry
             except Exception as e:
                 print(f"[proxy] Could not load VRAM estimates ({VRAM_ESTIMATES_FILE}): {e}", flush=True)
         _vram_estimates_loaded = True
@@ -2034,7 +2088,11 @@ def _persist_vram_estimates() -> None:
     with _vram_estimates_lock:
         try:
             VRAM_ESTIMATES_FILE.parent.mkdir(parents=True, exist_ok=True)
-            VRAM_ESTIMATES_FILE.write_text(json.dumps(_vram_estimates_cache, indent=2))
+            payload = {
+                "version": _VRAM_ESTIMATES_SCHEMA_VERSION,
+                "entries": _vram_estimates_cache,
+            }
+            VRAM_ESTIMATES_FILE.write_text(json.dumps(payload, indent=2))
         except Exception as e:
             print(f"[proxy] Could not persist VRAM estimates: {e}", flush=True)
 
@@ -2044,44 +2102,173 @@ def _vram_cache_key(workflow_name: str, width: int, height: int) -> str:
 
 
 def get_vram_estimate(workflow_name: str, width: int, height: int) -> Optional[int]:
-    """Return cached VRAM-per-image bytes for this (workflow, size), or None."""
+    """Return cached VRAM-per-image bytes for this (workflow, size), or None.
+
+    Only returns trusted measurements. Untrusted (legacy or probe-fallback)
+    entries cause the caller to re-measure on next run instead of planning
+    capacity against bad data.
+    """
     cache = _load_vram_estimates()
-    return cache.get(_vram_cache_key(workflow_name, width, height))
+    entry = cache.get(_vram_cache_key(workflow_name, width, height))
+    if not isinstance(entry, dict):
+        return None
+    if not entry.get("trusted"):
+        return None
+    peak = entry.get("peak_bytes")
+    return int(peak) if isinstance(peak, int) and peak > 0 else None
 
 
-def record_vram_estimate(workflow_name: str, width: int, height: int, bytes_per_image: int) -> None:
+def record_vram_estimate(
+    workflow_name: str,
+    width: int,
+    height: int,
+    bytes_per_image: int,
+    *,
+    trusted: bool = True,
+    source: str = "probe",
+) -> None:
     """Persist a measured VRAM-per-image cost so restarts inherit the calibration.
 
     We keep a lower-bound (the measured peak), since under-estimating leads to
-    OOM. Adopt a 10% safety margin baked into the stored value.
+    OOM. Adopt a 10% safety margin baked into the stored value when trusted.
+
+    Trusted measurements come from the in-run probe (peak = total -
+    min_free_observed). Untrusted measurements (probe failed, fell back to
+    endpoint diff) are persisted with trusted=False so the status page can
+    surface them but the batcher won't plan against them.
     """
     if bytes_per_image <= 0:
         return
-    safe_value = int(bytes_per_image * 1.1)
+    safe_value = int(bytes_per_image * 1.1) if trusted else int(bytes_per_image)
     key = _vram_cache_key(workflow_name, width, height)
     cache = _load_vram_estimates()
-    prior = cache.get(key)
-    # Keep the larger of the two — never under-estimate.
-    cache[key] = max(safe_value, int(prior)) if isinstance(prior, int) else safe_value
+    prior = cache.get(key) if isinstance(cache.get(key), dict) else None
+    prior_peak = int(prior.get("peak_bytes", 0)) if prior else 0
+    prior_trusted = bool(prior.get("trusted")) if prior else False
+    # Only let a trusted measurement overwrite a prior trusted one. An
+    # untrusted measurement never displaces a trusted one. When both are
+    # trusted, keep the larger value — never under-estimate.
+    if trusted:
+        new_peak = max(safe_value, prior_peak) if prior_trusted else safe_value
+        new_trusted = True
+    else:
+        if prior_trusted:
+            return
+        new_peak = safe_value
+        new_trusted = False
+    cache[key] = {
+        "peak_bytes": new_peak,
+        "trusted": new_trusted,
+        "measured_at": int(time.time()),
+        "source": source,
+    }
     _persist_vram_estimates()
 
 
-async def comfy_free_vram_bytes(client: httpx.AsyncClient) -> Optional[int]:
-    """Read free VRAM (bytes) on GPU0 from ComfyUI /system_stats."""
+async def comfy_vram_snapshot(
+    client: httpx.AsyncClient,
+) -> tuple[Optional[int], Optional[int]]:
+    """Return (free, total) VRAM bytes on GPU0 from ComfyUI /system_stats."""
     try:
         resp = await client.get(f"{COMFY_HOST}/system_stats", timeout=HEALTH_CHECK_TIMEOUT)
         if resp.status_code != 200:
-            return None
+            return None, None
         payload = resp.json()
         devices = payload.get("devices") or []
         if not devices:
-            return None
+            return None, None
         # GPU0 is the inference card per the project's NAS+RTX layout.
         free = devices[0].get("vram_free")
-        return int(free) if isinstance(free, (int, float)) else None
+        total = devices[0].get("vram_total")
+        free_i = int(free) if isinstance(free, (int, float)) else None
+        total_i = int(total) if isinstance(total, (int, float)) else None
+        return free_i, total_i
     except Exception as e:
-        print(f"[proxy] comfy_free_vram_bytes: {e}", flush=True)
-        return None
+        print(f"[proxy] comfy_vram_snapshot: {e}", flush=True)
+        return None, None
+
+
+async def comfy_free_vram_bytes(client: httpx.AsyncClient) -> Optional[int]:
+    """Backward-compatible: just the free-VRAM read."""
+    free, _ = await comfy_vram_snapshot(client)
+    return free
+
+
+# Sample cadence for the in-run VRAM probe. Spec floor is 250ms; default 500ms.
+_VRAM_PROBE_INTERVAL_S = 0.5
+_VRAM_PROBE_INTERVAL_MIN_S = 0.25
+
+
+class _VramProbe:
+    """Tracks min free VRAM across a single ComfyUI round.
+
+    `peak_used = vram_total - min_free_observed`, which is the true in-run
+    peak (not the residual endpoint diff). Runs as an asyncio task while the
+    caller awaits the round. Caller signals completion via `stop()`.
+    """
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        interval: float = _VRAM_PROBE_INTERVAL_S,
+    ) -> None:
+        self._client = client
+        self._interval = max(_VRAM_PROBE_INTERVAL_MIN_S, float(interval))
+        self._stop = asyncio.Event()
+        self._task: Optional[asyncio.Task] = None
+        self.samples = 0
+        self.min_free: Optional[int] = None
+        self.total: Optional[int] = None
+        self.error: Optional[str] = None
+
+    async def _record_sample(self) -> None:
+        free, total = await comfy_vram_snapshot(self._client)
+        if isinstance(total, int) and self.total is None:
+            self.total = total
+        if isinstance(free, int):
+            if self.min_free is None or free < self.min_free:
+                self.min_free = free
+            self.samples += 1
+
+    async def _run(self) -> None:
+        try:
+            # Capture an immediate baseline so we have at least one data
+            # point even on very short rounds.
+            await self._record_sample()
+            while not self._stop.is_set():
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
+                    break  # stop signaled — exit loop, final sample below.
+                except asyncio.TimeoutError:
+                    await self._record_sample()
+            # One final sample after stop to catch end-of-run state.
+            await self._record_sample()
+        except Exception as e:
+            self.error = f"{type(e).__name__}: {e}"
+
+    def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        self._stop.set()
+        if self._task is not None:
+            try:
+                await self._task
+            except Exception as e:
+                self.error = f"{type(e).__name__}: {e}"
+
+    def peak_used_bytes(self) -> Optional[int]:
+        if not isinstance(self.total, int) or not isinstance(self.min_free, int):
+            return None
+        peak = self.total - self.min_free
+        return peak if peak > 0 else None
+
+    def trustworthy(self) -> bool:
+        # Require at least two samples (otherwise we may have caught only the
+        # idle baseline). Single-sample mid-inference probes can still be
+        # informative but we mark them untrusted to be safe.
+        return self.samples >= 2 and self.peak_used_bytes() is not None
 
 
 def compute_max_batch(free_vram: Optional[int], per_image: Optional[int]) -> int:
@@ -2249,93 +2436,113 @@ async def _comfy_run_round(
     workflow: dict,
     headers: dict,
     label: str,
+    *,
+    vram_probe: Optional[_VramProbe] = None,
 ) -> tuple[Optional[Response], list[bytes]]:
     """Submit a single ComfyUI prompt and harvest the resulting image bytes.
 
     Returns (error_response, image_bytes_list). On success error_response is None.
     Caller is responsible for any retry / batch-splitting strategy.
+
+    If ``vram_probe`` is provided, it is started before the prompt is
+    submitted and stopped after the round completes (including on error),
+    populating the probe's min_free / total fields. Callers compute
+    `peak_used = total - min_free` from the probe.
     """
-    try:
-        resp = await client.post(
-            f"{COMFY_HOST}/prompt",
-            headers=headers,
-            json=_build_comfy_submit_payload(workflow),
-        )
-    except httpx.TimeoutException:
-        return Response(
-            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json",
-        ), []
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json",
-        ), []
+    if vram_probe is not None:
+        vram_probe.start()
 
-    if resp.status_code != 200:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json",
-        ), []
-
-    result = resp.json()
-    prompt_id = result.get("prompt_id")
-    if not prompt_id:
-        return Response(
-            content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json",
-        ), []
-
-    print(f"[proxy] ComfyUI {label} submitted: {prompt_id}", flush=True)
-
-    max_polls = COMFY_TIMEOUT * 2  # 0.5s cadence
-    job = None
-    for _ in range(max_polls):
-        await asyncio.sleep(0.5)
-        try:
-            history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
-        except (httpx.TimeoutException, httpx.ConnectError):
-            continue
-        if history_resp.status_code != 200:
-            continue
-        history = history_resp.json()
-        if prompt_id not in history:
-            continue
-        candidate = history[prompt_id]
-        if candidate.get("status", {}).get("completed"):
-            job = candidate
-            break
-
-    if job is None:
-        return Response(
-            content=json.dumps({"error": {"message": "Image generation timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json",
-        ), []
-
-    images: list[bytes] = []
-    outputs = job.get("outputs", {})
-    for _node_id, node_output in outputs.items():
-        if "images" not in node_output:
-            continue
-        for img_info in node_output["images"]:
-            filename = img_info.get("filename")
-            subfolder = img_info.get("subfolder", "")
-            img_type = img_info.get("type", "output")
-            params = {"filename": filename, "type": img_type}
-            if subfolder:
-                params["subfolder"] = subfolder
+    async def _finalize_probe() -> None:
+        if vram_probe is not None:
             try:
-                img_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
+                await vram_probe.stop()
+            except Exception as e:
+                print(f"[proxy] VRAM probe stop error: {e}", flush=True)
+
+    try:
+        try:
+            resp = await client.post(
+                f"{COMFY_HOST}/prompt",
+                headers=headers,
+                json=_build_comfy_submit_payload(workflow),
+            )
+        except httpx.TimeoutException:
+            return Response(
+                content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
+                status_code=504,
+                media_type="application/json",
+            ), []
+        except httpx.ConnectError:
+            return Response(
+                content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json",
+            ), []
+
+        if resp.status_code != 200:
+            return Response(
+                content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text}", "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json",
+            ), []
+
+        result = resp.json()
+        prompt_id = result.get("prompt_id")
+        if not prompt_id:
+            return Response(
+                content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json",
+            ), []
+
+        print(f"[proxy] ComfyUI {label} submitted: {prompt_id}", flush=True)
+
+        max_polls = COMFY_TIMEOUT * 2  # 0.5s cadence
+        job = None
+        for _ in range(max_polls):
+            await asyncio.sleep(0.5)
+            try:
+                history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
             except (httpx.TimeoutException, httpx.ConnectError):
                 continue
-            if img_resp.status_code == 200 and img_resp.content:
-                images.append(img_resp.content)
-    return None, images
+            if history_resp.status_code != 200:
+                continue
+            history = history_resp.json()
+            if prompt_id not in history:
+                continue
+            candidate = history[prompt_id]
+            if candidate.get("status", {}).get("completed"):
+                job = candidate
+                break
+
+        if job is None:
+            return Response(
+                content=json.dumps({"error": {"message": "Image generation timeout", "type": "api_error"}}),
+                status_code=504,
+                media_type="application/json",
+            ), []
+
+        images: list[bytes] = []
+        outputs = job.get("outputs", {})
+        for _node_id, node_output in outputs.items():
+            if "images" not in node_output:
+                continue
+            for img_info in node_output["images"]:
+                filename = img_info.get("filename")
+                subfolder = img_info.get("subfolder", "")
+                img_type = img_info.get("type", "output")
+                params = {"filename": filename, "type": img_type}
+                if subfolder:
+                    params["subfolder"] = subfolder
+                try:
+                    img_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
+                except (httpx.TimeoutException, httpx.ConnectError):
+                    continue
+                if img_resp.status_code == 200 and img_resp.content:
+                    images.append(img_resp.content)
+        return None, images
+    finally:
+        await _finalize_probe()
 
 
 def _build_image_response_payload(
@@ -2460,11 +2667,19 @@ async def _generate_images_with_adaptive_batching(
             )
             batch_target = 1
 
+        # Only run the probe on rounds where we don't yet have a trusted
+        # estimate (rounds_run == 1 is the typical case). Subsequent rounds
+        # skip the probe overhead.
+        probe: Optional[_VramProbe] = None
+        if estimate is None:
+            probe = _VramProbe(client)
+
         err, round_images = await _comfy_run_round(
             client,
             round_workflow,
             headers,
             label=f"image round {rounds_run}/{max_rounds} (target={batch_target})",
+            vram_probe=probe,
         )
         if err is not None:
             return err
@@ -2483,26 +2698,56 @@ async def _generate_images_with_adaptive_batching(
         images_collected.extend(round_images)
         images_remaining -= len(round_images)
 
-        # VRAM measurement after the first successful round. Two cases:
-        #   1. free_after < free_before: real allocation captured. Store it.
-        #   2. free_after >= free_before: model was already resident; the
-        #      incremental cost is below the granularity ComfyUI reports.
-        #      Store a small synthetic estimate (4 MiB / image) so subsequent
-        #      rounds use the cap path instead of probing forever. This also
-        #      causes the persisted file to reflect "small per-image cost",
-        #      which is the right answer for cached models.
+        # VRAM measurement after the first successful round.
+        # Preferred: use the in-run probe (peak_used = total - min_free).
+        # This captures the real GiB-scale peak even when the model is
+        # warm-cached (where end-of-round free VRAM equals start-of-round).
+        # Fallback: endpoint diff `free_before - free_after`, tagged as
+        # untrusted so the batcher doesn't plan against it.
         if estimate is None and rounds_run == 1:
-            free_after = await comfy_free_vram_bytes(client)
             per_image_cost = 0
-            if isinstance(free_after, int) and isinstance(free_before, int) and free_after < free_before:
-                per_image_cost = free_before - free_after
+            measurement_trusted = False
+            source = "probe"
+            free_after, _ = await comfy_vram_snapshot(client)
+
+            if probe is not None and probe.trustworthy():
+                peak = probe.peak_used_bytes()
+                if isinstance(peak, int) and peak > 0:
+                    # peak is total round usage; divide by batch_target to
+                    # get per-image cost (the cache key is per-image).
+                    divisor = max(1, batch_target)
+                    per_image_cost = peak // divisor
+                    measurement_trusted = True
+                    source = "probe"
+
             if per_image_cost <= 0:
-                per_image_cost = 4 * 1024 * 1024  # synthetic floor: 4 MiB
-            record_vram_estimate(workflow_name, width, height, per_image_cost)
+                # Probe failed or returned nothing useful. Fall back to the
+                # legacy endpoint diff so we at least persist *something*,
+                # but mark it untrusted.
+                if isinstance(free_after, int) and isinstance(free_before, int) and free_after < free_before:
+                    per_image_cost = (free_before - free_after) // max(1, batch_target)
+                if per_image_cost <= 0:
+                    per_image_cost = 4 * 1024 * 1024  # synthetic floor: 4 MiB
+                measurement_trusted = False
+                source = "endpoint_diff"
+
+            record_vram_estimate(
+                workflow_name,
+                width,
+                height,
+                per_image_cost,
+                trusted=measurement_trusted,
+                source=source,
+            )
+            # Re-read; will be None if measurement was untrusted (so we
+            # don't make scheduling decisions off it).
             estimate = get_vram_estimate(workflow_name, width, height)
+            samples = probe.samples if probe is not None else 0
             print(
                 f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: "
-                f"{per_image_cost / (1024**2):.1f} MiB/image (stored, synthetic={per_image_cost == 4*1024*1024})",
+                f"{per_image_cost / (1024**2):.1f} MiB/image "
+                f"(trusted={measurement_trusted}, source={source}, "
+                f"probe_samples={samples})",
                 flush=True,
             )
 

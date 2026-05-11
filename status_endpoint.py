@@ -1136,18 +1136,15 @@ def _read_gpu_budget() -> Optional[dict]:
 def _read_vram_estimates() -> Optional[dict]:
     """Read cached per-workflow per-image VRAM estimates.
 
-    Known issue: the persisted estimates are computed as
-    ``free_before_round - free_after_round`` from ComfyUI's free-VRAM
-    endpoint at *round boundaries* — i.e. NOT the in-run peak. When a model
-    is already resident (warm cache), free VRAM at end-of-round can be
-    nearly identical to start-of-round, yielding MiB-scale "estimates" for
-    workflows whose true peak is GiB-scale (flux2-klein-4b @ 512×512
-    persists as ~5 MiB despite peaking ~3-4 GiB).
+    Schema v2: ``{"version": 2, "entries": {key: {"peak_bytes", "trusted",
+    "measured_at", "source"}}}``. Trusted entries come from the in-run
+    asyncio probe (peak = vram_total - min_free_observed). Untrusted
+    entries are either legacy v1 (flat int = endpoint diff) or v2 fallback
+    where the probe failed and we recorded the endpoint diff anyway.
 
-    Until the proxy tracks peak across the run (sample free VRAM during
-    inference, not just endpoints), we surface the entries with an explicit
-    ``unavailable_reason`` so consumers know not to plan capacity off them.
-    See ``record_vram_estimate`` in proxy.py.
+    The status renderer reads ``trustworthy`` to decide whether to surface
+    the "Measurement unavailable" banner: only when *no* entries are
+    trusted do we flag the section.
     """
     try:
         if not _VRAM_ESTIMATES_PATH.is_file():
@@ -1156,31 +1153,66 @@ def _read_vram_estimates() -> Optional[dict]:
         if not isinstance(raw, dict):
             return None
         st = _VRAM_ESTIMATES_PATH.stat()
-        entries = []
-        for k, v in raw.items():
-            if not isinstance(k, str) or not isinstance(v, (int, float)):
-                continue
-            entries.append({"key": k, "peak_bytes": int(v)})
-        entries.sort(key=lambda e: e["peak_bytes"], reverse=True)
-        # Heuristic check: if every persisted entry is < 64 MiB, the
-        # measurement is almost certainly the warm-cache endpoint diff
-        # rather than a true peak — flag the whole section.
-        endpoint_diff_only = bool(entries) and all(
-            e["peak_bytes"] < 64 * 1024 * 1024 for e in entries
+
+        # Accept both v2 (wrapped) and v1 (flat) shapes; migrate v1 on the
+        # fly to the same display structure used by v2.
+        version = raw.get("version") if isinstance(raw.get("version"), int) else 1
+        entries_blob = (
+            raw.get("entries") if version >= 2 and isinstance(raw.get("entries"), dict)
+            else raw
         )
+
+        entries = []
+        for k, v in entries_blob.items():
+            if not isinstance(k, str):
+                continue
+            if isinstance(v, dict):
+                try:
+                    peak = int(v.get("peak_bytes", 0))
+                except (TypeError, ValueError):
+                    peak = 0
+                trusted = bool(v.get("trusted", False))
+                source = str(v.get("source", "unknown"))
+                measured_at = int(v.get("measured_at", 0) or 0)
+            elif isinstance(v, (int, float)):
+                # Legacy v1 flat int — always untrusted, and the value is
+                # the endpoint diff (residual) not the peak. Treat sub-64
+                # MiB values as effectively zero so they don't pollute the
+                # table.
+                peak_raw = int(v)
+                peak = peak_raw if peak_raw >= 64 * 1024 * 1024 else 0
+                trusted = False
+                source = "endpoint_diff"
+                measured_at = 0
+            else:
+                continue
+            entries.append({
+                "key": k,
+                "peak_bytes": peak,
+                "trusted": trusted,
+                "source": source,
+                "measured_at": measured_at,
+            })
+        entries.sort(key=lambda e: (not e["trusted"], -e["peak_bytes"]))
+
+        any_trusted = any(e["trusted"] and e["peak_bytes"] > 0 for e in entries)
         return {
             "last_modified": int(st.st_mtime),
             "entries": entries,
             "total_entries": len(entries),
+            "trusted_count": sum(1 for e in entries if e["trusted"]),
+            "schema_version": version,
             "unavailable_reason": (
-                "VRAM peak measurement broken: persisted values are the "
-                "endpoint diff (free_before − free_after_round), not the "
-                "true in-run peak. With warm-cached models this reads "
-                "MiB-scale even when peak is GiB-scale. Fix in proxy.py "
-                "record_vram_estimate to sample free VRAM during inference."
-                if endpoint_diff_only else None
+                None if any_trusted else (
+                    "No trusted VRAM peak measurements yet. The in-run "
+                    "probe records `vram_total - min(vram_free)` during "
+                    "inference; entries appear here after the next image "
+                    "generation completes. Untrusted rows (if any) are "
+                    "legacy endpoint-diff values or probe-fallback values "
+                    "and should not be used for capacity planning."
+                )
             ),
-            "trustworthy": not endpoint_diff_only,
+            "trustworthy": any_trusted,
         }
     except Exception:
         return None

@@ -1197,34 +1197,38 @@ def _render_vram_estimates(b: dict) -> str:
     vr = b.get("vram_estimates")
     if not vr:
         return '<div class="muted">no measurements cached</div>'
+    trusted_count = vr.get("trusted_count") or 0
+    total = vr.get("total_entries") or 0
     parts = [
-        f'<div class="muted small">{_esc(vr.get("total_entries"))} measurements; '
-        f'cache mtime {_ago(vr.get("last_modified"))}</div>'
+        f'<div class="muted small">{_esc(total)} measurements '
+        f'({_esc(trusted_count)} trusted); '
+        f'cache mtime {_ago(vr.get("last_modified"))}; '
+        f'schema v{_esc(vr.get("schema_version"))}</div>'
     ]
     reason = vr.get("unavailable_reason")
     if reason:
-        # Don't show numbers we don't trust — explain why and link the fix
-        # back to proxy.py.
+        # Surface only when nothing trusted has landed yet.
         parts.append(
             f'<div class="bad" style="margin:.5em 0">'
             f'<b>Measurement unavailable:</b> {_esc(reason)}</div>'
         )
-        parts.append(
-            '<details><summary class="muted small">'
-            'show raw cached values (do not trust)</summary>'
-        )
     parts.append(
         '<table><thead><tr><th>Workflow:size</th><th>Peak VRAM</th>'
-        '</tr></thead><tbody>'
+        '<th>Trusted</th><th>Source</th></tr></thead><tbody>'
     )
     for e in vr.get("entries") or []:
+        trusted = bool(e.get("trusted"))
+        trust_cell = (
+            '<span class="ok">yes</span>' if trusted
+            else '<span class="muted">no</span>'
+        )
         parts.append(
             f'<tr><td class="mono">{_esc(e.get("key"))}</td>'
-            f'<td class="mono">{_bytes(e.get("peak_bytes"))}</td></tr>'
+            f'<td class="mono">{_bytes(e.get("peak_bytes"))}</td>'
+            f'<td class="mono">{trust_cell}</td>'
+            f'<td class="mono">{_esc(e.get("source"))}</td></tr>'
         )
     parts.append("</tbody></table>")
-    if reason:
-        parts.append("</details>")
     return "".join(parts)
 
 
