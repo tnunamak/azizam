@@ -98,6 +98,34 @@ SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 # a specific model file. Whichever model the chosen backend has loaded is what gets used.
 ROLES = config.get("roles", {})
 
+# Optional catalog of additional GGUF aliases (parallel to ROLES). Each entry has
+# id/backend/path[/description] and is treated like a role with a pinned model:
+# clients send `model: "<id>"` and the proxy resolves it via ensure_target().
+# This lets us surface arbitrary GGUFs on /v1/models without inventing roles.
+def _normalize_models_catalog(raw) -> dict:
+    """Normalize config['models'] (list of dicts) into {normalized_id: entry}."""
+    out: dict = {}
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        mid = str(item.get("id", "")).strip().lower()
+        backend = item.get("backend")
+        path = item.get("path")
+        if not mid or backend not in ("kobold", "tabby") or not path:
+            continue
+        out[mid] = {
+            "id": mid,
+            "backend": backend,
+            "path": str(path).strip(),
+            "description": str(item.get("description", "") or ""),
+        }
+    return out
+
+
+MODELS_CATALOG = _normalize_models_catalog(config.get("models"))
+
 # TTS backend
 tts_cfg = config.get("backends", {}).get("tts", {})
 TTS_ENABLED = os.environ.get("TTS_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -1299,15 +1327,23 @@ def resolve_role_for_operation(operation: str, requested_model: str) -> Optional
     Roles are checked BEFORE OpenAI-style alias resolution so that "default" is
     treated as a role even if some future OpenAI model happens to share the name.
     """
-    if not ROLES or not requested_model:
+    if not requested_model:
         return None
-    role_def = ROLES.get(normalize_model_id(requested_model))
-    if not isinstance(role_def, dict):
-        return None
-    backend = role_def.get("backend")
+    normalized = normalize_model_id(requested_model)
+    role_def = ROLES.get(normalized) if isinstance(ROLES, dict) else None
+    if isinstance(role_def, dict):
+        backend = role_def.get("backend")
+        role_model = role_def.get("model")
+    else:
+        # Fall through to the optional models: catalog. Same shape but uses `path`
+        # instead of `model` and is keyed by id rather than position.
+        cat_entry = MODELS_CATALOG.get(normalized)
+        if not isinstance(cat_entry, dict):
+            return None
+        backend = cat_entry.get("backend")
+        role_model = cat_entry.get("path")
     if backend not in ("kobold", "tabby"):
         return None
-    role_model = role_def.get("model")
     role_model_path = str(role_model).strip() if role_model else None
     # Reuse is_openai_alias=True for the downstream rewrite path that swaps the
     # `model` field to the backend's actually-loaded model id.
@@ -4978,10 +5014,75 @@ async def videos_content(video_id: str, request: Request):
     return await proxy_comfy_video_content(video_id, auth_context)
 
 
+def _entry_created_ts(path: Optional[str]) -> int:
+    """mtime of a GGUF path when stat-able, else current time. Silent on EBADF/etc.
+    is bad — log when the file is unreadable so missing mounts surface."""
+    if path:
+        try:
+            return int(os.path.getmtime(path))
+        except OSError as e:
+            print(f"[proxy] /v1/models: could not stat {path}: {e}; using current time", flush=True)
+    return int(time.time())
+
+
+def _build_role_catalog_entries() -> list[dict]:
+    """Construct OpenAI-shaped /v1/models entries for each configured role and
+    each entry in the optional models: catalog. `id` is the role/alias name so
+    clients can send `model: "<id>"` and resolve_role_for_operation will route
+    them through ensure_target() (cold-swap on first use).
+
+    `vivid_fish_*` extension fields are advisory — unknown keys are ignored by
+    OpenAI-shaped clients. Model paths are exposed only in the extension field;
+    no client should need them to invoke the model.
+    """
+    entries: list[dict] = []
+
+    if isinstance(ROLES, dict):
+        for role_name, role_def in ROLES.items():
+            if not isinstance(role_def, dict):
+                continue
+            backend = role_def.get("backend")
+            if backend not in ("kobold", "tabby"):
+                continue
+            model_path = role_def.get("model")
+            entry = {
+                "id": str(role_name),
+                "object": "model",
+                "created": _entry_created_ts(model_path if isinstance(model_path, str) else None),
+                "owned_by": "vivid-fish",
+                "description": str(role_def.get("description", "") or ""),
+                "vivid_fish_role": True,
+                "vivid_fish_backend": backend,
+            }
+            if isinstance(model_path, str) and model_path:
+                entry["vivid_fish_model_path"] = model_path
+            entries.append(entry)
+
+    for mid, cat in MODELS_CATALOG.items():
+        entries.append({
+            "id": mid,
+            "object": "model",
+            "created": _entry_created_ts(cat.get("path")),
+            "owned_by": "vivid-fish",
+            "description": cat.get("description", ""),
+            "vivid_fish_alias": True,
+            "vivid_fish_backend": cat.get("backend"),
+            "vivid_fish_model_path": cat.get("path"),
+        })
+
+    return entries
+
+
 @app.get("/v1/models")
 async def list_models(request: Request):
-    """OpenAI-compatible model list. Augments the active backend's response with
-    the currently-loaded kobold GGUF path so clients can see which file is hot."""
+    """OpenAI-compatible model list. Returns:
+      1. One entry per role in proxy_config.yml's roles: block (id = role name)
+      2. One entry per alias in the optional models: catalog (id = alias)
+      3. The active backend's own /v1/models response (Tabby's catalog, kobold's
+         currently-loaded GGUF metadata)
+      4. The currently-loaded kobold GGUF (filename form only — full-path
+         duplicate dropped; clients should select via role/alias names)
+    """
     auth_context = authenticate_request(request, "/v1/models")
     if isinstance(auth_context, Response):
         return auth_context
@@ -5016,24 +5117,43 @@ async def list_models(request: Request):
         data = []
         upstream_payload["data"] = data
 
-    loaded_gguf = currently_loaded_kobold_model()
-    if loaded_gguf and not any(isinstance(item, dict) and item.get("id") == loaded_gguf for item in data):
-        # Populate `created` from the GGUF's mtime when stat-able. OpenAI's
-        # /v1/models always includes `created`; some SDK validators require it.
-        # If the file isn't readable (network share missing, etc.) fall back to
-        # int(time.time()) — log so this isn't silent.
-        try:
-            created_ts = int(os.path.getmtime(loaded_gguf))
-        except OSError as e:
-            print(f"[proxy] /v1/models: could not stat {loaded_gguf}: {e}; using current time", flush=True)
-            created_ts = int(time.time())
-        data.append({
-            "id": loaded_gguf,
-            "object": "model",
-            "owned_by": "kobold",
-            "created": created_ts,
-        })
+    # Drop the full-absolute-path duplicate from kobold's payload — it's
+    # redundant with the filename-only entry and LibreChat shows both as
+    # separate options, which is confusing.
+    data = [
+        item for item in data
+        if not (
+            isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and item["id"].startswith("/")
+            and item["id"].endswith(".gguf")
+        )
+    ]
 
+    # Prepend role + catalog entries so they appear at the top of the list.
+    role_entries = _build_role_catalog_entries()
+    existing_ids = {item.get("id") for item in data if isinstance(item, dict)}
+    for entry in role_entries:
+        if entry["id"] not in existing_ids:
+            data.insert(0, entry)
+            existing_ids.add(entry["id"])
+
+    # Surface the currently-loaded GGUF (filename form only) so clients can see
+    # what's actually hot. Skipped if some upstream entry already has it.
+    loaded_gguf = currently_loaded_kobold_model()
+    if loaded_gguf:
+        loaded_name = os.path.basename(loaded_gguf)
+        if loaded_name and loaded_name not in existing_ids:
+            data.append({
+                "id": loaded_name,
+                "object": "model",
+                "owned_by": "kobold",
+                "created": _entry_created_ts(loaded_gguf),
+                "vivid_fish_loaded": True,
+                "vivid_fish_model_path": loaded_gguf,
+            })
+
+    upstream_payload["data"] = data
     upstream_payload["object"] = upstream_payload.get("object") or "list"
     return Response(
         content=json.dumps(upstream_payload),

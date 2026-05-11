@@ -119,6 +119,24 @@ roles:
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
     description: Coding LLM (Qwen3.6-27B UD-Q4_K_XL via llama-turbo)
+# Optional catalog of additional GGUF aliases. Each entry becomes a selectable
+# model in /v1/models — clients send `model: "<id>"` and the proxy resolves it
+# through the same ensure_target() path as roles: (cold-swap on first use).
+# Use roles: for canonical workflows; use models: for ad-hoc/extra GGUFs you
+# want to expose without inventing a new role.
+models:
+  - id: heretic-v2
+    backend: kobold
+    path: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-uncensored-heretic-v2-Q4_K_M.gguf
+    description: "Qwen3.6-27B Uncensored Heretic v2 (Q4_K_M)"
+  - id: cydonia-24b
+    backend: kobold
+    path: /media/windows/AI Models/LLMs/GGUF/TheDrummer_Cydonia-24B-v4.3-Q6_K.gguf
+    description: "TheDrummer Cydonia 24B v4.3 (Q6_K)"
+  - id: qwen3-35b-a3b
+    backend: kobold
+    path: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf
+    description: "Qwen3.6-35B-A3B UD-IQ4_XS (MoE)"
 videos:
   default_workflow: video-ltx-2.3-distilled
   workflows:
