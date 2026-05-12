@@ -12,6 +12,13 @@ data/metrics.db-wal
 data/metrics.db-shm
 data/metrics.db.broken-*
 
+# Responses API persistence: SQLite store for /v1/responses stateful
+# conversations. Ephemeral runtime state with 7-day retention.
+data/responses.db
+data/responses.db-wal
+data/responses.db-shm
+data/responses.db.broken-*
+
 # GPU incident snapshots — ephemeral diagnostic captures written by
 # ~/.local/bin/gpu-incident-watcher
 data/incidents/

@@ -5985,6 +5985,339 @@ async def status_favicon():
     return Response(status_code=204)
 
 
+# =============================================================================
+# /v1/responses — OpenAI Responses API (spring 2025 surface).
+# Implemented as a translation layer over /v1/chat/completions. Stateful
+# conversations (previous_response_id + store=true) are persisted in
+# data/responses.db. Hosted tools (web_search, file_search, code_interpreter,
+# computer_use) are rejected with 400 — the proxy backs onto a local llama
+# server with no first-party hosted-tool surface.
+# =============================================================================
+
+async def _responses_prune_loop(stop_event: asyncio.Event) -> None:
+    """Hourly prune of expired Responses rows. Bounded disk."""
+    interval_s = 3600
+    while not stop_event.is_set():
+        try:
+            deleted = responses_store.prune()
+            if deleted:
+                print(f"[proxy] responses_store: pruned {deleted} expired row(s)", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[proxy] responses_store: prune failed: {e}", flush=True)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
+        except asyncio.TimeoutError:
+            pass
+
+
+def _responses_error(message: str, *, code: str = "invalid_request_error", param: Optional[str] = None, status: int = 400) -> Response:
+    payload = {"error": {"message": message, "type": code, "param": param, "code": code}}
+    return Response(
+        content=json.dumps(payload),
+        status_code=status,
+        media_type="application/json",
+    )
+
+
+async def _build_prior_messages(previous_response_id: Optional[str], auth_context) -> list[dict]:
+    """Walk the stored chain for previous_response_id and rebuild messages.
+    No auth scoping (any client with the response id can chain); revisit when
+    multi-tenant becomes a concern."""
+    if not previous_response_id:
+        return []
+    chain = responses_store.walk_chain(previous_response_id)
+    if not chain:
+        return []
+    return responses_translator.stored_chain_to_messages(chain)
+
+
+def _api_key_name(auth_context) -> Optional[str]:
+    try:
+        ident = getattr(auth_context, "identity", None)
+        if ident is None:
+            return None
+        return getattr(ident, "name", None)
+    except Exception:
+        return None
+
+
+async def _forward_chat_completions(
+    request: Request,
+    auth_context,
+    cc_body: dict,
+    *,
+    stream: bool,
+) -> httpx.Response | tuple[httpx.AsyncClient, httpx.Response]:
+    """Send a translated Chat Completions request through the same in-process
+    routing the catch-all proxy_request uses, by making an HTTP loopback call
+    to ourselves on 127.0.0.1:PROXY_PORT. This reuses every routing decision
+    (model resolution, vision detection, backend swapping) without
+    duplicating logic.
+
+    For streaming, returns (client, resp) so the caller can iterate. For
+    non-streaming, returns the httpx.Response with the body already read.
+    """
+    url = f"http://127.0.0.1:{PROXY_PORT}/v1/chat/completions"
+    # Carry the original Authorization header so authenticate_request on the
+    # loopback call resolves to the same identity.
+    headers = {"content-type": "application/json"}
+    auth_hdr = request.headers.get("authorization")
+    if auth_hdr:
+        headers["authorization"] = auth_hdr
+    api_key_hdr = request.headers.get("x-api-key")
+    if api_key_hdr:
+        headers["x-api-key"] = api_key_hdr
+
+    body = json.dumps(cc_body).encode("utf-8")
+    client = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=10))
+    if stream:
+        req = client.build_request("POST", url, headers=headers, content=body)
+        resp = await client.send(req, stream=True)
+        return client, resp
+    try:
+        resp = await client.post(url, headers=headers, content=body)
+        return resp
+    finally:
+        if not stream:
+            await client.aclose()
+
+
+@app.post("/v1/responses")
+async def create_response(request: Request):
+    """Create a Response. Translates to Chat Completions and forwards."""
+    auth_context = authenticate_request(request, "/v1/responses")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    state.update_activity()
+
+    try:
+        raw = await request.body()
+        try:
+            req_body = json.loads(raw) if raw else {}
+        except json.JSONDecodeError as e:
+            return _responses_error(f"Invalid JSON in request body: {e}", code="invalid_request_error")
+        if not isinstance(req_body, dict):
+            return _responses_error("Request body must be a JSON object.", code="invalid_request_error")
+
+        # Translate
+        try:
+            prior_messages = await _build_prior_messages(
+                req_body.get("previous_response_id"), auth_context
+            )
+            cc_body = responses_translator.to_chat_completions(
+                req_body, prior_messages=prior_messages
+            )
+        except responses_translator.ResponsesTranslationError as e:
+            return _responses_error(e.message, code=e.code, param=e.param)
+
+        # Reject obviously-malformed: no messages at all.
+        if not cc_body.get("messages"):
+            return _responses_error(
+                "Request must include `input` (or a chain via previous_response_id).",
+                param="input",
+            )
+
+        response_id = responses_translator.new_response_id()
+        created_at = int(time.time())
+        stream = bool(req_body.get("stream"))
+        store = req_body.get("store")
+        if store is None:
+            store = True
+
+        if stream:
+            # Streaming: open upstream stream, translate chunks, emit Responses SSE.
+            client, upstream = await _forward_chat_completions(
+                request, auth_context, cc_body, stream=True
+            )
+            if upstream.status_code >= 400:
+                # Drain the body for a useful error.
+                body_bytes = b""
+                try:
+                    async for chunk in upstream.aiter_bytes():
+                        body_bytes += chunk
+                        if len(body_bytes) > 8192:
+                            break
+                finally:
+                    await upstream.aclose()
+                    await client.aclose()
+                try:
+                    upstream_json = json.loads(body_bytes.decode("utf-8", errors="replace") or "{}")
+                except Exception:
+                    upstream_json = {"error": {"message": body_bytes.decode("utf-8", errors="replace")[:1000]}}
+                return Response(
+                    content=json.dumps({"error": {
+                        "message": (upstream_json.get("error") or {}).get("message") or "Upstream chat-completions error.",
+                        "type": "upstream_error",
+                        "code": "upstream_error",
+                    }}),
+                    status_code=upstream.status_code,
+                    media_type="application/json",
+                )
+
+            translator = responses_translator.StreamTranslator(
+                response_id=response_id,
+                created_at=created_at,
+                original_request=req_body,
+            )
+
+            async def event_stream():
+                final_obj: Optional[dict] = None
+                try:
+                    for ev in translator.start():
+                        yield ev
+                    async for chunk in upstream.aiter_bytes():
+                        for ev in translator.feed(chunk):
+                            yield ev
+                    for ev in translator.finish():
+                        yield ev
+                    final_obj = translator.build_final_response()
+                except Exception as e:  # noqa: BLE001
+                    err_ev = responses_translator.sse_pack("response.error", {
+                        "type": "response.error",
+                        "sequence_number": 9999,
+                        "error": {"message": str(e), "type": "internal_error", "code": "internal_error"},
+                    })
+                    yield err_ev
+                finally:
+                    try:
+                        await upstream.aclose()
+                    except Exception:
+                        pass
+                    try:
+                        await client.aclose()
+                    except Exception:
+                        pass
+                    # Persist if requested
+                    if store and final_obj is not None:
+                        try:
+                            responses_store.save(
+                                response_id,
+                                created_at=created_at,
+                                model=final_obj.get("model"),
+                                previous_response_id=req_body.get("previous_response_id"),
+                                request_json=req_body,
+                                response_json=final_obj,
+                                api_key_name=_api_key_name(auth_context),
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            print(f"[proxy] responses_store.save failed: {e}", flush=True)
+
+            return StreamingResponse(
+                event_stream(),
+                status_code=200,
+                media_type="text/event-stream",
+                headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+            )
+
+        # Non-streaming
+        upstream = await _forward_chat_completions(request, auth_context, cc_body, stream=False)
+        if upstream.status_code >= 400:
+            try:
+                upstream_json = upstream.json()
+            except Exception:
+                upstream_json = {"error": {"message": upstream.text[:1000]}}
+            return Response(
+                content=json.dumps({"error": {
+                    "message": (upstream_json.get("error") or {}).get("message") or "Upstream chat-completions error.",
+                    "type": "upstream_error",
+                    "code": "upstream_error",
+                }}),
+                status_code=upstream.status_code,
+                media_type="application/json",
+            )
+
+        try:
+            cc_json = upstream.json()
+        except Exception as e:
+            return _responses_error(
+                f"Upstream returned non-JSON: {e}",
+                code="upstream_error",
+                status=502,
+            )
+
+        resp_json = responses_translator.from_chat_completions(
+            cc_json,
+            response_id=response_id,
+            created_at=created_at,
+            original_request=req_body,
+        )
+
+        if store:
+            try:
+                responses_store.save(
+                    response_id,
+                    created_at=created_at,
+                    model=resp_json.get("model"),
+                    previous_response_id=req_body.get("previous_response_id"),
+                    request_json=req_body,
+                    response_json=resp_json,
+                    api_key_name=_api_key_name(auth_context),
+                )
+            except Exception as e:  # noqa: BLE001
+                print(f"[proxy] responses_store.save failed: {e}", flush=True)
+
+        return Response(
+            content=json.dumps(resp_json),
+            status_code=200,
+            media_type="application/json",
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] /v1/responses internal error: {e}", flush=True)
+        return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
+
+
+@app.get("/v1/responses/{response_id}")
+async def retrieve_response(response_id: str, request: Request):
+    auth_context = authenticate_request(request, "/v1/responses")
+    if isinstance(auth_context, Response):
+        return auth_context
+    try:
+        row = responses_store.get(response_id)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] responses_store.get failed: {e}", flush=True)
+        return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
+    if not row:
+        return _responses_error(
+            f"Response with id '{response_id}' not found.",
+            code="not_found",
+            status=404,
+        )
+    resp_json = row.get("response_json") or {}
+    return Response(
+        content=json.dumps(resp_json),
+        status_code=200,
+        media_type="application/json",
+    )
+
+
+@app.delete("/v1/responses/{response_id}")
+async def delete_response(response_id: str, request: Request):
+    auth_context = authenticate_request(request, "/v1/responses")
+    if isinstance(auth_context, Response):
+        return auth_context
+    try:
+        existed = responses_store.delete(response_id)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] responses_store.delete failed: {e}", flush=True)
+        return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
+    if not existed:
+        return _responses_error(
+            f"Response with id '{response_id}' not found.",
+            code="not_found",
+            status=404,
+        )
+    return Response(
+        content=json.dumps({
+            "id": response_id,
+            "object": "response.deleted",
+            "deleted": True,
+        }),
+        status_code=200,
+        media_type="application/json",
+    )
+
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def proxy_request(request: Request, path: str):
     """Proxy all other requests to TabbyAPI."""
