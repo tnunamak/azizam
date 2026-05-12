@@ -106,6 +106,7 @@ roles:
   default:
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     description: Default LLM (Qwen3.6-27B UD-Q4_K_XL via llama-turbo on :5051)
   vision:
     backend: tabby
@@ -113,11 +114,13 @@ roles:
   rp:
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-Uncensored-HauhauCS-Balanced-Q4_K_P.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     description: Roleplay LLM (Qwen3.6-27B Uncensored HauhauCS-Balanced Q4_K_P via
       llama-turbo)
   coder:
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     description: Coding LLM (Qwen3.6-27B UD-Q4_K_XL via llama-turbo)
 # Optional catalog of additional GGUF aliases. Each entry becomes a selectable
 # model in /v1/models — clients send `model: "<id>"` and the proxy resolves it
@@ -128,15 +131,18 @@ models:
   - id: heretic-v2
     backend: kobold
     path: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-uncensored-heretic-v2-Q4_K_M.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     description: "Qwen3.6-27B Uncensored Heretic v2 (Q4_K_M)"
   - id: cydonia-24b
     backend: kobold
     path: /media/windows/AI Models/LLMs/GGUF/TheDrummer_Cydonia-24B-v4.3-Q6_K.gguf
-    description: "TheDrummer Cydonia 24B v4.3 (Q6_K)"
+    mmproj: null  # 24B Cydonia is text-only — no companion mmproj on disk
+    description: "TheDrummer Cydonia 24B v4.3 (Q6_K, text-only)"
   - id: qwen3-35b-a3b
     backend: kobold
     path: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf
-    description: "Qwen3.6-35B-A3B UD-IQ4_XS (MoE)"
+    mmproj: null  # 35B MoE has no companion mmproj on disk (text-only)
+    description: "Qwen3.6-35B-A3B UD-IQ4_XS (MoE, text-only)"
 videos:
   default_workflow: video-ltx-2.3-distilled
   workflows:

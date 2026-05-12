@@ -48,6 +48,8 @@ import status_endpoint
 import firehose_metrics
 import metrics_store
 import metrics_sampler
+import responses_store
+import responses_translator
 
 # =============================================================================
 # Configuration
@@ -115,10 +117,13 @@ def _normalize_models_catalog(raw) -> dict:
         path = item.get("path")
         if not mid or backend not in ("kobold", "tabby") or not path:
             continue
+        mmproj_raw = item.get("mmproj")
+        mmproj_path = str(mmproj_raw).strip() if mmproj_raw else None
         out[mid] = {
             "id": mid,
             "backend": backend,
             "path": str(path).strip(),
+            "mmproj": mmproj_path or None,
             "description": str(item.get("description", "") or ""),
         }
     return out
@@ -385,6 +390,36 @@ def kobold_has_mmproj() -> Optional[bool]:
     return None
 
 
+def currently_loaded_kobold_mmproj() -> Optional[str]:
+    """Return the absolute path passed to llama-server's --mmproj flag, or None.
+
+    Parsed from the running llama-server cmdline via pgrep. Returns None if no
+    --mmproj flag is set (text-only model) or no llama-server is running.
+    """
+    try:
+        result = subprocess.run(
+            ["pgrep", "-af", "llama-server"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        for line in result.stdout.splitlines():
+            if "llama-server" not in line:
+                continue
+            idx = line.find("--mmproj ")
+            if idx == -1:
+                return None
+            tail = line[idx + len("--mmproj "):]
+            end = tail.find(" --")
+            if end != -1:
+                tail = tail[:end]
+            path = tail.strip()
+            return path or None
+    except Exception as e:
+        print(f"[proxy] currently_loaded_kobold_mmproj: pgrep failed: {e}", flush=True)
+    return None
+
+
 def currently_loaded_kobold_model() -> Optional[str]:
     """Return the absolute path of the GGUF llama-server is currently serving, or None.
 
@@ -425,12 +460,18 @@ def currently_loaded_kobold_model() -> Optional[str]:
     return path
 
 
-async def swap_kobold_model(target_path: str) -> bool:
-    """Restart llama-turbo.service so it loads the given GGUF.
+async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = None) -> bool:
+    """Restart llama-turbo.service so it loads the given GGUF (and mmproj).
 
-    Writes a higher-numbered drop-in (20-model.conf) overriding only LLAMA_TURBO_MODEL,
-    runs daemon-reload + restart, then polls /v1/models until ready. Concurrent callers
-    serialize on kobold_swap_lock; in-flight requests await the in-progress swap.
+    Writes a higher-numbered drop-in (20-model.conf) overriding LLAMA_TURBO_MODEL
+    AND LLAMA_TURBO_MMPROJ, runs daemon-reload + restart, then polls /v1/models
+    until ready. Concurrent callers serialize on kobold_swap_lock; in-flight
+    requests await the in-progress swap.
+
+    target_mmproj behavior:
+      - non-empty str: must exist on disk; written as the mmproj path
+      - None / empty: written as an empty LLAMA_TURBO_MMPROJ so start_service.sh
+        omits --mmproj (text-only model)
 
     Returns True on success, False on timeout or error.
     """
@@ -438,21 +479,36 @@ async def swap_kobold_model(target_path: str) -> bool:
         print(f"[proxy] swap_kobold_model: target not found: {target_path}", flush=True)
         return False
 
+    # Validate mmproj exists on disk if specified. Don't try to validate that the
+    # mmproj is architecturally compatible with the model — llama-server does that
+    # and produces a clear error.
+    if target_mmproj:
+        if not Path(target_mmproj).is_file():
+            print(f"[proxy] swap_kobold_model: mmproj not found: {target_mmproj}", flush=True)
+            return False
+    mmproj_value = target_mmproj or ""
+
     async with kobold_swap_lock:
         # Re-check inside the lock — another caller may have already loaded this model.
         current = currently_loaded_kobold_model()
-        if current == target_path:
+        current_mmproj = currently_loaded_kobold_mmproj() if current == target_path else None
+        if current == target_path and (current_mmproj or "") == mmproj_value:
             return True
 
-        print(f"[proxy] swapping kobold model: {current} -> {target_path}", flush=True)
+        print(
+            f"[proxy] swapping kobold model: {current} -> {target_path} "
+            f"(mmproj={mmproj_value or '<none>'})",
+            flush=True,
+        )
         start = time.time()
 
         try:
             KOBOLD_MODEL_DROPIN.parent.mkdir(parents=True, exist_ok=True)
             KOBOLD_MODEL_DROPIN.write_text(
-                "# Managed by openai-proxy. Do not edit by hand; set role `model:` in proxy_config.yml.\n"
+                "# Managed by openai-proxy. Do not edit by hand; set role `model:`/`mmproj:` in proxy_config.yml.\n"
                 "[Service]\n"
                 f'Environment="LLAMA_TURBO_MODEL={target_path}"\n'
+                f'Environment="LLAMA_TURBO_MMPROJ={mmproj_value}"\n'
             )
         except Exception as e:
             print(f"[proxy] swap_kobold_model: failed to write drop-in: {e}", flush=True)
@@ -648,15 +704,18 @@ async def swap_tabby_model(target_model: str) -> bool:
             return False
 
 
-async def ensure_target(backend: str, model: Optional[str]) -> bool:
-    """Make a (backend, model) target real before forwarding a request.
+async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str] = None) -> bool:
+    """Make a (backend, model, mmproj) target real before forwarding a request.
 
     Steps:
       1. If `backend` isn't currently the active LLM backend, call switch_backend()
          to start it (cold start). For tabby with TABBY_MANAGED, skip — that's the
          lifespan's job, but we still verify health after.
-      2. If `model` is provided and the loaded model on `backend` differs, swap to it
-         via the appropriate primitive (swap_kobold_model or swap_tabby_model).
+      2. If `model` is provided and the loaded model OR mmproj on `backend` differs,
+         swap via the appropriate primitive (swap_kobold_model or swap_tabby_model).
+
+    `mmproj` is kobold-only. Pass None for text-only models — the proxy writes an
+    empty LLAMA_TURBO_MMPROJ so start_service.sh omits --mmproj.
 
     Returns True only if both steps succeed. Caller turns False into a 503.
     """
@@ -664,7 +723,7 @@ async def ensure_target(backend: str, model: Optional[str]) -> bool:
         print(f"[proxy] ensure_target: unknown backend '{backend}'", flush=True)
         return False
 
-    label = f"ensure_target({backend}, {model})"
+    label = f"ensure_target({backend}, {model}, mmproj={mmproj or '<none>'})"
 
     # Step 1: cold-start the backend if needed.
     active = await get_active_backend()
@@ -684,8 +743,17 @@ async def ensure_target(backend: str, model: Optional[str]) -> bool:
                 if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
                     print(f"[proxy] {label} failed: GGUF not found at {model}", flush=True)
                     return False
+            # Pre-validate mmproj path if provided — caller asked for vision support,
+            # so refuse to proceed if the projector file is missing.
+            if mmproj and not (os.path.isabs(mmproj) and os.path.exists(mmproj)):
+                print(f"[proxy] {label} failed: mmproj not found at {mmproj}", flush=True)
+                return False
+
             loaded = currently_loaded_kobold_model()
-            if loaded != model:
+            loaded_mmproj = currently_loaded_kobold_mmproj()
+            target_mmproj = mmproj or None
+            mmproj_mismatch = (loaded_mmproj or None) != target_mmproj
+            if loaded != model or mmproj_mismatch:
                 if PIN_LOADED_MODEL:
                     # Pinned mode: never auto-restart llama-turbo. Serve the request
                     # with whatever's loaded. Warn once per distinct requested path.
@@ -693,12 +761,17 @@ async def ensure_target(backend: str, model: Optional[str]) -> bool:
                         _pin_mismatch_warned.add(model)
                         print(
                             f"[proxy] {label} pin_loaded_model=true: skipping switch "
-                            f"(loaded={loaded}, requested={model}); serving with current model",
+                            f"(loaded={loaded}, requested={model}, "
+                            f"loaded_mmproj={loaded_mmproj}, requested_mmproj={target_mmproj}); "
+                            f"serving with current model",
                             flush=True,
                         )
                 else:
-                    print(f"[proxy] {label} -> swap from {loaded}", flush=True)
-                    ok = await swap_kobold_model(model)
+                    print(
+                        f"[proxy] {label} -> swap from {loaded} (mmproj {loaded_mmproj} -> {target_mmproj})",
+                        flush=True,
+                    )
+                    ok = await swap_kobold_model(model, target_mmproj)
                     if not ok:
                         print(f"[proxy] {label} failed: kobold swap to {model} did not complete", flush=True)
                         return False
@@ -1313,6 +1386,10 @@ class ModelResolution:
     # If set, the role pinned a specific GGUF path. The request handler will swap
     # llama-turbo to this model (if needed) before forwarding.
     role_model_path: Optional[str] = None
+    # If set, the role/catalog entry pinned an mmproj path that should be paired
+    # with role_model_path on swap. None means the model is text-only — the proxy
+    # will write an empty LLAMA_TURBO_MMPROJ so start_service.sh omits --mmproj.
+    role_mmproj_path: Optional[str] = None
 
 
 def normalize_model_id(model_name: str) -> str:
@@ -1334,6 +1411,7 @@ def resolve_role_for_operation(operation: str, requested_model: str) -> Optional
     if isinstance(role_def, dict):
         backend = role_def.get("backend")
         role_model = role_def.get("model")
+        role_mmproj = role_def.get("mmproj")
     else:
         # Fall through to the optional models: catalog. Same shape but uses `path`
         # instead of `model` and is keyed by id rather than position.
@@ -1342,9 +1420,11 @@ def resolve_role_for_operation(operation: str, requested_model: str) -> Optional
             return None
         backend = cat_entry.get("backend")
         role_model = cat_entry.get("path")
+        role_mmproj = cat_entry.get("mmproj")
     if backend not in ("kobold", "tabby"):
         return None
     role_model_path = str(role_model).strip() if role_model else None
+    role_mmproj_path = str(role_mmproj).strip() if role_mmproj else None
     # Reuse is_openai_alias=True for the downstream rewrite path that swaps the
     # `model` field to the backend's actually-loaded model id.
     return ModelResolution(
@@ -1355,6 +1435,7 @@ def resolve_role_for_operation(operation: str, requested_model: str) -> Optional
         is_openai_alias=True,
         role_backend=backend,
         role_model_path=role_model_path or None,
+        role_mmproj_path=role_mmproj_path or None,
     )
 
 
@@ -5307,6 +5388,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Metrics sampler failed to start: {e}", flush=True)
 
+    # Responses API persistence: SQLite-backed store for stateful
+    # /v1/responses conversations. Pruned hourly; rows expire after 7 days.
+    responses_prune_stop = asyncio.Event()
+    responses_prune_task = None
+    try:
+        responses_store.init_db()
+        responses_prune_task = asyncio.create_task(
+            _responses_prune_loop(responses_prune_stop)
+        )
+        print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Responses store failed to start: {e}", flush=True)
+
     yield
 
     state.shutdown_requested = True
@@ -5361,6 +5455,15 @@ async def lifespan(app: FastAPI):
         metrics_sampler.close_writer()
     except Exception:
         pass
+    if responses_prune_task is not None:
+        responses_prune_stop.set()
+        responses_prune_task.cancel()
+        try:
+            await responses_prune_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
     if TABBY_MANAGED:
         stop_tabby_process()
 
@@ -5943,12 +6046,13 @@ async def proxy_request(request: Request, path: str):
                 if model_resolution.is_openai_alias:
                     preferred = model_resolution.role_backend
                     pinned_model = model_resolution.role_model_path
+                    pinned_mmproj = model_resolution.role_mmproj_path
 
                     if preferred and pinned_model:
                         # Hard contract: backend MUST be `preferred` and the loaded
-                        # model MUST match `pinned_model`. Cold-start + swap as needed.
-                        # Any failure -> 503 (no silent fallback).
-                        ok = await ensure_target(preferred, pinned_model)
+                        # model+mmproj MUST match `pinned_model`/`pinned_mmproj`.
+                        # Cold-start + swap as needed. Any failure -> 503 (no silent fallback).
+                        ok = await ensure_target(preferred, pinned_model, pinned_mmproj)
                         if not ok:
                             # Diagnose: was this a Conflicts=-blocked switch? If
                             # the OTHER LLM backend is currently hot, switching
@@ -6032,6 +6136,7 @@ async def proxy_request(request: Request, path: str):
                     vision_role = ROLES.get("vision") if isinstance(ROLES, dict) else None
                     vision_backend = (vision_role or {}).get("backend") if isinstance(vision_role, dict) else None
                     vision_model = (vision_role or {}).get("model") if isinstance(vision_role, dict) else None
+                    vision_mmproj = (vision_role or {}).get("mmproj") if isinstance(vision_role, dict) else None
                     if vision_backend == "tabby":
                         ok = await ensure_target("tabby", vision_model)
                         if ok:
@@ -6054,7 +6159,7 @@ async def proxy_request(request: Request, path: str):
                                 headers={"Retry-After": "10", "X-Vision-Routed": "false"},
                             )
                     elif vision_backend == "kobold" and vision_model:
-                        ok = await ensure_target("kobold", vision_model)
+                        ok = await ensure_target("kobold", vision_model, vision_mmproj)
                         if ok and (kobold_has_mmproj() is True):
                             target_host = KOBOLD_HOST
                             vision_routed_state = "true"
