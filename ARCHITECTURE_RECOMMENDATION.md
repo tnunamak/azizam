@@ -1,7 +1,7 @@
 # AI Gateway Architecture Recommendation
 
 Date: 2026-05-15
-Status: recommendation
+Status: recommendation plus live vertical-slice checkpoint
 
 This document is the product and architecture recommendation for evolving
 `openai-proxy` from a capable local OpenAI-compatible proxy into a local-first
@@ -114,10 +114,11 @@ so they speak clearly.
 - workflow drift detection
 - rich `/v1/status` operational surface
 
-The current weakness is architectural shape, not lack of substance. Much of the
-behavior is concentrated in `proxy.py`, and the boundary between protocol,
-routing, backend execution, resource policy, diagnostics, and passthrough is not
-yet stable enough for external contributors or a second operator's machine.
+The current weakness is architectural shape, not lack of substance. The first
+gateway slice now exists, but much of the behavior is still concentrated in
+`proxy.py`, and the boundary between protocol, routing, backend execution,
+resource policy, diagnostics, and passthrough is not yet stable enough for
+external contributors or a second operator's machine.
 
 ## Implementation Status
 
@@ -128,10 +129,14 @@ Implemented (lives on `main`):
 
 - `gateway/policy.py`: pure app-profile policy module with `AppProfile`,
   `PolicyRequest`, `PolicyDecision`, fallback/native-passthrough/visibility
-  policies, and an `evaluate` entry point. Not yet read by request handlers.
+  policies, and an `evaluate` entry point. It is used by the live gateway
+  discovery view, image route receipts, and non-streaming protocol frontends.
 - `gateway/profiles.py`: pure loader from existing proxy key-entry dicts into
   `AppProfile`, keeping credential lookup and file I/O outside the policy
   layer.
+- `gateway/runtime_auth.py`: bridge between the existing proxy key registry and
+  profile-aware gateway identities. Real `proxy_api_keys.yml` entries can now
+  carry additive `profile:` blocks without rotating keys.
 - `gateway/discovery.py`: pure workflow registry with audience-aware summaries
   (`internal`, `admin`, `client`).
 - `gateway/manifests.py`: workflow manifest load/validate plus
@@ -141,36 +146,55 @@ Implemented (lives on `main`):
   field names without logging values.
 - `gateway/capabilities.py`: pure capability record, resource estimate, and
   audience-aware summaries for future discovery and router pre-filtering.
-- `gateway/api.py`: read-only `/gateway/v1/workflows` FastAPI router backed by
-  the workflow registry. It exists but is not mounted in `proxy.py`.
+- `gateway/local_capabilities.py`: pure builder that converts
+  `proxy_config.yml`-shaped data into local capability records for LLM, image,
+  video, audio, speech, transcription, and embeddings.
+- `gateway/api.py`: `/gateway/v1` router for workflows, capabilities,
+  receipts, and durable media-job state. It is mounted in `proxy.py` behind the
+  proxy key layer.
 - `gateway/receipts.py`: `RouteReceipt` data model with policy-decision and
   validation hooks.
 - `gateway/receipt_store.py`: SQLite receipt persistence with audience
   filtering and structural guards against raw prompts, media bytes, request
   bodies, and secrets.
+- `gateway/media_jobs.py`: SQLite-backed durable media-job model and store,
+  wired to `/gateway/v1/media/jobs`.
+- `gateway/protocols/anthropic.py` and `gateway/protocols/ollama.py`:
+  pure translators for non-streaming Anthropic Messages and Ollama
+  chat/generate/tags frontends.
+- `manifests/workflows/flux2-klein-4b*.yml` and
+  `manifests/workflows/tangoflux.yml`: initial portable workflow manifests for
+  image generation/editing and TangoFlux audio generation.
 - Observational image-route receipts: `/v1/images/generations` and
   `/v1/images/edits` create a receipt after auth, attach a
-  `proxy:legacy-auth` placeholder policy decision, record safe field-name
-  validation outcomes for standard image inputs, attach manifest identity on a
-  best-effort basis, and emit a body-free `image_route_receipt` event through
-  the firehose metrics path. The receipt is not returned to clients.
+  profile-derived policy decision, record safe field-name validation outcomes
+  for standard image inputs and namespaced workflow extensions, attach manifest
+  identity when a binding participates, persist to SQLite, and emit a body-free
+  `image_route_receipt` event through the firehose metrics path. The receipt is
+  not returned inline to clients; it is discoverable through `/gateway/v1`.
+- Live non-streaming protocol frontends: `POST /v1/messages`, `POST /api/chat`,
+  `POST /api/generate`, and `GET /api/tags`. Streaming and backend-native
+  Ollama management remain out of scope for this slice.
 - `scripts/compat/` and `tests/compat/` SDK compatibility harness (see
   `docs/SDK_COMPATIBILITY_HARNESS.md`). The matrix runner executes registered
   unittest probes when SDK and environment preconditions are present; published
   compatibility claims are still separate from this infrastructure.
+- `scripts/local/upgrade_profiles.py`, `scripts/local/smoke_client.sh`, and
+  `scripts/compat/smoke_protocol_frontends.py`: local operator tooling for
+  additive profile migration and smoke checks without printing secrets.
 
 Not implemented:
 
-- `/gateway/v1/*` is not mounted in `proxy.py`. The workflow router exists as
-  a pure component, but every live `/gateway/v1/...` path in this document is
-  still a target shape, not current behavior.
-- No protocol frontend / canonical intent / router / scheduler split exists
-  yet; request handling still lives in `proxy.py`.
+- A clean protocol frontend / canonical intent / router / scheduler split is
+  not fully extracted yet; request handling still largely lives in `proxy.py`.
 - No backend adapter contract has been extracted.
-- Anthropic Messages and Ollama native frontends are not implemented.
-- Policy decisions, profile loading, capability matching, manifest validation,
-  and workflow bindings are not yet the source of truth for live request
-  routing.
+- Streaming Anthropic/Ollama frontends, Ollama model-management routes, and
+  native passthrough provider namespaces are not implemented.
+- Gateway media assets are not yet served by a durable `/gateway/v1/assets/*`
+  surface.
+- ACE-Step music and video workflow manifests are not yet backfilled.
+- Capability matching, manifest validation, and workflow bindings are not yet
+  the source of truth for every live request route.
 
 ## Target Users
 
@@ -899,14 +923,26 @@ P1 public protocols:
 
 Backend coverage should remain much broader than public protocol coverage.
 
-Gateway-native discovery should also live outside vendor-compatible namespaces
-(target; the underlying pure registry is in `gateway/discovery.py` but no
-`/gateway/v1` route mounts it yet):
+Gateway-native discovery lives outside vendor-compatible namespaces. The live
+first slice is:
 
 ```text
 GET /gateway/v1/capabilities
-GET /gateway/v1/models/{model}/capabilities
+GET /gateway/v1/workflows
 GET /gateway/v1/workflows/{workflow}
+GET /gateway/v1/receipts
+GET /gateway/v1/receipts/{request_id}
+POST /gateway/v1/media/jobs
+GET /gateway/v1/media/jobs
+GET /gateway/v1/media/jobs/{id}
+POST /gateway/v1/media/jobs/{id}/events
+POST /gateway/v1/media/jobs/{id}/cancel
+```
+
+The remaining target discovery extensions are:
+
+```text
+GET /gateway/v1/models/{model}/capabilities
 GET /gateway/v1/extensions
 ```
 
@@ -986,9 +1022,9 @@ adapters.
 ### Phase 4: Add Public Protocol Frontends
 
 - Solidify OpenAI frontend from current behavior.
-- Add Anthropic Messages frontend.
-- Add Ollama native frontend.
-- Add gateway media job/assets API.
+- Solidify the live non-streaming Anthropic Messages frontend.
+- Solidify the live non-streaming Ollama chat/generate/tags frontend.
+- Extend gateway media jobs with durable assets and scheduler execution.
 
 ### Phase 5: Introduce Scheduler Enforcement
 
