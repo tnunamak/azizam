@@ -10,6 +10,25 @@ The goal is not to freeze implementation details. The goal is to make every
 important boundary explicit enough that compatibility, routing, native power
 use, and diagnostics can evolve without turning into one large special case.
 
+## Implementation Status
+
+The contracts below are mostly aspirational. The pure Python building blocks
+that currently exist on `main`:
+
+- `gateway/policy.py` — `AppProfile`, `PolicyRequest`, `PolicyDecision`,
+  `evaluate(...)`. Not yet consulted by request handlers.
+- `gateway/manifests.py` — workflow manifest load/validate plus
+  `apply_backend_binding`. Not yet called from live image handlers.
+- `gateway/discovery.py` — workflow registry with audience-aware summaries
+  (`internal`, `admin`, `client`). Not yet exposed over HTTP.
+- `gateway/receipts.py` — `RouteReceipt` data model with policy-decision and
+  validation hooks. Observational receipts are emitted for
+  `/v1/images/generations` and `/v1/images/edits` (firehose-only, no client
+  visibility, no input capture).
+
+Adapter manifest, capability registry, resource claims, and job/event records
+described below have no implementation yet.
+
 ## Contract Rule
 
 Every request should cross these boundaries:

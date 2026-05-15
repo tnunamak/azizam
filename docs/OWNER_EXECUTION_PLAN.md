@@ -7,6 +7,31 @@ This plan turns the architecture into a sequence of small, provable steps. The
 goal is to keep the project broad enough for real self-hosted stacks without
 letting one operator's current machine become the core product.
 
+## Implemented So Far
+
+The status of each build-order item below reflects what currently lives on
+`main`. Anything not listed here is still aspirational.
+
+- [x] Pure app-profile policy module (`gateway/policy.py`, `tests/test_policy.py`)
+- [x] Pure workflow registry with audience-aware summaries (`gateway/discovery.py`, `tests/test_workflow_discovery_registry.py`)
+- [x] Workflow manifest parsing/validation/binding (`gateway/manifests.py`)
+- [x] Route receipt data model (`gateway/receipts.py`)
+- [x] Observational image-route receipts wired into `/v1/images/generations` and `/v1/images/edits` (placeholder policy decision, body-free firehose event)
+- [x] SDK compatibility harness scaffold (`scripts/compat/`, `tests/compat/`, `docs/SDK_COMPATIBILITY_HARNESS.md`)
+
+Not yet on main:
+
+- `/gateway/v1/*` namespace is not mounted in `proxy.py`. The endpoints under
+  that namespace in this document are targets, not current behavior.
+- Receipts are not yet attached to the canonical intent pipeline; the image
+  receipts are observational, carry a `proxy:legacy-auth` placeholder decision,
+  and are not exposed to clients.
+- Workflow manifest validation is not yet invoked from the live image-edit
+  handlers.
+- Policy module is not yet read by request handlers; app profiles are still
+  inferred from the existing proxy auth model.
+- No backend adapter contract has been extracted from `proxy.py` yet.
+
 ## North Star
 
 ```text
@@ -94,7 +119,7 @@ Success criteria:
 
 ## Build Order
 
-### 1. Route Receipts
+### 1. Route Receipts — partially done
 
 Add a small route receipt data model first. Do not wait for the full event
 system.
@@ -120,13 +145,17 @@ Minimum receipt fields:
 
 Initial delivery:
 
-- pure Python model/helper
-- unit tests
-- internal/admin/client redaction behavior
-- attach receipt internally to image edit path
-- optional debug response header or log line, not public API yet
+- [x] pure Python model/helper (`gateway/receipts.py`)
+- [x] unit tests
+- [ ] internal/admin/client redaction behavior (audience-aware summary exists
+      in `gateway/discovery.py`; receipts themselves have only a single shape)
+- [x] attach receipt internally to image edit path (observational only; carries
+      a `proxy:legacy-auth` placeholder policy decision, no accepted/rejected
+      inputs yet)
+- [x] optional debug log line, not public API yet (emitted via
+      `firehose_metrics.record_event("image_route_receipt", ...)`)
 
-### 2. Manifest Contract
+### 2. Manifest Contract — partially done
 
 Add pure manifest parsing/validation.
 
@@ -141,11 +170,12 @@ Minimum concepts:
 
 Initial delivery:
 
-- no ComfyUI graph execution changes yet
-- fake binding mutation tests
-- one sample manifest fixture
+- [x] no ComfyUI graph execution changes yet
+- [x] fake binding mutation tests (`gateway/manifests.py` exposes
+      `apply_backend_binding`; not yet called from live handlers)
+- [ ] one sample manifest fixture committed under `workflows/`
 
-### 3. Fake Backend Proof
+### 3. Fake Backend Proof — not started
 
 Build a fake ComfyUI-like request capture.
 
@@ -156,30 +186,33 @@ Initial delivery:
 - test asserts exact mutation
 - test asserts unknown extension rejection
 
-### 3.5. Live Integration Points
+### 3.5. Live Integration Points — partially done
 
 Only after the pure modules stay green, thread them into the existing proxy at
 the narrowest points:
 
-- `images_generations` and `images_edits` for handler-level image receipts after
-  auth succeeds
-- `_build_image_response_payload` for final response metadata
-- `load_comfy_workflow` for preflight validation of workflow shape and manifest
-  drift
-- `proxy_comfy_request` and `proxy_comfy_edit_request` for applying bindings
-  where node mutation already happens
-- `_firehose_request_counter` only for coarse request counters, not receipt
-  truth, because middleware should not read request bodies
-- status capability builders as source material for curated `/gateway/v1`
-  discovery, not as a raw payload to expose
+- [x] `images_generations` and `images_edits` for handler-level image receipts
+      after auth succeeds (observational, post-auth, no body inspection)
+- [ ] `_build_image_response_payload` for final response metadata
+- [ ] `load_comfy_workflow` for preflight validation of workflow shape and
+      manifest drift
+- [ ] `proxy_comfy_request` and `proxy_comfy_edit_request` for applying
+      bindings where node mutation already happens
+- [ ] `_firehose_request_counter` only for coarse request counters, not receipt
+      truth, because middleware should not read request bodies
+- [ ] status capability builders as source material for curated `/gateway/v1`
+      discovery, not as a raw payload to expose
 
 Do not spread policy checks through handlers. Resolve profile/policy once, pass
 the decision into receipt and routing helpers, and keep client/admin/internal
 visibility decisions explicit.
 
-### 4. `/gateway/v1` Namespace Skeleton
+### 4. `/gateway/v1` Namespace Skeleton — not started
 
-Add the namespace only after the internal contract exists.
+Add the namespace only after the internal contract exists. Nothing under
+`/gateway/v1/*` is mounted in `proxy.py` yet. The pure workflow registry in
+`gateway/discovery.py` is the intended data source for these endpoints, but it
+is not exposed over HTTP.
 
 Initial endpoints:
 
@@ -188,7 +221,7 @@ Initial endpoints:
 
 Keep them read-only initially.
 
-### 5. Media Jobs
+### 5. Media Jobs — not started
 
 Only after manifests and receipts are proven:
 
@@ -197,7 +230,12 @@ Only after manifests and receipts are proven:
 - asset references
 - ComfyUI adapter integration
 
-### 6. SDK/App Harness
+### 6. SDK/App Harness — scaffold landed
+
+A harness scaffold lives under `scripts/compat/` and `tests/compat/`, with
+documentation in `docs/SDK_COMPATIBILITY_HARNESS.md`. The matrix runner exists
+but no compatibility claims are published yet; treat current matrix output as
+infrastructure validation, not a compatibility result.
 
 Start with smoke tests, not full integration complexity.
 

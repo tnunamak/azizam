@@ -119,6 +119,44 @@ behavior is concentrated in `proxy.py`, and the boundary between protocol,
 routing, backend execution, resource policy, diagnostics, and passthrough is not
 yet stable enough for external contributors or a second operator's machine.
 
+## Implementation Status
+
+This section anchors the rest of the document, which is largely aspirational.
+The detailed slice-by-slice tracker lives in `docs/OWNER_EXECUTION_PLAN.md`.
+
+Implemented (lives on `main`):
+
+- `gateway/policy.py`: pure app-profile policy module with `AppProfile`,
+  `PolicyRequest`, `PolicyDecision`, fallback/native-passthrough/visibility
+  policies, and an `evaluate` entry point. Not yet read by request handlers.
+- `gateway/discovery.py`: pure workflow registry with audience-aware summaries
+  (`internal`, `admin`, `client`). Not yet exposed over HTTP.
+- `gateway/manifests.py`: workflow manifest load/validate plus
+  `apply_backend_binding`. Not yet invoked from live image handlers.
+- `gateway/receipts.py`: `RouteReceipt` data model with policy-decision and
+  validation hooks.
+- Observational image-route receipts: `/v1/images/generations` and
+  `/v1/images/edits` create a receipt after auth, attach a
+  `proxy:legacy-auth` placeholder policy decision, and emit a body-free
+  `image_route_receipt` event through the firehose metrics path. The receipt
+  is not returned to clients, does not inspect the request body, and does not
+  yet record accepted/rejected inputs.
+- `scripts/compat/` and `tests/compat/` SDK compatibility harness scaffold
+  (see `docs/SDK_COMPATIBILITY_HARNESS.md`). The matrix runner exists; no
+  compatibility claims are published yet.
+
+Not implemented:
+
+- `/gateway/v1/*` is not mounted in `proxy.py`. Every `/gateway/v1/...` path
+  in this document — discovery, media jobs, native passthrough, capability
+  endpoints — is a target shape, not current behavior.
+- No protocol frontend / canonical intent / router / scheduler split exists
+  yet; request handling still lives in `proxy.py`.
+- No backend adapter contract has been extracted.
+- Anthropic Messages and Ollama native frontends are not implemented.
+- Policy decisions, manifest validation, and workflow bindings are not yet
+  wired into live request paths.
+
 ## Target Users
 
 ### 1. Local Agent And Coding Tool Power User
@@ -709,7 +747,7 @@ Use three layers:
 2. Explicit provider-native passthrough for power users.
 3. Generic media job/assets API for long-running work.
 
-Recommended job surface:
+Recommended job surface (target; not yet wired in `proxy.py`):
 
 ```text
 POST /gateway/v1/media/jobs
@@ -846,7 +884,9 @@ P1 public protocols:
 
 Backend coverage should remain much broader than public protocol coverage.
 
-Gateway-native discovery should also live outside vendor-compatible namespaces:
+Gateway-native discovery should also live outside vendor-compatible namespaces
+(target; the underlying pure registry is in `gateway/discovery.py` but no
+`/gateway/v1` route mounts it yet):
 
 ```text
 GET /gateway/v1/capabilities

@@ -158,7 +158,7 @@ Media and multimodal work should expose three layers:
 3. Generic workflow/job layer.
    Durable jobs for video, music, sound effects, long-running image workflows, upscaling batches, and hosted queue-style media APIs.
 
-Suggested generic job surface:
+Suggested generic job surface (target shape; not yet wired in `proxy.py`):
 
 ```text
 POST /gateway/v1/media/jobs
@@ -169,7 +169,9 @@ GET  /gateway/v1/assets/{id}
 ```
 
 Gateway-native discovery and extension schemas should also live outside
-vendor-compatible namespaces:
+vendor-compatible namespaces (target shape; the pure workflow registry in
+`gateway/discovery.py` is the intended source, but no `/gateway/v1` route
+mounts it yet):
 
 ```text
 GET /gateway/v1/capabilities

@@ -5,6 +5,23 @@ Date: 2026-05-15
 This document scopes the gateway around the top target users without turning one
 operator's current machine into the product spec.
 
+## Implementation Status
+
+The extension ladder, manifest layering, and unknown-parameter policy below
+describe target behavior. Status on `main`:
+
+- Pure manifest validation and binding helpers exist in
+  `gateway/manifests.py`.
+- Pure workflow registry with portable input/output summaries exists in
+  `gateway/discovery.py`.
+- Pure app-profile policy module exists in `gateway/policy.py`.
+- Observational image-route receipts run in
+  `/v1/images/generations` and `/v1/images/edits` but do not record accepted
+  vs rejected inputs yet.
+- The OpenAI-compatible image-edit handler still parses only the standard
+  fields listed in the example below. There is no `extensions` container in
+  the live request shape and no `/gateway/v1/media/jobs` endpoint.
+
 ## Scope Decision
 
 The core product should optimize for three archetypes:
