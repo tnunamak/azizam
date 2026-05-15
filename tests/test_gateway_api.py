@@ -7,6 +7,7 @@ import sys
 import textwrap
 import unittest
 from pathlib import Path
+from typing import Any
 
 import yaml
 from fastapi import FastAPI
@@ -15,8 +16,15 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from gateway import receipt_store  # noqa: E402
 from gateway.api import create_gateway_router  # noqa: E402
+from gateway.capabilities import (  # noqa: E402
+    Capability,
+    ResourceEstimate,
+    unavailable_capability,
+)
 from gateway.discovery import WorkflowRegistry  # noqa: E402
+from gateway.receipts import RouteReceipt  # noqa: E402
 
 
 CONTROLNET_MANIFEST_YAML = textwrap.dedent(
@@ -255,6 +263,359 @@ class GatewayDiscoveryRouterTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["audience"], "client")
         self.assertNotIn("resolver should not leak", response.text)
+
+
+def _sample_capabilities() -> list[Capability]:
+    return [
+        Capability(
+            intent="image.edit",
+            backend="comfyui.local",
+            workflow="image.edit.controlnet.example",
+            input_modalities=("text", "image"),
+            output_modalities=("image",),
+            execution="job",
+            lifecycle="warm",
+            health="healthy",
+            resources=ResourceEstimate(gpu_required=True, vram_gb_estimate=12),
+            policy_sources=("profile:image-agent",),
+            policy_reasons=("workflow permitted",),
+        ),
+        unavailable_capability(
+            intent="video.generate",
+            backend="comfyui.video",
+            reason="backend not configured",
+        ),
+    ]
+
+
+def _make_capabilities_client(
+    *,
+    audience: str | None = None,
+    provider=None,
+) -> TestClient:
+    registry = _build_registry()
+    resolver = None
+    if audience is not None:
+        resolver = lambda _request, _a=audience: _a  # noqa: E731
+    app = FastAPI()
+    app.include_router(
+        create_gateway_router(
+            registry,
+            audience_resolver=resolver,
+            capabilities_provider=provider,
+        )
+    )
+    return TestClient(app)
+
+
+class GatewayCapabilitiesEndpointTests(unittest.TestCase):
+    def test_missing_provider_returns_empty_catalog(self) -> None:
+        client = _make_capabilities_client()
+        response = client.get("/gateway/v1/capabilities")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["schema_version"], 1)
+        self.assertEqual(body["audience"], "client")
+        self.assertEqual(body["capabilities"], [])
+
+    def test_provider_receives_request_and_returns_caps(self) -> None:
+        seen: list[str] = []
+
+        def provider(request):
+            seen.append(request.headers.get("x-trace", ""))
+            return _sample_capabilities()
+
+        client = _make_capabilities_client(provider=provider)
+        response = client.get(
+            "/gateway/v1/capabilities", headers={"x-trace": "abc"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(seen, ["abc"])
+        body = response.json()
+        intents = sorted({c["intent"] for c in body["capabilities"]})
+        self.assertEqual(intents, ["image.edit", "video.generate"])
+
+    def test_client_audience_hides_backend_and_policy_internals(self) -> None:
+        client = _make_capabilities_client(provider=lambda _r: _sample_capabilities())
+        response = client.get("/gateway/v1/capabilities")
+        self.assertEqual(response.status_code, 200)
+        raw = response.text
+        for forbidden in (
+            "comfyui.local",
+            "comfyui.video",
+            "profile:image-agent",
+            "workflow permitted",
+            "vram_gb_estimate",
+            "policy_sources",
+            "policy_reasons",
+            "policy_available",
+            "lifecycle",
+            "health",
+            "resources",
+        ):
+            self.assertNotIn(forbidden, raw, f"client leaked {forbidden!r}")
+
+    def test_admin_audience_includes_backend_and_resources(self) -> None:
+        client = _make_capabilities_client(
+            audience="admin",
+            provider=lambda _r: _sample_capabilities(),
+        )
+        response = client.get("/gateway/v1/capabilities")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        first = body["capabilities"][0]
+        self.assertEqual(first["backend"], "comfyui.local")
+        self.assertEqual(first["resources"]["gpu_required"], True)
+        self.assertEqual(first["policy_sources"], ["profile:image-agent"])
+        self.assertNotIn("policy_reasons", first)
+
+    def test_internal_audience_exposes_policy_reasons(self) -> None:
+        client = _make_capabilities_client(
+            audience="internal",
+            provider=lambda _r: _sample_capabilities(),
+        )
+        response = client.get("/gateway/v1/capabilities")
+        body = response.json()
+        first = body["capabilities"][0]
+        self.assertEqual(first["policy_reasons"], ["workflow permitted"])
+
+    def test_provider_error_is_protocol_shaped(self) -> None:
+        def provider(_request):
+            raise RuntimeError("provider boom")
+
+        client = _make_capabilities_client(provider=provider)
+        response = client.get("/gateway/v1/capabilities")
+        self.assertEqual(response.status_code, 500)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "gateway_internal_error")
+        # Client audience must not leak the raw provider error message.
+        self.assertNotIn("provider boom", response.text)
+
+    def test_provider_error_message_visible_to_admin(self) -> None:
+        def provider(_request):
+            raise RuntimeError("provider boom")
+
+        client = _make_capabilities_client(provider=provider, audience="admin")
+        response = client.get("/gateway/v1/capabilities")
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("provider boom", response.text)
+
+
+def _make_receipts_client(
+    *,
+    audience: str | None = None,
+    receipt_store_path: Path | None = None,
+    receipt_getter=None,
+    receipt_lister=None,
+) -> TestClient:
+    registry = _build_registry()
+    resolver = None
+    if audience is not None:
+        resolver = lambda _request, _a=audience: _a  # noqa: E731
+    app = FastAPI()
+    app.include_router(
+        create_gateway_router(
+            registry,
+            audience_resolver=resolver,
+            receipt_store_path=receipt_store_path,
+            receipt_getter=receipt_getter,
+            receipt_lister=receipt_lister,
+        )
+    )
+    return TestClient(app)
+
+
+def _seed_receipt(db: Path, **overrides) -> RouteReceipt:
+    r = RouteReceipt(
+        protocol="openai",
+        intent="chat.completions",
+        path="/v1/chat/completions",
+        app_profile="default",
+        api_key_name="alice",
+        requested_model="gpt-4o",
+        resolved_model="gpt-4o-mini",
+        backend="openai.local",
+    )
+    r.accept_input("messages")
+    r.set_policy_decision("allowed", reason="profile-default", source="config")
+    r.finish("ok", latency_ms=42.0)
+    r.metadata["internal_note"] = "ops eyes only"
+    for k, v in overrides.items():
+        setattr(r, k, v)
+    receipt_store.record(r, path=db)
+    return r
+
+
+class GatewayReceiptsEndpointTests(unittest.TestCase):
+    def setUp(self) -> None:
+        import tempfile
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "receipts.db"
+        receipt_store.init_db(self.db)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_missing_providers_returns_empty_list(self) -> None:
+        client = _make_receipts_client()
+        response = client.get("/gateway/v1/receipts")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["schema_version"], 1)
+        self.assertEqual(body["audience"], "client")
+        self.assertEqual(body["receipts"], [])
+
+    def test_missing_provider_get_returns_protocol_404(self) -> None:
+        client = _make_receipts_client()
+        response = client.get("/gateway/v1/receipts/req_anything")
+        self.assertEqual(response.status_code, 404)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "receipt_not_found")
+        self.assertIn("req_anything", body["error"]["message"])
+
+    def test_store_path_wires_durable_store(self) -> None:
+        seeded = _seed_receipt(self.db)
+        client = _make_receipts_client(receipt_store_path=self.db)
+
+        listing = client.get("/gateway/v1/receipts")
+        self.assertEqual(listing.status_code, 200)
+        body = listing.json()
+        self.assertEqual(len(body["receipts"]), 1)
+        self.assertEqual(body["receipts"][0]["request_id"], seeded.request_id)
+
+        single = client.get(f"/gateway/v1/receipts/{seeded.request_id}")
+        self.assertEqual(single.status_code, 200)
+        self.assertEqual(single.json()["request_id"], seeded.request_id)
+
+    def test_client_audience_redacts_internal_fields(self) -> None:
+        seeded = _seed_receipt(self.db)
+        client = _make_receipts_client(receipt_store_path=self.db)
+
+        for url in (
+            "/gateway/v1/receipts",
+            f"/gateway/v1/receipts/{seeded.request_id}",
+        ):
+            response = client.get(url)
+            self.assertEqual(response.status_code, 200)
+            raw = response.text
+            for forbidden in (
+                "ops eyes only",
+                "openai.local",
+                "metadata",
+                "backend",
+                "api_key_name",
+                "alice",
+                "policy_sources",
+                "policy_reasons",
+                "manifest_hash",
+                "app_profile",
+            ):
+                self.assertNotIn(
+                    forbidden, raw, f"client receipts leaked {forbidden!r} at {url}"
+                )
+
+    def test_admin_audience_sees_backend_but_not_metadata(self) -> None:
+        seeded = _seed_receipt(self.db)
+        client = _make_receipts_client(
+            audience="admin", receipt_store_path=self.db
+        )
+        response = client.get(f"/gateway/v1/receipts/{seeded.request_id}")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["backend"], "openai.local")
+        self.assertNotIn("metadata", body)
+        self.assertNotIn("ops eyes only", response.text)
+
+    def test_internal_audience_sees_metadata(self) -> None:
+        seeded = _seed_receipt(self.db)
+        client = _make_receipts_client(
+            audience="internal", receipt_store_path=self.db
+        )
+        response = client.get(f"/gateway/v1/receipts/{seeded.request_id}")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["metadata"], {"internal_note": "ops eyes only"})
+
+    def test_unknown_receipt_returns_protocol_404(self) -> None:
+        client = _make_receipts_client(receipt_store_path=self.db)
+        response = client.get("/gateway/v1/receipts/req_missing")
+        self.assertEqual(response.status_code, 404)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "receipt_not_found")
+
+    def test_list_respects_limit_and_filters(self) -> None:
+        import time
+
+        now = int(time.time())
+        ids = []
+        for i in range(3):
+            r = RouteReceipt(
+                protocol="openai",
+                intent="chat.completions",
+                app_profile="alpha" if i < 2 else "beta",
+            )
+            r.finish("ok")
+            receipt_store.record(r, created_at=now + i, path=self.db)
+            ids.append(r.request_id)
+
+        # Use admin so app_profile filter remains meaningful (client audience
+        # strips app_profile from output, but the filter still applies).
+        client = _make_receipts_client(
+            audience="admin", receipt_store_path=self.db
+        )
+        response = client.get(
+            "/gateway/v1/receipts",
+            params={"limit": 5, "app_profile": "alpha"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        returned = {row["request_id"] for row in body["receipts"]}
+        self.assertEqual(returned, {ids[0], ids[1]})
+
+    def test_explicit_providers_override_store_path(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def lister(*, audience, limit, app_profile=None, since_s=None):
+            captured["audience"] = audience
+            captured["limit"] = limit
+            return [{"request_id": "stub", "status": "ok"}]
+
+        def getter(request_id, *, audience):
+            captured["get_audience"] = audience
+            return {"request_id": request_id, "status": "ok"}
+
+        client = _make_receipts_client(
+            receipt_store_path=self.db,
+            receipt_getter=getter,
+            receipt_lister=lister,
+        )
+        listing = client.get("/gateway/v1/receipts", params={"limit": 7})
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(captured["limit"], 7)
+        self.assertEqual(captured["audience"], "client")
+        self.assertEqual(listing.json()["receipts"][0]["request_id"], "stub")
+
+        single = client.get("/gateway/v1/receipts/whatever")
+        self.assertEqual(single.status_code, 200)
+        self.assertEqual(single.json()["request_id"], "whatever")
+
+    def test_list_provider_error_is_protocol_shaped(self) -> None:
+        def lister(**_kwargs):
+            raise RuntimeError("lister boom")
+
+        client = _make_receipts_client(receipt_lister=lister)
+        response = client.get("/gateway/v1/receipts")
+        self.assertEqual(response.status_code, 500)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "gateway_internal_error")
+        self.assertNotIn("lister boom", response.text)
+
+    def test_limit_validation_rejects_zero(self) -> None:
+        client = _make_receipts_client(receipt_store_path=self.db)
+        response = client.get("/gateway/v1/receipts", params={"limit": 0})
+        # FastAPI validation kicks in before the handler.
+        self.assertEqual(response.status_code, 422)
 
 
 if __name__ == "__main__":
