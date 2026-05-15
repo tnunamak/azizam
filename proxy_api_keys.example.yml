@@ -26,3 +26,24 @@ keys:
   #         Authorization:
   #           env: SIMON_TTS_API_KEY
   #           prefix: Bearer
+
+  # Optional app profile block — consumed by gateway.profiles.load_profile_from_entry.
+  # Missing block falls back to DEFAULT_PROFILE (local-only, basic visibility).
+  # All allow-lists are optional; omit a list to mean "no opinion", set to []
+  # to deny that dimension entirely.
+  # - name: image-agent
+  #   key_hash: sha256:...
+  #   profile:
+  #     id: image-agent
+  #     protocols: ["openai.images"]
+  #     workflows: ["image.edit.controlnet.example"]
+  #     models: ["sdxl-base"]
+  #     backends: ["comfyui.local"]
+  #     fallback:
+  #       cloud_allowed: false
+  #     native_passthrough:
+  #       enabled: false
+  #       allowed_backends: []
+  #       allowed_operations: []
+  #     status_visibility:
+  #       level: basic   # one of: none, basic, standard, full
