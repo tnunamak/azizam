@@ -64,6 +64,11 @@ STANDARD_IMAGE_GENERATE_FIELDS: frozenset[str] = frozenset(
         "user",
         "quality",
         "style",
+        "moderation",
+        "output_compression",
+        "output_format",
+        "partial_images",
+        "stream",
         "extensions",
     }
 )
@@ -78,7 +83,15 @@ STANDARD_IMAGE_EDIT_FIELDS: frozenset[str] = frozenset(
         "background",
         "user",
         "image",
+        "images",
         "mask",
+        "input_fidelity",
+        "moderation",
+        "output_compression",
+        "output_format",
+        "partial_images",
+        "quality",
+        "stream",
         "extensions",
     }
 )

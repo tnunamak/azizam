@@ -26,6 +26,12 @@ data/media_jobs.db-wal
 data/media_jobs.db-shm
 data/media_jobs.db.broken-*
 
+# Gateway route receipts persistence. Ephemeral runtime diagnostics.
+data/receipts.db
+data/receipts.db-wal
+data/receipts.db-shm
+data/receipts.db.broken-*
+
 # GPU incident snapshots — ephemeral diagnostic captures written by
 # ~/.local/bin/gpu-incident-watcher
 data/incidents/

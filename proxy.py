@@ -31,11 +31,11 @@ import atexit
 import hashlib
 import secrets
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import httpx
 import yaml
@@ -50,12 +50,43 @@ import metrics_store
 import metrics_sampler
 import responses_store
 import responses_translator
+from gateway import media_jobs, receipt_store
+from gateway.api import create_gateway_router
+from gateway.capabilities import (
+    Capability,
+    ResourceEstimate,
+    capability_from_workflow_record,
+    capability_with_policy_view,
+)
+from gateway.discovery import WorkflowRegistry
+from gateway.extensions import ExtensionError
+from gateway.image_extensions import (
+    STANDARD_IMAGE_EDIT_FIELDS,
+    STANDARD_IMAGE_GENERATE_FIELDS,
+    WORKFLOW_EXTENSION_NAMESPACE,
+    bind_workflow_extensions,
+    detect_unknown_top_level_fields,
+    record_image_extension_binding,
+)
 from gateway.manifests import (
     ManifestError,
     load_workflow_manifest,
     manifest_identity,
 )
+from gateway.policy import DEFAULT_PROFILE, PolicyDecision
 from gateway.receipts import RouteReceipt
+from gateway.runtime_auth import (
+    RuntimeIdentity,
+    build_identity_registry,
+    discovery_audience_for_profile,
+    evaluate_and_apply,
+    hash_api_key as runtime_hash_api_key,
+    key_hashes_for_entry as runtime_key_hashes_for_entry,
+    make_policy_request,
+    normalize_key_hash as runtime_normalize_key_hash,
+)
+from gateway.protocols import anthropic as anthropic_protocol
+from gateway.protocols import ollama as ollama_protocol
 
 # =============================================================================
 # Configuration
@@ -866,13 +897,13 @@ AUTH_KEYS_FILE = config_path(
     "proxy_api_keys.yml",
 )
 AUTH_PUBLIC_PATHS = auth_cfg.get("public_paths") or ["/health"]
+AUTH_PROFILE_STRICT = bool_from_config(
+    os.environ.get("OPENAI_PROXY_AUTH_PROFILE_STRICT", auth_cfg.get("profile_strict")),
+    False,
+)
 
 
-@dataclass(frozen=True)
-class AuthIdentity:
-    name: str
-    key_hash: str
-    downstream: dict = field(default_factory=dict)
+AuthIdentity = RuntimeIdentity
 
 
 @dataclass(frozen=True)
@@ -885,13 +916,11 @@ NO_AUTH_CONTEXT = AuthContext()
 
 def hash_api_key(api_key: str) -> str:
     """Hash a client-facing proxy key for storage and lookup."""
-    return f"sha256:{hashlib.sha256(api_key.encode('utf-8')).hexdigest()}"
+    return runtime_hash_api_key(api_key)
 
 
 def normalize_key_hash(key_hash: str) -> str:
-    if key_hash.startswith("sha256:"):
-        return key_hash
-    return f"sha256:{key_hash}"
+    return runtime_normalize_key_hash(key_hash)
 
 
 def get_client_api_key_from_headers(headers) -> str:
@@ -933,42 +962,16 @@ def load_proxy_key_entries() -> list[dict]:
 
 def key_hashes_for_entry(entry: dict) -> list[str]:
     """Return every usable hash for one auth entry."""
-    hashes = []
-
-    key_hash = entry.get("key_hash")
-    if key_hash:
-        hashes.append(normalize_key_hash(str(key_hash).strip()))
-
-    raw_key = entry.get("key", "")
-    key_env = entry.get("key_env", "")
-    if key_env:
-        raw_key = os.environ.get(key_env, raw_key)
-    if raw_key:
-        hashes.append(hash_api_key(str(raw_key).strip()))
-
-    return hashes
+    return runtime_key_hashes_for_entry(entry, env=os.environ)
 
 
 def build_auth_registry(entries: list[dict]) -> dict[str, AuthIdentity]:
     """Build a hash-indexed registry of valid proxy keys."""
-    registry = {}
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-
-        name = str(entry.get("name") or entry.get("id") or "unnamed")
-        downstream = entry.get("downstream") or {}
-        if not isinstance(downstream, dict):
-            downstream = {}
-
-        for key_hash in key_hashes_for_entry(entry):
-            registry[key_hash] = AuthIdentity(
-                name=name,
-                key_hash=key_hash,
-                downstream=downstream,
-            )
-
-    return registry
+    return build_identity_registry(
+        entries,
+        env=os.environ,
+        strict=AUTH_PROFILE_STRICT,
+    )
 
 
 AUTH_REGISTRY: dict[str, AuthIdentity] = {}
@@ -1177,6 +1180,8 @@ def create_proxy_key(name: str, keys_file: Path = AUTH_KEYS_FILE) -> str:
                 "key_hash": hash_api_key(api_key),
                 "downstream": downstream,
             }
+            if "profile" in entry:
+                new_entry["profile"] = entry.get("profile")
             entries[idx] = new_entry
             break
     else:
@@ -3664,6 +3669,13 @@ async def proxy_comfy_request(
             status_code=400,
             media_type="application/json"
         )
+    unknown_response = _record_unknown_image_fields(
+        receipt,
+        body,
+        STANDARD_IMAGE_GENERATE_FIELDS,
+    )
+    if unknown_response is not None:
+        return unknown_response
 
     prompt = body.get("prompt", "")
     requested_model = body.get("model", COMFY_DEFAULT_MODEL)
@@ -3752,7 +3764,26 @@ async def proxy_comfy_request(
     if receipt is not None:
         receipt.requested_workflow = str(model) if model is not None else None
         receipt.resolved_workflow = workflow_name
-    _attach_image_manifest_if_available(receipt, "image.generate", str(model))
+    manifest = _find_image_manifest("image.generate", str(model))
+    if manifest is not None:
+        identity = manifest_identity(manifest)
+        if receipt is not None:
+            receipt.attach_manifest(
+                manifest_id=identity.id,
+                manifest_version=identity.version,
+                manifest_hash=identity.manifest_hash,
+            )
+    else:
+        _attach_image_manifest_if_available(receipt, "image.generate", str(model))
+    if receipt is not None:
+        decision = _apply_image_route_policy(
+            receipt,
+            auth_context,
+            model=str(model) if model is not None else None,
+            workflow=_policy_workflow_for_receipt(receipt),
+        )
+        if decision.denied:
+            return _policy_denied_response(decision)
     background_decision = await resolve_image_background_decision(
         background or "auto",
         prompt,
@@ -3770,6 +3801,16 @@ async def proxy_comfy_request(
     if size_node and size_node in workflow:
         workflow[size_node]["inputs"]["width"] = width
         workflow[size_node]["inputs"]["height"] = height
+
+    workflow, extension_response = _apply_workflow_extensions_to_image_request(
+        request_body=body,
+        manifest=manifest,
+        backend_request=workflow,
+        standard_fields=STANDARD_IMAGE_GENERATE_FIELDS,
+        receipt=receipt,
+    )
+    if extension_response is not None:
+        return extension_response
 
     fallback_workflow = copy.deepcopy(workflow)
     set_workflow_background_removal(fallback_workflow, meta, False)
@@ -3861,6 +3902,7 @@ async def proxy_comfy_edit_request(
             media_type="application/json"
         )
 
+    form_dict: dict[str, Any] = {}
     try:
         form = await request.form()
     except Exception as e:
@@ -3870,6 +3912,33 @@ async def proxy_comfy_edit_request(
             status_code=400,
             media_type="application/json"
         )
+    for key, value in form.multi_items():
+        if key in form_dict:
+            continue
+        form_dict[str(key)] = value
+    extensions_raw = form.get("extensions")
+    if isinstance(extensions_raw, str):
+        try:
+            form_dict["extensions"] = json.loads(extensions_raw)
+        except json.JSONDecodeError:
+            _record_image_input(receipt, "extensions", rejected_reason="invalid_json")
+            return Response(
+                content=json.dumps({"error": {
+                    "message": "extensions must be a JSON object string",
+                    "type": "invalid_request_error",
+                    "param": "extensions",
+                    "code": "invalid_json",
+                }}),
+                status_code=400,
+                media_type="application/json",
+            )
+    unknown_response = _record_unknown_image_fields(
+        receipt,
+        form_dict,
+        STANDARD_IMAGE_EDIT_FIELDS,
+    )
+    if unknown_response is not None:
+        return unknown_response
 
     image_file = form.get("image")
     mask_file = form.get("mask")
@@ -4016,7 +4085,26 @@ async def proxy_comfy_edit_request(
             if receipt is not None:
                 receipt.requested_workflow = str(model) if model is not None else None
                 receipt.resolved_workflow = workflow_name
-            _attach_image_manifest_if_available(receipt, "image.edit", str(model))
+            manifest = _find_image_manifest("image.edit", str(model))
+            if manifest is not None:
+                identity = manifest_identity(manifest)
+                if receipt is not None:
+                    receipt.attach_manifest(
+                        manifest_id=identity.id,
+                        manifest_version=identity.version,
+                        manifest_hash=identity.manifest_hash,
+                    )
+            else:
+                _attach_image_manifest_if_available(receipt, "image.edit", str(model))
+            if receipt is not None:
+                decision = _apply_image_route_policy(
+                    receipt,
+                    auth_context,
+                    model=str(model) if model is not None else None,
+                    workflow=_policy_workflow_for_receipt(receipt),
+                )
+                if decision.denied:
+                    return _policy_denied_response(decision)
             background_decision = await resolve_image_background_decision(
                 background or "auto",
                 prompt,
@@ -4043,6 +4131,16 @@ async def proxy_comfy_edit_request(
                         workflow[node_id]["inputs"]["width"] = img_width
                     if "height" in workflow[node_id]["inputs"]:
                         workflow[node_id]["inputs"]["height"] = img_height
+
+            workflow, extension_response = _apply_workflow_extensions_to_image_request(
+                request_body=form_dict,
+                manifest=manifest,
+                backend_request=workflow,
+                standard_fields=STANDARD_IMAGE_EDIT_FIELDS,
+                receipt=receipt,
+            )
+            if extension_response is not None:
+                return extension_response
 
             fallback_workflow = copy.deepcopy(workflow)
             set_workflow_background_removal(fallback_workflow, meta, False)
@@ -5929,6 +6027,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Responses store failed to start: {e}", flush=True)
 
+    try:
+        receipt_store.init_db()
+        pruned = receipt_store.prune()
+        print(
+            f"[proxy] Receipt store initialized (db={receipt_store.DB_PATH}, pruned={pruned})",
+            flush=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Receipt store failed to start: {e}", flush=True)
+
+    try:
+        media_jobs.init_db()
+        pruned = media_jobs.prune()
+        print(
+            f"[proxy] Media job store initialized (db={media_jobs.DB_PATH}, "
+            f"pruned_jobs={pruned.get('jobs', 0)} pruned_events={pruned.get('events', 0)})",
+            flush=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Media job store failed to start: {e}", flush=True)
+
     yield
 
     state.shutdown_requested = True
@@ -5997,6 +6116,206 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+_MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workflows"
+
+
+def _load_gateway_workflow_registry() -> WorkflowRegistry:
+    try:
+        registry = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR)
+        if registry.errors:
+            print(
+                f"[proxy] Gateway workflow registry loaded with {len(registry.errors)} error(s)",
+                flush=True,
+            )
+        return registry
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Gateway workflow registry unavailable: {e}", flush=True)
+        return WorkflowRegistry()
+
+
+GATEWAY_WORKFLOW_REGISTRY = _load_gateway_workflow_registry()
+
+
+def _auth_context_from_scope(request: Request) -> AuthContext:
+    auth_context = request.scope.get("auth_context")
+    if isinstance(auth_context, AuthContext):
+        return auth_context
+    return NO_AUTH_CONTEXT
+
+
+def _profile_for_auth_context(auth_context: AuthContext):
+    if auth_context.identity is None:
+        return DEFAULT_PROFILE
+    return auth_context.identity.profile
+
+
+def _protocol_for_intent(intent: str) -> str:
+    if intent.startswith("image."):
+        return "openai.images"
+    if intent.startswith("video."):
+        return "openai.video"
+    if intent.startswith(("audio.", "speech.", "sound.", "music.")):
+        return "openai.audio"
+    if intent.startswith("responses."):
+        return "openai.responses"
+    return "openai.chat"
+
+
+def _capability_for_profile(
+    capability: Capability,
+    auth_context: AuthContext,
+    *,
+    protocol: str | None = None,
+) -> Capability:
+    profile = _profile_for_auth_context(auth_context)
+    return capability_with_policy_view(
+        capability,
+        profile,
+        request=make_policy_request(
+            protocol=protocol or _protocol_for_intent(capability.intent),
+            intent=capability.intent,
+            workflow=capability.workflow,
+            model=capability.model,
+            backend=capability.backend,
+        ),
+    )
+
+
+def _gateway_capabilities_provider(request: Request) -> list[Capability]:
+    auth_context = _auth_context_from_scope(request)
+    capabilities: list[Capability] = []
+
+    if kobold_cfg:
+        capabilities.append(Capability(
+            intent="chat.completions",
+            backend="kobold",
+            model="default",
+            input_modalities=("text",),
+            output_modalities=("text",),
+            execution="sync",
+            streaming=True,
+            lifecycle="unknown",
+            health="unknown",
+            resources=ResourceEstimate(gpu_required=True),
+            caveats=("backend lifecycle is managed outside the gateway",),
+        ))
+    if tabby_cfg:
+        capabilities.append(Capability(
+            intent="chat.completions",
+            backend="tabby",
+            model="vision",
+            input_modalities=("text", "image"),
+            output_modalities=("text",),
+            execution="sync",
+            streaming=True,
+            lifecycle="unknown",
+            health="unknown",
+            resources=ResourceEstimate(gpu_required=True),
+            caveats=("standby backend may cold-start for vision routes",),
+        ))
+    if TTS_ENABLED:
+        capabilities.append(Capability(
+            intent="audio.speech",
+            backend="tts",
+            model=compat_cfg.get("defaults", {}).get("speech"),
+            input_modalities=("text",),
+            output_modalities=("audio",),
+            execution="sync",
+            streaming=False,
+            health="unknown",
+        ))
+    if STT_ENABLED:
+        capabilities.append(Capability(
+            intent="audio.transcriptions",
+            backend="stt",
+            model=compat_cfg.get("defaults", {}).get("transcriptions"),
+            input_modalities=("audio",),
+            output_modalities=("text",),
+            execution="sync",
+            streaming=False,
+            health="unknown",
+        ))
+    if COMFY_ENABLED:
+        capabilities.append(Capability(
+            intent="image.generate",
+            backend="comfyui",
+            model=COMFY_DEFAULT_MODEL,
+            input_modalities=("text",),
+            output_modalities=("image",),
+            execution="sync",
+            streaming=False,
+            health="unknown",
+            resources=ResourceEstimate(gpu_required=True),
+        ))
+        capabilities.append(Capability(
+            intent="video.generate",
+            backend="comfyui",
+            model=VIDEO_DEFAULT_WORKFLOW,
+            input_modalities=("text", "image"),
+            output_modalities=("video",),
+            execution="job",
+            streaming=False,
+            health="unknown",
+            resources=ResourceEstimate(gpu_required=True, duration_class="long"),
+        ))
+        audio_default = (config.get("audio", {}) or {}).get("default_workflow")
+        if audio_default:
+            capabilities.append(Capability(
+                intent="audio.generate",
+                backend="comfyui",
+                model=audio_default,
+                input_modalities=("text",),
+                output_modalities=("audio",),
+                execution="job",
+                streaming=False,
+                health="unknown",
+                resources=ResourceEstimate(gpu_required=True, duration_class="medium"),
+            ))
+
+    for record in GATEWAY_WORKFLOW_REGISTRY.records():
+        for backend in record.supported_backends:
+            try:
+                capabilities.append(capability_from_workflow_record(
+                    record,
+                    backend=backend,
+                    execution="job",
+                    resources=ResourceEstimate(gpu_required=backend == "comfyui"),
+                ))
+            except Exception:
+                continue
+
+    return [
+        _capability_for_profile(capability, auth_context)
+        for capability in capabilities
+    ]
+
+
+def _gateway_audience_resolver(request: Request) -> str:
+    auth_context = _auth_context_from_scope(request)
+    return discovery_audience_for_profile(_profile_for_auth_context(auth_context))
+
+
+@app.middleware("http")
+async def _gateway_auth_middleware(request: Request, call_next):
+    """Gate gateway-native discovery/receipt APIs behind the proxy key layer."""
+    if request.url.path.startswith("/gateway/v1"):
+        auth_context = authenticate_request(request, request.url.path)
+        if isinstance(auth_context, Response):
+            return auth_context
+        request.scope["auth_context"] = auth_context
+        request.scope["gateway_audience"] = _gateway_audience_resolver(request)
+    return await call_next(request)
+
+
+app.include_router(
+    create_gateway_router(
+        GATEWAY_WORKFLOW_REGISTRY,
+        audience_resolver=_gateway_audience_resolver,
+        capabilities_provider=_gateway_capabilities_provider,
+        receipt_store_path=receipt_store.DB_PATH,
+    )
+)
 
 
 # Endpoint paths excluded from the firehose per-key request counter.
@@ -6169,22 +6488,60 @@ def start_image_route_receipt(
     """
     intent = _IMAGE_ROUTE_INTENTS.get(path, "image.generate")
     key_name = auth_context.identity.name if auth_context.identity else None
+    profile = _profile_for_auth_context(auth_context)
     receipt = RouteReceipt(
         protocol="openai.images",
         path=path,
         intent=intent,
         backend="comfyui",
         api_key_name=key_name,
+        app_profile=profile.id,
+        visibility=profile.status_visibility.level,
     )
-    receipt.set_policy_decision(
-        "allowed",
-        source="proxy:legacy-auth",
-        reason="caller authenticated via proxy api key",
-    )
+    _apply_image_route_policy(receipt, auth_context)
     return receipt
 
 
-_MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workflows"
+def _apply_image_route_policy(
+    receipt: RouteReceipt,
+    auth_context: AuthContext,
+    *,
+    model: str | None = None,
+    workflow: str | None = None,
+) -> PolicyDecision:
+    return evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="openai.images",
+            intent=receipt.intent,
+            model=model,
+            workflow=workflow,
+            backend=receipt.backend,
+        ),
+        receipt,
+    )
+
+
+def _policy_workflow_for_receipt(receipt: RouteReceipt | None) -> str | None:
+    if receipt is None:
+        return None
+    return receipt.manifest_id or receipt.resolved_workflow or receipt.requested_workflow
+
+
+def _policy_denied_response(decision: PolicyDecision) -> Response:
+    reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": reason,
+                "type": "permission_error",
+                "code": "policy_denied",
+            }
+        }),
+        status_code=403,
+        media_type="application/json",
+    )
+
 
 _SAFE_IMAGE_INPUT_NAMES = ("model", "size", "n", "response_format", "background", "prompt", "image")
 
@@ -6199,37 +6556,161 @@ def _attach_image_manifest_if_available(
     if receipt is None:
         return
     try:
-        manifests_dir = _MANIFEST_WORKFLOWS_DIR
-        if not manifests_dir.is_dir():
-            receipt.add_warning("manifest_identity_deferred:no_manifests_dir")
+        manifest = _find_image_manifest(intent, resolved_model)
+        if manifest is None:
+            if not _MANIFEST_WORKFLOWS_DIR.is_dir():
+                receipt.add_warning("manifest_identity_deferred:no_manifests_dir")
+            else:
+                receipt.add_warning("manifest_identity_deferred:no_match")
             return
-        candidate_ids = {
-            f"{intent}.{resolved_model}",
-            f"{intent}.{resolved_model.removesuffix('-edit')}",
-        }
-        for path in sorted(manifests_dir.glob("*.yml")):
-            try:
-                manifest = load_workflow_manifest(path)
-            except (ManifestError, OSError, ValueError):
-                continue
-            mid = str(manifest.get("id") or "")
-            if manifest.get("intent") != intent:
-                continue
-            if mid in candidate_ids or mid.endswith(f".{resolved_model}"):
-                identity = manifest_identity(manifest)
-                receipt.attach_manifest(
-                    manifest_id=identity.id,
-                    manifest_version=identity.version,
-                    manifest_hash=identity.manifest_hash,
-                )
-                return
-        receipt.add_warning("manifest_identity_deferred:no_match")
+        identity = manifest_identity(manifest)
+        receipt.attach_manifest(
+            manifest_id=identity.id,
+            manifest_version=identity.version,
+            manifest_hash=identity.manifest_hash,
+        )
     except Exception:
         # Manifest attach is observational; never break the request.
         try:
             receipt.add_warning("manifest_identity_deferred:error")
         except Exception:
             pass
+
+
+def _find_image_manifest(intent: str, resolved_model: str) -> dict[str, Any] | None:
+    manifests_dir = _MANIFEST_WORKFLOWS_DIR
+    if not manifests_dir.is_dir():
+        return None
+    candidate_ids = {
+        f"{intent}.{resolved_model}",
+        f"{intent}.{resolved_model.removesuffix('-edit')}",
+    }
+    for path in sorted(manifests_dir.glob("*.yml")):
+        try:
+            manifest = load_workflow_manifest(path)
+        except (ManifestError, OSError, ValueError):
+            continue
+        mid = str(manifest.get("id") or "")
+        if manifest.get("intent") != intent:
+            continue
+        if mid in candidate_ids or mid.endswith(f".{resolved_model}"):
+            return manifest
+    return None
+
+
+def _record_unknown_image_fields(
+    receipt: RouteReceipt | None,
+    body: Mapping[str, Any],
+    standard_fields: frozenset[str],
+) -> Response | None:
+    unknown = detect_unknown_top_level_fields(body, standard_fields)
+    if not unknown:
+        return None
+    for name, reason in unknown.items():
+        _record_image_input(receipt, name, rejected_reason=reason)
+    first_name = next(iter(unknown))
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": unknown[first_name],
+                "type": "invalid_request_error",
+                "param": first_name,
+                "code": "unknown_parameter",
+            }
+        }),
+        status_code=400,
+        media_type="application/json",
+    )
+
+
+def _workflow_extension_supported_names(manifest: Mapping[str, Any], backend: str) -> tuple[str, ...]:
+    binding = (manifest.get("bindings") or {}).get(backend)
+    if not isinstance(binding, Mapping):
+        return ()
+    mapping = binding.get("map")
+    if not isinstance(mapping, Mapping):
+        return ()
+    # These are already handled by the OpenAI-shaped route itself. Keeping
+    # them out of the extension supported set prevents manifest-required
+    # portable fields from rejecting normal OpenAI requests.
+    standard_portable_names = {"prompt", "source_image", "width", "height"}
+    return tuple(name for name in mapping.keys() if name not in standard_portable_names)
+
+
+def _workflow_extensions_present(body: Mapping[str, Any]) -> bool:
+    extensions = body.get("extensions")
+    if not isinstance(extensions, Mapping):
+        return extensions is not None
+    return WORKFLOW_EXTENSION_NAMESPACE in extensions
+
+
+def _image_extension_error_response(
+    receipt: RouteReceipt | None,
+    message: str,
+    *,
+    param: str = "extensions",
+    status_code: int = 400,
+) -> Response:
+    _record_image_input(receipt, param, rejected_reason=message)
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": message,
+                "type": "invalid_request_error",
+                "param": param,
+                "code": "invalid_extension",
+            }
+        }),
+        status_code=status_code,
+        media_type="application/json",
+    )
+
+
+def _apply_workflow_extensions_to_image_request(
+    *,
+    request_body: Mapping[str, Any],
+    manifest: Mapping[str, Any] | None,
+    backend_request: Mapping[str, Any],
+    standard_fields: frozenset[str],
+    receipt: RouteReceipt | None,
+) -> tuple[dict[str, Any] | None, Response | None]:
+    unknown_response = _record_unknown_image_fields(receipt, request_body, standard_fields)
+    if unknown_response is not None:
+        return None, unknown_response
+
+    if manifest is None:
+        if _workflow_extensions_present(request_body):
+            return None, _image_extension_error_response(
+                receipt,
+                "workflow extensions are not supported for the resolved image workflow",
+            )
+        return dict(backend_request), None
+
+    try:
+        result = bind_workflow_extensions(
+            request_body,
+            manifest,
+            "comfyui",
+            backend_request,
+            supported_names=_workflow_extension_supported_names(manifest, "comfyui"),
+            standard_fields=standard_fields,
+        )
+        if receipt is not None:
+            record_image_extension_binding(receipt, result)
+    except (ExtensionError, ManifestError, ValueError) as e:
+        return None, _image_extension_error_response(receipt, str(e))
+
+    if result.unknown_top_level:
+        name, reason = next(iter(result.unknown_top_level.items()))
+        return None, _image_extension_error_response(receipt, reason, param=name)
+    if result.validation.rejected:
+        name, reason = next(iter(result.validation.rejected.items()))
+        return None, _image_extension_error_response(
+            receipt,
+            reason,
+            param=f"extensions.{result.namespace}.{name}",
+        )
+    return result.request or dict(backend_request), None
 
 
 def _record_image_input(
@@ -6269,6 +6750,13 @@ def finish_image_route_receipt(
     status_code = int(getattr(response, "status_code", 0) or 0)
     receipt.finish(_image_receipt_status(status_code))
     try:
+        receipt_store.record(receipt)
+    except Exception as e:
+        try:
+            print(f"[proxy] receipt_store.record failed: {e}", flush=True)
+        except Exception:
+            pass
+    try:
         firehose_metrics.record_event(
             "image_route_receipt",
             f"{receipt.intent} {receipt.status}",
@@ -6305,6 +6793,11 @@ async def images_generations(request: Request):
     if isinstance(auth_context, Response):
         return auth_context
     receipt = start_image_route_receipt("/v1/images/generations", auth_context)
+    decision = _apply_image_route_policy(receipt, auth_context)
+    if decision.denied:
+        response = _policy_denied_response(decision)
+        finish_image_route_receipt(receipt, response)
+        return response
     response = await proxy_comfy_request(request, auth_context, receipt=receipt)
     finish_image_route_receipt(receipt, response)
     return response
@@ -6317,6 +6810,11 @@ async def images_edits(request: Request):
     if isinstance(auth_context, Response):
         return auth_context
     receipt = start_image_route_receipt("/v1/images/edits", auth_context)
+    decision = _apply_image_route_policy(receipt, auth_context)
+    if decision.denied:
+        response = _policy_denied_response(decision)
+        finish_image_route_receipt(receipt, response)
+        return response
     response = await proxy_comfy_edit_request(request, auth_context, receipt=receipt)
     finish_image_route_receipt(receipt, response)
     return response
@@ -7044,6 +7542,325 @@ async def _forward_chat_completions(
     finally:
         if not stream:
             await client.aclose()
+
+
+def _response_json_payload(response: Any) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except Exception:
+        raw = getattr(response, "body", None)
+        if raw is None:
+            raw = getattr(response, "text", "") or ""
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(raw or "{}")
+        except Exception:
+            payload = {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _response_error_message(response: Any, fallback: str) -> str:
+    payload = _response_json_payload(response)
+    error = payload.get("error")
+    if isinstance(error, Mapping):
+        message = error.get("message")
+        if isinstance(message, str) and message:
+            return message
+    if isinstance(error, str) and error:
+        return error
+    text = getattr(response, "text", "") or ""
+    if isinstance(text, str) and text:
+        return text[:1000]
+    return fallback
+
+
+def _json_error_response(
+    payload: Mapping[str, Any],
+    *,
+    status_code: int,
+) -> Response:
+    return Response(
+        content=json.dumps(dict(payload)),
+        status_code=status_code,
+        media_type="application/json",
+    )
+
+
+def _anthropic_error_response(
+    message: str,
+    *,
+    status_code: int = 400,
+    error_type: str = "invalid_request_error",
+) -> Response:
+    return _json_error_response(
+        {
+            "type": "error",
+            "error": {
+                "type": error_type,
+                "message": message,
+            },
+        },
+        status_code=status_code,
+    )
+
+
+def _ollama_error_response(message: str, *, status_code: int = 400) -> Response:
+    return _json_error_response({"error": message}, status_code=status_code)
+
+
+def _protocol_policy_decision(
+    auth_context: AuthContext,
+    *,
+    protocol: str,
+    intent: str,
+    model: str | None = None,
+) -> PolicyDecision:
+    return evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(protocol=protocol, intent=intent, model=model),
+    )
+
+
+async def _read_json_object(request: Request) -> dict[str, Any] | Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "Invalid JSON body",
+                    "type": "invalid_request_error",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+    if not isinstance(body, dict):
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "Request body must be a JSON object",
+                    "type": "invalid_request_error",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+    return body
+
+
+@app.post("/v1/messages")
+async def anthropic_messages(request: Request):
+    """Anthropic Messages-compatible non-streaming frontend over chat completions."""
+    auth_context = authenticate_request(request, "/v1/messages")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    body = await _read_json_object(request)
+    if isinstance(body, Response):
+        return _anthropic_error_response("Invalid JSON body", status_code=400)
+
+    try:
+        canonical = anthropic_protocol.messages_request_to_canonical(body)
+    except anthropic_protocol.AnthropicTranslationError as e:
+        return _json_error_response(e.error_body, status_code=e.http_status)
+
+    if canonical.get("stream"):
+        return _json_error_response(
+            anthropic_protocol.unsupported_feature_error(
+                "streaming",
+                detail="the Anthropic frontend currently supports non-streaming requests only",
+            ),
+            status_code=400,
+        )
+
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol="anthropic.messages",
+        intent="chat.messages",
+        model=canonical.get("model"),
+    )
+    if decision.denied:
+        reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+        return _anthropic_error_response(
+            reason,
+            status_code=403,
+            error_type="permission_error",
+        )
+
+    state.update_activity()
+    upstream = await _forward_chat_completions(
+        request,
+        auth_context,
+        canonical,
+        stream=False,
+    )
+    if getattr(upstream, "status_code", 500) >= 400:
+        return _anthropic_error_response(
+            _response_error_message(upstream, "Upstream chat-completions error."),
+            status_code=int(getattr(upstream, "status_code", 502) or 502),
+            error_type="api_error",
+        )
+
+    try:
+        payload = anthropic_protocol.canonical_response_to_messages(
+            _response_json_payload(upstream),
+            request_model=body.get("model"),
+        )
+    except anthropic_protocol.AnthropicTranslationError as e:
+        return _json_error_response(e.error_body, status_code=e.http_status)
+    return _json_error_response(payload, status_code=200)
+
+
+def _ollama_native_annotation_error(canonical: Mapping[str, Any]) -> Response | None:
+    if canonical.get("__ollama_raw__"):
+        return _ollama_error_response(
+            "unsupported operation: raw prompting is not available through this frontend",
+            status_code=400,
+        )
+    native_options = canonical.get("__ollama_options__")
+    if isinstance(native_options, Mapping) and native_options:
+        names = ", ".join(sorted(str(k) for k in native_options.keys()))
+        return _ollama_error_response(
+            f"unsupported operation: native Ollama options are not mapped yet: {names}",
+            status_code=400,
+        )
+    return None
+
+
+async def _ollama_forward_non_streaming(
+    request: Request,
+    auth_context: AuthContext,
+    canonical: dict[str, Any],
+    *,
+    protocol: str,
+    intent: str,
+) -> Response | dict[str, Any]:
+    if canonical.get("stream"):
+        return _ollama_error_response(
+            "unsupported operation: streaming is not available through this frontend",
+            status_code=400,
+        )
+    annotation_error = _ollama_native_annotation_error(canonical)
+    if annotation_error is not None:
+        return annotation_error
+
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol=protocol,
+        intent=intent,
+        model=canonical.get("model"),
+    )
+    if decision.denied:
+        reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+        return _ollama_error_response(reason, status_code=403)
+
+    state.update_activity()
+    upstream = await _forward_chat_completions(
+        request,
+        auth_context,
+        canonical,
+        stream=False,
+    )
+    if getattr(upstream, "status_code", 500) >= 400:
+        return _ollama_error_response(
+            _response_error_message(upstream, "upstream chat-completions error"),
+            status_code=int(getattr(upstream, "status_code", 502) or 502),
+        )
+    return _response_json_payload(upstream)
+
+
+@app.post("/api/chat")
+async def ollama_chat(request: Request):
+    """Ollama `/api/chat` non-streaming frontend over chat completions."""
+    auth_context = authenticate_request(request, "/api/chat")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    body = await _read_json_object(request)
+    if isinstance(body, Response):
+        return _ollama_error_response("invalid JSON body", status_code=400)
+
+    try:
+        canonical = ollama_protocol.chat_request_to_canonical(body)
+    except ollama_protocol.OllamaTranslationError as e:
+        return _ollama_error_response(str(e), status_code=e.http_status)
+
+    upstream = await _ollama_forward_non_streaming(
+        request,
+        auth_context,
+        canonical,
+        protocol="ollama.chat",
+        intent="chat.completions",
+    )
+    if isinstance(upstream, Response):
+        return upstream
+    return _json_error_response(
+        ollama_protocol.canonical_response_to_chat(
+            upstream,
+            request_model=body.get("model"),
+        ),
+        status_code=200,
+    )
+
+
+@app.post("/api/generate")
+async def ollama_generate(request: Request):
+    """Ollama `/api/generate` non-streaming frontend over chat completions."""
+    auth_context = authenticate_request(request, "/api/generate")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    body = await _read_json_object(request)
+    if isinstance(body, Response):
+        return _ollama_error_response("invalid JSON body", status_code=400)
+
+    try:
+        canonical = ollama_protocol.generate_request_to_canonical(body)
+    except ollama_protocol.OllamaTranslationError as e:
+        return _ollama_error_response(str(e), status_code=e.http_status)
+
+    upstream = await _ollama_forward_non_streaming(
+        request,
+        auth_context,
+        canonical,
+        protocol="ollama.generate",
+        intent="chat.generate",
+    )
+    if isinstance(upstream, Response):
+        return upstream
+    return _json_error_response(
+        ollama_protocol.canonical_response_to_generate(
+            upstream,
+            request_model=body.get("model"),
+        ),
+        status_code=200,
+    )
+
+
+@app.get("/api/tags")
+async def ollama_tags(request: Request):
+    """Ollama model-list frontend over the proxy's configured model catalog."""
+    auth_context = authenticate_request(request, "/api/tags")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol="ollama.tags",
+        intent="models.list",
+    )
+    if decision.denied:
+        reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+        return _ollama_error_response(reason, status_code=403)
+
+    return _json_error_response(
+        ollama_protocol.tags_response_from_model_summaries(
+            _build_role_catalog_entries()
+        ),
+        status_code=200,
+    )
 
 
 @app.post("/v1/responses")

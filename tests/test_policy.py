@@ -42,6 +42,13 @@ class TestEvaluateAllowed(unittest.TestCase):
             decision.reasons,
         )
 
+    def test_protocol_family_scope_is_allowed(self) -> None:
+        profile = AppProfile(id="local-suite", protocols=frozenset({"openai"}))
+        decision = evaluate(profile, PolicyRequest(protocol="openai.images"))
+
+        self.assertEqual(decision.decision, ALLOWED)
+        self.assertIn("profile:local-suite", decision.sources)
+
     def test_workflow_model_backend_all_in_allow_lists(self) -> None:
         profile = AppProfile(
             id="image-agent",

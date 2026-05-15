@@ -157,6 +157,11 @@ def _allowed(
     )
 
 
+def _matches_scope(value: str, allowed: frozenset[str]) -> bool:
+    """Return True when ``value`` matches an exact or family allow-list item."""
+    return value in allowed or any(value.startswith(f"{item}.") for item in allowed)
+
+
 def evaluate(profile: AppProfile, request: PolicyRequest) -> PolicyDecision:
     """Evaluate a request against a profile.
 
@@ -175,7 +180,7 @@ def evaluate(profile: AppProfile, request: PolicyRequest) -> PolicyDecision:
     reasons: list[str] = []
 
     if profile.protocols is not None and request.protocol is not None:
-        if request.protocol not in profile.protocols:
+        if not _matches_scope(request.protocol, profile.protocols):
             return _denied(
                 profile,
                 [f"protocol {request.protocol!r} not permitted by profile"],

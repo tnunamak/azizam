@@ -43,7 +43,10 @@ class TestStartImageRouteReceipt(unittest.TestCase):
         self.assertEqual(receipt.backend, "comfyui")
         self.assertEqual(receipt.api_key_name, "alice")
         self.assertEqual(receipt.policy_decision, "allowed")
-        self.assertEqual(receipt.policy_sources, ["proxy:legacy-auth"])
+        self.assertTrue(
+            any(source.startswith("profile:") for source in receipt.policy_sources),
+            receipt.policy_sources,
+        )
         self.assertTrue(receipt.policy_reasons)
         self.assertTrue(receipt.request_id.startswith("req_"))
         self.assertIsNone(receipt.status)
