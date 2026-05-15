@@ -182,6 +182,36 @@ $PROXY_PYTHON -m unittest tests.compat.python.probe_openai -v
 Full setup, env vars, and instructions for adding new probes live in
 [`tests/compat/README.md`](../tests/compat/README.md).
 
+## Local Protocol-Frontend Smoke Script
+
+`scripts/compat/smoke_protocol_frontends.py` is a stdlib-only HTTP smoke
+runner intended for the owner's local box once live routes are wired. It
+is *not* a replacement for the SDK probes above — it complements them.
+
+When to use which:
+
+| Use this script | Use the SDK probes / matrix |
+|---|---|
+| Quick "is the gateway answering on the right paths?" check during local dev. | Proving SDK-shaped responses, streaming event names, tool-call envelopes. |
+| Running on a stripped machine without `openai`, `anthropic`, or `ollama` SDKs installed. | Compatibility matrix output for the README. |
+| Verifying auth wiring (`/health` no auth, `/gateway/v1/capabilities` auth). | End-to-end SDK behavior including retries, pagination, multipart. |
+| Optional tiny LLM round-trip behind an explicit opt-in flag. | Realistic SDK-driven chat/streaming/tool flows. |
+
+Env vars:
+
+- `OPENAI_PROXY_BASE_URL` (e.g. `http://127.0.0.1:5000`)
+- `OPENAI_PROXY_API_KEY` (e.g. `opk_...`)
+- `OPENAI_PROXY_SMOKE_LIVE_LLM=1` to enable the Anthropic `/v1/messages`
+  and Ollama `/api/chat` round-trips. Default off — those checks skip.
+- `OPENAI_PROXY_SMOKE_TIMEOUT` (seconds, default `10`)
+- `OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL`, `OPENAI_PROXY_SMOKE_OLLAMA_MODEL`
+  to override the default probe models.
+
+The script never prints the API key, prompts beyond the fixed string
+`ping`, or raw response bodies. Output is one compact `[PASS|SKIP|FAIL]`
+row per check plus a summary line. With no env set, it exits cleanly
+with all checks marked `skip` and performs no network I/O.
+
 ## Suggested Repo Layout
 
 ```text
