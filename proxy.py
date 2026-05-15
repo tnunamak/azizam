@@ -50,6 +50,7 @@ import metrics_store
 import metrics_sampler
 import responses_store
 import responses_translator
+from gateway.receipts import RouteReceipt
 
 # =============================================================================
 # Configuration
@@ -6074,13 +6075,85 @@ async def audio_transcriptions(request: Request):
     return await proxy_stt_request(request, auth_context)
 
 
+# Map image route paths to canonical intents for receipt construction.
+_IMAGE_ROUTE_INTENTS = {
+    "/v1/images/generations": "image.generate",
+    "/v1/images/edits": "image.edit",
+}
+
+
+def start_image_route_receipt(
+    path: str,
+    auth_context: AuthContext,
+) -> RouteReceipt:
+    """Build an observational route receipt for an image endpoint after auth.
+
+    The receipt records routing facts only: protocol, path, intent, key name,
+    backend, and a placeholder policy decision rooted in the current proxy
+    auth/profile model. It never reads the request body, so no prompts, file
+    names, or uploaded bytes can leak into the receipt.
+    """
+    intent = _IMAGE_ROUTE_INTENTS.get(path, "image.generate")
+    key_name = auth_context.identity.name if auth_context.identity else None
+    receipt = RouteReceipt(
+        protocol="openai.images",
+        path=path,
+        intent=intent,
+        backend="comfyui",
+        api_key_name=key_name,
+    )
+    receipt.set_policy_decision(
+        "allowed",
+        source="proxy:legacy-auth",
+        reason="caller authenticated via proxy api key",
+    )
+    return receipt
+
+
+def _image_receipt_status(status_code: int) -> str:
+    if 200 <= status_code < 300:
+        return "ok"
+    if 400 <= status_code < 500:
+        return "rejected"
+    return "error"
+
+
+def finish_image_route_receipt(
+    receipt: RouteReceipt,
+    response: Response,
+) -> None:
+    """Finish the receipt and emit a body-free firehose event."""
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    receipt.finish(_image_receipt_status(status_code))
+    try:
+        firehose_metrics.record_event(
+            "image_route_receipt",
+            f"{receipt.intent} {receipt.status}",
+            request_id=receipt.request_id,
+            path=receipt.path,
+            intent=receipt.intent,
+            backend=receipt.backend,
+            api_key_name=receipt.api_key_name,
+            policy_decision=receipt.policy_decision,
+            status=receipt.status,
+            http_status=status_code,
+            latency_ms=receipt.latency_ms,
+        )
+    except Exception:
+        # Receipts are observational; never break the request path.
+        pass
+
+
 @app.post("/v1/images/generations")
 async def images_generations(request: Request):
     """OpenAI-compatible image generation endpoint - routes to ComfyUI backend."""
     auth_context = authenticate_request(request, "/v1/images/generations")
     if isinstance(auth_context, Response):
         return auth_context
-    return await proxy_comfy_request(request, auth_context)
+    receipt = start_image_route_receipt("/v1/images/generations", auth_context)
+    response = await proxy_comfy_request(request, auth_context)
+    finish_image_route_receipt(receipt, response)
+    return response
 
 
 @app.post("/v1/images/edits")
@@ -6089,7 +6162,10 @@ async def images_edits(request: Request):
     auth_context = authenticate_request(request, "/v1/images/edits")
     if isinstance(auth_context, Response):
         return auth_context
-    return await proxy_comfy_edit_request(request, auth_context)
+    receipt = start_image_route_receipt("/v1/images/edits", auth_context)
+    response = await proxy_comfy_edit_request(request, auth_context)
+    finish_image_route_receipt(receipt, response)
+    return response
 
 
 @app.get("/v1/images/{image_id}/content")
