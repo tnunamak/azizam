@@ -50,6 +50,11 @@ import metrics_store
 import metrics_sampler
 import responses_store
 import responses_translator
+from gateway.manifests import (
+    ManifestError,
+    load_workflow_manifest,
+    manifest_identity,
+)
 from gateway.receipts import RouteReceipt
 
 # =============================================================================
@@ -3635,9 +3640,15 @@ async def _generate_images_with_adaptive_batching(
     return _build_image_response_payload(request, images_collected, response_format, response_headers)
 
 
-async def proxy_comfy_request(request: Request, auth_context: AuthContext) -> Response:
+async def proxy_comfy_request(
+    request: Request,
+    auth_context: AuthContext,
+    receipt: RouteReceipt | None = None,
+) -> Response:
     """Handle OpenAI-compatible image generation request via ComfyUI."""
     if not COMFY_ENABLED:
+        if receipt is not None:
+            receipt.add_fallback_reason("comfy_disabled")
         return Response(
             content=json.dumps({"error": {"message": "Image generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -3647,6 +3658,7 @@ async def proxy_comfy_request(request: Request, auth_context: AuthContext) -> Re
     try:
         body = await request.json()
     except:
+        _record_image_input(receipt, "body", rejected_reason="invalid_json")
         return Response(
             content=json.dumps({"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}}),
             status_code=400,
@@ -3654,10 +3666,16 @@ async def proxy_comfy_request(request: Request, auth_context: AuthContext) -> Re
         )
 
     prompt = body.get("prompt", "")
-    model = body.get("model", COMFY_DEFAULT_MODEL)
+    requested_model = body.get("model", COMFY_DEFAULT_MODEL)
+    model = requested_model
     size = body.get("size", "1024x1024")
+    if receipt is not None:
+        receipt.requested_model = str(requested_model) if requested_model is not None else None
+    _record_image_input(receipt, "model")
+    _record_image_input(receipt, "size")
     background, background_err = parse_image_background(body.get("background"))
     if background_err:
+        _record_image_input(receipt, "background", rejected_reason=background_err)
         return Response(
             content=json.dumps({"error": {
                 "message": background_err,
@@ -3668,45 +3686,60 @@ async def proxy_comfy_request(request: Request, auth_context: AuthContext) -> Re
             status_code=400,
             media_type="application/json",
         )
+    if "background" in body:
+        _record_image_input(receipt, "background")
     try:
         n = int(body.get("n", 1))
     except (TypeError, ValueError):
+        _record_image_input(receipt, "n", rejected_reason="not_integer")
         return Response(
             content=json.dumps({"error": {"message": "n must be an integer", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json",
         )
     if n < 1 or n > 10:
+        _record_image_input(receipt, "n", rejected_reason="out_of_range")
         return Response(
             content=json.dumps({"error": {"message": "n must be between 1 and 10", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json",
         )
+    _record_image_input(receipt, "n")
     response_format = body.get("response_format", "b64_json")
     if response_format not in ("b64_json", "url"):
+        _record_image_input(receipt, "response_format", rejected_reason="unsupported_value")
         return Response(
             content=json.dumps({"error": {"message": "response_format must be 'b64_json' or 'url'", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json",
         )
+    _record_image_input(receipt, "response_format")
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
         model_resolution = resolve_model_for_operation("images", model)
     except ModelCompatibilityError as e:
+        _record_image_input(receipt, "model", rejected_reason="model_incompatible")
         return model_compatibility_error(str(e))
     if model_resolution.is_openai_alias:
         print(f"[proxy] Model alias {model} -> {model_resolution.effective_model} for image generation", flush=True)
         model = model_resolution.effective_model
 
+    if receipt is not None:
+        receipt.resolved_model = str(model) if model is not None else None
+
     if not prompt:
+        _record_image_input(receipt, "prompt", rejected_reason="missing")
         return Response(
             content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json"
         )
+    _record_image_input(receipt, "prompt")
 
     workflow = load_comfy_workflow(model)
     if not workflow:
+        if receipt is not None:
+            receipt.add_fallback_reason(f"unknown_model:{model}")
         return Response(
             content=json.dumps({"error": {"message": f"Unknown model: {model}", "type": "invalid_request_error"}}),
             status_code=400,
@@ -3716,6 +3749,10 @@ async def proxy_comfy_request(request: Request, auth_context: AuthContext) -> Re
     workflow = copy.deepcopy(workflow)
     meta = workflow.pop("_meta", {})
     workflow_name = str(meta.get("name") or model)
+    if receipt is not None:
+        receipt.requested_workflow = str(model) if model is not None else None
+        receipt.resolved_workflow = workflow_name
+    _attach_image_manifest_if_available(receipt, "image.generate", str(model))
     background_decision = await resolve_image_background_decision(
         background or "auto",
         prompt,
@@ -3809,9 +3846,15 @@ async def proxy_comfy_request(request: Request, auth_context: AuthContext) -> Re
         )
 
 
-async def proxy_comfy_edit_request(request: Request, auth_context: AuthContext) -> Response:
+async def proxy_comfy_edit_request(
+    request: Request,
+    auth_context: AuthContext,
+    receipt: RouteReceipt | None = None,
+) -> Response:
     """Handle OpenAI-compatible image edit request via ComfyUI."""
     if not COMFY_ENABLED:
+        if receipt is not None:
+            receipt.add_fallback_reason("comfy_disabled")
         return Response(
             content=json.dumps({"error": {"message": "Image generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -3821,6 +3864,7 @@ async def proxy_comfy_edit_request(request: Request, auth_context: AuthContext) 
     try:
         form = await request.form()
     except Exception as e:
+        _record_image_input(receipt, "body", rejected_reason="invalid_form")
         return Response(
             content=json.dumps({"error": {"message": f"Invalid form data: {e}", "type": "invalid_request_error"}}),
             status_code=400,
@@ -3830,69 +3874,95 @@ async def proxy_comfy_edit_request(request: Request, auth_context: AuthContext) 
     image_file = form.get("image")
     mask_file = form.get("mask")
     prompt = form.get("prompt", "")
-    model = form.get("model", "flux2-klein-4b-edit")
+    requested_model = form.get("model", "flux2-klein-4b-edit")
+    model = requested_model
     size = form.get("size", "")
+    if receipt is not None:
+        receipt.requested_model = str(requested_model) if requested_model is not None else None
+    _record_image_input(receipt, "model")
+    if size:
+        _record_image_input(receipt, "size")
     background, background_err = parse_image_background(form.get("background"))
     if background_err:
+        _record_image_input(receipt, "background", rejected_reason=background_err)
         return Response(
-            content=json.dumps({"error": {
-                "message": background_err,
-                "type": "invalid_request_error",
-                "param": "background",
-                "code": "invalid_value",
-            }}),
+            content=json.dumps({
+                "error": {
+                    "message": background_err,
+                    "type": "invalid_request_error",
+                    "param": "background",
+                    "code": "invalid_value",
+                }
+            }),
             status_code=400,
             media_type="application/json",
         )
+    if form.get("background") is not None:
+        _record_image_input(receipt, "background")
     try:
         n = int(form.get("n", 1))
     except (TypeError, ValueError):
+        _record_image_input(receipt, "n", rejected_reason="not_integer")
         return Response(
             content=json.dumps({"error": {"message": "n must be an integer", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json",
         )
     if n < 1 or n > 10:
+        _record_image_input(receipt, "n", rejected_reason="out_of_range")
         return Response(
             content=json.dumps({"error": {"message": "n must be between 1 and 10", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json",
         )
+    _record_image_input(receipt, "n")
     response_format = str(form.get("response_format", "b64_json"))
     if response_format not in ("b64_json", "url"):
+        _record_image_input(receipt, "response_format", rejected_reason="unsupported_value")
         return Response(
             content=json.dumps({"error": {"message": "response_format must be 'b64_json' or 'url'", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json",
         )
+    _record_image_input(receipt, "response_format")
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
         model_resolution = resolve_model_for_operation("image_edits", model)
     except ModelCompatibilityError as e:
+        _record_image_input(receipt, "model", rejected_reason="model_incompatible")
         return model_compatibility_error(str(e))
     if model_resolution.is_openai_alias:
         print(f"[proxy] Model alias {model} -> {model_resolution.effective_model} for image edit", flush=True)
         model = model_resolution.effective_model
 
     if not image_file:
+        _record_image_input(receipt, "image", rejected_reason="missing")
         return Response(
             content=json.dumps({"error": {"message": "image is required", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json"
         )
+    _record_image_input(receipt, "image")
 
     if not prompt:
+        _record_image_input(receipt, "prompt", rejected_reason="missing")
         return Response(
             content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json"
         )
+    _record_image_input(receipt, "prompt")
 
     if not model.endswith("-edit"):
         model = f"{model}-edit"
 
+    if receipt is not None:
+        receipt.resolved_model = str(model) if model is not None else None
+
     workflow = load_comfy_workflow(model)
     if not workflow:
+        if receipt is not None:
+            receipt.add_fallback_reason(f"unknown_edit_model:{model}")
         return Response(
             content=json.dumps({"error": {"message": f"Unknown edit model: {model}", "type": "invalid_request_error"}}),
             status_code=400,
@@ -3943,6 +4013,10 @@ async def proxy_comfy_edit_request(request: Request, auth_context: AuthContext) 
             workflow = copy.deepcopy(workflow)
             meta = workflow.pop("_meta", {})
             workflow_name = str(meta.get("name") or model)
+            if receipt is not None:
+                receipt.requested_workflow = str(model) if model is not None else None
+                receipt.resolved_workflow = workflow_name
+            _attach_image_manifest_if_available(receipt, "image.edit", str(model))
             background_decision = await resolve_image_background_decision(
                 background or "auto",
                 prompt,
@@ -6110,6 +6184,75 @@ def start_image_route_receipt(
     return receipt
 
 
+_MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workflows"
+
+_SAFE_IMAGE_INPUT_NAMES = ("model", "size", "n", "response_format", "background", "prompt", "image")
+
+
+def _attach_image_manifest_if_available(
+    receipt: RouteReceipt | None,
+    intent: str,
+    resolved_model: str,
+) -> None:
+    """Best-effort: attach manifest identity if a manifest file matches the
+    intent/model. Never raises; records a warning when unavailable."""
+    if receipt is None:
+        return
+    try:
+        manifests_dir = _MANIFEST_WORKFLOWS_DIR
+        if not manifests_dir.is_dir():
+            receipt.add_warning("manifest_identity_deferred:no_manifests_dir")
+            return
+        candidate_ids = {
+            f"{intent}.{resolved_model}",
+            f"{intent}.{resolved_model.removesuffix('-edit')}",
+        }
+        for path in sorted(manifests_dir.glob("*.yml")):
+            try:
+                manifest = load_workflow_manifest(path)
+            except (ManifestError, OSError, ValueError):
+                continue
+            mid = str(manifest.get("id") or "")
+            if manifest.get("intent") != intent:
+                continue
+            if mid in candidate_ids or mid.endswith(f".{resolved_model}"):
+                identity = manifest_identity(manifest)
+                receipt.attach_manifest(
+                    manifest_id=identity.id,
+                    manifest_version=identity.version,
+                    manifest_hash=identity.manifest_hash,
+                )
+                return
+        receipt.add_warning("manifest_identity_deferred:no_match")
+    except Exception:
+        # Manifest attach is observational; never break the request.
+        try:
+            receipt.add_warning("manifest_identity_deferred:error")
+        except Exception:
+            pass
+
+
+def _record_image_input(
+    receipt: RouteReceipt | None,
+    name: str,
+    *,
+    accepted: bool = True,
+    rejected_reason: str | None = None,
+    ignored_reason: str | None = None,
+) -> None:
+    if receipt is None:
+        return
+    try:
+        if rejected_reason is not None:
+            receipt.reject_input(name, rejected_reason)
+        elif ignored_reason is not None:
+            receipt.ignore_input(name, ignored_reason)
+        elif accepted:
+            receipt.accept_input(name)
+    except Exception:
+        pass
+
+
 def _image_receipt_status(status_code: int) -> str:
     if 200 <= status_code < 300:
         return "ok"
@@ -6138,6 +6281,17 @@ def finish_image_route_receipt(
             status=receipt.status,
             http_status=status_code,
             latency_ms=receipt.latency_ms,
+            requested_model=receipt.requested_model,
+            resolved_model=receipt.resolved_model,
+            requested_workflow=receipt.requested_workflow,
+            resolved_workflow=receipt.resolved_workflow,
+            manifest_id=receipt.manifest_id,
+            manifest_version=receipt.manifest_version,
+            accepted_inputs=list(receipt.accepted_inputs),
+            rejected_inputs=dict(receipt.rejected_inputs),
+            ignored_inputs=dict(receipt.ignored_inputs),
+            fallback_reasons=list(receipt.fallback_reasons),
+            warnings=list(receipt.warnings),
         )
     except Exception:
         # Receipts are observational; never break the request path.
@@ -6151,7 +6305,7 @@ async def images_generations(request: Request):
     if isinstance(auth_context, Response):
         return auth_context
     receipt = start_image_route_receipt("/v1/images/generations", auth_context)
-    response = await proxy_comfy_request(request, auth_context)
+    response = await proxy_comfy_request(request, auth_context, receipt=receipt)
     finish_image_route_receipt(receipt, response)
     return response
 
@@ -6163,7 +6317,7 @@ async def images_edits(request: Request):
     if isinstance(auth_context, Response):
         return auth_context
     receipt = start_image_route_receipt("/v1/images/edits", auth_context)
-    response = await proxy_comfy_edit_request(request, auth_context)
+    response = await proxy_comfy_edit_request(request, auth_context, receipt=receipt)
     finish_image_route_receipt(receipt, response)
     return response
 

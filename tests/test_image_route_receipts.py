@@ -138,5 +138,221 @@ class TestImageReceiptStatus(unittest.TestCase):
         self.assertEqual(proxy._image_receipt_status(0), "error")
 
 
+class TestRecordImageInput(unittest.TestCase):
+    def _receipt(self) -> RouteReceipt:
+        return proxy.start_image_route_receipt(
+            "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+        )
+
+    def test_accept_records_field_name(self) -> None:
+        receipt = self._receipt()
+        proxy._record_image_input(receipt, "model")
+        self.assertIn("model", receipt.accepted_inputs)
+        self.assertNotIn("model", receipt.rejected_inputs)
+
+    def test_reject_records_reason_not_value(self) -> None:
+        receipt = self._receipt()
+        proxy._record_image_input(receipt, "n", rejected_reason="out_of_range")
+        self.assertEqual(receipt.rejected_inputs["n"], "out_of_range")
+        self.assertNotIn("n", receipt.accepted_inputs)
+
+    def test_ignore_records_reason(self) -> None:
+        receipt = self._receipt()
+        proxy._record_image_input(receipt, "size", ignored_reason="overridden_by_image")
+        self.assertEqual(receipt.ignored_inputs["size"], "overridden_by_image")
+
+    def test_none_receipt_is_safe(self) -> None:
+        proxy._record_image_input(None, "model")  # must not raise
+
+    def test_reject_supersedes_prior_accept(self) -> None:
+        receipt = self._receipt()
+        proxy._record_image_input(receipt, "model")
+        proxy._record_image_input(receipt, "model", rejected_reason="model_incompatible")
+        self.assertNotIn("model", receipt.accepted_inputs)
+        self.assertEqual(receipt.rejected_inputs["model"], "model_incompatible")
+
+
+class TestAttachImageManifest(unittest.TestCase):
+    def _receipt(self) -> RouteReceipt:
+        return proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+
+    def test_none_receipt_is_safe(self) -> None:
+        proxy._attach_image_manifest_if_available(None, "image.edit", "flux2-klein-4b-edit")
+
+    def test_known_edit_model_attaches_manifest(self) -> None:
+        receipt = self._receipt()
+        proxy._attach_image_manifest_if_available(
+            receipt, "image.edit", "flux2-klein-4b-edit"
+        )
+        # Manifest exists at manifests/workflows/flux2-klein-4b-edit.yml with id
+        # image.edit.flux2-klein-4b. Helper strips '-edit' suffix to match.
+        self.assertEqual(receipt.manifest_id, "image.edit.flux2-klein-4b")
+        self.assertIsNotNone(receipt.manifest_hash)
+
+    def test_unknown_model_records_deferred_warning(self) -> None:
+        receipt = self._receipt()
+        proxy._attach_image_manifest_if_available(
+            receipt, "image.generate", "this-model-has-no-manifest"
+        )
+        self.assertIsNone(receipt.manifest_id)
+        self.assertTrue(
+            any("manifest_identity_deferred" in w for w in receipt.warnings),
+            receipt.warnings,
+        )
+
+
+class TestFinishReceiptIncludesRoutingFacts(unittest.TestCase):
+    def test_firehose_event_carries_routing_and_input_facts(self) -> None:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+        )
+        receipt.requested_model = "gpt-image-1"
+        receipt.resolved_model = "flux2-klein-4b"
+        receipt.requested_workflow = "flux2-klein-4b"
+        receipt.resolved_workflow = "Flux2 Klein 4B"
+        receipt.accept_input("model")
+        receipt.accept_input("prompt")
+        receipt.reject_input("n", "out_of_range")
+        receipt.add_warning("manifest_identity_deferred:no_match")
+        receipt.add_fallback_reason("comfy_disabled")
+
+        events: list[dict[str, Any]] = []
+
+        def fake_record_event(event_type: str, summary: str, **extra: Any) -> None:
+            events.append({"type": event_type, "summary": summary, **extra})
+
+        with patch.object(proxy.firehose_metrics, "record_event", fake_record_event):
+            proxy.finish_image_route_receipt(receipt, _StubResponse(status_code=200))
+
+        evt = events[0]
+        self.assertEqual(evt["requested_model"], "gpt-image-1")
+        self.assertEqual(evt["resolved_model"], "flux2-klein-4b")
+        self.assertEqual(evt["requested_workflow"], "flux2-klein-4b")
+        self.assertEqual(evt["resolved_workflow"], "Flux2 Klein 4B")
+        self.assertIn("model", evt["accepted_inputs"])
+        self.assertIn("prompt", evt["accepted_inputs"])
+        self.assertEqual(evt["rejected_inputs"]["n"], "out_of_range")
+        self.assertIn("manifest_identity_deferred:no_match", evt["warnings"])
+        self.assertIn("comfy_disabled", evt["fallback_reasons"])
+
+    def test_event_keys_still_omit_raw_body_fields(self) -> None:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        receipt.accept_input("prompt")  # name only, never a value
+        receipt.accept_input("image")
+
+        events: list[dict[str, Any]] = []
+
+        def fake_record_event(event_type: str, summary: str, **extra: Any) -> None:
+            events.append({"type": event_type, "summary": summary, **extra})
+
+        with patch.object(proxy.firehose_metrics, "record_event", fake_record_event):
+            proxy.finish_image_route_receipt(receipt, _StubResponse(status_code=200))
+
+        forbidden = {"prompt", "image", "mask", "body", "file", "filename"}
+        for key in events[0]:
+            self.assertNotIn(key.lower(), forbidden)
+
+
+class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
+    """Integration-ish: drive proxy_comfy_request with COMFY disabled or invalid
+    bodies to exercise early-return receipt instrumentation without ComfyUI."""
+
+    def _receipt(self) -> RouteReceipt:
+        return proxy.start_image_route_receipt(
+            "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+        )
+
+    async def _run_with_json_body(self, body: Any) -> tuple[RouteReceipt, Any]:
+        receipt = self._receipt()
+
+        class _StubRequest:
+            async def json(self_inner) -> Any:
+                if isinstance(body, Exception):
+                    raise body
+                return body
+
+        with patch.object(proxy, "COMFY_ENABLED", True):
+            with patch.object(
+                proxy,
+                "configured_downstream_headers",
+                lambda _ac, _b: {},
+            ):
+                response = await proxy.proxy_comfy_request(
+                    _StubRequest(),  # type: ignore[arg-type]
+                    proxy.NO_AUTH_CONTEXT,
+                    receipt=receipt,
+                )
+        return receipt, response
+
+    async def test_comfy_disabled_records_fallback(self) -> None:
+        receipt = self._receipt()
+
+        class _StubRequest:
+            async def json(self_inner) -> Any:  # pragma: no cover
+                return {}
+
+        with patch.object(proxy, "COMFY_ENABLED", False):
+            response = await proxy.proxy_comfy_request(
+                _StubRequest(),  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("comfy_disabled", receipt.fallback_reasons)
+
+    async def test_invalid_json_records_body_rejection(self) -> None:
+        receipt, response = await self._run_with_json_body(ValueError("nope"))
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(receipt.rejected_inputs.get("body"), "invalid_json")
+
+    async def test_bad_n_records_rejection(self) -> None:
+        receipt, response = await self._run_with_json_body(
+            {"prompt": "x", "n": "abc"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(receipt.rejected_inputs.get("n"), "not_integer")
+        # model accepted before n was inspected
+        self.assertIn("model", receipt.accepted_inputs)
+
+    async def test_n_out_of_range_records_rejection(self) -> None:
+        receipt, response = await self._run_with_json_body(
+            {"prompt": "x", "n": 99}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(receipt.rejected_inputs.get("n"), "out_of_range")
+
+    async def test_bad_response_format_records_rejection(self) -> None:
+        receipt, response = await self._run_with_json_body(
+            {"prompt": "x", "response_format": "weird"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            receipt.rejected_inputs.get("response_format"), "unsupported_value"
+        )
+
+    async def test_missing_prompt_records_rejection(self) -> None:
+        receipt, response = await self._run_with_json_body(
+            {"prompt": "", "model": "flux2-klein-4b"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(receipt.rejected_inputs.get("prompt"), "missing")
+        self.assertEqual(receipt.requested_model, "flux2-klein-4b")
+        self.assertEqual(receipt.resolved_model, "flux2-klein-4b")
+
+    async def test_unknown_model_records_fallback(self) -> None:
+        receipt, response = await self._run_with_json_body(
+            {"prompt": "x", "model": "no-such-model-anywhere"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(
+            any("unknown_model" in r for r in receipt.fallback_reasons),
+            receipt.fallback_reasons,
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
