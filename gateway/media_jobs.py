@@ -1,0 +1,830 @@
+"""Generic media-job model and durable store.
+
+Media jobs are the gateway-native abstraction behind durable, possibly
+long-running media work: image edits routed through ComfyUI, video generation,
+music/sound effects, transcription batches, anything that does not fit a
+single synchronous request/response.
+
+This module is intentionally pure with respect to backends: it does not know
+how ComfyUI submits a workflow or how a TTS engine streams. It owns:
+
+- A small typed record (``MediaJob``) describing one job.
+- A SQLite store that persists job records and an append-only event log.
+- Audience filtering so the same internal record can be projected for
+  ``client``, ``admin``, and ``internal`` callers.
+- A safety guard that rejects event payloads or metadata that look like raw
+  prompts, image bytes, secrets, or request/response bodies.
+
+The shape is parallel to ``gateway/receipt_store.py`` but distinct:
+
+- Receipts are immutable diagnostics about a routing decision.
+- Jobs are mutable durable records about ongoing work. They progress through
+  states, accrue events, and reference assets.
+
+Wiring this into ``proxy.py``/``gateway/api.py`` is owned by a separate lane;
+see the workstream note for suggested integration points.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import sqlite3
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterable, Mapping
+from uuid import uuid4
+
+DB_PATH = Path(__file__).resolve().parent.parent / "data" / "media_jobs.db"
+
+# Retention: 14 days. Match the receipt store; media jobs reference durable
+# assets but the job record itself is a coordination surface, not the archive.
+RETAIN_S = 14 * 24 * 3600
+
+SCHEMA_VERSION = 1
+
+# Status values. Mirrors the minimum lifecycle in CORE_CONTRACTS.md.
+STATUS_QUEUED = "queued"
+STATUS_RUNNING = "running"
+STATUS_SUCCEEDED = "succeeded"
+STATUS_FAILED = "failed"
+STATUS_CANCELED = "canceled"
+
+ALL_STATUSES = frozenset({
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+    STATUS_SUCCEEDED,
+    STATUS_FAILED,
+    STATUS_CANCELED,
+})
+
+TERMINAL_STATUSES = frozenset({STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED})
+
+# Allowed forward transitions. Idempotent same-state writes are permitted
+# regardless (e.g. running -> running progress updates).
+_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
+    STATUS_QUEUED: frozenset({STATUS_QUEUED, STATUS_RUNNING, STATUS_FAILED, STATUS_CANCELED}),
+    STATUS_RUNNING: frozenset({STATUS_RUNNING, STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED}),
+    STATUS_SUCCEEDED: frozenset({STATUS_SUCCEEDED}),
+    STATUS_FAILED: frozenset({STATUS_FAILED}),
+    STATUS_CANCELED: frozenset({STATUS_CANCELED}),
+}
+
+_AUDIENCES = ("internal", "admin", "client")
+
+# Fields safe to expose to the caller of a job. Anything not in this set is
+# admin- or internal-only by default.
+CLIENT_VISIBLE_FIELDS = frozenset(
+    {
+        "request_id",
+        "job_id",
+        "intent",
+        "status",
+        "progress",
+        "assets",
+        "error",
+        "created_at",
+        "updated_at",
+        "parent_request_id",
+    }
+)
+
+# Backend identity, workflow alias, and ownership are admin/operator concerns.
+# They are not secrets, but exposing them to arbitrary clients leaks the
+# routing layer's internals. Audience filtering keeps that boundary explicit.
+ADMIN_ONLY_FIELDS = frozenset(
+    {
+        "workflow",
+        "backend",
+        "app_profile",
+        "api_key_name",
+    }
+)
+
+# Metadata bag and the raw event payloads are internal-only. They are the
+# place where adapter-specific breadcrumbs live (prompt_id, queue position,
+# probe response codes, etc.) and they have already passed the safety guard.
+INTERNAL_ONLY_FIELDS = frozenset({"metadata"})
+
+# Metadata/event keys that smell like raw payloads, secrets, or media bytes.
+# Mirrors the receipt_store guard so the two persistence surfaces share a
+# single redaction contract.
+_FORBIDDEN_KEYS = frozenset(
+    {
+        "prompt",
+        "prompts",
+        "input",
+        "inputs",
+        "messages",
+        "image",
+        "images",
+        "image_b64",
+        "image_bytes",
+        "image_data",
+        "video",
+        "video_bytes",
+        "audio",
+        "audio_bytes",
+        "media",
+        "media_bytes",
+        "bytes",
+        "data_b64",
+        "body",
+        "raw_body",
+        "raw_request",
+        "raw_response",
+        "request_body",
+        "response_body",
+        "authorization",
+        "api_key",
+        "api_token",
+        "secret",
+        "token",
+        "password",
+        "credentials",
+        "cookie",
+        "cookies",
+    }
+)
+
+
+def new_job_id() -> str:
+    return f"mj_{uuid4().hex}"
+
+
+def _now() -> int:
+    return int(time.time())
+
+
+@dataclass
+class MediaJob:
+    """Pure data record for one media job.
+
+    ``request_id`` is the originating route receipt's request id. ``job_id`` is
+    the durable handle clients poll. They are deliberately distinct: many
+    requests may attempt to create or reattach to a single job (idempotency by
+    request_id is enforced by the store).
+    """
+
+    intent: str
+    workflow: str | None = None
+    backend: str | None = None
+    request_id: str = ""
+    job_id: str = field(default_factory=new_job_id)
+    status: str = STATUS_QUEUED
+    progress: int = 0
+    assets: list[dict[str, Any]] = field(default_factory=list)
+    error: str | None = None
+    created_at: int = field(default_factory=_now)
+    updated_at: int = field(default_factory=_now)
+    app_profile: str | None = None
+    api_key_name: str | None = None
+    parent_request_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.intent:
+            raise ValueError("MediaJob.intent is required")
+        if self.status not in ALL_STATUSES:
+            raise ValueError(
+                f"MediaJob.status must be one of {sorted(ALL_STATUSES)}, got {self.status!r}"
+            )
+        self.progress = _clamp_progress(self.progress)
+        _assert_safe_mapping("MediaJob.metadata", self.metadata)
+        for asset in self.assets:
+            if not isinstance(asset, Mapping):
+                raise ValueError("MediaJob.assets entries must be mappings")
+            _assert_safe_mapping("MediaJob.assets[*]", asset)
+
+    def to_dict(self, audience: str = "internal") -> dict[str, Any]:
+        if audience not in _AUDIENCES:
+            raise ValueError(f"audience must be one of {_AUDIENCES}")
+        data: dict[str, Any] = {
+            "request_id": self.request_id,
+            "job_id": self.job_id,
+            "intent": self.intent,
+            "workflow": self.workflow,
+            "backend": self.backend,
+            "status": self.status,
+            "progress": self.progress,
+            "assets": [dict(a) for a in self.assets],
+            "error": self.error,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "app_profile": self.app_profile,
+            "api_key_name": self.api_key_name,
+            "parent_request_id": self.parent_request_id,
+            "metadata": dict(self.metadata),
+        }
+        return _filter_for_audience(data, audience)
+
+
+def _clamp_progress(value: Any) -> int:
+    try:
+        v = int(value)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"progress must be an int 0..100, got {value!r}") from e
+    if v < 0 or v > 100:
+        raise ValueError(f"progress must be in [0, 100], got {v}")
+    return v
+
+
+def _assert_safe_mapping(label: str, data: Any) -> None:
+    """Reject obviously unsafe shapes before they hit disk."""
+    if not isinstance(data, Mapping):
+        raise ValueError(f"{label} must be a mapping")
+    bad = sorted(k for k in data.keys() if str(k).lower() in _FORBIDDEN_KEYS)
+    if bad:
+        raise ValueError(
+            f"{label} contains forbidden keys: {bad} "
+            "(media jobs must not carry raw prompts, media bytes, secrets, or request bodies)"
+        )
+    # Recurse one level into nested dicts. We don't deep-walk arbitrary trees:
+    # the contract is metadata-only, and callers are expected to keep nesting
+    # shallow. One level catches the common "wrap a body in metadata.payload"
+    # mistake without becoming a content scanner.
+    for v in data.values():
+        if isinstance(v, Mapping):
+            bad_nested = sorted(k for k in v.keys() if str(k).lower() in _FORBIDDEN_KEYS)
+            if bad_nested:
+                raise ValueError(
+                    f"{label} contains forbidden nested keys: {bad_nested} "
+                    "(media jobs must not carry raw prompts, media bytes, secrets, or request bodies)"
+                )
+
+
+def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
+    if audience == "internal":
+        return dict(data)
+    if audience == "admin":
+        return {k: v for k, v in data.items() if k not in INTERNAL_ONLY_FIELDS}
+    return {k: data[k] for k in CLIENT_VISIBLE_FIELDS if k in data}
+
+
+# ---------------------------------------------------------------------------
+# SQLite store
+# ---------------------------------------------------------------------------
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS media_jobs (
+  job_id TEXT PRIMARY KEY,
+  request_id TEXT,
+  intent TEXT NOT NULL,
+  workflow TEXT,
+  backend TEXT,
+  status TEXT NOT NULL,
+  progress INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  app_profile TEXT,
+  api_key_name TEXT,
+  parent_request_id TEXT,
+  job_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS media_jobs_created_at ON media_jobs(created_at);
+CREATE INDEX IF NOT EXISTS media_jobs_status ON media_jobs(status);
+CREATE INDEX IF NOT EXISTS media_jobs_app_profile ON media_jobs(app_profile);
+CREATE INDEX IF NOT EXISTS media_jobs_request_id ON media_jobs(request_id);
+CREATE UNIQUE INDEX IF NOT EXISTS media_jobs_unique_request_id
+  ON media_jobs(request_id) WHERE request_id IS NOT NULL AND request_id != '';
+
+CREATE TABLE IF NOT EXISTS media_job_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES media_jobs(job_id)
+);
+CREATE INDEX IF NOT EXISTS media_job_events_job_id ON media_job_events(job_id, id);
+CREATE INDEX IF NOT EXISTS media_job_events_created_at ON media_job_events(created_at);
+
+CREATE TABLE IF NOT EXISTS media_jobs_schema_version (version INTEGER NOT NULL);
+"""
+
+
+def _apply_pragmas(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA temp_store=MEMORY;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+    conn.execute("PRAGMA foreign_keys=ON;")
+
+
+def _exec_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(_SCHEMA)
+    row = conn.execute("SELECT version FROM media_jobs_schema_version LIMIT 1").fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT INTO media_jobs_schema_version(version) VALUES (?)",
+            (SCHEMA_VERSION,),
+        )
+    elif int(row[0]) != SCHEMA_VERSION:
+        raise sqlite3.DatabaseError(
+            f"media_jobs schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
+        )
+    conn.commit()
+
+
+def init_db(path: Path = DB_PATH) -> None:
+    """Create the data dir, run the schema, integrity-check, replace if broken."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.exists():
+        try:
+            test = sqlite3.connect(str(path), timeout=5.0)
+            try:
+                _apply_pragmas(test)
+                row = test.execute("PRAGMA integrity_check").fetchone()
+                if not row or row[0] != "ok":
+                    raise sqlite3.DatabaseError(
+                        f"integrity_check returned: {row[0] if row else 'empty'}"
+                    )
+            finally:
+                test.close()
+        except sqlite3.DatabaseError as e:
+            broken = path.with_name(f"{path.name}.broken-{int(time.time())}")
+            print(f"[media_jobs] DB corrupt ({e}); moving aside to {broken}", flush=True)
+            try:
+                shutil.move(str(path), str(broken))
+            except Exception as mv_err:  # noqa: BLE001
+                print(f"[media_jobs] failed to move broken db: {mv_err}", flush=True)
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
+
+    conn = sqlite3.connect(str(path), timeout=5.0)
+    try:
+        _apply_pragmas(conn)
+        _exec_schema(conn)
+    finally:
+        conn.close()
+
+
+@contextmanager
+def _conn(path: Path = DB_PATH):
+    conn = sqlite3.connect(str(path), timeout=5.0)
+    try:
+        _apply_pragmas(conn)
+        yield conn
+    finally:
+        conn.close()
+
+
+def _coerce_to_job(job_or_dict: Any) -> MediaJob:
+    if isinstance(job_or_dict, MediaJob):
+        return job_or_dict
+    if isinstance(job_or_dict, Mapping):
+        data = dict(job_or_dict)
+        return MediaJob(
+            intent=data.get("intent", ""),
+            workflow=data.get("workflow"),
+            backend=data.get("backend"),
+            request_id=data.get("request_id", ""),
+            job_id=data.get("job_id") or new_job_id(),
+            status=data.get("status", STATUS_QUEUED),
+            progress=int(data.get("progress", 0) or 0),
+            assets=list(data.get("assets") or []),
+            error=data.get("error"),
+            created_at=int(data.get("created_at") or _now()),
+            updated_at=int(data.get("updated_at") or _now()),
+            app_profile=data.get("app_profile"),
+            api_key_name=data.get("api_key_name"),
+            parent_request_id=data.get("parent_request_id"),
+            metadata=dict(data.get("metadata") or {}),
+        )
+    raise TypeError(f"job must be MediaJob or mapping, got {type(job_or_dict).__name__}")
+
+
+def _job_payload(job: MediaJob) -> str:
+    return json.dumps(job.to_dict("internal"), ensure_ascii=False, sort_keys=True)
+
+
+def upsert(
+    job: MediaJob | Mapping[str, Any],
+    *,
+    path: Path = DB_PATH,
+) -> MediaJob:
+    """Insert or replace a job row.
+
+    Idempotent on ``job_id``: writing the same record twice is a no-op apart
+    from updating ``updated_at`` and ``job_json``. Idempotent on a non-empty
+    ``request_id``: a second call with the same ``request_id`` but a different
+    job_id will conflict (the unique index enforces this) — callers should
+    re-look-up by ``request_id`` first to get the existing job.
+    """
+    record = _coerce_to_job(job)
+    with _conn(path) as conn:
+        _write_job(conn, record)
+        conn.commit()
+    return record
+
+
+def create(
+    job: MediaJob | Mapping[str, Any],
+    *,
+    path: Path = DB_PATH,
+) -> MediaJob:
+    """Create a new job, returning the existing one if ``request_id`` matches.
+
+    This is the safe idempotent create primitive for handlers: clients may
+    retry POST /v1/videos with the same Idempotency-Key/request_id and we
+    must return the same job_id every time.
+    """
+    record = _coerce_to_job(job)
+    with _conn(path) as conn:
+        if record.request_id:
+            existing = conn.execute(
+                "SELECT job_json FROM media_jobs WHERE request_id = ?",
+                (record.request_id,),
+            ).fetchone()
+            if existing:
+                data = json.loads(existing[0])
+                return _coerce_to_job(data)
+        _write_job(conn, record)
+        conn.commit()
+    return record
+
+
+def _write_job(conn: sqlite3.Connection, job: MediaJob) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO media_jobs "
+        "(job_id, request_id, intent, workflow, backend, status, progress, error, "
+        " created_at, updated_at, app_profile, api_key_name, parent_request_id, job_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            job.job_id,
+            job.request_id or None,
+            job.intent,
+            job.workflow,
+            job.backend,
+            job.status,
+            job.progress,
+            job.error,
+            job.created_at,
+            job.updated_at,
+            job.app_profile,
+            job.api_key_name,
+            job.parent_request_id,
+            _job_payload(job),
+        ),
+    )
+
+
+def get(
+    job_id: str,
+    *,
+    audience: str = "internal",
+    path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Return the stored job filtered for ``audience``, or None."""
+    if audience not in _AUDIENCES:
+        raise ValueError(f"audience must be one of {_AUDIENCES}")
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT job_json FROM media_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+    if not row:
+        return None
+    data = _safe_loads(row[0])
+    if not isinstance(data, Mapping):
+        return None
+    return _filter_for_audience(data, audience)
+
+
+def get_by_request_id(
+    request_id: str,
+    *,
+    audience: str = "internal",
+    path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    if audience not in _AUDIENCES:
+        raise ValueError(f"audience must be one of {_AUDIENCES}")
+    if not request_id:
+        return None
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT job_json FROM media_jobs WHERE request_id = ?",
+            (request_id,),
+        ).fetchone()
+    if not row:
+        return None
+    data = _safe_loads(row[0])
+    if not isinstance(data, Mapping):
+        return None
+    return _filter_for_audience(data, audience)
+
+
+def recent(
+    limit: int = 50,
+    *,
+    audience: str = "internal",
+    app_profile: str | None = None,
+    status: str | None = None,
+    since_s: int | None = None,
+    path: Path = DB_PATH,
+) -> list[dict[str, Any]]:
+    """Return up to ``limit`` most-recently-updated jobs, newest first."""
+    if audience not in _AUDIENCES:
+        raise ValueError(f"audience must be one of {_AUDIENCES}")
+    if limit <= 0:
+        return []
+    clauses: list[str] = []
+    params: list[Any] = []
+    if app_profile is not None:
+        clauses.append("app_profile = ?")
+        params.append(app_profile)
+    if status is not None:
+        if status not in ALL_STATUSES:
+            raise ValueError(f"status must be one of {sorted(ALL_STATUSES)}")
+        clauses.append("status = ?")
+        params.append(status)
+    if since_s is not None:
+        clauses.append("updated_at >= ?")
+        params.append(int(time.time()) - int(since_s))
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(int(limit))
+    with _conn(path) as conn:
+        rows = conn.execute(
+            f"SELECT job_json FROM media_jobs{where} "
+            "ORDER BY updated_at DESC, job_id DESC LIMIT ?",
+            params,
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for (job_json,) in rows:
+        data = _safe_loads(job_json)
+        if not isinstance(data, Mapping):
+            continue
+        out.append(_filter_for_audience(data, audience))
+    return out
+
+
+def list_jobs(*args, **kwargs):
+    """Alias for ``recent`` so call-sites can read more naturally."""
+    return recent(*args, **kwargs)
+
+
+def update_status(
+    job_id: str,
+    status: str,
+    *,
+    progress: int | None = None,
+    error: str | None = None,
+    add_assets: Iterable[Mapping[str, Any]] | None = None,
+    metadata_patch: Mapping[str, Any] | None = None,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Apply a status transition. Returns the updated internal job dict.
+
+    Rejects illegal transitions (e.g. succeeded -> running). Same-state writes
+    are accepted so progress updates during ``running`` are idempotent.
+    """
+    if status not in ALL_STATUSES:
+        raise ValueError(f"status must be one of {sorted(ALL_STATUSES)}")
+    if progress is not None:
+        progress = _clamp_progress(progress)
+    if metadata_patch is not None:
+        _assert_safe_mapping("metadata_patch", metadata_patch)
+    assets_list: list[dict[str, Any]] = []
+    if add_assets is not None:
+        for asset in add_assets:
+            if not isinstance(asset, Mapping):
+                raise ValueError("add_assets entries must be mappings")
+            _assert_safe_mapping("add_assets[*]", asset)
+            assets_list.append(dict(asset))
+    ts = int(now if now is not None else _now())
+
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT job_json FROM media_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if not row:
+            return None
+        data = _safe_loads(row[0])
+        if not isinstance(data, Mapping):
+            return None
+        current = dict(data)
+        prev_status = current.get("status", STATUS_QUEUED)
+        if status not in _ALLOWED_TRANSITIONS.get(prev_status, frozenset()):
+            raise ValueError(
+                f"illegal status transition {prev_status!r} -> {status!r} for job {job_id!r}"
+            )
+        current["status"] = status
+        if progress is not None:
+            current["progress"] = progress
+        elif status == STATUS_SUCCEEDED:
+            current["progress"] = 100
+        if error is not None:
+            current["error"] = error
+        if assets_list:
+            existing_assets = list(current.get("assets") or [])
+            existing_assets.extend(assets_list)
+            current["assets"] = existing_assets
+        if metadata_patch:
+            existing_meta = dict(current.get("metadata") or {})
+            existing_meta.update(metadata_patch)
+            current["metadata"] = existing_meta
+        current["updated_at"] = ts
+
+        updated = _coerce_to_job(current)
+        _write_job(conn, updated)
+        conn.commit()
+    return updated.to_dict("internal")
+
+
+def append_event(
+    job_id: str,
+    event_type: str,
+    payload: Mapping[str, Any] | None = None,
+    *,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> int:
+    """Append one event to the job's event log. Returns the row id.
+
+    Event payloads are metadata-only. They must not carry raw prompts, image
+    bytes, request/response bodies, or secrets — the safety guard rejects
+    those shapes before they reach disk.
+    """
+    if not event_type or not isinstance(event_type, str):
+        raise ValueError("event_type must be a non-empty string")
+    safe_payload = dict(payload or {})
+    _assert_safe_mapping("event payload", safe_payload)
+    ts = int(now if now is not None else _now())
+    with _conn(path) as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM media_jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if not exists:
+            raise LookupError(f"unknown job_id {job_id!r}")
+        cur = conn.execute(
+            "INSERT INTO media_job_events(job_id, created_at, event_type, payload_json) "
+            "VALUES (?, ?, ?, ?)",
+            (job_id, ts, event_type, json.dumps(safe_payload, ensure_ascii=False, sort_keys=True)),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+
+
+def events(
+    job_id: str,
+    *,
+    audience: str = "internal",
+    limit: int = 200,
+    after_id: int | None = None,
+    path: Path = DB_PATH,
+) -> list[dict[str, Any]]:
+    """Return events for a job in insertion order.
+
+    Audience filtering for events:
+
+    - ``internal``: full payload included.
+    - ``admin``: type and timestamp; payload omitted by default.
+    - ``client``: type, timestamp, and minimal progress fields if present.
+      A small allowlist (``progress``, ``step``, ``total``, ``phase``) lets a
+      polling client see incremental progress without learning backend
+      breadcrumbs.
+    """
+    if audience not in _AUDIENCES:
+        raise ValueError(f"audience must be one of {_AUDIENCES}")
+    if limit <= 0:
+        return []
+    clauses = ["job_id = ?"]
+    params: list[Any] = [job_id]
+    if after_id is not None:
+        clauses.append("id > ?")
+        params.append(int(after_id))
+    params.append(int(limit))
+    where = " AND ".join(clauses)
+    with _conn(path) as conn:
+        rows = conn.execute(
+            f"SELECT id, created_at, event_type, payload_json FROM media_job_events "
+            f"WHERE {where} ORDER BY id ASC LIMIT ?",
+            params,
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for ev_id, created_at, event_type, payload_json in rows:
+        payload = _safe_loads(payload_json) or {}
+        out.append(_filter_event_for_audience(
+            {
+                "id": int(ev_id),
+                "job_id": job_id,
+                "created_at": int(created_at),
+                "event_type": event_type,
+                "payload": payload if isinstance(payload, Mapping) else {},
+            },
+            audience,
+        ))
+    return out
+
+
+_CLIENT_EVENT_PAYLOAD_KEYS = frozenset({"progress", "step", "total", "phase", "status"})
+
+
+def _filter_event_for_audience(event: Mapping[str, Any], audience: str) -> dict[str, Any]:
+    base = {
+        "id": event.get("id"),
+        "job_id": event.get("job_id"),
+        "created_at": event.get("created_at"),
+        "event_type": event.get("event_type"),
+    }
+    if audience == "internal":
+        return {**base, "payload": dict(event.get("payload") or {})}
+    if audience == "admin":
+        # Admin sees that an event happened but not the freeform breadcrumb
+        # bag. Operators who need the full payload bump to internal.
+        return base
+    payload = event.get("payload") or {}
+    if not isinstance(payload, Mapping):
+        return base
+    filtered = {k: payload[k] for k in _CLIENT_EVENT_PAYLOAD_KEYS if k in payload}
+    out = dict(base)
+    if filtered:
+        out["payload"] = filtered
+    return out
+
+
+def prune(retain_s: int = RETAIN_S, path: Path = DB_PATH) -> dict[str, int]:
+    """Delete jobs (and their events) older than ``retain_s`` seconds.
+
+    Returns the number of jobs and events removed.
+    """
+    cutoff = int(time.time()) - int(retain_s)
+    with _conn(path) as conn:
+        old = conn.execute(
+            "SELECT job_id FROM media_jobs WHERE updated_at < ?",
+            (cutoff,),
+        ).fetchall()
+        job_ids = [r[0] for r in old]
+        events_removed = 0
+        if job_ids:
+            placeholders = ",".join("?" for _ in job_ids)
+            cur = conn.execute(
+                f"DELETE FROM media_job_events WHERE job_id IN ({placeholders})",
+                job_ids,
+            )
+            events_removed = cur.rowcount or 0
+        cur = conn.execute("DELETE FROM media_jobs WHERE updated_at < ?", (cutoff,))
+        conn.commit()
+        return {"jobs": int(cur.rowcount or 0), "events": int(events_removed)}
+
+
+def count(path: Path = DB_PATH) -> int:
+    with _conn(path) as conn:
+        row = conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()
+        return int(row[0]) if row else 0
+
+
+def schema_version(path: Path = DB_PATH) -> int | None:
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT version FROM media_jobs_schema_version LIMIT 1"
+        ).fetchone()
+        return int(row[0]) if row else None
+
+
+def _safe_loads(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+__all__ = [
+    "DB_PATH",
+    "RETAIN_S",
+    "SCHEMA_VERSION",
+    "STATUS_QUEUED",
+    "STATUS_RUNNING",
+    "STATUS_SUCCEEDED",
+    "STATUS_FAILED",
+    "STATUS_CANCELED",
+    "ALL_STATUSES",
+    "TERMINAL_STATUSES",
+    "CLIENT_VISIBLE_FIELDS",
+    "ADMIN_ONLY_FIELDS",
+    "INTERNAL_ONLY_FIELDS",
+    "MediaJob",
+    "new_job_id",
+    "init_db",
+    "create",
+    "upsert",
+    "get",
+    "get_by_request_id",
+    "recent",
+    "list_jobs",
+    "update_status",
+    "append_event",
+    "events",
+    "prune",
+    "count",
+    "schema_version",
+]
