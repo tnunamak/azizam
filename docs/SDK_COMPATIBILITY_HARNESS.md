@@ -163,21 +163,20 @@ A first pass of this harness lives under `tests/compat/` and
 Quick commands:
 
 ```bash
+PROXY_PYTHON=${PROXY_PYTHON:-venv/bin/python}
+PROXY_PIP=${PROXY_PIP:-venv/bin/pip}
+
 # Core unit tests (no SDKs, no network):
-/home/tnunamak/applications/openai-proxy/venv/bin/python \
-    -m unittest discover -s tests -p 'test_*.py' -v
+$PROXY_PYTHON -m unittest discover -s tests -p 'test_*.py' -v
 
 # Compatibility matrix dry-run:
-/home/tnunamak/applications/openai-proxy/venv/bin/python \
-    scripts/compat/run_matrix.py --dry-run
+$PROXY_PYTHON scripts/compat/run_matrix.py --dry-run
 
 # Optional SDK probe (Python):
-/home/tnunamak/applications/openai-proxy/venv/bin/pip install \
-    -r tests/compat/python/requirements-openai.txt
+$PROXY_PIP install -r tests/compat/python/requirements-openai.txt
 export OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080
 export OPENAI_PROXY_API_KEY=sk-your-proxy-key
-/home/tnunamak/applications/openai-proxy/venv/bin/python \
-    -m unittest tests.compat.python.probe_openai -v
+$PROXY_PYTHON -m unittest tests.compat.python.probe_openai -v
 ```
 
 Full setup, env vars, and instructions for adding new probes live in

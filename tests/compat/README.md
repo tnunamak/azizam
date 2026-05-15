@@ -61,8 +61,8 @@ The harness's own correctness tests run with the existing venv and need
 no SDKs:
 
 ```bash
-/home/tnunamak/applications/openai-proxy/venv/bin/python \
-    -m unittest discover -s tests -p 'test_*.py' -v
+PROXY_PYTHON=${PROXY_PYTHON:-venv/bin/python}
+$PROXY_PYTHON -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 ## Running Python SDK probes (optional)
@@ -71,12 +71,13 @@ Install only the SDK you want, into the existing venv. The repo's
 default `requirements.txt` is untouched.
 
 ```bash
-PROXY_VENV=/home/tnunamak/applications/openai-proxy/venv/bin
+PROXY_PYTHON=${PROXY_PYTHON:-venv/bin/python}
+PROXY_PIP=${PROXY_PIP:-venv/bin/pip}
 
-$PROXY_VENV/pip install -r tests/compat/python/requirements-openai.txt
+$PROXY_PIP install -r tests/compat/python/requirements-openai.txt
 export OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080
 export OPENAI_PROXY_API_KEY=sk-your-proxy-key
-$PROXY_VENV/python -m unittest tests.compat.python.probe_openai -v
+$PROXY_PYTHON -m unittest tests.compat.python.probe_openai -v
 ```
 
 Replace `requirements-openai.txt` with `requirements-anthropic.txt` or
@@ -99,10 +100,9 @@ Python repo install.
 ## Emitting the compatibility matrix
 
 ```bash
-/home/tnunamak/applications/openai-proxy/venv/bin/python \
-    scripts/compat/run_matrix.py --dry-run
-/home/tnunamak/applications/openai-proxy/venv/bin/python \
-    scripts/compat/run_matrix.py --out tests/compat/matrix/compatibility.json
+PROXY_PYTHON=${PROXY_PYTHON:-venv/bin/python}
+$PROXY_PYTHON scripts/compat/run_matrix.py --dry-run
+$PROXY_PYTHON scripts/compat/run_matrix.py --out tests/compat/matrix/compatibility.json
 ```
 
 The output is validated against

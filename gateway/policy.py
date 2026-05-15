@@ -52,10 +52,9 @@ class StatusVisibilityPolicy:
 class AppProfile:
     """Named policy bundle attached to an API key or client identity.
 
-    Empty allow-lists mean "no opinion": a profile that does not enumerate
-    workflows allows any workflow unless another rule denies it. Set
-    ``protocols=frozenset()`` to allow no protocols. Use the ``*_configured``
-    factory args via :meth:`with_overrides` if you need explicit emptiness.
+    ``None`` allow-lists mean "no opinion": a profile that does not enumerate
+    workflows allows any workflow unless another rule denies it. An empty
+    frozenset means "deny all" for that dimension.
     """
 
     id: str = DEFAULT_PROFILE_ID

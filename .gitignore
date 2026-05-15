@@ -83,6 +83,11 @@ workflows/.backup-*/
 workflows/_drafts/
 workflows/*.obsolete
 
+# Local multi-agent workstream state. Worker prompts, handoff reports, and
+# linked Claude worktrees are coordination artifacts, not project source.
+tmp/workstreams/
+.claude/worktrees/
+
 # =============================================================================
 # Local config / overrides
 # =============================================================================
