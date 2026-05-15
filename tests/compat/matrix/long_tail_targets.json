@@ -1,0 +1,354 @@
+{
+  "version": "2026-05-15",
+  "generated_at": "2026-05-15",
+  "targets": [
+    {
+      "id": "open-webui",
+      "name": "Open WebUI",
+      "category": "chat-frontend",
+      "deployment": "self-hosted",
+      "protocols": [
+        "openai-chat",
+        "openai-embeddings",
+        "openai-images",
+        "openai-audio-speech",
+        "openai-audio-transcriptions"
+      ],
+      "client_config": {
+        "base_url_template": "${PROXY_BASE_URL}/v1",
+        "auth": "bearer",
+        "extra_settings": {
+          "settings_path": "Admin Settings > Connections > OpenAI API",
+          "feature_models_endpoint": "GET /v1/models",
+          "feature_streaming": "enabled by default"
+        }
+      },
+      "endpoints": [
+        "/v1/models",
+        "/v1/chat/completions",
+        "/v1/embeddings",
+        "/v1/images/generations",
+        "/v1/audio/speech",
+        "/v1/audio/transcriptions"
+      ],
+      "smoke_cases": [
+        "models.list",
+        "chat.non_streaming",
+        "chat.streaming",
+        "embeddings.create",
+        "images.generations",
+        "audio.speech",
+        "audio.transcriptions"
+      ],
+      "known_quirks": [
+        "Open WebUI probes /v1/models on every connection check; gateway must return the alias catalog quickly.",
+        "Title-generation and tag-generation features issue extra non-streaming chat calls in the background."
+      ],
+      "priority": "P0",
+      "status": "manual-smoke",
+      "references": [
+        "https://docs.openwebui.com/getting-started/api-endpoints",
+        "https://github.com/open-webui/open-webui"
+      ]
+    },
+    {
+      "id": "librechat",
+      "name": "LibreChat",
+      "category": "chat-frontend",
+      "deployment": "self-hosted",
+      "protocols": [
+        "openai-chat",
+        "openai-images",
+        "openai-audio-speech",
+        "openai-audio-transcriptions"
+      ],
+      "client_config": {
+        "base_url_template": "${PROXY_BASE_URL}/v1",
+        "auth": "bearer",
+        "extra_settings": {
+          "settings_path": "librechat.yaml custom endpoint",
+          "yaml_key": "endpoints.custom[].baseURL",
+          "feature_streaming": "enabled when 'streaming: true' on endpoint"
+        }
+      },
+      "endpoints": [
+        "/v1/models",
+        "/v1/chat/completions",
+        "/v1/images/generations",
+        "/v1/audio/speech",
+        "/v1/audio/transcriptions"
+      ],
+      "smoke_cases": [
+        "models.list",
+        "chat.non_streaming",
+        "chat.streaming",
+        "chat.tools",
+        "images.generations",
+        "audio.speech",
+        "audio.transcriptions"
+      ],
+      "known_quirks": [
+        "Custom endpoints require explicit 'models.fetch: true' to call /v1/models; otherwise model list is static.",
+        "Tool-call support varies by endpoint definition; gateway must return OpenAI-shaped tool_calls."
+      ],
+      "priority": "P0",
+      "status": "unverified",
+      "references": [
+        "https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/custom_endpoint",
+        "https://github.com/danny-avila/LibreChat"
+      ]
+    },
+    {
+      "id": "continue",
+      "name": "Continue",
+      "category": "coding-agent",
+      "deployment": "desktop",
+      "protocols": [
+        "openai-chat",
+        "openai-completions",
+        "openai-embeddings"
+      ],
+      "client_config": {
+        "base_url_template": "${PROXY_BASE_URL}/v1",
+        "auth": "bearer",
+        "extra_settings": {
+          "settings_path": "config.yaml or .continue/config.json",
+          "provider": "openai",
+          "apiBase": "${PROXY_BASE_URL}/v1"
+        }
+      },
+      "endpoints": [
+        "/v1/models",
+        "/v1/chat/completions",
+        "/v1/completions",
+        "/v1/embeddings"
+      ],
+      "smoke_cases": [
+        "models.list",
+        "chat.non_streaming",
+        "chat.streaming",
+        "completions.autocomplete",
+        "embeddings.create"
+      ],
+      "known_quirks": [
+        "Autocomplete role uses /v1/completions; chat role uses /v1/chat/completions.",
+        "Continue retries on 400-class errors; gateway error envelope must include OpenAI-shaped 'error.type'."
+      ],
+      "priority": "P0",
+      "status": "unverified",
+      "references": [
+        "https://docs.continue.dev/customize/model-providers/openai",
+        "https://github.com/continuedev/continue"
+      ]
+    },
+    {
+      "id": "cline",
+      "name": "Cline",
+      "category": "coding-agent",
+      "deployment": "desktop",
+      "protocols": [
+        "openai-chat",
+        "anthropic-messages"
+      ],
+      "client_config": {
+        "base_url_template": "${PROXY_BASE_URL}/v1",
+        "auth": "bearer",
+        "extra_settings": {
+          "settings_path": "VS Code Cline settings > API Provider",
+          "provider": "OpenAI Compatible",
+          "model_id_hint": "Use a gateway alias model id (e.g. 'opx/chat-default')."
+        }
+      },
+      "endpoints": [
+        "/v1/models",
+        "/v1/chat/completions",
+        "/v1/messages"
+      ],
+      "smoke_cases": [
+        "chat.non_streaming",
+        "chat.streaming",
+        "chat.tools",
+        "chat.image_input",
+        "anthropic.messages_non_streaming"
+      ],
+      "known_quirks": [
+        "Cline expects tool_calls in OpenAI streaming chunks to include 'index' on every delta.",
+        "Image input arrives as data URLs in OpenAI content blocks; gateway must accept and forward."
+      ],
+      "priority": "P1",
+      "status": "unverified",
+      "references": [
+        "https://docs.cline.bot/provider-config/openai-compatible",
+        "https://github.com/cline/cline"
+      ]
+    },
+    {
+      "id": "sillytavern",
+      "name": "SillyTavern",
+      "category": "roleplay-frontend",
+      "deployment": "self-hosted",
+      "protocols": [
+        "openai-chat",
+        "anthropic-messages"
+      ],
+      "client_config": {
+        "base_url_template": "${PROXY_BASE_URL}/v1",
+        "auth": "bearer",
+        "extra_settings": {
+          "settings_path": "API Connections > Chat Completion > Custom (OpenAI-compatible)",
+          "feature_long_context": "System+character prompts often exceed 8k tokens."
+        }
+      },
+      "endpoints": [
+        "/v1/models",
+        "/v1/chat/completions"
+      ],
+      "smoke_cases": [
+        "models.list",
+        "chat.non_streaming",
+        "chat.streaming",
+        "chat.long_system_prompt",
+        "chat.stop_sequences"
+      ],
+      "known_quirks": [
+        "Sends 'stop' as a list; gateway must accept and forward.",
+        "Uses very large 'messages' arrays for persona memory; watch for header/body limits.",
+        "Anthropic preset path uses /v1/messages and expects streaming event names exactly."
+      ],
+      "priority": "P1",
+      "status": "unverified",
+      "references": [
+        "https://docs.sillytavern.app/usage/api-connections/openai/",
+        "https://github.com/SillyTavern/SillyTavern"
+      ]
+    },
+    {
+      "id": "vercel-ai-sdk",
+      "name": "Vercel AI SDK",
+      "category": "sdk-framework",
+      "deployment": "library",
+      "protocols": [
+        "openai-chat",
+        "openai-responses",
+        "anthropic-messages"
+      ],
+      "client_config": {
+        "base_url_template": "${PROXY_BASE_URL}/v1",
+        "auth": "bearer",
+        "extra_settings": {
+          "package_openai": "@ai-sdk/openai or @ai-sdk/openai-compatible",
+          "package_anthropic": "@ai-sdk/anthropic",
+          "constructor_arg": "createOpenAICompatible({ baseURL })"
+        }
+      },
+      "endpoints": [
+        "/v1/chat/completions",
+        "/v1/responses",
+        "/v1/messages"
+      ],
+      "smoke_cases": [
+        "chat.non_streaming",
+        "chat.streaming",
+        "chat.tools",
+        "chat.structured_output",
+        "responses.non_streaming",
+        "anthropic.messages_streaming"
+      ],
+      "known_quirks": [
+        "@ai-sdk/openai-compatible disables provider-specific features (e.g. Responses) unless explicitly opted in.",
+        "generateObject relies on JSON Schema response_format; gateway must surface JSON-mode shape errors as OpenAI-typed errors."
+      ],
+      "priority": "P0",
+      "status": "unverified",
+      "references": [
+        "https://ai-sdk.dev/providers/community-providers/openai-compatible",
+        "https://ai-sdk.dev/docs"
+      ]
+    },
+    {
+      "id": "n8n",
+      "name": "n8n",
+      "category": "automation",
+      "deployment": "self-hosted",
+      "protocols": [
+        "openai-chat",
+        "openai-embeddings",
+        "openai-images",
+        "openai-audio-speech",
+        "openai-audio-transcriptions"
+      ],
+      "client_config": {
+        "base_url_template": "${PROXY_BASE_URL}/v1",
+        "auth": "bearer",
+        "extra_settings": {
+          "credential_type": "OpenAi (Custom Base URL)",
+          "node_examples": "OpenAI Chat Model, AI Agent, HTTP Request"
+        }
+      },
+      "endpoints": [
+        "/v1/models",
+        "/v1/chat/completions",
+        "/v1/embeddings",
+        "/v1/images/generations",
+        "/v1/audio/speech",
+        "/v1/audio/transcriptions"
+      ],
+      "smoke_cases": [
+        "models.list",
+        "chat.non_streaming",
+        "chat.tools",
+        "embeddings.create",
+        "images.generations",
+        "audio.speech",
+        "audio.transcriptions"
+      ],
+      "known_quirks": [
+        "n8n's OpenAI credential test pings /v1/models; failure blocks credential save.",
+        "AI Agent node passes 'response_format' for structured outputs; must round-trip exactly."
+      ],
+      "priority": "P1",
+      "status": "unverified",
+      "references": [
+        "https://docs.n8n.io/integrations/builtin/credentials/openai/",
+        "https://docs.n8n.io/advanced-ai/"
+      ]
+    },
+    {
+      "id": "home-assistant-extended-openai",
+      "name": "Home Assistant - Extended OpenAI Conversation",
+      "category": "voice-assistant",
+      "deployment": "self-hosted",
+      "protocols": [
+        "openai-chat"
+      ],
+      "client_config": {
+        "base_url_template": "${PROXY_BASE_URL}/v1",
+        "auth": "bearer",
+        "extra_settings": {
+          "integration": "custom_components/extended_openai_conversation",
+          "settings_path": "Settings > Devices & Services > Extended OpenAI Conversation",
+          "feature_function_calls": "Used for entity control."
+        }
+      },
+      "endpoints": [
+        "/v1/chat/completions"
+      ],
+      "smoke_cases": [
+        "chat.non_streaming",
+        "chat.tools",
+        "chat.function_call_entity_action",
+        "chat.error_envelope"
+      ],
+      "known_quirks": [
+        "Built-in HA 'OpenAI Conversation' integration is hardcoded to api.openai.com; only the community-maintained 'Extended OpenAI Conversation' fork accepts a custom base URL.",
+        "Tool-call format must match the older 'function_call' shape on some HA versions in addition to 'tool_calls'."
+      ],
+      "priority": "P2",
+      "status": "unverified",
+      "references": [
+        "https://github.com/jekalmin/extended_openai_conversation",
+        "https://www.home-assistant.io/integrations/openai_conversation/"
+      ]
+    }
+  ]
+}
