@@ -36,7 +36,7 @@ curl -fsS "${auth[@]}" \
   -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"stream\":false}" \
   "${BASE}/v1/chat/completions" | preview
 
-step "GET ${BASE}/gateway/v1/capabilities (empty if router not mounted)"
+step "GET ${BASE}/gateway/v1/capabilities"
 curl -fsS -o /tmp/.opx_caps.$$ -w '%{http_code}\n' "${auth[@]}" "${BASE}/gateway/v1/capabilities" || true
 head -c 400 /tmp/.opx_caps.$$ 2>/dev/null || true
 printf '\n'
@@ -49,4 +49,4 @@ printf '\n'
 rm -f /tmp/.opx_rec.$$
 
 echo
-echo "Smoke done. Non-2xx on /gateway/v1/* means that router is not mounted yet — see docs/LOCAL_CLIENT_RECIPES.md."
+echo "Smoke done. Non-2xx on /gateway/v1/* means auth, profile policy, or gateway storage needs investigation."

@@ -54,9 +54,12 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /v1/audio/generate`, `GET /v1/audio/models` | Native | Music/SFX/voice models. |
 | `POST /v1/videos`, `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content` | OpenAI-shaped video | |
 | `GET /v1/status` | Native | Operational status. |
+| `POST /v1/messages` | Anthropic Messages | Non-streaming translator over chat completions. |
+| `GET /api/tags` | Ollama-compatible | Model list from configured catalog. |
+| `POST /api/chat`, `POST /api/generate` | Ollama-compatible | Non-streaming translators over chat completions. |
 
-Read-only gateway-native discovery (`gateway/api.py`, not yet mounted into the
-live app) provides:
+Gateway-native discovery, receipts, and media-job state (`gateway/api.py`) are
+mounted into the live app:
 
 ```text
 GET /gateway/v1/workflows
@@ -64,33 +67,44 @@ GET /gateway/v1/workflows/{id}
 GET /gateway/v1/capabilities
 GET /gateway/v1/receipts
 GET /gateway/v1/receipts/{request_id}
+POST /gateway/v1/media/jobs
+GET /gateway/v1/media/jobs
+GET /gateway/v1/media/jobs/{job_id}
+POST /gateway/v1/media/jobs/{job_id}/events
+POST /gateway/v1/media/jobs/{job_id}/cancel
 ```
 
-Capability and receipt providers are wired conditionally. When the live app
-mounts the router with a receipt store path and capability provider, these
-endpoints return data; otherwise they return empty catalogs / protocol-shaped
-404s.
+Capability and receipt providers are wired conditionally. These endpoints may
+return empty catalogs when no matching data exists, but the router itself is
+live and authenticated.
 
-### Not yet live as client-facing protocols
+### Live with documented limits
 
-These surfaces have pure-Python translators or design docs but are **not**
-mounted in `proxy.py` today. Do not configure clients against them yet:
+The Anthropic and Ollama frontends are live, but intentionally narrow:
 
-- Anthropic Messages (`POST /v1/messages`) — translator exists in
-  `gateway/protocols/anthropic.py`.
-- Ollama native (`/api/tags`, `/api/show`, `/api/chat`, `/api/generate`,
-  `/api/ps`, `/api/pull`) — translator exists in `gateway/protocols/ollama.py`.
-- Generic gateway media-job API (`POST /gateway/v1/media/jobs` and friends) —
-  target shape per `docs/API_TARGETS.md`.
+- Streaming is rejected on `/v1/messages`, `/api/chat`, and `/api/generate`.
+  Use `stream: false` or omit streaming on these protocol surfaces.
+- Anthropic image/document/thinking blocks are rejected by the translator
+  instead of silently dropped. Anthropic-native prompt caching markers and beta
+  headers are not represented.
+- Ollama native model management is not implemented: `/api/show`, `/api/ps`,
+  `/api/pull`, `/api/push`, `/api/copy`, `/api/delete`, and `/api/create`.
+- Ollama's common generation options such as `temperature`, `top_p`,
+  `num_predict`, `seed`, `stop`, `presence_penalty`, and
+  `frequency_penalty` are mapped. Backend-native options such as `top_k`,
+  `num_ctx`, GPU placement, and memory flags are rejected because they do not
+  have a portable canonical meaning yet.
 
-Until these are mounted, point Anthropic-shaped and Ollama-shaped clients at
-the OpenAI Chat surface instead, or use a client that supports an
-OpenAI-compatible endpoint.
+For maximum compatibility, point general clients at the OpenAI-compatible
+surface and use the Anthropic/Ollama frontends only when a client specifically
+requires those protocols.
 
 ## Recipe: Open WebUI
 
-Open WebUI talks to any OpenAI-compatible server. Use the OpenAI provider, not
-the Ollama provider (Ollama native is not mounted yet).
+Open WebUI talks to any OpenAI-compatible server. The OpenAI provider is the
+best-supported path. Open WebUI's Ollama provider can use `/api/tags` and
+non-streaming `/api/chat`, but its model-management panels will fail because
+those routes are deliberately not implemented.
 
 **Settings → Connections → OpenAI:**
 
@@ -112,7 +126,10 @@ curl -s http://127.0.0.1:5000/v1/models \
 
 Expected unsupported features in Open WebUI against this proxy today:
 
-- Ollama-specific UI panels (pull, push, model management) — not wired.
+- Ollama-specific UI panels (pull, push, model management) are not implemented;
+  manage models on the backend that actually hosts them.
+- Streaming chat through the Ollama provider is not supported. Use Open WebUI's
+  OpenAI provider for streaming.
 - Web search / RAG features that depend on Open WebUI's own pipelines work
   normally; they are client-side.
 - Image generation works only if the configured image backend is reachable.
@@ -140,9 +157,9 @@ Set `OPENAI_PROXY_API_KEY` in the LibreChat `.env`. Do not paste the literal
 
 Expected unsupported features:
 
-- LibreChat's Anthropic provider block — leave unset until `/v1/messages` is
-  mounted. Routing Claude-shaped traffic via OpenAI Chat works for most chat
-  use, but loses Anthropic-native tool-use shape.
+- LibreChat's Anthropic provider block can target `POST /v1/messages` if that
+  provider can run non-streaming. If LibreChat forces streaming for the flow,
+  route Claude-shaped traffic through the OpenAI Chat surface instead.
 - Plugin/Tools that hit OpenAI-only endpoints (e.g. assistant beta) — the
   proxy does not implement Assistants; the Responses surface is the closest
   live equivalent.
@@ -183,9 +200,12 @@ substitutes `$OPENAI_PROXY_API_KEY` from environment at load time.
 
 Expected unsupported features:
 
-- Continue's "Anthropic" provider — point at OpenAI instead until `/v1/messages`
-  is mounted.
-- Continue's Ollama provider option — same; `/api/*` is not mounted yet.
+- Continue's "Anthropic" provider can target `POST /v1/messages` only for
+  non-streaming calls. Continue commonly streams, so the OpenAI provider remains
+  the safer default.
+- Continue's Ollama provider works only for non-streaming `/api/chat` and
+  `/api/generate`. Model management and native backend options are not
+  implemented.
 - Reranking provider — only works if a rerank-capable backend is configured.
 
 ## Recipe: Cline-style agents (Cline, Roo Code, Kilo, etc.)
@@ -210,40 +230,34 @@ Important caveats:
 
 ## Recipe: Ollama-compatible clients
 
-Ollama native (`/api/*`) is **not mounted** in `proxy.py` today. The
-translator in `gateway/protocols/ollama.py` is pure and not wired to a route.
+The proxy exposes a narrow Ollama-compatible surface backed by the canonical
+chat-completions pipeline:
 
-For now:
+| Path | Status |
+|---|---|
+| `GET /api/tags` | Live; returns the proxy's configured model catalog. |
+| `POST /api/chat` | Live, non-streaming only. |
+| `POST /api/generate` | Live, non-streaming only. |
+| `/api/show`, `/api/ps`, `/api/pull`, `/api/push`, `/api/copy`, `/api/delete`, `/api/create`, `/api/embeddings` | Not implemented. |
 
-- If the client supports an OpenAI-compatible endpoint alongside its Ollama
-  setting, use the OpenAI mode pointed at `http://127.0.0.1:5000/v1`.
-- If the client is Ollama-only, run a real Ollama next to the proxy and treat
-  the proxy as a separate provider, or wait for the native surface to be
-  mounted.
+Point the Ollama base URL at `http://127.0.0.1:5000` with no `/v1` suffix.
+Send `Authorization: Bearer $OPENAI_PROXY_API_KEY`; this is not a vanilla
+unauthenticated Ollama daemon.
 
-When `/api/*` is mounted, this section will document the exact path mapping.
+```bash
+curl -fsS http://127.0.0.1:5000/api/tags \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" | head -c 400
+```
+
+Use the OpenAI-compatible surface for streaming, model management, or clients
+that depend on backend-native Ollama options.
 
 ## Recipe: Anthropic SDK clients
 
-The Anthropic Messages surface (`POST /v1/messages`) is **not mounted** in
-`proxy.py` today. The translator in `gateway/protocols/anthropic.py` is pure.
-
-Two options today:
-
-1. Use the proxy's OpenAI Chat surface and the OpenAI SDK instead. Most
-   Claude-shaped behavior works at the chat level (system prompts, multi-turn,
-   streaming, OpenAI-shaped tool calls). You lose Anthropic-specific features:
-   prompt caching markers, vision-specific content blocks beyond what OpenAI
-   accepts, and Anthropic-native tool-use ergonomics.
-2. Continue pointing the official Anthropic SDK at Anthropic's hosted API for
-   Claude work, and at this proxy only for local-routed OpenAI-shaped
-   traffic. Configure the SDK per-call; do not put real Anthropic keys into
-   this proxy's key file.
-
-When `/v1/messages` is mounted, the SDK config will be:
+The Anthropic Messages surface (`POST /v1/messages`) is live as a non-streaming
+translator over the canonical chat-completions pipeline:
 
 ```python
-# anthropic-sdk-python — when /v1/messages is live
 import os
 from anthropic import Anthropic
 
@@ -251,9 +265,18 @@ client = Anthropic(
     base_url="http://127.0.0.1:5000",
     api_key=os.environ["OPENAI_PROXY_API_KEY"],
 )
+
+msg = client.messages.create(
+    model="auto",
+    max_tokens=256,
+    messages=[{"role": "user", "content": "ping"}],
+)
+print(msg.content[0].text)
 ```
 
-Until then, treat this as a future recipe.
+Do not use streaming calls such as `client.messages.stream(...)`; the proxy
+rejects `stream: true` on this surface today. Do not put real Anthropic keys
+into `proxy_api_keys.yml`.
 
 ## Recipe: OpenAI SDK clients
 
@@ -326,9 +349,9 @@ Expected unsupported features:
 
 ## Discovery and Debugging: `/gateway/v1/*`
 
-Once the read-only gateway router is mounted into the live app (see
-`gateway/api.py`), power users and agents can use it for runtime discovery
-and post-hoc debugging without scraping logs.
+The read-only gateway router (`gateway/api.py`) is mounted into the live app.
+Power users and agents can use it for runtime discovery and post-hoc debugging
+without scraping logs.
 
 The audience returned to a client is determined server-side; default is
 `client`, which redacts backend paths and policy sources.
@@ -389,10 +412,10 @@ Agents debugging a "why did this fail?" should:
 
 ## Migrating to Profile-Scoped Keys
 
-Today, generated `opk_...` keys map to the global downstream credentials
-configured for the proxy (see `AUTH_GUIDE.md` § "Downstream Credential
-Mapping"). The forthcoming `AppProfile` concept (`gateway/profiles.py`,
-`gateway/policy.py`) layers a named policy bundle on top of each client key:
+Generated `opk_...` keys map to downstream credentials and may carry a live
+`profile:` block (see `AUTH_GUIDE.md` § "Downstream Credential Mapping"). The
+`AppProfile` concept (`gateway/profiles.py`, `gateway/policy.py`) layers a
+named policy bundle on top of each client key:
 
 - which protocols a client can use
 - which model aliases it sees
@@ -401,17 +424,16 @@ Mapping"). The forthcoming `AppProfile` concept (`gateway/profiles.py`,
 - how much status and diagnostics it may see
 - which native passthrough lanes are allowed
 
-When profile-scoped keys land, the migration is:
+The migration path is:
 
 1. **Do not rotate keys preemptively.** The existing `opk_...` values keep
    working; profile binding is additive in `proxy_api_keys.yml`.
 2. **Add a `profile:` field** to each agent entry in `proxy_api_keys.yml`
    referencing a profile ID (e.g. `continue-local`, `image-agent`,
    `experimental-cloud`). The proxy reloads the file without restart.
-3. **Define profiles** in the gateway profile catalog (location TBD; tracked
-   in `gateway/profiles.py`). Profiles never contain raw secrets — they
-   reference downstream credential slots by name, exactly like the existing
-   `downstream:` block.
+3. **Use the profile fields in `proxy_api_keys.yml`.** Profiles never contain
+   raw secrets; they reference downstream credential slots by name, exactly
+   like the existing `downstream:` block.
 4. **Verify with `/gateway/v1/capabilities`.** After binding a profile, the
    capabilities listed for that key should narrow or widen to match. If the
    set looks wrong, the profile is misconfigured; do not rotate the key.

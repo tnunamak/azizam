@@ -16,7 +16,7 @@ source venv/bin/activate
 
 # Config via environment (override proxy_config.yml defaults)
 export OPENAI_PROXY_PORT="${OPENAI_PROXY_PORT:-5000}"
-export TABBY_IDLE_TIMEOUT="${TABBY_IDLE_TIMEOUT:-1800}"
+export TABBY_IDLE_TIMEOUT="${TABBY_IDLE_TIMEOUT:-300}"
 export TTS_ENABLED="${TTS_ENABLED:-true}"
 export TTS_HOST="${TTS_HOST:-http://127.0.0.1:8001}"
 

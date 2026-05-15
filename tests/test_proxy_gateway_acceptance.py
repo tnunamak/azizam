@@ -725,5 +725,50 @@ class TestNoBodyLeakInReceiptPersistence(unittest.TestCase):
             )
 
 
+# ---------------------------------------------------------------------------
+# _gateway_capabilities_provider: live wiring through local capability builder
+# ---------------------------------------------------------------------------
+
+
+class _StubScope:
+    def __init__(self) -> None:
+        self.scope: dict[str, Any] = {}
+
+
+class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
+    def test_provider_delegates_to_build_local_capabilities(self) -> None:
+        sentinel: list[bool] = []
+
+        def fake_build(cfg, **kwargs):
+            sentinel.append(True)
+            self.assertIs(cfg, proxy.config)
+            self.assertIn("enabled_flags", kwargs)
+            return []
+
+        with patch.object(proxy, "build_local_capabilities", fake_build):
+            result = proxy._gateway_capabilities_provider(_StubScope())  # type: ignore[arg-type]
+
+        self.assertTrue(sentinel, "build_local_capabilities was not invoked")
+        self.assertIsInstance(result, list)
+
+    def test_provider_still_policy_projects_capabilities(self) -> None:
+        seen: list[Any] = []
+        original_project = proxy._capability_for_profile
+
+        def spy_project(capability, auth_context, *, protocol=None):
+            projected = original_project(
+                capability,
+                auth_context,
+                protocol=protocol,
+            )
+            seen.append(projected)
+            return projected
+
+        with patch.object(proxy, "_capability_for_profile", spy_project):
+            result = proxy._gateway_capabilities_provider(_StubScope())  # type: ignore[arg-type]
+
+        self.assertEqual(len(result), len(seen))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

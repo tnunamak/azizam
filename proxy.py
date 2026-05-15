@@ -59,6 +59,7 @@ from gateway.capabilities import (
     capability_with_policy_view,
 )
 from gateway.discovery import WorkflowRegistry
+from gateway.local_capabilities import build_local_capabilities
 from gateway.extensions import ExtensionError
 from gateway.image_extensions import (
     STANDARD_IMAGE_EDIT_FIELDS,
@@ -6184,94 +6185,18 @@ def _capability_for_profile(
 
 def _gateway_capabilities_provider(request: Request) -> list[Capability]:
     auth_context = _auth_context_from_scope(request)
-    capabilities: list[Capability] = []
-
-    if kobold_cfg:
-        capabilities.append(Capability(
-            intent="chat.completions",
-            backend="kobold",
-            model="default",
-            input_modalities=("text",),
-            output_modalities=("text",),
-            execution="sync",
-            streaming=True,
-            lifecycle="unknown",
-            health="unknown",
-            resources=ResourceEstimate(gpu_required=True),
-            caveats=("backend lifecycle is managed outside the gateway",),
-        ))
-    if tabby_cfg:
-        capabilities.append(Capability(
-            intent="chat.completions",
-            backend="tabby",
-            model="vision",
-            input_modalities=("text", "image"),
-            output_modalities=("text",),
-            execution="sync",
-            streaming=True,
-            lifecycle="unknown",
-            health="unknown",
-            resources=ResourceEstimate(gpu_required=True),
-            caveats=("standby backend may cold-start for vision routes",),
-        ))
-    if TTS_ENABLED:
-        capabilities.append(Capability(
-            intent="audio.speech",
-            backend="tts",
-            model=compat_cfg.get("defaults", {}).get("speech"),
-            input_modalities=("text",),
-            output_modalities=("audio",),
-            execution="sync",
-            streaming=False,
-            health="unknown",
-        ))
-    if STT_ENABLED:
-        capabilities.append(Capability(
-            intent="audio.transcriptions",
-            backend="stt",
-            model=compat_cfg.get("defaults", {}).get("transcriptions"),
-            input_modalities=("audio",),
-            output_modalities=("text",),
-            execution="sync",
-            streaming=False,
-            health="unknown",
-        ))
-    if COMFY_ENABLED:
-        capabilities.append(Capability(
-            intent="image.generate",
-            backend="comfyui",
-            model=COMFY_DEFAULT_MODEL,
-            input_modalities=("text",),
-            output_modalities=("image",),
-            execution="sync",
-            streaming=False,
-            health="unknown",
-            resources=ResourceEstimate(gpu_required=True),
-        ))
-        capabilities.append(Capability(
-            intent="video.generate",
-            backend="comfyui",
-            model=VIDEO_DEFAULT_WORKFLOW,
-            input_modalities=("text", "image"),
-            output_modalities=("video",),
-            execution="job",
-            streaming=False,
-            health="unknown",
-            resources=ResourceEstimate(gpu_required=True, duration_class="long"),
-        ))
-        audio_default = (config.get("audio", {}) or {}).get("default_workflow")
-        if audio_default:
-            capabilities.append(Capability(
-                intent="audio.generate",
-                backend="comfyui",
-                model=audio_default,
-                input_modalities=("text",),
-                output_modalities=("audio",),
-                execution="job",
-                streaming=False,
-                health="unknown",
-                resources=ResourceEstimate(gpu_required=True, duration_class="medium"),
-            ))
+    capabilities = list(build_local_capabilities(
+        config,
+        enabled_flags={
+            "llm": bool(kobold_cfg) or bool(tabby_cfg),
+            "embeddings": True,
+            "tts": TTS_ENABLED,
+            "stt": STT_ENABLED,
+            "images": COMFY_ENABLED,
+            "videos": COMFY_ENABLED,
+            "audio": COMFY_ENABLED,
+        },
+    ))
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         for backend in record.supported_backends:
