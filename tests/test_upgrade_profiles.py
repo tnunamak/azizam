@@ -124,7 +124,7 @@ class TestUpgradeDocument(unittest.TestCase):
         results = upgrade_document(doc, replace=True)
         self.assertEqual(results, [("simon", STATUS_REPLACED)])
         self.assertEqual(
-            doc["keys"][0]["profile"]["status_visibility"]["level"], "basic"
+            doc["keys"][0]["profile"]["status_visibility"]["level"], "standard"
         )
 
     def test_unknown_name_reports_no_template(self) -> None:
@@ -167,6 +167,27 @@ class TestUpgradeDocument(unittest.TestCase):
             self.assertEqual(profile.id, name)
             self.assertFalse(profile.fallback.cloud_allowed)
             self.assertFalse(profile.native_passthrough.enabled)
+
+    def test_power_user_template_keeps_long_tail_protocols_open(self) -> None:
+        simon = builtin_template("simon")
+        self.assertIsNotNone(simon)
+        self.assertEqual(
+            set(simon["protocols"]),  # type: ignore[index]
+            {"openai", "anthropic", "ollama"},
+        )
+        self.assertEqual(
+            simon["status_visibility"]["level"],  # type: ignore[index]
+            "standard",
+        )
+
+    def test_client_templates_cover_live_protocol_frontends(self) -> None:
+        librechat = builtin_template("librechat")
+        open_webui = builtin_template("open-webui")
+        claude_test = builtin_template("claude-test")
+
+        self.assertIn("anthropic.messages", librechat["protocols"])  # type: ignore[index]
+        self.assertIn("ollama", open_webui["protocols"])  # type: ignore[index]
+        self.assertIn("anthropic.messages", claude_test["protocols"])  # type: ignore[index]
 
     def test_builtin_template_returns_deep_copy(self) -> None:
         a = builtin_template("simon")

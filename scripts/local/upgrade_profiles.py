@@ -54,8 +54,8 @@ def _profile(
 BUILTIN_TEMPLATES: dict[str, dict] = {
     "simon": _profile(
         "simon",
-        protocols=["openai.chat", "openai.completions", "openai.embeddings"],
-        visibility="basic",
+        protocols=["openai", "anthropic", "ollama"],
+        visibility="standard",
     ),
     "daisy": _profile(
         "daisy",
@@ -69,7 +69,12 @@ BUILTIN_TEMPLATES: dict[str, dict] = {
     ),
     "librechat": _profile(
         "librechat",
-        protocols=["openai.chat", "openai.completions", "openai.embeddings"],
+        protocols=[
+            "openai.chat",
+            "openai.completions",
+            "openai.embeddings",
+            "anthropic.messages",
+        ],
         visibility="basic",
     ),
     "cap": _profile(
@@ -79,12 +84,17 @@ BUILTIN_TEMPLATES: dict[str, dict] = {
     ),
     "open-webui": _profile(
         "open-webui",
-        protocols=["openai.chat", "openai.completions", "openai.embeddings"],
+        protocols=[
+            "openai.chat",
+            "openai.completions",
+            "openai.embeddings",
+            "ollama",
+        ],
         visibility="basic",
     ),
     "claude-test": _profile(
         "claude-test",
-        protocols=["openai.chat", "openai.completions"],
+        protocols=["openai.chat", "openai.completions", "anthropic.messages"],
         visibility="basic",
     ),
 }
