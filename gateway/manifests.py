@@ -35,6 +35,36 @@ class ManifestIdentity:
     source: str | None
 
 
+@dataclass
+class BackendBindingResult:
+    """Result of applying validated inputs to a backend-specific request.
+
+    Carries enough provenance for a route receipt without exposing the raw
+    request body payload itself outside of the ``request`` field.
+    """
+
+    request: dict[str, Any]
+    backend: str
+    identity: ManifestIdentity
+    applied_inputs: list[str] = field(default_factory=list)
+    ignored_inputs: dict[str, str] = field(default_factory=dict)
+    backend_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def receipt_provenance(self) -> dict[str, Any]:
+        """Provenance summary safe to surface on a route receipt."""
+        return {
+            "backend": self.backend,
+            "manifest_id": self.identity.id,
+            "manifest_version": self.identity.version,
+            "manifest_hash": self.identity.manifest_hash,
+            "manifest_trusted": self.identity.trusted,
+            "manifest_source": self.identity.source,
+            "applied_inputs": list(self.applied_inputs),
+            "ignored_inputs": dict(self.ignored_inputs),
+            "backend_metadata": dict(self.backend_metadata),
+        }
+
+
 def load_workflow_manifest(path: str | Path) -> dict[str, Any]:
     manifest_path = Path(path)
     with manifest_path.open("r", encoding="utf-8") as f:
@@ -101,8 +131,26 @@ def apply_backend_binding(
     backend_request: dict[str, Any],
     accepted_inputs: dict[str, Any],
 ) -> dict[str, Any]:
-    """Apply validated portable inputs to a backend-specific request copy."""
-    validate_manifest(manifest)
+    """Apply validated portable inputs to a backend-specific request copy.
+
+    Backward-compatible thin wrapper around :func:`bind_backend_request`.
+    """
+    return bind_backend_request(manifest, backend, backend_request, accepted_inputs).request
+
+
+def bind_backend_request(
+    manifest: dict[str, Any],
+    backend: str,
+    backend_request: dict[str, Any],
+    accepted_inputs: dict[str, Any],
+) -> BackendBindingResult:
+    """Apply validated inputs and return a receipt-ready binding result.
+
+    Accepted inputs with no mapping for the chosen backend are recorded as
+    ``ignored`` with a reason. Malformed maps fail fast via :class:`ManifestError`.
+    The source ``backend_request`` is not mutated.
+    """
+    identity = manifest_identity(manifest)
     backend_binding = manifest["bindings"].get(backend)
     if not isinstance(backend_binding, dict):
         raise ManifestError(f"manifest has no binding for backend: {backend}")
@@ -112,13 +160,48 @@ def apply_backend_binding(
         raise ManifestError(f"manifest binding for {backend} has invalid map")
 
     request = copy.deepcopy(backend_request)
+    applied: list[str] = []
+    ignored: dict[str, str] = {}
+
     for input_name, value in accepted_inputs.items():
-        mappings = binding_map.get(input_name, [])
+        if input_name not in binding_map:
+            ignored[input_name] = f"no mapping for input under backend {backend}"
+            continue
+        mappings = binding_map[input_name]
         if not isinstance(mappings, list):
             raise ManifestError(f"binding map for {input_name} must be a list")
+        if not mappings:
+            ignored[input_name] = f"empty mapping for input under backend {backend}"
+            continue
         for mapping in mappings:
             _apply_mapping(request, mapping, value)
-    return request
+        applied.append(input_name)
+
+    backend_metadata = _backend_metadata(backend_binding)
+
+    return BackendBindingResult(
+        request=request,
+        backend=backend,
+        identity=identity,
+        applied_inputs=applied,
+        ignored_inputs=ignored,
+        backend_metadata=backend_metadata,
+    )
+
+
+def _backend_metadata(backend_binding: dict[str, Any]) -> dict[str, Any]:
+    """Extract non-payload binding facts safe for route receipts."""
+    metadata: dict[str, Any] = {}
+    for key, value in backend_binding.items():
+        if key == "map":
+            continue
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            metadata[key] = value
+        elif isinstance(value, list) and all(
+            isinstance(item, (str, int, float, bool)) for item in value
+        ):
+            metadata[key] = list(value)
+    return metadata
 
 
 def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
@@ -160,7 +243,12 @@ def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any)
     if not isinstance(mapping, dict):
         raise ManifestError("binding mapping must be a mapping")
 
-    if "node" in mapping and "input" in mapping:
+    has_node = "node" in mapping
+    has_input = "input" in mapping
+    if has_node ^ has_input:
+        raise ManifestError("binding mapping needs both node and input, or path")
+
+    if has_node and has_input:
         node_id = str(mapping["node"])
         input_name = str(mapping["input"])
         try:
@@ -173,7 +261,9 @@ def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any)
 
     path = mapping.get("path")
     if path:
-        _set_path(request, str(path).split("."), value)
+        if not isinstance(path, str):
+            raise ManifestError("binding mapping path must be a dotted string")
+        _set_path(request, path.split("."), value)
         return
 
     raise ManifestError("binding mapping needs node/input or path")
