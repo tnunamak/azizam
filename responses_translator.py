@@ -19,8 +19,10 @@ Mapping summary (Responses -> Chat Completions, on request):
   text.format.type=json_schema  -> response_format={"type": "json_schema", ...}
   max_output_tokens             -> max_tokens
   temperature/top_p/metadata    -> pass through
-  reasoning.effort=minimal      -> append "/no_think" to system prompt
-  reasoning.effort=low|med|high -> no-op
+  reasoning.effort=none|minimal -> append "/no_think" to system prompt
+                                   + chat_template_kwargs.enable_thinking=false
+  reasoning.effort=low|med|high -> no-op (local models have a binary switch)
+  reasoning.effort=xhigh        -> no-op
   stream                        -> stream (event format differs; see translate_stream)
 
 Mapping back (Chat Completions -> Responses, on response):
@@ -304,16 +306,21 @@ def _translate_text_format(text_cfg: Any) -> Optional[dict]:
     return None
 
 
+# Effort values that suppress thinking on local reasoning models (Qwen3.6 family,
+# binary thinking switch). Keep in sync with proxy._REASONING_EFFORT_SUPPRESS.
+# "none" was added to OpenAI's spec with gpt-5.1 (Nov 2025); "minimal" predates it.
+_REASONING_EFFORT_SUPPRESS = frozenset({"none", "minimal"})
+
+
 def _apply_reasoning_effort_messages(messages: list[dict], reasoning: Any) -> list[dict]:
-    """Honor reasoning.effort=minimal by appending /no_think to the system
+    """Honor reasoning.effort=none/minimal by appending /no_think to the system
     prompt. Llama-server's Qwen3 chat template additionally honors a
     `chat_template_kwargs.enable_thinking=false` flag (set in
     `_apply_reasoning_effort_kwargs`); we set the system-prompt hint as a
     belt-and-suspenders fallback for backends that ignore the kwarg."""
     if not isinstance(reasoning, dict):
         return messages
-    effort = reasoning.get("effort")
-    if effort != "minimal":
+    if reasoning.get("effort") not in _REASONING_EFFORT_SUPPRESS:
         return messages
     hint = "/no_think"
     out = list(messages)
@@ -328,12 +335,12 @@ def _apply_reasoning_effort_messages(messages: list[dict], reasoning: Any) -> li
 
 
 def _apply_reasoning_effort_kwargs(cc: dict, reasoning: Any) -> None:
-    """If reasoning.effort=minimal, request that the chat template suppress
+    """If reasoning.effort=none/minimal, request that the chat template suppress
     thinking via the llama-server-recognized `chat_template_kwargs.enable_thinking`
     flag. Other backends will ignore unknown fields."""
     if not isinstance(reasoning, dict):
         return
-    if reasoning.get("effort") != "minimal":
+    if reasoning.get("effort") not in _REASONING_EFFORT_SUPPRESS:
         return
     cc.setdefault("chat_template_kwargs", {})
     if isinstance(cc["chat_template_kwargs"], dict):

@@ -1,0 +1,65 @@
+{
+  "_meta": {
+    "name": "tangoflux",
+    "description": "TangoFlux text-to-audio/SFX generation",
+    "prompt_node": [
+      {
+        "node": "2",
+        "key": "prompt"
+      }
+    ],
+    "duration_node": [
+      {
+        "node": "2",
+        "key": "duration"
+      }
+    ],
+    "seed_node": [
+      {
+        "node": "2",
+        "key": "seed"
+      }
+    ],
+    "save_node": "3"
+  },
+  "1": {
+    "class_type": "TangoFluxLoader",
+    "inputs": {
+      "enable_teacache": false,
+      "rel_l1_thresh": 0.25
+    }
+  },
+  "2": {
+    "class_type": "TangoFluxSampler",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "prompt": "ocean waves crashing",
+      "steps": 50,
+      "guidance_scale": 4,
+      "duration": 10,
+      "seed": 0,
+      "batch_size": 1,
+      "offload_model_to_cpu": false
+    }
+  },
+  "3": {
+    "class_type": "TangoFluxVAEDecodeAndPlay",
+    "inputs": {
+      "vae": [
+        "1",
+        1
+      ],
+      "tile_size": 32,
+      "latents": [
+        "2",
+        0
+      ],
+      "filename_prefix": "tangoflux",
+      "format": "wav",
+      "save_output": true
+    }
+  }
+}

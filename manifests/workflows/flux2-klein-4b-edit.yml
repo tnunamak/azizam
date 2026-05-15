@@ -1,0 +1,61 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.edit.flux2-klein-4b
+intent: image.edit
+display_name: Flux2 Klein 4B Edit
+description: Portable image edit contract bound to the existing ComfyUI workflow.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  source_image:
+    type: asset
+    required: true
+  width:
+    type: integer
+    minimum: 64
+    maximum: 2048
+  height:
+    type: integer
+    minimum: 64
+    maximum: 2048
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 100
+  guidance:
+    type: number
+    minimum: 0
+    maximum: 20
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/flux2-klein-4b-edit.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      source_image:
+        - node: "10"
+          input: image
+      width:
+        - node: "48"
+          input: width
+        - node: "47"
+          input: width
+      height:
+        - node: "48"
+          input: height
+        - node: "47"
+          input: height
+      steps:
+        - node: "48"
+          input: steps
+      guidance:
+        - node: "26"
+          input: guidance

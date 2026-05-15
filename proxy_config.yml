@@ -22,9 +22,9 @@ backends:
     role: standby
     note: "On-demand vision backend; cold-started by ensure_target() when a vision-capable role is invoked. Down at idle is expected."
     capabilities:
-    - vision
-    - chat
-    - completions
+      - vision
+      - chat
+      - completions
     managed: false
   kobold:
     name: llama-turbo / kobold (LLM)
@@ -33,8 +33,8 @@ backends:
     health_endpoint: /v1/models
     role: required
     capabilities:
-    - chat
-    - completions
+      - chat
+      - completions
     managed: false
   tts:
     name: voxtral-int4-tts
@@ -44,8 +44,8 @@ backends:
     timeout: 86400
     role: required
     capabilities:
-    - audio
-    - speech
+      - audio
+      - speech
     managed: false
   stt:
     name: parakeet-stt
@@ -55,8 +55,8 @@ backends:
     timeout: 120
     role: required
     capabilities:
-    - audio
-    - transcriptions
+      - audio
+      - transcriptions
     managed: false
   comfyui:
     name: ComfyUI (Image + Video Generation)
@@ -70,9 +70,9 @@ backends:
     video_timeout: 1800
     role: required
     capabilities:
-    - images
-    - generations
-    - videos
+      - images
+      - generations
+      - videos
     managed: false
 images:
   # Cache for `response_format: "url"` and content-addressed image storage.
@@ -83,21 +83,34 @@ images:
   signed_url_ttl: 3600
   # HMAC secret for signed URLs. If unset/empty, generated at first run and persisted
   # to <cache_dir>/.url_signing_secret with mode 0600.
-  signed_url_secret: ''
+  signed_url_secret: ""
   # Background eviction TTL for cached image bytes (seconds).
   cache_ttl: 86400
   # How often the eviction task runs (seconds).
   cache_eviction_interval: 3600
   # Reserve this many bytes of free VRAM as a safety margin when computing batch size.
-  vram_reserve_bytes: 1073741824   # 1 GiB
+  vram_reserve_bytes: 1073741824 # 1 GiB
   # Hard ceiling on batch_size per ComfyUI prompt regardless of VRAM headroom.
   max_batch_size: 4
+  # Supports OpenAI's background option: transparent, opaque, or auto. The
+  # RMBG graph lives inside each workflow; the proxy only selects the
+  # workflow-declared output. `auto` uses an LLM decision.
+  background_removal:
+    enabled: true
+    decision_timeout: 45
 model_routing:
   model_dir: /media/windows/AI Models/LLMs
   gguf_dir: /media/windows/AI Models/LLMs/GGUF
   tabby_service: tabbyapi.service
   kobold_service: llama-turbo.service
   switch_timeout: 60
+  # Per-chunk (idle) read timeout for /v1/chat/completions and /v1/completions
+  # forwarding. NOT a wall-clock cap — this is the max silence between bytes
+  # from the backend. Covers prompt-processing latency on reasoning/vision
+  # models (Qwen3.6 27B PP on a 4K-token vision prompt ≈ 150s). 600s is well
+  # past any legitimate work and tight enough to release a wedged backend.
+  # Env override: UPSTREAM_READ_TIMEOUT.
+  upstream_read_timeout: 600
 routing:
   default_backend: kobold
   audio_backend: tts
@@ -115,7 +128,8 @@ roles:
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-Uncensored-HauhauCS-Balanced-Q4_K_P.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
-    description: Roleplay LLM (Qwen3.6-27B Uncensored HauhauCS-Balanced Q4_K_P via
+    description:
+      Roleplay LLM (Qwen3.6-27B Uncensored HauhauCS-Balanced Q4_K_P via
       llama-turbo)
   coder:
     backend: kobold
@@ -136,12 +150,12 @@ models:
   - id: cydonia-24b
     backend: kobold
     path: /media/windows/AI Models/LLMs/GGUF/TheDrummer_Cydonia-24B-v4.3-Q6_K.gguf
-    mmproj: null  # 24B Cydonia is text-only — no companion mmproj on disk
+    mmproj: null # 24B Cydonia is text-only — no companion mmproj on disk
     description: "TheDrummer Cydonia 24B v4.3 (Q6_K, text-only)"
   - id: qwen3-35b-a3b
     backend: kobold
     path: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf
-    mmproj: null  # 35B MoE has no companion mmproj on disk (text-only)
+    mmproj: null # 35B MoE has no companion mmproj on disk (text-only)
     description: "Qwen3.6-35B-A3B UD-IQ4_XS (MoE, text-only)"
 videos:
   default_workflow: video-ltx-2.3-distilled
@@ -199,14 +213,39 @@ videos:
     wan-2.2-ti2v-5b: video-wan-2.2-ti2v-5b-q8
     sora-2: video-ltx-2.3-distilled
     sora-2-pro: video-ltx-2.3-distilled
+audio:
+  default_workflow: ace-step-1.5-xl-turbo
+  workflows_dir: ./workflows/audio
+  workflows:
+    ace-step-1.5-2b-base:
+      file: workflows/audio/ace-step-1.5-2b-base.json
+      max_seconds: 300
+      min_seconds: 1
+    ace-step-1.5-xl-turbo:
+      file: workflows/audio/ace-step-1.5-xl-turbo.json
+      max_seconds: 300
+      min_seconds: 1
+    tangoflux:
+      file: workflows/audio/tangoflux.json
+      max_seconds: 30
+      min_seconds: 0.5
+  aliases:
+    ace-step: ace-step-1.5-xl-turbo
+    ace-step-1.5: ace-step-1.5-xl-turbo
+    ace-step-xl: ace-step-1.5-xl-turbo
+    ace-step-2b: ace-step-1.5-2b-base
+    music: ace-step-1.5-xl-turbo
+    tangoflux-sfx: tangoflux
+    sfx: tangoflux
+    ambient: tangoflux
 model_compatibility:
   enabled: true
   generated_aliases_file: openai_model_aliases.generated.yml
   openai_models_api_url: https://api.openai.com/v1/models
   include_private: false
   defaults:
-    chat: ''
-    completions: ''
+    chat: ""
+    completions: ""
     speech: mistralai/Voxtral-4B-TTS-2603
     transcriptions: parakeet-tdt-0.6b-v3
     images: flux2-klein-4b
@@ -215,6 +254,6 @@ auth:
   enabled: true
   keys_file: proxy_api_keys.yml
   public_paths:
-  - /health
+    - /health
   api_key_env: TABBY_API_KEY
   admin_key_env: TABBY_ADMIN_KEY

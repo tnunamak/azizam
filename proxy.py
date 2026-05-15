@@ -68,6 +68,18 @@ def load_config() -> dict:
 
 config = load_config()
 
+
+def bool_from_config(value, default: bool) -> bool:
+    """Parse permissive bool config without making YAML null mean false."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 # Proxy settings
 PROXY_HOST = config.get("proxy", {}).get("host", "127.0.0.1")
 PROXY_PORT = int(os.environ.get("OPENAI_PROXY_PORT", os.environ.get("LLM_PROXY_PORT", config.get("proxy", {}).get("port", 5000))))
@@ -94,6 +106,18 @@ GGUF_DIR = routing_cfg.get("gguf_dir", "/media/windows/AI Models/LLMs/GGUF")
 TABBY_SERVICE = routing_cfg.get("tabby_service", "tabbyapi.service")
 KOBOLD_SERVICE_NAME = routing_cfg.get("kobold_service", "koboldcpp.service")
 SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
+# Idle (inter-chunk) timeout when forwarding /v1/chat/completions and /v1/completions
+# to the LLM backend. This is the max silence between bytes — NOT a wall-clock cap.
+# It governs:
+#   - streaming: max wait for the first SSE chunk (covers prompt processing) and
+#     max gap between subsequent tokens (catches a wedged backend mid-generation).
+#   - non-streaming: total wait for the response body, since the proxy reads it as
+#     a single chunk via aread() and the backend writes the whole JSON at once.
+# Reasoning models with 4K-token prompts can sit silent 1-3 minutes during prompt
+# processing; vision PP for a small image adds ~30-40s; long structured outputs
+# at >5 tok/s never approach this. 600s (10 min) of silence is well past any
+# legitimate work and tight enough that a hung backend frees the socket promptly.
+UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cfg.get("upstream_read_timeout", 600)))
 
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
 # hardcoding a filename. Roles map to a backend type ("kobold" or "tabby") — never to
@@ -177,6 +201,9 @@ IMAGE_CACHE_TTL = int(images_cfg.get("cache_ttl", 86400))
 IMAGE_CACHE_EVICT_INTERVAL = int(images_cfg.get("cache_eviction_interval", 3600))
 IMAGE_VRAM_RESERVE_BYTES = int(images_cfg.get("vram_reserve_bytes", 1 * 1024 * 1024 * 1024))
 IMAGE_MAX_BATCH_SIZE = int(images_cfg.get("max_batch_size", 4))
+IMAGE_BACKGROUND_REMOVAL_CFG = images_cfg.get("background_removal", {}) or {}
+IMAGE_BACKGROUND_REMOVAL_ENABLED = bool_from_config(IMAGE_BACKGROUND_REMOVAL_CFG.get("enabled"), True)
+IMAGE_BACKGROUND_REMOVAL_TIMEOUT = float(IMAGE_BACKGROUND_REMOVAL_CFG.get("decision_timeout", 45))
 
 # Video config (parallel to images). Maps `model:` aliases -> ComfyUI workflow JSON.
 videos_cfg = config.get("videos", {})
@@ -848,17 +875,6 @@ class AuthContext:
 
 
 NO_AUTH_CONTEXT = AuthContext()
-
-
-def bool_from_config(value, default: bool) -> bool:
-    """Parse permissive bool config without making YAML null mean false."""
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() in ("1", "true", "yes", "on")
-    return bool(value)
 
 
 def hash_api_key(api_key: str) -> str:
@@ -2780,6 +2796,223 @@ def apply_batch_size(workflow: dict, meta: dict, batch_size: int) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class ImageBackgroundRemovalDecision:
+    remove_background: bool
+    confidence: Optional[float] = None
+    reason: str = ""
+    source: str = "default"
+    error: str = ""
+
+
+def _background_removal_fallback(source: str, error: str = "") -> ImageBackgroundRemovalDecision:
+    return ImageBackgroundRemovalDecision(
+        remove_background=False,
+        confidence=0.0,
+        reason="background removal bypassed",
+        source=source,
+        error=str(error or "")[:200],
+    )
+
+
+def parse_image_background(value: Any) -> tuple[Optional[str], Optional[str]]:
+    """Parse OpenAI's image `background` option.
+
+    Returns (value, error). None and empty string mean OpenAI's default: auto.
+    """
+    if value is None or value == "":
+        return "auto", None
+    if not isinstance(value, str):
+        return None, "background must be one of 'transparent', 'opaque', or 'auto'"
+    normalized = value.strip().lower()
+    if normalized in ("transparent", "opaque", "auto"):
+        return normalized, None
+    return None, "background must be one of 'transparent', 'opaque', or 'auto'"
+
+
+async def resolve_image_background_decision(
+    background: str,
+    prompt: str,
+    *,
+    auth_context: AuthContext,
+    force_bypass: bool = False,
+) -> ImageBackgroundRemovalDecision:
+    """Resolve OpenAI's background option into a workflow output selection."""
+    if force_bypass:
+        return _background_removal_fallback("forced_bypass", "edit mask supplied")
+    if background == "transparent":
+        return ImageBackgroundRemovalDecision(
+            remove_background=True,
+            confidence=1.0,
+            reason="client requested transparent background",
+            source="request",
+        )
+    if background == "opaque":
+        return ImageBackgroundRemovalDecision(
+            remove_background=False,
+            confidence=1.0,
+            reason="client requested opaque background",
+            source="request",
+        )
+    return await decide_image_background_removal(prompt, auth_context=auth_context)
+
+
+def _extract_json_object(text: str) -> Optional[dict]:
+    """Best-effort JSON object extraction for backends that ignore json_object."""
+    if not isinstance(text, str):
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    try:
+        obj = json.loads(stripped)
+        return obj if isinstance(obj, dict) else None
+    except json.JSONDecodeError:
+        pass
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        obj = json.loads(stripped[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def parse_background_removal_decision(raw: Any, *, source: str = "llm") -> ImageBackgroundRemovalDecision:
+    """Normalize the LLM's structured decision into the internal shape."""
+    if isinstance(raw, str):
+        raw = _extract_json_object(raw)
+    if not isinstance(raw, dict):
+        return _background_removal_fallback(source, "decision was not a JSON object")
+
+    remove_background = raw.get("remove_background")
+    if not isinstance(remove_background, bool):
+        return _background_removal_fallback(source, "remove_background was not a boolean")
+
+    confidence = raw.get("confidence")
+    try:
+        confidence_val = float(confidence) if confidence is not None else None
+    except (TypeError, ValueError):
+        confidence_val = None
+    if confidence_val is not None:
+        confidence_val = max(0.0, min(1.0, confidence_val))
+
+    reason = raw.get("reason") or raw.get("rationale") or ""
+    return ImageBackgroundRemovalDecision(
+        remove_background=remove_background,
+        confidence=confidence_val,
+        reason=str(reason)[:200],
+        source=source,
+    )
+
+
+async def decide_image_background_removal(
+    prompt: str,
+    *,
+    auth_context: AuthContext,
+    force_bypass: bool = False,
+) -> ImageBackgroundRemovalDecision:
+    """Ask the active LLM whether this image request should return transparency.
+
+    Failure is intentionally non-fatal. The proxy can always produce the normal
+    image, so unknown/invalid decisions default to bypass.
+    """
+    if force_bypass:
+        return _background_removal_fallback("forced_bypass", "edit mask supplied")
+    if not IMAGE_BACKGROUND_REMOVAL_ENABLED:
+        return _background_removal_fallback("disabled")
+    prompt = str(prompt or "").strip()
+    if not prompt:
+        return _background_removal_fallback("empty_prompt")
+
+    active = await get_active_backend()
+    if active == "kobold":
+        target_host = KOBOLD_HOST
+        service = "kobold"
+    elif active == "tabby":
+        target_host = TABBY_HOST
+        service = "tabby"
+    else:
+        return _background_removal_fallback("llm_unavailable", "no active LLM backend")
+
+    model_id = await effective_llm_model_for_host(target_host)
+    if not model_id:
+        model_id = default_model_for_operation("chat", "default")
+
+    headers = configured_downstream_headers(auth_context, service)
+    payload = {
+        "model": model_id,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "/no_think\n"
+                    "Decide whether an image generation request should have its "
+                    "background removed and returned as a transparent PNG. "
+                    "Use the user's intent, not keyword matching. Return only JSON "
+                    "with keys remove_background boolean, confidence number 0..1, "
+                    "and reason string. Choose true for reusable assets such as "
+                    "logos, stickers, product cutouts, icons, isolated objects for "
+                    "commerce, or explicitly transparent-background intent. Choose "
+                    "false for portraits, landscapes, scenes, paintings, context-rich "
+                    "images, and ordinary photos where the environment is part of the result."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0,
+        "max_tokens": 160,
+        "response_format": {"type": "json_object"},
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(IMAGE_BACKGROUND_REMOVAL_TIMEOUT, connect=5)) as client:
+            resp = await client.post(f"{target_host}/v1/chat/completions", headers=headers, json=payload)
+        if resp.status_code != 200:
+            return _background_removal_fallback("llm_error", f"HTTP {resp.status_code}: {resp.text[:120]}")
+        data = resp.json()
+        content = (
+            ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+            if isinstance(data, dict)
+            else ""
+        )
+        return parse_background_removal_decision(content, source="llm")
+    except Exception as e:
+        return _background_removal_fallback("llm_error", str(e))
+
+
+def set_workflow_background_removal(workflow: dict, meta: dict, enabled: bool) -> bool:
+    """Select the workflow-defined plain or transparent image path.
+
+    Background-removal graph structure lives in the committed workflow JSON.
+    The proxy only toggles the SaveImage input declared in `_meta`.
+    """
+    cfg = meta.get("background_removal")
+    if not isinstance(cfg, dict):
+        return False
+    save_node_id = str(cfg.get("save_node") or "")
+    selected_input = cfg.get("transparent_image" if enabled else "plain_image")
+
+    save = workflow.get(save_node_id)
+    if not isinstance(save, dict) or save.get("class_type") != "SaveImage":
+        return False
+    inputs = save.get("inputs")
+    if not isinstance(inputs, dict):
+        return False
+    if not (
+        isinstance(selected_input, list)
+        and len(selected_input) == 2
+        and isinstance(selected_input[0], str)
+        and isinstance(selected_input[1], int)
+        and selected_input[0] in workflow
+    ):
+        return False
+    inputs["images"] = list(selected_input)
+    return True
+
+
 def _image_signing_secret() -> bytes:
     """Resolve (and lazily generate) the HMAC secret used for signed image URLs."""
     global _image_url_signing_secret
@@ -2883,6 +3116,64 @@ async def evict_image_cache_loop(stop_event: asyncio.Event) -> None:
             await asyncio.wait_for(stop_event.wait(), timeout=IMAGE_CACHE_EVICT_INTERVAL)
         except asyncio.TimeoutError:
             continue
+
+
+# OpenAI's documented set of valid reasoning_effort values on /v1/chat/completions.
+# Per OpenAI docs (May 2026): gpt-5.1+ accepts "none", gpt-5 accepts "minimal",
+# o-series/GPT-5 accept "low"/"medium"/"high", gpt-5.2 and codex variants add
+# "xhigh". We accept the union and return 400 on anything else.
+_REASONING_EFFORT_VALUES = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
+
+# Effort values that should suppress thinking on local reasoning models that have
+# a binary thinking switch (Qwen3.6's /no_think + chat_template_kwargs.enable_thinking).
+_REASONING_EFFORT_SUPPRESS = frozenset({"none", "minimal"})
+
+
+def apply_chat_completions_reasoning_effort(body_json: dict) -> Optional[str]:
+    """Translate OpenAI's `reasoning_effort` on /v1/chat/completions into signals
+    the local backend (llama-server) understands. Mutates body_json in place.
+
+    Returns an error message string if the value is invalid (caller should emit
+    a 400 in OpenAI's error shape). Returns None on success or no-op.
+
+    Local models (Qwen3.6 family) have a binary thinking switch, not graded effort
+    tiers, so we map:
+      - "none" / "minimal" -> /no_think + chat_template_kwargs.enable_thinking=false
+      - "low" / "medium" / "high" / "xhigh" -> no-op (model thinks normally)
+    The field itself is always stripped before forwarding so llama-server doesn't
+    see an unknown parameter.
+    """
+    if "reasoning_effort" not in body_json:
+        return None
+    effort = body_json.pop("reasoning_effort")
+    if effort is None:
+        return None
+    if not isinstance(effort, str) or effort not in _REASONING_EFFORT_VALUES:
+        return (
+            f"Invalid value for 'reasoning_effort': {effort!r}. "
+            f"Expected one of: {sorted(_REASONING_EFFORT_VALUES)}."
+        )
+    if effort not in _REASONING_EFFORT_SUPPRESS:
+        return None
+
+    # Suppress thinking. Belt-and-suspenders: chat template kwarg (preferred,
+    # llama-server understands it for Qwen3 family) plus /no_think system hint
+    # (fallback for backends that ignore the kwarg).
+    kwargs = body_json.setdefault("chat_template_kwargs", {})
+    if isinstance(kwargs, dict):
+        kwargs.setdefault("enable_thinking", False)
+
+    messages = body_json.get("messages")
+    if isinstance(messages, list):
+        hint = "/no_think"
+        for i, m in enumerate(messages):
+            if isinstance(m, dict) and m.get("role") == "system":
+                existing = m.get("content") or ""
+                if isinstance(existing, str) and hint not in existing:
+                    messages[i] = {**m, "content": (existing + ("\n" if existing else "") + hint)}
+                return None
+        messages.insert(0, {"role": "system", "content": hint})
+    return None
 
 
 def has_vision_content(messages) -> bool:
@@ -3064,6 +3355,9 @@ async def _generate_images_with_adaptive_batching(
     n_requested: int,
     response_format: str,
     headers: dict,
+    background_removal_decision: Optional[ImageBackgroundRemovalDecision] = None,
+    fallback_workflow: Optional[dict] = None,
+    fallback_workflow_name: Optional[str] = None,
 ) -> Response:
     """Submit `ceil(n / max_batch)` rounds and aggregate `n_requested` images.
 
@@ -3160,6 +3454,46 @@ async def _generate_images_with_adaptive_batching(
             vram_probe=probe,
         )
         if err is not None:
+            if (
+                background_removal_decision is not None
+                and background_removal_decision.remove_background
+                and fallback_workflow is not None
+            ):
+                try:
+                    body = json.loads(err.body.decode("utf-8")) if getattr(err, "body", None) else {}
+                    msg = ((body.get("error") or {}).get("message") or "") if isinstance(body, dict) else ""
+                except Exception:
+                    msg = ""
+                msg = msg[:200] or f"HTTP {getattr(err, 'status_code', 'unknown')}"
+                print(f"[proxy] background removal failed; retrying without RMBG: {msg}", flush=True)
+                firehose_metrics.record_event(
+                    "image_background_removal_fallback",
+                    "RMBG failed; retried without background removal",
+                    workflow=workflow_name,
+                    reason=msg,
+                )
+                bypass_decision = ImageBackgroundRemovalDecision(
+                    remove_background=False,
+                    confidence=0.0,
+                    reason="RMBG failed; retried without background removal",
+                    source="rmbg_fallback",
+                    error=msg,
+                )
+                return await _generate_images_with_adaptive_batching(
+                    request=request,
+                    client=client,
+                    base_workflow=copy.deepcopy(fallback_workflow),
+                    meta=meta,
+                    seed_node=seed_node,
+                    seed_field=seed_field,
+                    workflow_name=fallback_workflow_name or workflow_name,
+                    width=width,
+                    height=height,
+                    n_requested=n_requested,
+                    response_format=response_format,
+                    headers=headers,
+                    background_removal_decision=bypass_decision,
+                )
             return err
 
         if not round_images:
@@ -3284,6 +3618,12 @@ async def _generate_images_with_adaptive_batching(
         response_headers["X-Proxy-Warning"] = "; ".join(warnings)
     response_headers["X-Image-Rounds"] = str(rounds_run)
     response_headers["X-Image-Returned"] = str(len(images_collected))
+    if background_removal_decision is not None:
+        response_headers["X-Image-Background-Removal"] = (
+            "true" if background_removal_decision.remove_background else "false"
+        )
+        if background_removal_decision.source:
+            response_headers["X-Image-Background-Removal-Source"] = background_removal_decision.source
 
     print(
         f"[proxy] ComfyUI generated {len(images_collected)}/{n_requested} image(s) "
@@ -3315,6 +3655,18 @@ async def proxy_comfy_request(request: Request, auth_context: AuthContext) -> Re
     prompt = body.get("prompt", "")
     model = body.get("model", COMFY_DEFAULT_MODEL)
     size = body.get("size", "1024x1024")
+    background, background_err = parse_image_background(body.get("background"))
+    if background_err:
+        return Response(
+            content=json.dumps({"error": {
+                "message": background_err,
+                "type": "invalid_request_error",
+                "param": "background",
+                "code": "invalid_value",
+            }}),
+            status_code=400,
+            media_type="application/json",
+        )
     try:
         n = int(body.get("n", 1))
     except (TypeError, ValueError):
@@ -3363,6 +3715,11 @@ async def proxy_comfy_request(request: Request, auth_context: AuthContext) -> Re
     workflow = copy.deepcopy(workflow)
     meta = workflow.pop("_meta", {})
     workflow_name = str(meta.get("name") or model)
+    background_decision = await resolve_image_background_decision(
+        background or "auto",
+        prompt,
+        auth_context=auth_context,
+    )
 
     prompt_node = meta.get("prompt_node")
     size_node = meta.get("size_node")
@@ -3376,6 +3733,42 @@ async def proxy_comfy_request(request: Request, auth_context: AuthContext) -> Re
         workflow[size_node]["inputs"]["width"] = width
         workflow[size_node]["inputs"]["height"] = height
 
+    fallback_workflow = copy.deepcopy(workflow)
+    set_workflow_background_removal(fallback_workflow, meta, False)
+
+    if background_decision.remove_background:
+        if set_workflow_background_removal(workflow, meta, True):
+            print(
+                f"[proxy] Image background removal enabled for {workflow_name} "
+                f"(confidence={background_decision.confidence})",
+                flush=True,
+            )
+            firehose_metrics.record_event(
+                "image_background_removal",
+                "background removal enabled",
+                workflow=workflow_name,
+                confidence=background_decision.confidence,
+                source=background_decision.source,
+            )
+            workflow_name_for_batching = f"{workflow_name}+rmbg"
+        else:
+            print(f"[proxy] background removal requested but workflow {workflow_name} has no background_removal wiring", flush=True)
+            firehose_metrics.record_event(
+                "image_background_removal_fallback",
+                "workflow has no RMBG wiring",
+                workflow=workflow_name,
+            )
+            background_decision = ImageBackgroundRemovalDecision(
+                remove_background=False,
+                confidence=0.0,
+                reason="workflow has no RMBG wiring",
+                source="workflow_unsupported",
+            )
+            workflow_name_for_batching = workflow_name
+    else:
+        set_workflow_background_removal(workflow, meta, False)
+        workflow_name_for_batching = workflow_name
+
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
             return await _generate_images_with_adaptive_batching(
@@ -3385,12 +3778,15 @@ async def proxy_comfy_request(request: Request, auth_context: AuthContext) -> Re
                 meta=meta,
                 seed_node=seed_node,
                 seed_field="seed",
-                workflow_name=workflow_name,
+                workflow_name=workflow_name_for_batching,
                 width=width,
                 height=height,
                 n_requested=n,
                 response_format=response_format,
                 headers=headers,
+                background_removal_decision=background_decision,
+                fallback_workflow=fallback_workflow,
+                fallback_workflow_name=workflow_name,
             )
     except httpx.TimeoutException:
         return Response(
@@ -3431,9 +3827,22 @@ async def proxy_comfy_edit_request(request: Request, auth_context: AuthContext) 
         )
 
     image_file = form.get("image")
+    mask_file = form.get("mask")
     prompt = form.get("prompt", "")
     model = form.get("model", "flux2-klein-4b-edit")
     size = form.get("size", "")
+    background, background_err = parse_image_background(form.get("background"))
+    if background_err:
+        return Response(
+            content=json.dumps({"error": {
+                "message": background_err,
+                "type": "invalid_request_error",
+                "param": "background",
+                "code": "invalid_value",
+            }}),
+            status_code=400,
+            media_type="application/json",
+        )
     try:
         n = int(form.get("n", 1))
     except (TypeError, ValueError):
@@ -3533,6 +3942,12 @@ async def proxy_comfy_edit_request(request: Request, auth_context: AuthContext) 
             workflow = copy.deepcopy(workflow)
             meta = workflow.pop("_meta", {})
             workflow_name = str(meta.get("name") or model)
+            background_decision = await resolve_image_background_decision(
+                background or "auto",
+                prompt,
+                auth_context=auth_context,
+                force_bypass=bool(mask_file),
+            )
 
             prompt_node = meta.get("prompt_node")
             image_node = meta.get("image_node")
@@ -3554,6 +3969,41 @@ async def proxy_comfy_edit_request(request: Request, auth_context: AuthContext) 
                     if "height" in workflow[node_id]["inputs"]:
                         workflow[node_id]["inputs"]["height"] = img_height
 
+            fallback_workflow = copy.deepcopy(workflow)
+            set_workflow_background_removal(fallback_workflow, meta, False)
+            if background_decision.remove_background:
+                if set_workflow_background_removal(workflow, meta, True):
+                    print(
+                        f"[proxy] Image edit background removal enabled for {workflow_name} "
+                        f"(confidence={background_decision.confidence})",
+                        flush=True,
+                    )
+                    firehose_metrics.record_event(
+                        "image_background_removal",
+                        "edit background removal enabled",
+                        workflow=workflow_name,
+                        confidence=background_decision.confidence,
+                        source=background_decision.source,
+                    )
+                    workflow_name_for_batching = f"{workflow_name}+rmbg"
+                else:
+                    print(f"[proxy] background removal requested but edit workflow {workflow_name} has no background_removal wiring", flush=True)
+                    firehose_metrics.record_event(
+                        "image_background_removal_fallback",
+                        "edit workflow has no RMBG wiring",
+                        workflow=workflow_name,
+                    )
+                    background_decision = ImageBackgroundRemovalDecision(
+                        remove_background=False,
+                        confidence=0.0,
+                        reason="workflow has no RMBG wiring",
+                        source="workflow_unsupported",
+                    )
+                    workflow_name_for_batching = workflow_name
+            else:
+                set_workflow_background_removal(workflow, meta, False)
+                workflow_name_for_batching = workflow_name
+
             # V2 uses RandomNoise with noise_seed, V1 used KSampler with seed.
             seed_field = "seed"
             if seed_node and seed_node in workflow:
@@ -3568,12 +4018,15 @@ async def proxy_comfy_edit_request(request: Request, auth_context: AuthContext) 
                 meta=meta,
                 seed_node=seed_node,
                 seed_field=seed_field,
-                workflow_name=workflow_name,
+                workflow_name=workflow_name_for_batching,
                 width=img_width,
                 height=img_height,
                 n_requested=n,
                 response_format=response_format,
                 headers=headers,
+                background_removal_decision=background_decision,
+                fallback_workflow=fallback_workflow,
+                fallback_workflow_name=workflow_name,
             )
 
     except httpx.TimeoutException:
@@ -5728,6 +6181,277 @@ async def videos_content(video_id: str, request: Request):
     return await proxy_comfy_video_content(video_id, auth_context)
 
 
+# =============================================================================
+# Audio Generation via ComfyUI (ACE-Step + TangoFlux)
+# =============================================================================
+
+_audio_cfg = config.get("audio", {}) or {}
+AUDIO_DEFAULT_WORKFLOW = _audio_cfg.get("default_workflow", "ace-step-1.5-2b-base")
+_AUDIO_WORKFLOWS_DIR_CFG = _audio_cfg.get("workflows_dir", "./workflows/audio")
+AUDIO_WORKFLOWS_DIR = Path(_AUDIO_WORKFLOWS_DIR_CFG)
+if not AUDIO_WORKFLOWS_DIR.is_absolute():
+    AUDIO_WORKFLOWS_DIR = (Path(__file__).parent / _AUDIO_WORKFLOWS_DIR_CFG).resolve()
+AUDIO_WORKFLOWS_CFG = (_audio_cfg.get("workflows", {}) or {})
+AUDIO_ALIASES = (_audio_cfg.get("aliases", {}) or {})
+
+
+def _resolve_audio_workflow(model: str) -> tuple:
+    """Map model to (name, cfg). Returns (None, None) if not found."""
+    candidate = (model or "").strip()
+    if not candidate:
+        candidate = AUDIO_DEFAULT_WORKFLOW
+    if candidate in AUDIO_WORKFLOWS_CFG:
+        return candidate, AUDIO_WORKFLOWS_CFG[candidate]
+    alias_target = AUDIO_ALIASES.get(candidate.lower())
+    if alias_target and alias_target in AUDIO_WORKFLOWS_CFG:
+        return alias_target, AUDIO_WORKFLOWS_CFG[alias_target]
+    return None, None
+
+
+def _load_audio_workflow_file(workflow_cfg: dict):
+    """Load audio workflow JSON."""
+    file_path = workflow_cfg.get("file")
+    if not file_path:
+        return None
+    p = Path(file_path)
+    if not p.is_absolute():
+        p = Path(__file__).parent / file_path
+    if not p.exists():
+        return None
+    with open(p) as f:
+        workflow = json.load(f)
+    return workflow
+
+
+def _extract_audio_output(job: dict):
+    """Extract audio file info from ComfyUI job outputs."""
+    outputs = (job or {}).get("outputs", {}) or {}
+    for node_id, node_output in outputs.items():
+        for key in ("audios", "audio", "wav", "mp3"):
+            entries = node_output.get(key) or []
+            for entry in entries:
+                if isinstance(entry, dict):
+                    return {
+                        "filename": entry.get("filename"),
+                        "subfolder": entry.get("subfolder", ""),
+                        "type": entry.get("type", "output"),
+                    }
+    return None
+
+
+async def proxy_audio_generate(request: Request, auth_context):
+    """POST /v1/audio/generate — submit audio generation via ComfyUI."""
+    if not COMFY_ENABLED:
+        return Response(
+            content=json.dumps({"error": {"message": "Audio generation not enabled", "type": "service_unavailable"}}),
+            status_code=503,
+            media_type="application/json"
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        return Response(
+            content=json.dumps({"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
+
+    prompt = (body.get("prompt") or body.get("input") or "").strip()
+    model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
+    duration = body.get("duration", 30)
+    seed = body.get("seed")
+    audio_type = body.get("type", "music")  # music | sfx | ambient
+
+    if not prompt:
+        return Response(
+            content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
+
+    workflow_name, workflow_cfg = _resolve_audio_workflow(model)
+    if not workflow_cfg:
+        return Response(
+            content=json.dumps({"error": {"message": f"Unknown audio model: {model}", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
+
+    workflow = _load_audio_workflow_file(workflow_cfg)
+    if not workflow:
+        return Response(
+            content=json.dumps({"error": {"message": f"Workflow file missing for {workflow_name}", "type": "api_error"}}),
+            status_code=500,
+            media_type="application/json"
+        )
+
+    workflow = copy.deepcopy(workflow)
+    meta = workflow.pop("_meta", {})
+
+    # Inject parameters. Each *_node entry may be a single node id (legacy)
+    # or a list of {"node": id, "key": fieldname} mappings so one workflow
+    # can write the same logical value into multiple node inputs with
+    # different key names (e.g. ACE-Step's `seconds` vs TangoFlux's `duration`).
+    def _injection_targets(meta_value, default_key):
+        if not meta_value:
+            return []
+        if isinstance(meta_value, list):
+            out = []
+            for entry in meta_value:
+                if isinstance(entry, dict) and entry.get("node"):
+                    out.append((entry["node"], entry.get("key", default_key)))
+                elif isinstance(entry, str):
+                    out.append((entry, default_key))
+            return out
+        return [(meta_value, default_key)]
+
+    for node_id, key in _injection_targets(meta.get("prompt_node"), "text"):
+        if node_id in workflow:
+            workflow[node_id]["inputs"][key] = prompt
+
+    for node_id, key in _injection_targets(meta.get("duration_node"), "duration"):
+        if node_id in workflow:
+            try:
+                workflow[node_id]["inputs"][key] = float(duration)
+            except (TypeError, ValueError):
+                pass
+
+    seed_targets = _injection_targets(meta.get("seed_node"), "seed")
+    if seed_targets:
+        try:
+            seed_val = int(seed) if seed is not None else random.randint(0, 2**32 - 1)
+        except (TypeError, ValueError):
+            seed_val = random.randint(0, 2**32 - 1)
+        for node_id, key in seed_targets:
+            if node_id in workflow:
+                workflow[node_id]["inputs"][key] = seed_val
+
+    headers = configured_downstream_headers(auth_context, "comfyui")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+            resp = await client.post(
+                f"{COMFY_HOST}/prompt",
+                headers=headers,
+                json=_build_comfy_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
+            )
+            if resp.status_code != 200:
+                return Response(
+                    content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text[:500]}", "type": "api_error"}}),
+                    status_code=502,
+                    media_type="application/json"
+                )
+            prompt_id = resp.json().get("prompt_id")
+            if not prompt_id:
+                return Response(
+                    content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
+                    status_code=502,
+                    media_type="application/json"
+                )
+
+            audio_id = f"audio_{prompt_id}"
+            print(f"[proxy] Audio job submitted: workflow={workflow_name} id={audio_id}", flush=True)
+
+            # Wait for completion (simple polling)
+            for _ in range(600):  # 10 min max
+                await asyncio.sleep(2)
+                history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
+                if history_resp.status_code != 200:
+                    continue
+                history = history_resp.json()
+                if prompt_id not in history:
+                    continue
+                job = history[prompt_id]
+                status_obj = job.get("status", {}) or {}
+                status = status_obj.get("status_str") or status_obj.get("status") or ""
+                if status == "success":
+                    file_info = _extract_audio_output(job)
+                    if file_info and file_info.get("filename"):
+                        # Fetch the audio file
+                        params = {"filename": file_info["filename"], "type": file_info.get("type", "output")}
+                        if file_info.get("subfolder"):
+                            params["subfolder"] = file_info["subfolder"]
+                        audio_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
+                        if audio_resp.status_code == 200:
+                            content_type = audio_resp.headers.get("content-type", "audio/wav")
+                            return Response(
+                                content=audio_resp.content,
+                                status_code=200,
+                                media_type=content_type,
+                                headers={"X-Audio-Model": workflow_name, "X-Audio-Type": audio_type}
+                            )
+                    return Response(
+                        content=json.dumps({"error": {"message": "No audio output found", "type": "api_error"}}),
+                        status_code=502,
+                        media_type="application/json"
+                    )
+                elif status == "error":
+                    err_msg = "ComfyUI generation failed"
+                    for tag, payload in (status_obj.get("messages") or []):
+                        if tag == "execution_error" and isinstance(payload, dict):
+                            err_msg = f"ComfyUI {payload.get('node_type','')}: {payload.get('exception_message','').strip() or payload.get('exception_type','')}"
+                            break
+                    return Response(
+                        content=json.dumps({"error": {"message": err_msg, "type": "api_error"}}),
+                        status_code=502,
+                        media_type="application/json"
+                    )
+
+            return Response(
+                content=json.dumps({"error": {"message": "Audio generation timeout", "type": "api_error"}}),
+                status_code=504,
+                media_type="application/json"
+            )
+    except httpx.TimeoutException:
+        return Response(
+            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
+            status_code=504,
+            media_type="application/json"
+        )
+    except httpx.ConnectError:
+        return Response(
+            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json"
+        )
+    except Exception as e:
+        return Response(
+            content=json.dumps({"error": {"message": f"Audio proxy error: {str(e)}", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json"
+        )
+
+
+@app.post("/v1/audio/generate")
+async def audio_generate(request: Request):
+    """OpenAI-compatible audio generation endpoint."""
+    auth_context = authenticate_request(request, "/v1/audio/generate")
+    if isinstance(auth_context, Response):
+        return auth_context
+    return await proxy_audio_generate(request, auth_context)
+
+
+@app.get("/v1/audio/models")
+async def audio_models(request: Request):
+    """List available audio generation models."""
+    auth_context = authenticate_request(request, "/v1/audio/models")
+    if isinstance(auth_context, Response):
+        return auth_context
+    models = []
+    for name, cfg in AUDIO_WORKFLOWS_CFG.items():
+        models.append({
+            "id": name,
+            "owned_by": "local",
+            "permission": "generate",
+            "max_seconds": cfg.get("max_seconds", 300),
+            "min_seconds": cfg.get("min_seconds", 1),
+        })
+    return Response(
+        content=json.dumps({"data": models}),
+        status_code=200,
+        media_type="application/json"
+    )
+
+
 def _entry_created_ts(path: Optional[str]) -> int:
     """mtime of a GGUF path when stat-able, else current time. Silent on EBADF/etc.
     is bad — log when the file is unreadable so missing mounts surface."""
@@ -6069,7 +6793,17 @@ async def _forward_chat_completions(
         headers["x-api-key"] = api_key_hdr
 
     body = json.dumps(cc_body).encode("utf-8")
-    client = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=10))
+    # Loopback to /v1/chat/completions — inner forwarder already enforces
+    # UPSTREAM_READ_TIMEOUT against the LLM backend, so the outer read here
+    # only needs to bound the in-process round-trip (loopback is localhost
+    # and proxy code is non-blocking). Match UPSTREAM_READ_TIMEOUT so this
+    # never trips before the inner timeout does.
+    client = httpx.AsyncClient(timeout=httpx.Timeout(
+        connect=10.0,
+        read=UPSTREAM_READ_TIMEOUT,
+        write=60.0,
+        pool=None,
+    ))
     if stream:
         req = client.build_request("POST", url, headers=headers, content=body)
         resp = await client.send(req, stream=True)
@@ -6654,6 +7388,23 @@ async def proxy_request(request: Request, path: str):
                 effective_name = body_json.get("model", model_name)
                 body_json["vision"] = vision_routed_state == "true" or is_vision_model(effective_name)
                 print(f"[proxy] Auto-detected vision={body_json['vision']} for model {effective_name}", flush=True)
+            # Translate OpenAI's `reasoning_effort` parameter into local-backend
+            # signals. /v1/chat/completions only; /v1/completions doesn't accept it
+            # per the OpenAI spec, but we treat both the same way (passive strip)
+            # since llama-server's /v1/completions wouldn't recognize the field
+            # either. Invalid values produce a 400 in OpenAI's error shape.
+            err = apply_chat_completions_reasoning_effort(body_json)
+            if err:
+                return Response(
+                    content=json.dumps({"error": {
+                        "message": err,
+                        "type": "invalid_request_error",
+                        "param": "reasoning_effort",
+                        "code": "invalid_value",
+                    }}),
+                    status_code=400,
+                    media_type="application/json",
+                )
             body = json.dumps(body_json).encode()
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass  # Not JSON or can't parse, forward as-is
@@ -6666,7 +7417,16 @@ async def proxy_request(request: Request, path: str):
             pass
 
     try:
-        client = httpx.AsyncClient(timeout=httpx.Timeout(300, connect=10))
+        # connect tight (local backend should accept instantly), read generous
+        # (covers slow prompt-processing on reasoning/vision), write tight
+        # (request bodies are small even with base64 images), no pool budget
+        # (fresh client per request — no shared pool to wait on).
+        client = httpx.AsyncClient(timeout=httpx.Timeout(
+            connect=10.0,
+            read=UPSTREAM_READ_TIMEOUT,
+            write=60.0,
+            pool=None,
+        ))
         req = client.build_request(method=request.method, url=url, headers=headers, content=body)
         resp = await client.send(req, stream=True)
 
