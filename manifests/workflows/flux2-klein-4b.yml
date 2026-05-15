@@ -1,0 +1,64 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.generate.flux2-klein-4b
+intent: image.generate
+display_name: Flux2 Klein 4B
+description: Portable image generation contract bound to the FLUX.2 Klein 4B txt2img ComfyUI workflow.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  width:
+    type: integer
+    minimum: 64
+    maximum: 2048
+  height:
+    type: integer
+    minimum: 64
+    maximum: 2048
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 100
+  guidance:
+    type: number
+    minimum: 0
+    maximum: 20
+  seed:
+    type: integer
+    minimum: 0
+  batch_size:
+    type: integer
+    minimum: 1
+    maximum: 8
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/flux2-klein-4b.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      width:
+        - node: "27"
+          input: width
+      height:
+        - node: "27"
+          input: height
+      steps:
+        - node: "31"
+          input: steps
+      guidance:
+        - node: "35"
+          input: guidance
+      seed:
+        - node: "31"
+          input: seed
+      batch_size:
+        - node: "27"
+          input: batch_size
