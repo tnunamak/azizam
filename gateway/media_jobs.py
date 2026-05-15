@@ -37,6 +37,11 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
+from gateway.redaction import (
+    FORBIDDEN_KEYS as _SHARED_FORBIDDEN_KEYS,
+    assert_safe_mapping as _shared_assert_safe_mapping,
+)
+
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "media_jobs.db"
 
 # Retention: 14 days. Match the receipt store; media jobs reference durable
@@ -109,45 +114,10 @@ ADMIN_ONLY_FIELDS = frozenset(
 INTERNAL_ONLY_FIELDS = frozenset({"metadata"})
 
 # Metadata/event keys that smell like raw payloads, secrets, or media bytes.
-# Mirrors the receipt_store guard so the two persistence surfaces share a
-# single redaction contract.
-_FORBIDDEN_KEYS = frozenset(
-    {
-        "prompt",
-        "prompts",
-        "input",
-        "inputs",
-        "messages",
-        "image",
-        "images",
-        "image_b64",
-        "image_bytes",
-        "image_data",
-        "video",
-        "video_bytes",
-        "audio",
-        "audio_bytes",
-        "media",
-        "media_bytes",
-        "bytes",
-        "data_b64",
-        "body",
-        "raw_body",
-        "raw_request",
-        "raw_response",
-        "request_body",
-        "response_body",
-        "authorization",
-        "api_key",
-        "api_token",
-        "secret",
-        "token",
-        "password",
-        "credentials",
-        "cookie",
-        "cookies",
-    }
-)
+# Sourced from ``gateway.redaction`` so receipts and media jobs share one
+# vocabulary. Re-exported under the historical name for external callers
+# (the test suite asserts the two names refer to the same frozenset).
+_FORBIDDEN_KEYS = _SHARED_FORBIDDEN_KEYS  # noqa: F841 — re-exported for backward compat
 
 
 def new_job_id() -> str:
@@ -232,27 +202,12 @@ def _clamp_progress(value: Any) -> int:
 
 
 def _assert_safe_mapping(label: str, data: Any) -> None:
-    """Reject obviously unsafe shapes before they hit disk."""
-    if not isinstance(data, Mapping):
-        raise ValueError(f"{label} must be a mapping")
-    bad = sorted(k for k in data.keys() if str(k).lower() in _FORBIDDEN_KEYS)
-    if bad:
-        raise ValueError(
-            f"{label} contains forbidden keys: {bad} "
-            "(media jobs must not carry raw prompts, media bytes, secrets, or request bodies)"
-        )
-    # Recurse one level into nested dicts. We don't deep-walk arbitrary trees:
-    # the contract is metadata-only, and callers are expected to keep nesting
-    # shallow. One level catches the common "wrap a body in metadata.payload"
-    # mistake without becoming a content scanner.
-    for v in data.values():
-        if isinstance(v, Mapping):
-            bad_nested = sorted(k for k in v.keys() if str(k).lower() in _FORBIDDEN_KEYS)
-            if bad_nested:
-                raise ValueError(
-                    f"{label} contains forbidden nested keys: {bad_nested} "
-                    "(media jobs must not carry raw prompts, media bytes, secrets, or request bodies)"
-                )
+    """Reject obviously unsafe shapes before they hit disk.
+
+    Thin wrapper over ``gateway.redaction.assert_safe_mapping`` kept so older
+    call-sites in this module continue to read naturally.
+    """
+    _shared_assert_safe_mapping(label, data, recurse=True)
 
 
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:

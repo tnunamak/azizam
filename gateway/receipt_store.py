@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from gateway.receipts import CLIENT_VISIBLE_FIELDS, RouteReceipt
+from gateway.redaction import assert_safe_mapping, assert_safe_top_level
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "receipts.db"
 
@@ -43,34 +44,6 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "receipts.db"
 RETAIN_S = 14 * 24 * 3600
 
 SCHEMA_VERSION = 1
-
-# Metadata keys that smell like raw payload or secrets. Receipts must never
-# carry these; persisting them would defeat the redaction contract.
-_FORBIDDEN_METADATA_KEYS = frozenset(
-    {
-        "prompt",
-        "prompts",
-        "input",
-        "inputs",
-        "messages",
-        "image",
-        "images",
-        "image_b64",
-        "image_bytes",
-        "body",
-        "raw_body",
-        "raw_request",
-        "raw_response",
-        "request_body",
-        "response_body",
-        "authorization",
-        "api_key",
-        "api_token",
-        "secret",
-        "token",
-        "password",
-    }
-)
 
 _AUDIENCES = ("internal", "admin", "client")
 
@@ -178,30 +151,16 @@ def _assert_safe(data: Mapping[str, Any]) -> None:
     """Reject obviously unsafe shapes before we hit disk.
 
     Cheap structural check — not a substitute for callers building receipts
-    correctly. Looks at the metadata bag (the one free-form field) and top
-    level keys.
+    correctly. Delegates the forbidden-key vocabulary to ``gateway.redaction``
+    so receipts and media jobs share one contract.
     """
     if "request_id" not in data or not data["request_id"]:
         raise ValueError("receipt missing request_id")
-
-    bad_top_level = sorted(
-        k for k in data.keys() if str(k).lower() in _FORBIDDEN_METADATA_KEYS
-    )
-    if bad_top_level:
-        raise ValueError(
-            f"receipt contains forbidden top-level keys: {bad_top_level} "
-            "(receipts must not carry raw prompts, image bytes, secrets, or request bodies)"
-        )
-
-    metadata = data.get("metadata") or {}
-    if not isinstance(metadata, Mapping):
-        raise ValueError("receipt.metadata must be a mapping")
-    bad = sorted(k for k in metadata.keys() if str(k).lower() in _FORBIDDEN_METADATA_KEYS)
-    if bad:
-        raise ValueError(
-            f"receipt.metadata contains forbidden keys: {bad} "
-            "(receipts must not carry raw prompts, image bytes, secrets, or request bodies)"
-        )
+    assert_safe_top_level("receipt", data)
+    metadata = data.get("metadata")
+    if metadata is None:
+        return
+    assert_safe_mapping("receipt.metadata", metadata)
 
 
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
