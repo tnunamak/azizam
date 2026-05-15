@@ -62,7 +62,8 @@ The raw `opk_...` key is shown only once when generated. If it is lost, generate
 a new key for the same name and update that agent's client configuration.
 
 If the same `<agent-name>` already exists, the command rotates that agent's
-client key while preserving its downstream mapping.
+client key while preserving its downstream mapping and (when wired) its
+`profile:` block.
 
 ## Request Auth Rules
 
@@ -170,7 +171,151 @@ headers:
 ```
 
 The proxy reloads `proxy_api_keys.yml` when it changes, so adding, rotating, or
-deleting a key does not require a service restart.
+deleting a key does not require a service restart. App profile blocks (see
+below) reload alongside the key entries they live on.
+
+## App Profiles
+
+App profiles are the authorization and audience boundary for a key. Each key
+entry may carry an optional `profile:` block that the gateway loads into an
+`AppProfile` via `gateway.profiles.load_profile_from_entry`. When mounted in
+the request path, the profile decides:
+
+- which protocols the key may use (e.g. `openai.chat`, `openai.images`,
+  `openai.audio`, `openai.responses`, `anthropic.messages`, `ollama.chat`,
+  `ollama.generate`)
+- which workflows, models, and backends the key may target
+- whether cloud fallback is allowed
+- whether — and where — native passthrough is permitted
+- how much status, discovery, and receipt detail the key sees
+
+Missing `profile:` blocks stay backward-compatible: the loader falls back to
+`DEFAULT_PROFILE` (local-only, basic visibility), so existing keys keep
+working unchanged.
+
+Allow-lists are conservative by construction:
+
+- omit a list → "no opinion" for that dimension (no restriction)
+- set a list to `[]` → "deny all" for that dimension
+
+`status_visibility.level` maps a key to a discovery/receipt audience tier:
+
+| Level      | Audience       | What the key sees                              |
+|------------|----------------|------------------------------------------------|
+| `none`     | client         | No receipts; minimal discovery                 |
+| `basic`    | client         | Client receipts (request/job IDs, status)      |
+| `standard` | admin          | Routing facts, fallback reasons                |
+| `full`     | internal       | Backend, policy source, manifest hash, diags   |
+
+Example profile block on a key entry:
+
+```yaml
+keys:
+  - name: image-agent
+    key_hash: sha256:...
+    profile:
+      id: image-agent
+      protocols: ["openai.images"]
+      workflows: ["image.edit.controlnet.example"]
+      models: ["sdxl-base"]
+      backends: ["comfyui.local"]
+      fallback:
+        cloud_allowed: false
+      status_visibility:
+        level: basic
+```
+
+### Native passthrough
+
+`native_passthrough` is opt-in and scoped per profile. It is not a blanket
+ComfyUI DSL — it is a privileged lane for specific operations on specific
+backends, and every use is recorded in receipts.
+
+```yaml
+profile:
+  id: comfy-tinkerer
+  native_passthrough:
+    enabled: true
+    allowed_backends: ["comfyui.local"]
+    allowed_operations: ["queue_prompt", "history"]
+    audit: true
+```
+
+### Gateway-owned controls live under extensions
+
+Backend-native power (denoise, controlnet strength, model-specific knobs)
+should not be added as global OpenAI fields. It belongs under namespaced
+gateway extensions:
+
+```json
+{
+  "extensions": {
+    "com.vividfish.workflow": {
+      "denoise": 0.35,
+      "controlnet_strength": 1.1
+    }
+  }
+}
+```
+
+Unknown extension inputs are rejected with a reason; known-but-unsupported
+inputs are recorded as ignored. The proxy never silently drops inputs.
+
+### Templates for current local keys
+
+Safe starter profiles for the agent/UI/harness keys this proxy serves today.
+Drop these under the matching key entry — they use non-secret placeholders
+only. Tighten the allow-lists when a key has a narrow role; leave them
+omitted to keep "no opinion" semantics until you need to restrict.
+
+```yaml
+# Agent/coding clients (Claude Code-style, Continue, Cline):
+- name: simon
+  key_hash: sha256:...
+  profile:
+    id: simon
+    # Omit protocols/models to stay permissive; add lists when narrowing.
+    fallback:
+      cloud_allowed: false
+    status_visibility:
+      level: standard
+
+# UI clients (LibreChat, Open WebUI):
+- name: librechat
+  key_hash: sha256:...
+  profile:
+    id: librechat
+    protocols: ["openai.chat", "openai.responses", "openai.audio"]
+    fallback:
+      cloud_allowed: false
+    status_visibility:
+      level: basic
+
+- name: open-webui
+  key_hash: sha256:...
+  profile:
+    id: open-webui
+    protocols: ["openai.chat", "openai.responses", "openai.audio", "openai.images"]
+    fallback:
+      cloud_allowed: false
+    status_visibility:
+      level: basic
+
+# Compatibility harness / test client:
+- name: claude-test
+  key_hash: sha256:...
+  profile:
+    id: claude-test
+    protocols: ["anthropic.messages"]
+    fallback:
+      cloud_allowed: false
+    status_visibility:
+      level: full
+
+# Helper agents (daisy, cap): leave profile omitted to inherit
+# DEFAULT_PROFILE (local-only, basic visibility) until a narrower
+# boundary is needed.
+```
 
 ## Rotation And Revocation
 

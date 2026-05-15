@@ -14,28 +14,37 @@ The status of each build-order item below reflects what currently lives on
 
 - [x] Pure app-profile policy module (`gateway/policy.py`, `tests/test_policy.py`)
 - [x] Pure app-profile loader for existing key-entry config (`gateway/profiles.py`, `tests/test_profiles.py`)
+- [x] Pure runtime-auth/profile bridge (`gateway/runtime_auth.py`,
+      `tests/test_runtime_auth.py`) — `RuntimeIdentity`, identity registry,
+      policy bridge, profile→audience helper
 - [x] Pure workflow registry with audience-aware summaries (`gateway/discovery.py`, `tests/test_workflow_discovery_registry.py`)
 - [x] Workflow manifest parsing/validation/binding with receipt-ready binding provenance (`gateway/manifests.py`)
 - [x] Typed request-extension validation contract (`gateway/extensions.py`, `tests/test_extensions.py`)
+- [x] Image-extension/manifest-binding layer (`gateway/image_extensions.py`)
 - [x] Pure capability model and policy-aware summaries (`gateway/capabilities.py`, `tests/test_capabilities.py`)
-- [x] Unmounted read-only workflow discovery router (`gateway/api.py`, `tests/test_gateway_api.py`)
+- [x] Pure Anthropic and Ollama protocol-frontend translators (`gateway/protocols/`)
+- [x] Read-only workflow discovery + capability/receipt router (`gateway/api.py`, `tests/test_gateway_api.py`)
 - [x] Route receipt data model (`gateway/receipts.py`)
 - [x] Durable SQLite receipt store (`gateway/receipt_store.py`, `tests/test_receipt_store.py`)
+- [x] Gateway media-job model and durable store (`gateway/media_jobs.py`)
 - [x] Observational image-route receipts wired into `/v1/images/generations` and `/v1/images/edits` (placeholder policy decision, safe field-name outcomes, best-effort manifest identity, body-free firehose event)
 - [x] SDK compatibility harness with executable registered probes (`scripts/compat/`, `tests/compat/`, `docs/SDK_COMPATIBILITY_HARNESS.md`)
 
-Not yet on main:
+In-progress / depends on owner wiring landing:
 
-- `/gateway/v1/*` namespace is not mounted in `proxy.py`. The workflow
-  discovery router exists as a component; the endpoints under that namespace
-  are not live behavior yet.
-- Receipts are not yet attached to the canonical intent pipeline; the image
-  receipts are observational, carry a `proxy:legacy-auth` placeholder decision,
-  and are not exposed to clients.
-- Workflow manifest binding is not yet the source of live ComfyUI mutation.
-- Policy/profile modules are not yet read by request handlers; app profiles are
-  still inferred from the existing proxy auth model.
-- No backend adapter contract has been extracted from `proxy.py` yet.
+- `/gateway/v1/*` mount in `proxy.py` — the workflow/capability/receipt
+  router exists; once mounted the endpoints under that namespace become live
+  behavior.
+- Canonical intent pipeline receipts — image receipts remain observational
+  with a `proxy:legacy-auth` placeholder decision until the runtime-auth
+  bridge feeds real policy decisions in.
+- Workflow manifest binding as the source of live ComfyUI mutation.
+- Request handlers consulting `gateway.runtime_auth` for profile/policy
+  evaluation instead of inferring from the legacy auth model. The pure
+  bridge is ready; the integration switch is owner work.
+- `generate-key` preserving `profile:` blocks on rotation (depends on the
+  owner-side `generate-key` change landing).
+- Backend adapter contract extracted from `proxy.py`.
 
 ## North Star
 
@@ -216,8 +225,9 @@ visibility decisions explicit.
 ### 4. `/gateway/v1` Namespace Skeleton — partially done
 
 Add the namespace only after the internal contract exists. `gateway/api.py`
-now provides an unmounted FastAPI router for workflow discovery. Nothing under
-`/gateway/v1/*` is mounted in `proxy.py` yet.
+provides the read-only workflow discovery, capability, and receipt router.
+The mount into `proxy.py` is owner work in flight; the endpoints below go
+live when that lands.
 
 Initial endpoints:
 
