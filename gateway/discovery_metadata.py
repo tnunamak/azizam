@@ -1,0 +1,199 @@
+"""Public discovery metadata for agent clients.
+
+This module is deliberately pure: no filesystem, no environment, no secrets.
+The live FastAPI app passes a request-derived base URL when it wants absolute
+links; tests and docs can use the same builder with a fixed base URL.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "openai",
+        "base_path": "/v1",
+        "compatibility": "openai-compatible",
+        "default": True,
+        "streaming": {
+            "chat_completions": True,
+            "responses": True,
+            "images": False,
+            "audio": False,
+        },
+        "endpoints": [
+            "/v1/models",
+            "/v1/chat/completions",
+            "/v1/completions",
+            "/v1/embeddings",
+            "/v1/responses",
+            "/v1/images/generations",
+            "/v1/images/edits",
+            "/v1/audio/speech",
+            "/v1/audio/transcriptions",
+            "/v1/audio/generate",
+            "/v1/videos",
+        ],
+    },
+    {
+        "id": "anthropic",
+        "base_path": "/v1/messages",
+        "compatibility": "anthropic-messages-subset",
+        "default": False,
+        "streaming": {"messages": False},
+        "endpoints": ["/v1/messages"],
+        "limits": [
+            "non-streaming only",
+            "image/document/thinking blocks are rejected",
+        ],
+    },
+    {
+        "id": "ollama",
+        "base_path": "/api",
+        "compatibility": "ollama-subset",
+        "default": False,
+        "streaming": {"chat": False, "generate": False},
+        "endpoints": ["/api/tags", "/api/chat", "/api/generate"],
+        "limits": [
+            "model-management endpoints are not implemented",
+            "backend-native options without portable meaning are rejected",
+        ],
+    },
+    {
+        "id": "gateway",
+        "base_path": "/gateway/v1",
+        "compatibility": "openai-proxy-native",
+        "default": False,
+        "streaming": {},
+        "endpoints": [
+            "/gateway/v1/capabilities",
+            "/gateway/v1/workflows",
+            "/gateway/v1/receipts",
+            "/gateway/v1/media/jobs",
+        ],
+    },
+)
+
+
+def _join(base_url: str | None, path: str) -> str:
+    if not base_url:
+        return path
+    return f"{base_url.rstrip('/')}{path}"
+
+
+def build_gateway_discovery_metadata(
+    *,
+    base_url: str | None = None,
+    service_name: str = "openai-proxy",
+) -> dict[str, Any]:
+    """Return unauthenticated public metadata for agent/client discovery."""
+    links = {
+        "health": "/health",
+        "openapi": "/openapi.json",
+        "llms_txt": "/llms.txt",
+        "skill_catalog": "/.well-known/skills",
+        "skill": "/.well-known/skills/openai-proxy-gateway/SKILL.md",
+        "capabilities": "/gateway/v1/capabilities",
+        "workflows": "/gateway/v1/workflows",
+        "receipts": "/gateway/v1/receipts",
+        "media_jobs": "/gateway/v1/media/jobs",
+    }
+
+    return {
+        "schema_version": 1,
+        "object": "ai_gateway_discovery",
+        "service": {
+            "name": service_name,
+            "base_url": base_url.rstrip("/") if base_url else None,
+            "local_first": True,
+            "privacy": "Requests are routed to configured local backends unless an app profile explicitly allows fallback.",
+        },
+        "auth": {
+            "type": "bearer",
+            "header": "Authorization",
+            "token_prefix": "opk_",
+            "secret_handling": [
+                "Do not ask users to paste raw opk tokens into chat.",
+                "Use environment variables or local secret stores.",
+                "Do not read or print proxy_api_keys.yml.",
+            ],
+        },
+        "protocols": list(PUBLIC_PROTOCOLS),
+        "links": links,
+        "absolute_links": {
+            key: _join(base_url, path) for key, path in links.items()
+        },
+        "repository_docs": [
+            "docs/LOCAL_CLIENT_RECIPES.md",
+            "docs/CORE_CONTRACTS.md",
+            "ARCHITECTURE.md",
+        ],
+        "agent_guidance": {
+            "start_here": [
+                "GET /health without auth.",
+                "Fetch this metadata document.",
+                "Fetch the openai-proxy-gateway skill if your agent runtime supports skills.",
+                "Use /gateway/v1/capabilities with a bearer token before assuming a modality.",
+            ],
+            "default_surface": "Use OpenAI-compatible /v1 endpoints unless a client specifically requires Anthropic or Ollama.",
+            "debugging": "Use /gateway/v1/receipts to inspect accepted, rejected, and ignored workflow controls.",
+        },
+    }
+
+
+def build_skill_catalog(*, base_url: str | None = None) -> dict[str, Any]:
+    """Return a tiny unauthenticated skill catalog."""
+    skill_path = "/.well-known/skills/openai-proxy-gateway/SKILL.md"
+    return {
+        "schema_version": 1,
+        "object": "skill_catalog",
+        "skills": [
+            {
+                "id": "openai-proxy-gateway",
+                "name": "openai-proxy-gateway",
+                "media_type": "text/markdown",
+                "href": skill_path,
+                "url": _join(base_url, skill_path),
+                "description": "Discover-first instructions for using this local AI gateway safely from agent clients.",
+            }
+        ],
+    }
+
+
+def build_llms_txt(*, base_url: str | None = None) -> str:
+    """Return a compact llms.txt-style discovery document."""
+    root = (base_url or "").rstrip("/")
+    prefix = f"{root}" if root else ""
+    lines = [
+        "# openai-proxy gateway",
+        "",
+        "Local-first OpenAI-compatible AI gateway with Anthropic, Ollama, and gateway-native discovery surfaces.",
+        "",
+        "## Discovery",
+        f"- Gateway metadata: {prefix}/.well-known/ai-gateway",
+        f"- Alias metadata: {prefix}/.well-known/openai-proxy",
+        f"- OpenAPI: {prefix}/openapi.json",
+        f"- Agent skill: {prefix}/.well-known/skills/openai-proxy-gateway/SKILL.md",
+        "",
+        "## Auth",
+        "- Use Authorization: Bearer $OPENAI_PROXY_API_KEY for all /v1, /api, and /gateway/v1 calls except /health.",
+        "- Do not ask users to paste raw opk tokens into chat.",
+        "",
+        "## Preferred Flow",
+        "1. GET /health.",
+        "2. GET /.well-known/ai-gateway.",
+        "3. GET /gateway/v1/capabilities with bearer auth.",
+        "4. Use /v1 by default; use /v1/messages or /api/* only for clients that require those protocols.",
+        "5. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+__all__ = [
+    "PUBLIC_PROTOCOLS",
+    "build_gateway_discovery_metadata",
+    "build_llms_txt",
+    "build_skill_catalog",
+]

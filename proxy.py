@@ -59,6 +59,11 @@ from gateway.capabilities import (
     capability_with_policy_view,
 )
 from gateway.discovery import WorkflowRegistry
+from gateway.discovery_metadata import (
+    build_gateway_discovery_metadata,
+    build_llms_txt,
+    build_skill_catalog,
+)
 from gateway.local_capabilities import build_local_capabilities
 from gateway.extensions import ExtensionError
 from gateway.image_extensions import (
@@ -6257,9 +6262,10 @@ _FIREHOSE_NO_RECORD_PREFIXES = (
     "/static/",
     "/SKILL.md",
     "/robots.txt",
+    "/.well-known/",
 )
 # Exact paths (not prefixes) that should be excluded too.
-_FIREHOSE_NO_RECORD_EXACT = {"/"}
+_FIREHOSE_NO_RECORD_EXACT = {"/", "/llms.txt"}
 
 # Map known successful-response paths to a synthesized event-type for the
 # Recent activity timeline. We don't peek at request bodies — the path tells
@@ -6349,6 +6355,79 @@ async def health():
         "auth_enabled": AUTH_ENABLED,
         "proxy_keys_configured": len(AUTH_REGISTRY),
     }
+
+
+def _public_base_url(request: Request) -> str | None:
+    """Best-effort public origin for absolute discovery links.
+
+    Operators can pin the public origin via ``OPENAI_PROXY_PUBLIC_URL`` or
+    a ``proxy.public_url`` config key. Otherwise we honor standard reverse
+    proxy headers, then fall back to the request's host. We return
+    ``None`` if no candidate is available so the discovery helper can
+    emit relative links rather than fabricate an origin.
+    """
+    pinned = os.environ.get("OPENAI_PROXY_PUBLIC_URL")
+    if not pinned:
+        proxy_cfg = config.get("proxy") or {}
+        pinned = proxy_cfg.get("public_url") or None
+    if pinned:
+        return pinned
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+    )
+    if not host:
+        return None
+    scheme = (
+        request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
+    )
+    return f"{scheme}://{host}"
+
+
+@app.get("/.well-known/ai-gateway", include_in_schema=False)
+async def well_known_ai_gateway(request: Request):
+    """Unauthenticated agent-client discovery for this AI gateway."""
+    return build_gateway_discovery_metadata(base_url=_public_base_url(request))
+
+
+@app.get("/.well-known/openai-proxy", include_in_schema=False)
+async def well_known_openai_proxy(request: Request):
+    """Alias of /.well-known/ai-gateway for OpenAI-style SDK clients."""
+    return build_gateway_discovery_metadata(base_url=_public_base_url(request))
+
+
+@app.get("/.well-known/skills", include_in_schema=False)
+async def well_known_skills(request: Request):
+    """Public catalog of discoverable agent skills served by this proxy."""
+    return build_skill_catalog(base_url=_public_base_url(request))
+
+
+_SKILL_ROOT = Path(__file__).resolve().parent / "skills"
+
+
+@app.get(
+    "/.well-known/skills/{skill_id}/SKILL.md",
+    include_in_schema=False,
+)
+async def well_known_skill_file(skill_id: str):
+    """Serve the raw SKILL.md for a published agent skill."""
+    # Tight allowlist: only flat ``skills/<id>/SKILL.md`` paths, no traversal.
+    if "/" in skill_id or skill_id.startswith(".") or not skill_id:
+        return Response(status_code=404)
+    path = _SKILL_ROOT / skill_id / "SKILL.md"
+    try:
+        path = path.resolve(strict=True)
+    except (FileNotFoundError, OSError):
+        return Response(status_code=404)
+    if _SKILL_ROOT.resolve() not in path.parents:
+        return Response(status_code=404)
+    return FileResponse(path, media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/llms.txt", include_in_schema=False)
+async def llms_txt(request: Request):
+    body = build_llms_txt(base_url=_public_base_url(request))
+    return Response(content=body, media_type="text/plain; charset=utf-8")
 
 
 @app.get("/v1/voices")
@@ -8025,7 +8104,57 @@ async def delete_response(response_id: str, request: Request):
     )
 
 
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+_OPENAI_COMPAT_JSON_BODY_OPENAPI = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": True,
+                }
+            }
+        },
+    },
+    "responses": {
+        "200": {
+            "description": "OpenAI-compatible response proxied from the active local backend.",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": True,
+                    }
+                }
+            },
+        }
+    },
+}
+
+
+@app.post("/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
+async def chat_completions(request: Request):
+    """OpenAI-compatible chat completions proxied to the active LLM backend."""
+    return await proxy_request(request, "v1/chat/completions")
+
+
+@app.post("/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
+async def completions(request: Request):
+    """OpenAI-compatible text completions proxied to the active LLM backend."""
+    return await proxy_request(request, "v1/completions")
+
+
+@app.post("/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
+async def embeddings(request: Request):
+    """OpenAI-compatible embeddings proxied to the configured embedding backend."""
+    return await proxy_request(request, "v1/embeddings")
+
+
+@app.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    include_in_schema=False,
+)
 async def proxy_request(request: Request, path: str):
     """Proxy all other requests to TabbyAPI."""
     request_path = f"/{path}"

@@ -12,6 +12,19 @@ The proxy presents a single `/v1` surface that matches the OpenAI API closely en
 
 In production it's served at `https://openai.vivid.fish` via a Traefik front door.
 
+## Agent discovery
+
+Agent clients can start without local repo context by fetching the public discovery surface:
+
+- `GET /health`
+- `GET /.well-known/ai-gateway`
+- `GET /.well-known/openai-proxy` (alias)
+- `GET /llms.txt`
+- `GET /.well-known/skills`
+- `GET /.well-known/skills/openai-proxy-gateway/SKILL.md`
+
+The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](skills/openai-proxy-gateway/SKILL.md). It tells agents to discover capabilities before assuming a backend, keep bearer tokens out of chat, use `/v1` by default, and inspect `/gateway/v1/receipts` when workflow controls are rejected or ignored.
+
 ## Endpoint surface
 
 | Method + Path | Backend | Purpose |
