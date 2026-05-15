@@ -18,19 +18,24 @@ Endpoints
 * ``GET /gateway/v1/capabilities``            — list capabilities
 * ``GET /gateway/v1/receipts``                — recent route receipts
 * ``GET /gateway/v1/receipts/{request_id}``   — one route receipt
+* ``POST /gateway/v1/media/jobs``             — create or attach to a media job
+* ``GET /gateway/v1/media/jobs``              — recent media jobs
+* ``GET /gateway/v1/media/jobs/{job_id}``     — single media job
+* ``POST /gateway/v1/media/jobs/{job_id}/events`` — append a job event
+* ``POST /gateway/v1/media/jobs/{job_id}/cancel`` — cancel a non-terminal job
 
-Capability and receipt endpoints return empty results (or a protocol-shaped
-404) when their optional providers are not wired. Mounting the router without
-a capability provider, for example, yields an empty capability catalog rather
-than a crash.
+Capability, receipt, and media-job endpoints return empty results (or a
+protocol-shaped 404) when their optional providers are not wired. Mounting the
+router without a capability provider, for example, yields an empty capability
+catalog rather than a crash.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Body, Query, Request, status
 from fastapi.responses import JSONResponse
 
 from gateway.capabilities import Capability, summarize_capabilities
@@ -40,12 +45,21 @@ AudienceResolver = Callable[[Request], str]
 CapabilitiesProvider = Callable[[Request], Sequence[Capability] | Iterable[Capability]]
 ReceiptGetter = Callable[..., dict[str, Any] | None]
 ReceiptLister = Callable[..., list[dict[str, Any]]]
+MediaJobCreator = Callable[..., dict[str, Any]]
+MediaJobGetter = Callable[..., dict[str, Any] | None]
+MediaJobLister = Callable[..., list[dict[str, Any]]]
+MediaJobEventAppender = Callable[..., int]
+MediaJobCanceler = Callable[..., dict[str, Any] | None]
 
 DEFAULT_AUDIENCE = "client"
 
 # Cap recent-receipt listings to keep the response small and predictable.
 RECEIPTS_DEFAULT_LIMIT = 50
 RECEIPTS_MAX_LIMIT = 200
+
+# Same caps for media-job listings.
+MEDIA_JOBS_DEFAULT_LIMIT = 50
+MEDIA_JOBS_MAX_LIMIT = 200
 
 
 def _default_audience_resolver(_: Request) -> str:
@@ -137,6 +151,96 @@ def _build_receipt_providers(
     )
 
 
+def _build_media_job_providers(
+    *,
+    media_job_creator: MediaJobCreator | None,
+    media_job_getter: MediaJobGetter | None,
+    media_job_lister: MediaJobLister | None,
+    media_job_event_appender: MediaJobEventAppender | None,
+    media_job_canceler: MediaJobCanceler | None,
+    media_job_store_path: str | Path | None,
+) -> tuple[
+    MediaJobCreator | None,
+    MediaJobGetter | None,
+    MediaJobLister | None,
+    MediaJobEventAppender | None,
+    MediaJobCanceler | None,
+]:
+    """Wire media-job providers, defaulting to the SQLite-backed store when a
+    path is supplied. Explicit callables always win over the path shortcut.
+    """
+    if media_job_store_path is None:
+        return (
+            media_job_creator,
+            media_job_getter,
+            media_job_lister,
+            media_job_event_appender,
+            media_job_canceler,
+        )
+
+    from gateway import media_jobs as _media_jobs
+
+    store_path = Path(media_job_store_path)
+
+    def store_creator(
+        payload: Mapping[str, Any], *, audience: str
+    ) -> dict[str, Any]:
+        record = _media_jobs.create(payload, path=store_path)
+        return record.to_dict(audience)
+
+    def store_getter(job_id: str, *, audience: str) -> dict[str, Any] | None:
+        return _media_jobs.get(job_id, audience=audience, path=store_path)
+
+    def store_lister(
+        *,
+        audience: str,
+        limit: int,
+        app_profile: str | None = None,
+        status: str | None = None,
+        since_s: int | None = None,
+    ) -> list[dict[str, Any]]:
+        return _media_jobs.recent(
+            limit=limit,
+            audience=audience,
+            app_profile=app_profile,
+            status=status,
+            since_s=since_s,
+            path=store_path,
+        )
+
+    def store_event_appender(
+        job_id: str,
+        event_type: str,
+        payload: Mapping[str, Any] | None,
+        *,
+        audience: str,
+    ) -> int:
+        return _media_jobs.append_event(
+            job_id, event_type, payload, path=store_path
+        )
+
+    def store_canceler(
+        job_id: str, *, audience: str, reason: str | None = None
+    ) -> dict[str, Any] | None:
+        updated = _media_jobs.update_status(
+            job_id,
+            _media_jobs.STATUS_CANCELED,
+            error=reason,
+            path=store_path,
+        )
+        if updated is None:
+            return None
+        return _media_jobs.get(job_id, audience=audience, path=store_path)
+
+    return (
+        media_job_creator or store_creator,
+        media_job_getter or store_getter,
+        media_job_lister or store_lister,
+        media_job_event_appender or store_event_appender,
+        media_job_canceler or store_canceler,
+    )
+
+
 def create_gateway_router(
     registry: WorkflowRegistry,
     *,
@@ -145,6 +249,12 @@ def create_gateway_router(
     receipt_getter: ReceiptGetter | None = None,
     receipt_lister: ReceiptLister | None = None,
     receipt_store_path: str | Path | None = None,
+    media_job_creator: MediaJobCreator | None = None,
+    media_job_getter: MediaJobGetter | None = None,
+    media_job_lister: MediaJobLister | None = None,
+    media_job_event_appender: MediaJobEventAppender | None = None,
+    media_job_canceler: MediaJobCanceler | None = None,
+    media_job_store_path: str | Path | None = None,
     prefix: str = "/gateway/v1",
 ) -> APIRouter:
     """Build a read-only gateway router.
@@ -172,6 +282,20 @@ def create_gateway_router(
         receipt_getter=receipt_getter,
         receipt_lister=receipt_lister,
         receipt_store_path=receipt_store_path,
+    )
+    (
+        media_job_creator,
+        media_job_getter,
+        media_job_lister,
+        media_job_event_appender,
+        media_job_canceler,
+    ) = _build_media_job_providers(
+        media_job_creator=media_job_creator,
+        media_job_getter=media_job_getter,
+        media_job_lister=media_job_lister,
+        media_job_event_appender=media_job_event_appender,
+        media_job_canceler=media_job_canceler,
+        media_job_store_path=media_job_store_path,
     )
 
     router = APIRouter(prefix=prefix, tags=["gateway-discovery"])
@@ -268,5 +392,214 @@ def create_gateway_router(
                 ),
             )
         return JSONResponse(status_code=status.HTTP_200_OK, content=row)
+
+    @router.post("/media/jobs")
+    def create_media_job(
+        request: Request,
+        payload: dict[str, Any] = Body(...),
+    ) -> JSONResponse:
+        audience = _resolve_request_audience(resolve_audience, request)
+        if media_job_creator is None:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content=_error_payload(
+                    "media_jobs_unavailable",
+                    "media job store is not configured",
+                ),
+            )
+        if not isinstance(payload, Mapping) or not payload.get("intent"):
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=_error_payload(
+                    "invalid_media_job",
+                    "media job payload must include 'intent'",
+                ),
+            )
+        try:
+            created = media_job_creator(payload, audience=audience)
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=_error_payload(
+                    "invalid_media_job",
+                    _client_safe_message(str(exc), audience),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content=created)
+
+    @router.get("/media/jobs")
+    def list_media_jobs(
+        request: Request,
+        limit: int = Query(
+            MEDIA_JOBS_DEFAULT_LIMIT, ge=1, le=MEDIA_JOBS_MAX_LIMIT
+        ),
+        app_profile: str | None = Query(None),
+        job_status: str | None = Query(None, alias="status"),
+        since_s: int | None = Query(None, ge=0),
+    ) -> JSONResponse:
+        audience = _resolve_request_audience(resolve_audience, request)
+        try:
+            if media_job_lister is None:
+                rows: list[dict[str, Any]] = []
+            else:
+                rows = list(
+                    media_job_lister(
+                        audience=audience,
+                        limit=limit,
+                        app_profile=app_profile,
+                        status=job_status,
+                        since_s=since_s,
+                    )
+                )
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=_error_payload(
+                    "invalid_media_job_query",
+                    _client_safe_message(str(exc), audience),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "schema_version": 1,
+                "audience": audience,
+                "jobs": rows,
+            },
+        )
+
+    @router.get("/media/jobs/{job_id}")
+    def get_media_job(job_id: str, request: Request) -> JSONResponse:
+        audience = _resolve_request_audience(resolve_audience, request)
+        try:
+            row = (
+                None
+                if media_job_getter is None
+                else media_job_getter(job_id, audience=audience)
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        if row is None:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content=_error_payload(
+                    "media_job_not_found",
+                    f"media job {job_id!r} not found",
+                ),
+            )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=row)
+
+    @router.post("/media/jobs/{job_id}/events")
+    def append_media_job_event(
+        job_id: str,
+        request: Request,
+        payload: dict[str, Any] = Body(...),
+    ) -> JSONResponse:
+        audience = _resolve_request_audience(resolve_audience, request)
+        if media_job_event_appender is None:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content=_error_payload(
+                    "media_jobs_unavailable",
+                    "media job store is not configured",
+                ),
+            )
+        event_type = payload.get("event_type") if isinstance(payload, Mapping) else None
+        event_payload = payload.get("payload") if isinstance(payload, Mapping) else None
+        if not isinstance(event_type, str) or not event_type:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=_error_payload(
+                    "invalid_media_job_event",
+                    "event payload must include a non-empty 'event_type' string",
+                ),
+            )
+        if event_payload is not None and not isinstance(event_payload, Mapping):
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=_error_payload(
+                    "invalid_media_job_event",
+                    "'payload' must be an object when provided",
+                ),
+            )
+        try:
+            event_id = media_job_event_appender(
+                job_id, event_type, event_payload, audience=audience
+            )
+        except LookupError:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content=_error_payload(
+                    "media_job_not_found",
+                    f"media job {job_id!r} not found",
+                ),
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=_error_payload(
+                    "invalid_media_job_event",
+                    _client_safe_message(str(exc), audience),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        return JSONResponse(
+            status_code=status.HTTP_201_CREATED,
+            content={"id": event_id, "job_id": job_id, "event_type": event_type},
+        )
+
+    @router.post("/media/jobs/{job_id}/cancel")
+    def cancel_media_job(
+        job_id: str,
+        request: Request,
+        payload: dict[str, Any] | None = Body(default=None),
+    ) -> JSONResponse:
+        audience = _resolve_request_audience(resolve_audience, request)
+        if media_job_canceler is None:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content=_error_payload(
+                    "media_jobs_unavailable",
+                    "media job store is not configured",
+                ),
+            )
+        reason: str | None = None
+        if isinstance(payload, Mapping):
+            raw_reason = payload.get("reason")
+            if raw_reason is not None and not isinstance(raw_reason, str):
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content=_error_payload(
+                        "invalid_media_job_cancel",
+                        "'reason' must be a string when provided",
+                    ),
+                )
+            reason = raw_reason
+        try:
+            updated = media_job_canceler(job_id, audience=audience, reason=reason)
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content=_error_payload(
+                    "media_job_cancel_conflict",
+                    _client_safe_message(str(exc), audience),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        if updated is None:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content=_error_payload(
+                    "media_job_not_found",
+                    f"media job {job_id!r} not found",
+                ),
+            )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=updated)
 
     return router
