@@ -30,6 +30,11 @@ from gateway.manifests import (  # noqa: E402
     manifest_identity,
     validate_inputs,
 )
+from gateway.audio_extensions import (  # noqa: E402
+    STANDARD_AUDIO_GENERATE_FIELDS,
+    WORKFLOW_EXTENSION_NAMESPACE,
+    bind_audio_workflow_extensions,
+)
 
 
 MANIFEST_PATH = ROOT / "manifests/workflows/tangoflux.yml"
@@ -168,6 +173,124 @@ class TestBindingShapeGuards(unittest.TestCase):
         result = validate_inputs(self.manifest, {"prompt": "x"})
         with self.assertRaises(ManifestError):
             apply_backend_binding(self.manifest, "comfyui", workflow, result.accepted)
+
+
+class TestAudioGenerateWorkflowExtensions(unittest.TestCase):
+    """Strict namespaced extension binding for POST /v1/audio/generate."""
+
+    def setUp(self) -> None:
+        self.manifest = load_workflow_manifest(MANIFEST_PATH)
+
+    def test_standard_audio_fields_allow_extensions_envelope(self) -> None:
+        self.assertIn("extensions", STANDARD_AUDIO_GENERATE_FIELDS)
+        for top_level_control in ("steps", "guidance", "batch_size"):
+            self.assertNotIn(top_level_control, STANDARD_AUDIO_GENERATE_FIELDS)
+
+    def test_namespaced_controls_validate_and_bind_to_tangoflux(self) -> None:
+        workflow = _load_workflow()
+        original = copy.deepcopy(workflow)
+        body = {
+            "model": "tangoflux",
+            "prompt": "standard prompt",
+            "duration": 3.0,
+            "extensions": {
+                WORKFLOW_EXTENSION_NAMESPACE: {
+                    "steps": 45,
+                    "guidance": 4.25,
+                    "batch_size": 2,
+                }
+            },
+        }
+
+        result = bind_audio_workflow_extensions(
+            body,
+            self.manifest,
+            "comfyui",
+            workflow,
+        )
+
+        self.assertTrue(result.ok, result.validation.rejected)
+        self.assertEqual(workflow, original)
+        node = result.request["2"]["inputs"]
+        self.assertEqual(node["steps"], 45)
+        self.assertEqual(node["guidance_scale"], 4.25)
+        self.assertEqual(node["batch_size"], 2)
+
+    def test_route_managed_namespaced_audio_fields_are_rejected(self) -> None:
+        result = bind_audio_workflow_extensions(
+            {
+                "model": "tangoflux",
+                "prompt": "x",
+                "extensions": {
+                    WORKFLOW_EXTENSION_NAMESPACE: {
+                        "duration": 12,
+                        "seed": 987,
+                    }
+                },
+            },
+            self.manifest,
+            "comfyui",
+            _load_workflow(),
+        )
+
+        self.assertEqual(
+            set(result.validation.rejected),
+            {"duration", "seed"},
+        )
+        self.assertFalse(result.ok)
+
+    def test_unknown_top_level_workflow_control_is_rejected(self) -> None:
+        result = bind_audio_workflow_extensions(
+            {
+                "model": "tangoflux",
+                "prompt": "x",
+                "steps": 45,
+                "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {}},
+            },
+            self.manifest,
+            "comfyui",
+            _load_workflow(),
+        )
+
+        self.assertIn("steps", result.unknown_top_level)
+        self.assertIn("extensions", result.unknown_top_level["steps"])
+        self.assertFalse(result.ok)
+
+    def test_unknown_namespaced_control_is_rejected(self) -> None:
+        result = bind_audio_workflow_extensions(
+            {
+                "model": "tangoflux",
+                "prompt": "x",
+                "extensions": {
+                    WORKFLOW_EXTENSION_NAMESPACE: {
+                        "sampler": "euler",
+                    }
+                },
+            },
+            self.manifest,
+            "comfyui",
+            _load_workflow(),
+        )
+
+        self.assertEqual(result.validation.rejected, {"sampler": "unknown input"})
+        self.assertFalse(result.ok)
+
+    def test_out_of_range_namespaced_control_is_rejected_not_applied(self) -> None:
+        workflow = _load_workflow()
+        original_steps = workflow["2"]["inputs"]["steps"]
+        result = bind_audio_workflow_extensions(
+            {
+                "model": "tangoflux",
+                "prompt": "x",
+                "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {"steps": 0}},
+            },
+            self.manifest,
+            "comfyui",
+            workflow,
+        )
+
+        self.assertIn("steps", result.validation.rejected)
+        self.assertEqual(result.request["2"]["inputs"]["steps"], original_steps)
 
 
 if __name__ == "__main__":

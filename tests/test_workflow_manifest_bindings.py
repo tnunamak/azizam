@@ -104,7 +104,7 @@ class TestWorkflowManifestBindings(unittest.TestCase):
         )
         identity = manifest_identity(manifest)
         self.assertEqual(identity.id, "image.edit.flux2-klein-4b")
-        self.assertEqual(identity.version, "0.1.0")
+        self.assertEqual(identity.version, "0.2.0")
         self.assertTrue(identity.trusted)
         self.assertEqual(len(identity.manifest_hash), 64)
         workflow = json.loads(

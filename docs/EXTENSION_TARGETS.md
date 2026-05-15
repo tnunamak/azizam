@@ -9,7 +9,7 @@ validated against an explicit contract.
 
 | Namespace | Purpose | Status |
 |---|---|---|
-| `extensions.com.vividfish.workflow` | Manifest-backed workflow controls for local generation/editing jobs. | Implemented for images; target for audio/video. |
+| `extensions.com.vividfish.workflow` | Manifest-backed workflow controls for local generation/editing jobs. | Implemented for image, audio, and video workflow routes. |
 | `extensions.com.vividfish.chat` | Local chat/runtime behavior that is not an OpenAI field. | Proposed. |
 | `extensions.com.vividfish.routing` | Per-request routing hints that profiles may allow or deny. | Proposed. |
 | `extensions.com.vividfish.telemetry` | Receipt/debug verbosity preferences without prompt/body capture. | Proposed. |
@@ -24,8 +24,8 @@ visibility. Those remain configuration/profile concerns.
 |---|---|---|---|
 | `POST /v1/images/generations` | `extensions.com.vividfish.workflow` | Implemented | Binds manifest controls such as `steps`, `guidance`, `seed`, and `batch_size`. Unknown top-level workflow controls are rejected. |
 | `POST /v1/images/edits` | `extensions.com.vividfish.workflow` | Implemented | Binds `steps`, `guidance`, and `denoise` for `flux2-klein-4b-edit`. ControlNet is not exposed until a real ControlNet workflow and model are present. |
-| `POST /v1/audio/generate` | `extensions.com.vividfish.workflow` | Next | TangoFlux already has a manifest; route-level strict extension validation still needs to be wired. |
-| `POST /v1/videos` | `extensions.com.vividfish.workflow` | Next | Video workflows need manifest-backed binding before accepting workflow-specific controls. |
+| `POST /v1/audio/generate` | `extensions.com.vividfish.workflow` | Implemented | TangoFlux accepts namespaced `steps`, `guidance`, and `batch_size`; standard `duration` and `seed` stay top-level. |
+| `POST /v1/videos` | `extensions.com.vividfish.workflow` | Implemented | LTX 2.3 distilled accepts namespaced `steps`, `stage1_cfg`, and `stage2_cfg`; standard `size`, `seconds`, `seed`, prompt, and image-reference fields stay top-level. |
 | `POST /v1/chat/completions` | `extensions.com.vividfish.chat`, `extensions.com.vividfish.routing` | Proposed | Candidate controls: local sampler extras, backend role hints, prompt-cache preferences, fallback preference, receipt verbosity. |
 | `POST /v1/responses` | `extensions.com.vividfish.chat`, `extensions.com.vividfish.routing`, `extensions.com.vividfish.responses` | Proposed | Should share chat extension validation where possible. |
 | `POST /v1/completions` | `extensions.com.vividfish.chat`, `extensions.com.vividfish.routing` | Proposed | Same concerns as chat completions, narrower request shape. |

@@ -52,6 +52,7 @@ import responses_store
 import responses_translator
 from gateway import media_jobs, receipt_store
 from gateway.api import create_gateway_router
+from gateway.audio_extensions import bind_audio_workflow_extensions
 from gateway.capabilities import (
     Capability,
     ResourceEstimate,
@@ -78,6 +79,10 @@ from gateway.manifests import (
     ManifestError,
     load_workflow_manifest,
     manifest_identity,
+)
+from gateway.video_extensions import (
+    STANDARD_VIDEO_CREATE_FIELDS,
+    bind_video_workflow_extensions,
 )
 from gateway.policy import DEFAULT_PROFILE, PolicyDecision
 from gateway.receipts import RouteReceipt
@@ -4699,6 +4704,28 @@ def _load_video_workflow_file(workflow_cfg: dict) -> Optional[dict]:
     return workflow
 
 
+def _find_video_manifest(workflow_name: str, workflow_cfg: dict) -> Optional[dict]:
+    manifest_path = workflow_cfg.get("manifest")
+    candidates = []
+    if manifest_path:
+        candidates.append(Path(manifest_path))
+    candidates.append(Path("manifests") / "workflows" / f"{workflow_name}.yml")
+
+    for candidate in candidates:
+        p = candidate
+        if not p.is_absolute():
+            p = Path(__file__).parent / p
+        if not p.exists():
+            continue
+        try:
+            return load_workflow_manifest(p)
+        except ManifestError:
+            raise
+        except Exception as e:
+            raise ManifestError(f"failed to load video workflow manifest {p}: {e}") from e
+    return None
+
+
 def _parse_size_clamped(size_str: str, max_size_str: str) -> tuple[int, int]:
     """Parse 'WxH' and clamp to per-workflow max_size."""
     width, height = parse_size(size_str or "1280x720")
@@ -4967,6 +4994,22 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             content=json.dumps({"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json"
+        )
+    unknown_video_fields = detect_unknown_top_level_fields(
+        body,
+        STANDARD_VIDEO_CREATE_FIELDS,
+    )
+    if unknown_video_fields:
+        first_name, first_reason = next(iter(unknown_video_fields.items()))
+        return Response(
+            content=json.dumps({"error": {
+                "message": first_reason,
+                "type": "invalid_request_error",
+                "param": first_name,
+                "code": "unknown_parameter",
+            }}),
+            status_code=400,
+            media_type="application/json",
         )
 
     prompt = (body.get("prompt") or "").strip()
@@ -5299,6 +5342,55 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             # Wan: connect start_image link from image_node into the I2V latent node.
             if target_node in workflow:
                 workflow[target_node].setdefault("inputs", {})[target_field] = [image_node, 0]
+
+    has_workflow_extensions = bool(body.get("inputs")) or bool(
+        (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+        if isinstance(body.get("extensions"), Mapping)
+        else body.get("extensions")
+    )
+    if has_workflow_extensions:
+        try:
+            manifest = _find_video_manifest(str(workflow_name), workflow_cfg)
+            if manifest is None:
+                return Response(
+                    content=json.dumps({"error": {
+                        "message": f"Workflow {workflow_name} does not have a video workflow manifest",
+                        "type": "invalid_request_error",
+                        "code": "workflow_manifest_missing",
+                    }}),
+                    status_code=400,
+                    media_type="application/json",
+                )
+            extension_binding = bind_video_workflow_extensions(
+                body,
+                manifest,
+                workflow,
+            )
+        except (ExtensionError, ManifestError) as e:
+            return Response(
+                content=json.dumps({"error": {
+                    "message": str(e),
+                    "type": "invalid_request_error",
+                    "code": "invalid_workflow_extension",
+                }}),
+                status_code=400,
+                media_type="application/json",
+            )
+        if not extension_binding.ok:
+            rejected = dict(extension_binding.validation.rejected)
+            rejected.update(extension_binding.unknown_top_level)
+            first_name, first_reason = next(iter(rejected.items()))
+            return Response(
+                content=json.dumps({"error": {
+                    "message": first_reason,
+                    "type": "invalid_request_error",
+                    "param": first_name,
+                    "code": "invalid_workflow_extension",
+                }}),
+                status_code=400,
+                media_type="application/json",
+            )
+        workflow = extension_binding.request
 
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
@@ -6926,6 +7018,9 @@ if not AUDIO_WORKFLOWS_DIR.is_absolute():
     AUDIO_WORKFLOWS_DIR = (Path(__file__).parent / _AUDIO_WORKFLOWS_DIR_CFG).resolve()
 AUDIO_WORKFLOWS_CFG = (_audio_cfg.get("workflows", {}) or {})
 AUDIO_ALIASES = (_audio_cfg.get("aliases", {}) or {})
+AUDIO_MANIFESTS_BY_WORKFLOW = {
+    "tangoflux": Path(__file__).resolve().parent / "manifests" / "workflows" / "tangoflux.yml",
+}
 
 
 def _resolve_audio_workflow(model: str) -> tuple:
@@ -6954,6 +7049,29 @@ def _load_audio_workflow_file(workflow_cfg: dict):
     with open(p) as f:
         workflow = json.load(f)
     return workflow
+
+
+def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
+    manifest_path = AUDIO_MANIFESTS_BY_WORKFLOW.get(workflow_name)
+    if manifest_path is None:
+        return None
+    return load_workflow_manifest(manifest_path)
+
+
+def _audio_extension_error_response(message: str, *, param: str = "extensions") -> Response:
+    return Response(
+        content=json.dumps(
+            {
+                "error": {
+                    "message": message,
+                    "type": "invalid_request_error",
+                    "param": param,
+                }
+            }
+        ),
+        status_code=400,
+        media_type="application/json",
+    )
 
 
 def _extract_audio_output(job: dict):
@@ -7058,6 +7176,28 @@ async def proxy_audio_generate(request: Request, auth_context):
         for node_id, key in seed_targets:
             if node_id in workflow:
                 workflow[node_id]["inputs"][key] = seed_val
+
+    manifest = _load_audio_workflow_manifest(workflow_name)
+    if manifest is not None:
+        try:
+            extension_result = bind_audio_workflow_extensions(
+                body,
+                manifest,
+                "comfyui",
+                workflow,
+            )
+        except (ExtensionError, ManifestError) as e:
+            return _audio_extension_error_response(str(e))
+        if extension_result.unknown_top_level:
+            name, reason = next(iter(extension_result.unknown_top_level.items()))
+            return _audio_extension_error_response(reason, param=name)
+        if extension_result.validation.rejected:
+            name, reason = next(iter(extension_result.validation.rejected.items()))
+            return _audio_extension_error_response(
+                reason,
+                param=f"extensions.{extension_result.namespace}.{name}",
+            )
+        workflow = extension_result.request
 
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
