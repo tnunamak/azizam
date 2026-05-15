@@ -1,0 +1,57 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: audio.generate.tangoflux
+intent: audio.generate
+display_name: TangoFlux
+description: Portable audio.generate contract bound to the TangoFlux text-to-audio ComfyUI workflow.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  duration:
+    type: number
+    minimum: 0.5
+    maximum: 30
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 200
+  guidance:
+    type: number
+    minimum: 0
+    maximum: 20
+  seed:
+    type: integer
+    minimum: 0
+  batch_size:
+    type: integer
+    minimum: 1
+    maximum: 4
+outputs:
+  audio:
+    media_type: audio/wav
+bindings:
+  comfyui:
+    workflow: workflows/audio/tangoflux.json
+    map:
+      prompt:
+        - node: "2"
+          input: prompt
+      duration:
+        - node: "2"
+          input: duration
+      steps:
+        - node: "2"
+          input: steps
+      guidance:
+        - node: "2"
+          input: guidance_scale
+      seed:
+        - node: "2"
+          input: seed
+      batch_size:
+        - node: "2"
+          input: batch_size
