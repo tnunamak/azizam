@@ -120,6 +120,7 @@ class TestWorkflowManifestBindings(unittest.TestCase):
                 "height": 768,
                 "steps": 8,
                 "guidance": 3.5,
+                "denoise": 0.42,
             },
         )
         self.assertTrue(result.ok)
@@ -133,6 +134,7 @@ class TestWorkflowManifestBindings(unittest.TestCase):
         self.assertEqual(mutated["47"]["inputs"]["height"], 768)
         self.assertEqual(mutated["48"]["inputs"]["steps"], 8)
         self.assertEqual(mutated["26"]["inputs"]["guidance"], 3.5)
+        self.assertEqual(mutated["49"]["inputs"]["denoise"], 0.42)
 
     def test_missing_binding_target_fails_fast(self) -> None:
         result = validate_inputs(

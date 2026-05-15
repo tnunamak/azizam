@@ -32,8 +32,8 @@ NS = WORKFLOW_EXTENSION_NAMESPACE
 
 
 # Synthetic image-edit manifest used by most tests. The committed Flux2 edit
-# workflow does not currently expose denoise / controlnet controls, so tests
-# that need those controls use this manifest rather than altering the real one.
+# workflow exposes denoise, but not ControlNet, so tests that need ControlNet
+# use this manifest rather than pretending the real workflow has those nodes.
 CONTROLNET_EDIT_MANIFEST = {
     "schema_version": 1,
     "id": "image.edit.controlnet.fixture",
@@ -367,12 +367,11 @@ class TestRecordImageExtensionBinding(unittest.TestCase):
 
 
 class TestRealFluxManifestKeepsContractHonest(unittest.TestCase):
-    """The committed Flux2 edit manifest must not silently accept denoise.
+    """The committed Flux2 edit manifest must expose only real controls.
 
-    The current Flux2 Klein 4B edit workflow does not expose denoise or
-    controlnet strength. The binding layer should therefore *reject* those
-    extension inputs as unknown when the resolved manifest is the real one —
-    no silent no-ops.
+    The current Flux2 Klein 4B edit workflow exposes denoise through a
+    SplitSigmasDenoise node. It still does not expose ControlNet, so
+    ControlNet controls must be rejected instead of silently no-oping.
     """
 
     def setUp(self) -> None:
@@ -380,7 +379,7 @@ class TestRealFluxManifestKeepsContractHonest(unittest.TestCase):
             ROOT / "manifests/workflows/flux2-klein-4b-edit.yml"
         )
 
-    def test_denoise_extension_is_rejected_against_real_manifest(self) -> None:
+    def test_controlnet_extension_is_rejected_against_real_manifest(self) -> None:
         body = {"extensions": {NS: {"denoise": 0.35, "controlnet_strength": 1.0}}}
         # Narrow supported_names so the required-missing check (which is
         # satisfied at the route by top-level fields) does not muddy the
@@ -388,35 +387,35 @@ class TestRealFluxManifestKeepsContractHonest(unittest.TestCase):
         result = resolve_workflow_extensions(
             body,
             self.manifest,
-            supported_names=("guidance", "steps", "width", "height"),
+            supported_names=("guidance", "steps", "width", "height", "denoise"),
         )
-        self.assertEqual(
-            set(result.rejected.keys()),
-            {"denoise", "controlnet_strength"},
-        )
-        for reason in result.rejected.values():
-            self.assertEqual(reason, "unknown input")
+        self.assertEqual(result.accepted, {"denoise": 0.35})
+        self.assertEqual(result.rejected, {"controlnet_strength": "unknown input"})
 
     def test_real_manifest_inputs_still_bind(self) -> None:
-        # Spec'd inputs (e.g. guidance) under the extensions envelope should
+        # Spec'd inputs (e.g. guidance and denoise) under the extensions envelope should
         # validate and apply through the real ComfyUI binding. The host route
         # passes the top-level standard fields (prompt, source_image) on its
         # own, so the binding here narrows ``supported_names`` to only the
         # extension-shaped controls.
-        body = {"extensions": {NS: {"guidance": 3.5}}}
+        body = {"extensions": {NS: {"guidance": 3.5, "denoise": 0.42}}}
         # Build the smallest possible workflow surface the binding needs.
-        backend_request = {"26": {"inputs": {"guidance": 4.0}}}
+        backend_request = {
+            "26": {"inputs": {"guidance": 4.0}},
+            "49": {"inputs": {"denoise": 1.0}},
+        }
         result = bind_workflow_extensions(
             body,
             self.manifest,
             "comfyui",
             backend_request,
-            supported_names=("guidance", "steps", "width", "height"),
+            supported_names=("guidance", "steps", "width", "height", "denoise"),
             standard_fields=STANDARD_IMAGE_EDIT_FIELDS,
         )
         self.assertTrue(result.validation.ok, result.validation.rejected)
         assert result.request is not None
         self.assertEqual(result.request["26"]["inputs"]["guidance"], 3.5)
+        self.assertEqual(result.request["49"]["inputs"]["denoise"], 0.42)
 
 
 if __name__ == "__main__":
