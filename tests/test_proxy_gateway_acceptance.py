@@ -46,6 +46,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from gateway import receipt_store  # noqa: E402
 from gateway import runtime_auth as gw_runtime_auth  # noqa: E402
+from gateway.policy import AppProfile, StatusVisibilityPolicy  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -331,24 +332,22 @@ class TestGatewayAudienceFromProfile(unittest.TestCase):
         # same way the proxy middleware will.
         class _Stub:
             def __init__(self, identity):
-                self.state = type("S", (), {"auth_context": proxy.AuthContext(
-                    identity=identity
-                )})()
-                self.headers = {}
+                self.scope = {
+                    "auth_context": proxy.AuthContext(identity=identity),
+                }
 
         admin_identity = proxy.AuthIdentity(
-            name="ops", key_hash="sha256:ops", downstream={}
+            name="ops",
+            key_hash="sha256:ops",
+            downstream={},
+            profile=AppProfile(
+                id="ops",
+                status_visibility=StatusVisibilityPolicy(level="standard"),
+            ),
         )
-        # Some implementations set `profile` on the identity, others on the
-        # auth context. Accept both shapes.
-        for attr in ("profile",):
-            try:
-                setattr(admin_identity, attr, "admin")
-            except Exception:
-                pass
 
         result = resolver(_Stub(admin_identity))
-        self.assertIn(result, ("client", "admin", "internal"))
+        self.assertEqual(result, "admin")
 
 
 # ---------------------------------------------------------------------------
@@ -485,21 +484,23 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
         body = {
             "prompt": "x",
             "model": "flux2-klein-4b",
-            "extensions": {
-                "com.vividfish.workflow": {"denoise": 0.35},
-            },
+            "extensions": {"com.vividfish.workflow": {"guidance": 3.5}},
         }
         receipt, response = await self._call(body)
 
         # Acceptance: the helper must not 400 on the namespaced field, and the
-        # receipt must NOT carry an unknown_top_level rejection for "denoise"
+        # receipt must NOT carry an unknown_top_level rejection for "guidance"
         # or "extensions".
-        if "denoise" in (receipt.rejected_inputs or {}):
+        if "guidance" in (receipt.rejected_inputs or {}):
             self.skipTest(
                 "namespaced extension handling not yet wired — owner is "
                 "wiring bind_workflow_extensions"
             )
         self.assertNotIn("extensions", receipt.rejected_inputs or {})
+        self.assertIn(
+            "com.vividfish.workflow.guidance",
+            receipt.accepted_inputs,
+        )
         # We allow the test to pass even when downstream backend returns a
         # 502/504 because there's no real ComfyUI here; the contract under
         # test is *acceptance*, not happy-path success.
