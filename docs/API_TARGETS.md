@@ -170,14 +170,20 @@ POST /gateway/v1/media/jobs/{id}/cancel
 
 Gateway-native discovery and extension schemas should also live outside
 vendor-compatible namespaces. `gateway/api.py` is mounted by `proxy.py` for
-workflow discovery, capabilities, receipts, and media jobs. The rest of this
-surface remains target shape:
+workflow discovery, capabilities, receipts, and media jobs. The currently live
+discovery/receipt surface is:
 
 ```text
 GET /gateway/v1/capabilities
+GET /gateway/v1/workflows
 GET /gateway/v1/workflows/{workflow}
 GET /gateway/v1/receipts
 GET /gateway/v1/receipts/{request_id}
+```
+
+The remaining discovery extensions are target shape:
+
+```text
 GET /gateway/v1/models/{model}/capabilities
 GET /gateway/v1/extensions
 ```
