@@ -1,0 +1,20 @@
+{
+  "name": "openai-proxy-compat-node",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Node-side SDK compatibility probes (OpenAI, Anthropic, Ollama, Vercel AI SDK). Not installed by the core Python repo — see tests/compat/node/README.md.",
+  "type": "module",
+  "scripts": {
+    "probe:openai": "node --test openai.test.mjs",
+    "probe:anthropic": "node --test anthropic.test.mjs",
+    "probe:ollama": "node --test ollama.test.mjs",
+    "probe:ai-sdk": "node --test vercel-ai-sdk.test.mjs"
+  },
+  "devDependencies": {
+    "openai": "^4.60.0",
+    "@anthropic-ai/sdk": "^0.30.0",
+    "ollama": "^0.5.0",
+    "ai": "^3.4.0",
+    "@ai-sdk/openai": "^0.0.70"
+  }
+}

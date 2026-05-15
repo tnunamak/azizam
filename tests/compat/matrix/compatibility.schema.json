@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openai-proxy/compat/compatibility.schema.json",
+  "title": "SDK Compatibility Matrix",
+  "description": "Machine-readable compatibility report emitted by tests/compat. The top-level value is an array of protocol/SDK reports.",
+  "type": "array",
+  "items": { "$ref": "#/$defs/protocolMatrix" },
+  "$defs": {
+    "protocolMatrix": {
+      "type": "object",
+      "required": ["protocol", "sdk", "sdk_version", "gateway_version", "results"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "openai",
+            "anthropic",
+            "ollama",
+            "gateway",
+            "elevenlabs",
+            "gemini"
+          ]
+        },
+        "sdk": {
+          "type": "string",
+          "description": "Stable SDK identifier, e.g. openai-python, openai-node, anthropic-python."
+        },
+        "sdk_version": { "type": "string" },
+        "gateway_version": { "type": "string" },
+        "results": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/result" }
+        },
+        "notes": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "result": {
+      "type": "string",
+      "enum": ["pass", "fail", "partial", "unsupported", "skipped"]
+    }
+  }
+}

@@ -143,6 +143,46 @@ Generate a machine-readable report, for example:
 
 The README should eventually render this into a human table.
 
+## Running The Scaffold
+
+A first pass of this harness lives under `tests/compat/` and
+`scripts/compat/`. It is intentionally minimal:
+
+- `tests/compat/harness/` is the shared, stdlib-only library (env
+  validation, matrix builder, fake response shapes).
+- `tests/test_compat_harness.py` covers the harness library and is run
+  by the repo's default unittest discovery.
+- `tests/compat/python/probe_*.py` are optional live probes that
+  auto-skip when their SDK or the env is missing.
+- `tests/compat/node/` is an isolated Node project for JS SDK probes —
+  it does not touch the Python install.
+- `scripts/compat/run_matrix.py` aggregates whatever probes are
+  available and emits a JSON document matching
+  `tests/compat/matrix/compatibility.schema.json`.
+
+Quick commands:
+
+```bash
+# Core unit tests (no SDKs, no network):
+/home/tnunamak/applications/openai-proxy/venv/bin/python \
+    -m unittest discover -s tests -p 'test_*.py' -v
+
+# Compatibility matrix dry-run:
+/home/tnunamak/applications/openai-proxy/venv/bin/python \
+    scripts/compat/run_matrix.py --dry-run
+
+# Optional SDK probe (Python):
+/home/tnunamak/applications/openai-proxy/venv/bin/pip install \
+    -r tests/compat/python/requirements-openai.txt
+export OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080
+export OPENAI_PROXY_API_KEY=sk-your-proxy-key
+/home/tnunamak/applications/openai-proxy/venv/bin/python \
+    -m unittest tests.compat.python.probe_openai -v
+```
+
+Full setup, env vars, and instructions for adding new probes live in
+[`tests/compat/README.md`](../tests/compat/README.md).
+
 ## Suggested Repo Layout
 
 ```text
