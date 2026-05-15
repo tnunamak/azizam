@@ -8,24 +8,29 @@ operator's current machine into the product spec.
 ## Implementation Status
 
 The extension ladder, manifest layering, and unknown-parameter policy below
-describe target behavior. Status on `main`:
+describe the implemented first slice plus the remaining target behavior.
+Status on `main`:
 
 - Pure manifest validation and binding helpers exist in
   `gateway/manifests.py`.
 - Pure typed request-extension validation exists in `gateway/extensions.py`.
 - Pure workflow registry with portable input/output summaries exists in
   `gateway/discovery.py`.
-- An unmounted read-only workflow discovery router exists in `gateway/api.py`.
+- A mounted `/gateway/v1` router exists in `proxy.py` for workflow discovery,
+  capabilities, durable receipts, and media jobs.
 - A pure capability model exists in `gateway/capabilities.py`.
 - Pure app-profile policy module exists in `gateway/policy.py`.
 - A pure app-profile loader for existing key-entry config exists in
   `gateway/profiles.py`.
-- Observational image-route receipts run in
+- Profile-aware image-route receipts run in
   `/v1/images/generations` and `/v1/images/edits`, recording safe field-name
-  accepted/rejected/ignored outcomes and best-effort manifest identity.
-- The OpenAI-compatible image-edit handler still parses only the standard
-  fields listed in the example below. There is no `extensions` container in
-  the live request shape and no `/gateway/v1/media/jobs` endpoint.
+  accepted/rejected/ignored outcomes, manifest identity, durable persistence,
+  and body-free firehose events.
+- The OpenAI-compatible image handlers accept a namespaced `extensions`
+  container for supported workflow-manifest controls and reject unknown
+  top-level gateway-native controls instead of silently dropping them.
+- `/gateway/v1/media/jobs` provides the first generic durable media-job API;
+  asset serving and backend scheduling are still follow-up work.
 
 ## Scope Decision
 

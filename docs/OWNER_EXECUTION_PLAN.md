@@ -23,27 +23,22 @@ The status of each build-order item below reflects what currently lives on
 - [x] Image-extension/manifest-binding layer (`gateway/image_extensions.py`)
 - [x] Pure capability model and policy-aware summaries (`gateway/capabilities.py`, `tests/test_capabilities.py`)
 - [x] Pure Anthropic and Ollama protocol-frontend translators (`gateway/protocols/`)
-- [x] Read-only workflow discovery + capability/receipt router (`gateway/api.py`, `tests/test_gateway_api.py`)
+- [x] Workflow discovery, capability, receipt, and media-job router (`gateway/api.py`, `tests/test_gateway_api.py`, `tests/test_gateway_media_api.py`)
 - [x] Route receipt data model (`gateway/receipts.py`)
 - [x] Durable SQLite receipt store (`gateway/receipt_store.py`, `tests/test_receipt_store.py`)
 - [x] Gateway media-job model and durable store (`gateway/media_jobs.py`)
-- [x] Observational image-route receipts wired into `/v1/images/generations` and `/v1/images/edits` (placeholder policy decision, safe field-name outcomes, best-effort manifest identity, body-free firehose event)
+- [x] Image-route receipts wired into `/v1/images/generations` and `/v1/images/edits` with profile-aware policy decisions, safe field-name outcomes, manifest identity, durable persistence, and body-free firehose events
+- [x] Live `/gateway/v1/*` mount in `proxy.py` for workflows, capabilities, receipts, and media jobs
+- [x] Live non-streaming Anthropic Messages and Ollama chat/generate/tags frontends over the existing chat route
+- [x] Live image workflow extension binding for supported manifest controls
+- [x] `generate-key` preserves existing `profile:` blocks on rotation
 - [x] SDK compatibility harness with executable registered probes (`scripts/compat/`, `tests/compat/`, `docs/SDK_COMPATIBILITY_HARNESS.md`)
 
-In-progress / depends on owner wiring landing:
+In-progress / next integration targets:
 
-- `/gateway/v1/*` mount in `proxy.py` — the workflow/capability/receipt
-  router exists; once mounted the endpoints under that namespace become live
-  behavior.
-- Canonical intent pipeline receipts — image receipts remain observational
-  with a `proxy:legacy-auth` placeholder decision until the runtime-auth
-  bridge feeds real policy decisions in.
-- Workflow manifest binding as the source of live ComfyUI mutation.
-- Request handlers consulting `gateway.runtime_auth` for profile/policy
-  evaluation instead of inferring from the legacy auth model. The pure
-  bridge is ready; the integration switch is owner work.
-- `generate-key` preserving `profile:` blocks on rotation (depends on the
-  owner-side `generate-key` change landing).
+- Expand the live capability inventory beyond the initial hand-built catalog.
+- Add asset serving for durable media jobs.
+- Add streaming protocol-frontend coverage where real clients need it.
 - Backend adapter contract extracted from `proxy.py`.
 
 ## North Star
@@ -133,7 +128,7 @@ Success criteria:
 
 ## Build Order
 
-### 1. Route Receipts — partially done
+### 1. Route Receipts — live first slice done
 
 Add a small route receipt data model first. Do not wait for the full event
 system.
@@ -163,13 +158,14 @@ Initial delivery:
 - [x] unit tests
 - [x] internal/admin/client redaction behavior (`RouteReceipt.to_dict(...)` and
       `gateway/receipt_store.py` audience filtering)
-- [x] attach receipt internally to image edit path (observational only; carries
-      a `proxy:legacy-auth` placeholder policy decision and safe field-name
-      accepted/rejected/ignored outcomes)
-- [x] optional debug log line, not public API yet (emitted via
-      `firehose_metrics.record_event("image_route_receipt", ...)`)
+- [x] attach profile-aware receipts internally to image generation/edit paths
+      with safe field-name accepted/rejected/ignored outcomes
+- [x] persist receipts durably and expose audience-filtered views under
+      `/gateway/v1/receipts`
+- [x] body-free debug event via
+      `firehose_metrics.record_event("image_route_receipt", ...)`
 
-### 2. Manifest Contract — partially done
+### 2. Manifest Contract — live first slice done
 
 Add pure manifest parsing/validation.
 
@@ -184,36 +180,37 @@ Minimum concepts:
 
 Initial delivery:
 
-- [x] no ComfyUI graph execution changes yet
 - [x] fake binding mutation tests (`gateway/manifests.py` exposes
-      `apply_backend_binding` and `bind_backend_request`; not yet called from
-      live handlers)
-- [x] one sample manifest fixture committed under `manifests/workflows/`
+      `apply_backend_binding` and `bind_backend_request`)
+- [x] live image generation/edit handlers call the manifest binding layer for
+      supported namespaced controls
+- [x] sample image edit and image generation manifests committed under
+      `manifests/workflows/`
 
-### 3. Fake Backend Proof — not started
+### 3. Fake Backend Proof — done for image extension binding
 
 Build a fake ComfyUI-like request capture.
 
 Initial delivery:
 
-- test submits denoise/controlnet extension
-- adapter applies binding to backend request object
-- test asserts exact mutation
-- test asserts unknown extension rejection
+- [x] tests submit namespaced workflow extensions
+- [x] adapter applies binding to backend request object
+- [x] tests assert exact mutation
+- [x] tests assert unknown extension rejection
 
-### 3.5. Live Integration Points — partially done
+### 3.5. Live Integration Points — live first slice done
 
 Only after the pure modules stay green, thread them into the existing proxy at
 the narrowest points:
 
 - [x] `images_generations` and `images_edits` for handler-level image receipts
-      after auth succeeds (observational, post-auth, safe field-name capture)
+      after auth succeeds (profile-aware, post-auth, safe field-name capture)
 - [ ] `_build_image_response_payload` for final response metadata
 - [ ] `load_comfy_workflow` for preflight validation of workflow shape and
       manifest drift
-- [ ] `proxy_comfy_request` and `proxy_comfy_edit_request` for applying
+- [x] `proxy_comfy_request` and `proxy_comfy_edit_request` for applying
       manifest bindings where node mutation already happens
-- [ ] `_firehose_request_counter` only for coarse request counters, not receipt
+- [x] `_firehose_request_counter` only for coarse request counters, not receipt
       truth, because middleware should not read request bodies
 - [ ] status capability builders as source material for curated `/gateway/v1`
       discovery, not as a raw payload to expose
@@ -222,29 +219,30 @@ Do not spread policy checks through handlers. Resolve profile/policy once, pass
 the decision into receipt and routing helpers, and keep client/admin/internal
 visibility decisions explicit.
 
-### 4. `/gateway/v1` Namespace Skeleton — partially done
+### 4. `/gateway/v1` Namespace Skeleton — live first slice done
 
-Add the namespace only after the internal contract exists. `gateway/api.py`
-provides the read-only workflow discovery, capability, and receipt router.
-The mount into `proxy.py` is owner work in flight; the endpoints below go
-live when that lands.
+`gateway/api.py` provides workflow discovery, capability, receipt, and media
+job endpoints. `proxy.py` mounts the namespace behind proxy-key auth.
 
 Initial endpoints:
 
-- [ ] `GET /gateway/v1/capabilities`
+- [x] `GET /gateway/v1/capabilities`
 - [x] `GET /gateway/v1/workflows`
 - [x] `GET /gateway/v1/workflows/{id}`
+- [x] `GET /gateway/v1/receipts`
+- [x] `GET /gateway/v1/receipts/{request_id}`
+- [x] `POST /gateway/v1/media/jobs`
+- [x] `GET /gateway/v1/media/jobs`
+- [x] `GET /gateway/v1/media/jobs/{job_id}`
+- [x] `POST /gateway/v1/media/jobs/{job_id}/events`
+- [x] `POST /gateway/v1/media/jobs/{job_id}/cancel`
 
-Keep them read-only initially.
+### 5. Media Jobs — storage/API first slice done
 
-### 5. Media Jobs — not started
-
-Only after manifests and receipts are proven:
-
-- `POST /gateway/v1/media/jobs`
-- durable job record
-- asset references
-- ComfyUI adapter integration
+- [x] durable job record
+- [x] audience-filtered API surface
+- [ ] asset serving
+- [ ] ComfyUI adapter integration for long-running jobs
 
 ### 6. SDK/App Harness — executable harness landed
 
@@ -260,8 +258,8 @@ Initial targets:
 
 - OpenAI Python against `/v1/chat/completions`
 - OpenAI Python against `/v1/images/edits`
-- Anthropic Python against a fake `/v1/messages` once implemented
-- Ollama Python against fake native endpoints once implemented
+- Anthropic Python against `/v1/messages`
+- Ollama clients against `/api/chat`, `/api/generate`, and `/api/tags`
 
 ## Guardrails
 

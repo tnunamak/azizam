@@ -1,7 +1,7 @@
 # Core Contracts
 
 Date: 2026-05-15
-Status: initial contract
+Status: live proxy integration in progress
 
 This document defines the smallest set of stable contracts the gateway needs
 before it grows more endpoints, adapters, or scheduler behavior.
@@ -12,12 +12,15 @@ use, and diagnostics can evolve without turning into one large special case.
 
 ## Implementation Status
 
-The contracts below are still ahead of the live request path, but the core
-pure Python building blocks currently exist on `main`:
+The contracts below are now partially in the live request path. The core pure
+Python building blocks currently exist on `main`, and `proxy.py` wires the
+auth/profile bridge, gateway discovery router, image manifest extensions,
+durable receipts, media-job store initialization, and non-streaming
+Anthropic/Ollama protocol frontends:
 
 - `gateway/policy.py` — `AppProfile`, `PolicyRequest`, `PolicyDecision`,
-  `evaluate(...)`. Consulted by request handlers once the runtime-auth bridge
-  is mounted; pure module remains independently testable.
+  `evaluate(...)`. Consulted by the live gateway/image/protocol handlers
+  through the runtime-auth bridge; pure module remains independently testable.
 - `gateway/profiles.py` — loader from existing proxy key-entry dicts into
   `AppProfile`, without reading files or resolving secrets. `profile:` blocks
   on key entries hot-reload with the rest of `proxy_api_keys.yml`.
@@ -27,9 +30,9 @@ pure Python building blocks currently exist on `main`:
   `discovery_audience_for_profile` helper that maps
   `status_visibility.level` → audience tier.
 - `gateway/manifests.py` — workflow manifest load/validate plus
-  `apply_backend_binding` and receipt-ready `bind_backend_request`. Binding is
-  the source of recorded routing facts; live ComfyUI mutation switches over
-  when the owner wiring lands.
+  `apply_backend_binding` and receipt-ready `bind_backend_request`. Image
+  generation/edit handlers use this binding layer for supported workflow
+  extension inputs.
 - `gateway/extensions.py` — typed namespaced request-extension validation with
   accepted/rejected/ignored outcomes. The canonical namespace for
   gateway-owned controls is `com.vividfish.workflow`.
@@ -39,21 +42,19 @@ pure Python building blocks currently exist on `main`:
   with audience-aware summaries.
 - `gateway/discovery.py` — workflow registry with audience-aware summaries
   (`internal`, `admin`, `client`).
-- `gateway/api.py` — read-only `/gateway/v1/workflows` and capability/receipt
-  router; mounted into the request path by the owner wiring.
+- `gateway/api.py` — `/gateway/v1/workflows`, `/gateway/v1/capabilities`,
+  `/gateway/v1/receipts`, and `/gateway/v1/media/jobs` router; mounted into
+  the live proxy behind proxy-key auth.
 - `gateway/receipts.py` — `RouteReceipt` data model with policy-decision and
-  validation hooks. Observational receipts are emitted for
-  `/v1/images/generations` and `/v1/images/edits` (firehose-only, no client
-  visibility, safe field-name outcomes only).
+  validation hooks. Image routes persist durable receipts and emit body-free
+  firehose events with safe field-name outcomes only.
 - `gateway/receipt_store.py` — durable SQLite receipt store with audience
   filtering and payload/secret shape guards.
 - `gateway/media_jobs.py` — gateway media-job model and durable store backing
   the `/gateway/v1/media/jobs` surface.
 
-Backend adapter extraction, a live capability registry, resource claims, and
-client-facing receipt/event surfaces described below are still in progress.
-Media job records have a pure model and durable store; the owner work is
-mounting the read/write endpoints into the request path.
+Backend adapter extraction, a richer live capability inventory, resource
+claims, and asset serving described below are still in progress.
 
 ## Contract Rule
 
