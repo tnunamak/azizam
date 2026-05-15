@@ -55,6 +55,30 @@ curl -fsS "$BASE/gateway/v1/receipts/$REQUEST_ID" \
 
 Receipts record field names and reasons, not raw prompts or media bytes. Use them to understand policy denials, accepted inputs, rejected inputs, ignored namespaced workflow controls, and manifest provenance.
 
+## Workflow Controls
+
+Do not send backend workflow knobs as random top-level OpenAI fields. First fetch `GET /gateway/v1/workflows`, then send only manifest-listed controls under `extensions.com.vividfish.workflow`.
+
+Current examples:
+
+- `/v1/images/edits` with `model: flux2-klein-4b-edit` supports `denoise`, `steps`, and `guidance` as namespaced workflow controls. ControlNet is not currently exposed unless discovery shows a ControlNet-capable workflow.
+- `/v1/audio/generate` with `model: tangoflux` supports `steps`, `guidance`, and `batch_size` as namespaced workflow controls. Keep `duration` and `seed` top-level.
+- `/v1/videos` with `model: video-ltx-2.3-distilled` supports `steps`, `stage1_cfg`, and `stage2_cfg` as namespaced workflow controls. Keep `size`, `seconds`, `seed`, prompt, and image-reference fields top-level.
+
+Example JSON body shape:
+
+```json
+{
+  "model": "flux2-klein-4b-edit",
+  "prompt": "preserve this structure, paint it as underwater rock",
+  "extensions": {
+    "com.vividfish.workflow": {
+      "denoise": 0.35
+    }
+  }
+}
+```
+
 ## Common Calls
 
 - Chat: `POST /v1/chat/completions`

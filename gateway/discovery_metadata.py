@@ -185,7 +185,8 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         "2. GET /.well-known/ai-gateway.",
         "3. GET /gateway/v1/capabilities with bearer auth.",
         "4. Use /v1 by default; use /v1/messages or /api/* only for clients that require those protocols.",
-        "5. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",
+        "5. Fetch /gateway/v1/workflows before using extensions.com.vividfish.workflow controls.",
+        "6. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",
         "",
     ]
     return "\n".join(lines)
