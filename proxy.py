@@ -6239,6 +6239,7 @@ app.include_router(
         audience_resolver=_gateway_audience_resolver,
         capabilities_provider=_gateway_capabilities_provider,
         receipt_store_path=receipt_store.DB_PATH,
+        media_job_store_path=media_jobs.DB_PATH,
     )
 )
 

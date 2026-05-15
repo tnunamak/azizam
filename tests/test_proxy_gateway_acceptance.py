@@ -284,6 +284,36 @@ class TestGatewayRouterMounting(unittest.TestCase):
                 body.get("error", {}).get("type"), "authentication_error"
             )
 
+    def test_gateway_media_jobs_use_live_store_provider(self) -> None:
+        class _FakeJob:
+            def to_dict(self, audience):
+                return {
+                    "job_id": "mj_acceptance",
+                    "schema_version": 1,
+                    "audience": audience,
+                    "intent": "image.generate",
+                    "status": "queued",
+                }
+
+        calls: list[dict[str, Any]] = []
+
+        def fake_create(payload, *, path):
+            calls.append({"payload": payload, "path": path})
+            return _FakeJob()
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.media_jobs, "create", fake_create
+        ):
+            response = client.post(
+                "/gateway/v1/media/jobs",
+                json={"intent": "image.generate"},
+            )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["job_id"], "mj_acceptance")
+        self.assertEqual(calls[0]["path"], proxy.media_jobs.DB_PATH)
+
 
 # ---------------------------------------------------------------------------
 # Gateway audience derived from the authenticated profile
