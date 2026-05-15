@@ -418,6 +418,24 @@ class TestExecuteProbe(unittest.TestCase):
         self.assertEqual(probes[0].result, Result.FAIL)
         self.assertIn("NoSuchClass", probes[0].note or "")
 
+    def test_execute_probe_rejects_non_testcase_class(self) -> None:
+        _install_fake_module(
+            "tests.compat._fake_probe_bad_class",
+            {"Probe": object},
+        )
+        self.addCleanup(sys.modules.pop, "tests.compat._fake_probe_bad_class", None)
+        spec = run_matrix.ProbeSpec(
+            protocol="fake",
+            sdk="fake-sdk",
+            module="tests.compat._fake_probe_bad_class",
+            test_class="Probe",
+            sdk_dependency="_fake_sdk_dep",
+            case_map=(("a", "test_a"),),
+        )
+        probes = run_matrix.execute_probe(spec)
+        self.assertEqual(probes[0].result, Result.FAIL)
+        self.assertIn("unittest.TestCase", probes[0].note or "")
+
     def test_collect_matrices_runs_executor_when_ready(self) -> None:
         spec = run_matrix.ProbeSpec(
             protocol="fake",

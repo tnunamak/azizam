@@ -184,6 +184,15 @@ def _assert_safe(data: Mapping[str, Any]) -> None:
     if "request_id" not in data or not data["request_id"]:
         raise ValueError("receipt missing request_id")
 
+    bad_top_level = sorted(
+        k for k in data.keys() if str(k).lower() in _FORBIDDEN_METADATA_KEYS
+    )
+    if bad_top_level:
+        raise ValueError(
+            f"receipt contains forbidden top-level keys: {bad_top_level} "
+            "(receipts must not carry raw prompts, image bytes, secrets, or request bodies)"
+        )
+
     metadata = data.get("metadata") or {}
     if not isinstance(metadata, Mapping):
         raise ValueError("receipt.metadata must be a mapping")
@@ -259,7 +268,7 @@ def get(
     if not row:
         return None
     data = _safe_loads(row[0])
-    if data is None:
+    if not isinstance(data, Mapping):
         return None
     out = _filter_for_audience(data, audience)
     out.setdefault("_stored_at", int(row[1]))
@@ -302,7 +311,7 @@ def recent(
     out: list[dict[str, Any]] = []
     for receipt_json, created_at in rows:
         data = _safe_loads(receipt_json)
-        if data is None:
+        if not isinstance(data, Mapping):
             continue
         filtered = _filter_for_audience(data, audience)
         filtered.setdefault("_stored_at", int(created_at))

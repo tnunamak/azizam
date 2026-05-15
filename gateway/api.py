@@ -47,6 +47,16 @@ def _client_safe_message(message: str, audience: str) -> str:
     return message
 
 
+def _resolve_request_audience(
+    resolver: AudienceResolver,
+    request: Request,
+) -> str:
+    try:
+        return _normalize_audience(resolver(request))
+    except Exception:
+        return DEFAULT_AUDIENCE
+
+
 def create_gateway_router(
     registry: WorkflowRegistry,
     *,
@@ -66,7 +76,7 @@ def create_gateway_router(
 
     @router.get("/workflows")
     def list_workflows(request: Request) -> JSONResponse:
-        audience = _normalize_audience(resolve_audience(request))
+        audience = _resolve_request_audience(resolve_audience, request)
         try:
             catalog = registry.summarize_catalog(audience=audience)
         except Exception as exc:  # noqa: BLE001 — translate to protocol error
@@ -81,7 +91,7 @@ def create_gateway_router(
 
     @router.get("/workflows/{workflow_id}")
     def get_workflow(workflow_id: str, request: Request) -> JSONResponse:
-        audience = _normalize_audience(resolve_audience(request))
+        audience = _resolve_request_audience(resolve_audience, request)
         try:
             summary = registry.summarize_workflow(workflow_id, audience=audience)
         except Exception as exc:  # noqa: BLE001

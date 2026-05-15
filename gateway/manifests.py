@@ -112,7 +112,7 @@ def validate_inputs(
         if spec is None:
             result.rejected[name] = "unknown input"
             continue
-        reason = _validate_value(name, value, spec)
+        reason = validate_input_value(name, value, spec)
         if reason is None:
             result.accepted[name] = value
         else:
@@ -202,6 +202,11 @@ def _backend_metadata(backend_binding: dict[str, Any]) -> dict[str, Any]:
         ):
             metadata[key] = list(value)
     return metadata
+
+
+def validate_input_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
+    """Validate one value against the manifest input-spec subset."""
+    return _validate_value(name, value, spec)
 
 
 def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:

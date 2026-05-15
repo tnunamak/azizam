@@ -141,6 +141,8 @@ class TestLoadProfileValidation(unittest.TestCase):
         with self.assertRaises(ProfileLoadError):
             load_profile({"id": "x", "protocols": "openai.chat"})
         with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "protocols": {"openai.chat": True}})
+        with self.assertRaises(ProfileLoadError):
             load_profile({"id": "x", "protocols": [1, 2]})
 
     def test_fallback_cloud_allowed_must_be_bool(self) -> None:

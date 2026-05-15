@@ -129,33 +129,48 @@ Implemented (lives on `main`):
 - `gateway/policy.py`: pure app-profile policy module with `AppProfile`,
   `PolicyRequest`, `PolicyDecision`, fallback/native-passthrough/visibility
   policies, and an `evaluate` entry point. Not yet read by request handlers.
+- `gateway/profiles.py`: pure loader from existing proxy key-entry dicts into
+  `AppProfile`, keeping credential lookup and file I/O outside the policy
+  layer.
 - `gateway/discovery.py`: pure workflow registry with audience-aware summaries
-  (`internal`, `admin`, `client`). Not yet exposed over HTTP.
+  (`internal`, `admin`, `client`).
 - `gateway/manifests.py`: workflow manifest load/validate plus
-  `apply_backend_binding`. Not yet invoked from live image handlers.
+  `apply_backend_binding` and receipt-ready `bind_backend_request`.
+- `gateway/extensions.py`: pure typed request-extension validator for
+  namespaced gateway-native controls. It records accepted/rejected/ignored
+  field names without logging values.
+- `gateway/capabilities.py`: pure capability record, resource estimate, and
+  audience-aware summaries for future discovery and router pre-filtering.
+- `gateway/api.py`: read-only `/gateway/v1/workflows` FastAPI router backed by
+  the workflow registry. It exists but is not mounted in `proxy.py`.
 - `gateway/receipts.py`: `RouteReceipt` data model with policy-decision and
   validation hooks.
+- `gateway/receipt_store.py`: SQLite receipt persistence with audience
+  filtering and structural guards against raw prompts, media bytes, request
+  bodies, and secrets.
 - Observational image-route receipts: `/v1/images/generations` and
   `/v1/images/edits` create a receipt after auth, attach a
-  `proxy:legacy-auth` placeholder policy decision, and emit a body-free
-  `image_route_receipt` event through the firehose metrics path. The receipt
-  is not returned to clients, does not inspect the request body, and does not
-  yet record accepted/rejected inputs.
-- `scripts/compat/` and `tests/compat/` SDK compatibility harness scaffold
-  (see `docs/SDK_COMPATIBILITY_HARNESS.md`). The matrix runner exists; no
-  compatibility claims are published yet.
+  `proxy:legacy-auth` placeholder policy decision, record safe field-name
+  validation outcomes for standard image inputs, attach manifest identity on a
+  best-effort basis, and emit a body-free `image_route_receipt` event through
+  the firehose metrics path. The receipt is not returned to clients.
+- `scripts/compat/` and `tests/compat/` SDK compatibility harness (see
+  `docs/SDK_COMPATIBILITY_HARNESS.md`). The matrix runner executes registered
+  unittest probes when SDK and environment preconditions are present; published
+  compatibility claims are still separate from this infrastructure.
 
 Not implemented:
 
-- `/gateway/v1/*` is not mounted in `proxy.py`. Every `/gateway/v1/...` path
-  in this document — discovery, media jobs, native passthrough, capability
-  endpoints — is a target shape, not current behavior.
+- `/gateway/v1/*` is not mounted in `proxy.py`. The workflow router exists as
+  a pure component, but every live `/gateway/v1/...` path in this document is
+  still a target shape, not current behavior.
 - No protocol frontend / canonical intent / router / scheduler split exists
   yet; request handling still lives in `proxy.py`.
 - No backend adapter contract has been extracted.
 - Anthropic Messages and Ollama native frontends are not implemented.
-- Policy decisions, manifest validation, and workflow bindings are not yet
-  wired into live request paths.
+- Policy decisions, profile loading, capability matching, manifest validation,
+  and workflow bindings are not yet the source of truth for live request
+  routing.
 
 ## Target Users
 

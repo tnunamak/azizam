@@ -12,12 +12,17 @@ describe target behavior. Status on `main`:
 
 - Pure manifest validation and binding helpers exist in
   `gateway/manifests.py`.
+- Pure typed request-extension validation exists in `gateway/extensions.py`.
 - Pure workflow registry with portable input/output summaries exists in
   `gateway/discovery.py`.
+- An unmounted read-only workflow discovery router exists in `gateway/api.py`.
+- A pure capability model exists in `gateway/capabilities.py`.
 - Pure app-profile policy module exists in `gateway/policy.py`.
+- A pure app-profile loader for existing key-entry config exists in
+  `gateway/profiles.py`.
 - Observational image-route receipts run in
-  `/v1/images/generations` and `/v1/images/edits` but do not record accepted
-  vs rejected inputs yet.
+  `/v1/images/generations` and `/v1/images/edits`, recording safe field-name
+  accepted/rejected/ignored outcomes and best-effort manifest identity.
 - The OpenAI-compatible image-edit handler still parses only the standard
   fields listed in the example below. There is no `extensions` container in
   the live request shape and no `/gateway/v1/media/jobs` endpoint.

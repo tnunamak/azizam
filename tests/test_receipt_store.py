@@ -147,6 +147,13 @@ class TestReceiptStore(unittest.TestCase):
         # And confirm nothing slipped through.
         self.assertEqual(receipt_store.count(self.db), 0)
 
+    def test_rejects_forbidden_top_level_keys(self) -> None:
+        data = _make_receipt().to_dict("internal")
+        data["prompt"] = "should not be persisted"
+        with self.assertRaises(ValueError) as ctx:
+            receipt_store.record(data, path=self.db)
+        self.assertIn("top-level", str(ctx.exception))
+
     def test_rejects_non_mapping_metadata(self) -> None:
         data = _make_receipt().to_dict("internal")
         data["metadata"] = ["not", "a", "mapping"]

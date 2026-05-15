@@ -174,6 +174,14 @@ class TestValidateExtensionInputs(unittest.TestCase):
                 namespace=NAMESPACE,
             )
 
+    def test_bad_individual_spec_fails_fast(self) -> None:
+        with self.assertRaises(ExtensionError):
+            validate_extension_inputs(
+                {"prompt": ["not", "a", "mapping"]},  # type: ignore[dict-item]
+                {"prompt": "x"},
+                namespace=NAMESPACE,
+            )
+
 
 class TestRecordExtensionResult(unittest.TestCase):
     def test_receipt_records_namespaced_names_only(self) -> None:

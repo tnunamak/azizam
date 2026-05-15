@@ -169,9 +169,9 @@ GET  /gateway/v1/assets/{id}
 ```
 
 Gateway-native discovery and extension schemas should also live outside
-vendor-compatible namespaces (target shape; the pure workflow registry in
-`gateway/discovery.py` is the intended source, but no `/gateway/v1` route
-mounts it yet):
+vendor-compatible namespaces. `gateway/api.py` now provides an unmounted
+read-only workflow router backed by `gateway/discovery.py`; the rest of this
+surface remains target shape:
 
 ```text
 GET /gateway/v1/capabilities

@@ -31,7 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
-from gateway.manifests import _validate_value  # internal reuse; same project
+from gateway.manifests import validate_input_value
 
 
 class ExtensionError(ValueError):
@@ -125,7 +125,9 @@ def validate_extension_inputs(
         if name not in supported:
             result.ignored[name] = "input not supported by current binding"
             continue
-        reason = _validate_value(name, value, dict(spec))
+        if not isinstance(spec, Mapping):
+            raise ExtensionError(f"spec for input {name!r} must be a mapping")
+        reason = validate_input_value(name, value, dict(spec))
         if reason is None:
             result.accepted[name] = value
         else:
@@ -134,6 +136,8 @@ def validate_extension_inputs(
     for name, spec in specs.items():
         if name in supplied:
             continue
+        if not isinstance(spec, Mapping):
+            raise ExtensionError(f"spec for input {name!r} must be a mapping")
         if spec.get("required") and name in supported:
             result.rejected[name] = "required input missing"
 

@@ -172,9 +172,8 @@ ProbeRunner = Callable[[ProbeSpec], List[ProbeResult]]
 def execute_probe(spec: ProbeSpec) -> List[ProbeResult]:
     """Default executor: load the probe's TestCase and run each case.
 
-    Each case maps to a single test method. The loader is invoked per
-    case so a single ``setUp`` failure does not poison sibling cases'
-    results — every case gets its own fresh test instance.
+    Each case maps to a single test method. The TestCase is instantiated per
+    case so a single ``setUp`` failure does not poison sibling cases' results.
     """
 
     module = importlib.import_module(spec.module)
@@ -187,7 +186,13 @@ def execute_probe(spec: ProbeSpec) -> List[ProbeResult]:
             for case in spec.cases
         ]
 
-    loader = unittest.TestLoader()
+    if not isinstance(test_cls, type) or not issubclass(test_cls, unittest.TestCase):
+        reason = f"{spec.test_class!r} is not a unittest.TestCase"
+        return [
+            ProbeResult(case=case, result=Result.FAIL, note=reason)
+            for case in spec.cases
+        ]
+
     probes: List[ProbeResult] = []
     for case, method in spec.case_map:
         if not hasattr(test_cls, method):
@@ -199,7 +204,7 @@ def execute_probe(spec: ProbeSpec) -> List[ProbeResult]:
                 )
             )
             continue
-        suite = unittest.TestSuite([loader.loadTestsFromName(method, test_cls)])
+        suite = unittest.TestSuite([test_cls(method)])
         outcome, note = _run_one(suite)
         probes.append(ProbeResult(case=case, result=outcome, note=note))
     return probes

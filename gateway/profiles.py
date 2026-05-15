@@ -75,7 +75,10 @@ def _coerce_str_set(
     """
     if value is None:
         return None
-    if isinstance(value, str) or not isinstance(value, Iterable):
+    if (
+        isinstance(value, (str, bytes, Mapping))
+        or not isinstance(value, Iterable)
+    ):
         raise ProfileLoadError(
             f"{where} must be a list of strings, got {type(value).__name__}"
         )

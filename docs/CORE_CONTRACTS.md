@@ -12,22 +12,33 @@ use, and diagnostics can evolve without turning into one large special case.
 
 ## Implementation Status
 
-The contracts below are mostly aspirational. The pure Python building blocks
-that currently exist on `main`:
+The contracts below are still ahead of the live request path, but the core
+pure Python building blocks currently exist on `main`:
 
 - `gateway/policy.py` — `AppProfile`, `PolicyRequest`, `PolicyDecision`,
   `evaluate(...)`. Not yet consulted by request handlers.
+- `gateway/profiles.py` — loader from existing proxy key-entry dicts into
+  `AppProfile`, without reading files or resolving secrets.
 - `gateway/manifests.py` — workflow manifest load/validate plus
-  `apply_backend_binding`. Not yet called from live image handlers.
+  `apply_backend_binding` and receipt-ready `bind_backend_request`. Binding is
+  not yet the source of live image-handler mutation.
+- `gateway/extensions.py` — typed namespaced request-extension validation with
+  accepted/rejected/ignored outcomes.
+- `gateway/capabilities.py` — pure capability and resource-estimate records
+  with audience-aware summaries.
 - `gateway/discovery.py` — workflow registry with audience-aware summaries
-  (`internal`, `admin`, `client`). Not yet exposed over HTTP.
+  (`internal`, `admin`, `client`).
+- `gateway/api.py` — unmounted read-only `/gateway/v1/workflows` router.
 - `gateway/receipts.py` — `RouteReceipt` data model with policy-decision and
   validation hooks. Observational receipts are emitted for
   `/v1/images/generations` and `/v1/images/edits` (firehose-only, no client
-  visibility, no input capture).
+  visibility, safe field-name outcomes only).
+- `gateway/receipt_store.py` — durable SQLite receipt store with audience
+  filtering and payload/secret shape guards.
 
-Adapter manifest, capability registry, resource claims, and job/event records
-described below have no implementation yet.
+Backend adapter extraction, live capability registry, resource claims, media
+job records, and client-facing receipt/event surfaces described below are not
+implemented yet.
 
 ## Contract Rule
 

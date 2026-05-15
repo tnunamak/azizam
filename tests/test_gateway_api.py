@@ -241,6 +241,21 @@ class GatewayDiscoveryRouterTests(unittest.TestCase):
         self.assertEqual(seen, ["admin"])
         self.assertEqual(response.json()["audience"], "admin")
 
+    def test_audience_resolver_error_falls_back_to_client(self) -> None:
+        def resolver(_request) -> str:
+            raise RuntimeError("resolver should not leak")
+
+        registry = _build_registry()
+        app = FastAPI()
+        app.include_router(
+            create_gateway_router(registry, audience_resolver=resolver)
+        )
+        client = TestClient(app)
+        response = client.get("/gateway/v1/workflows")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["audience"], "client")
+        self.assertNotIn("resolver should not leak", response.text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
