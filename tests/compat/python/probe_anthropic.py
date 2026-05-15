@@ -39,7 +39,7 @@ class TestAnthropicPythonSDK(unittest.TestCase):
             timeout=self.cfg.request_timeout_s,
         )
 
-    def test_client_constructs(self) -> None:
+    def test_client_construct(self) -> None:
         # Construction alone is a useful smoke probe; live calls live in
         # later slices once the gateway exposes a known Anthropic model.
         self.assertTrue(hasattr(self.client, "messages"))

@@ -284,5 +284,254 @@ class TestRunMatrixCLI(unittest.TestCase):
             validate_matrix_dict(m.to_dict())
 
 
+# ---------- Probe execution tests (fake probe modules, no SDKs) ----------
+
+
+def _install_fake_module(name: str, attrs: dict) -> None:
+    """Register a fake module in sys.modules for runner tests."""
+    import types
+
+    mod = types.ModuleType(name)
+    for k, v in attrs.items():
+        setattr(mod, k, v)
+    sys.modules[name] = mod
+
+
+def _make_pass_case() -> type:
+    return type(
+        "Probe",
+        (unittest.TestCase,),
+        {
+            "test_a": lambda self: self.assertTrue(True),
+            "test_b": lambda self: self.assertTrue(True),
+        },
+    )
+
+
+def _make_mixed_case() -> type:
+    def _fail(self):
+        self.assertEqual(1, 2)
+
+    def _error(self):
+        raise RuntimeError("boom")
+
+    def _skipped(self):
+        self.skipTest("explicit skip")
+
+    return type(
+        "Probe",
+        (unittest.TestCase,),
+        {
+            "test_pass": lambda self: self.assertEqual(1, 1),
+            "test_fail": _fail,
+            "test_error": _error,
+            "test_skipped": _skipped,
+        },
+    )
+
+
+class TestExecuteProbe(unittest.TestCase):
+    def setUp(self) -> None:
+        # Build TestCase classes dynamically so unittest discover does
+        # not collect them as real tests at module load time.
+        _install_fake_module(
+            "tests.compat._fake_probe_pass",
+            {"Probe": _make_pass_case()},
+        )
+        _install_fake_module(
+            "tests.compat._fake_probe_mixed",
+            {"Probe": _make_mixed_case()},
+        )
+        # Also register a fake SDK dep so the precondition check passes.
+        _install_fake_module("_fake_sdk_dep", {"__version__": "9.9.9"})
+
+    def tearDown(self) -> None:
+        for name in (
+            "tests.compat._fake_probe_pass",
+            "tests.compat._fake_probe_mixed",
+            "_fake_sdk_dep",
+        ):
+            sys.modules.pop(name, None)
+
+    def test_execute_probe_pass(self) -> None:
+        spec = run_matrix.ProbeSpec(
+            protocol="fake",
+            sdk="fake-sdk",
+            module="tests.compat._fake_probe_pass",
+            test_class="Probe",
+            sdk_dependency="_fake_sdk_dep",
+            case_map=(("a", "test_a"), ("b", "test_b")),
+        )
+        probes = run_matrix.execute_probe(spec)
+        self.assertEqual([p.case for p in probes], ["a", "b"])
+        self.assertTrue(all(p.result == Result.PASS for p in probes))
+        self.assertTrue(all(p.note is None for p in probes))
+
+    def test_execute_probe_mixed(self) -> None:
+        spec = run_matrix.ProbeSpec(
+            protocol="fake",
+            sdk="fake-sdk",
+            module="tests.compat._fake_probe_mixed",
+            test_class="Probe",
+            sdk_dependency="_fake_sdk_dep",
+            case_map=(
+                ("pass", "test_pass"),
+                ("fail", "test_fail"),
+                ("error", "test_error"),
+                ("skipped", "test_skipped"),
+            ),
+        )
+        probes = {p.case: p for p in run_matrix.execute_probe(spec)}
+        self.assertEqual(probes["pass"].result, Result.PASS)
+        self.assertEqual(probes["fail"].result, Result.FAIL)
+        self.assertIn("AssertionError", probes["fail"].note or "")
+        self.assertEqual(probes["error"].result, Result.FAIL)
+        self.assertIn("RuntimeError", probes["error"].note or "")
+        self.assertEqual(probes["skipped"].result, Result.SKIPPED)
+        self.assertIn("explicit skip", probes["skipped"].note or "")
+
+    def test_execute_probe_missing_method(self) -> None:
+        spec = run_matrix.ProbeSpec(
+            protocol="fake",
+            sdk="fake-sdk",
+            module="tests.compat._fake_probe_pass",
+            test_class="Probe",
+            sdk_dependency="_fake_sdk_dep",
+            case_map=(("ghost", "test_does_not_exist"),),
+        )
+        probes = run_matrix.execute_probe(spec)
+        self.assertEqual(len(probes), 1)
+        self.assertEqual(probes[0].result, Result.FAIL)
+        self.assertIn("not found", probes[0].note or "")
+
+    def test_execute_probe_missing_class(self) -> None:
+        spec = run_matrix.ProbeSpec(
+            protocol="fake",
+            sdk="fake-sdk",
+            module="tests.compat._fake_probe_pass",
+            test_class="NoSuchClass",
+            sdk_dependency="_fake_sdk_dep",
+            case_map=(("a", "test_a"),),
+        )
+        probes = run_matrix.execute_probe(spec)
+        self.assertEqual(len(probes), 1)
+        self.assertEqual(probes[0].result, Result.FAIL)
+        self.assertIn("NoSuchClass", probes[0].note or "")
+
+    def test_collect_matrices_runs_executor_when_ready(self) -> None:
+        spec = run_matrix.ProbeSpec(
+            protocol="fake",
+            sdk="fake-sdk",
+            module="tests.compat._fake_probe_mixed",
+            test_class="Probe",
+            sdk_dependency="_fake_sdk_dep",
+            case_map=(("pass", "test_pass"), ("fail", "test_fail")),
+        )
+
+        def loader(*, allow_anonymous: bool = False):
+            return load_config(
+                env={
+                    "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080",
+                    "OPENAI_PROXY_API_KEY": "sk-test",
+                },
+                allow_anonymous=allow_anonymous,
+            )
+
+        matrices = run_matrix.collect_matrices(
+            cfg_loader=loader, probe_specs=(spec,)
+        )
+        self.assertEqual(len(matrices), 1)
+        m = matrices[0]
+        self.assertEqual(m.results["pass"], Result.PASS)
+        self.assertEqual(m.results["fail"], Result.FAIL)
+        self.assertEqual(m.sdk_version, "9.9.9")
+        validate_matrix_dict(m.to_dict())
+
+    def test_collect_matrices_skips_when_sdk_missing(self) -> None:
+        spec = run_matrix.ProbeSpec(
+            protocol="fake",
+            sdk="fake-sdk",
+            module="tests.compat._fake_probe_pass",
+            test_class="Probe",
+            sdk_dependency="_definitely_not_installed_xyz",
+            case_map=(("a", "test_a"),),
+        )
+
+        def loader(*, allow_anonymous: bool = False):
+            return load_config(
+                env={
+                    "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080",
+                    "OPENAI_PROXY_API_KEY": "sk-test",
+                },
+                allow_anonymous=allow_anonymous,
+            )
+
+        # Sanity: a runner that would crash if invoked — proving it's
+        # never called when the SDK is absent.
+        def exploding_runner(_spec):
+            raise AssertionError("runner must not run when SDK is missing")
+
+        matrices = run_matrix.collect_matrices(
+            cfg_loader=loader, probe_specs=(spec,), runner=exploding_runner
+        )
+        self.assertEqual(matrices[0].results["a"], Result.SKIPPED)
+        self.assertIn("not installed", matrices[0].notes["a"])
+
+    def test_collect_matrices_recovers_from_runner_crash(self) -> None:
+        spec = run_matrix.ProbeSpec(
+            protocol="fake",
+            sdk="fake-sdk",
+            module="tests.compat._fake_probe_pass",
+            test_class="Probe",
+            sdk_dependency="_fake_sdk_dep",
+            case_map=(("a", "test_a"),),
+        )
+
+        def loader(*, allow_anonymous: bool = False):
+            return load_config(
+                env={
+                    "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080",
+                    "OPENAI_PROXY_API_KEY": "sk-test",
+                },
+                allow_anonymous=allow_anonymous,
+            )
+
+        def crashing_runner(_spec):
+            raise RuntimeError("kaboom")
+
+        matrices = run_matrix.collect_matrices(
+            cfg_loader=loader, probe_specs=(spec,), runner=crashing_runner
+        )
+        self.assertEqual(matrices[0].results["a"], Result.FAIL)
+        self.assertIn("kaboom", matrices[0].notes["a"])
+
+
+class TestRegisteredProbeWiring(unittest.TestCase):
+    """Sanity-check the wiring of real probe specs against their modules.
+
+    Imports the probe module (allowed even without the SDK because
+    probe modules guard the SDK import) and asserts the named test
+    class and method names exist. This guards against typos in the
+    spec registry without requiring the SDK to be installed.
+    """
+
+    def test_each_registered_probe_resolves(self) -> None:
+        import importlib as _il
+
+        for spec in run_matrix.PROBES:
+            with self.subTest(probe=f"{spec.protocol}/{spec.sdk}"):
+                mod = _il.import_module(spec.module)
+                self.assertTrue(
+                    hasattr(mod, spec.test_class),
+                    f"{spec.module} missing {spec.test_class}",
+                )
+                cls = getattr(mod, spec.test_class)
+                for case, method in spec.case_map:
+                    self.assertTrue(
+                        hasattr(cls, method),
+                        f"{spec.test_class}.{method} missing (case {case!r})",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

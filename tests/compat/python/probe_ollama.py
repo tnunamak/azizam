@@ -35,7 +35,11 @@ class TestOllamaPythonSDK(unittest.TestCase):
         assert _ollama is not None
         self.client = _ollama.Client(host=self.cfg.ollama_host())
 
-    def test_tags(self) -> None:
+    def test_client_construct(self) -> None:
+        self.assertIsNotNone(self.client)
+        self.assertTrue(hasattr(self.client, "list"))
+
+    def test_tags_list(self) -> None:
         listing = self.client.list()
         # The Ollama SDK has shifted between dict and pydantic shapes
         # across versions, so we tolerate both.

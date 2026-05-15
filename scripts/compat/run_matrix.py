@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Run available SDK compatibility probes and emit a matrix JSON.
 
-This is intentionally minimal: the scaffold ships with a registry of
-known probe modules, each of which is *optional*. A probe is included
-when:
+The CLI ships with a registry of known probe modules, each of which is
+*optional*. A probe is included when:
 
 - its SDK dependency is importable, AND
 - ``OPENAI_PROXY_BASE_URL`` (and ``OPENAI_PROXY_API_KEY`` unless the
   probe is anonymous) are set.
 
-Probes that fail either check are recorded as ``skipped`` rather than
+When both checks pass, this script loads the probe module's unittest
+TestCase and executes the test methods that back each declared case,
+mapping unittest outcomes to ``pass`` / ``fail`` / ``skipped``. Probes
+whose SDK or env are missing are recorded as ``skipped`` rather than
 silently omitted, so the matrix always documents the full case grid.
 
 Usage::
@@ -25,9 +27,10 @@ import argparse
 import importlib
 import json
 import sys
+import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -48,37 +51,56 @@ from tests.compat.harness.matrix import validate_matrix_dict  # noqa: E402
 
 @dataclass(frozen=True)
 class ProbeSpec:
-    """Static description of a probe registered with the CLI."""
+    """Static description of a probe registered with the CLI.
+
+    ``case_map`` maps each declared case to the unittest method on the
+    probe's TestCase class that backs it. The runner executes those
+    methods and maps the unittest outcome to a ``Result``.
+    """
 
     protocol: str
     sdk: str
     module: str
+    test_class: str
     sdk_dependency: Optional[str]
-    cases: tuple[str, ...]
+    case_map: Tuple[Tuple[str, str], ...]
     allow_anonymous: bool = False
 
+    @property
+    def cases(self) -> Tuple[str, ...]:
+        return tuple(case for case, _ in self.case_map)
 
-PROBES: tuple[ProbeSpec, ...] = (
+
+PROBES: Tuple[ProbeSpec, ...] = (
     ProbeSpec(
         protocol="openai",
         sdk="openai-python",
         module="tests.compat.python.probe_openai",
+        test_class="TestOpenAIPythonSDK",
         sdk_dependency="openai",
-        cases=("client.construct", "models.list"),
+        case_map=(
+            ("client.construct", "test_client_construct"),
+            ("models.list", "test_models_list"),
+        ),
     ),
     ProbeSpec(
         protocol="anthropic",
         sdk="anthropic-python",
         module="tests.compat.python.probe_anthropic",
+        test_class="TestAnthropicPythonSDK",
         sdk_dependency="anthropic",
-        cases=("client.construct",),
+        case_map=(("client.construct", "test_client_construct"),),
     ),
     ProbeSpec(
         protocol="ollama",
         sdk="ollama-python",
         module="tests.compat.python.probe_ollama",
+        test_class="TestOllamaPythonSDK",
         sdk_dependency="ollama",
-        cases=("client.construct", "tags.list"),
+        case_map=(
+            ("client.construct", "test_client_construct"),
+            ("tags.list", "test_tags_list"),
+        ),
         allow_anonymous=True,
     ),
 )
@@ -115,16 +137,85 @@ def _gateway_version() -> str:
     return "local"
 
 
+def _format_failure(entry: Tuple[unittest.TestCase, str]) -> str:
+    """Reduce a unittest (test, traceback_string) entry to a one-liner."""
+
+    _test, tb = entry
+    # The last non-blank line of a traceback is the exception summary
+    # (e.g. ``AssertionError: 1 != 2``). That is the most useful note
+    # for a matrix consumer.
+    for line in reversed(tb.strip().splitlines()):
+        line = line.strip()
+        if line:
+            return line
+    return "error"
+
+
+def _run_one(suite: unittest.TestSuite) -> Tuple[Result, Optional[str]]:
+    """Run a single-test suite and reduce its outcome to a Result."""
+
+    result = unittest.TestResult()
+    suite.run(result)
+    if result.skipped:
+        _test, reason = result.skipped[0]
+        return Result.SKIPPED, reason or "skipped"
+    if result.errors:
+        return Result.FAIL, _format_failure(result.errors[0])
+    if result.failures:
+        return Result.FAIL, _format_failure(result.failures[0])
+    return Result.PASS, None
+
+
+ProbeRunner = Callable[[ProbeSpec], List[ProbeResult]]
+
+
+def execute_probe(spec: ProbeSpec) -> List[ProbeResult]:
+    """Default executor: load the probe's TestCase and run each case.
+
+    Each case maps to a single test method. The loader is invoked per
+    case so a single ``setUp`` failure does not poison sibling cases'
+    results — every case gets its own fresh test instance.
+    """
+
+    module = importlib.import_module(spec.module)
+    try:
+        test_cls = getattr(module, spec.test_class)
+    except AttributeError as exc:
+        reason = f"probe module missing TestCase {spec.test_class!r}: {exc}"
+        return [
+            ProbeResult(case=case, result=Result.FAIL, note=reason)
+            for case in spec.cases
+        ]
+
+    loader = unittest.TestLoader()
+    probes: List[ProbeResult] = []
+    for case, method in spec.case_map:
+        if not hasattr(test_cls, method):
+            probes.append(
+                ProbeResult(
+                    case=case,
+                    result=Result.FAIL,
+                    note=f"test method {method!r} not found on {spec.test_class}",
+                )
+            )
+            continue
+        suite = unittest.TestSuite([loader.loadTestsFromName(method, test_cls)])
+        outcome, note = _run_one(suite)
+        probes.append(ProbeResult(case=case, result=outcome, note=note))
+    return probes
+
+
 def collect_matrices(
     *,
     cfg_loader: Callable[..., HarnessConfig] = load_config,
-    probe_specs: tuple[ProbeSpec, ...] = PROBES,
+    probe_specs: Tuple[ProbeSpec, ...] = PROBES,
+    runner: ProbeRunner = execute_probe,
 ) -> List[ProtocolMatrix]:
     """Build a matrix entry for each registered probe.
 
-    Probes are not executed live by this function — that runs in the
-    unittest layer. This function records availability so the matrix
-    reflects what *could* run in the current environment.
+    When the SDK + env preconditions hold, ``runner`` executes the
+    probe's test cases and the matrix records pass/fail/skipped. When
+    they do not hold, every case is marked skipped with the reason.
     """
 
     gateway_version = _gateway_version()
@@ -151,7 +242,7 @@ def collect_matrices(
                     )
                 )
                 continue
-        # Module-importability check (without executing test cases)
+        # Module-importability check (probe imports the SDK at top-level)
         try:
             importlib.import_module(spec.module)
         except Exception as exc:  # pragma: no cover - defensive
@@ -164,26 +255,25 @@ def collect_matrices(
             )
             continue
 
-        # Scaffold: mark every case ``skipped`` with a pointer to the
-        # unittest invocation. Future slices flip these to pass/fail by
-        # actually calling the probe.
+        try:
+            probes = runner(spec)
+        except Exception as exc:  # defensive: a runner crash becomes fail
+            probes = [
+                ProbeResult(
+                    case=case,
+                    result=Result.FAIL,
+                    note=f"runner crashed: {exc!r}",
+                )
+                for case in spec.cases
+            ]
+
         matrices.append(
             build_matrix(
                 protocol=spec.protocol,
                 sdk=spec.sdk,
                 sdk_version=_sdk_version(spec.sdk_dependency),
                 gateway_version=gateway_version,
-                probes=[
-                    ProbeResult(
-                        case=case,
-                        result=Result.SKIPPED,
-                        note=(
-                            "scaffold: run "
-                            f"'python -m unittest {spec.module}' to exercise"
-                        ),
-                    )
-                    for case in spec.cases
-                ],
+                probes=probes,
             )
         )
     return matrices
@@ -204,7 +294,7 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the probe registry and resolved env without writing output.",
+        help="Print the probe registry and resolved env without executing probes.",
     )
     parser.add_argument(
         "--list-probes",

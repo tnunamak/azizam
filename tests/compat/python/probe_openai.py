@@ -51,6 +51,10 @@ class TestOpenAIPythonSDK(unittest.TestCase):
             timeout=self.cfg.request_timeout_s,
         )
 
+    def test_client_construct(self) -> None:
+        self.assertTrue(hasattr(self.client, "models"))
+        self.assertTrue(hasattr(self.client, "chat"))
+
     def test_models_list(self) -> None:
         models = self.client.models.list()
         self.assertTrue(hasattr(models, "data"))

@@ -105,6 +105,12 @@ $PROXY_PYTHON scripts/compat/run_matrix.py --dry-run
 $PROXY_PYTHON scripts/compat/run_matrix.py --out tests/compat/matrix/compatibility.json
 ```
 
+When the SDK + env preconditions hold for a probe, the runner loads
+its unittest TestCase and executes the test method backing each
+declared case, mapping outcomes to `pass` / `fail` / `skipped`. When
+the SDK or env are missing, every case is recorded as `skipped` with
+the reason — the case grid is always documented in full.
+
 The output is validated against
 `tests/compat/matrix/compatibility.schema.json`.
 
