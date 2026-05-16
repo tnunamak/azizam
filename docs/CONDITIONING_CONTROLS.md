@@ -88,6 +88,17 @@ true:
 - Every advertised control has a backend binding.
 - Tests assert the backend request changes at the intended node or field.
 
-Current local status: `image.edit.flux2-klein-4b` exposes `denoise`, standard
-OpenAI `mask`, and no ControlNet controls. ControlNet-like controls are rejected
-against that workflow until a real ControlNet workflow/manifest is installed.
+Current local status:
+
+- `image.edit.flux2-klein-4b` exposes `steps`, `guidance`, and `denoise`.
+  Standard OpenAI `mask` is accepted; without a native mask workflow it falls
+  back to gateway post-composite preservation.
+- `image.edit.flux2-klein-4b-inpaint` is auto-selected for
+  `flux2-klein-4b-edit` requests that include `mask`. It binds the normalized
+  OpenAI mask into ComfyUI with `SetLatentNoiseMask` and exposes
+  `steps`, `guidance`, `denoise`, `mask_expand`, and `mask_feather` as
+  workflow extensions.
+- ControlNet and IP-Adapter are not advertised on this machine yet. ComfyUI has
+  node support, but the local inventory is missing ControlNet weights,
+  IP-Adapter weights, and CLIP-vision assets. ControlNet-like controls are
+  rejected until a real workflow, manifest, and model artifacts are installed.

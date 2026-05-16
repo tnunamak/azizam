@@ -1,0 +1,120 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.edit.flux2-klein-4b-inpaint
+intent: image.edit
+display_name: Flux2 Klein 4B Inpaint
+description: Mask-bound FLUX.2 Klein edit workflow. The OpenAI image edit mask is normalized by the gateway and applied inside ComfyUI with SetLatentNoiseMask.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  source_image:
+    type: asset
+    required: true
+  mask:
+    type: asset
+    required: true
+    description: OpenAI image-edit mask. Transparent alpha or white pixels are regenerated; opaque alpha or black pixels are preserved.
+  width:
+    type: integer
+    minimum: 64
+    maximum: 2048
+  height:
+    type: integer
+    minimum: 64
+    maximum: 2048
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 8
+  guidance:
+    type: number
+    minimum: 0
+    maximum: 20
+    default: 4
+  denoise:
+    type: number
+    minimum: 0
+    maximum: 1
+    default: 0.75
+    description: Sampling strength for the masked edit. Lower values preserve more of the source image.
+  mask_expand:
+    type: integer
+    minimum: -256
+    maximum: 256
+    default: 0
+    description: Pixels to grow or shrink the edit mask before sampling.
+  mask_feather:
+    type: integer
+    minimum: 0
+    maximum: 256
+    default: 0
+    description: Pixels to feather each edge of the edit mask before sampling.
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/flux2-klein-4b-inpaint.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      source_image:
+        - node: "10"
+          input: image
+      mask:
+        - node: "12"
+          input: image
+      width:
+        - node: "11"
+          input: width
+        - node: "14"
+          input: width
+        - node: "48"
+          input: width
+      height:
+        - node: "11"
+          input: height
+        - node: "14"
+          input: height
+        - node: "48"
+          input: height
+      steps:
+        - node: "48"
+          input: steps
+      guidance:
+        - node: "26"
+          input: guidance
+      denoise:
+        - node: "49"
+          input: denoise
+      mask_expand:
+        - node: "18"
+          input: expand
+      mask_feather:
+        - node: "19"
+          input: left
+        - node: "19"
+          input: top
+        - node: "19"
+          input: right
+        - node: "19"
+          input: bottom
+requires:
+  custom_nodes:
+    - UnetLoaderGGUF
+    - ReferenceLatent
+    - Flux2Scheduler
+    - SplitSigmasDenoise
+  models:
+    - role: diffusion_model
+      path: unet/flux-2-klein-4b-Q6_K.gguf
+    - role: text_encoder
+      path: text_encoders/qwen_3_4b.safetensors
+    - role: vae
+      path: vae/flux2-vae.safetensors

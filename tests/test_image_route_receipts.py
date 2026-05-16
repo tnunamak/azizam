@@ -783,6 +783,10 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             lambda _auth_context, _service: {},
         ), patch.object(
             proxy,
+            "_prefer_inpaint_workflow_for_mask",
+            lambda model: model,
+        ), patch.object(
+            proxy,
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
@@ -798,6 +802,47 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["image_response_headers"]["X-Image-Mask-Source"], "alpha")
         self.assertTrue(callable(captured["image_transform"]))
         self.assertEqual(_FakeAsyncClient.uploads, 1)
+
+    async def test_explicit_inpaint_workflow_requires_mask(self) -> None:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest(
+            [
+                ("prompt", "replace the left pixel"),
+                ("model", "flux2-klein-4b-inpaint"),
+                ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
+            ]
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(status_code=500)
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(captured, {})
+        self.assertIn("mask", receipt.rejected_inputs)
+        self.assertIn("mask is required", response.body.decode())
 
     async def test_workflow_mask_binding_uploads_normalized_mask(self) -> None:
         from PIL import Image
@@ -852,6 +897,10 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             proxy,
             "bind_backend_request",
             fake_bind,
+        ), patch.object(
+            proxy,
+            "_apply_manifest_route_inputs",
+            lambda _manifest, workflow, _values: workflow,
         ), patch.object(
             proxy,
             "_generate_images_with_adaptive_batching",

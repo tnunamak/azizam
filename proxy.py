@@ -4148,6 +4148,21 @@ async def proxy_comfy_edit_request(
                     )
             else:
                 _attach_image_manifest_if_available(receipt, "image.edit", str(model))
+            required_mask_input = _manifest_required_route_mask_input(manifest)
+            if mask_context is None and required_mask_input:
+                _record_image_input(receipt, "mask", rejected_reason="missing")
+                return Response(
+                    content=json.dumps({
+                        "error": {
+                            "message": f"mask is required for workflow input {required_mask_input}",
+                            "type": "invalid_request_error",
+                            "param": "mask",
+                            "code": "missing_required_parameter",
+                        }
+                    }),
+                    status_code=400,
+                    media_type="application/json",
+                )
             if receipt is not None:
                 decision = _apply_image_route_policy(
                     receipt,
@@ -4221,6 +4236,11 @@ async def proxy_comfy_edit_request(
                         workflow[node_id]["inputs"]["width"] = img_width
                     if "height" in workflow[node_id]["inputs"]:
                         workflow[node_id]["inputs"]["height"] = img_height
+            workflow = _apply_manifest_route_inputs(
+                manifest,
+                workflow,
+                {"width": img_width, "height": img_height},
+            )
 
             workflow, extension_response = await _apply_workflow_extensions_to_image_request(
                 request_body=form_dict,
@@ -6867,6 +6887,52 @@ def _manifest_route_managed_mask_input(manifest: Mapping[str, Any] | None) -> st
         if name in inputs and name in mapping:
             return name
     return None
+
+
+def _manifest_required_route_mask_input(manifest: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(manifest, Mapping):
+        return None
+    inputs = manifest.get("inputs")
+    mask_name = _manifest_route_managed_mask_input(manifest)
+    if not mask_name or not isinstance(inputs, Mapping):
+        return None
+    spec = inputs.get(mask_name)
+    if isinstance(spec, Mapping) and spec.get("required"):
+        return mask_name
+    return None
+
+
+def _apply_manifest_route_inputs(
+    manifest: Mapping[str, Any] | None,
+    workflow: Mapping[str, Any],
+    values: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Apply route-owned portable fields through a manifest when mapped.
+
+    The image route owns OpenAI fields like ``size`` and turns them into
+    portable ``width``/``height`` values. Some workflows need those values on
+    more nodes than the historical hard-coded Flux ids, so reuse manifest
+    bindings when they exist.
+    """
+    if not isinstance(manifest, Mapping):
+        return dict(workflow)
+    binding = (manifest.get("bindings") or {}).get("comfyui")
+    mapping = binding.get("map") if isinstance(binding, Mapping) else None
+    if not isinstance(mapping, Mapping):
+        return dict(workflow)
+    mapped_values = {
+        name: value
+        for name, value in values.items()
+        if name in mapping
+    }
+    if not mapped_values:
+        return dict(workflow)
+    return bind_backend_request(
+        dict(manifest),
+        "comfyui",
+        dict(workflow),
+        mapped_values,
+    ).request
 
 
 def _prefer_inpaint_workflow_for_mask(model: str) -> str:
