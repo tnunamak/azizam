@@ -2124,7 +2124,7 @@
         "Node name for S&R": "LatentUpscaleModelLoader"
       },
       "widgets_values": [
-        "ltx-2.3-spatial-upscaler-x2-1.0.safetensors"
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
       ]
     },
     {
