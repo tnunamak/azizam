@@ -1,4 +1,4 @@
-"""Read-only ``/gateway/v1`` gateway-native router.
+"""Gateway-native ``/gateway/v1`` router.
 
 Thin FastAPI layer over the gateway's pure discovery, capability, and receipt
 modules. The router does not import :mod:`proxy`, does not touch live auth, and
@@ -20,7 +20,7 @@ Endpoints
 * ``GET /gateway/v1/models/{model}/capabilities`` — model capability view
 * ``GET /gateway/v1/receipts``                — recent route receipts
 * ``GET /gateway/v1/receipts/{request_id}``   — one route receipt
-* ``POST /gateway/v1/media/jobs``             — create or attach to a media job
+* ``POST /gateway/v1/media/jobs``             — create/attach or delegate executable media job submit
 * ``GET /gateway/v1/media/jobs``              — recent media jobs
 * ``GET /gateway/v1/media/jobs/{job_id}``     — single media job
 * ``POST /gateway/v1/media/jobs/{job_id}/events`` — append a job event
@@ -34,6 +34,7 @@ catalog rather than a crash.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -56,6 +57,7 @@ MediaJobGetter = Callable[..., dict[str, Any] | None]
 MediaJobLister = Callable[..., list[dict[str, Any]]]
 MediaJobEventAppender = Callable[..., int]
 MediaJobCanceler = Callable[..., dict[str, Any] | None]
+MediaJobSubmitter = Callable[..., Any]
 
 DEFAULT_AUDIENCE = "client"
 
@@ -260,6 +262,7 @@ def create_gateway_router(
     media_job_lister: MediaJobLister | None = None,
     media_job_event_appender: MediaJobEventAppender | None = None,
     media_job_canceler: MediaJobCanceler | None = None,
+    media_job_submitter: MediaJobSubmitter | None = None,
     media_job_store_path: str | Path | None = None,
     prefix: str = "/gateway/v1",
 ) -> APIRouter:
@@ -424,11 +427,24 @@ def create_gateway_router(
         return JSONResponse(status_code=status.HTTP_200_OK, content=row)
 
     @router.post("/media/jobs")
-    def create_media_job(
+    async def create_media_job(
         request: Request,
         payload: dict[str, Any] = Body(...),
     ) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
+        if media_job_submitter is not None:
+            try:
+                submitted = media_job_submitter(
+                    request=request,
+                    payload=payload,
+                    audience=audience,
+                )
+                if inspect.isawaitable(submitted):
+                    submitted = await submitted
+            except Exception as exc:  # noqa: BLE001
+                return _internal_error(audience, exc)
+            if submitted is not None:
+                return submitted
         if media_job_creator is None:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

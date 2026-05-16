@@ -42,6 +42,8 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `POST /v1/images/generations` | ComfyUI | Text-to-image (default `flux2-klein-4b`) |
 | `POST /v1/images/edits` | ComfyUI | Image edit; multipart with input image and optional top-level OpenAI `mask` |
 | `GET  /v1/images/{id}/content` | proxy cache | Fetch a cached image referenced by a `response_format: "url"` result. Auth-gated; URL is HMAC-signed with a TTL. |
+| `POST /gateway/v1/media/jobs` | proxy + ComfyUI | Durable media-job submit. For images, send `{"intent":"image.generate","request":{...}}`. |
+| `GET  /gateway/v1/media/jobs/{id}/content` | proxy cache | Fetch the OpenAI-shaped image payload for a completed durable image job. |
 | `POST /v1/videos` | ComfyUI | Submit video job (Sora-shaped, async) |
 | `GET  /v1/videos/{id}` | ComfyUI | Poll job status (`queued` → `running` → `succeeded`/`failed`) |
 | `GET  /v1/videos/{id}/content` | ComfyUI | Fetch rendered MP4 once `status=succeeded` |
@@ -53,6 +55,7 @@ Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [
 
 - **Vision routing** — chat-completions requests carrying `image_url` / `input_image` content blocks auto-switch to the configured `roles.vision` backend; text-only backends with no vision role return HTTP 400 (`code: vision_unsupported`) rather than silently dropping image content. Every chat-completions response carries an `X-Vision-Routed` header for observability.
 - **Honest `n` for images** — adaptive ComfyUI batching backs the request, returning all `n` images. If even one image won't fit in free VRAM, the proxy returns HTTP 503 with `Retry-After: 30` rather than silently truncating.
+- **Durable image jobs** — long/batch image work can use `POST /gateway/v1/media/jobs` with `intent: "image.generate"` and an OpenAI image request under `request`. The proxy queues the work server-side, retries transient VRAM/ComfyUI/tile-composition failures, persists redacted job state, and returns signed reusable asset URLs via polling/content endpoints. The private request payload is kept on disk only while the job is pending/running so the proxy can recover from client disconnects and restarts.
 - **Signed image URLs** — `response_format: "url"` returns hostname-aware, HMAC-signed URLs into a content-addressed cache. URLs are bearer-auth-gated and expire (default 1 h), and the cache evicts older entries (default 24 h).
 - **Async video generation** — Sora-2-shaped submit/poll/fetch flow with multiple model aliases (`ltx-2.3`, `ltx-2.3-detail`, `ltx-2.3-long`, `wan-2.2`, etc.). Generated MP4s and PNGs embed the full UI-format ComfyUI workflow in metadata, so dropping an output back into ComfyUI's frontend rebuilds the editable graph.
 

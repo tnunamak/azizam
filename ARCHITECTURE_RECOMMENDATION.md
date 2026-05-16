@@ -159,6 +159,11 @@ Implemented (lives on `main`):
   bodies, and secrets.
 - `gateway/media_jobs.py`: SQLite-backed durable media-job model and store,
   wired to `/gateway/v1/media/jobs`.
+- Durable image media-job execution: `POST /gateway/v1/media/jobs` accepts
+  `intent: image.generate` with an OpenAI image request under `request`, queues
+  it server-side, retries transient ComfyUI/VRAM/tile-composition failures, and
+  exposes completed image assets through
+  `/gateway/v1/media/jobs/{job_id}/content`.
 - `gateway/protocols/anthropic.py` and `gateway/protocols/ollama.py`:
   pure translators for non-streaming Anthropic Messages and Ollama
   chat/generate/tags frontends.
@@ -190,8 +195,9 @@ Not implemented:
 - No backend adapter contract has been extracted.
 - Streaming Anthropic/Ollama frontends, Ollama model-management routes, and
   native passthrough provider namespaces are not implemented.
-- Gateway media assets are not yet served by a durable `/gateway/v1/assets/*`
-  surface.
+- Gateway media assets are not yet served by a generic durable
+  `/gateway/v1/assets/*` surface; image media jobs use the existing signed
+  `/v1/assets/{asset_id}/content` cache plus a job content endpoint.
 - ACE-Step music and video workflow manifests are not yet backfilled.
 - Capability matching, manifest validation, and workflow bindings are not yet
   the source of truth for every live request route.
@@ -786,11 +792,13 @@ Use three layers:
 2. Explicit provider-native passthrough for power users.
 3. Generic media job/assets API for long-running work.
 
-Recommended job surface (target; not yet wired in `proxy.py`):
+Recommended job surface (image.generate first slice is wired in `proxy.py`;
+generic assets remain a target):
 
 ```text
 POST /gateway/v1/media/jobs
 GET  /gateway/v1/media/jobs/{id}
+GET  /gateway/v1/media/jobs/{id}/content
 GET  /gateway/v1/media/jobs/{id}/events
 POST /gateway/v1/media/jobs/{id}/cancel
 GET  /gateway/v1/assets/{id}
@@ -1024,7 +1032,8 @@ adapters.
 - Solidify OpenAI frontend from current behavior.
 - Solidify the live non-streaming Anthropic Messages frontend.
 - Solidify the live non-streaming Ollama chat/generate/tags frontend.
-- Extend gateway media jobs with durable assets and scheduler execution.
+- Extend gateway media jobs beyond the live image-generation executor to
+  generic assets, video, audio/music, and provider-native adapters.
 
 ### Phase 5: Introduce Scheduler Enforcement
 

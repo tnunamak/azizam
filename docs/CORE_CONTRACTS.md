@@ -51,10 +51,13 @@ Anthropic/Ollama protocol frontends:
 - `gateway/receipt_store.py` — durable SQLite receipt store with audience
   filtering and payload/secret shape guards.
 - `gateway/media_jobs.py` — gateway media-job model and durable store backing
-  the `/gateway/v1/media/jobs` surface.
+  the `/gateway/v1/media/jobs` surface. The live proxy now executes
+  `image.generate` jobs from this surface and returns completed image payloads
+  at `/gateway/v1/media/jobs/{job_id}/content`.
 
 Backend adapter extraction, a richer live capability inventory, resource
-claims, and asset serving described below are still in progress.
+claims, generic gateway assets, and broader media-job adapters described below
+are still in progress.
 
 ## Contract Rule
 

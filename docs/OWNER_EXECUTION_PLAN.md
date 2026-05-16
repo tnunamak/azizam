@@ -29,6 +29,7 @@ The status of each build-order item below reflects what currently lives on
 - [x] Gateway media-job model and durable store (`gateway/media_jobs.py`)
 - [x] Image-route receipts wired into `/v1/images/generations` and `/v1/images/edits` with profile-aware policy decisions, safe field-name outcomes, manifest identity, durable persistence, and body-free firehose events
 - [x] Live `/gateway/v1/*` mount in `proxy.py` for workflows, capabilities, receipts, and media jobs
+- [x] Durable `image.generate` media-job execution through `POST /gateway/v1/media/jobs` with retry, idempotency, persisted job state, and completed image content retrieval
 - [x] Live non-streaming Anthropic Messages and Ollama chat/generate/tags frontends over the existing chat route
 - [x] Live image workflow extension binding for supported manifest controls
 - [x] `generate-key` preserves existing `profile:` blocks on rotation
@@ -37,7 +38,7 @@ The status of each build-order item below reflects what currently lives on
 In-progress / next integration targets:
 
 - Expand the live capability inventory beyond the initial hand-built catalog.
-- Add asset serving for durable media jobs.
+- Extend durable media-job execution to video, audio/music, and generic gateway assets.
 - Add streaming protocol-frontend coverage where real clients need it.
 - Backend adapter contract extracted from `proxy.py`.
 
@@ -241,8 +242,10 @@ Initial endpoints:
 
 - [x] durable job record
 - [x] audience-filtered API surface
-- [ ] asset serving
-- [ ] ComfyUI adapter integration for long-running jobs
+- [x] image job content retrieval through `/gateway/v1/media/jobs/{job_id}/content`
+- [x] ComfyUI image-generation adapter integration for long-running jobs
+- [ ] generic `/gateway/v1/assets/*` serving
+- [ ] ComfyUI video/audio adapter integration for long-running jobs
 
 ### 6. SDK/App Harness — executable harness landed
 

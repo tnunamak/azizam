@@ -11,6 +11,7 @@ from typing import Any
 
 import yaml
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -491,6 +492,37 @@ class GatewayMediaJobsExplicitProviderTests(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["error"]["code"], "gateway_internal_error")
         self.assertNotIn("creator boom", response.text)
+
+    def test_submitter_can_handle_executable_media_job_before_creator(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def submitter(*, request, payload, audience):
+            captured["payload"] = dict(payload)
+            captured["audience"] = audience
+            return JSONResponse(
+                status_code=202,
+                content={"job_id": "mj_exec", "status": "queued"},
+            )
+
+        def creator(_payload, *, audience):
+            raise AssertionError("generic creator should not run")
+
+        client = _make_client(
+            media_job_creator=creator,
+            media_job_submitter=submitter,
+        )
+        response = client.post(
+            "/gateway/v1/media/jobs",
+            json={
+                "intent": "image.generate",
+                "request": {"model": "flux2-klein-4b", "prompt": "private"},
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["job_id"], "mj_exec")
+        self.assertEqual(captured["audience"], "client")
+        self.assertEqual(captured["payload"]["intent"], "image.generate")
 
 
 if __name__ == "__main__":

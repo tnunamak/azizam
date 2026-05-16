@@ -32,7 +32,7 @@ If a needed capability is absent or unavailable, stop and report that honestly.
 - Use `/v1` OpenAI-compatible endpoints by default. This is the best-supported path and supports streaming chat.
 - Use `POST /v1/messages` only for Anthropic-shaped clients. It is non-streaming unless discovery metadata says otherwise.
 - Use `GET /api/tags`, `POST /api/chat`, or `POST /api/generate` only for Ollama-shaped clients. Chat/generate are non-streaming unless discovery metadata says otherwise.
-- Use `/gateway/v1/media/jobs` for durable long-running media jobs and `/gateway/v1/receipts` for diagnostics.
+- Use `/gateway/v1/media/jobs` for durable long-running media jobs and `/gateway/v1/receipts` for diagnostics. For durable image generation, submit `{"intent":"image.generate","request":{...OpenAI image body...}}`, then poll `/gateway/v1/media/jobs/{job_id}` and fetch `/gateway/v1/media/jobs/{job_id}/content`.
 - Use `data[].asset_id` and signed `/v1/assets/{asset_id}/content` URLs when image outputs need to be reused by later gateway-aware calls.
 
 ## Auth Rules
@@ -72,6 +72,7 @@ Current examples:
 ## Chaining And Variants
 
 - Image generation/edit responses include `asset_id`, `asset_url`, and `media_type` alongside `b64_json` or `url`.
+- Durable image jobs always produce URL-backed assets, even if the submitted request asked for `b64_json`; this keeps job records small and reusable.
 - Video `input_reference` accepts prior image handles as `{"asset_id":"img_<sha256>"}` or `asset:img_<sha256>` when the same API key minted the asset.
 - For image variants, use top-level `n`; for repeatability, use manifest-backed `extensions.com.vividfish.workflow.seed` only when discovery lists `seed`.
 - For video variants, repeat calls with different top-level `seed`. Do not invent `variant_count` or other unadvertised controls.
@@ -97,6 +98,7 @@ Example JSON body shape:
 - TTS: `POST /v1/audio/speech`
 - STT: `POST /v1/audio/transcriptions`
 - Image generation: `POST /v1/images/generations`
+- Durable image generation: `POST /gateway/v1/media/jobs` with `intent: "image.generate"`
 - Image edit: `POST /v1/images/edits`
 - Audio/music/SFX generation: `POST /v1/audio/generate`
 - Video job submit/poll/fetch: `POST /v1/videos`, `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content`

@@ -258,6 +258,22 @@ IMAGE_MAX_BATCH_SIZE = int(images_cfg.get("max_batch_size", 4))
 IMAGE_BACKGROUND_REMOVAL_CFG = images_cfg.get("background_removal", {}) or {}
 IMAGE_BACKGROUND_REMOVAL_ENABLED = bool_from_config(IMAGE_BACKGROUND_REMOVAL_CFG.get("enabled"), True)
 IMAGE_BACKGROUND_REMOVAL_TIMEOUT = float(IMAGE_BACKGROUND_REMOVAL_CFG.get("decision_timeout", 45))
+IMAGE_MEDIA_JOBS_CFG = images_cfg.get("media_jobs", {}) or {}
+IMAGE_MEDIA_JOB_PAYLOAD_DIR = Path(IMAGE_MEDIA_JOBS_CFG.get(
+    "payload_dir",
+    str(Path(__file__).parent / "data" / "image_media_jobs"),
+))
+IMAGE_MEDIA_JOB_MAX_ATTEMPTS = int(IMAGE_MEDIA_JOBS_CFG.get("max_attempts", 3))
+IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS = float(IMAGE_MEDIA_JOBS_CFG.get("retry_base_seconds", 5))
+IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS = float(IMAGE_MEDIA_JOBS_CFG.get("retry_max_seconds", 30))
+IMAGE_MEDIA_JOB_CONCURRENCY = max(1, int(IMAGE_MEDIA_JOBS_CFG.get("concurrency", 1)))
+IMAGE_MEDIA_JOB_RESUME_ON_START = bool_from_config(
+    os.environ.get("IMAGE_MEDIA_JOB_RESUME_ON_START", IMAGE_MEDIA_JOBS_CFG.get("resume_on_start")),
+    True,
+)
+_image_media_job_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
+_image_media_job_tasks: set[asyncio.Task] = set()
+_image_media_job_scheduled: set[str] = set()
 
 # Video config (parallel to images). Maps `model:` aliases -> ComfyUI workflow JSON.
 videos_cfg = config.get("videos", {})
@@ -6549,12 +6565,23 @@ async def lifespan(app: FastAPI):
             f"pruned_jobs={pruned.get('jobs', 0)} pruned_events={pruned.get('events', 0)})",
             flush=True,
         )
+        if COMFY_ENABLED and IMAGE_MEDIA_JOB_RESUME_ON_START:
+            resumed = _resume_pending_image_media_jobs()
+            if resumed:
+                print(
+                    f"[proxy] Resumed {resumed} pending image media job(s)",
+                    flush=True,
+                )
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Media job store failed to start: {e}", flush=True)
 
     yield
 
     state.shutdown_requested = True
+    for task in list(_image_media_job_tasks):
+        task.cancel()
+    if _image_media_job_tasks:
+        await asyncio.gather(*list(_image_media_job_tasks), return_exceptions=True)
     maintenance_task.cancel()
     try:
         await maintenance_task
@@ -6724,6 +6751,19 @@ def _gateway_audience_resolver(request: Request) -> str:
     return discovery_audience_for_profile(_profile_for_auth_context(auth_context))
 
 
+async def _gateway_media_job_submitter(
+    *,
+    request: Request,
+    payload: Mapping[str, Any],
+    audience: str,
+) -> Response | None:
+    return await _dispatch_gateway_media_job_submission(
+        request=request,
+        payload=payload,
+        audience=audience,
+    )
+
+
 @app.middleware("http")
 async def _gateway_auth_middleware(request: Request, call_next):
     """Gate gateway-native discovery/receipt APIs behind the proxy key layer."""
@@ -6743,6 +6783,7 @@ app.include_router(
         capabilities_provider=_gateway_capabilities_provider,
         receipt_store_path=receipt_store.DB_PATH,
         media_job_store_path=media_jobs.DB_PATH,
+        media_job_submitter=_gateway_media_job_submitter,
     )
 )
 
@@ -8283,6 +8324,872 @@ def finish_image_route_receipt(
     except Exception:
         # Receipts are observational; never break the request path.
         pass
+
+
+class _RequestUrlShim:
+    def __init__(self, *, scheme: str, netloc: str) -> None:
+        self.scheme = scheme
+        self.netloc = netloc
+
+
+class _JsonBodyRequestShim:
+    """Small Request-shaped object for replaying JSON jobs off the HTTP path."""
+
+    query_params: dict[str, str] = {}
+    method = "POST"
+
+    def __init__(
+        self,
+        *,
+        body: Mapping[str, Any],
+        headers: Mapping[str, str],
+        scheme: str,
+        netloc: str,
+        scope: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._body = copy.deepcopy(dict(body))
+        self.headers = dict(headers)
+        self.url = _RequestUrlShim(scheme=scheme, netloc=netloc)
+        self.scope = dict(scope or {})
+
+    async def json(self) -> dict[str, Any]:
+        return copy.deepcopy(self._body)
+
+
+def _gateway_auth_context(request: Request, path: str) -> AuthContext | Response:
+    auth_context = _auth_context_from_scope(request)
+    if auth_context is not NO_AUTH_CONTEXT or not AUTH_ENABLED:
+        return auth_context
+    return authenticate_request(request, path)
+
+
+def _safe_image_job_headers(request: Request) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for name in ("host", "x-forwarded-host", "x-forwarded-proto"):
+        value = request.headers.get(name)
+        if value:
+            headers[name] = value
+    return headers
+
+
+def _image_media_job_payload_path(job_id: str) -> Path:
+    return IMAGE_MEDIA_JOB_PAYLOAD_DIR / f"{job_id}.json"
+
+
+def _persist_image_media_job_payload(
+    job_id: str,
+    *,
+    body: Mapping[str, Any],
+    request: Request,
+    auth_context: AuthContext,
+) -> None:
+    IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    identity = auth_context.identity
+    payload = {
+        "schema_version": 1,
+        "body": copy.deepcopy(dict(body)),
+        "headers": _safe_image_job_headers(request),
+        "url": {
+            "scheme": request.url.scheme or "http",
+            "netloc": getattr(request.url, "netloc", "") or request.headers.get("host", "127.0.0.1"),
+        },
+        "auth": {
+            "name": identity.name if identity else None,
+            "key_hash": identity.key_hash if identity else None,
+        },
+        "created_at": int(time.time()),
+    }
+    path = _image_media_job_payload_path(job_id)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except Exception:
+        pass
+    tmp.replace(path)
+
+
+def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
+    path = _image_media_job_payload_path(job_id)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] image media job payload read failed for {job_id}: {exc}", flush=True)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _delete_image_media_job_payload(job_id: str) -> None:
+    try:
+        _image_media_job_payload_path(job_id).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _image_job_body_has_seed(body: Mapping[str, Any]) -> bool:
+    if isinstance(body.get("seed"), int) and not isinstance(body.get("seed"), bool):
+        return True
+    extensions = body.get("extensions")
+    if not isinstance(extensions, Mapping):
+        return False
+    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    if not isinstance(block, Mapping):
+        return False
+    seed = block.get("seed")
+    return isinstance(seed, int) and not isinstance(seed, bool)
+
+
+def _image_job_request_digest(body: Mapping[str, Any], auth_context: AuthContext) -> str:
+    owner = _asset_owner_key(auth_context) or "anonymous"
+    canonical = json.dumps(
+        {"owner": owner, "body": body},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hmac.new(_image_signing_secret(), canonical, hashlib.sha256).hexdigest()
+
+
+def _image_media_job_request_id(
+    *,
+    body: Mapping[str, Any],
+    auth_context: AuthContext,
+    idempotency_key: str | None,
+    fallback_request_id: str,
+) -> tuple[str, str, str]:
+    owner = _asset_owner_key(auth_context) or "anonymous"
+    if idempotency_key:
+        canonical = json.dumps(
+            {"owner": owner, "idempotency_key": idempotency_key},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = hmac.new(_image_signing_secret(), canonical, hashlib.sha256).hexdigest()
+        return f"imgjob_idem_{digest[:40]}", digest, "idempotency_key"
+    if _image_job_body_has_seed(body):
+        digest = _image_job_request_digest(body, auth_context)
+        return f"imgjob_seeded_{digest[:40]}", digest, "seeded_request"
+    digest = _image_job_request_digest(body, auth_context)
+    return fallback_request_id, digest, "request"
+
+
+def _safe_image_media_job_metadata(
+    *,
+    body: Mapping[str, Any],
+    request_hash: str,
+    idempotency: str,
+) -> dict[str, Any]:
+    try:
+        n_value = int(body.get("n", 1))
+    except (TypeError, ValueError):
+        n_value = 1
+    return {
+        "mode": "async_image_generation",
+        "request_hash": request_hash,
+        "idempotency": idempotency,
+        "requested_model": str(body.get("model", COMFY_DEFAULT_MODEL))[:160],
+        "size": str(body.get("size", "1024x1024"))[:32],
+        "n": max(1, min(n_value, 10)),
+        "response_format": "url",
+    }
+
+
+def _image_media_job_client_payload(
+    job: Mapping[str, Any],
+    request: Request,
+) -> dict[str, Any]:
+    job_id = str(job.get("job_id") or "")
+    client_job = {
+        key: job[key]
+        for key in media_jobs.CLIENT_VISIBLE_FIELDS
+        if key in job
+    }
+    return {
+        "object": "media.job",
+        "id": job_id,
+        **client_job,
+        "poll_url": f"/gateway/v1/media/jobs/{job_id}",
+        "content_url": f"/gateway/v1/media/jobs/{job_id}/content",
+    }
+
+
+def _image_media_job_response(
+    job: Mapping[str, Any],
+    request: Request,
+    *,
+    status_code: int | None = None,
+) -> Response:
+    status_value = str(job.get("status") or "")
+    if status_code is None:
+        status_code = 200 if status_value in media_jobs.TERMINAL_STATUSES else 202
+    job_id = str(job.get("job_id") or "")
+    return Response(
+        content=json.dumps(_image_media_job_client_payload(job, request)),
+        status_code=status_code,
+        media_type="application/json",
+        headers={"Location": f"/gateway/v1/media/jobs/{job_id}"},
+    )
+
+
+def _image_response_json(response: Response) -> dict[str, Any]:
+    body = getattr(response, "body", b"")
+    if isinstance(body, str):
+        raw = body
+    else:
+        raw = bytes(body or b"").decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _image_response_error(response: Response) -> tuple[str, str | None]:
+    parsed = _image_response_json(response)
+    error = parsed.get("error")
+    if isinstance(error, Mapping):
+        message = str(error.get("message") or "image generation failed")
+        code = error.get("code")
+        return message[:500], str(code) if code else None
+    return f"image generation failed with HTTP {response.status_code}", None
+
+
+def _retry_after_seconds(response: Response) -> float | None:
+    raw = response.headers.get("retry-after") if hasattr(response, "headers") else None
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        return None
+    return min(value, IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS)
+
+
+def _image_media_job_retry_decision(
+    response: Response,
+    *,
+    attempt: int,
+    max_attempts: int = IMAGE_MEDIA_JOB_MAX_ATTEMPTS,
+) -> tuple[str, float] | None:
+    if attempt >= max_attempts:
+        return None
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    message, code = _image_response_error(response)
+    text = message.lower()
+    reason: str | None = None
+    if status_code == 503 and (code == "vram_exhausted" or "vram" in text):
+        reason = "vram_exhausted"
+    elif status_code == 502 and "comfyui unavailable" in text:
+        reason = "comfyui_unavailable"
+    elif status_code == 502 and "gateway tile composition error" in text:
+        reason = "tile_composition_error"
+    elif status_code == 502 and "no prompt_id returned" in text:
+        reason = "missing_prompt_id"
+    elif status_code == 504:
+        reason = "comfyui_timeout"
+    elif status_code == 503 and "unavailable" in text:
+        reason = "service_unavailable"
+
+    if reason is None:
+        return None
+    retry_after = _retry_after_seconds(response)
+    if retry_after is not None:
+        return reason, retry_after
+    backoff = IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1))
+    return reason, min(backoff, IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS)
+
+
+def _assets_from_image_response(response: Response) -> list[dict[str, Any]]:
+    parsed = _image_response_json(response)
+    data = parsed.get("data")
+    if not isinstance(data, list):
+        return []
+    assets: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, Mapping):
+            continue
+        asset: dict[str, Any] = {}
+        for key in ("asset_id", "asset_url", "url", "media_type"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                asset[key] = value
+        if asset.get("asset_id"):
+            assets.append(asset)
+    return assets
+
+
+def _openai_image_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, Any]:
+    data: list[dict[str, Any]] = []
+    for asset in job.get("assets") or []:
+        if not isinstance(asset, Mapping):
+            continue
+        item = {
+            key: asset[key]
+            for key in ("asset_id", "asset_url", "url", "media_type")
+            if isinstance(asset.get(key), str) and asset.get(key)
+        }
+        if item:
+            data.append(item)
+    return {
+        "created": int(job.get("updated_at") or time.time()),
+        "job_id": job.get("job_id"),
+        "data": data,
+    }
+
+
+def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthContext:
+    auth = payload.get("auth")
+    if not isinstance(auth, Mapping):
+        return NO_AUTH_CONTEXT
+    key_hash = auth.get("key_hash")
+    if not isinstance(key_hash, str) or not key_hash:
+        return NO_AUTH_CONTEXT
+    refresh_auth_registry()
+    identity = AUTH_REGISTRY.get(key_hash)
+    if identity is None:
+        identity = AuthIdentity(
+            name=str(auth.get("name") or "image-media-job"),
+            key_hash=key_hash,
+        )
+    return AuthContext(identity=identity)
+
+
+def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBodyRequestShim | None:
+    body = payload.get("body")
+    if not isinstance(body, Mapping):
+        return None
+    url = payload.get("url")
+    headers = payload.get("headers")
+    if not isinstance(url, Mapping):
+        url = {}
+    if not isinstance(headers, Mapping):
+        headers = {}
+    replay_body = copy.deepcopy(dict(body))
+    replay_body["response_format"] = "url"
+    return _JsonBodyRequestShim(
+        body=replay_body,
+        headers={str(k): str(v) for k, v in headers.items()},
+        scheme=str(url.get("scheme") or "http"),
+        netloc=str(url.get("netloc") or headers.get("host") or "127.0.0.1"),
+    )
+
+
+def _mark_image_media_job_failed(
+    job_id: str,
+    message: str,
+    *,
+    http_status: int | None = None,
+) -> None:
+    metadata_patch: dict[str, Any] = {}
+    if http_status is not None:
+        metadata_patch["last_http_status"] = int(http_status)
+    try:
+        media_jobs.update_status(
+            job_id,
+            media_jobs.STATUS_FAILED,
+            error=message[:500],
+            metadata_patch=metadata_patch or None,
+            path=media_jobs.DB_PATH,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] image media job fail update failed for {job_id}: {exc}", flush=True)
+    try:
+        media_jobs.append_event(
+            job_id,
+            "failed",
+            {
+                "phase": "failed",
+                "status": media_jobs.STATUS_FAILED,
+                "progress": 100,
+                "http_status": http_status or 0,
+            },
+            path=media_jobs.DB_PATH,
+        )
+    except Exception:
+        pass
+
+
+async def _run_image_media_job(job_id: str) -> None:
+    async with _image_media_job_semaphore:
+        job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+        if not job:
+            return
+        if job.get("status") in media_jobs.TERMINAL_STATUSES:
+            return
+
+        payload = _load_image_media_job_payload(job_id)
+        request_shim = _request_shim_from_image_job_payload(payload or {})
+        if payload is None or request_shim is None:
+            _mark_image_media_job_failed(job_id, "Image media job payload is missing or invalid")
+            return
+
+        auth_context = _auth_context_from_image_job_payload(payload)
+        try:
+            media_jobs.update_status(
+                job_id,
+                media_jobs.STATUS_RUNNING,
+                progress=5,
+                metadata_patch={"started_at": int(time.time())},
+                path=media_jobs.DB_PATH,
+            )
+            media_jobs.append_event(
+                job_id,
+                "started",
+                {
+                    "phase": "running",
+                    "status": media_jobs.STATUS_RUNNING,
+                    "progress": 5,
+                },
+                path=media_jobs.DB_PATH,
+            )
+        except ValueError:
+            return
+
+        max_attempts = max(1, IMAGE_MEDIA_JOB_MAX_ATTEMPTS)
+        for attempt in range(1, max_attempts + 1):
+            receipt = start_image_route_receipt("/v1/images/generations", auth_context)
+            try:
+                media_jobs.append_event(
+                    job_id,
+                    "attempt",
+                    {
+                        "phase": "running",
+                        "status": media_jobs.STATUS_RUNNING,
+                        "progress": min(95, 5 + (attempt - 1) * 10),
+                        "attempt": attempt,
+                        "total": max_attempts,
+                    },
+                    path=media_jobs.DB_PATH,
+                )
+                response = await proxy_comfy_request(
+                    request_shim,
+                    auth_context,
+                    receipt=receipt,
+                )
+                finish_image_route_receipt(receipt, response)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                finish_image_route_receipt(
+                    receipt,
+                    Response(
+                        content=json.dumps({
+                            "error": {
+                                "message": f"image media job executor error: {type(exc).__name__}",
+                                "type": "api_error",
+                            }
+                        }),
+                        status_code=502,
+                        media_type="application/json",
+                    ),
+                )
+                if attempt < max_attempts:
+                    delay = min(
+                        IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1)),
+                        IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS,
+                    )
+                    media_jobs.append_event(
+                        job_id,
+                        "retry",
+                        {
+                            "phase": "retrying",
+                            "status": media_jobs.STATUS_RUNNING,
+                            "progress": min(95, 10 + attempt * 10),
+                            "attempt": attempt,
+                            "total": max_attempts,
+                            "reason": type(exc).__name__,
+                            "retry_after_s": delay,
+                        },
+                        path=media_jobs.DB_PATH,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                _mark_image_media_job_failed(
+                    job_id,
+                    f"Image media job executor error: {type(exc).__name__}",
+                    http_status=502,
+                )
+                return
+
+            status_code = int(getattr(response, "status_code", 0) or 0)
+            if 200 <= status_code < 300:
+                assets = _assets_from_image_response(response)
+                if not assets:
+                    _mark_image_media_job_failed(
+                        job_id,
+                        "Image generation succeeded but returned no reusable assets",
+                        http_status=status_code,
+                    )
+                    return
+                media_jobs.update_status(
+                    job_id,
+                    media_jobs.STATUS_SUCCEEDED,
+                    progress=100,
+                    add_assets=assets,
+                    metadata_patch={
+                        "attempts": attempt,
+                        "last_http_status": status_code,
+                        "completed_at": int(time.time()),
+                    },
+                    path=media_jobs.DB_PATH,
+                )
+                media_jobs.append_event(
+                    job_id,
+                    "succeeded",
+                    {
+                        "phase": "complete",
+                        "status": media_jobs.STATUS_SUCCEEDED,
+                        "progress": 100,
+                        "attempt": attempt,
+                        "total": max_attempts,
+                    },
+                    path=media_jobs.DB_PATH,
+                )
+                _delete_image_media_job_payload(job_id)
+                return
+
+            retry = _image_media_job_retry_decision(
+                response,
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+            if retry is not None:
+                reason, delay = retry
+                media_jobs.update_status(
+                    job_id,
+                    media_jobs.STATUS_RUNNING,
+                    progress=min(95, 10 + attempt * 10),
+                    metadata_patch={
+                        "attempts": attempt,
+                        "last_http_status": status_code,
+                        "last_retry_reason": reason,
+                    },
+                    path=media_jobs.DB_PATH,
+                )
+                media_jobs.append_event(
+                    job_id,
+                    "retry",
+                    {
+                        "phase": "retrying",
+                        "status": media_jobs.STATUS_RUNNING,
+                        "progress": min(95, 10 + attempt * 10),
+                        "attempt": attempt,
+                        "total": max_attempts,
+                        "http_status": status_code,
+                        "reason": reason,
+                        "retry_after_s": delay,
+                    },
+                    path=media_jobs.DB_PATH,
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            message, _code = _image_response_error(response)
+            _mark_image_media_job_failed(
+                job_id,
+                message,
+                http_status=status_code,
+            )
+            return
+
+
+def _schedule_image_media_job(job_id: str) -> bool:
+    if job_id in _image_media_job_scheduled:
+        return False
+    _image_media_job_scheduled.add(job_id)
+    task = asyncio.create_task(_run_image_media_job(job_id))
+    _image_media_job_tasks.add(task)
+
+    def _done(done_task: asyncio.Task) -> None:
+        _image_media_job_tasks.discard(done_task)
+        _image_media_job_scheduled.discard(job_id)
+        try:
+            exc = done_task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            print(f"[proxy] image media job task crashed for {job_id}: {exc}", flush=True)
+
+    task.add_done_callback(_done)
+    return True
+
+
+def _resume_pending_image_media_jobs() -> int:
+    resumed = 0
+    for status_value in (media_jobs.STATUS_RUNNING, media_jobs.STATUS_QUEUED):
+        try:
+            rows = media_jobs.recent(
+                limit=200,
+                audience="internal",
+                status=status_value,
+                path=media_jobs.DB_PATH,
+            )
+        except Exception:
+            continue
+        for job in rows:
+            if job.get("intent") != "image.generate":
+                continue
+            metadata = job.get("metadata") or {}
+            if not isinstance(metadata, Mapping) or metadata.get("mode") != "async_image_generation":
+                continue
+            job_id = str(job.get("job_id") or "")
+            if not job_id:
+                continue
+            if not _image_media_job_payload_path(job_id).exists():
+                _mark_image_media_job_failed(
+                    job_id,
+                    "Image media job payload missing after proxy restart",
+                )
+                continue
+            if _schedule_image_media_job(job_id):
+                resumed += 1
+    return resumed
+
+
+def _image_generation_body_from_media_job_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if payload.get("intent") != "image.generate":
+        return None
+    request_body = payload.get("request")
+    if not isinstance(request_body, Mapping):
+        request_body = payload.get("parameters")
+    if isinstance(request_body, Mapping):
+        return dict(request_body)
+    if "prompt" not in payload:
+        return None
+    return {
+        str(key): value
+        for key, value in payload.items()
+        if str(key) in STANDARD_IMAGE_GENERATE_FIELDS
+    }
+
+
+async def _dispatch_gateway_media_job_submission(
+    *,
+    request: Request,
+    payload: Mapping[str, Any],
+    audience: str,
+) -> Response | None:
+    del audience
+    body = _image_generation_body_from_media_job_payload(payload)
+    if body is None:
+        return None
+    headers = _safe_image_job_headers(request)
+    idempotency_key = request.headers.get("idempotency-key")
+    if idempotency_key:
+        headers["idempotency-key"] = idempotency_key
+    submit_request = _JsonBodyRequestShim(
+        body=body,
+        headers=headers,
+        scheme=request.url.scheme or "http",
+        netloc=getattr(request.url, "netloc", "") or request.headers.get("host", "127.0.0.1"),
+        scope=getattr(request, "scope", {}),
+    )
+    return await gateway_image_generations_media_job(
+        submit_request,  # type: ignore[arg-type]
+    )
+
+
+@app.post("/gateway/v1/media/jobs/image-generations")
+async def gateway_image_generations_media_job(request: Request):
+    """Submit durable, pollable image generation work through media jobs."""
+    auth_context = _gateway_auth_context(
+        request,
+        "/gateway/v1/media/jobs/image-generations",
+    )
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    receipt = start_image_route_receipt(
+        "/gateway/v1/media/jobs/image-generations",
+        auth_context,
+    )
+    decision = _apply_image_route_policy(receipt, auth_context)
+    if decision.denied:
+        response = _policy_denied_response(decision)
+        finish_image_route_receipt(receipt, response)
+        return response
+
+    try:
+        body = await request.json()
+    except Exception:
+        _record_image_input(receipt, "body", rejected_reason="invalid_json")
+        response = Response(
+            content=json.dumps({"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json",
+        )
+        finish_image_route_receipt(receipt, response)
+        return response
+    if not isinstance(body, Mapping):
+        _record_image_input(receipt, "body", rejected_reason="not_object")
+        response = Response(
+            content=json.dumps({"error": {"message": "JSON body must be an object", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json",
+        )
+        finish_image_route_receipt(receipt, response)
+        return response
+
+    idempotency_key = request.headers.get("idempotency-key")
+    request_id, request_hash, idempotency = _image_media_job_request_id(
+        body=body,
+        auth_context=auth_context,
+        idempotency_key=idempotency_key.strip() if idempotency_key else None,
+        fallback_request_id=receipt.request_id,
+    )
+    existing = media_jobs.get_by_request_id(
+        request_id,
+        audience="internal",
+        path=media_jobs.DB_PATH,
+    )
+    if existing is not None:
+        if existing.get("status") in {media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING}:
+            job_id = str(existing.get("job_id") or "")
+            if job_id and _image_media_job_payload_path(job_id).exists():
+                _schedule_image_media_job(job_id)
+        response = _image_media_job_response(existing, request)
+        finish_image_route_receipt(receipt, response)
+        return response
+
+    model = str(body.get("model", COMFY_DEFAULT_MODEL))
+    profile = _profile_for_auth_context(auth_context)
+    job = media_jobs.MediaJob(
+        intent="image.generate",
+        workflow=f"image.generate.{model}",
+        backend="comfyui",
+        request_id=request_id,
+        app_profile=profile.id,
+        api_key_name=auth_context.identity.name if auth_context.identity else None,
+        parent_request_id=receipt.request_id,
+        metadata=_safe_image_media_job_metadata(
+            body=body,
+            request_hash=request_hash,
+            idempotency=idempotency,
+        ),
+    )
+
+    try:
+        _persist_image_media_job_payload(
+            job.job_id,
+            body=body,
+            request=request,
+            auth_context=auth_context,
+        )
+        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+    except Exception as exc:  # noqa: BLE001
+        _delete_image_media_job_payload(job.job_id)
+        response = Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"Could not create image media job: {type(exc).__name__}",
+                    "type": "api_error",
+                }
+            }),
+            status_code=500,
+            media_type="application/json",
+        )
+        finish_image_route_receipt(receipt, response)
+        return response
+
+    if created.job_id != job.job_id:
+        _delete_image_media_job_payload(job.job_id)
+        created_dict = created.to_dict("internal")
+        response = _image_media_job_response(created_dict, request)
+        finish_image_route_receipt(receipt, response)
+        return response
+
+    try:
+        media_jobs.append_event(
+            job.job_id,
+            "queued",
+            {
+                "phase": "queued",
+                "status": media_jobs.STATUS_QUEUED,
+                "progress": 0,
+            },
+            path=media_jobs.DB_PATH,
+        )
+    except Exception:
+        pass
+    _schedule_image_media_job(job.job_id)
+    created_dict = created.to_dict("internal")
+    response = _image_media_job_response(created_dict, request, status_code=202)
+    finish_image_route_receipt(receipt, response)
+    return response
+
+
+@app.get("/gateway/v1/media/jobs/{job_id}/content")
+async def gateway_media_job_content(job_id: str, request: Request):
+    """Return an OpenAI image payload for a completed gateway image media job."""
+    auth_context = _gateway_auth_context(
+        request,
+        "/gateway/v1/media/jobs/{job_id}/content",
+    )
+    if isinstance(auth_context, Response):
+        return auth_context
+    job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+    if job is None:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"media job {job_id!r} not found",
+                    "type": "invalid_request_error",
+                    "code": "media_job_not_found",
+                }
+            }),
+            status_code=404,
+            media_type="application/json",
+        )
+    if job.get("intent") != "image.generate":
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "media job content is only implemented for image.generate jobs",
+                    "type": "invalid_request_error",
+                    "code": "unsupported_media_job_content",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+    status_value = str(job.get("status") or "")
+    if status_value != media_jobs.STATUS_SUCCEEDED:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"media job is {status_value or 'unknown'}",
+                    "type": "invalid_request_error",
+                    "code": "media_job_not_ready",
+                    "status": status_value,
+                }
+            }),
+            status_code=409,
+            media_type="application/json",
+        )
+    payload = _openai_image_payload_from_media_job(job)
+    if not payload["data"]:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "media job has no image assets",
+                    "type": "api_error",
+                    "code": "media_job_assets_missing",
+                }
+            }),
+            status_code=502,
+            media_type="application/json",
+        )
+    return Response(
+        content=json.dumps(payload),
+        status_code=200,
+        media_type="application/json",
+    )
 
 
 @app.post("/v1/images/generations")

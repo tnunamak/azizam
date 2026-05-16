@@ -45,10 +45,11 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /v1/responses` | OpenAI Responses | Translator over chat completions; durable store. |
 | `GET /v1/responses/{id}` | OpenAI Responses | Read back. |
 | `DELETE /v1/responses/{id}` | OpenAI Responses | |
-| `POST /v1/images/generations` | OpenAI Images | Emits observational gateway receipts. |
+| `POST /v1/images/generations` | OpenAI Images | Synchronous image generation; emits observational gateway receipts. |
 | `POST /v1/images/edits` | OpenAI Images | Emits observational gateway receipts. |
 | `GET /v1/images/{id}/content` | OpenAI Images | Asset retrieval. |
 | `GET /v1/assets/{asset_id}/content` | Native | Signed generated-asset retrieval. |
+| `POST /gateway/v1/media/jobs` | Gateway media jobs | Durable async image generation when `intent` is `image.generate` and `request` carries the OpenAI image body. |
 | `POST /v1/audio/speech` | OpenAI Audio | TTS. |
 | `POST /v1/audio/transcriptions` | OpenAI Audio | STT. |
 | `GET /v1/voices`, `GET /v1/audio/voices` | OpenAI Audio | Voice list. |
@@ -73,6 +74,7 @@ GET /gateway/v1/receipts/{request_id}
 POST /gateway/v1/media/jobs
 GET /gateway/v1/media/jobs
 GET /gateway/v1/media/jobs/{job_id}
+GET /gateway/v1/media/jobs/{job_id}/content
 POST /gateway/v1/media/jobs/{job_id}/events
 POST /gateway/v1/media/jobs/{job_id}/cancel
 ```
@@ -187,6 +189,45 @@ with the same bearer token. `asset_id` can be passed back to gateway-aware
 routes that explicitly accept an image input reference. Asset handles are scoped
 to the API key that minted them, so they are convenient local references rather
 than global public content hashes.
+
+Durable image generation job, preferred for unattended batches or clients that
+cannot safely keep a long HTTP request open:
+
+```bash
+JOB_JSON=$(curl -s http://127.0.0.1:5000/gateway/v1/media/jobs \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: tile-rock-4242" \
+  -d '{
+    "intent": "image.generate",
+    "request": {
+      "model": "flux2-klein-4b-seamless-tile",
+      "prompt": "hand-painted underwater basalt floor texture, game asset, tileable",
+      "size": "1024x1024",
+      "n": 1,
+      "extensions": {
+        "com.vividfish.workflow": {
+          "seed": 4242,
+          "seam_mask_width": 96,
+          "seam_denoise": 0.58
+        }
+      }
+    }
+  }')
+JOB_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["job_id"])' <<<"$JOB_JSON")
+curl -s "http://127.0.0.1:5000/gateway/v1/media/jobs/$JOB_ID" \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+curl -s "http://127.0.0.1:5000/gateway/v1/media/jobs/$JOB_ID/content" \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+```
+
+The job executor forces `response_format: "url"` so durable records point at
+signed, auth-gated cached assets instead of storing base64 response bodies.
+Seeded image requests are idempotent by request hash; `Idempotency-Key` is the
+stronger option for unseeded prompts and client retries. The media-job record
+stores only redacted metadata; the private request payload lives in
+`data/image_media_jobs/` while the job is pending/running and is removed after
+success.
 
 Image edit denoise:
 
