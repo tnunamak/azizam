@@ -4013,6 +4013,41 @@ async def proxy_comfy_request(
         )
     _record_image_input(receipt, "prompt")
 
+    manifest = _find_image_manifest("image.generate", str(model))
+    gateway_compose = _gateway_image_generate_compose(manifest)
+    if gateway_compose == "offset_inpaint_tile":
+        if background == "transparent":
+            _record_image_input(
+                receipt,
+                "background",
+                rejected_reason="unsupported_for_gateway_composition",
+            )
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": "background=transparent is not supported for offset-inpaint tile generation",
+                        "type": "invalid_request_error",
+                        "param": "background",
+                        "code": "unsupported_value",
+                    }
+                }),
+                status_code=400,
+                media_type="application/json",
+            )
+        return await _proxy_offset_inpaint_tile_request(
+            request=request,
+            body=body,
+            auth_context=auth_context,
+            receipt=receipt,
+            manifest=manifest,
+            prompt=prompt,
+            model=str(model),
+            size=str(size),
+            n=n,
+            response_format=response_format,
+            headers=headers,
+        )
+
     workflow = load_comfy_workflow(model)
     if not workflow:
         if receipt is not None:
@@ -4029,7 +4064,6 @@ async def proxy_comfy_request(
     if receipt is not None:
         receipt.requested_workflow = str(model) if model is not None else None
         receipt.resolved_workflow = workflow_name
-    manifest = _find_image_manifest("image.generate", str(model))
     if manifest is not None:
         identity = manifest_identity(manifest)
         if receipt is not None:
@@ -7129,6 +7163,518 @@ def _apply_image_edit_mask_composite(
     return _image_to_png_bytes(composited)
 
 
+def _offset_image_bytes(
+    content: bytes,
+    *,
+    x_fraction: float = 0.5,
+    y_fraction: float = 0.5,
+) -> bytes:
+    from PIL import Image, ImageChops
+    import io
+
+    image = Image.open(io.BytesIO(content)).convert("RGBA")
+    image.load()
+    x_offset = int(round(image.width * x_fraction))
+    y_offset = int(round(image.height * y_fraction))
+    return _image_to_png_bytes(ImageChops.offset(image, x_offset, y_offset))
+
+
+def _make_seam_cross_mask_png(
+    width: int,
+    height: int,
+    *,
+    seam_width: int,
+) -> bytes:
+    from PIL import Image, ImageDraw
+
+    safe_width = max(1, min(int(seam_width), max(1, min(width, height))))
+    image = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(image)
+
+    x0 = max(0, (width - safe_width) // 2)
+    x1 = min(width - 1, x0 + safe_width - 1)
+    y0 = max(0, (height - safe_width) // 2)
+    y1 = min(height - 1, y0 + safe_width - 1)
+    draw.rectangle((x0, 0, x1, height - 1), fill=255)
+    draw.rectangle((0, y0, width - 1, y1), fill=255)
+    return _image_to_png_bytes(image)
+
+
+def _image_size_from_bytes(content: bytes) -> tuple[int, int]:
+    from PIL import Image
+    import io
+
+    image = Image.open(io.BytesIO(content))
+    image.load()
+    return image.size
+
+
+def _manifest_input_default(
+    manifest: Mapping[str, Any] | None,
+    name: str,
+    fallback: Any,
+) -> Any:
+    if isinstance(manifest, Mapping):
+        inputs = manifest.get("inputs")
+        if isinstance(inputs, Mapping):
+            spec = inputs.get(name)
+            if isinstance(spec, Mapping) and "default" in spec:
+                return spec["default"]
+    return fallback
+
+
+async def _upload_comfy_image_bytes(
+    client: Any,
+    headers: Mapping[str, str],
+    content: bytes,
+    *,
+    filename: str,
+    media_type: str = "image/png",
+) -> tuple[str | None, Response | None]:
+    files = {"image": (filename, content, media_type)}
+    upload_resp = await client.post(
+        f"{COMFY_HOST}/upload/image",
+        headers=dict(headers),
+        files=files,
+    )
+    if upload_resp.status_code != 200:
+        return None, Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"Image upload failed: {upload_resp.text}",
+                    "type": "api_error",
+                }
+            }),
+            status_code=502,
+            media_type="application/json",
+        )
+
+    uploaded_filename = upload_resp.json().get("name")
+    if not uploaded_filename:
+        return None, Response(
+            content=json.dumps({
+                "error": {
+                    "message": "No filename returned from upload",
+                    "type": "api_error",
+                }
+            }),
+            status_code=502,
+            media_type="application/json",
+        )
+    return str(uploaded_filename), None
+
+
+def _gateway_image_generate_compose(manifest: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(manifest, Mapping):
+        return None
+    binding = (manifest.get("bindings") or {}).get("gateway")
+    if not isinstance(binding, Mapping):
+        return None
+    compose = binding.get("compose")
+    return str(compose) if isinstance(compose, str) and compose else None
+
+
+def _gateway_image_model_id(record_manifest: Mapping[str, Any]) -> str | None:
+    binding = (record_manifest.get("bindings") or {}).get("gateway")
+    if not isinstance(binding, Mapping):
+        return None
+    model_id = binding.get("model_id")
+    return str(model_id) if isinstance(model_id, str) and model_id else None
+
+
+def _gateway_binding_value(
+    manifest: Mapping[str, Any],
+    name: str,
+    *,
+    fallback: str,
+) -> str:
+    binding = (manifest.get("bindings") or {}).get("gateway")
+    if isinstance(binding, Mapping):
+        value = binding.get(name)
+        if isinstance(value, str) and value:
+            return value
+    return fallback
+
+
+def _gateway_workflow_extension_values(
+    *,
+    body: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    receipt: RouteReceipt | None,
+    standard_fields: frozenset[str],
+) -> tuple[dict[str, Any], Response | None]:
+    try:
+        result = bind_workflow_extensions(
+            body,
+            manifest,
+            "gateway",
+            {},
+            supported_names=_workflow_extension_supported_names(manifest, "gateway"),
+            standard_fields=standard_fields,
+        )
+        if receipt is not None:
+            record_image_extension_binding(receipt, result)
+    except (ExtensionError, ManifestError, ValueError) as e:
+        return {}, _image_extension_error_response(receipt, str(e))
+
+    if result.unknown_top_level:
+        name, reason = next(iter(result.unknown_top_level.items()))
+        return {}, _image_extension_error_response(
+            receipt,
+            reason,
+            param=name,
+        )
+    if result.validation.rejected:
+        name, reason = next(iter(result.validation.rejected.items()))
+        return {}, _image_extension_error_response(
+            receipt,
+            reason,
+            param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}",
+        )
+    return dict(result.validation.accepted), None
+
+
+def _seed_field_for_workflow(workflow: Mapping[str, Any], seed_node: str | None) -> str:
+    if seed_node and seed_node in workflow:
+        inputs = workflow[seed_node].get("inputs", {})
+        if isinstance(inputs, Mapping) and "noise_seed" in inputs:
+            return "noise_seed"
+    return "seed"
+
+
+def _set_workflow_seed(
+    workflow: Mapping[str, Any],
+    *,
+    seed_node: str | None,
+    seed_field: str,
+    seed: int | None,
+) -> None:
+    if not seed_node or seed_node not in workflow:
+        return
+    inputs = workflow[seed_node].get("inputs", {})
+    if not isinstance(inputs, dict):
+        return
+    if seed is None:
+        seed = random.randint(0, 2**32 - 1)
+    inputs[seed_field] = int(seed)
+
+
+async def _run_single_comfy_image(
+    *,
+    client: httpx.AsyncClient,
+    workflow: dict[str, Any],
+    meta: Mapping[str, Any],
+    headers: Mapping[str, str],
+    label: str,
+    seed: int | None = None,
+) -> tuple[Response | None, bytes | None]:
+    round_workflow = copy.deepcopy(workflow)
+    apply_batch_size(round_workflow, dict(meta), 1)
+    seed_node = meta.get("seed_node")
+    seed_node_str = str(seed_node) if seed_node is not None else None
+    _set_workflow_seed(
+        round_workflow,
+        seed_node=seed_node_str,
+        seed_field=_seed_field_for_workflow(round_workflow, seed_node_str),
+        seed=seed,
+    )
+    err, images = await _comfy_run_round(
+        client,
+        round_workflow,
+        dict(headers),
+        label,
+    )
+    if err is not None:
+        return err, None
+    if not images:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "ComfyUI returned no images",
+                    "type": "api_error",
+                }
+            }),
+            status_code=502,
+            media_type="application/json",
+        ), None
+    return None, images[0]
+
+
+def _tile_seam_prompt(prompt: str, seam_prompt: Any) -> str:
+    if isinstance(seam_prompt, str) and seam_prompt.strip():
+        return seam_prompt.strip()
+    return (
+        f"{prompt}. Repair only the masked center seam cross so the texture "
+        "wraps seamlessly on all edges. Preserve the source material, style, "
+        "scale, lighting, and brush texture. Do not add borders, text, logos, "
+        "objects, frames, or directional features."
+    )
+
+
+async def _proxy_offset_inpaint_tile_request(
+    *,
+    request: Request,
+    body: Mapping[str, Any],
+    auth_context: AuthContext,
+    receipt: RouteReceipt | None,
+    manifest: Mapping[str, Any] | None,
+    prompt: str,
+    model: str,
+    size: str,
+    n: int,
+    response_format: str,
+    headers: Mapping[str, str],
+) -> Response:
+    if manifest is None:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"Unknown gateway image workflow: {model}",
+                    "type": "invalid_request_error",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    if receipt is not None:
+        receipt.resolved_model = model
+        receipt.requested_workflow = model
+        receipt.resolved_workflow = str(manifest.get("id") or model)
+        identity = manifest_identity(dict(manifest))
+        receipt.attach_manifest(
+            manifest_id=identity.id,
+            manifest_version=identity.version,
+            manifest_hash=identity.manifest_hash,
+        )
+        decision = _apply_image_route_policy(
+            receipt,
+            auth_context,
+            model=model,
+            workflow=_policy_workflow_for_receipt(receipt),
+        )
+        if decision.denied:
+            return _policy_denied_response(decision)
+
+    controls, control_error = _gateway_workflow_extension_values(
+        body=body,
+        manifest=manifest,
+        receipt=receipt,
+        standard_fields=STANDARD_IMAGE_GENERATE_FIELDS,
+    )
+    if control_error is not None:
+        return control_error
+
+    base_model = _gateway_binding_value(
+        manifest,
+        "base_model",
+        fallback="flux2-klein-4b",
+    )
+    inpaint_model = _gateway_binding_value(
+        manifest,
+        "inpaint_model",
+        fallback="flux2-klein-4b-inpaint",
+    )
+    base_workflow = load_comfy_workflow(base_model)
+    inpaint_workflow = load_comfy_workflow(inpaint_model)
+    base_manifest = _find_image_manifest("image.generate", base_model)
+    inpaint_manifest = _find_image_manifest("image.edit", inpaint_model)
+    if not base_workflow or not inpaint_workflow or base_manifest is None or inpaint_manifest is None:
+        if receipt is not None:
+            receipt.add_fallback_reason("offset_inpaint_tile_prerequisite_missing")
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": (
+                        "offset-inpaint tile generation requires the Flux2 "
+                        "base and inpaint workflows plus their manifests"
+                    ),
+                    "type": "api_error",
+                }
+            }),
+            status_code=503,
+            media_type="application/json",
+        )
+
+    width, height = parse_size(size)
+
+    base_workflow = copy.deepcopy(base_workflow)
+    base_meta = base_workflow.pop("_meta", {})
+    base_prompt_node = base_meta.get("prompt_node")
+    if base_prompt_node and base_prompt_node in base_workflow:
+        base_workflow[base_prompt_node]["inputs"]["text"] = prompt
+    base_size_node = base_meta.get("size_node")
+    if base_size_node and base_size_node in base_workflow:
+        base_workflow[base_size_node]["inputs"]["width"] = width
+        base_workflow[base_size_node]["inputs"]["height"] = height
+    base_workflow = _apply_manifest_route_inputs(
+        base_manifest,
+        base_workflow,
+        {"prompt": prompt, "width": width, "height": height},
+    )
+    base_extension_inputs = {
+        name: value
+        for name, value in controls.items()
+        if name in {"steps", "guidance", "seed"}
+    }
+    if base_extension_inputs:
+        base_workflow = bind_backend_request(
+            base_manifest,
+            "comfyui",
+            base_workflow,
+            base_extension_inputs,
+        ).request
+    set_workflow_background_removal(base_workflow, base_meta, False)
+
+    fixed_seed = controls.get("seed")
+    fixed_seed_int = int(fixed_seed) if isinstance(fixed_seed, int) and not isinstance(fixed_seed, bool) else None
+    seam_width = int(_manifest_input_default(manifest, "seam_mask_width", 96))
+    if "seam_mask_width" in controls:
+        seam_width = int(controls["seam_mask_width"])
+    seam_expand = int(_manifest_input_default(manifest, "seam_mask_expand", 0))
+    if "seam_mask_expand" in controls:
+        seam_expand = int(controls["seam_mask_expand"])
+    seam_feather = int(_manifest_input_default(manifest, "seam_mask_feather", 32))
+    if "seam_mask_feather" in controls:
+        seam_feather = int(controls["seam_mask_feather"])
+    seam_steps = int(_manifest_input_default(manifest, "seam_steps", 8))
+    if "seam_steps" in controls:
+        seam_steps = int(controls["seam_steps"])
+    seam_guidance = float(_manifest_input_default(manifest, "seam_guidance", 4.0))
+    if "seam_guidance" in controls:
+        seam_guidance = float(controls["seam_guidance"])
+    seam_denoise = float(_manifest_input_default(manifest, "seam_denoise", 0.58))
+    if "seam_denoise" in controls:
+        seam_denoise = float(controls["seam_denoise"])
+    seam_prompt = _tile_seam_prompt(prompt, controls.get("seam_prompt"))
+
+    images: list[bytes] = []
+    response_headers: dict[str, str] = {
+        "X-Image-Seamless-Tile-Strategy": "offset-inpaint",
+        "X-Image-Seam-Mask-Width": str(seam_width),
+    }
+    rounds = 0
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+            for index in range(n):
+                base_seed = (
+                    fixed_seed_int + (index * 2)
+                    if fixed_seed_int is not None
+                    else None
+                )
+                seam_seed = base_seed + 1 if base_seed is not None else None
+                err, base_image = await _run_single_comfy_image(
+                    client=client,
+                    workflow=base_workflow,
+                    meta=base_meta,
+                    headers=headers,
+                    label=f"offset tile base {index + 1}/{n}",
+                    seed=base_seed,
+                )
+                rounds += 1
+                if err is not None:
+                    return err
+                assert base_image is not None
+
+                offset_image = _offset_image_bytes(base_image)
+                actual_width, actual_height = _image_size_from_bytes(offset_image)
+                mask = _make_seam_cross_mask_png(
+                    actual_width,
+                    actual_height,
+                    seam_width=seam_width,
+                )
+
+                uploaded_image, upload_error = await _upload_comfy_image_bytes(
+                    client,
+                    headers,
+                    offset_image,
+                    filename=f"offset-tile-{index + 1}.png",
+                )
+                if upload_error is not None:
+                    return upload_error
+                uploaded_mask, upload_error = await _upload_comfy_image_bytes(
+                    client,
+                    headers,
+                    mask,
+                    filename=f"offset-tile-mask-{index + 1}.png",
+                )
+                if upload_error is not None:
+                    return upload_error
+                assert uploaded_image is not None
+                assert uploaded_mask is not None
+
+                edit_workflow = copy.deepcopy(inpaint_workflow)
+                edit_meta = edit_workflow.pop("_meta", {})
+                set_workflow_background_removal(edit_workflow, edit_meta, False)
+                edit_workflow = bind_backend_request(
+                    inpaint_manifest,
+                    "comfyui",
+                    edit_workflow,
+                    {
+                        "prompt": seam_prompt,
+                        "source_image": uploaded_image,
+                        "mask": uploaded_mask,
+                        "width": actual_width,
+                        "height": actual_height,
+                        "steps": seam_steps,
+                        "guidance": seam_guidance,
+                        "denoise": seam_denoise,
+                        "mask_expand": seam_expand,
+                        "mask_feather": seam_feather,
+                        "seed": seam_seed if seam_seed is not None else random.randint(0, 2**32 - 1),
+                    },
+                ).request
+
+                err, repaired_offset = await _run_single_comfy_image(
+                    client=client,
+                    workflow=edit_workflow,
+                    meta=edit_meta,
+                    headers=headers,
+                    label=f"offset tile seam inpaint {index + 1}/{n}",
+                    seed=seam_seed,
+                )
+                rounds += 1
+                if err is not None:
+                    return err
+                assert repaired_offset is not None
+                images.append(
+                    _offset_image_bytes(
+                        repaired_offset,
+                        x_fraction=-0.5,
+                        y_fraction=-0.5,
+                    )
+                )
+    except httpx.TimeoutException:
+        return Response(
+            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
+            status_code=504,
+            media_type="application/json",
+        )
+    except httpx.ConnectError:
+        return Response(
+            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json",
+        )
+    except Exception as e:
+        return Response(
+            content=json.dumps({"error": {"message": f"Gateway tile composition error: {e}", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json",
+        )
+
+    response_headers["X-Image-Rounds"] = str(rounds)
+    response_headers["X-Image-Returned"] = str(len(images))
+    return _build_image_response_payload(
+        request,
+        images,
+        response_format,
+        response_headers,
+        auth_context=auth_context,
+    )
+
+
 def _manifest_route_managed_mask_input(manifest: Mapping[str, Any] | None) -> str | None:
     if not isinstance(manifest, Mapping):
         return None
@@ -8341,9 +8887,11 @@ def _build_workflow_model_entries(
 ) -> list[dict]:
     """Construct OpenAI-shaped model entries for directly invocable workflows.
 
-    The model id is the workflow JSON basename because the image routes load
-    `workflows/images/<model>.json` directly. Keep local paths out of the
-    public payload; gateway-native discovery has the fuller contract.
+    Direct ComfyUI workflows use the workflow JSON basename because the image
+    routes load `workflows/images/<model>.json` directly. Gateway-composed
+    workflows can declare an explicit `bindings.gateway.model_id`. Keep local
+    paths out of the public payload; gateway-native discovery has the fuller
+    contract.
     """
     entries: list[dict] = []
     for record in registry.records():
@@ -8352,15 +8900,23 @@ def _build_workflow_model_entries(
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, dict):
             continue
-        comfy = bindings.get("comfyui")
-        if not isinstance(comfy, dict):
-            continue
-        workflow_artifact = comfy.get("workflow")
-        if not isinstance(workflow_artifact, str) or not workflow_artifact:
-            continue
-        model_id = Path(workflow_artifact).stem
-        if not model_id:
-            continue
+        backend = "comfyui"
+        model_id = _gateway_image_model_id(record.manifest)
+        workflow_artifact = ""
+        if model_id:
+            backend = "gateway"
+            workflow_artifact = str(record.source_path) if record.source_path else ""
+        else:
+            comfy = bindings.get("comfyui")
+            if not isinstance(comfy, dict):
+                continue
+            artifact = comfy.get("workflow")
+            if not isinstance(artifact, str) or not artifact:
+                continue
+            workflow_artifact = artifact
+            model_id = Path(workflow_artifact).stem
+            if not model_id:
+                continue
         entry = {
             "id": model_id,
             "object": "model",
@@ -8370,7 +8926,7 @@ def _build_workflow_model_entries(
             "vivid_fish_workflow": True,
             "vivid_fish_workflow_id": record.id,
             "vivid_fish_intent": record.intent,
-            "vivid_fish_backend": "comfyui",
+            "vivid_fish_backend": backend,
         }
         version = record.manifest.get("version")
         if version:

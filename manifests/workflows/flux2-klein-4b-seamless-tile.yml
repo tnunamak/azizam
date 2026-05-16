@@ -1,0 +1,108 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.generate.flux2-klein-4b-seamless-tile
+intent: image.generate
+display_name: Flux2 Klein 4B Seamless Tile
+description: Gateway-composed seamless texture generation. The proxy generates with Flux2, circularly offsets the image, masks the centered seam cross, repairs it with the Flux2 inpaint workflow, then offsets the result back.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  width:
+    type: integer
+    minimum: 64
+    maximum: 2048
+  height:
+    type: integer
+    minimum: 64
+    maximum: 2048
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 100
+    description: Base Flux2 generation step count before seam repair.
+  guidance:
+    type: number
+    minimum: 0
+    maximum: 20
+    description: Base Flux2 generation guidance before seam repair.
+  seed:
+    type: integer
+    minimum: 0
+    description: Base seed. Each returned image increments by two; the seam inpaint pass uses base seed plus one.
+  seam_mask_width:
+    type: integer
+    minimum: 1
+    maximum: 512
+    default: 96
+    description: Width in pixels of the centered vertical and horizontal seam-repair mask after the 50% offset.
+  seam_mask_expand:
+    type: integer
+    minimum: -256
+    maximum: 256
+    default: 0
+    description: Pixels to grow or shrink the seam mask inside the inpaint workflow.
+  seam_mask_feather:
+    type: integer
+    minimum: 0
+    maximum: 256
+    default: 32
+    description: Pixels to feather each edge of the seam mask inside the inpaint workflow.
+  seam_steps:
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 8
+    description: Flux2 inpaint step count for the seam repair pass.
+  seam_guidance:
+    type: number
+    minimum: 0
+    maximum: 20
+    default: 4.0
+    description: Flux2 inpaint guidance for the seam repair pass.
+  seam_denoise:
+    type: number
+    minimum: 0
+    maximum: 1
+    default: 0.58
+    description: Flux2 inpaint denoise for the seam repair pass. Lower values preserve more of the generated texture.
+  seam_prompt:
+    type: string
+    description: Optional override prompt for the seam repair pass. Defaults to a preservation-oriented prompt derived from prompt.
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  gateway:
+    model_id: flux2-klein-4b-seamless-tile
+    compose: offset_inpaint_tile
+    base_model: flux2-klein-4b
+    inpaint_model: flux2-klein-4b-inpaint
+    map:
+      steps:
+        - path: base.steps
+      guidance:
+        - path: base.guidance
+      seed:
+        - path: base.seed
+      seam_mask_width:
+        - path: seam.mask_width
+      seam_mask_expand:
+        - path: seam.mask_expand
+      seam_mask_feather:
+        - path: seam.mask_feather
+      seam_steps:
+        - path: seam.steps
+      seam_guidance:
+        - path: seam.guidance
+      seam_denoise:
+        - path: seam.denoise
+      seam_prompt:
+        - path: seam.prompt
+requires:
+  workflows:
+    - image.generate.flux2-klein-4b
+    - image.edit.flux2-klein-4b-inpaint

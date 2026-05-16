@@ -110,7 +110,37 @@ fields such as `model`, `prompt`, `size`, `duration`, `seconds`, and
 image-edit `mask` stay top-level. Route-native `seed` stays top-level on
 audio/video; image workflow seeds are manifest-backed extensions.
 
-Image generation seamless tile:
+Image generation seamless tile, recommended Flux2 offset+inpaint path:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/generations \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "flux2-klein-4b-seamless-tile",
+    "prompt": "hand-painted underwater basalt floor texture, game asset, tileable",
+    "size": "1024x1024",
+    "n": 1,
+    "response_format": "b64_json",
+    "extensions": {
+      "com.vividfish.workflow": {
+        "steps": 5,
+        "guidance": 3.5,
+        "seed": 4242,
+        "seam_mask_width": 96,
+        "seam_mask_feather": 32,
+        "seam_denoise": 0.58,
+        "seam_steps": 8
+      }
+    }
+  }'
+```
+
+This is a gateway-composed route: Flux2 generation, 50%/50% circular offset,
+center seam-cross mask, Flux2 inpaint repair, then offset back. Response
+headers include `X-Image-Seamless-Tile-Strategy: offset-inpaint`.
+
+Direct SDXL postprocess tile workflow:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/generations \
@@ -138,7 +168,8 @@ curl -s http://127.0.0.1:5000/v1/images/generations \
 
 `seam_blending` is bounded to `0..0.5` by the installed WAS/img2texture
 implementation. Values above `0.5` are rejected by the proxy instead of being
-submitted to ComfyUI and timing out.
+submitted to ComfyUI and timing out. This direct SDXL workflow is postprocess
+only; it is not the full circular SDXL stack.
 
 Every image result includes gateway-native reuse metadata in addition to the
 OpenAI-compatible field the client asked for:

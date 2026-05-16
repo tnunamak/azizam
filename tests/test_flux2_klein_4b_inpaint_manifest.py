@@ -50,6 +50,7 @@ class TestFlux2KleinInpaintManifest(unittest.TestCase):
                 "steps": 12,
                 "guidance": 3.25,
                 "denoise": 0.58,
+                "seed": 1234,
                 "mask_expand": 8,
                 "mask_feather": 12,
             },
@@ -64,6 +65,7 @@ class TestFlux2KleinInpaintManifest(unittest.TestCase):
         self.assertEqual(bound["48"]["inputs"]["steps"], 12)
         self.assertEqual(bound["26"]["inputs"]["guidance"], 3.25)
         self.assertEqual(bound["49"]["inputs"]["denoise"], 0.58)
+        self.assertEqual(bound["25"]["inputs"]["noise_seed"], 1234)
         self.assertEqual(bound["18"]["inputs"]["expand"], 8)
         self.assertEqual(bound["19"]["inputs"]["left"], 12)
         self.assertEqual(bound["19"]["inputs"]["right"], 12)
@@ -110,7 +112,7 @@ class TestFlux2KleinInpaintManifest(unittest.TestCase):
         controls = set(workflow_targets[0]["controls"])
         self.assertEqual(
             controls,
-            {"denoise", "guidance", "mask_expand", "mask_feather", "steps"},
+            {"denoise", "guidance", "mask_expand", "mask_feather", "seed", "steps"},
         )
 
 

@@ -1,6 +1,6 @@
 schema_version: 1
 min_gateway_version: "0.1"
-version: "0.1.0"
+version: "0.1.1"
 id: image.edit.flux2-klein-4b-inpaint
 intent: image.edit
 display_name: Flux2 Klein 4B Inpaint
@@ -42,6 +42,10 @@ inputs:
     maximum: 1
     default: 0.75
     description: Sampling strength for the masked edit. Lower values preserve more of the source image.
+  seed:
+    type: integer
+    minimum: 0
+    description: Noise seed for the masked edit sampler.
   mask_expand:
     type: integer
     minimum: -256
@@ -93,6 +97,9 @@ bindings:
       denoise:
         - node: "49"
           input: denoise
+      seed:
+        - node: "25"
+          input: noise_seed
       mask_expand:
         - node: "18"
           input: expand
