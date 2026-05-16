@@ -353,6 +353,13 @@ standard multipart fields. The route may normalize and bind those assets to a
 workflow or apply a documented preservation fallback, but `mask` is not a
 workflow extension.
 
+Non-standard conditioning assets remain workflow extensions. For multipart
+image edits, an extension value such as
+`extensions.com.vividfish.workflow.control_image={"multipart_field":"control_image"}`
+may point at an extra uploaded form part. That form part is transport only; the
+selected manifest must still declare and bind `control_image` before the route
+will apply it.
+
 This is the bridge between authentication, routing, credential provisioning,
 and user-facing compatibility.
 

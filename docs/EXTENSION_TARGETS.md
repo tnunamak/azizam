@@ -24,13 +24,15 @@ The live discovery contract is:
 - `GET /gateway/v1/models/{model}/capabilities` for model-specific controls.
 - `GET /gateway/v1/workflows` and `GET /gateway/v1/capabilities` for the
   broader workflow catalog.
+- `docs/CONDITIONING_CONTROLS.md` for ControlNet/IP-Adapter/style-reference
+  conventions and readiness gates.
 
 ## Current Surface
 
 | API | Extension Target | Current State | Notes |
 |---|---|---|---|
 | `POST /v1/images/generations` | `extensions.com.vividfish.workflow` | Implemented | Binds manifest controls such as `steps`, `guidance`, `seed`, and `batch_size`. Unknown top-level workflow controls are rejected. |
-| `POST /v1/images/edits` | `extensions.com.vividfish.workflow` | Implemented | Binds `steps`, `guidance`, and `denoise` for `flux2-klein-4b-edit`. Top-level `mask` is a standard OpenAI multipart field, not an extension; the current Flux2 edit workflow preserves unmasked pixels with a post-composite mask fallback unless a native mask-bound workflow is selected. ControlNet is not exposed until a real ControlNet workflow and model are present. |
+| `POST /v1/images/edits` | `extensions.com.vividfish.workflow` | Implemented | Binds `steps`, `guidance`, and `denoise` for `flux2-klein-4b-edit`. Top-level `mask` is a standard OpenAI multipart field, not an extension; the current Flux2 edit workflow preserves unmasked pixels with a post-composite mask fallback unless a native mask-bound workflow is selected. Future conditioning controls such as `control_image` and `controlnet_strength` stay namespaced and manifest-backed; multipart extension assets can reference an extra form field with `{"multipart_field":"control_image"}`. ControlNet is not exposed until a real ControlNet workflow and model are present. |
 | `POST /v1/audio/generate` | `extensions.com.vividfish.workflow` | Implemented | TangoFlux accepts namespaced `steps`, `guidance`, and `batch_size`; standard `duration` and `seed` stay top-level. |
 | `POST /v1/videos` | `extensions.com.vividfish.workflow` | Implemented | LTX 2.3 distilled accepts namespaced `steps`, `stage1_cfg`, and `stage2_cfg`; standard `size`, `seconds`, `seed`, prompt, and image-reference fields stay top-level. |
 | `POST /v1/chat/completions` | `extensions.com.vividfish.chat`, `extensions.com.vividfish.routing` | Proposed | Candidate controls: local sampler extras, backend role hints, prompt-cache preferences, fallback preference, receipt verbosity. |
@@ -45,7 +47,9 @@ The live discovery contract is:
 ControlNet readiness: there is an audit trail for ControlNet, but the current
 local system is not ready. Do not expose fake `controlnet_*`, conditioning,
 adapter, or preprocessor request controls until a real workflow, model,
-manifest, and readiness check are present.
+manifest, and readiness check are present. When support is present, put those
+controls under `extensions.com.vividfish.workflow` or a gateway-native media job
+shape, not as global OpenAI-compatible fields.
 
 ## Standard Fields
 

@@ -3839,7 +3839,7 @@ async def proxy_comfy_request(
         workflow[size_node]["inputs"]["width"] = width
         workflow[size_node]["inputs"]["height"] = height
 
-    workflow, extension_response = _apply_workflow_extensions_to_image_request(
+    workflow, extension_response = await _apply_workflow_extensions_to_image_request(
         request_body=body,
         manifest=manifest,
         backend_request=workflow,
@@ -3973,6 +3973,7 @@ async def proxy_comfy_edit_request(
         receipt,
         form_dict,
         STANDARD_IMAGE_EDIT_FIELDS,
+        extra_allowed_fields=set(_extension_asset_field_references(form_dict).values()),
     )
     if unknown_response is not None:
         return unknown_response
@@ -4156,6 +4157,13 @@ async def proxy_comfy_edit_request(
                 )
                 if decision.denied:
                     return _policy_denied_response(decision)
+            extension_asset_fields, asset_error_response = _allowed_image_extension_asset_fields(
+                request_body=form_dict,
+                manifest=manifest,
+                receipt=receipt,
+            )
+            if asset_error_response is not None:
+                return asset_error_response
             background_decision = await resolve_image_background_decision(
                 background or "auto",
                 prompt,
@@ -4214,12 +4222,16 @@ async def proxy_comfy_edit_request(
                     if "height" in workflow[node_id]["inputs"]:
                         workflow[node_id]["inputs"]["height"] = img_height
 
-            workflow, extension_response = _apply_workflow_extensions_to_image_request(
+            workflow, extension_response = await _apply_workflow_extensions_to_image_request(
                 request_body=form_dict,
                 manifest=manifest,
                 backend_request=workflow,
                 standard_fields=STANDARD_IMAGE_EDIT_FIELDS,
                 receipt=receipt,
+                form=form,
+                client=client,
+                headers=headers,
+                extension_asset_fields=extension_asset_fields,
             )
             if extension_response is not None:
                 return extension_response
@@ -6921,8 +6933,13 @@ def _record_unknown_image_fields(
     receipt: RouteReceipt | None,
     body: Mapping[str, Any],
     standard_fields: frozenset[str],
+    *,
+    extra_allowed_fields: set[str] | None = None,
 ) -> Response | None:
-    unknown = detect_unknown_top_level_fields(body, standard_fields)
+    allowed_fields = set(standard_fields)
+    if extra_allowed_fields:
+        allowed_fields.update(extra_allowed_fields)
+    unknown = detect_unknown_top_level_fields(body, allowed_fields)
     if not unknown:
         return None
     for name, reason in unknown.items():
@@ -6940,6 +6957,104 @@ def _record_unknown_image_fields(
         status_code=400,
         media_type="application/json",
     )
+
+
+def _extension_asset_field_references(body: Mapping[str, Any]) -> dict[str, str]:
+    """Return ``{extension_input: multipart_field}`` references from a body."""
+    extensions = body.get("extensions")
+    if not isinstance(extensions, Mapping):
+        return {}
+    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    if not isinstance(block, Mapping):
+        return {}
+
+    references: dict[str, str] = {}
+    for input_name, value in block.items():
+        field_name = _extension_asset_multipart_field(value)
+        if field_name:
+            references[str(input_name)] = field_name
+    return references
+
+
+def _allowed_image_extension_asset_fields(
+    *,
+    request_body: Mapping[str, Any],
+    manifest: Mapping[str, Any] | None,
+    receipt: RouteReceipt | None,
+) -> tuple[set[str], Response | None]:
+    """Return multipart transport fields that are valid for this workflow.
+
+    OpenAI image edits are multipart. Gateway workflow controls still belong
+    under ``extensions.com.vividfish.workflow``, but asset-valued controls such
+    as a future ``control_image`` need a way to point at an additional file
+    part without becoming top-level OpenAI parameters themselves.
+    """
+    references = _extension_asset_field_references(request_body)
+    if not references:
+        return set(), None
+
+    if manifest is None:
+        input_name = next(iter(references))
+        return set(), _image_extension_error_response(
+            receipt,
+            "workflow extensions are not supported for the resolved image workflow",
+            param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_name}",
+        )
+
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, Mapping):
+        return set(), _image_extension_error_response(
+            receipt,
+            "manifest must define an 'inputs' mapping",
+        )
+
+    supported = set(_workflow_extension_supported_names(manifest, "comfyui"))
+    fields: set[str] = set()
+    for input_name, field_name in references.items():
+        spec = inputs.get(input_name)
+        if input_name not in supported:
+            return set(), _image_extension_error_response(
+                receipt,
+                f"{input_name} is not a supported asset extension input",
+                param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_name}",
+            )
+        if not isinstance(spec, Mapping) or spec.get("type") != "asset":
+            return set(), _image_extension_error_response(
+                receipt,
+                f"{input_name} is not an asset extension input",
+                param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_name}",
+            )
+        if field_name in STANDARD_IMAGE_EDIT_FIELDS:
+            return set(), _image_extension_error_response(
+                receipt,
+                f"multipart field {field_name!r} is reserved for OpenAI image edits",
+                param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_name}",
+            )
+        fields.add(field_name)
+    return fields, None
+
+
+def _extension_asset_multipart_field(value: Any) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+    field = value.get("multipart_field") or value.get("form_field")
+    if not isinstance(field, str):
+        return None
+    field = field.strip()
+    return field or None
+
+
+def _request_without_top_level_fields(
+    body: Mapping[str, Any],
+    field_names: set[str],
+) -> dict[str, Any]:
+    if not field_names:
+        return dict(body)
+    return {
+        str(key): value
+        for key, value in body.items()
+        if str(key) not in field_names
+    }
 
 
 def _workflow_extension_supported_names(manifest: Mapping[str, Any], backend: str) -> tuple[str, ...]:
@@ -6991,20 +7106,163 @@ def _image_extension_error_response(
     )
 
 
-def _apply_workflow_extensions_to_image_request(
+async def _upload_image_workflow_extension_assets(
+    *,
+    form: Any,
+    request_body: Mapping[str, Any],
+    manifest: Mapping[str, Any] | None,
+    client: Any,
+    headers: Mapping[str, str],
+    receipt: RouteReceipt | None,
+) -> tuple[dict[str, Any], Response | None]:
+    """Upload extension-referenced image assets and replace them with filenames.
+
+    The extension value shape is:
+
+    ``{"multipart_field": "control_image"}``
+
+    The top-level multipart field is only transport. It is removed before
+    extension validation so it never becomes a public OpenAI-compatible field.
+    """
+    updated = dict(request_body)
+    if manifest is None:
+        return updated, None
+
+    extensions = request_body.get("extensions")
+    if not isinstance(extensions, Mapping):
+        return updated, None
+    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    if not isinstance(block, Mapping):
+        return updated, None
+
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, Mapping):
+        return updated, None
+
+    supported = set(_workflow_extension_supported_names(manifest, "comfyui"))
+    allowed_fields, allow_error = _allowed_image_extension_asset_fields(
+        request_body=request_body,
+        manifest=manifest,
+        receipt=receipt,
+    )
+    if allow_error is not None:
+        return updated, allow_error
+    next_block = dict(block)
+    uploaded_any = False
+    for input_name, value in block.items():
+        field_name = _extension_asset_multipart_field(value)
+        if field_name is None:
+            continue
+
+        input_key = str(input_name)
+        spec = inputs.get(input_key)
+        if field_name not in allowed_fields:
+            continue
+        if input_key not in supported or not isinstance(spec, Mapping):
+            continue
+        if spec.get("type") != "asset":
+            continue
+
+        upload = form.get(field_name)
+        read = getattr(upload, "read", None)
+        if upload is None or not callable(read):
+            return updated, _image_extension_error_response(
+                receipt,
+                f"multipart field {field_name!r} is required for {input_key}",
+                param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
+            )
+
+        try:
+            content = await read()
+        except Exception as exc:  # noqa: BLE001
+            return updated, _image_extension_error_response(
+                receipt,
+                f"could not read multipart field {field_name!r}: {exc}",
+                param=field_name,
+            )
+
+        filename = getattr(upload, "filename", None) or f"{field_name}.png"
+        content_type = getattr(upload, "content_type", None) or "image/png"
+        files = {"image": (filename, content, content_type)}
+        upload_resp = await client.post(
+            f"{COMFY_HOST}/upload/image",
+            headers=dict(headers),
+            files=files,
+        )
+        if upload_resp.status_code != 200:
+            return updated, Response(
+                content=json.dumps({
+                    "error": {
+                        "message": f"Image upload failed: {upload_resp.text}",
+                        "type": "api_error",
+                    }
+                }),
+                status_code=502,
+                media_type="application/json",
+            )
+
+        uploaded_filename = upload_resp.json().get("name")
+        if not uploaded_filename:
+            return updated, Response(
+                content=json.dumps({
+                    "error": {
+                        "message": "No filename returned from upload",
+                        "type": "api_error",
+                    }
+                }),
+                status_code=502,
+                media_type="application/json",
+            )
+
+        next_block[input_key] = str(uploaded_filename)
+        uploaded_any = True
+        _record_image_input(receipt, field_name)
+
+    if uploaded_any:
+        next_extensions = dict(extensions)
+        next_extensions[WORKFLOW_EXTENSION_NAMESPACE] = next_block
+        updated["extensions"] = next_extensions
+    return updated, None
+
+
+async def _apply_workflow_extensions_to_image_request(
     *,
     request_body: Mapping[str, Any],
     manifest: Mapping[str, Any] | None,
     backend_request: Mapping[str, Any],
     standard_fields: frozenset[str],
     receipt: RouteReceipt | None,
+    form: Any | None = None,
+    client: Any | None = None,
+    headers: Mapping[str, str] | None = None,
+    extension_asset_fields: set[str] | None = None,
 ) -> tuple[dict[str, Any] | None, Response | None]:
-    unknown_response = _record_unknown_image_fields(receipt, request_body, standard_fields)
+    asset_fields = extension_asset_fields or set()
+    unknown_response = _record_unknown_image_fields(
+        receipt,
+        request_body,
+        standard_fields,
+        extra_allowed_fields=asset_fields,
+    )
     if unknown_response is not None:
         return None, unknown_response
 
+    extension_body = dict(request_body)
+    if form is not None and client is not None:
+        extension_body, upload_response = await _upload_image_workflow_extension_assets(
+            form=form,
+            request_body=request_body,
+            manifest=manifest,
+            client=client,
+            headers=headers or {},
+            receipt=receipt,
+        )
+        if upload_response is not None:
+            return None, upload_response
+    extension_body = _request_without_top_level_fields(extension_body, asset_fields)
+
     if manifest is None:
-        if _workflow_extensions_present(request_body):
+        if _workflow_extensions_present(extension_body):
             return None, _image_extension_error_response(
                 receipt,
                 "workflow extensions are not supported for the resolved image workflow",
@@ -7013,7 +7271,7 @@ def _apply_workflow_extensions_to_image_request(
 
     try:
         result = bind_workflow_extensions(
-            request_body,
+            extension_body,
             manifest,
             "comfyui",
             backend_request,

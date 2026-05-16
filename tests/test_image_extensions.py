@@ -41,6 +41,7 @@ CONTROLNET_EDIT_MANIFEST = {
     "inputs": {
         "prompt": {"type": "string", "required": True},
         "denoise": {"type": "number", "minimum": 0, "maximum": 1},
+        "control_image": {"type": "asset"},
         "controlnet_strength": {"type": "number", "minimum": 0, "maximum": 2},
         "sampler": {"type": "string", "enum": ["euler", "dpmpp_2m"]},
     },
@@ -51,6 +52,7 @@ CONTROLNET_EDIT_MANIFEST = {
             "map": {
                 "prompt": [{"node": "6", "input": "text"}],
                 "denoise": [{"node": "31", "input": "denoise"}],
+                "control_image": [{"node": "42", "input": "image"}],
                 "controlnet_strength": [{"node": "44", "input": "strength"}],
             },
         },
@@ -59,6 +61,7 @@ CONTROLNET_EDIT_MANIFEST = {
             "map": {
                 "prompt": [{"path": "input.prompt"}],
                 "denoise": [{"path": "sampling.denoise"}],
+                "control_image": [{"path": "controlnet.image"}],
                 "controlnet_strength": [{"path": "controlnet.strength"}],
             },
         },
@@ -70,16 +73,28 @@ def _fake_comfy_workflow() -> dict[str, object]:
     return {
         "6": {"inputs": {"text": "old"}},
         "31": {"inputs": {"denoise": 0.0}},
+        "42": {"inputs": {"image": ""}},
         "44": {"inputs": {"strength": 0.0}},
     }
 
 
 # The image route supplies ``prompt`` at the top level as a standard OpenAI
 # field, so the extensions binding does *not* claim ``prompt`` as a supported
-# extension. ``denoise`` and ``controlnet_strength`` are the actually-wired
-# extension inputs. ``sampler`` is spec'd in the manifest but intentionally
-# left unsupported to exercise the "ignored with reason" path.
-SUPPORTED = ("denoise", "controlnet_strength")
+# extension. ``denoise``, ``control_image``, and ``controlnet_strength`` are
+# the actually-wired extension inputs. ``control_image`` proves asset-shaped
+# conditioning controls can be bound without becoming OpenAI top-level fields.
+# ``sampler`` is spec'd in the manifest but intentionally left unsupported to
+# exercise the "ignored with reason" path.
+SUPPORTED = ("denoise", "control_image", "controlnet_strength")
+
+CONTROLNET_LIKE_EXTENSION_CONTROLS = (
+    "control_image",
+    "controlnet_strength",
+    "controlnet_start",
+    "controlnet_end",
+    "controlnet_model",
+    "controlnet_preprocessor",
+)
 
 
 class TestStandardFields(unittest.TestCase):
@@ -95,7 +110,13 @@ class TestStandardFields(unittest.TestCase):
         self.assertIn("extensions", STANDARD_IMAGE_EDIT_FIELDS)
 
     def test_arbitrary_top_level_is_not_standard(self) -> None:
-        for shouldnt_be_in in ("denoise", "controlnet_strength", "sampler", "seed"):
+        for shouldnt_be_in in (
+            "denoise",
+            "control_image",
+            "controlnet_strength",
+            "sampler",
+            "seed",
+        ):
             self.assertNotIn(shouldnt_be_in, STANDARD_IMAGE_GENERATE_FIELDS)
             self.assertNotIn(shouldnt_be_in, STANDARD_IMAGE_EDIT_FIELDS)
 
@@ -109,11 +130,19 @@ class TestDetectUnknownTopLevelFields(unittest.TestCase):
         )
 
     def test_top_level_extension_inputs_are_flagged(self) -> None:
-        body = {"prompt": "x", "denoise": 0.4, "controlnet_strength": 1.1}
+        body = {
+            "prompt": "x",
+            "denoise": 0.4,
+            "control_image": "control.png",
+            "controlnet_strength": 1.1,
+        }
         unknown = detect_unknown_top_level_fields(
             body, STANDARD_IMAGE_GENERATE_FIELDS
         )
-        self.assertEqual(set(unknown.keys()), {"denoise", "controlnet_strength"})
+        self.assertEqual(
+            set(unknown.keys()),
+            {"denoise", "control_image", "controlnet_strength"},
+        )
         for reason in unknown.values():
             self.assertIn("extensions", reason)
             self.assertIn(WORKFLOW_EXTENSION_NAMESPACE, reason)
@@ -185,7 +214,11 @@ class TestBindWorkflowExtensions(unittest.TestCase):
             "prompt": "matte watercolor rock arch",
             "model": "controlnet-fixture",
             "extensions": {
-                NS: {"denoise": 0.35, "controlnet_strength": 1.25},
+                NS: {
+                    "denoise": 0.35,
+                    "control_image": "control.png",
+                    "controlnet_strength": 1.25,
+                },
             },
         }
         source = _fake_comfy_workflow()
@@ -206,6 +239,7 @@ class TestBindWorkflowExtensions(unittest.TestCase):
         request = result.request
         assert request is not None
         self.assertEqual(request["31"]["inputs"]["denoise"], 0.35)
+        self.assertEqual(request["42"]["inputs"]["image"], "control.png")
         self.assertEqual(request["44"]["inputs"]["strength"], 1.25)
         self.assertTrue(result.ok)
         self.assertEqual(result.validation.accepted["denoise"], 0.35)
@@ -213,13 +247,19 @@ class TestBindWorkflowExtensions(unittest.TestCase):
         assert result.binding is not None
         self.assertEqual(
             sorted(result.binding.applied_inputs),
-            ["controlnet_strength", "denoise"],
+            ["control_image", "controlnet_strength", "denoise"],
         )
 
     def test_dotted_path_backend_binding_is_portable(self) -> None:
         body = {
             "prompt": "x",
-            "extensions": {NS: {"denoise": 0.4, "controlnet_strength": 0.9}},
+            "extensions": {
+                NS: {
+                    "denoise": 0.4,
+                    "control_image": {"asset_id": "asset_123"},
+                    "controlnet_strength": 0.9,
+                }
+            },
         }
         backend_request = {"input": {"prompt": "ignored"}, "sampling": {}}
         result = bind_workflow_extensions(
@@ -232,6 +272,10 @@ class TestBindWorkflowExtensions(unittest.TestCase):
         )
         assert result.request is not None
         self.assertEqual(result.request["sampling"]["denoise"], 0.4)
+        self.assertEqual(
+            result.request["controlnet"]["image"],
+            {"asset_id": "asset_123"},
+        )
         self.assertEqual(result.request["controlnet"]["strength"], 0.9)
 
     def test_top_level_extension_input_is_flagged_not_applied(self) -> None:
@@ -380,7 +424,14 @@ class TestRealFluxManifestKeepsContractHonest(unittest.TestCase):
         )
 
     def test_controlnet_extension_is_rejected_against_real_manifest(self) -> None:
-        body = {"extensions": {NS: {"denoise": 0.35, "controlnet_strength": 1.0}}}
+        body = {
+            "extensions": {
+                NS: {
+                    "denoise": 0.35,
+                    **{name: "x" for name in CONTROLNET_LIKE_EXTENSION_CONTROLS},
+                }
+            }
+        }
         # Narrow supported_names so the required-missing check (which is
         # satisfied at the route by top-level fields) does not muddy the
         # rejection set we're asserting on.
@@ -390,7 +441,10 @@ class TestRealFluxManifestKeepsContractHonest(unittest.TestCase):
             supported_names=("guidance", "steps", "width", "height", "denoise"),
         )
         self.assertEqual(result.accepted, {"denoise": 0.35})
-        self.assertEqual(result.rejected, {"controlnet_strength": "unknown input"})
+        self.assertEqual(
+            result.rejected,
+            {name: "unknown input" for name in CONTROLNET_LIKE_EXTENSION_CONTROLS},
+        )
 
     def test_real_manifest_inputs_still_bind(self) -> None:
         # Spec'd inputs (e.g. guidance and denoise) under the extensions envelope should

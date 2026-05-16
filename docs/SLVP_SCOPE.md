@@ -171,8 +171,11 @@ edit handler parses standard fields such as:
 - `response_format`
 
 It then mutates the selected ComfyUI workflow for image upload, prompt, size,
-seed/background behavior, and adaptive batching. There is no typed contract for
-`denoise` or `controlnet`, so those inputs cannot affect the workflow.
+seed/background behavior, and adaptive batching. The current gateway now has a
+typed workflow-extension contract for manifest-backed controls. For
+`image.edit.flux2-klein-4b`, that includes `denoise`, `steps`, and `guidance`.
+It still does not include ControlNet because the local workflow and model
+inventory do not contain a real ControlNet path.
 
 The right product answer is not "add arbitrary passthrough params to OpenAI
 Images." The right answer is:
@@ -277,7 +280,22 @@ in a namespaced `extensions` object, for example:
 ```
 
 For multipart image edits, the same concept can be represented as a JSON form
-field such as `extensions`.
+field such as `extensions`. Asset-valued extension controls can reference an
+extra multipart field:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/edits \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -F model=flux2-edit-controlnet \
+  -F prompt='preserve the geometry, watercolor style' \
+  -F image=@input.png \
+  -F control_image=@edge-map.png \
+  -F 'extensions={"com.vividfish.workflow":{"control_image":{"multipart_field":"control_image"},"controlnet_strength":1.1}}'
+```
+
+The form field `control_image` is upload transport. The portable control remains
+`extensions.com.vividfish.workflow.control_image`, and it only works when the
+resolved manifest declares and binds that asset input.
 
 For gateway-owned media jobs, use a cleaner native shape:
 
@@ -345,3 +363,6 @@ Promote a local extension toward core only when at least two are true:
 Under this rule, denoise/controlnet probably starts as a workflow-manifest
 extension. It may later become a shared image-edit convention, but it should not
 be a global public protocol promise on day one.
+
+See `docs/CONDITIONING_CONTROLS.md` for the concrete ControlNet/conditioning
+readiness gate and naming convention.

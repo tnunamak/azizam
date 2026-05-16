@@ -183,6 +183,25 @@ ControlNet is not ready on the current local system. The audit exists, but
 operators should not advertise or send ControlNet controls until a real
 ControlNet workflow, model, manifest, and readiness check are present.
 
+When a future workflow does advertise conditioning controls, keep them under
+`extensions.com.vividfish.workflow`. For multipart image edits, an asset-valued
+control can point at an extra form field without becoming a top-level API
+parameter:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/edits \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -F model=flux2-klein-4b-edit-controlnet \
+  -F prompt='preserve the geometry, paint it as underwater rock' \
+  -F image=@input.png \
+  -F control_image=@edge-map.png \
+  -F 'extensions={"com.vividfish.workflow":{"control_image":{"multipart_field":"control_image"},"controlnet_strength":0.75}}'
+```
+
+Fetch `/gateway/v1/workflows` first. If `control_image` or
+`controlnet_strength` is absent for the selected workflow, the request should
+be treated as unsupported.
+
 ### Live with documented limits
 
 The Anthropic and Ollama frontends are live, but intentionally narrow:

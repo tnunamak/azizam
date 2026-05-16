@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import json
+import copy
 import sys
 import unittest
 from dataclasses import dataclass
@@ -519,6 +520,237 @@ class _FakeAsyncClient:
 
 
 class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
+    def _conditioning_manifest(
+        self,
+        *,
+        inputs: dict[str, Any] | None = None,
+        mapping: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "id": "image.edit.flux2-klein-4b",
+            "intent": "image.edit",
+            "inputs": inputs
+            or {
+                "prompt": {"type": "string", "required": True},
+                "source_image": {"type": "asset", "required": True},
+                "control_image": {"type": "asset"},
+                "controlnet_strength": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 2,
+                },
+            },
+            "outputs": {"image": {"media_type": "image/png"}},
+            "bindings": {
+                "comfyui": {
+                    "workflow": "workflows/images/controlnet-fixture.json",
+                    "map": mapping
+                    or {
+                        "prompt": [{"node": "6", "input": "text"}],
+                        "source_image": [{"node": "10", "input": "image"}],
+                        "control_image": [{"node": "42", "input": "image"}],
+                        "controlnet_strength": [{"node": "44", "input": "strength"}],
+                    },
+                }
+            },
+        }
+
+    def _conditioning_workflow(self) -> dict[str, Any]:
+        return {
+            "_meta": {
+                "name": "controlnet-fixture",
+                "prompt_node": "6",
+                "image_node": "10",
+                "size_node": "47",
+            },
+            "6": {"inputs": {"text": ""}},
+            "10": {"inputs": {"image": ""}},
+            "42": {"inputs": {"image": ""}},
+            "44": {"inputs": {"strength": 0.0}},
+            "47": {"inputs": {"width": 512, "height": 512}},
+            "48": {"inputs": {"width": 512, "height": 512}},
+        }
+
+    async def _run_edit_with_manifest(
+        self,
+        *,
+        extension_block: dict[str, Any],
+        extra_parts: list[tuple[str, Any]] | None = None,
+        manifest: dict[str, Any] | None = None,
+    ) -> tuple[RouteReceipt, Response, dict[str, Any]]:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest(
+            [
+                ("prompt", "preserve geometry with edge conditioning"),
+                ("model", "flux2-klein-4b-edit"),
+                ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
+                *(extra_parts or []),
+                (
+                    "extensions",
+                    json.dumps({"com.vividfish.workflow": extension_block}),
+                ),
+            ]
+        )
+        workflow = self._conditioning_workflow()
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "load_comfy_workflow",
+            lambda _model: copy.deepcopy(workflow),
+        ), patch.object(
+            proxy,
+            "_find_image_manifest",
+            lambda _intent, _model: manifest,
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+        return receipt, response, captured
+
+    async def test_workflow_extension_asset_uploads_and_binds(self) -> None:
+        receipt, response, captured = await self._run_edit_with_manifest(
+            extension_block={
+                "control_image": {"multipart_field": "control_image"},
+                "controlnet_strength": 0.75,
+            },
+            extra_parts=[
+                ("control_image", _MultipartUpload("edge.png", _png_bytes((0, 0, 0, 255)))),
+            ],
+            manifest=self._conditioning_manifest(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(_FakeAsyncClient.uploads, 2)
+        workflow_payload = captured["base_workflow"]
+        self.assertEqual(workflow_payload["10"]["inputs"]["image"], "uploaded-1.png")
+        self.assertEqual(workflow_payload["42"]["inputs"]["image"], "uploaded-2.png")
+        self.assertEqual(workflow_payload["44"]["inputs"]["strength"], 0.75)
+        self.assertIn("control_image", receipt.accepted_inputs)
+        self.assertIn(
+            "com.vividfish.workflow.control_image",
+            receipt.accepted_inputs,
+        )
+        self.assertIn(
+            "com.vividfish.workflow.controlnet_strength",
+            receipt.accepted_inputs,
+        )
+
+    async def test_extension_asset_reference_requires_supported_asset_input(self) -> None:
+        manifest = self._conditioning_manifest(
+            inputs={
+                "prompt": {"type": "string", "required": True},
+                "source_image": {"type": "asset", "required": True},
+                "sampler": {"type": "asset"},
+            },
+            mapping={
+                "prompt": [{"node": "6", "input": "text"}],
+                "source_image": [{"node": "10", "input": "image"}],
+            },
+        )
+
+        receipt, response, captured = await self._run_edit_with_manifest(
+            extension_block={"sampler": {"multipart_field": "extra_file"}},
+            extra_parts=[
+                ("extra_file", _MultipartUpload("extra.png", _png_bytes((0, 0, 0, 255)))),
+            ],
+            manifest=manifest,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(captured, {})
+        self.assertIn(
+            "extensions.com.vividfish.workflow.sampler",
+            receipt.rejected_inputs,
+        )
+        self.assertIn("not a supported asset", response.body.decode())
+
+    async def test_extension_asset_reference_requires_asset_typed_input(self) -> None:
+        manifest = self._conditioning_manifest(
+            inputs={
+                "prompt": {"type": "string", "required": True},
+                "source_image": {"type": "asset", "required": True},
+                "denoise": {"type": "number", "minimum": 0, "maximum": 1},
+            },
+            mapping={
+                "prompt": [{"node": "6", "input": "text"}],
+                "source_image": [{"node": "10", "input": "image"}],
+                "denoise": [{"node": "44", "input": "strength"}],
+            },
+        )
+
+        receipt, response, captured = await self._run_edit_with_manifest(
+            extension_block={"denoise": {"multipart_field": "extra_file"}},
+            extra_parts=[
+                ("extra_file", _MultipartUpload("extra.png", _png_bytes((0, 0, 0, 255)))),
+            ],
+            manifest=manifest,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(captured, {})
+        self.assertIn(
+            "extensions.com.vividfish.workflow.denoise",
+            receipt.rejected_inputs,
+        )
+        self.assertIn("not an asset", response.body.decode())
+
+    async def test_extension_asset_reference_requires_manifest_support(self) -> None:
+        receipt, response, captured = await self._run_edit_with_manifest(
+            extension_block={"control_image": {"multipart_field": "control_image"}},
+            extra_parts=[
+                ("control_image", _MultipartUpload("edge.png", _png_bytes((0, 0, 0, 255)))),
+            ],
+            manifest=None,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(captured, {})
+        self.assertIn(
+            "extensions.com.vividfish.workflow.control_image",
+            receipt.rejected_inputs,
+        )
+        self.assertIn("not supported", response.body.decode())
+
+    async def test_extension_asset_reference_cannot_reuse_reserved_image_field(self) -> None:
+        receipt, response, captured = await self._run_edit_with_manifest(
+            extension_block={"control_image": {"multipart_field": "image"}},
+            manifest=self._conditioning_manifest(),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(captured, {})
+        self.assertIn(
+            "extensions.com.vividfish.workflow.control_image",
+            receipt.rejected_inputs,
+        )
+        self.assertIn("reserved", response.body.decode())
+
     async def test_multipart_mask_uses_post_composite_when_workflow_has_no_mask_binding(self) -> None:
         receipt = proxy.start_image_route_receipt(
             "/v1/images/edits", proxy.NO_AUTH_CONTEXT

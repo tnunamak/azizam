@@ -189,6 +189,11 @@ land.
 These are not OpenAI/Ollama/Anthropic standards. They are the gateway's own
 introspection contract.
 
+Workflow-specific conditioning controls such as ControlNet, IP-Adapter, and
+style-reference images belong in this gateway extension/job layer unless a
+vendor-compatible protocol already owns the field. See
+`docs/CONDITIONING_CONTROLS.md`.
+
 The job request should carry:
 
 - intent
