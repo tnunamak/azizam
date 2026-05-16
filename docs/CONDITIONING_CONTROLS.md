@@ -22,6 +22,11 @@ The live contract is:
 4. The route validates, binds, and receipts the input by name.
 5. Unknown top-level controls are rejected instead of silently dropped.
 
+Agent rule: discovery is authoritative. Treat examples and naming conventions
+as patterns only; do not send conditioning controls unless the selected
+workflow advertises them through `/gateway/v1/workflows` or
+`/gateway/v1/extensions`.
+
 ## OpenAI-Compatible Image Edit Shape
 
 For multipart image edits, extension-valued image assets can reference an extra
@@ -56,6 +61,11 @@ send the asset value directly under the same extension name:
   }
 }
 ```
+
+Live image results expose gateway-native `asset_id` handles such as
+`img_<sha256>`. Those handles can be reused for asset-valued workflow inputs
+only when the selected manifest declares and binds that input. Reuse is scoped
+to the authenticated API key that minted the asset.
 
 ## Naming Convention
 

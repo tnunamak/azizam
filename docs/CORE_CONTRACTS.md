@@ -360,6 +360,17 @@ may point at an extra uploaded form part. That form part is transport only; the
 selected manifest must still declare and bind `control_image` before the route
 will apply it.
 
+Generated media may also surface a gateway asset handle. For image outputs,
+`data[].asset_id` is a content-addressed `img_<sha256>` handle and
+`data[].asset_url` is a signed content URL under
+`/v1/assets/{asset_id}/content`. These handles are gateway-native metadata:
+OpenAI-compatible fields such as `b64_json` and `url` remain intact, while
+agents can reuse `asset_id` where a workflow manifest declares an asset input
+or where a route explicitly accepts an input reference, such as video
+`input_reference`. Asset IDs are scoped to the authenticated API key that
+minted them; signed content URLs still require bearer auth and a valid HMAC
+signature.
+
 This is the bridge between authentication, routing, credential provisioning,
 and user-facing compatibility.
 

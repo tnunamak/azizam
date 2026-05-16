@@ -9,13 +9,16 @@ import io
 import json
 import copy
 import sys
+import tempfile
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 from fastapi import Response
+from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -51,6 +54,153 @@ def _identity(name: str) -> proxy.AuthIdentity:
 @dataclass
 class _StubResponse:
     status_code: int
+
+
+class _StubUrlRequest:
+    headers: dict[str, str] = {}
+    url = SimpleNamespace(scheme="http", netloc="gateway.test")
+
+
+class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache_dir = Path(self.tmp.name)
+        self.cache_patch = patch.object(proxy, "IMAGE_CACHE_DIR", self.cache_dir)
+        self.secret_patch = patch.object(proxy, "_image_url_signing_secret", b"test-secret")
+        self.cache_patch.start()
+        self.secret_patch.start()
+        self.addCleanup(self.cache_patch.stop)
+        self.addCleanup(self.secret_patch.stop)
+
+    def test_image_response_includes_reusable_asset_for_b64_and_url(self) -> None:
+        raw = _png_bytes((1, 2, 3, 255))
+        request = _StubUrlRequest()
+
+        b64_response = proxy._build_image_response_payload(
+            request,  # type: ignore[arg-type]
+            [raw],
+            "b64_json",
+            {},
+        )
+        b64_body = json.loads(b64_response.body.decode("utf-8"))
+        b64_item = b64_body["data"][0]
+        self.assertTrue(b64_item["asset_id"].startswith("img_"))
+        self.assertIn("/v1/assets/", b64_item["asset_url"])
+        self.assertEqual(b64_item["media_type"], "image/png")
+        self.assertIn("b64_json", b64_item)
+
+        url_response = proxy._build_image_response_payload(
+            request,  # type: ignore[arg-type]
+            [raw],
+            "url",
+            {},
+        )
+        url_body = json.loads(url_response.body.decode("utf-8"))
+        url_item = url_body["data"][0]
+        self.assertEqual(url_item["asset_id"], b64_item["asset_id"])
+        self.assertIn("/v1/images/", url_item["url"])
+        self.assertIn("/v1/assets/", url_item["asset_url"])
+
+    def test_signed_asset_content_serves_cached_image(self) -> None:
+        raw = _png_bytes((4, 5, 6, 255))
+        asset_id = proxy.store_image_bytes(raw)
+        expires = int(proxy.time.time()) + 60
+        sig = proxy._sign_asset_token(asset_id, expires)
+
+        request = _StubUrlRequest()
+        request.query_params = {"expires": str(expires), "sig": sig}
+        response = proxy._signed_asset_content_response(
+            asset_id,  # type: ignore[arg-type]
+            request,  # type: ignore[arg-type]
+            invalid_message="Invalid asset id",
+            missing_message="Asset not found",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.media_type, "image/png")
+        self.assertEqual(response.body, raw)
+
+    async def test_asset_id_resolves_as_input_reference(self) -> None:
+        raw = _png_bytes((7, 8, 9, 255))
+        asset_id = proxy.store_image_bytes(raw)
+
+        content, filename = await proxy._resolve_input_reference({"asset_id": asset_id})
+
+        self.assertEqual(content, raw)
+        self.assertTrue(filename.startswith(asset_id))
+        self.assertTrue(filename.endswith(".png"))
+
+    async def test_asset_id_reuse_is_owner_bound_when_metadata_exists(self) -> None:
+        raw = _png_bytes((10, 11, 12, 255))
+        asset_id = proxy.store_image_bytes(raw, owner_key_hash="sha256:alice")
+
+        content, _ = await proxy._resolve_input_reference(
+            {"asset_id": asset_id},
+            proxy.AuthContext(identity=_identity("alice")),
+        )
+        self.assertEqual(content, raw)
+
+        with self.assertRaisesRegex(
+            proxy._InputReferenceError,
+            "not accessible",
+        ):
+            await proxy._resolve_input_reference(
+                {"asset_id": asset_id},
+                proxy.AuthContext(identity=_identity("bob")),
+            )
+
+    def test_asset_content_route_requires_auth_signature_and_owner(self) -> None:
+        raw_key = "opk_asset_test"
+        raw = _png_bytes((13, 14, 15, 255))
+        owner_hash = proxy.hash_api_key(raw_key)
+        asset_id = proxy.store_image_bytes(raw, owner_key_hash=owner_hash)
+        expires = int(proxy.time.time()) + 60
+        sig = proxy._sign_asset_token(asset_id, expires)
+        path = f"/v1/assets/{asset_id}/content"
+        query = {"expires": str(expires), "sig": sig}
+        client = TestClient(proxy.app)
+        bob_hash = proxy.hash_api_key("bob")
+
+        registry = {
+            owner_hash: proxy.AuthIdentity(name="alice", key_hash=owner_hash),
+            bob_hash: proxy.AuthIdentity(name="bob", key_hash=bob_hash),
+        }
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy, "AUTH_REGISTRY", registry
+        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            no_auth = client.get(path, params=query)
+            self.assertEqual(no_auth.status_code, 401)
+
+            missing_sig = client.get(
+                path,
+                params={"expires": str(expires)},
+                headers={"Authorization": f"Bearer {raw_key}"},
+            )
+            self.assertEqual(missing_sig.status_code, 400)
+
+            bad_sig = client.get(
+                path,
+                params={"expires": str(expires), "sig": "bad"},
+                headers={"Authorization": f"Bearer {raw_key}"},
+            )
+            self.assertEqual(bad_sig.status_code, 403)
+
+            wrong_owner = client.get(
+                path,
+                params=query,
+                headers={"Authorization": "Bearer bob"},
+            )
+            self.assertEqual(wrong_owner.status_code, 403)
+
+            ok = client.get(
+                path,
+                params=query,
+                headers={"Authorization": f"Bearer {raw_key}"},
+            )
+            self.assertEqual(ok.status_code, 200, ok.text)
+            self.assertEqual(ok.headers["content-type"], "image/png")
+            self.assertEqual(ok.content, raw)
 
 
 class TestStartImageRouteReceipt(unittest.TestCase):
@@ -658,6 +808,32 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn(
             "com.vividfish.workflow.controlnet_strength",
+            receipt.accepted_inputs,
+        )
+
+    async def test_workflow_extension_asset_id_uploads_and_binds(self) -> None:
+        with tempfile.TemporaryDirectory() as cache_dir, patch.object(
+            proxy, "IMAGE_CACHE_DIR", Path(cache_dir)
+        ):
+            control_bytes = _png_bytes((0, 0, 0, 255))
+            asset_id = proxy.store_image_bytes(control_bytes)
+
+            receipt, response, captured = await self._run_edit_with_manifest(
+                extension_block={
+                    "control_image": {"asset_id": asset_id},
+                    "controlnet_strength": 0.75,
+                },
+                manifest=self._conditioning_manifest(),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(_FakeAsyncClient.uploads, 2)
+        workflow_payload = captured["base_workflow"]
+        self.assertEqual(workflow_payload["42"]["inputs"]["image"], "uploaded-2.png")
+        uploaded_control = _FakeAsyncClient.upload_files[1]["image"]
+        self.assertEqual(uploaded_control[1], control_bytes)
+        self.assertIn(
+            "com.vividfish.workflow.control_image",
             receipt.accepted_inputs,
         )
 

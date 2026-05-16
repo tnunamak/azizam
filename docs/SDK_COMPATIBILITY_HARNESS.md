@@ -58,6 +58,8 @@ The gateway should prove compatibility with real SDKs and apps as it evolves. Cu
 - embeddings
 - image generation
 - image edit multipart upload
+- image responses with gateway-native extra fields (`asset_id`, `asset_url`,
+  `media_type`) still parse through official SDK response models
 - audio speech
 - audio transcription multipart upload
 - protocol-shaped validation error

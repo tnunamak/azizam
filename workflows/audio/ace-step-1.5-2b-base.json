@@ -3,6 +3,8 @@
     "name": "ace-step-1.5-2b-base",
     "description": "ACE-Step 1.5 Turbo AIO text-to-music via native ComfyUI nodes",
     "prompt_node": [{"node": "5", "key": "tags"}],
+    "tags_node": [{"node": "5", "key": "tags"}],
+    "lyrics_node": [{"node": "5", "key": "lyrics"}],
     "duration_node": [
       {"node": "10", "key": "seconds"},
       {"node": "5", "key": "duration"}

@@ -33,6 +33,7 @@ If a needed capability is absent or unavailable, stop and report that honestly.
 - Use `POST /v1/messages` only for Anthropic-shaped clients. It is non-streaming unless discovery metadata says otherwise.
 - Use `GET /api/tags`, `POST /api/chat`, or `POST /api/generate` only for Ollama-shaped clients. Chat/generate are non-streaming unless discovery metadata says otherwise.
 - Use `/gateway/v1/media/jobs` for durable long-running media jobs and `/gateway/v1/receipts` for diagnostics.
+- Use `data[].asset_id` and signed `/v1/assets/{asset_id}/content` URLs when image outputs need to be reused by later gateway-aware calls.
 
 ## Auth Rules
 
@@ -64,8 +65,16 @@ Current examples:
 - `/v1/images/edits` with `model: flux2-klein-4b-edit` supports `denoise`, `steps`, and `guidance` as namespaced workflow controls. ControlNet is not currently exposed unless discovery shows a ControlNet-capable workflow.
 - `/v1/images/edits` accepts OpenAI's standard top-level multipart `mask` field. Do not put `mask` under `extensions`. Alpha masks use OpenAI polarity: transparent edits, opaque preserves. Grayscale masks use white to edit and black to preserve. If the resolved workflow has no native mask binding, the proxy preserves unmasked pixels with a documented post-composite fallback and returns `X-Image-Mask: post-composite`.
 - Future ControlNet/conditioning controls are manifest-backed workflow controls, not OpenAI top-level fields. If discovery shows an asset input such as `control_image`, multipart edits can upload it as an extra form field and reference it from the extension value: `{"control_image":{"multipart_field":"control_image"},"controlnet_strength":0.75}`.
-- `/v1/audio/generate` with `model: tangoflux` supports `steps`, `guidance`, and `batch_size` as namespaced workflow controls. Keep `duration` and `seed` top-level.
+- Asset-valued workflow controls may also use `{"asset_id":"img_<sha256>"}` when the same API key minted that prior image response and discovery shows the selected workflow supports the asset input.
+- `/v1/audio/generate` with ACE-Step accepts top-level `tags` and `lyrics`; `prompt` maps to ACE-Step tags when `tags` is absent. With `model: tangoflux`, use `prompt` for the description; `steps`, `guidance`, and `batch_size` are namespaced workflow controls. Keep `duration`, `seed`, `tags`, and `lyrics` top-level.
 - `/v1/videos` with `model: video-ltx-2.3-distilled` supports `steps`, `stage1_cfg`, and `stage2_cfg` as namespaced workflow controls. Keep `size`, `seconds`, `seed`, prompt, and image-reference fields top-level.
+
+## Chaining And Variants
+
+- Image generation/edit responses include `asset_id`, `asset_url`, and `media_type` alongside `b64_json` or `url`.
+- Video `input_reference` accepts prior image handles as `{"asset_id":"img_<sha256>"}` or `asset:img_<sha256>` when the same API key minted the asset.
+- For image variants, use top-level `n`; for repeatability, use manifest-backed `extensions.com.vividfish.workflow.seed` only when discovery lists `seed`.
+- For video variants, repeat calls with different top-level `seed`. Do not invent `variant_count` or other unadvertised controls.
 
 Example JSON body shape:
 

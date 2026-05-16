@@ -31,6 +31,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
             metadata["absolute_links"]["capabilities"],
             "http://gw/gateway/v1/capabilities",
         )
+        self.assertEqual(metadata["links"]["asset_content"], "/v1/assets/{asset_id}/content")
 
     def test_metadata_does_not_contain_secret_values(self) -> None:
         rendered = repr(build_gateway_discovery_metadata(base_url="http://gw"))
@@ -50,6 +51,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         text = build_llms_txt(base_url="http://gw")
         self.assertIn("/.well-known/ai-gateway", text)
         self.assertIn("/gateway/v1/capabilities", text)
+        self.assertIn("/v1/assets/{asset_id}/content", text)
         self.assertNotIn("opk_", text)
 
 

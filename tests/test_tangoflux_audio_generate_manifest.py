@@ -19,6 +19,7 @@ import sys
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -34,7 +35,9 @@ from gateway.audio_extensions import (  # noqa: E402
     STANDARD_AUDIO_GENERATE_FIELDS,
     WORKFLOW_EXTENSION_NAMESPACE,
     bind_audio_workflow_extensions,
+    detect_unknown_audio_fields,
 )
+import proxy  # noqa: E402
 
 
 MANIFEST_PATH = ROOT / "manifests/workflows/tangoflux.yml"
@@ -43,6 +46,98 @@ WORKFLOW_PATH = ROOT / "workflows/audio/tangoflux.json"
 
 def _load_workflow() -> dict[str, Any]:
     return json.loads(WORKFLOW_PATH.read_text(encoding="utf-8"))
+
+
+def _ace_workflow() -> dict[str, Any]:
+    return {
+        "_meta": {
+            "prompt_node": [{"node": "5", "key": "tags"}],
+            "tags_node": [{"node": "5", "key": "tags"}],
+            "lyrics_node": [{"node": "5", "key": "lyrics"}],
+            "duration_node": [
+                {"node": "10", "key": "seconds"},
+                {"node": "5", "key": "duration"},
+            ],
+            "seed_node": [{"node": "20", "key": "seed"}],
+        },
+        "5": {
+            "class_type": "TextEncodeAceStepAudio1.5",
+            "inputs": {
+                "tags": "",
+                "lyrics": "[instrumental]",
+                "duration": 0,
+            },
+        },
+        "10": {"class_type": "PrimitiveFloat", "inputs": {"seconds": 0}},
+        "20": {"class_type": "PrimitiveInt", "inputs": {"seed": 0}},
+    }
+
+
+class _JsonRequest:
+    def __init__(self, body: dict[str, Any]) -> None:
+        self._body = body
+
+    async def json(self) -> dict[str, Any]:
+        return self._body
+
+
+class _FakeHTTPResponse:
+    def __init__(
+        self,
+        status_code: int,
+        *,
+        json_data: dict[str, Any] | None = None,
+        content: bytes = b"",
+        headers: dict[str, str] | None = None,
+        text: str = "",
+    ) -> None:
+        self.status_code = status_code
+        self._json_data = json_data or {}
+        self.content = content
+        self.headers = headers or {}
+        self.text = text
+
+    def json(self) -> dict[str, Any]:
+        return self._json_data
+
+
+class _FakeAudioClient:
+    def __init__(self, captured: dict[str, Any]) -> None:
+        self.captured = captured
+
+    async def __aenter__(self) -> "_FakeAudioClient":
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+    async def post(self, url: str, **kwargs: Any) -> _FakeHTTPResponse:
+        self.captured["post_url"] = url
+        self.captured["payload"] = kwargs.get("json")
+        return _FakeHTTPResponse(200, json_data={"prompt_id": "audio-prompt"})
+
+    async def get(self, url: str, **_kwargs: Any) -> _FakeHTTPResponse:
+        if "/history/" in url:
+            return _FakeHTTPResponse(
+                200,
+                json_data={
+                    "audio-prompt": {
+                        "status": {"status_str": "success"},
+                        "outputs": {
+                            "38": {
+                                "audios": [
+                                    {"filename": "out.wav", "type": "output"}
+                                ]
+                            }
+                        },
+                    }
+                },
+            )
+        return _FakeHTTPResponse(
+            200,
+            content=b"RIFFfake-wave",
+            headers={"content-type": "audio/wav"},
+        )
 
 
 class TestManifestShape(unittest.TestCase):
@@ -183,8 +278,50 @@ class TestAudioGenerateWorkflowExtensions(unittest.TestCase):
 
     def test_standard_audio_fields_allow_extensions_envelope(self) -> None:
         self.assertIn("extensions", STANDARD_AUDIO_GENERATE_FIELDS)
+        self.assertIn("tags", STANDARD_AUDIO_GENERATE_FIELDS)
+        self.assertIn("lyrics", STANDARD_AUDIO_GENERATE_FIELDS)
         for top_level_control in ("steps", "guidance", "batch_size"):
             self.assertNotIn(top_level_control, STANDARD_AUDIO_GENERATE_FIELDS)
+
+    def test_top_level_tags_and_lyrics_are_standard_route_fields(self) -> None:
+        result = bind_audio_workflow_extensions(
+            {
+                "model": "tangoflux",
+                "prompt": "short analog synth riser",
+                "tags": "ignored when prompt is present on TangoFlux",
+                "lyrics": "ignored by TangoFlux",
+                "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {"steps": 30}},
+            },
+            self.manifest,
+            "comfyui",
+            _load_workflow(),
+        )
+
+        self.assertEqual(result.unknown_top_level, {})
+        self.assertTrue(result.ok, result.validation.rejected)
+        node = result.request["2"]["inputs"]
+        self.assertNotIn("tags", node)
+        self.assertNotIn("lyrics", node)
+
+    def test_namespaced_tags_and_lyrics_are_route_managed(self) -> None:
+        result = bind_audio_workflow_extensions(
+            {
+                "model": "tangoflux",
+                "prompt": "x",
+                "extensions": {
+                    WORKFLOW_EXTENSION_NAMESPACE: {
+                        "tags": "do not bind as extension",
+                        "lyrics": "do not bind as extension",
+                    }
+                },
+            },
+            self.manifest,
+            "comfyui",
+            _load_workflow(),
+        )
+
+        self.assertEqual(set(result.validation.rejected), {"tags", "lyrics"})
+        self.assertFalse(result.ok)
 
     def test_namespaced_controls_validate_and_bind_to_tangoflux(self) -> None:
         workflow = _load_workflow()
@@ -291,6 +428,117 @@ class TestAudioGenerateWorkflowExtensions(unittest.TestCase):
 
         self.assertIn("steps", result.validation.rejected)
         self.assertEqual(result.request["2"]["inputs"]["steps"], original_steps)
+
+
+class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
+    async def _call(self, body: dict[str, Any], workflow: dict[str, Any]):
+        captured: dict[str, Any] = {}
+
+        async def no_sleep(_seconds: float) -> None:
+            return None
+
+        def fake_client_factory(*_args: Any, **_kwargs: Any) -> _FakeAudioClient:
+            return _FakeAudioClient(captured)
+
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy,
+            "_resolve_audio_workflow",
+            return_value=("ace-step-1.5-xl-turbo", {"file": "unused"}),
+        ), patch.object(
+            proxy,
+            "_load_audio_workflow_file",
+            return_value=workflow,
+        ), patch.object(
+            proxy,
+            "_load_audio_workflow_manifest",
+            return_value=None,
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            return_value={},
+        ), patch.object(
+            proxy.httpx,
+            "AsyncClient",
+            fake_client_factory,
+        ), patch.object(proxy.asyncio, "sleep", no_sleep):
+            response = await proxy.proxy_audio_generate(
+                _JsonRequest(body),  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+            )
+        return response, captured
+
+    async def test_tags_and_lyrics_bind_to_ace_step_inputs(self) -> None:
+        response, captured = await self._call(
+            {
+                "model": "ace-step-1.5-xl-turbo",
+                "prompt": "generic music prompt",
+                "tags": "dream pop, piano, soft drums",
+                "lyrics": "first line\nsecond line",
+                "duration": 12,
+                "seed": 1234,
+            },
+            _ace_workflow(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        workflow = captured["payload"]["prompt"]
+        self.assertEqual(workflow["5"]["inputs"]["tags"], "dream pop, piano, soft drums")
+        self.assertEqual(workflow["5"]["inputs"]["lyrics"], "first line\nsecond line")
+        self.assertEqual(workflow["5"]["inputs"]["duration"], 12.0)
+        self.assertEqual(workflow["10"]["inputs"]["seconds"], 12.0)
+        self.assertEqual(workflow["20"]["inputs"]["seed"], 1234)
+
+    async def test_prompt_falls_back_to_ace_step_tags(self) -> None:
+        response, captured = await self._call(
+            {
+                "model": "ace-step-1.5-xl-turbo",
+                "prompt": "solo piano, intimate room",
+            },
+            _ace_workflow(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        workflow = captured["payload"]["prompt"]
+        self.assertEqual(workflow["5"]["inputs"]["tags"], "solo piano, intimate room")
+        self.assertEqual(workflow["5"]["inputs"]["lyrics"], "[instrumental]")
+
+    async def test_tags_can_supply_audio_prompt_when_prompt_is_absent(self) -> None:
+        response, captured = await self._call(
+            {
+                "model": "ace-step-1.5-xl-turbo",
+                "tags": "ambient synth pad",
+            },
+            _ace_workflow(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        workflow = captured["payload"]["prompt"]
+        self.assertEqual(workflow["5"]["inputs"]["tags"], "ambient synth pad")
+
+    async def test_non_string_tags_and_lyrics_are_rejected(self) -> None:
+        for field_name in ("tags", "lyrics"):
+            body = {
+                "model": "ace-step-1.5-xl-turbo",
+                "prompt": "x",
+                field_name: 123,
+            }
+            response, captured = await self._call(body, _ace_workflow())
+            self.assertEqual(response.status_code, 400)
+            self.assertNotIn("payload", captured)
+            error = json.loads(response.body.decode("utf-8"))["error"]
+            self.assertEqual(error["param"], field_name)
+
+    def test_unknown_audio_field_detector_accepts_tags_and_lyrics(self) -> None:
+        self.assertEqual(
+            detect_unknown_audio_fields(
+                {
+                    "model": "ace-step-1.5-xl-turbo",
+                    "tags": "dream pop",
+                    "lyrics": "hello",
+                }
+            ),
+            {},
+        )
 
 
 if __name__ == "__main__":

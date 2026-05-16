@@ -100,6 +100,7 @@ def build_gateway_discovery_metadata(
         "workflows": "/gateway/v1/workflows",
         "receipts": "/gateway/v1/receipts",
         "media_jobs": "/gateway/v1/media/jobs",
+        "asset_content": "/v1/assets/{asset_id}/content",
     }
 
     return {
@@ -189,6 +190,7 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         "4. Use /v1 by default; use /v1/messages or /api/* only for clients that require those protocols.",
         "5. Fetch /gateway/v1/workflows before using extensions.com.vividfish.workflow controls.",
         "6. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",
+        "7. Reuse generated images via data[].asset_id or signed /v1/assets/{asset_id}/content URLs when present; asset IDs are scoped to the minting API key.",
         "",
     ]
     return "\n".join(lines)

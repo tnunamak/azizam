@@ -33,7 +33,7 @@ The live discovery contract is:
 |---|---|---|---|
 | `POST /v1/images/generations` | `extensions.com.vividfish.workflow` | Implemented | Binds manifest controls such as `steps`, `guidance`, `seed`, `batch_size`, `negative_prompt`, `sampler`, `scheduler`, and workflow-specific controls such as `seam_blending` on `sdxl-seamless-tile` (`0..0.5`). Unknown top-level workflow controls are rejected. |
 | `POST /v1/images/edits` | `extensions.com.vividfish.workflow` | Implemented | Binds `steps`, `guidance`, and `denoise` for `flux2-klein-4b-edit`. Top-level `mask` is a standard OpenAI multipart field, not an extension; masked requests auto-select `flux2-klein-4b-inpaint` when available, which applies the normalized mask inside ComfyUI and exposes `mask_expand`/`mask_feather`. Future conditioning controls such as `control_image` and `controlnet_strength` stay namespaced and manifest-backed; multipart extension assets can reference an extra form field with `{"multipart_field":"control_image"}`. ControlNet is not exposed until a real ControlNet workflow and model are present. |
-| `POST /v1/audio/generate` | `extensions.com.vividfish.workflow` | Implemented | TangoFlux accepts namespaced `steps`, `guidance`, and `batch_size`; standard `duration` and `seed` stay top-level. |
+| `POST /v1/audio/generate` | `extensions.com.vividfish.workflow` | Implemented | ACE-Step accepts top-level `tags` and `lyrics`; `prompt` remains an alias for ACE-Step `tags` when `tags` is absent. TangoFlux accepts namespaced `steps`, `guidance`, and `batch_size`; standard `duration`, `seed`, `tags`, and `lyrics` stay top-level route-managed fields. |
 | `POST /v1/videos` | `extensions.com.vividfish.workflow` | Implemented | LTX 2.3 distilled accepts namespaced `steps`, `stage1_cfg`, and `stage2_cfg`; standard `size`, `seconds`, `seed`, prompt, and image-reference fields stay top-level. |
 | `POST /v1/chat/completions` | `extensions.com.vividfish.chat`, `extensions.com.vividfish.routing` | Proposed | Candidate controls: local sampler extras, backend role hints, prompt-cache preferences, fallback preference, receipt verbosity. |
 | `POST /v1/responses` | `extensions.com.vividfish.chat`, `extensions.com.vividfish.routing`, `extensions.com.vividfish.responses` | Proposed | Should share chat extension validation where possible. |
@@ -50,6 +50,12 @@ adapter, or preprocessor request controls until a real workflow, model,
 manifest, and readiness check are present. When support is present, put those
 controls under `extensions.com.vividfish.workflow` or a gateway-native media job
 shape, not as global OpenAI-compatible fields.
+
+Variant semantics are not a separate extension family. Use top-level `n` where
+the public protocol owns batch count, and use manifest-backed `seed` or
+route-native `seed` where the selected route already supports it. Do not add
+ad hoc extension names such as `variant_count` or `variations` unless a
+gateway-native route defines them explicitly.
 
 ## Standard Fields
 

@@ -26,6 +26,8 @@ STANDARD_AUDIO_GENERATE_FIELDS: frozenset[str] = frozenset(
     {
         "prompt",
         "input",
+        "tags",
+        "lyrics",
         "model",
         "duration",
         "seed",
@@ -39,6 +41,8 @@ STANDARD_AUDIO_GENERATE_FIELDS: frozenset[str] = frozenset(
 ROUTE_MANAGED_AUDIO_INPUTS: frozenset[str] = frozenset(
     {
         "prompt",
+        "tags",
+        "lyrics",
         "duration",
         "seed",
     }

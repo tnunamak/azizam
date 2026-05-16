@@ -48,6 +48,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /v1/images/generations` | OpenAI Images | Emits observational gateway receipts. |
 | `POST /v1/images/edits` | OpenAI Images | Emits observational gateway receipts. |
 | `GET /v1/images/{id}/content` | OpenAI Images | Asset retrieval. |
+| `GET /v1/assets/{asset_id}/content` | Native | Signed generated-asset retrieval. |
 | `POST /v1/audio/speech` | OpenAI Audio | TTS. |
 | `POST /v1/audio/transcriptions` | OpenAI Audio | STT. |
 | `GET /v1/voices`, `GET /v1/audio/voices` | OpenAI Audio | Voice list. |
@@ -139,6 +140,23 @@ curl -s http://127.0.0.1:5000/v1/images/generations \
 implementation. Values above `0.5` are rejected by the proxy instead of being
 submitted to ComfyUI and timing out.
 
+Every image result includes gateway-native reuse metadata in addition to the
+OpenAI-compatible field the client asked for:
+
+```json
+{
+  "asset_id": "img_<sha256>",
+  "asset_url": "http://127.0.0.1:5000/v1/assets/img_<sha256>/content?...",
+  "media_type": "image/png"
+}
+```
+
+`asset_url` is signed and auth-gated like `/v1/images/{id}/content`; fetch it
+with the same bearer token. `asset_id` can be passed back to gateway-aware
+routes that explicitly accept an image input reference. Asset handles are scoped
+to the API key that minted them, so they are convenient local references rather
+than global public content hashes.
+
 Image edit denoise:
 
 ```bash
@@ -166,6 +184,27 @@ masks use OpenAI polarity: transparent edits, opaque preserves. Grayscale masks
 use white to edit and black to preserve. The current Flux2 edit workflow has no
 native inpaint node, so the proxy preserves unmasked pixels with a documented
 post-composite fallback unless a native mask-bound workflow is selected.
+
+ACE-Step music generation:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/audio/generate \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ace-step-1.5-xl-turbo",
+    "tags": "dream pop, warm piano, soft drums",
+    "lyrics": "first line of the song\nsecond line of the song",
+    "duration": 20,
+    "seed": 1234
+  }' \
+  -o /tmp/music.wav
+```
+
+For ACE-Step workflows, `prompt` is still accepted and maps to the model's
+`tags` input. Use top-level `tags` when an agent wants to be explicit about the
+music-description field, and top-level `lyrics` for sung lyrics. If `tags` and
+`prompt` are both present on ACE-Step, `tags` wins.
 
 TangoFlux audio generation:
 
@@ -232,6 +271,32 @@ curl -s http://127.0.0.1:5000/v1/images/edits \
 Fetch `/gateway/v1/workflows` first. If `control_image` or
 `controlnet_strength` is absent for the selected workflow, the request should
 be treated as unsupported.
+
+## Chaining And Variants
+
+Generated image outputs can be reused without inventing new top-level fields:
+
+- For OpenAI-compatible clients, request `response_format: "url"` and fetch
+  `data[].url` or `data[].asset_url` with the same bearer token.
+- For gateway-aware clients, keep `data[].asset_id` and pass it where a route
+  advertises an asset input. Video `input_reference` accepts `{"asset_id":
+  "img_<sha256>"}` or `asset:img_<sha256>` when the same API key minted the
+  asset.
+- For future conditioning workflows, asset-valued extension inputs such as
+  `control_image` may use `{"asset_id":"img_<sha256>"}` instead of uploading a
+  second multipart file, but only when discovery shows the selected workflow
+  supports that asset input.
+
+Variants use existing route semantics:
+
+- Image generation and edits: use top-level `n` for count and manifest-backed
+  `extensions.com.vividfish.workflow.seed` when the selected image workflow
+  exposes `seed`.
+- Video: repeat requests with different top-level `seed`; model aliases are
+  quality/speed choices, not batch-variant controls.
+- Do not send ad hoc fields such as `variant_count`, `variations`, or
+  `controlnet_strength` unless a gateway-native route or workflow manifest
+  explicitly advertises them.
 
 ### Live with documented limits
 

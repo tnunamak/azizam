@@ -29,6 +29,7 @@ import threading
 import time
 import atexit
 import hashlib
+import hmac
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -3070,44 +3071,197 @@ def _image_signing_secret() -> bytes:
 
 
 def _sign_image_token(image_id: str, expires: int) -> str:
-    msg = f"{image_id}:{expires}".encode("utf-8")
-    return hashlib.sha256(_image_signing_secret() + msg).hexdigest()
+    return _sign_asset_token(image_id, expires)
+
+
+def _sign_asset_token(asset_id: str, expires: int) -> str:
+    msg = f"{asset_id}:{expires}".encode("utf-8")
+    return hmac.new(_image_signing_secret(), msg, hashlib.sha256).hexdigest()
 
 
 def verify_image_signature(image_id: str, expires: int, sig: str) -> bool:
-    """Constant-time HMAC verification (sha256(secret || msg))."""
+    """Constant-time HMAC verification for signed image URLs."""
+    return verify_asset_signature(image_id, expires, sig)
+
+
+def verify_asset_signature(asset_id: str, expires: int, sig: str) -> bool:
+    """Constant-time HMAC verification for signed asset URLs."""
     if expires < int(time.time()):
         return False
-    expected = _sign_image_token(image_id, expires)
-    if len(expected) != len(sig):
-        return False
-    diff = 0
-    for a, b in zip(expected, sig):
-        diff |= ord(a) ^ ord(b)
-    return diff == 0
+    expected = _sign_asset_token(asset_id, expires)
+    return hmac.compare_digest(expected, str(sig or ""))
 
 
-def store_image_bytes(content: bytes) -> str:
-    """Write `content` to the content-addressed cache. Returns the image_id."""
-    digest = hashlib.sha256(content).hexdigest()
-    image_id = f"img_{digest}"
+def _asset_owner_key(auth_context: AuthContext | None) -> str | None:
+    identity = getattr(auth_context, "identity", None) if auth_context else None
+    key_hash = getattr(identity, "key_hash", None)
+    return str(key_hash) if key_hash else None
+
+
+def _asset_metadata_path(asset_id: str) -> Path | None:
+    parsed = _parse_asset_id(asset_id)
+    if parsed is None:
+        return None
+    _, digest = parsed
+    return IMAGE_CACHE_DIR / f"{digest}.meta.json"
+
+
+def _read_asset_metadata(asset_id: str) -> dict[str, Any]:
+    path = _asset_metadata_path(asset_id)
+    if path is None or not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_asset_metadata(asset_id: str, metadata: Mapping[str, Any]) -> None:
+    path = _asset_metadata_path(asset_id)
+    if path is None:
+        return
     IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    target = IMAGE_CACHE_DIR / f"{digest}.png"
+    tmp = path.with_name(f"{path.name}.tmp")
+    try:
+        tmp.write_text(json.dumps(dict(metadata), sort_keys=True), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:
+        print(f"[proxy] Could not persist asset metadata for {asset_id}: {e}", flush=True)
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _record_asset_owner(asset_id: str, owner_key_hash: str | None) -> None:
+    if not owner_key_hash:
+        return
+    metadata = _read_asset_metadata(asset_id)
+    owners_raw = metadata.get("owner_key_hashes") or []
+    owners = [str(owner) for owner in owners_raw if isinstance(owner, str)]
+    if owner_key_hash not in owners:
+        owners.append(owner_key_hash)
+    metadata["asset_id"] = asset_id
+    metadata["owner_key_hashes"] = sorted(set(owners))
+    metadata["updated_at"] = int(time.time())
+    _write_asset_metadata(asset_id, metadata)
+
+
+def _asset_access_allowed(asset_id: str, auth_context: AuthContext | None) -> bool:
+    owners_raw = _read_asset_metadata(asset_id).get("owner_key_hashes") or []
+    owners = {str(owner) for owner in owners_raw if isinstance(owner, str)}
+    if not owners:
+        # Fail closed for authenticated callers when metadata is absent. Auth-
+        # disabled local runs have no identity and keep the old cache behavior.
+        return _asset_owner_key(auth_context) is None
+    owner_key_hash = _asset_owner_key(auth_context)
+    return bool(owner_key_hash and owner_key_hash in owners)
+
+
+def store_asset_bytes(
+    content: bytes,
+    *,
+    kind: str = "img",
+    suffix: str = ".png",
+    owner_key_hash: str | None = None,
+) -> str:
+    """Write `content` to the content-addressed cache. Returns the asset_id."""
+    kind = str(kind).strip().lower()
+    if kind not in {"img", "aud", "vid"}:
+        raise ValueError("asset kind must be one of img, aud, vid")
+    suffix = str(suffix or "").strip().lower()
+    if not suffix.startswith("."):
+        suffix = f".{suffix or 'bin'}"
+    digest = hashlib.sha256(content).hexdigest()
+    asset_id = f"{kind}_{digest}"
+    IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    target = IMAGE_CACHE_DIR / f"{digest}{suffix}"
     if not target.exists():
         # Atomic write: tmp + rename.
-        tmp = target.with_suffix(".png.tmp")
+        tmp = target.with_suffix(f"{suffix}.tmp")
         tmp.write_bytes(content)
         tmp.replace(target)
-    return image_id
+    _record_asset_owner(asset_id, owner_key_hash)
+    return asset_id
+
+
+def store_image_bytes(content: bytes, *, owner_key_hash: str | None = None) -> str:
+    """Write `content` to the content-addressed cache. Returns the image_id."""
+    return store_asset_bytes(
+        content,
+        kind="img",
+        suffix=".png",
+        owner_key_hash=owner_key_hash,
+    )
+
+
+_ASSET_SUFFIXES_BY_KIND = {
+    "img": (".png", ".jpg", ".jpeg", ".webp", ".gif"),
+    "aud": (".wav", ".mp3", ".flac", ".ogg", ".m4a"),
+    "vid": (".mp4", ".webm", ".mov", ".mkv"),
+}
+
+_ASSET_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska",
+}
+
+
+def _parse_asset_id(asset_id: str) -> tuple[str, str] | None:
+    if not isinstance(asset_id, str) or "_" not in asset_id:
+        return None
+    kind, digest = asset_id.split("_", 1)
+    if kind not in _ASSET_SUFFIXES_BY_KIND:
+        return None
+    if len(digest) != 64 or not all(c in "0123456789abcdef" for c in digest):
+        return None
+    return kind, digest
+
+
+def asset_cache_path(asset_id: str) -> Optional[Path]:
+    parsed = _parse_asset_id(asset_id)
+    if parsed is None:
+        return None
+    kind, digest = parsed
+    candidates = [IMAGE_CACHE_DIR / f"{digest}{suffix}" for suffix in _ASSET_SUFFIXES_BY_KIND[kind]]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+def asset_media_type(asset_id: str, path: Path | None = None) -> str:
+    path = path or asset_cache_path(asset_id)
+    suffix = path.suffix.lower() if path is not None else ""
+    return _ASSET_MEDIA_TYPES.get(suffix, "application/octet-stream")
 
 
 def image_cache_path(image_id: str) -> Optional[Path]:
     if not image_id.startswith("img_"):
         return None
-    digest = image_id[len("img_"):]
-    if len(digest) != 64 or not all(c in "0123456789abcdef" for c in digest):
-        return None
-    return IMAGE_CACHE_DIR / f"{digest}.png"
+    return asset_cache_path(image_id)
+
+
+def build_signed_asset_url(request: Request, asset_id: str) -> str:
+    """Build a signed, hostname-aware URL for a generated asset."""
+    expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
+    sig = _sign_asset_token(asset_id, expires)
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&sig={sig}"
 
 
 def build_signed_image_url(request: Request, image_id: str) -> str:
@@ -3129,8 +3283,15 @@ async def evict_image_cache_loop(stop_event: asyncio.Event) -> None:
         try:
             cutoff = time.time() - IMAGE_CACHE_TTL
             if IMAGE_CACHE_DIR.exists():
+                asset_suffixes = {
+                    suffix
+                    for suffixes in _ASSET_SUFFIXES_BY_KIND.values()
+                    for suffix in suffixes
+                }
                 for entry in IMAGE_CACHE_DIR.iterdir():
-                    if not entry.is_file() or entry.suffix != ".png":
+                    if not entry.is_file():
+                        continue
+                    if entry.suffix not in asset_suffixes and not entry.name.endswith(".meta.json"):
                         continue
                     try:
                         if entry.stat().st_mtime < cutoff:
@@ -3391,16 +3552,24 @@ def _build_image_response_payload(
     images: list[bytes],
     response_format: str,
     warning_headers: dict,
+    auth_context: AuthContext | None = None,
 ) -> Response:
     """Shape `data[]` for either b64_json or url, honoring the client's choice."""
     data: list[dict] = []
+    owner_key_hash = _asset_owner_key(auth_context)
     for raw in images:
+        image_id = store_image_bytes(raw, owner_key_hash=owner_key_hash)
+        item: dict[str, Any] = {
+            "asset_id": image_id,
+            "asset_url": build_signed_asset_url(request, image_id),
+            "media_type": "image/png",
+        }
         if response_format == "url":
-            image_id = store_image_bytes(raw)
-            data.append({"url": build_signed_image_url(request, image_id)})
+            item["url"] = build_signed_image_url(request, image_id)
         else:
             b64 = base64.b64encode(raw).decode("utf-8")
-            data.append({"b64_json": b64})
+            item["b64_json"] = b64
+        data.append(item)
     headers = {"content-type": "application/json"}
     headers.update(warning_headers)
     return Response(
@@ -3433,6 +3602,7 @@ async def _generate_images_with_adaptive_batching(
     image_transform: Optional[Callable[[bytes], bytes]] = None,
     image_response_headers: Optional[dict[str, str]] = None,
     fixed_seed: Optional[int] = None,
+    auth_context: AuthContext | None = None,
 ) -> Response:
     """Submit `ceil(n / max_batch)` rounds and aggregate `n_requested` images.
 
@@ -3575,6 +3745,7 @@ async def _generate_images_with_adaptive_batching(
                     image_transform=image_transform,
                     image_response_headers=image_response_headers,
                     fixed_seed=fixed_seed,
+                    auth_context=auth_context,
                 )
             return err
 
@@ -3730,7 +3901,13 @@ async def _generate_images_with_adaptive_batching(
         flush=True,
     )
 
-    return _build_image_response_payload(request, images_collected, response_format, response_headers)
+    return _build_image_response_payload(
+        request,
+        images_collected,
+        response_format,
+        response_headers,
+        auth_context=auth_context,
+    )
 
 
 async def proxy_comfy_request(
@@ -3901,6 +4078,7 @@ async def proxy_comfy_request(
         backend_request=workflow,
         standard_fields=STANDARD_IMAGE_GENERATE_FIELDS,
         receipt=receipt,
+        auth_context=auth_context,
     )
     if extension_response is not None:
         return extension_response
@@ -3961,6 +4139,7 @@ async def proxy_comfy_request(
                 fallback_workflow=fallback_workflow,
                 fallback_workflow_name=workflow_name,
                 fixed_seed=fixed_seed,
+                auth_context=auth_context,
             )
     except httpx.TimeoutException:
         return Response(
@@ -4310,6 +4489,7 @@ async def proxy_comfy_edit_request(
                 client=client,
                 headers=headers,
                 extension_asset_fields=extension_asset_fields,
+                auth_context=auth_context,
             )
             if extension_response is not None:
                 return extension_response
@@ -4387,6 +4567,7 @@ async def proxy_comfy_edit_request(
                 fallback_workflow_name=workflow_name,
                 image_transform=image_transform,
                 image_response_headers=image_response_headers,
+                auth_context=auth_context,
             )
 
     except httpx.TimeoutException:
@@ -5061,7 +5242,25 @@ class _InputReferenceError(ValueError):
 _DATA_URI_PREFIX = "data:"
 
 
-async def _resolve_input_reference(value) -> tuple[bytes, str]:
+def _resolve_cached_image_asset(
+    asset_id: str,
+    auth_context: AuthContext | None = None,
+) -> tuple[bytes, str]:
+    parsed = _parse_asset_id(asset_id)
+    if parsed is None or parsed[0] != "img":
+        raise _InputReferenceError("asset_id must reference a cached image asset")
+    path = asset_cache_path(asset_id)
+    if path is None or not path.exists():
+        raise _InputReferenceError("asset_id not found (may have been evicted)")
+    if not _asset_access_allowed(asset_id, auth_context):
+        raise _InputReferenceError("asset_id is not accessible for this API key")
+    return path.read_bytes(), f"{asset_id}{path.suffix or '.png'}"
+
+
+async def _resolve_input_reference(
+    value,
+    auth_context: AuthContext | None = None,
+) -> tuple[bytes, str]:
     """Resolve an OpenAI-shaped input_reference into (bytes, filename).
 
     Accepts (in priority order):
@@ -5080,12 +5279,15 @@ async def _resolve_input_reference(value) -> tuple[bytes, str]:
     # Unwrap OpenAI vision-style content blocks. We don't need full schema
     # support — pull out a string we can resolve.
     if isinstance(value, dict):
+        asset_id = value.get("asset_id")
+        if isinstance(asset_id, str):
+            return _resolve_cached_image_asset(asset_id.strip(), auth_context)
         for key in ("image_url", "url", "input_image"):
             inner = value.get(key)
             if isinstance(inner, dict):
                 inner = inner.get("url") or inner.get("image_url")
             if isinstance(inner, str):
-                return await _resolve_input_reference(inner)
+                return await _resolve_input_reference(inner, auth_context)
         raise _InputReferenceError(
             "input_reference dict missing a recognizable image_url/url field"
         )
@@ -5096,6 +5298,11 @@ async def _resolve_input_reference(value) -> tuple[bytes, str]:
     s = value.strip()
     if not s:
         raise _InputReferenceError("input_reference is empty")
+
+    if s.startswith("asset:"):
+        return _resolve_cached_image_asset(s[len("asset:"):].strip(), auth_context)
+    if s.startswith("img_"):
+        return _resolve_cached_image_asset(s, auth_context)
 
     # Filesystem path.
     try:
@@ -5426,7 +5633,10 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             )
 
         try:
-            image_bytes, image_filename = await _resolve_input_reference(input_reference)
+            image_bytes, image_filename = await _resolve_input_reference(
+                input_reference,
+                auth_context,
+            )
         except _InputReferenceError as e:
             return Response(
                 content=json.dumps({
@@ -7154,6 +7364,16 @@ def _extension_asset_multipart_field(value: Any) -> str | None:
     return field or None
 
 
+def _extension_asset_id(value: Any) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+    asset_id = value.get("asset_id")
+    if not isinstance(asset_id, str):
+        return None
+    asset_id = asset_id.strip()
+    return asset_id or None
+
+
 def _request_without_top_level_fields(
     body: Mapping[str, Any],
     field_names: set[str],
@@ -7237,6 +7457,7 @@ async def _upload_image_workflow_extension_assets(
     client: Any,
     headers: Mapping[str, str],
     receipt: RouteReceipt | None,
+    auth_context: AuthContext | None = None,
 ) -> tuple[dict[str, Any], Response | None]:
     """Upload extension-referenced image assets and replace them with filenames.
 
@@ -7274,38 +7495,61 @@ async def _upload_image_workflow_extension_assets(
     uploaded_any = False
     for input_name, value in block.items():
         field_name = _extension_asset_multipart_field(value)
-        if field_name is None:
+        asset_id = _extension_asset_id(value)
+        if field_name is None and asset_id is None:
             continue
 
         input_key = str(input_name)
         spec = inputs.get(input_key)
-        if field_name not in allowed_fields:
+        if field_name is not None and field_name not in allowed_fields:
             continue
         if input_key not in supported or not isinstance(spec, Mapping):
-            continue
-        if spec.get("type") != "asset":
-            continue
-
-        upload = form.get(field_name)
-        read = getattr(upload, "read", None)
-        if upload is None or not callable(read):
             return updated, _image_extension_error_response(
                 receipt,
-                f"multipart field {field_name!r} is required for {input_key}",
+                f"{input_key} is not a supported asset extension input",
+                param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
+            )
+        if spec.get("type") != "asset":
+            return updated, _image_extension_error_response(
+                receipt,
+                f"{input_key} is not an asset extension input",
                 param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
             )
 
-        try:
-            content = await read()
-        except Exception as exc:  # noqa: BLE001
-            return updated, _image_extension_error_response(
-                receipt,
-                f"could not read multipart field {field_name!r}: {exc}",
-                param=field_name,
-            )
+        if asset_id is not None:
+            try:
+                content, filename = _resolve_cached_image_asset(
+                    asset_id,
+                    auth_context,
+                )
+            except _InputReferenceError as exc:
+                return updated, _image_extension_error_response(
+                    receipt,
+                    str(exc),
+                    param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
+                )
+            content_type = asset_media_type(asset_id, asset_cache_path(asset_id))
+        else:
+            upload = form.get(field_name)
+            read = getattr(upload, "read", None)
+            if upload is None or not callable(read):
+                return updated, _image_extension_error_response(
+                    receipt,
+                    f"multipart field {field_name!r} is required for {input_key}",
+                    param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
+                )
 
-        filename = getattr(upload, "filename", None) or f"{field_name}.png"
-        content_type = getattr(upload, "content_type", None) or "image/png"
+            try:
+                content = await read()
+            except Exception as exc:  # noqa: BLE001
+                return updated, _image_extension_error_response(
+                    receipt,
+                    f"could not read multipart field {field_name!r}: {exc}",
+                    param=field_name,
+                )
+
+            filename = getattr(upload, "filename", None) or f"{field_name}.png"
+            content_type = getattr(upload, "content_type", None) or "image/png"
         files = {"image": (filename, content, content_type)}
         upload_resp = await client.post(
             f"{COMFY_HOST}/upload/image",
@@ -7339,7 +7583,8 @@ async def _upload_image_workflow_extension_assets(
 
         next_block[input_key] = str(uploaded_filename)
         uploaded_any = True
-        _record_image_input(receipt, field_name)
+        if field_name is not None:
+            _record_image_input(receipt, field_name)
 
     if uploaded_any:
         next_extensions = dict(extensions)
@@ -7359,6 +7604,7 @@ async def _apply_workflow_extensions_to_image_request(
     client: Any | None = None,
     headers: Mapping[str, str] | None = None,
     extension_asset_fields: set[str] | None = None,
+    auth_context: AuthContext | None = None,
 ) -> tuple[dict[str, Any] | None, Response | None]:
     asset_fields = extension_asset_fields or set()
     unknown_response = _record_unknown_image_fields(
@@ -7379,6 +7625,7 @@ async def _apply_workflow_extensions_to_image_request(
             client=client,
             headers=headers or {},
             receipt=receipt,
+            auth_context=auth_context,
         )
         if upload_response is not None:
             return None, upload_response
@@ -7538,7 +7785,40 @@ async def images_content(image_id: str, request: Request):
     auth_context = authenticate_request(request, "/v1/images/{image_id}/content")
     if isinstance(auth_context, Response):
         return auth_context
+    return _signed_asset_content_response(
+        image_id,
+        request,
+        invalid_message="Invalid image id",
+        missing_message="Image not found (may have been evicted)",
+        image_only=True,
+        auth_context=auth_context,
+    )
 
+
+@app.get("/v1/assets/{asset_id}/content")
+async def assets_content(asset_id: str, request: Request):
+    """Serve a cached generated asset referenced by a signed URL."""
+    auth_context = authenticate_request(request, "/v1/assets/{asset_id}/content")
+    if isinstance(auth_context, Response):
+        return auth_context
+    return _signed_asset_content_response(
+        asset_id,
+        request,
+        invalid_message="Invalid asset id",
+        missing_message="Asset not found (may have been evicted)",
+        auth_context=auth_context,
+    )
+
+
+def _signed_asset_content_response(
+    asset_id: str,
+    request: Request,
+    *,
+    invalid_message: str,
+    missing_message: str,
+    image_only: bool = False,
+    auth_context: AuthContext | None = None,
+) -> Response:
     expires_raw = request.query_params.get("expires", "")
     sig = request.query_params.get("sig", "")
     try:
@@ -7555,24 +7835,35 @@ async def images_content(image_id: str, request: Request):
             status_code=400,
             media_type="application/json",
         )
-    if not verify_image_signature(image_id, expires, sig):
+    if not verify_asset_signature(asset_id, expires, sig):
         return Response(
             content=json.dumps({"error": {"message": "Invalid or expired signature", "type": "invalid_request_error"}}),
             status_code=403,
             media_type="application/json",
         )
 
-    cache_path = image_cache_path(image_id)
+    cache_path = image_cache_path(asset_id) if image_only else asset_cache_path(asset_id)
     if cache_path is None:
         return Response(
-            content=json.dumps({"error": {"message": "Invalid image id", "type": "invalid_request_error"}}),
+            content=json.dumps({"error": {"message": invalid_message, "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json",
         )
     if not cache_path.exists():
         return Response(
-            content=json.dumps({"error": {"message": "Image not found (may have been evicted)", "type": "invalid_request_error"}}),
+            content=json.dumps({"error": {"message": missing_message, "type": "invalid_request_error"}}),
             status_code=404,
+            media_type="application/json",
+        )
+    if not _asset_access_allowed(asset_id, auth_context):
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "Asset is not accessible for this API key",
+                    "type": "invalid_request_error",
+                }
+            }),
+            status_code=403,
             media_type="application/json",
         )
 
@@ -7580,7 +7871,7 @@ async def images_content(image_id: str, request: Request):
     return Response(
         content=data,
         status_code=200,
-        media_type="image/png",
+        media_type=asset_media_type(asset_id, cache_path),
         headers={
             "content-length": str(len(data)),
             "cache-control": "private, max-age=3600",
@@ -7716,7 +8007,34 @@ async def proxy_audio_generate(request: Request, auth_context):
             media_type="application/json"
         )
 
-    prompt = (body.get("prompt") or body.get("input") or "").strip()
+    text_fields: dict[str, str | None] = {}
+    for field_name in ("prompt", "input", "tags", "lyrics"):
+        value = body.get(field_name)
+        if value is None:
+            text_fields[field_name] = None
+            continue
+        if not isinstance(value, str):
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": f"{field_name} must be a string",
+                        "type": "invalid_request_error",
+                        "param": field_name,
+                    }
+                }),
+                status_code=400,
+                media_type="application/json",
+            )
+        text_fields[field_name] = value.strip()
+
+    prompt = (
+        text_fields.get("prompt")
+        or text_fields.get("input")
+        or text_fields.get("tags")
+        or ""
+    )
+    tags = text_fields.get("tags")
+    lyrics = text_fields.get("lyrics")
     model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
     duration = body.get("duration", 30)
     seed = body.get("seed")
@@ -7724,7 +8042,12 @@ async def proxy_audio_generate(request: Request, auth_context):
 
     if not prompt:
         return Response(
-            content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
+            content=json.dumps({
+                "error": {
+                    "message": "prompt, input, or tags is required",
+                    "type": "invalid_request_error",
+                }
+            }),
             status_code=400,
             media_type="application/json"
         )
@@ -7768,6 +8091,16 @@ async def proxy_audio_generate(request: Request, auth_context):
     for node_id, key in _injection_targets(meta.get("prompt_node"), "text"):
         if node_id in workflow:
             workflow[node_id]["inputs"][key] = prompt
+
+    if tags is not None:
+        for node_id, key in _injection_targets(meta.get("tags_node"), "tags"):
+            if node_id in workflow:
+                workflow[node_id]["inputs"][key] = tags
+
+    if lyrics is not None:
+        for node_id, key in _injection_targets(meta.get("lyrics_node"), "lyrics"):
+            if node_id in workflow:
+                workflow[node_id]["inputs"][key] = lyrics
 
     for node_id, key in _injection_targets(meta.get("duration_node"), "duration"):
         if node_id in workflow:
