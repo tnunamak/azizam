@@ -18,6 +18,13 @@ Do not use extensions for credentials, profile permissions, backend URLs,
 cloud fallback policy, native passthrough permission, cache TTLs, or status
 visibility. Those remain configuration/profile concerns.
 
+The live discovery contract is:
+
+- `GET /gateway/v1/extensions` for extension namespaces and route support.
+- `GET /gateway/v1/models/{model}/capabilities` for model-specific controls.
+- `GET /gateway/v1/workflows` and `GET /gateway/v1/capabilities` for the
+  broader workflow catalog.
+
 ## Current Surface
 
 | API | Extension Target | Current State | Notes |
@@ -34,6 +41,11 @@ visibility. Those remain configuration/profile concerns.
 | `POST /v1/messages` | Native Anthropic shape first | Proposed bridge | Prefer Anthropic-native fields. Gateway-only controls can be translated from `metadata.vividfish` or an explicitly allowed `extensions` block. |
 | `POST /api/chat`, `POST /api/generate` | Native Ollama `options` first | Partial native support | Ollama options are not gateway extensions. Use gateway extensions only for gateway routing/diagnostics. |
 | `/gateway/v1/*` | First-class native fields | Implemented | Gateway-native routes should usually use explicit `inputs`, `workflow`, `assets`, and receipt fields instead of an extension envelope. |
+
+ControlNet readiness: there is an audit trail for ControlNet, but the current
+local system is not ready. Do not expose fake `controlnet_*`, conditioning,
+adapter, or preprocessor request controls until a real workflow, model,
+manifest, and readiness check are present.
 
 ## Standard Fields
 

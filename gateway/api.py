@@ -16,6 +16,8 @@ Endpoints
 * ``GET /gateway/v1/workflows``               — list workflows (audience-scoped)
 * ``GET /gateway/v1/workflows/{id}``          — single workflow summary
 * ``GET /gateway/v1/capabilities``            — list capabilities
+* ``GET /gateway/v1/extensions``              — list extension namespaces
+* ``GET /gateway/v1/models/{model}/capabilities`` — model capability view
 * ``GET /gateway/v1/receipts``                — recent route receipts
 * ``GET /gateway/v1/receipts/{request_id}``   — one route receipt
 * ``POST /gateway/v1/media/jobs``             — create or attach to a media job
@@ -40,6 +42,10 @@ from fastapi.responses import JSONResponse
 
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.discovery import VALID_AUDIENCES, WorkflowRegistry
+from gateway.extension_catalog import (
+    summarize_extensions,
+    summarize_model_capabilities,
+)
 
 AudienceResolver = Callable[[Request], str]
 CapabilitiesProvider = Callable[[Request], Sequence[Capability] | Iterable[Capability]]
@@ -335,6 +341,30 @@ def create_gateway_router(
             else:
                 capabilities = capabilities_provider(request) or ()
             catalog = summarize_capabilities(capabilities, audience=audience)
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=catalog)
+
+    @router.get("/extensions")
+    def list_extensions(request: Request) -> JSONResponse:
+        audience = _resolve_request_audience(resolve_audience, request)
+        try:
+            catalog = summarize_extensions(registry, audience=audience)
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=catalog)
+
+    @router.get("/models/{model}/capabilities")
+    def get_model_capabilities(model: str, request: Request) -> JSONResponse:
+        audience = _resolve_request_audience(resolve_audience, request)
+        try:
+            if capabilities_provider is None:
+                capabilities: Iterable[Capability] = ()
+            else:
+                capabilities = capabilities_provider(request) or ()
+            catalog = summarize_model_capabilities(
+                capabilities, model=model, audience=audience
+            )
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
         return JSONResponse(status_code=status.HTTP_200_OK, content=catalog)

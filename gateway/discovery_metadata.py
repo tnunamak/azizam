@@ -95,6 +95,8 @@ def build_gateway_discovery_metadata(
         "skill_catalog": "/.well-known/skills",
         "skill": "/.well-known/skills/openai-proxy-gateway/SKILL.md",
         "capabilities": "/gateway/v1/capabilities",
+        "extensions": "/gateway/v1/extensions",
+        "model_capabilities": "/gateway/v1/models/{model}/capabilities",
         "workflows": "/gateway/v1/workflows",
         "receipts": "/gateway/v1/receipts",
         "media_jobs": "/gateway/v1/media/jobs",

@@ -59,6 +59,10 @@ from gateway.capabilities import (
     capability_from_workflow_record,
     capability_with_policy_view,
 )
+from gateway.chat_extensions import (
+    validate_chat_completions_extensions,
+    validate_responses_extensions,
+)
 from gateway.discovery import WorkflowRegistry
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
@@ -7732,6 +7736,25 @@ def _json_error_response(
     )
 
 
+def _extension_validation_error_response(
+    rejected: Mapping[str, str],
+    *,
+    param: str = "extensions",
+) -> Response:
+    return _json_error_response(
+        {
+            "error": {
+                "message": "Invalid gateway extension controls.",
+                "type": "invalid_request_error",
+                "param": param,
+                "code": "invalid_gateway_extensions",
+                "rejected": dict(rejected),
+            }
+        },
+        status_code=400,
+    )
+
+
 def _anthropic_error_response(
     message: str,
     *,
@@ -8026,6 +8049,14 @@ async def create_response(request: Request):
         if not isinstance(req_body, dict):
             return _responses_error("Request body must be a JSON object.", code="invalid_request_error")
 
+        try:
+            extension_result = validate_responses_extensions(req_body)
+        except ExtensionError as e:
+            return _responses_error(str(e), code="invalid_request_error", param="extensions")
+        if not extension_result.ok:
+            return _extension_validation_error_response(extension_result.rejected)
+        req_body = extension_result.request
+
         # Translate
         try:
             prior_messages = await _build_prior_messages(
@@ -8319,6 +8350,15 @@ async def proxy_request(request: Request, path: str):
     if request_path in ["/v1/chat/completions", "/v1/completions"]:
         try:
             body_json = json.loads(body_peek)
+            if request_path == "/v1/chat/completions":
+                try:
+                    extension_result = validate_chat_completions_extensions(body_json)
+                except ExtensionError as e:
+                    return _extension_validation_error_response({"extensions": str(e)})
+                if not extension_result.ok:
+                    return _extension_validation_error_response(extension_result.rejected)
+                body_json = extension_result.request
+                body_peek = json.dumps(body_json).encode()
             model_name = body_json.get("model", "")
             operation = "chat" if request_path == "/v1/chat/completions" else "completions"
             # Fix 3: scan for image content blocks BEFORE routing. We need this

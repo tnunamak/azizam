@@ -65,6 +65,8 @@ mounted into the live app:
 GET /gateway/v1/workflows
 GET /gateway/v1/workflows/{id}
 GET /gateway/v1/capabilities
+GET /gateway/v1/extensions
+GET /gateway/v1/models/{model}/capabilities
 GET /gateway/v1/receipts
 GET /gateway/v1/receipts/{request_id}
 POST /gateway/v1/media/jobs
@@ -77,6 +79,92 @@ POST /gateway/v1/media/jobs/{job_id}/cancel
 Capability and receipt providers are wired conditionally. These endpoints may
 return empty catalogs when no matching data exists, but the router itself is
 live and authenticated.
+
+## Agent Testing Path
+
+Use the discovery surfaces before guessing workflow controls:
+
+```bash
+curl -s http://127.0.0.1:5000/gateway/v1/extensions \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+
+curl -s http://127.0.0.1:5000/gateway/v1/models/flux2-klein-4b-edit/capabilities \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+
+./venv/bin/python scripts/doctor.py \
+  --base-url http://127.0.0.1:5000 \
+  --comfy-url http://127.0.0.1:7890 \
+  --format text
+```
+
+`scripts/doctor.py` checks public health, public discovery metadata, optional
+ComfyUI health, manifest registry shape, and workflow bindings. Auth
+diagnostics are limited to redacted environment-variable presence; do not
+inspect or print `proxy_api_keys.yml`.
+
+## Workflow Control Examples
+
+Workflow knobs live under `extensions.com.vividfish.workflow`; standard API
+fields such as `model`, `prompt`, `size`, `duration`, `seconds`, and `seed`
+stay top-level.
+
+Image edit denoise:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/edits \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -F model=flux2-klein-4b-edit \
+  -F prompt='remove the background clutter' \
+  -F image=@input.png \
+  -F 'extensions={"com.vividfish.workflow":{"denoise":0.42,"steps":24,"guidance":3.5}}'
+```
+
+TangoFlux audio generation:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/audio/generate \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "tangoflux",
+    "prompt": "short analog synth riser",
+    "duration": 6,
+    "seed": 1234,
+    "extensions": {
+      "com.vividfish.workflow": {
+        "steps": 30,
+        "guidance": 4.5,
+        "batch_size": 1
+      }
+    }
+  }'
+```
+
+LTX video generation:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/videos \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ltx-2.3",
+    "prompt": "slow dolly shot across a workbench",
+    "size": "1280x720",
+    "seconds": 5,
+    "seed": 1234,
+    "extensions": {
+      "com.vividfish.workflow": {
+        "steps": 20,
+        "stage1_cfg": 1.0,
+        "stage2_cfg": 1.0
+      }
+    }
+  }'
+```
+
+ControlNet is not ready on the current local system. The audit exists, but
+operators should not advertise or send ControlNet controls until a real
+ControlNet workflow, model, manifest, and readiness check are present.
 
 ### Live with documented limits
 

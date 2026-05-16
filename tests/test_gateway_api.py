@@ -270,6 +270,7 @@ def _sample_capabilities() -> list[Capability]:
         Capability(
             intent="image.edit",
             backend="comfyui.local",
+            model="image-controlnet",
             workflow="image.edit.controlnet.example",
             input_modalities=("text", "image"),
             output_modalities=("image",),
@@ -277,6 +278,7 @@ def _sample_capabilities() -> list[Capability]:
             lifecycle="warm",
             health="healthy",
             resources=ResourceEstimate(gpu_required=True, vram_gb_estimate=12),
+            caveats=("aliases: controlnet-alias",),
             policy_sources=("profile:image-agent",),
             policy_reasons=("workflow permitted",),
         ),
@@ -399,6 +401,76 @@ class GatewayCapabilitiesEndpointTests(unittest.TestCase):
         response = client.get("/gateway/v1/capabilities")
         self.assertEqual(response.status_code, 500)
         self.assertIn("provider boom", response.text)
+
+    def test_model_capabilities_filters_by_model(self) -> None:
+        client = _make_capabilities_client(provider=lambda _r: _sample_capabilities())
+        response = client.get("/gateway/v1/models/image-controlnet/capabilities")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["audience"], "client")
+        self.assertEqual(len(body["capabilities"]), 1)
+        self.assertEqual(body["capabilities"][0]["model"], "image-controlnet")
+
+    def test_model_capabilities_filters_by_workflow_alias(self) -> None:
+        client = _make_capabilities_client(provider=lambda _r: _sample_capabilities())
+        response = client.get("/gateway/v1/models/controlnet-alias/capabilities")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(len(body["capabilities"]), 1)
+        self.assertEqual(
+            body["capabilities"][0]["workflow"],
+            "image.edit.controlnet.example",
+        )
+
+    def test_model_capabilities_keeps_admin_audience_filtering(self) -> None:
+        client = _make_capabilities_client(
+            audience="admin",
+            provider=lambda _r: _sample_capabilities(),
+        )
+        response = client.get("/gateway/v1/models/image-controlnet/capabilities")
+
+        self.assertEqual(response.status_code, 200)
+        first = response.json()["capabilities"][0]
+        self.assertEqual(first["backend"], "comfyui.local")
+        self.assertNotIn("policy_reasons", first)
+
+    def test_extensions_lists_namespaces_and_route_targets(self) -> None:
+        client = _make_capabilities_client()
+        response = client.get("/gateway/v1/extensions")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["audience"], "client")
+        by_namespace = {item["namespace"]: item for item in body["extensions"]}
+        self.assertEqual(
+            by_namespace["com.vividfish.workflow"]["namespace"],
+            "com.vividfish.workflow",
+        )
+        routes = by_namespace["com.vividfish.workflow"]["routes"]
+        route_targets = {route["route"]: route["targets"] for route in routes}
+        self.assertIn("/v1/images/edits", route_targets)
+        edit_target = route_targets["/v1/images/edits"][0]
+        self.assertEqual(edit_target["intent"], "image.edit")
+        self.assertEqual(edit_target["backends"], ["comfyui"])
+        self.assertEqual(
+            edit_target["workflows"][0]["controls"],
+            ["denoise"],
+        )
+        generate_intents = {
+            target["intent"] for target in route_targets["/v1/images/generations"]
+        }
+        self.assertNotIn("image.edit", generate_intents)
+        self.assertEqual(
+            by_namespace["com.vividfish.chat"]["routes"][0]["controls"],
+            ["receipt_verbosity"],
+        )
+        self.assertEqual(
+            by_namespace["com.vividfish.routing"]["routes"][0]["controls"],
+            ["local_preference"],
+        )
+        self.assertNotIn("/srv/openai-proxy", response.text)
 
 
 def _make_receipts_client(

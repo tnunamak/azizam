@@ -175,18 +175,16 @@ discovery/receipt surface is:
 
 ```text
 GET /gateway/v1/capabilities
+GET /gateway/v1/extensions
+GET /gateway/v1/models/{model}/capabilities
 GET /gateway/v1/workflows
 GET /gateway/v1/workflows/{workflow}
 GET /gateway/v1/receipts
 GET /gateway/v1/receipts/{request_id}
 ```
 
-The remaining discovery extensions are target shape:
-
-```text
-GET /gateway/v1/models/{model}/capabilities
-GET /gateway/v1/extensions
-```
+Additional discovery can layer onto this surface as more adapters and manifests
+land.
 
 These are not OpenAI/Ollama/Anthropic standards. They are the gateway's own
 introspection contract.

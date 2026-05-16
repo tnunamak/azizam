@@ -22,6 +22,8 @@ Agent clients can start without local repo context by fetching the public discov
 - `GET /llms.txt`
 - `GET /.well-known/skills`
 - `GET /.well-known/skills/openai-proxy-gateway/SKILL.md`
+- `GET /gateway/v1/extensions`
+- `GET /gateway/v1/models/{model}/capabilities`
 
 The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](skills/openai-proxy-gateway/SKILL.md). It tells agents to discover capabilities before assuming a backend, keep bearer tokens out of chat, use `/v1` by default, and inspect `/gateway/v1/receipts` when workflow controls are rejected or ignored.
 
@@ -43,6 +45,8 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `POST /v1/videos` | ComfyUI | Submit video job (Sora-shaped, async) |
 | `GET  /v1/videos/{id}` | ComfyUI | Poll job status (`queued` → `running` → `succeeded`/`failed`) |
 | `GET  /v1/videos/{id}/content` | ComfyUI | Fetch rendered MP4 once `status=succeeded` |
+| `GET  /gateway/v1/extensions` | proxy | Live extension namespace and route discovery |
+| `GET  /gateway/v1/models/{model}/capabilities` | proxy | Live model-specific capability and workflow-control discovery |
 | `* /<any other>` | tabby | Catch-all proxy to TabbyAPI (admin/model-load endpoints) |
 
 Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [`MODEL_COMPATIBILITY.md`](MODEL_COMPATIBILITY.md), and [`OPENCLAW_SETUP.md`](OPENCLAW_SETUP.md):
@@ -87,6 +91,7 @@ workflows/                     # ComfyUI workflows (committed; canonical alongsi
   video-*.json                 #   LTX-2.3 / Wan 2.2 video graphs (paired with .ui.json twins)
   video-*.ui.json              #   UI-format twins (regeneratable but expensive — committed for reproducibility)
 scripts/
+  doctor.py                    # Operator/agent smoke checks for health, auth, manifests, and workflow bindings
   check_workflow_drift.py      # Verifies every .ui.json's API-format extraction still matches the committed *.json
   convert_api_to_ui.py         # Round-trips API-format graph back into UI-format
 status-page/                   # Next.js status dashboard (uses /v1/status + /v1/metrics)
