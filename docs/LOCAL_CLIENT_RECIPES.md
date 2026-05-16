@@ -135,6 +135,10 @@ curl -s http://127.0.0.1:5000/v1/images/generations \
   }'
 ```
 
+`seam_blending` is bounded to `0..0.5` by the installed WAS/img2texture
+implementation. Values above `0.5` are rejected by the proxy instead of being
+submitted to ComfyUI and timing out.
+
 Image edit denoise:
 
 ```bash

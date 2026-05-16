@@ -93,9 +93,10 @@ Current local status:
 - `image.generate.sdxl-seamless-tile` exposes a real SDXL base workflow for
   texture tiles. It uses `Image Seamless Texture` postprocessing and accepts
   `steps`, `guidance`, `seed`, `batch_size`, `negative_prompt`, `sampler`,
-  `scheduler`, and `seam_blending` as workflow extensions. It intentionally
-  does not advertise ControlNet Tile because no ControlNet weights are
-  installed on this machine.
+  `scheduler`, and `seam_blending` as workflow extensions. `seam_blending` is
+  constrained to `0..0.5`, matching the installed WAS/img2texture backend. It
+  intentionally does not advertise ControlNet Tile because no ControlNet
+  weights are installed on this machine.
 - `image.edit.flux2-klein-4b` exposes `steps`, `guidance`, and `denoise`.
   Standard OpenAI `mask` is accepted; without a native mask workflow it falls
   back to gateway post-composite preservation.

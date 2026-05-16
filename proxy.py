@@ -3226,6 +3226,39 @@ def has_vision_content(messages) -> bool:
     return False
 
 
+def _comfy_execution_error_message(job: Mapping[str, Any] | None) -> str | None:
+    """Return a safe, short ComfyUI execution error summary if one is present."""
+    status_block = (job or {}).get("status", {}) if isinstance(job, Mapping) else {}
+    if not isinstance(status_block, Mapping):
+        return None
+
+    messages = status_block.get("messages", []) or []
+    for msg in messages:
+        if not (isinstance(msg, (list, tuple)) and msg and msg[0] == "execution_error"):
+            continue
+        payload = msg[1] if len(msg) > 1 and isinstance(msg[1], Mapping) else {}
+        node_type = str(payload.get("node_type") or "").strip()
+        node_id = str(payload.get("node_id") or "").strip()
+        exception_message = str(payload.get("exception_message") or "").strip()
+        exception_type = str(payload.get("exception_type") or "").strip()
+
+        location = "ComfyUI execution error"
+        if node_type and node_id:
+            location = f"ComfyUI {node_type} node {node_id}"
+        elif node_type:
+            location = f"ComfyUI {node_type}"
+        elif node_id:
+            location = f"ComfyUI node {node_id}"
+
+        reason = exception_message or exception_type or "execution_error"
+        return f"{location}: {reason}"[:500]
+
+    status = str(status_block.get("status_str") or status_block.get("status") or "").lower()
+    if status == "error":
+        return "ComfyUI execution failed"
+    return None
+
+
 async def _comfy_run_round(
     client: httpx.AsyncClient,
     workflow: dict,
@@ -3307,6 +3340,18 @@ async def _comfy_run_round(
             if prompt_id not in history:
                 continue
             candidate = history[prompt_id]
+            error_message = _comfy_execution_error_message(candidate)
+            if error_message:
+                return Response(
+                    content=json.dumps({
+                        "error": {
+                            "message": error_message,
+                            "type": "api_error",
+                        }
+                    }),
+                    status_code=502,
+                    media_type="application/json",
+                ), []
             if candidate.get("status", {}).get("completed"):
                 job = candidate
                 break
@@ -4579,18 +4624,13 @@ def _history_terminal_state(job: dict) -> tuple[str, Optional[str]]:
 
     terminal_status is 'succeeded', 'failed', or 'running' (not yet terminal).
     """
+    error_message = _comfy_execution_error_message(job)
+    if error_message:
+        return ("failed", error_message)
+
     status_block = (job or {}).get("status", {}) or {}
     if not status_block.get("completed"):
         return ("running", None)
-    messages = status_block.get("messages", []) or []
-    for msg in messages:
-        if isinstance(msg, (list, tuple)) and msg and msg[0] == "execution_error":
-            err_text = ""
-            try:
-                err_text = json.dumps(msg[1])[:500] if len(msg) > 1 else "execution_error"
-            except Exception:
-                err_text = "execution_error"
-            return ("failed", err_text or "execution_error")
     return ("succeeded", None)
 
 
@@ -4983,13 +5023,11 @@ async def _comfy_queue_status(client: httpx.AsyncClient, prompt_id: str, headers
 
 def _job_status_from_history(job: dict) -> tuple[str, int]:
     """Translate a ComfyUI history entry to (sora_status, progress_0_to_100)."""
+    if _comfy_execution_error_message(job):
+        return "failed", 100
+
     status_block = (job or {}).get("status", {}) or {}
     if status_block.get("completed"):
-        # Distinguish success vs error if we can.
-        messages = status_block.get("messages", []) or []
-        for msg in messages:
-            if isinstance(msg, (list, tuple)) and msg and msg[0] == "execution_error":
-                return "failed", 100
         return "succeeded", 100
     # If history has the entry but not yet completed, treat as running.
     return "running", 50
@@ -5726,14 +5764,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                 payload["node"] = live.get("node")
                 payload["phase"] = live.get("phase")
             if sora_status == "failed":
-                # Surface ComfyUI error messages (truncated) to help debugging.
-                messages = (job.get("status") or {}).get("messages", []) or []
-                err_text = ""
-                for msg in messages:
-                    if isinstance(msg, (list, tuple)) and msg and msg[0] == "execution_error":
-                        err_text = json.dumps(msg[1])[:500] if len(msg) > 1 else "execution_error"
-                        break
-                payload["error"] = err_text or "ComfyUI execution_error"
+                payload["error"] = _comfy_execution_error_message(job) or "ComfyUI execution_error"
             return Response(
                 content=json.dumps(payload),
                 status_code=200,

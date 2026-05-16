@@ -56,7 +56,7 @@ class TestSdxlSeamlessTileManifest(unittest.TestCase):
         identity = manifest_identity(self.manifest)
 
         self.assertEqual(identity.id, "image.generate.sdxl-seamless-tile")
-        self.assertEqual(identity.version, "0.1.0")
+        self.assertEqual(identity.version, "0.1.1")
         self.assertTrue(identity.trusted)
         self.assertEqual(self.manifest["intent"], "image.generate")
         self.assertEqual(
@@ -107,7 +107,7 @@ class TestSdxlSeamlessTileManifest(unittest.TestCase):
                 "negative_prompt": "straight lines, text, border",
                 "sampler": "dpmpp_2m_sde",
                 "scheduler": "karras",
-                "seam_blending": 0.55,
+                "seam_blending": 0.5,
             },
         )
         self.assertTrue(result.ok, result.rejected)
@@ -127,7 +127,7 @@ class TestSdxlSeamlessTileManifest(unittest.TestCase):
         self.assertEqual(mutated["31"]["inputs"]["sampler_name"], "dpmpp_2m_sde")
         self.assertEqual(mutated["31"]["inputs"]["scheduler"], "karras")
         self.assertEqual(mutated["33"]["inputs"]["text"], "straight lines, text, border")
-        self.assertEqual(mutated["45"]["inputs"]["blending"], 0.55)
+        self.assertEqual(mutated["45"]["inputs"]["blending"], 0.5)
 
     def test_invalid_controls_are_rejected(self) -> None:
         result = validate_inputs(
@@ -136,7 +136,7 @@ class TestSdxlSeamlessTileManifest(unittest.TestCase):
                 "prompt": "x",
                 "sampler": "not-a-sampler",
                 "scheduler": "not-a-scheduler",
-                "seam_blending": 1.7,
+                "seam_blending": 0.7,
             },
         )
 
@@ -265,6 +265,102 @@ class TestSdxlSeamlessTileModelDiscovery(unittest.TestCase):
         self.assertNotIn("/home/", rendered)
         self.assertNotIn("/media/", rendered)
         self.assertNotIn("workflows/images/sdxl-seamless-tile.json", rendered)
+
+
+class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
+    async def test_comfy_execution_error_fails_fast(self) -> None:
+        class _Response:
+            def __init__(self, payload: dict[str, object], status_code: int = 200) -> None:
+                self._payload = payload
+                self.status_code = status_code
+                self.text = json.dumps(payload)
+
+            def json(self) -> dict[str, object]:
+                return self._payload
+
+        class _Client:
+            async def post(self, *_args: object, **_kwargs: object) -> _Response:
+                return _Response({"prompt_id": "prompt-error"})
+
+            async def get(self, *_args: object, **_kwargs: object) -> _Response:
+                return _Response(
+                    {
+                        "prompt-error": {
+                            "status": {
+                                "completed": False,
+                                "status_str": "error",
+                                "messages": [
+                                    [
+                                        "execution_error",
+                                        {
+                                            "node_id": "45",
+                                            "node_type": "Image Seamless Texture",
+                                            "exception_message": "0.7\n",
+                                        },
+                                    ]
+                                ],
+                            },
+                            "outputs": {},
+                        }
+                    }
+                )
+
+        err, images = await proxy._comfy_run_round(
+            _Client(),  # type: ignore[arg-type]
+            {},
+            {},
+            "test error",
+        )
+
+        self.assertEqual(images, [])
+        self.assertIsNotNone(err)
+        assert err is not None
+        self.assertEqual(err.status_code, 502)
+        body = json.loads(err.body.decode("utf-8"))
+        self.assertIn("Image Seamless Texture node 45: 0.7", body["error"]["message"])
+
+
+class TestComfyExecutionErrorParsing(unittest.TestCase):
+    def test_incomplete_execution_error_is_terminal_failure(self) -> None:
+        job = {
+            "status": {
+                "completed": False,
+                "messages": [
+                    [
+                        "execution_error",
+                        {
+                            "node_id": "45",
+                            "node_type": "Image Seamless Texture",
+                            "exception_message": "0.7\n",
+                        },
+                    ]
+                ],
+            },
+            "outputs": {},
+        }
+
+        self.assertEqual(
+            proxy._comfy_execution_error_message(job),
+            "ComfyUI Image Seamless Texture node 45: 0.7",
+        )
+        self.assertEqual(
+            proxy._history_terminal_state(job),
+            ("failed", "ComfyUI Image Seamless Texture node 45: 0.7"),
+        )
+        self.assertEqual(proxy._job_status_from_history(job), ("failed", 100))
+
+    def test_error_status_without_payload_is_terminal_failure(self) -> None:
+        job = {
+            "status": {
+                "completed": False,
+                "status_str": "error",
+                "messages": [],
+            },
+            "outputs": {},
+        }
+
+        self.assertEqual(proxy._comfy_execution_error_message(job), "ComfyUI execution failed")
+        self.assertEqual(proxy._history_terminal_state(job), ("failed", "ComfyUI execution failed"))
 
 
 if __name__ == "__main__":
