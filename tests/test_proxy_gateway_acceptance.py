@@ -536,6 +536,43 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
         # test is *acceptance*, not happy-path success.
         self.assertNotEqual(response.status_code, 400, response.body)
 
+    async def test_seed_extension_reaches_generation_batcher_as_fixed_seed(self) -> None:
+        body = {
+            "prompt": "tileable mossy cobblestone",
+            "model": "sdxl-seamless-tile",
+            "size": "512x512",
+            "extensions": {"com.vividfish.workflow": {"seed": 12345}},
+        }
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs):
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 0, "data": []}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy, "configured_downstream_headers", lambda *_a, **_kw: {}
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_request(
+                _StubRequest(body), proxy.NO_AUTH_CONTEXT, receipt=receipt
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured["fixed_seed"], 12345)
+        self.assertEqual(captured["base_workflow"]["8"]["inputs"]["width"], 512)
+        self.assertEqual(captured["base_workflow"]["8"]["inputs"]["height"], 512)
+        self.assertIn("com.vividfish.workflow.seed", receipt.accepted_inputs)
+
 
 # ---------------------------------------------------------------------------
 # Anthropic / Ollama protocol routes mounted + translate via chat forwarder

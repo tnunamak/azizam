@@ -3387,6 +3387,7 @@ async def _generate_images_with_adaptive_batching(
     fallback_workflow_name: Optional[str] = None,
     image_transform: Optional[Callable[[bytes], bytes]] = None,
     image_response_headers: Optional[dict[str, str]] = None,
+    fixed_seed: Optional[int] = None,
 ) -> Response:
     """Submit `ceil(n / max_batch)` rounds and aggregate `n_requested` images.
 
@@ -3454,7 +3455,11 @@ async def _generate_images_with_adaptive_batching(
         # produce different images instead of the same image repeated.
         round_workflow = copy.deepcopy(base_workflow)
         if seed_node and seed_node in round_workflow:
-            round_seed = random.randint(0, 2**32 - 1)
+            round_seed = (
+                (fixed_seed + len(images_collected))
+                if fixed_seed is not None
+                else random.randint(0, 2**32 - 1)
+            )
             inputs = round_workflow[seed_node].get("inputs", {})
             inputs[seed_field] = round_seed
 
@@ -3524,6 +3529,7 @@ async def _generate_images_with_adaptive_batching(
                     background_removal_decision=bypass_decision,
                     image_transform=image_transform,
                     image_response_headers=image_response_headers,
+                    fixed_seed=fixed_seed,
                 )
             return err
 
@@ -3838,6 +3844,11 @@ async def proxy_comfy_request(
     if size_node and size_node in workflow:
         workflow[size_node]["inputs"]["width"] = width
         workflow[size_node]["inputs"]["height"] = height
+    workflow = _apply_manifest_route_inputs(
+        manifest,
+        workflow,
+        {"prompt": prompt, "width": width, "height": height},
+    )
 
     workflow, extension_response = await _apply_workflow_extensions_to_image_request(
         request_body=body,
@@ -3848,6 +3859,7 @@ async def proxy_comfy_request(
     )
     if extension_response is not None:
         return extension_response
+    fixed_seed = _workflow_extension_integer(body, "seed")
 
     fallback_workflow = copy.deepcopy(workflow)
     set_workflow_background_removal(fallback_workflow, meta, False)
@@ -3903,6 +3915,7 @@ async def proxy_comfy_request(
                 background_removal_decision=background_decision,
                 fallback_workflow=fallback_workflow,
                 fallback_workflow_name=workflow_name,
+                fixed_seed=fixed_seed,
             )
     except httpx.TimeoutException:
         return Response(
@@ -7150,6 +7163,19 @@ def _workflow_extensions_present(body: Mapping[str, Any]) -> bool:
     return WORKFLOW_EXTENSION_NAMESPACE in extensions
 
 
+def _workflow_extension_integer(body: Mapping[str, Any], name: str) -> Optional[int]:
+    extensions = body.get("extensions")
+    if not isinstance(extensions, Mapping):
+        return None
+    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    if not isinstance(block, Mapping):
+        return None
+    value = block.get(name)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
 def _image_extension_error_response(
     receipt: RouteReceipt | None,
     message: str,
@@ -7936,14 +7962,68 @@ def _build_role_catalog_entries() -> list[dict]:
     return entries
 
 
+def _workflow_model_entry_created(workflow_artifact: str) -> int:
+    path = Path(workflow_artifact)
+    if not path.is_absolute():
+        path = (Path(__file__).resolve().parent / path).resolve()
+    try:
+        return int(path.stat().st_mtime)
+    except OSError:
+        return int(time.time())
+
+
+def _build_workflow_model_entries(
+    registry: WorkflowRegistry = GATEWAY_WORKFLOW_REGISTRY,
+) -> list[dict]:
+    """Construct OpenAI-shaped model entries for directly invocable workflows.
+
+    The model id is the workflow JSON basename because the image routes load
+    `workflows/images/<model>.json` directly. Keep local paths out of the
+    public payload; gateway-native discovery has the fuller contract.
+    """
+    entries: list[dict] = []
+    for record in registry.records():
+        if not record.intent.startswith("image."):
+            continue
+        bindings = record.manifest.get("bindings")
+        if not isinstance(bindings, dict):
+            continue
+        comfy = bindings.get("comfyui")
+        if not isinstance(comfy, dict):
+            continue
+        workflow_artifact = comfy.get("workflow")
+        if not isinstance(workflow_artifact, str) or not workflow_artifact:
+            continue
+        model_id = Path(workflow_artifact).stem
+        if not model_id:
+            continue
+        entry = {
+            "id": model_id,
+            "object": "model",
+            "created": _workflow_model_entry_created(workflow_artifact),
+            "owned_by": "vivid-fish",
+            "description": str(record.manifest.get("description", "") or ""),
+            "vivid_fish_workflow": True,
+            "vivid_fish_workflow_id": record.id,
+            "vivid_fish_intent": record.intent,
+            "vivid_fish_backend": "comfyui",
+        }
+        version = record.manifest.get("version")
+        if version:
+            entry["vivid_fish_manifest_version"] = str(version)
+        entries.append(entry)
+    return entries
+
+
 @app.get("/v1/models")
 async def list_models(request: Request):
     """OpenAI-compatible model list. Returns:
       1. One entry per role in proxy_config.yml's roles: block (id = role name)
       2. One entry per alias in the optional models: catalog (id = alias)
-      3. The active backend's own /v1/models response (Tabby's catalog, kobold's
+      3. One entry per directly invocable image workflow manifest
+      4. The active backend's own /v1/models response (Tabby's catalog, kobold's
          currently-loaded GGUF metadata)
-      4. The currently-loaded kobold GGUF (filename form only — full-path
+      5. The currently-loaded kobold GGUF (filename form only — full-path
          duplicate dropped; clients should select via role/alias names)
     """
     auth_context = authenticate_request(request, "/v1/models")
@@ -7993,10 +8073,13 @@ async def list_models(request: Request):
         )
     ]
 
-    # Prepend role + catalog entries so they appear at the top of the list.
+    # Prepend role/catalog and workflow entries so they appear at the top of
+    # the list. Workflow entries let OpenAI-shaped image clients discover ids
+    # such as `sdxl-seamless-tile` without knowing the gateway manifest API.
     role_entries = _build_role_catalog_entries()
+    workflow_entries = _build_workflow_model_entries()
     existing_ids = {item.get("id") for item in data if isinstance(item, dict)}
-    for entry in role_entries:
+    for entry in role_entries + workflow_entries:
         if entry["id"] not in existing_ids:
             data.insert(0, entry)
             existing_ids.add(entry["id"])

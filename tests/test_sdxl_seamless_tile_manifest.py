@@ -1,0 +1,271 @@
+"""Contract tests for the SDXL seamless tile generation workflow."""
+
+from __future__ import annotations
+
+import copy
+import json
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import proxy  # noqa: E402
+from gateway.discovery import WorkflowRegistry  # noqa: E402
+from gateway.extension_catalog import summarize_extensions  # noqa: E402
+from gateway.image_extensions import (  # noqa: E402
+    STANDARD_IMAGE_GENERATE_FIELDS,
+    WORKFLOW_EXTENSION_NAMESPACE,
+    bind_workflow_extensions,
+    resolve_workflow_extensions,
+)
+from gateway.manifests import (  # noqa: E402
+    apply_backend_binding,
+    load_workflow_manifest,
+    manifest_identity,
+    validate_inputs,
+)
+
+
+NS = WORKFLOW_EXTENSION_NAMESPACE
+MANIFEST_PATH = ROOT / "manifests/workflows/sdxl-seamless-tile.yml"
+WORKFLOW_PATH = ROOT / "workflows/images/sdxl-seamless-tile.json"
+
+EXTENSION_INPUTS = (
+    "steps",
+    "guidance",
+    "seed",
+    "batch_size",
+    "negative_prompt",
+    "sampler",
+    "scheduler",
+    "seam_blending",
+)
+
+
+def _load_workflow() -> dict[str, object]:
+    return json.loads(WORKFLOW_PATH.read_text(encoding="utf-8"))
+
+
+class TestSdxlSeamlessTileManifest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.manifest = load_workflow_manifest(MANIFEST_PATH)
+
+    def test_identity_and_declared_inputs(self) -> None:
+        identity = manifest_identity(self.manifest)
+
+        self.assertEqual(identity.id, "image.generate.sdxl-seamless-tile")
+        self.assertEqual(identity.version, "0.1.0")
+        self.assertTrue(identity.trusted)
+        self.assertEqual(self.manifest["intent"], "image.generate")
+        self.assertEqual(
+            set(self.manifest["inputs"]),
+            {
+                "prompt",
+                "width",
+                "height",
+                "steps",
+                "guidance",
+                "seed",
+                "batch_size",
+                "negative_prompt",
+                "sampler",
+                "scheduler",
+                "seam_blending",
+            },
+        )
+
+    def test_manifest_targets_existing_workflow_nodes(self) -> None:
+        workflow = _load_workflow()
+        mapping = self.manifest["bindings"]["comfyui"]["map"]
+
+        self.assertEqual(set(mapping), set(self.manifest["inputs"]))
+        for entries in mapping.values():
+            self.assertIsInstance(entries, list)
+            self.assertGreater(len(entries), 0)
+            for entry in entries:
+                node = entry["node"]
+                input_name = entry["input"]
+                self.assertIn(node, workflow)
+                self.assertIn(input_name, workflow[node]["inputs"])
+
+    def test_inputs_bind_to_texture_workflow_controls(self) -> None:
+        workflow = _load_workflow()
+        original = copy.deepcopy(workflow)
+
+        result = validate_inputs(
+            self.manifest,
+            {
+                "prompt": "hand-painted underwater basalt floor tile",
+                "width": 768,
+                "height": 768,
+                "steps": 32,
+                "guidance": 6.5,
+                "seed": 4242,
+                "batch_size": 2,
+                "negative_prompt": "straight lines, text, border",
+                "sampler": "dpmpp_2m_sde",
+                "scheduler": "karras",
+                "seam_blending": 0.55,
+            },
+        )
+        self.assertTrue(result.ok, result.rejected)
+
+        mutated = apply_backend_binding(self.manifest, "comfyui", workflow, result.accepted)
+
+        self.assertEqual(workflow, original)
+        self.assertEqual(mutated["6"]["inputs"]["text"], "hand-painted underwater basalt floor tile")
+        self.assertEqual(mutated["27"]["inputs"]["width"], 768)
+        self.assertEqual(mutated["27"]["inputs"]["height"], 768)
+        self.assertEqual(mutated["27"]["inputs"]["batch_size"], 2)
+        self.assertEqual(mutated["8"]["inputs"]["width"], 768)
+        self.assertEqual(mutated["8"]["inputs"]["height"], 768)
+        self.assertEqual(mutated["31"]["inputs"]["steps"], 32)
+        self.assertEqual(mutated["31"]["inputs"]["cfg"], 6.5)
+        self.assertEqual(mutated["31"]["inputs"]["seed"], 4242)
+        self.assertEqual(mutated["31"]["inputs"]["sampler_name"], "dpmpp_2m_sde")
+        self.assertEqual(mutated["31"]["inputs"]["scheduler"], "karras")
+        self.assertEqual(mutated["33"]["inputs"]["text"], "straight lines, text, border")
+        self.assertEqual(mutated["45"]["inputs"]["blending"], 0.55)
+
+    def test_invalid_controls_are_rejected(self) -> None:
+        result = validate_inputs(
+            self.manifest,
+            {
+                "prompt": "x",
+                "sampler": "not-a-sampler",
+                "scheduler": "not-a-scheduler",
+                "seam_blending": 1.7,
+            },
+        )
+
+        self.assertIn("sampler", result.rejected)
+        self.assertIn("scheduler", result.rejected)
+        self.assertIn("seam_blending", result.rejected)
+
+
+class TestSdxlSeamlessTileExtensionContract(unittest.TestCase):
+    def setUp(self) -> None:
+        self.manifest = load_workflow_manifest(MANIFEST_PATH)
+
+    def test_standard_generate_fields_remain_route_owned(self) -> None:
+        body = {
+            "prompt": "mossy stone floor",
+            "model": "sdxl-seamless-tile",
+            "n": 1,
+            "size": "1024x1024",
+            "extensions": {
+                NS: {
+                    "steps": 28,
+                    "guidance": 6.5,
+                    "negative_prompt": "text, logo, seam",
+                    "seam_blending": 0.45,
+                }
+            },
+        }
+
+        result = bind_workflow_extensions(
+            body,
+            self.manifest,
+            "comfyui",
+            _load_workflow(),
+            supported_names=EXTENSION_INPUTS,
+            standard_fields=STANDARD_IMAGE_GENERATE_FIELDS,
+        )
+
+        self.assertTrue(result.ok, (result.unknown_top_level, result.validation.rejected))
+        assert result.request is not None
+        self.assertEqual(result.request["31"]["inputs"]["steps"], 28)
+        self.assertEqual(result.request["31"]["inputs"]["cfg"], 6.5)
+        self.assertEqual(result.request["33"]["inputs"]["text"], "text, logo, seam")
+        self.assertEqual(result.request["45"]["inputs"]["blending"], 0.45)
+
+    def test_width_height_are_route_owned_not_extension_applied(self) -> None:
+        body = {
+            "prompt": "x",
+            "extensions": {NS: {"width": 512, "height": 512}},
+        }
+
+        result = resolve_workflow_extensions(
+            body,
+            self.manifest,
+            supported_names=EXTENSION_INPUTS,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.ignored,
+            {
+                "width": "input not supported by current binding",
+                "height": "input not supported by current binding",
+            },
+        )
+
+    def test_controlnet_tile_controls_are_not_exposed_until_backed(self) -> None:
+        body = {
+            "prompt": "x",
+            "extensions": {
+                NS: {
+                    "control_image": {"multipart_field": "control_image"},
+                    "controlnet_strength": 0.75,
+                }
+            },
+        }
+
+        result = resolve_workflow_extensions(
+            body,
+            self.manifest,
+            supported_names=EXTENSION_INPUTS,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.rejected,
+            {
+                "control_image": "unknown input",
+                "controlnet_strength": "unknown input",
+            },
+        )
+
+    def test_discovery_exposes_only_extension_owned_tile_controls(self) -> None:
+        registry = WorkflowRegistry.from_directory(ROOT / "manifests/workflows")
+
+        catalog = summarize_extensions(registry, audience="client")
+        workflow_targets = [
+            workflow
+            for extension in catalog["extensions"]
+            if extension["namespace"] == NS
+            for route in extension["routes"]
+            if route["route"] == "/v1/images/generations"
+            for target in route["targets"]
+            for workflow in target["workflows"]
+            if workflow["id"] == "image.generate.sdxl-seamless-tile"
+        ]
+
+        self.assertEqual(len(workflow_targets), 1)
+        self.assertEqual(set(workflow_targets[0]["controls"]), set(EXTENSION_INPUTS))
+
+
+class TestSdxlSeamlessTileModelDiscovery(unittest.TestCase):
+    def test_openai_models_entry_is_directly_invocable_and_path_safe(self) -> None:
+        entries = proxy._build_workflow_model_entries()
+        by_id = {entry["id"]: entry for entry in entries}
+
+        self.assertIn("sdxl-seamless-tile", by_id)
+        tile = by_id["sdxl-seamless-tile"]
+        self.assertEqual(tile["object"], "model")
+        self.assertEqual(tile["owned_by"], "vivid-fish")
+        self.assertTrue(tile["vivid_fish_workflow"])
+        self.assertEqual(tile["vivid_fish_workflow_id"], "image.generate.sdxl-seamless-tile")
+        self.assertEqual(tile["vivid_fish_intent"], "image.generate")
+        self.assertEqual(tile["vivid_fish_backend"], "comfyui")
+
+        rendered = json.dumps(tile, sort_keys=True)
+        self.assertNotIn("/home/", rendered)
+        self.assertNotIn("/media/", rendered)
+        self.assertNotIn("workflows/images/sdxl-seamless-tile.json", rendered)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

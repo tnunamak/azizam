@@ -1,0 +1,103 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.generate.sdxl-seamless-tile
+intent: image.generate
+display_name: SDXL Seamless Tile
+description: Portable image generation contract for SDXL texture tiles with manifest-backed seamless postprocessing controls.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  width:
+    type: integer
+    minimum: 64
+    maximum: 2048
+  height:
+    type: integer
+    minimum: 64
+    maximum: 2048
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 100
+  guidance:
+    type: number
+    minimum: 0
+    maximum: 20
+  seed:
+    type: integer
+    minimum: 0
+  batch_size:
+    type: integer
+    minimum: 1
+    maximum: 8
+  negative_prompt:
+    type: string
+  sampler:
+    type: string
+    enum:
+      - euler
+      - euler_ancestral
+      - dpmpp_2m
+      - dpmpp_2m_sde
+      - dpmpp_sde
+      - uni_pc
+  scheduler:
+    type: string
+    enum:
+      - karras
+      - normal
+      - simple
+      - sgm_uniform
+      - beta
+  seam_blending:
+    type: number
+    minimum: 0
+    maximum: 1
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/sdxl-seamless-tile.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      width:
+        - node: "27"
+          input: width
+        - node: "8"
+          input: width
+      height:
+        - node: "27"
+          input: height
+        - node: "8"
+          input: height
+      steps:
+        - node: "31"
+          input: steps
+      guidance:
+        - node: "31"
+          input: cfg
+      seed:
+        - node: "31"
+          input: seed
+      batch_size:
+        - node: "27"
+          input: batch_size
+      negative_prompt:
+        - node: "33"
+          input: text
+      sampler:
+        - node: "31"
+          input: sampler_name
+      scheduler:
+        - node: "31"
+          input: scheduler
+      seam_blending:
+        - node: "45"
+          input: blending

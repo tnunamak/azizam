@@ -105,8 +105,35 @@ inspect or print `proxy_api_keys.yml`.
 ## Workflow Control Examples
 
 Workflow knobs live under `extensions.com.vividfish.workflow`; standard API
-fields such as `model`, `prompt`, `size`, `duration`, `seconds`, `seed`, and
-image-edit `mask` stay top-level.
+fields such as `model`, `prompt`, `size`, `duration`, `seconds`, and
+image-edit `mask` stay top-level. Route-native `seed` stays top-level on
+audio/video; image workflow seeds are manifest-backed extensions.
+
+Image generation seamless tile:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/generations \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "sdxl-seamless-tile",
+    "prompt": "hand-painted underwater basalt floor texture, game asset, tileable",
+    "size": "1024x1024",
+    "n": 1,
+    "response_format": "b64_json",
+    "extensions": {
+      "com.vividfish.workflow": {
+        "steps": 28,
+        "guidance": 7.0,
+        "seed": 4242,
+        "negative_prompt": "text, logo, watermark, frame, border, visible seam",
+        "sampler": "dpmpp_2m",
+        "scheduler": "karras",
+        "seam_blending": 0.4
+      }
+    }
+  }'
+```
 
 Image edit denoise:
 
