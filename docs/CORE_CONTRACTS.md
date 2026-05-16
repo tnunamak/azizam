@@ -347,6 +347,12 @@ controls) belong under namespaced request extensions
 passthrough remains opt-in, scoped per profile, and is not a blanket ComfyUI
 DSL.
 
+OpenAI-native media fields remain top-level even when the local backend needs
+adapter work. For example, `/v1/images/edits` receives `image` and `mask` as
+standard multipart fields. The route may normalize and bind those assets to a
+workflow or apply a documented preservation fallback, but `mask` is not a
+workflow extension.
+
 This is the bridge between authentication, routing, credential provisioning,
 and user-facing compatibility.
 

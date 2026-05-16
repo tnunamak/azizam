@@ -30,7 +30,7 @@ The live discovery contract is:
 | API | Extension Target | Current State | Notes |
 |---|---|---|---|
 | `POST /v1/images/generations` | `extensions.com.vividfish.workflow` | Implemented | Binds manifest controls such as `steps`, `guidance`, `seed`, and `batch_size`. Unknown top-level workflow controls are rejected. |
-| `POST /v1/images/edits` | `extensions.com.vividfish.workflow` | Implemented | Binds `steps`, `guidance`, and `denoise` for `flux2-klein-4b-edit`. ControlNet is not exposed until a real ControlNet workflow and model are present. |
+| `POST /v1/images/edits` | `extensions.com.vividfish.workflow` | Implemented | Binds `steps`, `guidance`, and `denoise` for `flux2-klein-4b-edit`. Top-level `mask` is a standard OpenAI multipart field, not an extension; the current Flux2 edit workflow preserves unmasked pixels with a post-composite mask fallback unless a native mask-bound workflow is selected. ControlNet is not exposed until a real ControlNet workflow and model are present. |
 | `POST /v1/audio/generate` | `extensions.com.vividfish.workflow` | Implemented | TangoFlux accepts namespaced `steps`, `guidance`, and `batch_size`; standard `duration` and `seed` stay top-level. |
 | `POST /v1/videos` | `extensions.com.vividfish.workflow` | Implemented | LTX 2.3 distilled accepts namespaced `steps`, `stage1_cfg`, and `stage2_cfg`; standard `size`, `seconds`, `seed`, prompt, and image-reference fields stay top-level. |
 | `POST /v1/chat/completions` | `extensions.com.vividfish.chat`, `extensions.com.vividfish.routing` | Proposed | Candidate controls: local sampler extras, backend role hints, prompt-cache preferences, fallback preference, receipt verbosity. |
@@ -55,7 +55,7 @@ These should not be extensions:
 `tool_choice`, `response_format`, `text.format`, `reasoning`, `metadata`,
 `stream`, `temperature`, `top_p`, `max_tokens`, `max_output_tokens`, `stop`,
 `n`, `size`, `quality`, `style`, `background`, `voice`, `speed`, `format`,
-and multipart file fields.
+and multipart file fields such as image-edit `image` and `mask`.
 
 ## Implementation Standard
 

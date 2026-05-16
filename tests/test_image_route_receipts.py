@@ -5,6 +5,8 @@ These exercise pure helpers only — no FastAPI client, no ComfyUI, no IO.
 
 from __future__ import annotations
 
+import io
+import json
 import sys
 import unittest
 from dataclasses import dataclass
@@ -12,11 +14,33 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from fastapi import Response
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
+
+
+def _png_bytes(color: tuple[int, int, int, int], size: tuple[int, int] = (2, 1)) -> bytes:
+    from PIL import Image
+
+    image = Image.new("RGBA", size, color)
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _image_pixels(content: bytes) -> list[tuple[int, int, int, int]]:
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(content)).convert("RGBA")
+    return [
+        image.getpixel((x, y))
+        for y in range(image.height)
+        for x in range(image.width)
+    ]
 
 
 def _identity(name: str) -> proxy.AuthIdentity:
@@ -173,6 +197,82 @@ class TestRecordImageInput(unittest.TestCase):
         proxy._record_image_input(receipt, "model", rejected_reason="model_incompatible")
         self.assertNotIn("model", receipt.accepted_inputs)
         self.assertEqual(receipt.rejected_inputs["model"], "model_incompatible")
+
+
+class TestImageEditMaskSemantics(unittest.TestCase):
+    def test_alpha_mask_matches_openai_edit_semantics(self) -> None:
+        from PIL import Image
+
+        source = _png_bytes((255, 0, 0, 255))
+        generated = _png_bytes((0, 0, 255, 255))
+        # Transparent left pixel edits; opaque right pixel preserves.
+        mask = Image.new("RGBA", (2, 1), (0, 0, 0, 255))
+        mask.putpixel((0, 0), (0, 0, 0, 0))
+        output = io.BytesIO()
+        mask.save(output, format="PNG")
+
+        context, error = proxy._prepare_image_edit_mask_context(
+            source_image_content=source,
+            mask_content=output.getvalue(),
+        )
+
+        self.assertIsNone(error)
+        assert context is not None
+        self.assertEqual(context.mask_mode, "alpha")
+        composited = proxy._apply_image_edit_mask_composite(context, generated)
+        self.assertEqual(
+            _image_pixels(composited),
+            [(0, 0, 255, 255), (255, 0, 0, 255)],
+        )
+
+    def test_grayscale_mask_uses_white_as_edit_region(self) -> None:
+        from PIL import Image
+
+        source = _png_bytes((255, 0, 0, 255))
+        generated = _png_bytes((0, 0, 255, 255))
+        mask = Image.new("L", (2, 1), 0)
+        mask.putpixel((0, 0), 255)
+        output = io.BytesIO()
+        mask.save(output, format="PNG")
+
+        context, error = proxy._prepare_image_edit_mask_context(
+            source_image_content=source,
+            mask_content=output.getvalue(),
+        )
+
+        self.assertIsNone(error)
+        assert context is not None
+        self.assertEqual(context.mask_mode, "grayscale")
+        composited = proxy._apply_image_edit_mask_composite(context, generated)
+        self.assertEqual(
+            _image_pixels(composited),
+            [(0, 0, 255, 255), (255, 0, 0, 255)],
+        )
+
+    def test_mask_dimension_mismatch_is_rejected(self) -> None:
+        context, error = proxy._prepare_image_edit_mask_context(
+            source_image_content=_png_bytes((255, 0, 0, 255), size=(2, 1)),
+            mask_content=_png_bytes((0, 0, 0, 255), size=(1, 1)),
+        )
+
+        self.assertIsNone(context)
+        assert error is not None
+        self.assertEqual(error.status_code, 400)
+        body = json.loads(error.body)
+        self.assertEqual(body["error"]["param"], "mask")
+        self.assertEqual(body["error"]["code"], "invalid_mask_dimensions")
+
+    def test_inpaint_workflow_is_preferred_only_when_it_exists(self) -> None:
+        with patch.object(proxy, "load_comfy_workflow", lambda name: {"ok": True} if name.endswith("-inpaint") else None):
+            self.assertEqual(
+                proxy._prefer_inpaint_workflow_for_mask("flux2-klein-4b-edit"),
+                "flux2-klein-4b-inpaint",
+            )
+        with patch.object(proxy, "load_comfy_workflow", lambda _name: None):
+            self.assertEqual(
+                proxy._prefer_inpaint_workflow_for_mask("flux2-klein-4b-edit"),
+                "flux2-klein-4b-edit",
+            )
 
 
 class TestAttachImageManifest(unittest.TestCase):
@@ -354,6 +454,195 @@ class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any("unknown_model" in r for r in receipt.fallback_reasons),
             receipt.fallback_reasons,
+        )
+
+
+class _MultipartUpload:
+    def __init__(self, filename: str, content: bytes) -> None:
+        self.filename = filename
+        self._content = content
+
+    async def read(self) -> bytes:
+        return self._content
+
+
+class _MultipartForm:
+    def __init__(self, items: list[tuple[str, Any]]) -> None:
+        self._items = items
+
+    def multi_items(self) -> list[tuple[str, Any]]:
+        return list(self._items)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        for item_key, value in self._items:
+            if item_key == key:
+                return value
+        return default
+
+
+class _MultipartRequest:
+    def __init__(self, items: list[tuple[str, Any]]) -> None:
+        self._form = _MultipartForm(items)
+
+    async def form(self) -> _MultipartForm:
+        return self._form
+
+
+class _UploadResponse:
+    status_code = 200
+    text = "ok"
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def json(self) -> dict[str, str]:
+        return {"name": self._name}
+
+
+class _FakeAsyncClient:
+    uploads = 0
+    upload_files: list[dict[str, Any]] = []
+
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> "_FakeAsyncClient":
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+    async def post(self, *_args: Any, **_kwargs: Any) -> _UploadResponse:
+        type(self).uploads += 1
+        type(self).upload_files.append(_kwargs.get("files") or {})
+        return _UploadResponse(f"uploaded-{type(self).uploads}.png")
+
+
+class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
+    async def test_multipart_mask_uses_post_composite_when_workflow_has_no_mask_binding(self) -> None:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest(
+            [
+                ("prompt", "replace the left pixel"),
+                ("model", "flux2-klein-4b-edit"),
+                ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
+                ("mask", _MultipartUpload("mask.png", _png_bytes((0, 0, 0, 0)))),
+            ]
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("mask", receipt.accepted_inputs)
+        self.assertEqual(captured["image_response_headers"]["X-Image-Mask"], "post-composite")
+        self.assertEqual(captured["image_response_headers"]["X-Image-Mask-Source"], "alpha")
+        self.assertTrue(callable(captured["image_transform"]))
+        self.assertEqual(_FakeAsyncClient.uploads, 1)
+
+    async def test_workflow_mask_binding_uploads_normalized_mask(self) -> None:
+        from PIL import Image
+
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        mask = Image.new("RGBA", (2, 1), (0, 0, 0, 255))
+        mask.putpixel((0, 0), (0, 0, 0, 0))
+        mask_output = io.BytesIO()
+        mask.save(mask_output, format="PNG")
+        request = _MultipartRequest(
+            [
+                ("prompt", "replace the left pixel"),
+                ("model", "flux2-klein-4b-edit"),
+                ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
+                ("mask", _MultipartUpload("mask.png", mask_output.getvalue())),
+            ]
+        )
+        captured: dict[str, Any] = {}
+        bound_inputs: dict[str, Any] = {}
+
+        class _BindingResult:
+            def __init__(self, request_body: dict[str, Any]) -> None:
+                self.request = request_body
+
+        def fake_bind(_manifest: Any, _backend: str, request_body: dict[str, Any], accepted: dict[str, Any]) -> _BindingResult:
+            bound_inputs.update(accepted)
+            return _BindingResult(request_body)
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "_manifest_route_managed_mask_input",
+            lambda _manifest: "source_mask",
+        ), patch.object(
+            proxy,
+            "bind_backend_request",
+            fake_bind,
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(_FakeAsyncClient.uploads, 2)
+        self.assertEqual(bound_inputs, {"source_mask": "uploaded-2.png"})
+        self.assertEqual(captured["image_response_headers"]["X-Image-Mask"], "workflow")
+        self.assertEqual(captured["image_response_headers"]["X-Image-Mask-Source"], "alpha")
+        self.assertIsNone(captured["image_transform"])
+        mask_file_tuple = _FakeAsyncClient.upload_files[1]["image"]
+        self.assertEqual(mask_file_tuple[0], "normalized-mask.png")
+        normalized_pixels = _image_pixels(mask_file_tuple[1])
+        self.assertEqual(
+            [pixel[0] for pixel in normalized_pixels],
+            [255, 0],
         )
 
 

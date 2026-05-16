@@ -105,8 +105,8 @@ inspect or print `proxy_api_keys.yml`.
 ## Workflow Control Examples
 
 Workflow knobs live under `extensions.com.vividfish.workflow`; standard API
-fields such as `model`, `prompt`, `size`, `duration`, `seconds`, and `seed`
-stay top-level.
+fields such as `model`, `prompt`, `size`, `duration`, `seconds`, `seed`, and
+image-edit `mask` stay top-level.
 
 Image edit denoise:
 
@@ -118,6 +118,23 @@ curl -s http://127.0.0.1:5000/v1/images/edits \
   -F image=@input.png \
   -F 'extensions={"com.vividfish.workflow":{"denoise":0.42,"steps":24,"guidance":3.5}}'
 ```
+
+Image edit mask:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/edits \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -F model=flux2-klein-4b-edit \
+  -F prompt='replace only the masked area with coral texture' \
+  -F image=@input.png \
+  -F mask=@mask.png
+```
+
+`mask` is the standard OpenAI multipart field, not a workflow extension. Alpha
+masks use OpenAI polarity: transparent edits, opaque preserves. Grayscale masks
+use white to edit and black to preserve. The current Flux2 edit workflow has no
+native inpaint node, so the proxy preserves unmasked pixels with a documented
+post-composite fallback unless a native mask-bound workflow is selected.
 
 TangoFlux audio generation:
 

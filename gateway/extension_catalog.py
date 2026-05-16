@@ -27,7 +27,17 @@ _WORKFLOW_ROUTES = (
 
 _ROUTE_MANAGED_WORKFLOW_INPUTS: dict[str, frozenset[str]] = {
     "image.generate": frozenset({"prompt", "source_image", "width", "height"}),
-    "image.edit": frozenset({"prompt", "source_image", "width", "height"}),
+    "image.edit": frozenset(
+        {
+            "prompt",
+            "source_image",
+            "width",
+            "height",
+            "mask",
+            "source_mask",
+            "mask_asset",
+        }
+    ),
     "audio.generate": ROUTE_MANAGED_AUDIO_INPUTS,
     "video.generate": ROUTE_MANAGED_VIDEO_INPUTS,
 }

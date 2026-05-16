@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 import httpx
 import yaml
@@ -81,6 +81,7 @@ from gateway.image_extensions import (
 )
 from gateway.manifests import (
     ManifestError,
+    bind_backend_request,
     load_workflow_manifest,
     manifest_identity,
 )
@@ -3384,6 +3385,8 @@ async def _generate_images_with_adaptive_batching(
     background_removal_decision: Optional[ImageBackgroundRemovalDecision] = None,
     fallback_workflow: Optional[dict] = None,
     fallback_workflow_name: Optional[str] = None,
+    image_transform: Optional[Callable[[bytes], bytes]] = None,
+    image_response_headers: Optional[dict[str, str]] = None,
 ) -> Response:
     """Submit `ceil(n / max_batch)` rounds and aggregate `n_requested` images.
 
@@ -3519,6 +3522,8 @@ async def _generate_images_with_adaptive_batching(
                     response_format=response_format,
                     headers=headers,
                     background_removal_decision=bypass_decision,
+                    image_transform=image_transform,
+                    image_response_headers=image_response_headers,
                 )
             return err
 
@@ -3639,9 +3644,26 @@ async def _generate_images_with_adaptive_batching(
             f"requested n={n_requested} but produced {len(images_collected)} after {rounds_run} round(s)"
         )
 
+    if image_transform is not None:
+        try:
+            images_collected = [image_transform(raw) for raw in images_collected]
+        except Exception as e:
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": f"Image post-processing failed: {e}",
+                        "type": "api_error",
+                    }
+                }),
+                status_code=502,
+                media_type="application/json",
+            )
+
     if warnings:
         # Single header, comma-joined per RFC 7234. Visible to the client.
         response_headers["X-Proxy-Warning"] = "; ".join(warnings)
+    if image_response_headers:
+        response_headers.update(image_response_headers)
     response_headers["X-Image-Rounds"] = str(rounds_run)
     response_headers["X-Image-Returned"] = str(len(images_collected))
     if background_removal_decision is not None:
@@ -4037,8 +4059,10 @@ async def proxy_comfy_edit_request(
         )
     _record_image_input(receipt, "prompt")
 
-    if not model.endswith("-edit"):
+    if not (str(model).endswith("-edit") or str(model).endswith("-inpaint")):
         model = f"{model}-edit"
+    if mask_file:
+        model = _prefer_inpaint_workflow_for_mask(str(model))
 
     if receipt is not None:
         receipt.resolved_model = str(model) if model is not None else None
@@ -4056,6 +4080,18 @@ async def proxy_comfy_edit_request(
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
             image_content = await image_file.read()
+            mask_content = await mask_file.read() if mask_file else None
+            mask_context: ImageEditMaskContext | None = None
+            if mask_content is not None:
+                mask_context, mask_error = _prepare_image_edit_mask_context(
+                    source_image_content=image_content,
+                    mask_content=mask_content,
+                )
+                if mask_error is not None:
+                    _record_image_input(receipt, "mask", rejected_reason="invalid_mask")
+                    return mask_error
+                _record_image_input(receipt, "mask")
+
             files = {"image": (image_file.filename or "input.png", image_content, "image/png")}
             upload_resp = await client.post(f"{COMFY_HOST}/upload/image", headers=headers, files=files)
 
@@ -4138,6 +4174,37 @@ async def proxy_comfy_edit_request(
             if image_node and image_node in workflow:
                 workflow[image_node]["inputs"]["image"] = uploaded_filename
 
+            mask_input_name = _manifest_route_managed_mask_input(manifest)
+            mask_uses_workflow = False
+            if mask_context is not None and mask_input_name and mask_content is not None:
+                mask_files = {"image": ("normalized-mask.png", mask_context.edit_mask, "image/png")}
+                mask_upload_resp = await client.post(
+                    f"{COMFY_HOST}/upload/image",
+                    headers=headers,
+                    files=mask_files,
+                )
+                if mask_upload_resp.status_code != 200:
+                    return Response(
+                        content=json.dumps({"error": {"message": f"Mask upload failed: {mask_upload_resp.text}", "type": "api_error"}}),
+                        status_code=502,
+                        media_type="application/json"
+                    )
+                mask_upload_result = mask_upload_resp.json()
+                uploaded_mask_filename = mask_upload_result.get("name")
+                if not uploaded_mask_filename:
+                    return Response(
+                        content=json.dumps({"error": {"message": "No mask filename returned from upload", "type": "api_error"}}),
+                        status_code=502,
+                        media_type="application/json"
+                    )
+                workflow = bind_backend_request(
+                    manifest,
+                    "comfyui",
+                    workflow,
+                    {mask_input_name: uploaded_mask_filename},
+                ).request
+                mask_uses_workflow = True
+
             # Set size on Flux2Scheduler and EmptyFlux2LatentImage nodes.
             # V2 workflows use node 48 for scheduler and 47 for empty latent.
             for node_id in ["47", "48", size_node]:
@@ -4156,6 +4223,19 @@ async def proxy_comfy_edit_request(
             )
             if extension_response is not None:
                 return extension_response
+
+            image_transform: Optional[Callable[[bytes], bytes]] = None
+            image_response_headers: dict[str, str] = {}
+            if mask_context is not None:
+                if mask_uses_workflow:
+                    image_response_headers["X-Image-Mask"] = "workflow"
+                    image_response_headers["X-Image-Mask-Source"] = mask_context.mask_mode
+                else:
+                    image_transform = lambda raw: _apply_image_edit_mask_composite(mask_context, raw)
+                    image_response_headers["X-Image-Mask"] = "post-composite"
+                    image_response_headers["X-Image-Mask-Source"] = mask_context.mask_mode
+                    if receipt is not None:
+                        receipt.add_warning("mask_mode:post_composite")
 
             fallback_workflow = copy.deepcopy(workflow)
             set_workflow_background_removal(fallback_workflow, meta, False)
@@ -4215,6 +4295,8 @@ async def proxy_comfy_edit_request(
                 background_removal_decision=background_decision,
                 fallback_workflow=fallback_workflow,
                 fallback_workflow_name=workflow_name,
+                image_transform=image_transform,
+                image_response_headers=image_response_headers,
             )
 
     except httpx.TimeoutException:
@@ -6645,6 +6727,142 @@ def _policy_denied_response(decision: PolicyDecision) -> Response:
 
 
 _SAFE_IMAGE_INPUT_NAMES = ("model", "size", "n", "response_format", "background", "prompt", "image")
+_MASK_ROUTE_MANAGED_MANIFEST_INPUTS = ("source_mask", "mask_asset", "mask")
+
+
+@dataclass(frozen=True)
+class ImageEditMaskContext:
+    source_image: bytes
+    edit_mask: bytes
+    source_size: tuple[int, int]
+    mask_mode: str
+
+
+def _image_error_response(message: str, *, param: str, code: str) -> Response:
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": message,
+                "type": "invalid_request_error",
+                "param": param,
+                "code": code,
+            }
+        }),
+        status_code=400,
+        media_type="application/json",
+    )
+
+
+def _open_image_for_route(content: bytes, *, param: str):
+    try:
+        from PIL import Image
+        import io
+
+        image = Image.open(io.BytesIO(content))
+        image.load()
+        return image, None
+    except Exception:
+        return None, _image_error_response(
+            f"{param} must be a valid image file",
+            param=param,
+            code="invalid_image",
+        )
+
+
+def _edit_mask_from_image(mask_image) -> tuple[Any, str]:
+    """Return an L mask where white means "take generated pixels"."""
+    if "A" in mask_image.getbands():
+        alpha = mask_image.getchannel("A")
+        return alpha.point(lambda value: 255 - value), "alpha"
+    return mask_image.convert("L"), "grayscale"
+
+
+def _prepare_image_edit_mask_context(
+    *,
+    source_image_content: bytes,
+    mask_content: bytes,
+) -> tuple[ImageEditMaskContext | None, Response | None]:
+    source_image, source_error = _open_image_for_route(
+        source_image_content,
+        param="image",
+    )
+    if source_error is not None:
+        return None, source_error
+
+    mask_image, mask_error = _open_image_for_route(mask_content, param="mask")
+    if mask_error is not None:
+        return None, mask_error
+
+    if mask_image.size != source_image.size:
+        return None, _image_error_response(
+            "mask must have the same dimensions as image",
+            param="mask",
+            code="invalid_mask_dimensions",
+        )
+
+    edit_mask, mode = _edit_mask_from_image(mask_image)
+    return (
+        ImageEditMaskContext(
+            source_image=source_image_content,
+            edit_mask=_image_to_png_bytes(edit_mask),
+            source_size=source_image.size,
+            mask_mode=mode,
+        ),
+        None,
+    )
+
+
+def _image_to_png_bytes(image) -> bytes:
+    import io
+
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _apply_image_edit_mask_composite(
+    context: ImageEditMaskContext,
+    generated_content: bytes,
+) -> bytes:
+    from PIL import Image
+    import io
+
+    generated = Image.open(io.BytesIO(generated_content)).convert("RGBA")
+    generated.load()
+    source = Image.open(io.BytesIO(context.source_image)).convert("RGBA")
+    source.load()
+    mask = Image.open(io.BytesIO(context.edit_mask)).convert("L")
+    mask.load()
+
+    if source.size != generated.size:
+        source = source.resize(generated.size, Image.Resampling.LANCZOS)
+    if mask.size != generated.size:
+        mask = mask.resize(generated.size, Image.Resampling.LANCZOS)
+
+    composited = Image.composite(generated, source, mask)
+    return _image_to_png_bytes(composited)
+
+
+def _manifest_route_managed_mask_input(manifest: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(manifest, Mapping):
+        return None
+    inputs = manifest.get("inputs")
+    binding = (manifest.get("bindings") or {}).get("comfyui")
+    mapping = binding.get("map") if isinstance(binding, Mapping) else None
+    if not isinstance(inputs, Mapping) or not isinstance(mapping, Mapping):
+        return None
+    for name in _MASK_ROUTE_MANAGED_MANIFEST_INPUTS:
+        if name in inputs and name in mapping:
+            return name
+    return None
+
+
+def _prefer_inpaint_workflow_for_mask(model: str) -> str:
+    if model.endswith("-inpaint"):
+        return model
+    base = model.removesuffix("-edit")
+    candidate = f"{base}-inpaint"
+    return candidate if load_comfy_workflow(candidate) else model
 
 
 def _attach_image_manifest_if_available(
@@ -6734,7 +6952,13 @@ def _workflow_extension_supported_names(manifest: Mapping[str, Any], backend: st
     # These are already handled by the OpenAI-shaped route itself. Keeping
     # them out of the extension supported set prevents manifest-required
     # portable fields from rejecting normal OpenAI requests.
-    standard_portable_names = {"prompt", "source_image", "width", "height"}
+    standard_portable_names = {
+        "prompt",
+        "source_image",
+        "width",
+        "height",
+        *_MASK_ROUTE_MANAGED_MANIFEST_INPUTS,
+    }
     return tuple(name for name in mapping.keys() if name not in standard_portable_names)
 
 

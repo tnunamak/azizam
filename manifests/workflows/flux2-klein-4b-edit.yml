@@ -1,6 +1,6 @@
 schema_version: 1
 min_gateway_version: "0.1"
-version: "0.2.0"
+version: "0.3.0"
 id: image.edit.flux2-klein-4b
 intent: image.edit
 display_name: Flux2 Klein 4B Edit
@@ -14,6 +14,9 @@ inputs:
   source_image:
     type: asset
     required: true
+  mask:
+    type: asset
+    description: Optional OpenAI image-edit mask. Transparent alpha edits and opaque alpha preserves; grayscale white edits and black preserves. The current Flux2 edit workflow has no native inpaint node, so the gateway applies this as a post-composite preservation mask unless a mask-bound workflow is selected.
   width:
     type: integer
     minimum: 64

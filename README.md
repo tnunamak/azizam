@@ -40,7 +40,7 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `POST /v1/audio/speech` | Voxtral TTS | OpenAI-compatible TTS, voice-mapped |
 | `POST /v1/audio/transcriptions` | Parakeet STT | Multipart audio → transcript |
 | `POST /v1/images/generations` | ComfyUI | Text-to-image (default `flux2-klein-4b`) |
-| `POST /v1/images/edits` | ComfyUI | Image edit; multipart with input image |
+| `POST /v1/images/edits` | ComfyUI | Image edit; multipart with input image and optional top-level OpenAI `mask` |
 | `GET  /v1/images/{id}/content` | proxy cache | Fetch a cached image referenced by a `response_format: "url"` result. Auth-gated; URL is HMAC-signed with a TTL. |
 | `POST /v1/videos` | ComfyUI | Submit video job (Sora-shaped, async) |
 | `GET  /v1/videos/{id}` | ComfyUI | Poll job status (`queued` → `running` → `succeeded`/`failed`) |
