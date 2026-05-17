@@ -2,8 +2,13 @@
 
 Date: 2026-05-15
 
-This document scopes the gateway around the top target users without turning one
-operator's current machine into the product spec.
+This document scopes **Vivid Fish AI Gateway** (the product formerly known as
+`openai-proxy`) around the top target users without turning one operator's
+current machine into the product spec.
+
+Canonical public host: `https://ai.vivid.fish`.
+Compatibility alias: `https://openai.vivid.fish` (kept indefinitely so apps
+already configured against the legacy host keep working).
 
 ## Implementation Status
 
@@ -43,13 +48,26 @@ The core product should optimize for three archetypes:
 The common need across all three is:
 
 ```text
-make existing clients and existing engines work together through one reliable
+make existing apps and existing engines work together through one reliable
 local endpoint, while preserving enough local control to be useful.
 ```
 
 The product should not promote every local trick into core. It should provide
 clear extension points so local tricks can be expressed, tested, and shared when
 they become generally useful.
+
+## Control-Plane Nouns (Brief)
+
+The SLVP control plane has two small noun sets. Detail lives in
+`docs/CORE_CONTRACTS.md`; the short version:
+
+- **Admin plane:** User, ServiceAccount, Credential, AdminRole, AuditEvent.
+- **Runtime plane:** App, Profile, Credential, Capability, Provider, Workflow,
+  Job, Receipt, UsageRecord.
+
+Invariant: every executed request resolves an App + Profile + policy decision
+before it runs, and produces exactly one body-free Receipt. Anything that
+violates that invariant is out of scope for the SLVP.
 
 ## What Belongs In Core
 
