@@ -53,7 +53,10 @@ import responses_store
 import responses_translator
 from gateway import media_jobs, receipt_store
 from gateway.api import create_gateway_router
-from gateway.audio_extensions import bind_audio_workflow_extensions
+from gateway.audio_extensions import (
+    bind_audio_workflow_extensions,
+    detect_unknown_audio_fields,
+)
 from gateway.capabilities import (
     Capability,
     ResourceEstimate,
@@ -9371,8 +9374,11 @@ if not AUDIO_WORKFLOWS_DIR.is_absolute():
     AUDIO_WORKFLOWS_DIR = (Path(__file__).parent / _AUDIO_WORKFLOWS_DIR_CFG).resolve()
 AUDIO_WORKFLOWS_CFG = (_audio_cfg.get("workflows", {}) or {})
 AUDIO_ALIASES = (_audio_cfg.get("aliases", {}) or {})
+_AUDIO_MANIFESTS_DIR = Path(__file__).resolve().parent / "manifests" / "workflows"
 AUDIO_MANIFESTS_BY_WORKFLOW = {
-    "tangoflux": Path(__file__).resolve().parent / "manifests" / "workflows" / "tangoflux.yml",
+    "ace-step-1.5-2b-base": _AUDIO_MANIFESTS_DIR / "ace-step-1.5-2b-base.yml",
+    "ace-step-1.5-xl-turbo": _AUDIO_MANIFESTS_DIR / "ace-step-1.5-xl-turbo.yml",
+    "tangoflux": _AUDIO_MANIFESTS_DIR / "tangoflux.yml",
 }
 
 
@@ -9459,6 +9465,11 @@ async def proxy_audio_generate(request: Request, auth_context):
             status_code=400,
             media_type="application/json"
         )
+
+    unknown_top_level = detect_unknown_audio_fields(body)
+    if unknown_top_level:
+        name, reason = next(iter(unknown_top_level.items()))
+        return _audio_extension_error_response(reason, param=name)
 
     text_fields: dict[str, str | None] = {}
     for field_name in ("prompt", "input", "tags", "lyrics"):

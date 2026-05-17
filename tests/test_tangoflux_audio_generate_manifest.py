@@ -42,10 +42,16 @@ import proxy  # noqa: E402
 
 MANIFEST_PATH = ROOT / "manifests/workflows/tangoflux.yml"
 WORKFLOW_PATH = ROOT / "workflows/audio/tangoflux.json"
+ACE_XL_MANIFEST_PATH = ROOT / "manifests/workflows/ace-step-1.5-xl-turbo.yml"
+ACE_XL_WORKFLOW_PATH = ROOT / "workflows/audio/ace-step-1.5-xl-turbo.json"
 
 
 def _load_workflow() -> dict[str, Any]:
     return json.loads(WORKFLOW_PATH.read_text(encoding="utf-8"))
+
+
+def _load_ace_xl_workflow() -> dict[str, Any]:
+    return json.loads(ACE_XL_WORKFLOW_PATH.read_text(encoding="utf-8"))
 
 
 def _ace_workflow() -> dict[str, Any]:
@@ -430,6 +436,74 @@ class TestAudioGenerateWorkflowExtensions(unittest.TestCase):
         self.assertEqual(result.request["2"]["inputs"]["steps"], original_steps)
 
 
+class TestAceStepAudioGenerateManifest(unittest.TestCase):
+    """ACE-Step exposes route-managed lyrics plus namespaced workflow controls."""
+
+    def setUp(self) -> None:
+        self.manifest = load_workflow_manifest(ACE_XL_MANIFEST_PATH)
+
+    def test_manifest_identity(self) -> None:
+        identity = manifest_identity(self.manifest)
+        self.assertEqual(identity.id, "audio.generate.ace-step-1.5-xl-turbo")
+        self.assertTrue(identity.trusted)
+
+    def test_namespaced_controls_validate_and_bind_to_ace_step(self) -> None:
+        workflow = _load_ace_xl_workflow()
+        original = copy.deepcopy(workflow)
+        body = {
+            "model": "ace-step-1.5-xl-turbo",
+            "tags": "boom bap rap",
+            "lyrics": "[verse]\nhello",
+            "duration": 12,
+            "extensions": {
+                WORKFLOW_EXTENSION_NAMESPACE: {
+                    "bpm": 92,
+                    "temperature": 0.72,
+                    "steps": 36,
+                    "sampler": "er_sde",
+                    "denoise": 0.95,
+                }
+            },
+        }
+
+        result = bind_audio_workflow_extensions(
+            body,
+            self.manifest,
+            "comfyui",
+            workflow,
+        )
+
+        self.assertTrue(result.ok, result.validation.rejected)
+        self.assertEqual(workflow, original)
+        self.assertEqual(result.request["5"]["inputs"]["bpm"], 92)
+        self.assertEqual(result.request["5"]["inputs"]["temperature"], 0.72)
+        self.assertEqual(result.request["20"]["inputs"]["steps"], 36)
+        self.assertEqual(result.request["20"]["inputs"]["sampler_name"], "er_sde")
+        self.assertEqual(result.request["20"]["inputs"]["denoise"], 0.95)
+
+    def test_route_managed_lyrics_rejected_inside_extension_block(self) -> None:
+        result = bind_audio_workflow_extensions(
+            {
+                "model": "ace-step-1.5-xl-turbo",
+                "tags": "boom bap rap",
+                "extensions": {
+                    WORKFLOW_EXTENSION_NAMESPACE: {
+                        "lyrics": "wrong level",
+                    }
+                },
+            },
+            self.manifest,
+            "comfyui",
+            _load_ace_xl_workflow(),
+        )
+
+        self.assertEqual(
+            result.validation.rejected,
+            {"lyrics": "lyrics is managed by the standard top-level request field"},
+        )
+        self.assertFalse(result.ok)
+
+
 class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
     async def _call(self, body: dict[str, Any], workflow: dict[str, Any]):
         captured: dict[str, Any] = {}
@@ -527,6 +601,22 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("payload", captured)
             error = json.loads(response.body.decode("utf-8"))["error"]
             self.assertEqual(error["param"], field_name)
+
+    async def test_unknown_top_level_audio_control_is_rejected_before_submit(self) -> None:
+        response, captured = await self._call(
+            {
+                "model": "ace-step-1.5-xl-turbo",
+                "prompt": "x",
+                "steps": 36,
+            },
+            _ace_workflow(),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("payload", captured)
+        error = json.loads(response.body.decode("utf-8"))["error"]
+        self.assertEqual(error["param"], "steps")
+        self.assertIn("extensions.com.vividfish.workflow", error["message"])
 
     def test_unknown_audio_field_detector_accepts_tags_and_lyrics(self) -> None:
         self.assertEqual(

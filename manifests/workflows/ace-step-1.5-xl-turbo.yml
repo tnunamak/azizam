@@ -1,0 +1,135 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: audio.generate.ace-step-1.5-xl-turbo
+intent: audio.generate
+display_name: ACE-Step 1.5 XL Turbo
+description: Portable audio.generate contract bound to the ACE-Step 1.5 XL Turbo ComfyUI workflow.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+  tags:
+    type: string
+  lyrics:
+    type: string
+  duration:
+    type: number
+    minimum: 1
+    maximum: 300
+  seed:
+    type: integer
+    minimum: 0
+  bpm:
+    type: integer
+    minimum: 0
+    maximum: 300
+  timesignature:
+    type: string
+  language:
+    type: string
+  keyscale:
+    type: string
+  cfg_scale:
+    type: number
+    minimum: 0
+    maximum: 20
+  temperature:
+    type: number
+    minimum: 0
+    maximum: 2
+  top_p:
+    type: number
+    minimum: 0
+    maximum: 1
+  top_k:
+    type: integer
+    minimum: 0
+    maximum: 1000
+  min_p:
+    type: number
+    minimum: 0
+    maximum: 1
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 200
+  cfg:
+    type: number
+    minimum: 0
+    maximum: 20
+  sampler:
+    type: string
+  scheduler:
+    type: string
+  denoise:
+    type: number
+    minimum: 0
+    maximum: 1
+outputs:
+  audio:
+    media_type: audio/wav
+bindings:
+  comfyui:
+    workflow: workflows/audio/ace-step-1.5-xl-turbo.json
+    map:
+      prompt:
+        - node: "5"
+          input: tags
+      tags:
+        - node: "5"
+          input: tags
+      lyrics:
+        - node: "5"
+          input: lyrics
+      duration:
+        - node: "10"
+          input: seconds
+        - node: "5"
+          input: duration
+      seed:
+        - node: "20"
+          input: seed
+      bpm:
+        - node: "5"
+          input: bpm
+      timesignature:
+        - node: "5"
+          input: timesignature
+      language:
+        - node: "5"
+          input: language
+      keyscale:
+        - node: "5"
+          input: keyscale
+      cfg_scale:
+        - node: "5"
+          input: cfg_scale
+      temperature:
+        - node: "5"
+          input: temperature
+      top_p:
+        - node: "5"
+          input: top_p
+      top_k:
+        - node: "5"
+          input: top_k
+      min_p:
+        - node: "5"
+          input: min_p
+      steps:
+        - node: "20"
+          input: steps
+      cfg:
+        - node: "20"
+          input: cfg
+      sampler:
+        - node: "20"
+          input: sampler_name
+      scheduler:
+        - node: "20"
+          input: scheduler
+      denoise:
+        - node: "20"
+          input: denoise
