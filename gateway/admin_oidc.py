@@ -1,0 +1,760 @@
+"""Pure OIDC / admin-session helpers for the control plane.
+
+This module is **only** concerned with the human admin dashboard login path —
+it never authenticates data-plane API requests, never reads files, never
+touches ``os.environ`` directly, and never makes network calls. It is meant
+to be wired into ``proxy.py`` via a thin FastAPI callback route living in
+that module; the route handler stays small because all of the policy lives
+here.
+
+What lives here:
+
+* :class:`OIDCConfig` and :class:`CookieConfig` — plain dataclasses loaded
+  from a dict / env-shaped mapping.
+* Authorization-URL builder with ``state``, ``nonce``, and PKCE
+  (``S256``) parameters.
+* Signed admin session token (HMAC-SHA256) helpers. **No raw OIDC id_token
+  or access_token ever lands in the cookie payload** — only the claims the
+  control plane actually needs (subject + email + role + expiry).
+* ``state`` / ``nonce`` storage + validation primitives that are pure (a
+  caller-supplied dict-like store).
+* An ID-token *claim-shape* validator (``validate_id_token_claims``) that
+  checks issuer, audience, expiry, nonce, and email/domain allow-list given
+  an already-decoded claims dict. Cryptographic JWT signature verification
+  is delegated to an adapter boundary (:class:`IDTokenVerifier`) so this
+  module is fully testable without network or a JWKS dependency.
+* Role bootstrap helper that promotes the first allowed login to ``owner``
+  when no owner is recorded yet.
+
+Security defaults chosen for r/selfhosted operators:
+
+* Cookies default to ``Secure``, ``HttpOnly``, ``SameSite=Lax``.
+* PKCE always uses ``S256`` (plain is never offered).
+* ``state`` and ``nonce`` are 256-bit URL-safe tokens.
+* HMAC verification uses ``hmac.compare_digest``.
+* Signing-secret must be at least 32 bytes; shorter secrets raise on
+  config load so a misconfigured deployment fails fast at startup, not at
+  first login.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import time
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Mapping, MutableMapping, Protocol
+from urllib.parse import urlencode
+
+__all__ = [
+    "AdminRole",
+    "AdminSession",
+    "CookieConfig",
+    "IDTokenClaimsError",
+    "IDTokenVerifier",
+    "OIDCConfig",
+    "OIDCConfigError",
+    "PKCEPair",
+    "SessionError",
+    "StateRecord",
+    "authorization_url",
+    "bootstrap_admin_role",
+    "consume_state",
+    "encode_session_cookie",
+    "decode_session_cookie",
+    "generate_pkce_pair",
+    "generate_nonce",
+    "generate_state",
+    "load_oidc_config",
+    "record_state",
+    "session_from_claims",
+    "validate_id_token_claims",
+]
+
+
+# ---------------------------------------------------------------------------
+# Exceptions.
+# ---------------------------------------------------------------------------
+
+
+class OIDCConfigError(ValueError):
+    """Raised when the OIDC config dict is malformed or insecure."""
+
+
+class IDTokenClaimsError(ValueError):
+    """Raised when an ID-token claims dict fails validation."""
+
+
+class SessionError(ValueError):
+    """Raised when a session cookie is malformed, tampered with, or expired."""
+
+
+# ---------------------------------------------------------------------------
+# Config dataclasses.
+# ---------------------------------------------------------------------------
+
+
+# Roles are intentionally a small closed set — the control plane only needs
+# to know "is this caller allowed to mutate admin state, and are they the
+# bootstrap owner."
+class AdminRole:
+    OWNER = "owner"
+    ADMIN = "admin"
+    NONE = "none"
+
+    ALL = frozenset({OWNER, ADMIN, NONE})
+
+
+@dataclass(frozen=True)
+class CookieConfig:
+    """Settings for the signed admin-session cookie."""
+
+    name: str = "opx_admin_session"
+    max_age_seconds: int = 60 * 60 * 8  # 8h default — admins re-auth daily-ish
+    secure: bool = True
+    http_only: bool = True
+    same_site: str = "lax"  # "lax" | "strict" | "none"
+    path: str = "/"
+    domain: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.same_site not in {"lax", "strict", "none"}:
+            raise OIDCConfigError(
+                f"cookie same_site must be lax|strict|none, got {self.same_site!r}"
+            )
+        if self.same_site == "none" and not self.secure:
+            # Browsers reject SameSite=None without Secure; fail loudly.
+            raise OIDCConfigError(
+                "cookie same_site=none requires secure=true"
+            )
+        if self.max_age_seconds <= 0:
+            raise OIDCConfigError("cookie max_age_seconds must be > 0")
+
+
+_MIN_SIGNING_KEY_BYTES = 32
+
+
+@dataclass(frozen=True)
+class OIDCConfig:
+    """All inputs required to do admin OIDC.
+
+    ``client_secret`` is provided pre-resolved by the caller — this module
+    never reads env vars itself. Callers should resolve ``client_secret_env``
+    against their env mapping before constructing the config.
+    """
+
+    enabled: bool
+    issuer: str
+    client_id: str
+    client_secret: str
+    redirect_uri: str
+    scopes: tuple[str, ...]
+    allowed_email_domains: frozenset[str]
+    admin_emails: frozenset[str]
+    signing_key: bytes
+    cookie: CookieConfig = field(default_factory=CookieConfig)
+    # Authorization / token endpoints are usually discovered from the
+    # issuer's ``.well-known/openid-configuration``. We accept them as
+    # plain values so the discovery side can stay in proxy.py (or a small
+    # adapter) without this module taking on network responsibility.
+    authorization_endpoint: str = ""
+    token_endpoint: str = ""
+    jwks_uri: str = ""
+    # Allow clock skew when checking ``exp`` / ``iat``.
+    clock_skew_seconds: int = 60
+
+    def __post_init__(self) -> None:
+        if not self.enabled:
+            return  # Disabled config doesn't need to be fully valid.
+        for field_name in ("issuer", "client_id", "client_secret", "redirect_uri"):
+            if not getattr(self, field_name):
+                raise OIDCConfigError(f"{field_name} is required when enabled=true")
+        if "openid" not in self.scopes:
+            raise OIDCConfigError("scopes must include 'openid'")
+        if len(self.signing_key) < _MIN_SIGNING_KEY_BYTES:
+            raise OIDCConfigError(
+                f"signing_key must be at least {_MIN_SIGNING_KEY_BYTES} bytes"
+            )
+        if self.clock_skew_seconds < 0:
+            raise OIDCConfigError("clock_skew_seconds must be >= 0")
+
+
+def _coerce_str_set(values: Any) -> frozenset[str]:
+    if values is None:
+        return frozenset()
+    if isinstance(values, str):
+        items: Iterable[str] = [values]
+    else:
+        try:
+            items = list(values)
+        except TypeError as exc:
+            raise OIDCConfigError(f"expected iterable, got {type(values).__name__}") from exc
+    return frozenset(str(v).strip().lower() for v in items if str(v).strip())
+
+
+def _coerce_scopes(values: Any) -> tuple[str, ...]:
+    if values is None:
+        return ("openid", "email", "profile")
+    if isinstance(values, str):
+        parts = values.split()
+    else:
+        try:
+            parts = [str(v) for v in values]
+        except TypeError as exc:
+            raise OIDCConfigError("scopes must be a string or iterable") from exc
+    cleaned = tuple(p.strip() for p in parts if p.strip())
+    return cleaned or ("openid", "email", "profile")
+
+
+def _coerce_signing_key(raw: Any) -> bytes:
+    if raw is None:
+        raise OIDCConfigError("signing_key is required")
+    if isinstance(raw, bytes):
+        return raw
+    if isinstance(raw, str):
+        # Treat as utf-8 — operators commonly paste a hex/base64/random
+        # string. We don't try to base64-decode magically; the byte length
+        # check in __post_init__ catches obviously too-short values.
+        return raw.encode("utf-8")
+    raise OIDCConfigError(f"signing_key must be str or bytes, got {type(raw).__name__}")
+
+
+def load_oidc_config(
+    data: Mapping[str, Any],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> OIDCConfig:
+    """Build an :class:`OIDCConfig` from a plain config mapping.
+
+    Recognized keys (all optional unless ``enabled`` is true):
+
+    * ``enabled`` — bool
+    * ``issuer`` — string (no trailing slash assumed; we don't normalize)
+    * ``client_id`` — string
+    * ``client_secret`` — string (literal)
+    * ``client_secret_env`` — env var name; resolved against ``env``. If
+      both are present, ``client_secret`` wins.
+    * ``redirect_uri`` — absolute URL
+    * ``scopes`` — string ("openid email profile") or list
+    * ``allowed_email_domains`` — list of domains (case-insensitive)
+    * ``admin_emails`` — list of emails (case-insensitive)
+    * ``signing_key`` — literal
+    * ``signing_key_env`` — env var name
+    * ``cookie`` — nested mapping for :class:`CookieConfig`
+    * ``authorization_endpoint`` / ``token_endpoint`` / ``jwks_uri``
+    * ``clock_skew_seconds`` — int
+    """
+    env_map: Mapping[str, str] = env or {}
+
+    enabled = bool(data.get("enabled", False))
+
+    client_secret = data.get("client_secret") or ""
+    if not client_secret:
+        secret_env = data.get("client_secret_env")
+        if secret_env:
+            client_secret = env_map.get(str(secret_env), "")
+
+    signing_raw = data.get("signing_key")
+    if not signing_raw:
+        sk_env = data.get("signing_key_env")
+        if sk_env:
+            signing_raw = env_map.get(str(sk_env))
+
+    # When disabled, allow missing signing key — but if present, still
+    # require sane bytes. This lets ops stage the config block before
+    # flipping enabled=true.
+    if signing_raw is None and not enabled:
+        signing_key = b"\x00" * _MIN_SIGNING_KEY_BYTES
+    else:
+        signing_key = _coerce_signing_key(signing_raw)
+
+    cookie_data = data.get("cookie") or {}
+    if not isinstance(cookie_data, Mapping):
+        raise OIDCConfigError("cookie config must be a mapping")
+    cookie = CookieConfig(
+        name=str(cookie_data.get("name", CookieConfig.name)),
+        max_age_seconds=int(cookie_data.get("max_age_seconds", CookieConfig.max_age_seconds)),
+        secure=bool(cookie_data.get("secure", CookieConfig.secure)),
+        http_only=bool(cookie_data.get("http_only", CookieConfig.http_only)),
+        same_site=str(cookie_data.get("same_site", CookieConfig.same_site)).lower(),
+        path=str(cookie_data.get("path", CookieConfig.path)),
+        domain=(str(cookie_data["domain"]) if cookie_data.get("domain") else None),
+    )
+
+    return OIDCConfig(
+        enabled=enabled,
+        issuer=str(data.get("issuer", "")),
+        client_id=str(data.get("client_id", "")),
+        client_secret=str(client_secret),
+        redirect_uri=str(data.get("redirect_uri", "")),
+        scopes=_coerce_scopes(data.get("scopes")),
+        allowed_email_domains=_coerce_str_set(data.get("allowed_email_domains")),
+        admin_emails=_coerce_str_set(data.get("admin_emails")),
+        signing_key=signing_key,
+        cookie=cookie,
+        authorization_endpoint=str(data.get("authorization_endpoint", "")),
+        token_endpoint=str(data.get("token_endpoint", "")),
+        jwks_uri=str(data.get("jwks_uri", "")),
+        clock_skew_seconds=int(data.get("clock_skew_seconds", 60)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# State / nonce / PKCE primitives.
+# ---------------------------------------------------------------------------
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def generate_state() -> str:
+    """Return a 256-bit URL-safe ``state`` parameter."""
+    return _b64url(secrets.token_bytes(32))
+
+
+def generate_nonce() -> str:
+    """Return a 256-bit URL-safe ``nonce`` parameter."""
+    return _b64url(secrets.token_bytes(32))
+
+
+@dataclass(frozen=True)
+class PKCEPair:
+    verifier: str
+    challenge: str
+    method: str = "S256"
+
+
+def generate_pkce_pair() -> PKCEPair:
+    """Return a fresh ``S256`` PKCE verifier/challenge pair.
+
+    Verifier length is 64 url-safe chars (~384 bits of entropy), well above
+    the RFC 7636 minimum of 43.
+    """
+    verifier = _b64url(secrets.token_bytes(48))
+    challenge = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
+    return PKCEPair(verifier=verifier, challenge=challenge, method="S256")
+
+
+@dataclass(frozen=True)
+class StateRecord:
+    """What gets stashed server-side while the user is at the IdP.
+
+    The store can be anything mapping-like (in-memory dict for single-proc,
+    Redis-backed shim for multi-proc). The values here are never sent to
+    the browser.
+    """
+
+    state: str
+    nonce: str
+    pkce_verifier: str
+    created_at: float
+    return_to: str = "/"
+
+
+def record_state(
+    store: MutableMapping[str, StateRecord],
+    *,
+    nonce: str,
+    pkce_verifier: str,
+    return_to: str = "/",
+    state: str | None = None,
+    now: float | None = None,
+) -> StateRecord:
+    """Mint a ``state`` and store the matching record. Returns the record."""
+    record = StateRecord(
+        state=state or generate_state(),
+        nonce=nonce,
+        pkce_verifier=pkce_verifier,
+        created_at=now if now is not None else time.time(),
+        return_to=return_to,
+    )
+    store[record.state] = record
+    return record
+
+
+def consume_state(
+    store: MutableMapping[str, StateRecord],
+    state: str,
+    *,
+    max_age_seconds: int = 600,
+    now: float | None = None,
+) -> StateRecord:
+    """Pop and validate a ``state`` from the store.
+
+    Raises :class:`SessionError` if the state is unknown or expired. The
+    record is removed from the store regardless to prevent replay.
+    """
+    record = store.pop(state, None)
+    if record is None:
+        raise SessionError("unknown or already-used state")
+    current = now if now is not None else time.time()
+    if current - record.created_at > max_age_seconds:
+        raise SessionError("state expired")
+    return record
+
+
+# ---------------------------------------------------------------------------
+# Authorization URL.
+# ---------------------------------------------------------------------------
+
+
+def authorization_url(
+    config: OIDCConfig,
+    *,
+    state: str,
+    nonce: str,
+    pkce: PKCEPair,
+    extra_params: Mapping[str, str] | None = None,
+) -> str:
+    """Build the IdP authorization URL.
+
+    The caller supplies ``state`` / ``nonce`` / ``pkce`` so they can also
+    persist them server-side via :func:`record_state`. ``extra_params`` is
+    a small escape hatch for things like ``prompt=login`` or
+    ``login_hint=...``.
+    """
+    if not config.enabled:
+        raise OIDCConfigError("OIDC is disabled; cannot build authorization URL")
+    if not config.authorization_endpoint:
+        raise OIDCConfigError("authorization_endpoint is required")
+    if pkce.method != "S256":
+        raise OIDCConfigError("only S256 PKCE is supported")
+
+    params: dict[str, str] = {
+        "response_type": "code",
+        "client_id": config.client_id,
+        "redirect_uri": config.redirect_uri,
+        "scope": " ".join(config.scopes),
+        "state": state,
+        "nonce": nonce,
+        "code_challenge": pkce.challenge,
+        "code_challenge_method": pkce.method,
+    }
+    if extra_params:
+        for k, v in extra_params.items():
+            # Don't let extras silently override security-relevant params.
+            if k in {"state", "nonce", "code_challenge", "code_challenge_method",
+                     "response_type", "client_id", "redirect_uri"}:
+                continue
+            params[k] = str(v)
+
+    separator = "&" if "?" in config.authorization_endpoint else "?"
+    return f"{config.authorization_endpoint}{separator}{urlencode(params)}"
+
+
+# ---------------------------------------------------------------------------
+# ID-token claims validation.
+# ---------------------------------------------------------------------------
+
+
+class IDTokenVerifier(Protocol):
+    """Adapter boundary for full cryptographic JWT verification.
+
+    Implementations (e.g. an Authlib + JWKS-backed verifier) are wired in
+    by ``proxy.py`` and must:
+
+    * fetch the issuer's JWKS,
+    * verify the JWT signature against the appropriate key,
+    * verify ``iss`` / ``aud`` / signature algorithm,
+    * return the decoded claims dict on success,
+    * raise on any verification failure.
+
+    Keeping this as a Protocol lets ``admin_oidc`` stay free of any JWT
+    library dependency and lets tests pin validation behavior with a
+    trivial fake.
+    """
+
+    def verify(self, id_token: str) -> Mapping[str, Any]:
+        ...
+
+
+def validate_id_token_claims(
+    claims: Mapping[str, Any],
+    *,
+    config: OIDCConfig,
+    expected_nonce: str,
+    now: float | None = None,
+) -> Mapping[str, Any]:
+    """Validate the *shape* of an already-decoded ID-token claims dict.
+
+    Checks:
+
+    * ``iss`` matches ``config.issuer`` exactly,
+    * ``aud`` contains ``config.client_id`` (aud may be string or list),
+    * ``exp`` is in the future (with ``clock_skew_seconds`` tolerance),
+    * ``iat``, if present, is not absurdly in the future,
+    * ``nonce`` matches ``expected_nonce``,
+    * ``email`` is present and (if domain/admin allow-lists are set)
+      is permitted by them.
+
+    Returns the same claims dict on success; raises
+    :class:`IDTokenClaimsError` otherwise. Cryptographic signature
+    verification is the verifier adapter's job and is *not* duplicated
+    here — this function trusts that ``claims`` was produced by a verifier
+    that already checked the signature.
+    """
+    current = now if now is not None else time.time()
+    skew = max(config.clock_skew_seconds, 0)
+
+    iss = claims.get("iss")
+    if iss != config.issuer:
+        raise IDTokenClaimsError(f"issuer mismatch: {iss!r} != {config.issuer!r}")
+
+    aud = claims.get("aud")
+    if isinstance(aud, str):
+        aud_list = [aud]
+    elif isinstance(aud, (list, tuple)):
+        aud_list = [str(a) for a in aud]
+    else:
+        raise IDTokenClaimsError("aud claim missing or wrong type")
+    if config.client_id not in aud_list:
+        raise IDTokenClaimsError(f"audience does not include client_id {config.client_id!r}")
+
+    exp = claims.get("exp")
+    if not isinstance(exp, (int, float)):
+        raise IDTokenClaimsError("exp claim missing or not numeric")
+    if current - skew > float(exp):
+        raise IDTokenClaimsError("id_token expired")
+
+    iat = claims.get("iat")
+    if isinstance(iat, (int, float)) and float(iat) - skew > current:
+        raise IDTokenClaimsError("id_token iat in the future")
+
+    nonce = claims.get("nonce")
+    if not nonce or not hmac.compare_digest(str(nonce), expected_nonce):
+        raise IDTokenClaimsError("nonce mismatch")
+
+    email_raw = claims.get("email")
+    if not email_raw:
+        raise IDTokenClaimsError("email claim required")
+    email = str(email_raw).strip().lower()
+    if "@" not in email:
+        raise IDTokenClaimsError("email claim malformed")
+
+    email_verified = claims.get("email_verified")
+    if email_verified is False:
+        raise IDTokenClaimsError("email not verified by IdP")
+
+    if not _email_allowed(email, config):
+        raise IDTokenClaimsError("email not in allow-list")
+
+    return claims
+
+
+def _email_allowed(email: str, config: OIDCConfig) -> bool:
+    """Return True if ``email`` passes the configured allow-lists.
+
+    Rules:
+
+    * If both ``admin_emails`` and ``allowed_email_domains`` are empty,
+      *anyone* who passes IdP auth is allowed. This is the "single tenant,
+      IdP-restricted to my org" case.
+    * Otherwise, the email must either be in ``admin_emails`` or its
+      domain must be in ``allowed_email_domains``.
+    """
+    if not config.admin_emails and not config.allowed_email_domains:
+        return True
+    if email in config.admin_emails:
+        return True
+    _, _, domain = email.partition("@")
+    return domain in config.allowed_email_domains
+
+
+# ---------------------------------------------------------------------------
+# Signed admin session cookie.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AdminSession:
+    """The minimal payload we trust into a signed cookie.
+
+    Deliberately **does not** include the raw ``id_token`` or
+    ``access_token`` — those stay server-side (or are dropped entirely
+    after one-shot use). The dashboard only needs to know "who you are"
+    and "what you're allowed to do."
+    """
+
+    subject: str
+    email: str
+    role: str
+    issued_at: float
+    expires_at: float
+    session_id: str = ""
+
+    def is_expired(self, now: float | None = None) -> bool:
+        current = now if now is not None else time.time()
+        return current >= self.expires_at
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sub": self.subject,
+            "email": self.email,
+            "role": self.role,
+            "iat": int(self.issued_at),
+            "exp": int(self.expires_at),
+            "sid": self.session_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "AdminSession":
+        try:
+            return cls(
+                subject=str(data["sub"]),
+                email=str(data["email"]),
+                role=str(data["role"]),
+                issued_at=float(data["iat"]),
+                expires_at=float(data["exp"]),
+                session_id=str(data.get("sid", "")),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SessionError(f"malformed session payload: {exc}") from exc
+
+
+# A short version tag so we can rotate the cookie format without silently
+# accepting old shapes.
+_SESSION_VERSION = "v1"
+
+
+def session_from_claims(
+    claims: Mapping[str, Any],
+    *,
+    role: str,
+    cookie: CookieConfig,
+    now: float | None = None,
+) -> AdminSession:
+    """Build an :class:`AdminSession` from validated ID-token claims.
+
+    Only the subject + email are pulled from the claims. The role is
+    decided by the caller (typically via :func:`bootstrap_admin_role`).
+    """
+    if role not in AdminRole.ALL:
+        raise SessionError(f"invalid role {role!r}")
+    issued = now if now is not None else time.time()
+    return AdminSession(
+        subject=str(claims["sub"]),
+        email=str(claims["email"]).strip().lower(),
+        role=role,
+        issued_at=issued,
+        expires_at=issued + cookie.max_age_seconds,
+        session_id=_b64url(secrets.token_bytes(16)),
+    )
+
+
+def encode_session_cookie(session: AdminSession, *, signing_key: bytes) -> str:
+    """Return the signed cookie string for an :class:`AdminSession`.
+
+    Layout: ``<version>.<b64url(payload)>.<b64url(hmac-sha256)>``. The
+    payload is the JSON of :meth:`AdminSession.to_dict`. The HMAC covers
+    ``<version>.<b64url(payload)>`` so we can change the version field
+    without resigning issues.
+    """
+    if len(signing_key) < _MIN_SIGNING_KEY_BYTES:
+        raise SessionError("signing_key too short")
+    payload = json.dumps(session.to_dict(), separators=(",", ":"), sort_keys=True)
+    payload_b64 = _b64url(payload.encode("utf-8"))
+    signing_input = f"{_SESSION_VERSION}.{payload_b64}".encode("ascii")
+    mac = hmac.new(signing_key, signing_input, hashlib.sha256).digest()
+    return f"{_SESSION_VERSION}.{payload_b64}.{_b64url(mac)}"
+
+
+def decode_session_cookie(
+    token: str,
+    *,
+    signing_key: bytes,
+    now: float | None = None,
+) -> AdminSession:
+    """Verify HMAC, expiry, and version; return the :class:`AdminSession`.
+
+    Raises :class:`SessionError` for any tampering, wrong version, bad
+    encoding, or expiry.
+    """
+    if not token or token.count(".") != 2:
+        raise SessionError("malformed cookie")
+    version, payload_b64, mac_b64 = token.split(".", 2)
+    if version != _SESSION_VERSION:
+        raise SessionError(f"unsupported cookie version {version!r}")
+
+    signing_input = f"{version}.{payload_b64}".encode("ascii")
+    expected_mac = hmac.new(signing_key, signing_input, hashlib.sha256).digest()
+    try:
+        provided_mac = _b64url_decode(mac_b64)
+    except (ValueError, base64.binascii.Error) as exc:  # type: ignore[attr-defined]
+        raise SessionError("bad signature encoding") from exc
+    if not hmac.compare_digest(expected_mac, provided_mac):
+        raise SessionError("signature mismatch")
+
+    try:
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise SessionError("payload decode failed") from exc
+    if not isinstance(payload, Mapping):
+        raise SessionError("payload not an object")
+
+    session = AdminSession.from_dict(payload)
+    if session.is_expired(now=now):
+        raise SessionError("session expired")
+    return session
+
+
+# ---------------------------------------------------------------------------
+# Role bootstrap.
+# ---------------------------------------------------------------------------
+
+
+def bootstrap_admin_role(
+    email: str,
+    *,
+    config: OIDCConfig,
+    existing_roles: Mapping[str, str],
+) -> str:
+    """Decide which :class:`AdminRole` to grant a freshly-authenticated user.
+
+    Rules, in order:
+
+    1. If ``existing_roles`` already maps this email to a role, that role
+       is returned verbatim (so a manually-promoted admin keeps their
+       grant across logins).
+    2. If no row in ``existing_roles`` has role=owner *and* no row has
+       role=admin, the first allowed login becomes ``owner`` — the
+       single-operator bootstrap path.
+    3. If the email is listed in ``config.admin_emails``, they get
+       ``admin``.
+    4. Otherwise they get ``none`` — they can browse the dashboard but
+       can't mutate admin state. Callers may choose to reject ``none`` at
+       the route layer.
+
+    ``existing_roles`` is expected to be a ``{email: role}`` mapping; the
+    actual persistence is up to the caller.
+    """
+    email_norm = email.strip().lower()
+    existing_norm = {
+        str(k).strip().lower(): str(v).strip().lower()
+        for k, v in existing_roles.items()
+    }
+
+    if email_norm in existing_norm:
+        role = existing_norm[email_norm]
+        if role in AdminRole.ALL:
+            return role
+        return AdminRole.NONE
+
+    has_owner = any(r == AdminRole.OWNER for r in existing_norm.values())
+    has_admin = any(r == AdminRole.ADMIN for r in existing_norm.values())
+
+    if not has_owner and not has_admin:
+        return AdminRole.OWNER
+
+    if email_norm in config.admin_emails:
+        return AdminRole.ADMIN
+
+    return AdminRole.NONE
