@@ -1,7 +1,10 @@
 # Core Contracts
 
 Date: 2026-05-15
-Status: live proxy integration in progress
+Status: live gateway integration in progress
+Product: **Vivid Fish AI Gateway** (project directory still named
+`openai-proxy`; canonical host `https://ai.vivid.fish`; alias
+`https://openai.vivid.fish` preserved for compatibility).
 
 This document defines the smallest set of stable contracts the gateway needs
 before it grows more endpoints, adapters, or scheduler behavior.
@@ -9,6 +12,44 @@ before it grows more endpoints, adapters, or scheduler behavior.
 The goal is not to freeze implementation details. The goal is to make every
 important boundary explicit enough that compatibility, routing, native power
 use, and diagnostics can evolve without turning into one large special case.
+
+## Control-Plane Nouns
+
+The gateway has two small noun sets. They are stable across docs, code, and
+receipts.
+
+### Admin Plane
+
+| Noun           | Meaning                                                                 |
+|----------------|-------------------------------------------------------------------------|
+| `User`         | A human principal, typically authenticated via OIDC.                    |
+| `ServiceAccount` | A non-human principal that owns Apps and Credentials.                 |
+| `Credential`   | A hashed bearer token (App API key, OIDC session, downstream provider). |
+| `AdminRole`    | A named bundle of admin-plane permissions.                              |
+| `AuditEvent`   | An immutable record of an admin-plane action.                           |
+
+### Runtime Plane
+
+| Noun           | Meaning                                                                 |
+|----------------|-------------------------------------------------------------------------|
+| `App`          | A registered consumer of the gateway (e.g. LibreChat, Continue, an agent). |
+| `Profile`      | The policy bundle attached to an App.                                   |
+| `Credential`   | The App API key (and any per-key downstream-credential overrides).      |
+| `Capability`   | A runtime fact about what a Provider/model can do right now.            |
+| `Provider`     | A configured backend instance (TabbyAPI, llama.cpp, ComfyUI, TTS, ...). |
+| `Workflow`     | A typed manifest mapping portable inputs to a backend binding.          |
+| `Job`          | A durable, asynchronous execution record for media work.                |
+| `Receipt`      | A body-free record of one request: identity, decision, accepted/rejected/ignored inputs. |
+| `UsageRecord`  | Per-App tokens/seconds/bytes/GPU-time aggregations.                     |
+
+The product invariant — load-bearing across every contract below:
+
+> A request without a resolved **App** + **Profile** + policy decision is
+> never executed. Every executed request produces exactly one **Receipt**.
+
+The word "client" is preserved only inside compatibility contexts: SDK names
+("OpenAI client"), audience tiers ("client receipts"), and protocol-level
+client/server wording. In product docs the consumer entity is an **App**.
 
 ## Implementation Status
 
@@ -309,11 +350,11 @@ Minimum eligibility fields for routing:
 
 ## App Profile
 
-An app profile is a named policy bundle tied to an API key or client identity.
-Profiles live as optional `profile:` blocks on each key entry in
-`proxy_api_keys.yml` and hot-reload alongside the keys that carry them.
-Missing blocks fall back to `DEFAULT_PROFILE` (local-only, basic visibility)
-so existing keys keep working unchanged.
+A Profile is a named policy bundle tied to an App API key. Profiles live as
+optional `profile:` blocks on each key entry in `proxy_api_keys.yml` and
+hot-reload alongside the entries that carry them. Missing blocks fall back to
+`DEFAULT_PROFILE` (local-only, basic visibility) so existing Apps keep
+working unchanged.
 
 Example:
 
@@ -335,13 +376,14 @@ means "no opinion" for that dimension; an empty list means "deny all".
 
 Profiles are where the gateway maps:
 
-- which protocols a client can use
-- which workflows, models, and backends it may target
+- which protocols an App can use
+- which workflows, models, and Providers it may target
 - whether cloud fallback is allowed
-- which credentials may be used downstream
-- how much status, discovery, and receipt detail it may see
+- which Credentials may be used downstream
+- how much status, discovery, and Receipt detail it may see
   (`status_visibility.level`: `none` / `basic` / `standard` / `full` →
-  client / client / admin / internal audience tiers)
+  client / client / admin / internal audience tiers; "client" here is the
+  audience-tier name, not a product noun)
 - which native passthrough lanes are allowed
 
 Backend-native power knobs (denoise, controlnet strength, model-specific

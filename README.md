@@ -1,6 +1,8 @@
-# openai-proxy
+# Vivid Fish AI Gateway
 
-Self-hosted, OpenAI-compatible HTTP gateway that fronts a stack of local AI backends:
+> Project directory and Python package are still named `openai-proxy`. The product, public discovery surfaces, and self-hoster docs are now branded **Vivid Fish AI Gateway** (or **AI Gateway** for short). Existing app configs that point at `openai.vivid.fish` keep working unchanged.
+
+Self-hosted, OpenAI-compatible HTTP gateway and control plane that fronts a stack of local AI backends:
 
 - **TabbyAPI** (Qwen3-VL EXL3) — chat / completions / vision
 - **llama.cpp / koboldcpp** — GGUF chat/completions (mutually exclusive with TabbyAPI on the same GPU; swap via systemd)
@@ -8,24 +10,30 @@ Self-hosted, OpenAI-compatible HTTP gateway that fronts a stack of local AI back
 - **Parakeet TDT 0.6B** — speech-to-text
 - **ComfyUI** — image generation, image edit, and video generation (LTX-2.3, Wan 2.2)
 
-The proxy presents a single `/v1` surface that matches the OpenAI API closely enough that off-the-shelf clients (LibreChat, OpenWebUI, OpenClaw, the OpenAI SDKs, etc.) point at it without modification.
+The gateway presents a single `/v1` surface that matches the OpenAI API closely enough that off-the-shelf apps (LibreChat, Open WebUI, OpenClaw, Continue, Cline, the OpenAI SDKs, etc.) point at it without modification.
 
-In production it's served at `https://openai.vivid.fish` via a Traefik front door.
+The canonical public host is **`https://ai.vivid.fish`**. The original **`https://openai.vivid.fish`** host is preserved as a compatibility alias — every route, discovery document, and signed URL resolves identically on both hosts, so existing apps do not need to be reconfigured.
 
 ## Agent discovery
 
-Agent clients can start without local repo context by fetching the public discovery surface:
+Agents and apps can start without local repo context by fetching the public discovery surface (no auth required):
 
 - `GET /health`
-- `GET /.well-known/ai-gateway`
-- `GET /.well-known/openai-proxy` (alias)
+- `GET /.well-known/ai-gateway` — canonical gateway metadata document
+- `GET /.well-known/openai-proxy` — compatibility alias (identical body)
 - `GET /llms.txt`
 - `GET /.well-known/skills`
 - `GET /.well-known/skills/openai-proxy-gateway/SKILL.md`
 - `GET /gateway/v1/extensions`
 - `GET /gateway/v1/models/{model}/capabilities`
 
-The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](skills/openai-proxy-gateway/SKILL.md). It tells agents to discover capabilities before assuming a backend, keep bearer tokens out of chat, use `/v1` by default, and inspect `/gateway/v1/receipts` when workflow controls are rejected or ignored.
+The discovery document advertises:
+
+- `service.product = "Vivid Fish AI Gateway"`
+- `service.canonical_host = "https://ai.vivid.fish"`
+- `service.compatibility_aliases` includes `https://openai.vivid.fish`
+
+The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](skills/openai-proxy-gateway/SKILL.md). The skill ID is preserved as `openai-proxy-gateway` so existing skill catalogs and tests keep resolving it. The skill itself tells agents to discover capabilities before assuming a backend, keep bearer tokens out of chat, use `/v1` by default, and inspect `/gateway/v1/receipts` when workflow controls are rejected or ignored.
 
 ## Endpoint surface
 
@@ -59,21 +67,62 @@ Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [
 - **Signed image URLs** — `response_format: "url"` returns hostname-aware, HMAC-signed URLs into a content-addressed cache. URLs are bearer-auth-gated and expire (default 1 h), and the cache evicts older entries (default 24 h).
 - **Async video generation** — Sora-2-shaped submit/poll/fetch flow with multiple model aliases (`ltx-2.3`, `ltx-2.3-detail`, `ltx-2.3-long`, `wan-2.2`, etc.). Generated MP4s and PNGs embed the full UI-format ComfyUI workflow in metadata, so dropping an output back into ComfyUI's frontend rebuilds the editable graph.
 
+## Control-plane nouns
+
+The gateway uses a small, stable set of nouns across docs, code, and receipts. Two planes — keep them straight:
+
+**Admin plane** (who can operate this gateway):
+
+- **User** — a human principal, typically authenticated via OIDC (e.g. the self-hoster, a family member, a friend).
+- **ServiceAccount** — a non-human principal that owns one or more apps and the credentials they use.
+- **Credential** — a bearer-token secret (an `opk_...` App API key, an OIDC session, or a downstream provider key); always stored as a hash where possible.
+- **AdminRole** — a named bundle of admin permissions (e.g. read-only operator vs full owner).
+- **AuditEvent** — an immutable record of an admin-plane action (key minted, profile changed, role assigned, etc.).
+
+**Runtime plane** (what gets executed for an end user):
+
+- **App** — a registered consumer of the gateway (e.g. LibreChat, Open WebUI, Continue, a personal chat client). Apps are what mint and present API keys at request time.
+- **Profile** — the policy bundle attached to an App: allowed protocols, models, workflows, backends, fallback rules, native passthrough scopes, and receipt visibility tier.
+- **Credential** (runtime) — the App API key the App presents, plus any per-key downstream-credential overrides.
+- **Capability** — a runtime fact about what a backend/model can actually do right now (intent, modality, context window, streaming, health, resource estimate).
+- **Provider** — a configured backend instance (TabbyAPI, llama.cpp, ComfyUI, TTS, STT, hosted-LLM fallback).
+- **Workflow** — a typed manifest that maps portable inputs (prompt, denoise, seed) to a backend-specific binding.
+- **Job** — a durable, asynchronous execution record for media work (image, video, long audio).
+- **Receipt** — a body-free record of every request: who, what intent, what policy decision, what workflow/manifest, what was accepted/rejected/ignored.
+- **UsageRecord** — per-App tokens/seconds/bytes/GPU-time, used for status and metrics.
+
+The product invariant is:
+
+> **A request without a resolved App + Profile + policy decision is never executed. Every executed request produces exactly one Receipt.**
+
+The legacy term **"client"** is preserved only in compatibility contexts (OpenAI client SDKs, "client receipts" audience tier, protocol-level client/server wording). In product docs the user-facing entity is an **App**.
+
 ## Auth
 
-All `/v1` traffic requires a bearer token. `/health` is public.
+All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health` and the `/.well-known/*` discovery surfaces are public.
 
-Proxy keys are stored as sha256 hashes in `proxy_api_keys.yml` (gitignored). Generate or rotate one with:
+App API keys are stored as sha256 hashes in `proxy_api_keys.yml` (gitignored). Generate or rotate one with:
 
 ```bash
-./venv/bin/python proxy.py generate-key <name>
+./venv/bin/python proxy.py generate-key <app-name>
 ```
 
-The printed `opk_...` value is the bearer key clients send as `Authorization: Bearer opk_...`. The yaml only ever holds the hash.
+The printed `opk_...` value is the bearer key apps send as `Authorization: Bearer opk_...`. The yaml only ever holds the hash.
 
-Per-key downstream overrides are supported — any one proxy key can map to different upstream credentials per backend (TabbyAPI key, TTS auth header, etc.). See [`proxy_api_keys.example.yml`](proxy_api_keys.example.yml) for the structure.
+Per-key downstream overrides are supported — any one App API key can map to different upstream credentials per provider (TabbyAPI key, TTS auth header, etc.). See [`proxy_api_keys.example.yml`](proxy_api_keys.example.yml) for the structure.
 
-See [`AUTH_GUIDE.md`](AUTH_GUIDE.md) for the agent-facing key generation and rotation workflow.
+### Give a family member a key
+
+The shortest "share my gateway with another human" flow:
+
+1. **OIDC User.** The family member signs in to the gateway's admin UI (or, today, asks the owner to provision them) and becomes a **User** in the admin plane.
+2. **Personal App.** They register one **App** for themselves — e.g. `aunt-mary-chat`. An App is a named consumer, not a person; one User can own several Apps.
+3. **Profile.** The App is attached to a **Profile** that grants only what they need (e.g. `openai.chat` + `openai.audio`, no native passthrough, `cloud_allowed: false`, `status_visibility.level: basic`).
+4. **App API key.** Mint a bearer token for that App (`generate-key aunt-mary-chat`). They paste it once into their chat app of choice as the OpenAI API key, with base URL `https://ai.vivid.fish/v1`.
+
+Rotation is per-App, not per-human: re-running `generate-key aunt-mary-chat` mints a new key while preserving the App's Profile and downstream mapping. The User remains the same.
+
+See [`AUTH_GUIDE.md`](AUTH_GUIDE.md) for the full key-generation and rotation workflow.
 
 ## Repository layout
 

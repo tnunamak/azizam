@@ -1,11 +1,15 @@
-# AI Gateway Architecture Recommendation
+# Vivid Fish AI Gateway — Architecture Recommendation
 
 Date: 2026-05-15
 Status: recommendation plus live vertical-slice checkpoint
+Product: **Vivid Fish AI Gateway** (the "AI Gateway"). Canonical host
+`https://ai.vivid.fish`. The historical `https://openai.vivid.fish` host is a
+preserved compatibility alias and resolves to the same routes.
 
 This document is the product and architecture recommendation for evolving
-`openai-proxy` from a capable local OpenAI-compatible proxy into a local-first
-AI gateway.
+the codebase still known internally as `openai-proxy` into the local-first
+**Vivid Fish AI Gateway** — a generalized control plane and operator
+experience for self-hosted AI.
 
 Detailed inventories live in:
 
@@ -591,17 +595,43 @@ disagreement and avoid overclaiming.
 
 ## Credential And Tenant Plane
 
-Preserve and generalize what `openai-proxy` already does well.
+Preserve and generalize what the current implementation already does well, but
+formalize the noun set so admin- and runtime-plane concerns stop blurring
+together.
 
-Core entities:
+**Admin-plane nouns** (who can operate this gateway):
 
 ```text
-AuthIdentity
-Credential
-CredentialMapping
-Policy
-UsageRecord
+User           OIDC-authenticated human (owner, family member, friend)
+ServiceAccount Non-human principal that owns Apps and Credentials
+Credential     Hashed bearer secret (App API key, OIDC session, provider key)
+AdminRole      Named permission bundle for admin actions
+AuditEvent     Immutable record of an admin-plane action
 ```
+
+**Runtime-plane nouns** (what gets executed for an end user):
+
+```text
+App         A registered consumer (LibreChat, Continue, an agent, ...)
+Profile     Policy bundle attached to the App
+Credential  The App's API key + per-key downstream overrides
+Capability  Runtime fact about a Provider/model
+Provider    A configured backend (TabbyAPI, llama.cpp, ComfyUI, TTS, ...)
+Workflow    Typed manifest mapping portable inputs to backend bindings
+Job         Durable async execution record
+Receipt     Body-free record of one request
+UsageRecord Per-App tokens/seconds/bytes/GPU-time
+```
+
+The legacy entity names (`AuthIdentity`, `CredentialMapping`, `Policy`) survive
+inside the implementation, but the product-facing nouns above are what the
+docs, discovery surfaces, and operator UI should expose. The word "client"
+remains valid only for compatibility uses (SDK names, audience tiers,
+protocol-level wording); the consumer entity in product docs is an **App**.
+
+The load-bearing invariant is the same one stated in `docs/CORE_CONTRACTS.md`:
+a request without a resolved App + Profile + policy decision is never
+executed, and every executed request produces exactly one Receipt.
 
 Required behavior:
 
@@ -653,6 +683,23 @@ Profiles should define:
 - recommended key scopes
 
 Profiles are not hardcoded special-case behavior. They are test/config bundles.
+
+### Concrete flow: give a family member a key
+
+The self-hoster-friendly flow that this architecture must support end-to-end:
+
+1. **OIDC User.** The family member signs in to the gateway and becomes a
+   `User` in the admin plane (today: provisioned manually; target: OIDC).
+2. **Personal App.** They register one `App` they own — `aunt-mary-chat`.
+3. **Profile.** A narrow Profile is attached:
+   `protocols: [openai.chat, openai.audio]`, `cloud_allowed: false`,
+   `native_passthrough: { enabled: false }`, `status_visibility.level: basic`.
+4. **App API key.** The owner runs `generate-key aunt-mary-chat`. The
+   `opk_...` value is shown once and pasted into the App's config with base
+   URL `https://ai.vivid.fish/v1`.
+
+Rotation is per-App; the User and Profile survive key rotation. Revocation
+removes the key entry — the User and AuditEvent history remain.
 
 ## Normalized Events And Route Receipts
 

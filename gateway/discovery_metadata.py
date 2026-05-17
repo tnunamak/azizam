@@ -63,7 +63,7 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
     {
         "id": "gateway",
         "base_path": "/gateway/v1",
-        "compatibility": "openai-proxy-native",
+        "compatibility": "ai-gateway-native",
         "default": False,
         "streaming": {},
         "endpoints": [
@@ -85,7 +85,7 @@ def _join(base_url: str | None, path: str) -> str:
 def build_gateway_discovery_metadata(
     *,
     base_url: str | None = None,
-    service_name: str = "openai-proxy",
+    service_name: str = "vivid-fish-ai-gateway",
 ) -> dict[str, Any]:
     """Return unauthenticated public metadata for agent/client discovery."""
     links = {
@@ -108,7 +108,10 @@ def build_gateway_discovery_metadata(
         "object": "ai_gateway_discovery",
         "service": {
             "name": service_name,
+            "product": "Vivid Fish AI Gateway",
             "base_url": base_url.rstrip("/") if base_url else None,
+            "canonical_host": "https://ai.vivid.fish",
+            "compatibility_aliases": ["https://openai.vivid.fish"],
             "local_first": True,
             "privacy": "Requests are routed to configured local backends unless an app profile explicitly allows fallback.",
         },
@@ -130,7 +133,7 @@ def build_gateway_discovery_metadata(
         "repository_docs": [
             "docs/LOCAL_CLIENT_RECIPES.md",
             "docs/CORE_CONTRACTS.md",
-            "ARCHITECTURE.md",
+            "ARCHITECTURE_RECOMMENDATION.md",
         ],
         "agent_guidance": {
             "start_here": [
@@ -158,7 +161,7 @@ def build_skill_catalog(*, base_url: str | None = None) -> dict[str, Any]:
                 "media_type": "text/markdown",
                 "href": skill_path,
                 "url": _join(base_url, skill_path),
-                "description": "Discover-first instructions for using this local AI gateway safely from agent clients.",
+                "description": "Discover-first instructions for using Vivid Fish AI Gateway safely from agent clients.",
             }
         ],
     }
@@ -169,9 +172,10 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
     root = (base_url or "").rstrip("/")
     prefix = f"{root}" if root else ""
     lines = [
-        "# openai-proxy gateway",
+        "# Vivid Fish AI Gateway",
         "",
         "Local-first OpenAI-compatible AI gateway with Anthropic, Ollama, and gateway-native discovery surfaces.",
+        "Canonical host: https://ai.vivid.fish (https://openai.vivid.fish remains a compatibility alias).",
         "",
         "## Discovery",
         f"- Gateway metadata: {prefix}/.well-known/ai-gateway",
@@ -180,7 +184,7 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         f"- Agent skill: {prefix}/.well-known/skills/openai-proxy-gateway/SKILL.md",
         "",
         "## Auth",
-        "- Use Authorization: Bearer $OPENAI_PROXY_API_KEY for all /v1, /api, and /gateway/v1 calls except /health.",
+        "- Use Authorization: Bearer $AI_GATEWAY_API_KEY (OPENAI_PROXY_API_KEY remains a working alias) for all /v1, /api, and /gateway/v1 calls except /health.",
         "- Do not ask users to paste raw opk tokens into chat.",
         "",
         "## Preferred Flow",
@@ -190,7 +194,7 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         "4. Use /v1 by default; use /v1/messages or /api/* only for clients that require those protocols.",
         "5. Fetch /gateway/v1/workflows before using extensions.com.vividfish.workflow controls.",
         "6. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",
-        "7. Reuse generated images via data[].asset_id or signed /v1/assets/{asset_id}/content URLs when present; asset IDs are scoped to the minting API key.",
+        "7. Reuse generated images via data[].asset_id or signed /v1/assets/{asset_id}/content URLs when present; asset IDs are scoped to the minting App API key.",
         "",
     ]
     return "\n".join(lines)

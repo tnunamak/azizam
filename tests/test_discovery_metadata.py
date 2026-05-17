@@ -33,6 +33,15 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         )
         self.assertEqual(metadata["links"]["asset_content"], "/v1/assets/{asset_id}/content")
 
+    def test_service_block_advertises_canonical_host_and_alias(self) -> None:
+        metadata = build_gateway_discovery_metadata(base_url="http://gw")
+        service = metadata["service"]
+        self.assertEqual(service["product"], "Vivid Fish AI Gateway")
+        self.assertEqual(service["canonical_host"], "https://ai.vivid.fish")
+        self.assertIn("https://openai.vivid.fish", service["compatibility_aliases"])
+        # Default service name no longer leaks the legacy product slug.
+        self.assertNotEqual(service["name"], "openai-proxy")
+
     def test_metadata_does_not_contain_secret_values(self) -> None:
         rendered = repr(build_gateway_discovery_metadata(base_url="http://gw"))
         self.assertNotIn("proxy_api_keys.yml:", rendered)
@@ -42,6 +51,8 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
     def test_skill_catalog_points_at_skill(self) -> None:
         catalog = build_skill_catalog(base_url="http://gw")
         self.assertEqual(catalog["object"], "skill_catalog")
+        # Skill ID remains `openai-proxy-gateway` for client/test compatibility.
+        self.assertEqual(catalog["skills"][0]["id"], "openai-proxy-gateway")
         self.assertEqual(
             catalog["skills"][0]["url"],
             "http://gw/.well-known/skills/openai-proxy-gateway/SKILL.md",
@@ -52,6 +63,9 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("/.well-known/ai-gateway", text)
         self.assertIn("/gateway/v1/capabilities", text)
         self.assertIn("/v1/assets/{asset_id}/content", text)
+        self.assertIn("Vivid Fish AI Gateway", text)
+        self.assertIn("https://ai.vivid.fish", text)
+        self.assertIn("https://openai.vivid.fish", text)
         self.assertNotIn("opk_", text)
 
 
@@ -64,6 +78,8 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertEqual(body["object"], "ai_gateway_discovery")
+        self.assertEqual(body["service"]["product"], "Vivid Fish AI Gateway")
+        self.assertEqual(body["service"]["canonical_host"], "https://ai.vivid.fish")
         self.assertIn("/gateway/v1/capabilities", body["links"].values())
 
     def test_openai_proxy_alias_matches_discovery_shape(self) -> None:
@@ -81,7 +97,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
 
         skill = self.client.get(href)
         self.assertEqual(skill.status_code, 200, skill.text)
-        self.assertIn("openai-proxy gateway", skill.text)
+        self.assertIn("Vivid Fish AI Gateway", skill.text)
         self.assertIn("/gateway/v1/capabilities", skill.text)
 
     def test_llms_txt_is_public(self) -> None:
@@ -89,6 +105,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.headers["content-type"].split(";")[0], "text/plain")
         self.assertIn("/.well-known/ai-gateway", response.text)
+        self.assertIn("Vivid Fish AI Gateway", response.text)
 
     def test_openapi_advertises_core_openai_compat_paths(self) -> None:
         response = self.client.get("/openapi.json")

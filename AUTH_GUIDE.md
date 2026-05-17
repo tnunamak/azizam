@@ -1,17 +1,37 @@
-# OpenAI Proxy Auth Guide
+# Vivid Fish AI Gateway — Auth Guide
 
-This proxy uses client-facing API keys that are separate from downstream service
-keys. Agents and tools should authenticate to the proxy with their own `opk_...`
-key. The proxy then maps that key to the backend credentials needed for Tabby,
-Kobold, TTS, STT, or ComfyUI.
+This document explains how Vivid Fish AI Gateway (the project formerly known as
+`openai-proxy`) handles authentication for the apps that call it.
 
-## Quick Start For Agents
+The gateway uses **App API keys** that are separate from downstream provider
+keys. Each app — LibreChat, Open WebUI, Continue, Cline, a personal chat
+client, an agent — authenticates to the gateway with its own `opk_...` key.
+The gateway then maps that key to the provider credentials needed for Tabby,
+Kobold, TTS, STT, ComfyUI, or any other configured backend.
 
-Run this from the proxy directory:
+The legacy term "client" is preserved only inside protocol/SDK compatibility
+contexts (the OpenAI Python "client", "client receipts" as an audience tier).
+The product entity is an **App**.
+
+## Control-plane nouns at a glance
+
+- **User** — a human, typically authenticated via OIDC (owner, family member, friend).
+- **ServiceAccount** — a non-human principal that owns Apps and Credentials.
+- **App** — a registered consumer of the gateway (LibreChat, Continue, an agent).
+- **Profile** — the policy bundle attached to an App.
+- **Credential** — a hashed App API key (`opk_...`) or an OIDC session.
+- **AdminRole** / **AuditEvent** — admin-plane permission bundle and audit trail.
+
+The invariant: every executed request resolves an App + Profile + policy
+decision before it runs, and produces exactly one body-free **Receipt**.
+
+## Quick Start For Apps
+
+Run this from the gateway directory:
 
 ```bash
 cd /home/tnunamak/applications/openai-proxy
-./venv/bin/python proxy.py generate-key <agent-name>
+./venv/bin/python proxy.py generate-key <app-name>
 ```
 
 Example:
@@ -20,35 +40,39 @@ Example:
 ./venv/bin/python proxy.py generate-key simon
 ```
 
-The command prints one client API key:
+The command prints one App API key:
 
 ```text
 opk_...
 ```
 
-Use that value as the OpenAI API key for this proxy. Store it in the agent's
+Use that value as the OpenAI API key inside the app. Store it in the app's
 secret store or environment. Do not put the printed key in source files, logs,
 or prompts.
 
-Typical client settings:
+Typical app settings:
 
 ```text
 Base URL: http://127.0.0.1:5000/v1
 API key:  opk_...
 ```
 
-External clients can use the public proxy host when available:
+External apps can use the public canonical host:
 
 ```text
-Base URL: https://openai.vivid.fish/v1
+Base URL: https://ai.vivid.fish/v1
 API key:  opk_...
 ```
 
+The previous host `https://openai.vivid.fish/v1` remains a compatibility alias
+— every route resolves identically — so apps that are already configured
+against it do not need to change.
+
 ## What The Command Does
 
-`generate-key` creates or rotates an entry in `proxy_api_keys.yml`.
+`generate-key` creates or rotates an App entry in `proxy_api_keys.yml`.
 
-The file stores only a SHA-256 hash of the client key:
+The file stores only a SHA-256 hash of the App API key:
 
 ```yaml
 keys:
@@ -58,19 +82,53 @@ keys:
       tabby: {}
 ```
 
-The raw `opk_...` key is shown only once when generated. If it is lost, generate
-a new key for the same name and update that agent's client configuration.
+The raw `opk_...` key is shown only once when generated. If it is lost,
+generate a new key for the same App name and update that app's configuration.
 
-If the same `<agent-name>` already exists, the command rotates that agent's
-client key while preserving its downstream mapping and (when wired) its
-`profile:` block.
+If the same `<app-name>` already exists, the command rotates that App's API
+key while preserving its downstream mapping, Profile block, and audit trail.
+
+## Give A Family Member Access
+
+Concrete walkthrough of the canonical "share my gateway with another human"
+flow:
+
+1. **OIDC User.** The family member signs in to the gateway's admin UI (or, in
+   the current SLVP, asks the owner) and becomes a **User** in the admin
+   plane.
+2. **Personal App.** Register one App for them — `aunt-mary-chat` — owned by
+   their User. One human can own several Apps; one App is a single API key
+   with a single Profile.
+3. **Profile.** Attach a Profile to the App that grants only what they need.
+   For a typical chat-only setup:
+   ```yaml
+   profile:
+     id: aunt-mary-chat
+     protocols: ["openai.chat", "openai.audio"]
+     fallback:
+       cloud_allowed: false
+     native_passthrough:
+       enabled: false
+     status_visibility:
+       level: basic
+   ```
+4. **App API key.** Mint the bearer token:
+   ```bash
+   ./venv/bin/python proxy.py generate-key aunt-mary-chat
+   ```
+   They paste the printed `opk_...` value once, as the OpenAI API key, into
+   their chat app of choice (LibreChat, Open WebUI, an iOS shortcut, etc.)
+   with base URL `https://ai.vivid.fish/v1`.
+
+Rotation stays per-App: `generate-key aunt-mary-chat` again rotates the API
+key while leaving the User, the Profile, and the audit history intact.
 
 ## Request Auth Rules
 
-All proxied traffic requires a valid proxy API key. `/health` is the only public
-endpoint by default.
+All gateway traffic requires a valid App API key. `/health` and the
+`/.well-known/*` discovery surfaces are the only public endpoints by default.
 
-Accepted client auth headers:
+Accepted auth headers:
 
 ```http
 Authorization: Bearer opk_...
@@ -88,13 +146,15 @@ or:
 api-key: opk_...
 ```
 
-Do not send Tabby admin keys or downstream provider keys as client auth. The
-proxy strips client auth headers before forwarding requests and injects the
+Do not send Tabby admin keys or downstream provider keys as App auth. The
+gateway strips inbound auth headers before forwarding requests and injects the
 appropriate downstream credentials itself.
 
 ## Smoke Test
 
-After generating a key, test that the proxy accepts it:
+After generating a key, test that the gateway accepts it. `OPENAI_PROXY_API_KEY`
+is the historical env-var name and remains the canonical one for now — new
+docs may also reference `AI_GATEWAY_API_KEY` as an alias:
 
 ```bash
 export OPENAI_PROXY_API_KEY='opk_...'
@@ -119,14 +179,14 @@ OPENAI_PROXY_API_KEY='opk_...' ./test_e2e.sh
 
 ## Downstream Credential Mapping
 
-By default, proxy API keys map to the global downstream credentials configured
-for the proxy:
+By default, App API keys map to the global downstream provider credentials
+configured for the gateway:
 
 - Tabby API key: `TABBY_API_KEY` or Tabby's `api_tokens.yml`
 - Tabby admin key: `TABBY_ADMIN_KEY` or Tabby's `api_tokens.yml`
 - TTS, STT, ComfyUI, Kobold: no extra auth unless configured per key
 
-Per-agent overrides can be added in `proxy_api_keys.yml` when an agent needs
+Per-App overrides can be added in `proxy_api_keys.yml` when an App needs
 different downstream credentials:
 
 ```yaml
@@ -170,27 +230,27 @@ headers:
     prefix: Bearer
 ```
 
-The proxy reloads `proxy_api_keys.yml` when it changes, so adding, rotating, or
-deleting a key does not require a service restart. App profile blocks (see
-below) reload alongside the key entries they live on.
+The gateway reloads `proxy_api_keys.yml` when it changes, so adding, rotating,
+or deleting an App API key does not require a service restart. Profile blocks
+(see below) reload alongside the entries they live on.
 
 ## App Profiles
 
-App profiles are the authorization and audience boundary for a key. Each key
-entry may carry an optional `profile:` block that the gateway loads into an
-`AppProfile` via `gateway.profiles.load_profile_from_entry`. When mounted in
-the request path, the profile decides:
+A Profile is the authorization and audience boundary attached to an App. Each
+key entry may carry an optional `profile:` block that the gateway loads into
+an `AppProfile` via `gateway.profiles.load_profile_from_entry`. When mounted
+in the request path, the Profile decides:
 
-- which protocols the key may use (e.g. `openai.chat`, `openai.images`,
+- which protocols the App may use (e.g. `openai.chat`, `openai.images`,
   `openai.audio`, `openai.responses`, `anthropic.messages`, `ollama.chat`,
   `ollama.generate`)
-- which workflows, models, and backends the key may target
+- which workflows, models, and providers the App may target
 - whether cloud fallback is allowed
 - whether — and where — native passthrough is permitted
-- how much status, discovery, and receipt detail the key sees
+- how much status, discovery, and receipt detail the App sees
 
 Missing `profile:` blocks stay backward-compatible: the loader falls back to
-`DEFAULT_PROFILE` (local-only, basic visibility), so existing keys keep
+`DEFAULT_PROFILE` (local-only, basic visibility), so existing Apps keep
 working unchanged.
 
 Allow-lists are conservative by construction:
@@ -198,12 +258,14 @@ Allow-lists are conservative by construction:
 - omit a list → "no opinion" for that dimension (no restriction)
 - set a list to `[]` → "deny all" for that dimension
 
-`status_visibility.level` maps a key to a discovery/receipt audience tier:
+`status_visibility.level` maps an App to a discovery/receipt audience tier.
+"Client" here is the protocol/audience tier name (kept for compatibility),
+not a product noun — the requester is still an App:
 
-| Level      | Audience       | What the key sees                              |
+| Level      | Audience       | What the App sees                              |
 |------------|----------------|------------------------------------------------|
 | `none`     | client         | No receipts; minimal discovery                 |
-| `basic`    | client         | Client receipts (request/job IDs, status)      |
+| `basic`    | client         | Client-tier receipts (request/job IDs, status) |
 | `standard` | admin          | Routing facts, fallback reasons                |
 | `full`     | internal       | Backend, policy source, manifest hash, diags   |
 
@@ -259,17 +321,17 @@ gateway extensions:
 ```
 
 Unknown extension inputs are rejected with a reason; known-but-unsupported
-inputs are recorded as ignored. The proxy never silently drops inputs.
+inputs are recorded as ignored. The gateway never silently drops inputs.
 
-### Templates for current local keys
+### Templates for current Apps
 
-Safe starter profiles for the agent/UI/harness keys this proxy serves today.
+Safe starter Profiles for the agent/UI/harness Apps this gateway serves today.
 Drop these under the matching key entry — they use non-secret placeholders
-only. Tighten the allow-lists when a key has a narrow role; leave them
+only. Tighten the allow-lists when an App has a narrow role; leave them
 omitted to keep "no opinion" semantics until you need to restrict.
 
 ```yaml
-# Agent/coding clients (Claude Code-style, Continue, Cline):
+# Agent/coding apps (Claude Code-style, Continue, Cline):
 - name: simon
   key_hash: sha256:...
   profile:
@@ -280,7 +342,7 @@ omitted to keep "no opinion" semantics until you need to restrict.
     status_visibility:
       level: standard
 
-# UI clients (LibreChat, Open WebUI):
+# UI apps (LibreChat, Open WebUI):
 - name: librechat
   key_hash: sha256:...
   profile:
@@ -301,7 +363,7 @@ omitted to keep "no opinion" semantics until you need to restrict.
     status_visibility:
       level: basic
 
-# Compatibility harness / test client:
+# Compatibility harness / test App:
 - name: claude-test
   key_hash: sha256:...
   profile:
@@ -319,36 +381,37 @@ omitted to keep "no opinion" semantics until you need to restrict.
 
 ## Rotation And Revocation
 
-Rotate one agent's key:
+Rotate one App's API key:
 
 ```bash
 ./venv/bin/python proxy.py generate-key simon
 ```
 
-Then update that agent to use the newly printed `opk_...` value.
+Then update that App to use the newly printed `opk_...` value.
 
-Revoke an agent's key:
+Revoke an App's API key:
 
-1. Remove that agent's entry from `proxy_api_keys.yml`.
+1. Remove that App's entry from `proxy_api_keys.yml`.
 2. Save the file.
-3. The proxy will reject that key on subsequent `/v1` requests.
+3. The gateway will reject that key on subsequent `/v1` requests.
 
 ## Common Failures
 
 `401 Missing API key.`
 
-The request reached a proxied endpoint without `Authorization: Bearer opk_...`
-or another accepted client auth header.
+The request reached an authenticated endpoint without
+`Authorization: Bearer opk_...` or another accepted auth header.
 
 `401 Invalid API key.`
 
-The client key does not match any hash in `proxy_api_keys.yml`.
+The presented App API key does not match any hash in `proxy_api_keys.yml`.
 
 `503 Proxy auth is enabled, but no proxy API keys are configured.`
 
-Auth is fail-closed and no usable keys are loaded. Generate at least one key.
+Auth is fail-closed and no usable App API keys are loaded. Generate at least
+one.
 
 `502` or `503` backend errors.
 
-The client key was accepted, but the selected downstream service was unavailable
-or rejected its own backend credentials.
+The App API key was accepted, but the selected downstream provider was
+unavailable or rejected its own backend credentials.
