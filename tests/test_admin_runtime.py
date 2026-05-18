@@ -17,6 +17,7 @@ from gateway.admin_runtime import (  # noqa: E402
     AdminAuthenticator,
     AdminSQLiteStore,
     create_admin_service_account_key,
+    runtime_identity_for_app_credential_hash,
 )
 from gateway.runtime_auth import hash_api_key  # noqa: E402
 
@@ -85,6 +86,61 @@ class AdminRuntimeTests(unittest.TestCase):
         forbidden = self._client(app_key).get("/admin/api/overview")
         self.assertEqual(forbidden.status_code, 403)
         self.assertEqual(forbidden.json()["error"]["code"], "admin_forbidden")
+
+    def test_admin_store_app_key_builds_runtime_identity_with_profile(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        profile = client.post(
+            "/admin/api/profiles",
+            json={
+                "name": "brother-chat-only",
+                "profile": {
+                    "id": "brother-chat-only",
+                    "protocols": ["openai.chat"],
+                    "fallback": {"cloud_allowed": False},
+                    "status_visibility": {"level": "basic"},
+                },
+            },
+        ).json()["profile"]
+        app_id = client.post(
+            "/admin/api/apps",
+            json={
+                "name": "brother-personal",
+                "profile_id": profile["id"],
+            },
+        ).json()["app"]["id"]
+        app_key = client.post(f"/admin/api/apps/{app_id}/keys", json={}).json()[
+            "credential"
+        ]["api_key"]
+        stored = admin_store.find_credential_by_hash(
+            hash_api_key(app_key),
+            path=self.db,
+        )
+        self.assertIsNotNone(stored)
+        # Dashboard/default key minting inherits the App profile at runtime;
+        # it does not freeze a copy onto the credential.
+        self.assertIsNone(stored["profile_id"])  # type: ignore[index]
+
+        identity = runtime_identity_for_app_credential_hash(
+            hash_api_key(app_key),
+            path=self.db,
+        )
+        self.assertIsNotNone(identity)
+        self.assertEqual(identity.name, "brother-personal")  # type: ignore[union-attr]
+        self.assertEqual(identity.profile.id, "brother-chat-only")  # type: ignore[union-attr]
+        self.assertEqual(
+            identity.profile.protocols,  # type: ignore[union-attr]
+            frozenset({"openai.chat"}),
+        )
+
+        self.assertIsNone(
+            runtime_identity_for_app_credential_hash(
+                hash_api_key(admin_key),
+                path=self.db,
+            )
+        )
 
     def test_invalid_personal_app_owner_returns_400(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(

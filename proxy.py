@@ -75,6 +75,7 @@ from gateway.admin_runtime import (
     AdminAuthenticator,
     AdminSQLiteStore,
     create_admin_service_account_key,
+    runtime_identity_for_app_credential_hash,
 )
 from gateway.api import create_gateway_router
 from gateway.audio_extensions import (
@@ -1171,14 +1172,17 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
 
     refresh_auth_registry()
 
-    if not AUTH_REGISTRY:
-        return auth_error("Proxy auth is enabled, but no proxy API keys are configured.", 503)
-
     api_key = get_client_api_key_from_headers(request.headers)
     if not api_key:
         return auth_error("Missing API key.")
 
-    identity = AUTH_REGISTRY.get(hash_api_key(api_key))
+    key_hash = hash_api_key(api_key)
+    identity = AUTH_REGISTRY.get(key_hash)
+    if not identity:
+        identity = runtime_identity_for_app_credential_hash(
+            key_hash,
+            path=ADMIN_STORE.path,
+        )
     if not identity:
         return auth_error("Invalid API key.")
 

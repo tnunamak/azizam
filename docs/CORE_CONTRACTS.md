@@ -359,10 +359,11 @@ Minimum eligibility fields for routing:
 
 ## App Profile
 
-A Profile is a named policy bundle tied to an App API key. Profiles live as
-optional `profile:` blocks on each key entry in `proxy_api_keys.yml` and
-hot-reload alongside the entries that carry them. Missing blocks fall back to
-`DEFAULT_PROFILE` (local-only, basic visibility) so existing Apps keep
+A Profile is a named policy bundle tied to an App. In the durable admin store,
+Apps point at stored Profiles and App keys inherit that Profile at runtime.
+Legacy `proxy_api_keys.yml` entries may also carry optional `profile:` blocks
+that hot-reload alongside the entries that carry them. Missing blocks fall
+back to `DEFAULT_PROFILE` (local-only, basic visibility) so existing Apps keep
 working unchanged.
 
 Example:

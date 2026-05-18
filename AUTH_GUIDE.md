@@ -144,11 +144,11 @@ one.
 Concrete walkthrough of the canonical "share my gateway with another human"
 flow:
 
-1. **OIDC User.** The family member signs in to the gateway's admin UI and
-   becomes a **User** in the admin plane.
-2. **Personal App.** Register one App for them — `aunt-mary-chat` — owned by
-   their User. One human can own several Apps; one App is a single API key
-   with a single Profile.
+1. **OIDC User.** The family member signs in once so the admin store has
+   their **User** row. They do not need a global admin role.
+2. **Personal App.** An owner/admin registers one App for them —
+   `aunt-mary-chat` — owned by their User. One human can own several Apps;
+   one App is the access boundary that ordinary keys use at runtime.
 3. **Profile.** Attach a Profile to the App that grants only what they need.
    For a typical chat-only setup:
    ```yaml
@@ -180,6 +180,9 @@ flow:
 
 Rotation stays per-App: revoke the old Credential and mint a new key for the
 same App while leaving the User, the Profile, and the audit history intact.
+Dashboard/default key minting inherits the App's current Profile at runtime;
+use a per-key Profile override only when you intentionally want a narrower or
+temporary exception.
 
 ## Request Auth Rules
 
@@ -294,10 +297,11 @@ or deleting an App API key does not require a service restart. Profile blocks
 
 ## App Profiles
 
-A Profile is the authorization and audience boundary attached to an App. Each
-key entry may carry an optional `profile:` block that the gateway loads into
-an `AppProfile` via `gateway.profiles.load_profile_from_entry`. When mounted
-in the request path, the Profile decides:
+A Profile is the authorization and audience boundary attached to an App. In
+the durable admin store, Apps point at stored Profiles and App keys inherit
+that Profile at runtime. Legacy `proxy_api_keys.yml` entries may also carry an
+optional `profile:` block loaded by `gateway.profiles.load_profile_from_entry`.
+When mounted in the request path, the Profile decides:
 
 - which protocols the App may use (e.g. `openai.chat`, `openai.images`,
   `openai.audio`, `openai.responses`, `anthropic.messages`, `ollama.chat`,

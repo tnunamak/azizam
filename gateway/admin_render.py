@@ -155,8 +155,19 @@ def _credential_row(record: Mapping[str, Any]) -> str:
 def _app_row(record: Mapping[str, Any]) -> str:
     app_id = _esc(record.get("id"))
     name = _esc(record.get("name") or "—")
-    owner = _esc(record.get("owner") or record.get("user_id") or "—")
-    profile = _esc(record.get("profile_id") or record.get("profile") or "—")
+    owner = _esc(
+        record.get("owner")
+        or record.get("owner_user_id")
+        or record.get("owner_service_account_id")
+        or record.get("user_id")
+        or "—"
+    )
+    profile = _esc(
+        record.get("default_profile_id")
+        or record.get("profile_id")
+        or record.get("profile")
+        or "—"
+    )
     created = _esc(record.get("created_at") or "—")
     return (
         "<tr>"
@@ -261,9 +272,9 @@ def _flow_form(
         for profile in profiles
     )
     return (
-        '<p class="hint">Register an App, mint one <code>opk_...</code> key, then paste it into that App with base URL <code>https://ai.vivid.fish/v1</code>. The raw key is shown once.</p>'
+        '<p class="hint">For a human, create a Personal app owned by that User and attach a Profile. For bots or shared integrations, create a Service app. Then mint one <code>opk_...</code> key and paste it into the tool with base URL <code>https://ai.vivid.fish/v1</code>. The raw key is shown once.</p>'
         '<form class="flow" method="post" action="' + _esc(create_app_action) + '" data-create-app>'
-        "<label>Create an app:</label>"
+        "<label>Create access boundary:</label>"
         '<div class="stack">'
         '<input type="text" name="name" placeholder="App name" required>'
         '<select name="kind"><option value="service">Service app</option><option value="personal">Personal app</option></select>'
@@ -278,7 +289,7 @@ def _flow_form(
         '<form class="flow" method="post" data-action-template="'
         + _esc(create_key_action_template)
         + '" data-mint-key>'
-        "<label>Mint an API key for an existing app:</label>"
+        "<label>Mint an API key for an access boundary:</label>"
         '<div class="row">'
         f'<select name="app_id" required>{app_options}</select>'
         '<input type="text" name="label" placeholder="Key label">'
@@ -424,7 +435,7 @@ def render_admin_dashboard(
         "</header>"
         "<main>"
         + _section("Overview", f'<div class="counts">{counts_html}</div>')
-        + _section("Give an app an API key", flow_html)
+        + _section("Give Access", flow_html)
         + _section("Apps", apps_table)
         + _section("Users", users_table)
         + _section("App profiles", profiles_table)

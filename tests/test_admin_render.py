@@ -33,8 +33,8 @@ def _snapshot() -> dict:
             {
                 "id": "app_2",
                 "name": "kitchen-tablet",
-                "owner": "u_owner",
-                "profile_id": "kiosk",
+                "owner_user_id": "u_owner",
+                "default_profile_id": "kiosk",
                 "created_at": "2026-05-17T00:01:00Z",
             },
         ],
@@ -106,9 +106,9 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_includes_create_app_and_mint_key_flow(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn("Create an app", html)
+        self.assertIn("Create access boundary", html)
         self.assertIn("Mint an API key", html)
-        self.assertIn("Register an App", html)
+        self.assertIn("Personal app owned by that User", html)
         self.assertIn("https://ai.vivid.fish/v1", html)
         self.assertIn('action="/admin/api/apps"', html)
         self.assertIn("x-ai-gateway-admin-action", html)

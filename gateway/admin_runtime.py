@@ -23,8 +23,9 @@ from fastapi import Request, status
 from gateway import admin_store
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.admin_oidc import CookieConfig, SessionError, decode_session_cookie
+from gateway.policy import DEFAULT_PROFILE
 from gateway.profiles import ProfileLoadError, load_profile
-from gateway.runtime_auth import hash_api_key
+from gateway.runtime_auth import RuntimeIdentity, hash_api_key
 
 APP_KEY_PREFIX = "opk_"
 ADMIN_KEY_PREFIX = "oak_"
@@ -181,7 +182,7 @@ class AdminSQLiteStore:
         if app is None:
             raise ValueError(f"app {app_id!r} not found")
         api_key = generate_app_api_key()
-        profile_id = data.get("profile_id") or app.get("default_profile_id")
+        profile_id = data.get("profile_id")
         if profile_id and admin_store.get_profile(str(profile_id), path=self.path) is None:
             raise ValueError(f"profile {profile_id!r} not found")
         record = admin_store.create_credential_hash(
@@ -354,6 +355,53 @@ def _credential_active(record: Mapping[str, Any]) -> bool:
     if expires_at is not None and int(expires_at) <= int(time.time()):
         return False
     return True
+
+
+def runtime_identity_for_app_credential_hash(
+    key_hash: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> RuntimeIdentity | None:
+    """Return a data-plane identity for an admin-store App credential.
+
+    Dashboard-minted ``opk_...`` keys live in the durable admin store, not in
+    ``proxy_api_keys.yml``. Runtime auth must accept only active App
+    credentials from that store; user/service-account admin keys remain
+    control-plane-only.
+    """
+    credential = admin_store.find_credential_by_hash(key_hash, path=path)
+    if credential is None or not _credential_active(credential):
+        return None
+    if credential.get("subject_kind") != "app":
+        return None
+
+    app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
+    if not app_id:
+        return None
+    app = admin_store.get_app(app_id, path=path)
+    if app is None or app.get("disabled_at"):
+        return None
+
+    profile = DEFAULT_PROFILE
+    profile_id = credential.get("profile_id") or app.get("default_profile_id")
+    if profile_id:
+        profile_record = admin_store.get_profile(str(profile_id), path=path)
+        if profile_record is None:
+            return None
+        try:
+            profile = load_profile(
+                profile_record.get("profile"),
+                default_id=str(profile_id),
+            )
+        except ProfileLoadError:
+            return None
+
+    return RuntimeIdentity(
+        name=str(app.get("name") or credential.get("display_name") or app_id),
+        key_hash=key_hash,
+        downstream={},
+        profile=profile,
+    )
 
 
 def create_admin_service_account_key(

@@ -25,8 +25,14 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.old_oidc = proxy.ADMIN_OIDC_CONFIG
         self.old_signing_key = proxy.ADMIN_AUTH.signing_key
         self.old_cookie = proxy.ADMIN_AUTH.cookie
+        self.old_auth_enabled = proxy.AUTH_ENABLED
+        self.old_auth_registry = proxy.AUTH_REGISTRY
+        self.old_refresh_auth_registry = proxy.refresh_auth_registry
         proxy.ADMIN_STORE.path = self.db
         proxy.ADMIN_OIDC_STATES.clear()
+        proxy.AUTH_ENABLED = True
+        proxy.AUTH_REGISTRY = {}
+        proxy.refresh_auth_registry = lambda force=False: None
         admin_store.init_db(self.db)
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
@@ -38,6 +44,9 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_OIDC_CONFIG = self.old_oidc
         proxy.ADMIN_AUTH.signing_key = self.old_signing_key
         proxy.ADMIN_AUTH.cookie = self.old_cookie
+        proxy.AUTH_ENABLED = self.old_auth_enabled
+        proxy.AUTH_REGISTRY = self.old_auth_registry
+        proxy.refresh_auth_registry = self.old_refresh_auth_registry
         proxy.ADMIN_OIDC_STATES.clear()
         self.tmp.cleanup()
 
@@ -74,6 +83,55 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(forbidden.status_code, 403)
         self.assertEqual(forbidden.json()["error"]["code"], "admin_forbidden")
+
+    def test_admin_created_app_key_authenticates_runtime_with_profile(self) -> None:
+        profile = self.client.post(
+            "/admin/api/profiles",
+            json={
+                "name": "chat-only",
+                "profile": {
+                    "id": "chat-only",
+                    "protocols": ["openai.chat"],
+                    "fallback": {"cloud_allowed": False},
+                    "status_visibility": {"level": "basic"},
+                },
+            },
+            headers=self._auth(),
+        ).json()["profile"]
+        created = self.client.post(
+            "/admin/api/apps",
+            json={"name": "brother-chat", "profile_id": profile["id"]},
+            headers=self._auth(),
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        app_id = created.json()["app"]["id"]
+        key_response = self.client.post(
+            f"/admin/api/apps/{app_id}/keys",
+            json={"label": "Brother"},
+            headers=self._auth(),
+        )
+        self.assertEqual(key_response.status_code, 201, key_response.text)
+        app_key = key_response.json()["credential"]["api_key"]
+
+        capabilities = self.client.get(
+            "/gateway/v1/capabilities",
+            headers={"Authorization": f"Bearer {app_key}"},
+        )
+        self.assertEqual(capabilities.status_code, 200, capabilities.text)
+
+        denied = self.client.post(
+            "/v1/images/generations",
+            json={"model": "flux2-klein-4b", "prompt": "test"},
+            headers={"Authorization": f"Bearer {app_key}"},
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self.assertEqual(denied.json()["error"]["code"], "policy_denied")
+
+        admin_key_on_runtime = self.client.get(
+            "/gateway/v1/capabilities",
+            headers={"Authorization": f"Bearer {self.admin_key}"},
+        )
+        self.assertEqual(admin_key_on_runtime.status_code, 401)
 
     def test_admin_dashboard_renders_with_admin_key(self) -> None:
         response = self.client.get("/admin", headers=self._auth())

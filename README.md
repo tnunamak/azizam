@@ -123,12 +123,12 @@ The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-com
 
 The shortest "share my gateway with another human" flow:
 
-1. **OIDC User.** The family member signs in to the gateway's admin UI and becomes a **User** in the admin plane.
-2. **Personal App.** They register one **App** for themselves — e.g. `aunt-mary-chat`. An App is a named consumer, not a person; one User can own several Apps.
-3. **Profile.** The App is attached to a **Profile** that grants only what they need (e.g. `openai.chat` + `openai.audio`, no native passthrough, `cloud_allowed: false`, `status_visibility.level: basic`).
+1. **OIDC User.** The family member signs in once so the admin store has their **User** row. They do not need a global admin role.
+2. **Personal App.** An owner/admin creates one **Personal App** owned by that User — e.g. `aunt-mary-chat`. An App is the access boundary, not the person.
+3. **Profile.** The App is attached to a **Profile** that grants only what they need (e.g. `openai.chat` + `openai.audio`, no native passthrough, `cloud_allowed: false`, `status_visibility.level: basic`). This is what controls their normal access limits.
 4. **App API key.** Mint a bearer token for that App with `POST /admin/api/apps/{app_id}/keys`. They paste the returned `opk_...` value once into their chat app of choice as the OpenAI API key, with base URL `https://ai.vivid.fish/v1`.
 
-Rotation is per-App, not per-human: revoke the old Credential and mint a new key while preserving the App's Profile and downstream mapping. The User remains the same.
+Rotation is per-App, not per-human: revoke the old Credential and mint a new key while preserving the App's Profile and downstream mapping. Dashboard-minted keys inherit the App's current Profile unless an explicit per-key override is requested.
 
 See [`AUTH_GUIDE.md`](AUTH_GUIDE.md) for the full key-generation and rotation workflow.
 
