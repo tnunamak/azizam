@@ -233,6 +233,11 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         dashboard = self.client.get("/admin")
         self.assertEqual(dashboard.status_code, 200, dashboard.text)
         self.assertIn("owner@example.com", dashboard.text)
+        users = admin_store.list_users(path=self.db)
+        self.assertEqual(len(users), 1)
+        apps = admin_store.list_apps_for_user(users[0]["id"], path=self.db)
+        self.assertEqual(len(apps), 1)
+        self.assertEqual(apps[0]["kind"], "personal")
 
     def test_status_dashboard_accepts_admin_oidc_session(self) -> None:
         cfg = OIDCConfig(
@@ -604,7 +609,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(logout.status_code, 302)
         self.assertEqual(logout.headers["location"], "/")
 
-    def test_user_portal_access_request_creates_pending_personal_app(self) -> None:
+    def test_user_portal_self_creates_personal_app_and_mints_key(self) -> None:
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
@@ -651,18 +656,32 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             },
         )
         self.assertEqual(requested.status_code, 201, requested.text)
-        self.assertTrue(requested.json()["app"]["profile_required"])
+        self.assertFalse(requested.json()["app"]["profile_required"])
+        self.assertEqual(
+            requested.json()["app"]["effective_profile_id"],
+            "default-local",
+        )
 
-        denied = self.client.post(
+        minted = self.client.post(
             f"/me/api/apps/{requested.json()['app']['id']}/keys",
-            json={},
+            json={"label": "New user laptop"},
             headers={
                 "x-ai-gateway-user-action": "1",
                 "x-ai-gateway-csrf": csrf,
             },
         )
-        self.assertEqual(denied.status_code, 403, denied.text)
-        self.assertEqual(denied.json()["error"]["code"], "profile_required")
+        self.assertEqual(minted.status_code, 201, minted.text)
+        self.assertTrue(minted.json()["credential"]["api_key"].startswith("opk_"))
+
+        capabilities = self.client.get(
+            "/gateway/v1/capabilities",
+            headers={
+                "Authorization": (
+                    f"Bearer {minted.json()['credential']['api_key']}"
+                )
+            },
+        )
+        self.assertEqual(capabilities.status_code, 200, capabilities.text)
 
 
 if __name__ == "__main__":

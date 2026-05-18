@@ -82,6 +82,24 @@ def _profile_summary(profile_id: str | None, *, path: Path) -> dict[str, Any] | 
     }
 
 
+def _default_profile_summary(profile_id: str | None, *, path: Path) -> dict[str, Any]:
+    if profile_id:
+        profile = _profile_summary(profile_id, path=path)
+        if profile is not None:
+            profile["inherited"] = True
+            return profile
+    return {
+        "id": "default-local",
+        "name": "Default local",
+        "policy_id": "default-local",
+        "protocols": [],
+        "allow": {},
+        "status_visibility": "basic",
+        "missing": False,
+        "inherited": True,
+    }
+
+
 def _credentials_for_app(app_id: str, *, path: Path) -> list[dict[str, Any]]:
     credentials = []
     for record in admin_store.list_credentials(path=path):
@@ -112,18 +130,26 @@ def _app_belongs_to_user(app_id: str, user_id: str, *, path: Path) -> dict[str, 
     return app
 
 
-def _app_profile_for_self_service(app: Mapping[str, Any], *, path: Path) -> str:
-    profile_id = app.get("default_profile_id")
+def _effective_profile_id(
+    app: Mapping[str, Any], *, default_profile_id: str | None = None
+) -> str | None:
+    profile_id = app.get("default_profile_id") or default_profile_id
+    return str(profile_id) if profile_id else None
+
+
+def _app_profile_for_self_service(
+    app: Mapping[str, Any],
+    *,
+    default_profile_id: str | None = None,
+    path: Path,
+) -> str | None:
+    profile_id = _effective_profile_id(app, default_profile_id=default_profile_id)
     if not profile_id:
-        raise UserPortalError(
-            "profile_required",
-            "An operator must attach a Profile before this App can mint keys",
-            status_code=403,
-        )
+        return None
     if admin_store.get_profile(str(profile_id), path=path) is None:
         raise UserPortalError(
             "profile_missing",
-            "This App's Profile is missing; ask the operator to repair access",
+            "This App's inherited Profile is missing; ask the operator to repair access",
             status_code=403,
         )
     return str(profile_id)
@@ -143,6 +169,8 @@ def _user_from_session(session: AdminSession, *, path: Path) -> dict[str, Any]:
 def build_user_portal_snapshot(
     session: AdminSession | None,
     *,
+    auto_create_personal_app: bool = False,
+    default_profile_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Return the account data safe to embed in ``/me``.
@@ -161,13 +189,26 @@ def build_user_portal_snapshot(
             "error": {"code": exc.code, "message": exc.message},
         }
 
+    if auto_create_personal_app:
+        label = user.get("email") or user.get("display_name") or user["id"]
+        admin_store.ensure_personal_app_for_user(
+            str(user["id"]),
+            name=f"{label} personal access",
+            path=path,
+        )
+
     apps: list[dict[str, Any]] = []
     for app in admin_store.list_apps_for_user(user["id"], path=path):
         profile_id = app.get("default_profile_id")
+        effective_profile_id = _effective_profile_id(
+            app,
+            default_profile_id=default_profile_id,
+        )
         credentials = _credentials_for_app(str(app["id"]), path=path)
-        profile = _profile_summary(
-            str(profile_id) if profile_id else None,
-            path=path,
+        profile = (
+            _profile_summary(str(profile_id), path=path)
+            if profile_id
+            else _default_profile_summary(default_profile_id, path=path)
         )
         apps.append({
             "id": app.get("id"),
@@ -175,13 +216,14 @@ def build_user_portal_snapshot(
             "name": app.get("name"),
             "disabled_at": app.get("disabled_at"),
             "profile_id": profile_id,
+            "effective_profile_id": effective_profile_id or "default-local",
             "profile": profile,
             "can_mint_keys": (
-                bool(profile_id)
-                and not app.get("disabled_at")
+                not app.get("disabled_at")
                 and not (profile or {}).get("missing")
             ),
-            "profile_required": not bool(profile_id),
+            "inherits_profile": not bool(profile_id),
+            "profile_required": False,
             "credentials": credentials,
             "active_credentials": sum(1 for c in credentials if c.get("active")),
             "created_at": app.get("created_at"),
@@ -204,12 +246,17 @@ def mint_user_app_key(
     app_id: str,
     *,
     label: str | None = None,
+    default_profile_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Mint a runtime key for an App already owned by ``session.subject``."""
     user = _user_from_session(session, path=path)
     app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
-    _app_profile_for_self_service(app, path=path)
+    _app_profile_for_self_service(
+        app,
+        default_profile_id=default_profile_id,
+        path=path,
+    )
     api_key = generate_app_api_key()
     record = admin_store.create_credential_hash(
         subject_kind="app",
@@ -237,9 +284,10 @@ def mint_user_app_key(
 def request_user_access(
     session: AdminSession,
     *,
+    default_profile_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Create or return the signed-in user's pending Personal App."""
+    """Create or return the signed-in user's self-service Personal App."""
     user = _user_from_session(session, path=path)
     label = user.get("email") or user.get("display_name") or user["id"]
     app = admin_store.ensure_personal_app_for_user(
@@ -247,13 +295,23 @@ def request_user_access(
         name=f"{label} personal access",
         path=path,
     )
+    profile = (
+        _profile_summary(str(app.get("default_profile_id")), path=path)
+        if app.get("default_profile_id")
+        else _default_profile_summary(default_profile_id, path=path)
+    )
     admin_store.record_audit(
-        "app.self_request_access",
+        "app.self_create",
         actor_kind="user",
         actor_id=str(user["id"]),
         target_kind="app",
         target_id=app["id"],
-        metadata={"email": user.get("email")},
+        metadata={
+            "email": user.get("email"),
+            "effective_profile_id": (
+                app.get("default_profile_id") or default_profile_id or "default-local"
+            ),
+        },
         path=path,
     )
     return {
@@ -262,7 +320,11 @@ def request_user_access(
             "kind": app.get("kind"),
             "name": app.get("name"),
             "profile_id": app.get("default_profile_id"),
-            "profile_required": not bool(app.get("default_profile_id")),
+            "effective_profile_id": (
+                app.get("default_profile_id") or default_profile_id or "default-local"
+            ),
+            "profile": profile,
+            "profile_required": False,
         }
     }
 

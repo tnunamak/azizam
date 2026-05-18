@@ -119,7 +119,8 @@ class UserPortalRenderTests(unittest.TestCase):
             },
             csrf_token="csrf-token",
         )
-        self.assertIn("Request access", html)
+        self.assertIn("Create a Personal App", html)
+        self.assertIn("<button type=\"submit\">Create App</button>", html)
         self.assertIn("data-request-access", html)
         self.assertIn("x-ai-gateway-csrf", html)
 

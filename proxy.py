@@ -342,6 +342,9 @@ _pin_mismatch_warned: set = set()
 # Auth
 auth_cfg = config.get("auth", {})
 admin_cfg = config.get("admin", {}) or {}
+user_defaults_cfg = admin_cfg.get("user_defaults") or {}
+if not isinstance(user_defaults_cfg, Mapping):
+    user_defaults_cfg = {}
 
 # Health
 HEALTH_CHECK_TIMEOUT = 5
@@ -1049,6 +1052,151 @@ ADMIN_AUTH = AdminAuthenticator(
 )
 
 
+def _profile_ref_to_store_id(ref: Any) -> str | None:
+    raw = str(ref or "").strip()
+    if not raw:
+        return None
+    if raw in {"default", "default-local"}:
+        return None
+    if admin_store.get_profile(raw, path=ADMIN_STORE.path) is not None:
+        return raw
+    for profile in admin_store.list_profiles(path=ADMIN_STORE.path):
+        profile_doc = profile.get("profile")
+        policy_id = (
+            str(profile_doc.get("id") or "")
+            if isinstance(profile_doc, Mapping)
+            else ""
+        )
+        if raw in {str(profile.get("id") or ""), str(profile.get("name") or ""), policy_id}:
+            return str(profile.get("id"))
+    return raw
+
+
+def _user_self_service_enabled() -> bool:
+    return bool_from_config(
+        os.environ.get(
+            "AI_GATEWAY_USER_SELF_SERVICE",
+            user_defaults_cfg.get("self_service_apps"),
+        ),
+        True,
+    )
+
+
+def _auto_create_personal_app_enabled() -> bool:
+    return bool_from_config(
+        os.environ.get(
+            "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP",
+            user_defaults_cfg.get("auto_create_personal_app"),
+        ),
+        _user_self_service_enabled(),
+    )
+
+
+def _profile_from_map(mapping_name: str, key: str) -> str | None:
+    mapping = user_defaults_cfg.get(mapping_name)
+    if not isinstance(mapping, Mapping):
+        return None
+    raw = mapping.get(key) or mapping.get(key.lower())
+    return _profile_ref_to_store_id(raw)
+
+
+def _default_profile_id_for_user(*, email: str, role: str) -> str | None:
+    normalized_email = email.strip().lower()
+    if normalized_email:
+        profile_id = _profile_from_map("email_profile_ids", normalized_email)
+        if profile_id:
+            return profile_id
+        _, _, domain = normalized_email.partition("@")
+        if domain:
+            profile_id = _profile_from_map("domain_profile_ids", domain)
+            if profile_id:
+                return profile_id
+
+    normalized_role = (role or "none").strip().lower() or "none"
+    profile_id = _profile_from_map("role_profile_ids", normalized_role)
+    if profile_id:
+        return profile_id
+
+    return _profile_ref_to_store_id(user_defaults_cfg.get("default_profile_id"))
+
+
+def _admin_role_for_user_id(user_id: str) -> str:
+    roles = {
+        str(role.get("role") or "")
+        for role in admin_store.list_admin_roles(
+            subject_kind="user",
+            subject_id=user_id,
+            path=ADMIN_STORE.path,
+        )
+    }
+    for role in ("owner", "superadmin", "admin"):
+        if role in roles:
+            return role
+    return "none"
+
+
+def _default_profile_id_for_session(session) -> str | None:
+    return _default_profile_id_for_user(
+        email=str(getattr(session, "email", "") or ""),
+        role=str(getattr(session, "role", "") or "none"),
+    )
+
+
+def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
+    if not _user_self_service_enabled():
+        return None
+    owner_user_id = str(app.get("owner_user_id") or "")
+    if not owner_user_id:
+        return None
+    user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
+    if user is None:
+        return None
+    return _default_profile_id_for_user(
+        email=str(user.get("email") or ""),
+        role=_admin_role_for_user_id(owner_user_id),
+    )
+
+
+def _provision_existing_user_personal_apps() -> int:
+    if not (_user_self_service_enabled() and _auto_create_personal_app_enabled()):
+        return 0
+    created = 0
+    for user in admin_store.list_users(path=ADMIN_STORE.path):
+        user_id = str(user.get("id") or "")
+        if not user_id:
+            continue
+        before = admin_store.list_apps_for_user(user_id, path=ADMIN_STORE.path)
+        if any(app.get("kind") == "personal" for app in before):
+            continue
+        label = user.get("email") or user.get("display_name") or user_id
+        app = admin_store.ensure_personal_app_for_user(
+            user_id,
+            name=f"{label} personal access",
+            path=ADMIN_STORE.path,
+        )
+        admin_store.record_audit(
+            "app.self_create",
+            actor_kind="system",
+            actor_id="startup",
+            target_kind="app",
+            target_id=str(app["id"]),
+            metadata={
+                "email": user.get("email"),
+                "via": "startup_auto_provision",
+                "effective_profile_id": (
+                    _default_profile_id_for_user(
+                        email=str(user.get("email") or ""),
+                        role=_admin_role_for_user_id(user_id),
+                    )
+                    or "default-local"
+                ),
+            },
+            path=ADMIN_STORE.path,
+        )
+        created += 1
+    return created
+
+
 AuthIdentity = RuntimeIdentity
 
 
@@ -1192,6 +1340,7 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
     if not identity:
         identity = runtime_identity_for_app_credential_hash(
             key_hash,
+            inherited_profile_id_for_app=_inherited_profile_id_for_app,
             path=ADMIN_STORE.path,
         )
     if not identity:
@@ -6723,6 +6872,12 @@ async def lifespan(app: FastAPI):
     try:
         ADMIN_STORE.init_db()
         print(f"[proxy] Admin store initialized (db={ADMIN_DB_PATH})", flush=True)
+        provisioned = _provision_existing_user_personal_apps()
+        if provisioned:
+            print(
+                f"[proxy] Provisioned {provisioned} self-service personal app(s)",
+                flush=True,
+            )
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Admin store failed to start: {e}", flush=True)
 
@@ -7146,7 +7301,13 @@ async def user_portal_logout():
 
 def _render_user_portal_response(request: Request, *, login_return_to: str) -> Response:
     session = _oidc_session_from_request(request)
-    account = build_user_portal_snapshot(session, path=ADMIN_STORE.path)
+    account = build_user_portal_snapshot(
+        session,
+        default_profile_id=(
+            _default_profile_id_for_session(session) if session else None
+        ),
+        path=ADMIN_STORE.path,
+    )
     body = render_user_portal(
         title="AI Gateway",
         public_base_url=_public_base_url(request) or "https://ai.vivid.fish",
@@ -7173,7 +7334,13 @@ async def user_portal_session(request: Request):
     session = _oidc_session_from_request(request)
     return JSONResponse(
         status_code=200,
-        content=build_user_portal_snapshot(session, path=ADMIN_STORE.path),
+        content=build_user_portal_snapshot(
+            session,
+            default_profile_id=(
+                _default_profile_id_for_session(session) if session else None
+            ),
+            path=ADMIN_STORE.path,
+        ),
         headers={"cache-control": "no-store"},
     )
 
@@ -7197,6 +7364,7 @@ async def user_portal_mint_key(app_id: str, request: Request):
             session,
             app_id,
             label=str(label).strip() if label else None,
+            default_profile_id=_default_profile_id_for_session(session),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -7218,7 +7386,11 @@ async def user_portal_request_access(request: Request):
     if header_error is not None:
         return header_error
     try:
-        payload = request_user_access(session, path=ADMIN_STORE.path)
+        payload = request_user_access(
+            session,
+            default_profile_id=_default_profile_id_for_session(session),
+            path=ADMIN_STORE.path,
+        )
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     return JSONResponse(
@@ -7391,6 +7563,32 @@ async def admin_oidc_callback(request: Request):
                 subject_kind="user",
                 subject_id=user["id"],
                 granted_by="oidc",
+                path=ADMIN_STORE.path,
+            )
+        if _user_self_service_enabled() and _auto_create_personal_app_enabled():
+            label = user.get("email") or user.get("display_name") or user["id"]
+            app = admin_store.ensure_personal_app_for_user(
+                str(user["id"]),
+                name=f"{label} personal access",
+                path=ADMIN_STORE.path,
+            )
+            admin_store.record_audit(
+                "app.self_create",
+                actor_kind="user",
+                actor_id=str(user["id"]),
+                target_kind="app",
+                target_id=str(app["id"]),
+                metadata={
+                    "email": user.get("email"),
+                    "via": "oidc_login",
+                    "effective_profile_id": (
+                        _default_profile_id_for_user(
+                            email=str(user.get("email") or ""),
+                            role=role,
+                        )
+                        or "default-local"
+                    ),
+                },
                 path=ADMIN_STORE.path,
             )
         session_claims = {

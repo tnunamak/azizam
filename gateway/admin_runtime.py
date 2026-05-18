@@ -16,6 +16,7 @@ from __future__ import annotations
 import secrets
 import time
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Mapping
 
 from fastapi import Request, status
@@ -379,6 +380,7 @@ def _credential_active(record: Mapping[str, Any]) -> bool:
 def runtime_identity_for_app_credential_hash(
     key_hash: str,
     *,
+    inherited_profile_id_for_app: Callable[[Mapping[str, Any]], str | None] | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> RuntimeIdentity | None:
     """Return a data-plane identity for an admin-store App credential.
@@ -403,6 +405,8 @@ def runtime_identity_for_app_credential_hash(
 
     profile = DEFAULT_PROFILE
     profile_id = credential.get("profile_id") or app.get("default_profile_id")
+    if not profile_id and inherited_profile_id_for_app is not None:
+        profile_id = inherited_profile_id_for_app(app)
     if profile_id:
         profile_record = admin_store.get_profile(str(profile_id), path=path)
         if profile_record is None:

@@ -226,14 +226,17 @@ def _app_html(app: Mapping[str, Any]) -> str:
     name = esc(app.get("name") or app_id or "App")
     kind = esc(app.get("kind") or "app")
     profile = app.get("profile") if isinstance(app.get("profile"), Mapping) else None
-    profile_name = "Awaiting operator profile"
+    profile_name = "Default local"
     profile_id = app.get("profile_id") or ""
-    profile_badge = _badge("profile needed", "warn")
+    profile_badge = _badge("inherited profile")
     if profile:
         profile_name = str(profile.get("name") or profile.get("policy_id") or profile_id)
         profile_id = profile.get("id") or profile_id
+        inherited = bool(profile.get("inherited"))
         profile_badge = _badge(
-            "missing profile" if profile.get("missing") else profile_id,
+            "missing profile"
+            if profile.get("missing")
+            else ("inherited profile" if inherited else profile_id),
             "bad" if profile.get("missing") else "",
         )
     credentials = [c for c in app.get("credentials", []) if isinstance(c, Mapping)]
@@ -251,8 +254,8 @@ def _app_html(app: Mapping[str, Any]) -> str:
         "</form>"
         if can_mint
         else (
-            '<p class="empty">An operator needs to attach a Profile before '
-            "this App can mint runtime keys.</p>"
+            '<p class="empty">This App cannot mint keys until its inherited '
+            "Profile is available.</p>"
         )
     )
     return (
@@ -281,8 +284,8 @@ def _signed_out_hero(*, oidc_enabled: bool, login_url: str) -> str:
         '<section aria-labelledby="hero-heading">'
         '<div class="hero">'
         '<h2 id="hero-heading">Start with an account or key</h2>'
-        '<p class="lead">Sign in to manage Apps and runtime keys. Paste an '
-        "<code>opk_</code> key only if an operator already gave you one; "
+        '<p class="lead">Sign in to create Apps and runtime keys. Paste an '
+        "<code>opk_</code> key if you already have one; "
         "the browser stores it in this tab.</p>"
         f'<div class="actions">{primary}</div>'
         "</div>"
@@ -300,16 +303,16 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     is_admin = can_admin(account)
     empty_html = (
         '<article class="card"><h3>No owned Apps</h3>'
-        "<p>Create or assign Apps from Admin.</p>"
+        "<p>Create your own App here, or use Admin for shared service Apps.</p>"
         '<div class="actions"><a class="pill" href="/admin">Open Admin</a></div>'
         "</article>"
         if is_admin
         else (
             '<article class="card"><h3>No Apps yet</h3>'
-            "<p>Request access to create a pending Personal App. An operator "
-            "will attach a Profile so you can mint runtime keys.</p>"
+            "<p>Create a Personal App that inherits your account permissions, "
+            "then mint an API key for your tools.</p>"
             '<form class="actions" data-request-access>'
-            '<button type="submit">Request access</button>'
+            '<button type="submit">Create App</button>'
             "</form></article>"
         )
     )
@@ -660,10 +663,10 @@ def render_user_portal(
 
   document.querySelector("[data-request-access]")?.addEventListener("submit", async (event) => {{
     event.preventDefault();
-    setAccountMessage("Requesting access...");
+    setAccountMessage("Creating App...");
     try {{
       await postAccountJson("/me/api/access-request", {{}});
-      setAccountMessage("Access request recorded. Reloading account view...", "good");
+      setAccountMessage("App created. Reloading account view...", "good");
       setTimeout(() => location.reload(), 800);
     }} catch (error) {{
       setAccountMessage(error.message || "Access request failed.", "bad");

@@ -160,7 +160,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("prof_db_1", html)
         self.assertNotIn("profile missing", html)
 
-    def test_personal_app_without_profile_is_pending_not_default_local(self) -> None:
+    def test_personal_app_without_profile_inherits_default_profile(self) -> None:
         snapshot = _snapshot()
         snapshot["apps"] = [
             {
@@ -173,9 +173,11 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         ]
         snapshot["credentials"] = []
         html = render_admin_dashboard(snapshot)
-        self.assertIn("needs profile", html)
-        self.assertIn("profile required", html)
-        self.assertIn("new-user-access has no Profile yet.", html)
+        self.assertNotIn("needs profile", html)
+        self.assertNotIn("profile required", html)
+        self.assertNotIn("new-user-access has no Profile yet.", html)
+        self.assertIn("default-local", html)
+        self.assertIn("protocols openai", html)
 
     def test_credentials_table_marks_revoked_status(self) -> None:
         html = render_admin_dashboard(_snapshot())

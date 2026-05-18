@@ -138,6 +138,15 @@ Secrets should come from environment variables:
 ```yaml
 admin:
   db_path: data/admin.db
+  user_defaults:
+    self_service_apps: true
+    auto_create_personal_app: true
+    default_profile_id: prof_family_default
+    role_profile_ids:
+      none: prof_family_default
+      admin: prof_operator_default
+    domain_profile_ids:
+      vivid.fish: prof_operator_default
   oidc:
     enabled: true
     issuer: https://idp.example.com
@@ -153,6 +162,11 @@ The first allowed OIDC login becomes `owner` if no owner exists yet. Later
 allowed logins get the configured role or no admin role until an owner grants
 one.
 
+`admin.user_defaults` is the self-service policy boundary. Users can create
+Personal Apps and keys, but those Apps inherit only the Profile selected by the
+operator's default/profile mappings. Omit `default_profile_id` to use the
+gateway's built-in `default-local` profile.
+
 ## Give A Family Member Access
 
 Concrete walkthrough of the canonical "share my gateway with another human"
@@ -160,10 +174,12 @@ flow:
 
 1. **OIDC User.** The family member signs in once so the admin store has
    their **User** row. They do not need a global admin role.
-2. **Personal App.** An owner/admin registers one App for them —
-   `aunt-mary-chat` — owned by their User. One human can own several Apps;
-   one App is the access boundary that ordinary keys use at runtime.
-3. **Profile.** Attach a Profile to the App that grants only what they need.
+2. **Personal App.** The account portal creates or returns their self-service
+   Personal App. One human can own several Apps; one App is the access boundary
+   that ordinary keys use at runtime.
+3. **Inherited Profile.** By default, the Personal App inherits the user's
+   effective Profile. Admins control that default with `admin.user_defaults`
+   mappings, and can still attach an explicit App/Profile override when needed.
    For a typical chat-only setup:
    ```yaml
    profile:
@@ -176,23 +192,13 @@ flow:
      status_visibility:
        level: basic
    ```
-4. **App API key.** Mint the bearer token through the admin plane:
-   ```bash
-   curl -s https://ai.vivid.fish/admin/api/apps \
-     -H "Authorization: Bearer oak_..." \
-     -H "Content-Type: application/json" \
-     -d '{"name":"aunt-mary-chat","kind":"personal","owner_user_id":"user_...","profile_id":"prof_..."}'
-
-   curl -s https://ai.vivid.fish/admin/api/apps/app_.../keys \
-     -H "Authorization: Bearer oak_..." \
-     -H "Content-Type: application/json" \
-     -d '{"label":"Aunt Mary laptop"}'
-   ```
-   They can visit `https://ai.vivid.fish/`, sign in with OIDC or paste the
-   printed `opk_...` value locally in the browser, and verify the base URL,
-   SDK snippets, effective capabilities, and recent media jobs visible to that
-   key. Then they paste the same key into their chat app of choice (LibreChat,
-   Open WebUI, an iOS shortcut, etc.) with base URL `https://ai.vivid.fish/v1`.
+4. **App API key.** They mint their own bearer token from the account portal.
+   They can visit `https://ai.vivid.fish/`, sign in with OIDC, create their
+   Personal App if one does not already exist, mint an `opk_...` key, and verify
+   the base URL, SDK snippets, effective capabilities, and recent media jobs
+   visible to that key. Then they paste the same key into their chat app of
+   choice (LibreChat, Open WebUI, an iOS shortcut, etc.) with base URL
+   `https://ai.vivid.fish/v1`.
 
 Rotation stays per-App: revoke the old Credential and mint a new key for the
 same App while leaving the User, the Profile, and the audit history intact.
@@ -200,12 +206,11 @@ Dashboard/default key minting inherits the App's current Profile at runtime;
 use a per-key Profile override only when you intentionally want a narrower or
 temporary exception.
 
-Signed-in users may mint or revoke runtime keys for Apps they already own from
-the account portal once an operator has attached a Profile to the App. If they
-have no App, they can request access from the account portal, which creates a
-pending Personal App for an operator to review and profile. That does not let
-them change ownership, assign Profiles, enable cloud fallback, or grant
-themselves new capability classes; those remain admin-plane actions.
+Signed-in users may create a Personal App, mint runtime keys for Apps they own,
+and revoke those keys from the account portal. Those Apps inherit the user's
+default Profile unless an admin attaches an explicit App Profile. Self-service
+does not let users change ownership, assign Profiles, enable cloud fallback, or
+grant themselves new capability classes; those remain admin-plane actions.
 
 ## Request Auth Rules
 

@@ -270,7 +270,7 @@ def _app_profile_id(record: Mapping[str, Any]) -> str:
     if profile_id:
         return str(profile_id)
     if record.get("kind") == "personal" or record.get("owner_user_id"):
-        return ""
+        return "default-local"
     return "default-local"
 
 
@@ -305,11 +305,11 @@ def _app_row(
         status_class = "attention"
         status_text = "needs key"
     access = (
-        "operator must attach a Profile"
-        if not profile_id
-        else _profile_access_summary(profile)
+        _profile_access_summary(profile)
+        if profile_id != "default-local" or profile is not None
+        else "inherited built-in default"
     )
-    profile_label = profile_id or "profile required"
+    profile_label = profile_id or "default-local"
     created = _esc(record.get("created_at") or "—")
     return (
         "<tr>"
@@ -418,9 +418,7 @@ def _access_issues(
         app_id = str(app.get("id") or "")
         app_name = str(app.get("name") or app_id or "unnamed app")
         profile_id = _app_profile_id(app)
-        if not profile_id:
-            items.append(f"{app_name} has no Profile yet.")
-        elif profile_id != "default-local" and profile_id not in profiles_by_id:
+        if profile_id != "default-local" and profile_id not in profiles_by_id:
             items.append(f"{app_name} points at missing Profile {profile_id}.")
         if active_keys_by_app.get(app_id, 0) < 1:
             items.append(f"{app_name} has no active runtime key.")

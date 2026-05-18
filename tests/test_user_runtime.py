@@ -97,7 +97,7 @@ class UserRuntimeTests(unittest.TestCase):
         self.assertFalse(revoked["active"])
         self.assertIsNotNone(revoked["revoked_at"])
 
-    def test_access_request_creates_pending_app_without_mint_power(self) -> None:
+    def test_access_request_creates_self_service_app_with_inherited_mint_power(self) -> None:
         new_user = admin_store.upsert_oidc_user(
             "https://idp.example",
             "new-user-sub",
@@ -114,13 +114,44 @@ class UserRuntimeTests(unittest.TestCase):
         )
 
         requested = request_user_access(session, path=self.db)
-        self.assertTrue(requested["app"]["profile_required"])
+        self.assertFalse(requested["app"]["profile_required"])
+        self.assertEqual(requested["app"]["effective_profile_id"], "default-local")
         snapshot = build_user_portal_snapshot(session, path=self.db)
-        self.assertFalse(snapshot["apps"][0]["can_mint_keys"])
+        self.assertTrue(snapshot["apps"][0]["can_mint_keys"])
+        self.assertTrue(snapshot["apps"][0]["inherits_profile"])
 
-        with self.assertRaises(UserPortalError) as ctx:
-            mint_user_app_key(session, requested["app"]["id"], path=self.db)
-        self.assertEqual(ctx.exception.code, "profile_required")
+        created = mint_user_app_key(session, requested["app"]["id"], path=self.db)
+        self.assertTrue(created["api_key"].startswith("opk_"))
+
+    def test_self_service_app_can_inherit_configured_default_profile(self) -> None:
+        new_user = admin_store.upsert_oidc_user(
+            "https://idp.example",
+            "profiled-user-sub",
+            email="profiled@example.com",
+            display_name="Profiled User",
+            path=self.db,
+        )
+        session = AdminSession(
+            subject=new_user["id"],
+            email="profiled@example.com",
+            role="none",
+            issued_at=1,
+            expires_at=4_000_000_000,
+        )
+
+        requested = request_user_access(
+            session,
+            default_profile_id=self.profile["id"],
+            path=self.db,
+        )
+        self.assertEqual(requested["app"]["effective_profile_id"], self.profile["id"])
+        snapshot = build_user_portal_snapshot(
+            session,
+            default_profile_id=self.profile["id"],
+            path=self.db,
+        )
+        self.assertEqual(snapshot["apps"][0]["effective_profile_id"], self.profile["id"])
+        self.assertTrue(snapshot["apps"][0]["can_mint_keys"])
 
     def test_user_cannot_revoke_another_users_app_key(self) -> None:
         other = admin_store.upsert_oidc_user(

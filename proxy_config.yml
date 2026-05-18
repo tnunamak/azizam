@@ -259,6 +259,15 @@ auth:
   admin_key_env: TABBY_ADMIN_KEY
 admin:
   db_path: data/admin.db
+  user_defaults:
+    self_service_apps: true
+    auto_create_personal_app: true
+    # Omit default_profile_id to use the built-in default-local profile.
+    # Add role_profile_ids/domain_profile_ids/email_profile_ids when you want
+    # OIDC identities to inherit narrower or broader Profiles by default.
+    role_profile_ids: {}
+    domain_profile_ids: {}
+    email_profile_ids: {}
   oidc:
     enabled: true
     issuer: https://id.vivid.fish/realms/vivid-fish
