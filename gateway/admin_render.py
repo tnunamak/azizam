@@ -23,69 +23,105 @@ __all__ = ["render_admin_dashboard"]
 
 
 _DASHBOARD_CSS = """
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: dark;
+    --bg: oklch(17% 0.018 255);
+    --surface: oklch(21% 0.019 255);
+    --surface-2: oklch(25% 0.02 255);
+    --line: oklch(34% 0.026 255);
+    --muted: oklch(72% 0.035 255);
+    --text: oklch(92% 0.018 255);
+    --good-bg: oklch(27% 0.055 150);
+    --good: oklch(82% 0.13 150);
+    --warn-bg: oklch(30% 0.07 65);
+    --warn: oklch(84% 0.14 75);
+    --bad-bg: oklch(27% 0.065 25);
+    --bad: oklch(82% 0.13 25);
+    --focus: oklch(67% 0.16 235);
+  }
   * { box-sizing: border-box; }
   body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0;
-         background: #0f1115; color: #e6e8ef; }
-  header { padding: 1.25rem 1.5rem; border-bottom: 1px solid #1f2330;
-           display: flex; align-items: center; justify-content: space-between; }
-  header h1 { font-size: 1.15rem; margin: 0; letter-spacing: 0.02em; }
-  header .actor { font-size: 0.85rem; color: #9aa3b8; }
-  main { padding: 1.5rem; display: grid; gap: 1.5rem;
-         grid-template-columns: minmax(0, 1fr); max-width: 1100px;
+         background: var(--bg); color: var(--text); }
+  header { padding: 1rem clamp(1rem, 3vw, 2rem); border-bottom: 1px solid var(--line);
+           display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+           background: oklch(18.5% 0.02 255); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 1.05rem; margin: 0; letter-spacing: 0; }
+  header .actor { font-size: 0.85rem; color: var(--muted); }
+  main { padding: 0 clamp(1rem, 3vw, 2rem) 2rem; display: grid; gap: 0;
+         grid-template-columns: minmax(0, 1fr); max-width: 1280px;
          margin: 0 auto; }
-  section { background: #161a24; border: 1px solid #1f2330;
-            border-radius: 10px; padding: 1.25rem; }
-  section h2 { font-size: 1rem; margin: 0 0 0.75rem 0;
-               letter-spacing: 0.04em; text-transform: uppercase;
-               color: #9aa3b8; }
+  section { border-top: 1px solid var(--line); padding: 1.25rem 0; }
+  section h2 { font-size: 0.92rem; margin: 0 0 0.75rem 0;
+               letter-spacing: 0.08em; text-transform: uppercase;
+               color: var(--muted); }
+  .hero { display: grid; gap: 1rem; padding: 1.4rem 0 1.25rem;
+          grid-template-columns: minmax(0, 1fr); }
+  .hero h2 { color: var(--text); font-size: clamp(1.7rem, 3vw, 2.8rem);
+             line-height: 1.03; max-width: 17ch; margin: 0; letter-spacing: 0; }
+  .hero p { color: var(--muted); margin: 0; max-width: 68ch; line-height: 1.5; }
+  .connect { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+             padding: 1rem; background: var(--surface); border: 1px solid var(--line);
+             border-radius: 8px; }
+  .connect .label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase;
+                    letter-spacing: 0.08em; margin-bottom: 0.3rem; }
+  .connect code, td code { font-family: ui-monospace, monospace; font-size: 0.86em;
+                           background: oklch(15.5% 0.016 255); padding: 0.12rem 0.35rem;
+                           border: 1px solid var(--line); border-radius: 4px; }
   .counts { display: grid; grid-template-columns: repeat(auto-fit,
              minmax(140px, 1fr)); gap: 0.75rem; }
-  .count { background: #0f1320; border: 1px solid #1f2330;
+  .count { background: var(--surface); border: 1px solid var(--line);
            padding: 0.75rem 1rem; border-radius: 8px; }
-  .count .label { font-size: 0.75rem; color: #9aa3b8;
+  .count .label { font-size: 0.75rem; color: var(--muted);
                   text-transform: uppercase; letter-spacing: 0.05em; }
   .count .value { font-size: 1.5rem; font-weight: 600;
                   margin-top: 0.25rem; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
   th, td { text-align: left; padding: 0.5rem 0.75rem;
-           border-bottom: 1px solid #1f2330; vertical-align: top; }
-  th { font-weight: 500; color: #9aa3b8; }
+           border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 500; color: var(--muted); }
   tr:last-child td { border-bottom: none; }
-  td code { font-family: ui-monospace, monospace; font-size: 0.85em;
-            background: #0f1320; padding: 0.1rem 0.35rem;
-            border-radius: 4px; }
-  .empty { color: #6b7390; font-style: italic; }
+  .empty { color: var(--muted); font-style: italic; }
+  .cell-main { font-weight: 650; color: var(--text); }
+  .cell-sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.2rem; }
   form.flow { display: grid; gap: 0.75rem; }
   form.flow .row { display: grid; gap: 0.5rem;
                    grid-template-columns: minmax(0, 1fr) auto; }
   form.flow .stack { display: grid; gap: 0.5rem;
                      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
-  form.flow label { font-size: 0.85rem; color: #9aa3b8; }
-  form.flow input, form.flow select { background: #0f1320;
-                   border: 1px solid #1f2330; color: #e6e8ef;
+  form.flow label { font-size: 0.85rem; color: var(--muted); }
+  form.flow input, form.flow select { background: oklch(15.5% 0.016 255);
+                   border: 1px solid var(--line); color: var(--text);
                    padding: 0.5rem 0.65rem; border-radius: 6px; }
-  form.flow button { background: #3b82f6; color: white; border: 0;
+  form.flow button { background: var(--focus); color: oklch(12% 0.02 255); border: 0;
                      padding: 0.55rem 1rem; border-radius: 6px;
                      cursor: pointer; font-weight: 600; }
-  form.flow button:hover { background: #2563eb; }
-  button.inline { background: #3b1f24; color: #fca5a5; border: 1px solid #7f1d1d;
+  form.flow button:hover { filter: brightness(1.08); }
+  button.inline { background: var(--bad-bg); color: var(--bad); border: 1px solid oklch(40% 0.08 25);
                   padding: 0.3rem 0.55rem; border-radius: 6px; cursor: pointer; }
-  button.inline:hover { background: #4c1d24; }
-  .hint { margin: 0 0 0.9rem 0; color: #9aa3b8; font-size: 0.9rem; line-height: 1.45; }
+  button.inline:hover { filter: brightness(1.08); }
+  .hint { margin: 0 0 0.9rem 0; color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
   ul.links { list-style: none; padding: 0; margin: 0;
              display: flex; flex-wrap: wrap; gap: 0.5rem; }
-  ul.links a { color: #93c5fd; text-decoration: none;
-               background: #0f1320; border: 1px solid #1f2330;
+  ul.links a { color: oklch(83% 0.09 235); text-decoration: none;
+               background: var(--surface); border: 1px solid var(--line);
                padding: 0.35rem 0.6rem; border-radius: 999px;
                font-size: 0.85rem; }
   .badge { font-size: 0.75rem; padding: 0.15rem 0.45rem;
-           border-radius: 4px; background: #1f2330; color: #9aa3b8; }
-  .badge.revoked { background: #3b1f24; color: #fca5a5; }
-  .badge.active { background: #173a26; color: #86efac; }
-  .result { white-space: pre-wrap; background: #0f1320; border: 1px solid #1f2330;
+           border-radius: 4px; background: var(--surface-2); color: var(--muted); }
+  .badge.revoked, .badge.problem { background: var(--bad-bg); color: var(--bad); }
+  .badge.active, .badge.ready { background: var(--good-bg); color: var(--good); }
+  .badge.warn, .badge.attention { background: var(--warn-bg); color: var(--warn); }
+  .problem-list { display: grid; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+  .problem-list li { background: var(--surface); border: 1px solid var(--line);
+                     border-radius: 8px; padding: 0.65rem 0.75rem; }
+  .result { white-space: pre-wrap; background: oklch(15.5% 0.016 255); border: 1px solid var(--line);
             border-radius: 8px; padding: 0.75rem; min-height: 2.5rem;
-            color: #dbeafe; }
+            color: oklch(90% 0.05 235); }
+  @media (max-width: 760px) {
+    header { align-items: flex-start; flex-direction: column; }
+    table { display: block; overflow-x: auto; }
+    form.flow .row { grid-template-columns: 1fr; }
+  }
 """
 
 
@@ -116,6 +152,90 @@ def _format_optional_list(value: Any) -> str:
     if isinstance(value, (list, tuple, set, frozenset)):
         return ", ".join(_esc(v) for v in sorted(value))
     return _esc(value)
+
+
+def _profile_doc(record: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    if not record:
+        return {}
+    profile = record.get("profile")
+    if isinstance(profile, Mapping):
+        return profile
+    return record
+
+
+def _profile_id(record: Mapping[str, Any] | None) -> str:
+    if not record:
+        return "default-local"
+    doc = _profile_doc(record)
+    return str(doc.get("id") or record.get("id") or "default-local")
+
+
+def _nested_mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _nested_list(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return sorted(str(item) for item in value)
+    return []
+
+
+def _profile_access_summary(record: Mapping[str, Any] | None) -> str:
+    doc = _profile_doc(record)
+    allow = _nested_mapping(doc.get("allow"))
+    intents = _nested_list(allow.get("intents"))
+    trust = _nested_list(allow.get("trust_tiers"))
+    resources = _nested_list(allow.get("resource_tiers"))
+    exposure = _nested_list(allow.get("exposure"))
+    tags = _nested_list(allow.get("tags"))
+
+    if intents or trust or resources or exposure or tags:
+        parts: list[str] = []
+        if exposure:
+            parts.append("exposure " + ", ".join(exposure))
+        if trust:
+            parts.append("trust " + ", ".join(trust))
+        if resources:
+            parts.append("resources " + ", ".join(resources))
+        if intents:
+            parts.append("intents " + ", ".join(intents))
+        if tags:
+            parts.append("tags " + ", ".join(tags))
+        return "; ".join(parts)
+
+    protocols = _nested_list(doc.get("protocols"))
+    workflows = _nested_list(doc.get("workflows"))
+    models = _nested_list(doc.get("models"))
+    if protocols or workflows or models:
+        parts = []
+        if protocols:
+            parts.append("protocols " + ", ".join(protocols))
+        if workflows:
+            parts.append("workflows " + ", ".join(workflows))
+        if models:
+            parts.append("models " + ", ".join(models))
+        return "; ".join(parts)
+
+    return "Local defaults; cloud fallback and native passthrough stay off"
+
+
+def _profile_guardrail_summary(record: Mapping[str, Any] | None) -> str:
+    doc = _profile_doc(record)
+    fallback = _nested_mapping(doc.get("fallback"))
+    native = _nested_mapping(doc.get("native_passthrough"))
+    cloud = "cloud allowed" if fallback.get("cloud_allowed") else "local only"
+    native_text = "native allowed" if native.get("enabled") else "native off"
+    return f"{cloud}; {native_text}"
+
+
+def _visibility_summary(record: Mapping[str, Any] | None) -> str:
+    doc = _profile_doc(record)
+    raw = doc.get("status_visibility")
+    if isinstance(raw, Mapping):
+        return str(raw.get("level") or "basic")
+    if isinstance(raw, str):
+        return raw
+    return "basic"
 
 
 def _is_revoked(record: Mapping[str, Any]) -> bool:
@@ -152,8 +272,23 @@ def _credential_row(record: Mapping[str, Any]) -> str:
     )
 
 
-def _app_row(record: Mapping[str, Any]) -> str:
-    app_id = _esc(record.get("id"))
+def _app_profile_id(record: Mapping[str, Any]) -> str:
+    return str(
+        record.get("default_profile_id")
+        or record.get("profile_id")
+        or record.get("profile")
+        or "default-local"
+    )
+
+
+def _app_row(
+    record: Mapping[str, Any],
+    *,
+    profiles_by_id: Mapping[str, Mapping[str, Any]],
+    active_keys_by_app: Mapping[str, int],
+) -> str:
+    raw_app_id = str(record.get("id") or "")
+    app_id = _esc(raw_app_id)
     name = _esc(record.get("name") or "—")
     owner = _esc(
         record.get("owner")
@@ -162,19 +297,26 @@ def _app_row(record: Mapping[str, Any]) -> str:
         or record.get("user_id")
         or "—"
     )
-    profile = _esc(
-        record.get("default_profile_id")
-        or record.get("profile_id")
-        or record.get("profile")
-        or "—"
-    )
+    profile_id = _app_profile_id(record)
+    profile = profiles_by_id.get(profile_id)
+    active_keys = active_keys_by_app.get(raw_app_id, 0)
+    status_class = "ready"
+    status_text = "ready"
+    if profile_id != "default-local" and profile is None:
+        status_class = "problem"
+        status_text = "profile missing"
+    elif active_keys < 1:
+        status_class = "attention"
+        status_text = "needs key"
+    access = _profile_access_summary(profile)
     created = _esc(record.get("created_at") or "—")
     return (
         "<tr>"
-        f"<td><code>{app_id}</code></td>"
-        f"<td>{name}</td>"
+        f'<td><div class="cell-main">{name}</div><div class="cell-sub"><code>{app_id}</code></div></td>'
         f"<td>{owner}</td>"
-        f"<td><code>{profile}</code></td>"
+        f'<td><div><code>{_esc(profile_id)}</code></div><div class="cell-sub">{_esc(access)}</div></td>'
+        f"<td>{_esc(active_keys)} active</td>"
+        f'<td><span class="badge {status_class}">{status_text}</span></td>'
         f"<td>{created}</td>"
         "</tr>"
     )
@@ -196,17 +338,24 @@ def _user_row(record: Mapping[str, Any]) -> str:
 
 
 def _profile_row(record: Mapping[str, Any]) -> str:
-    profile_id = _esc(record.get("id"))
+    doc = _profile_doc(record)
+    profile_id = _esc(_profile_id(record))
     label = _esc(record.get("label") or record.get("name") or "—")
-    protocols = _format_optional_list(record.get("protocols"))
-    workflows = _format_optional_list(record.get("workflows"))
-    visibility = _esc(record.get("status_visibility") or "basic")
+    protocols = _format_optional_list(doc.get("protocols"))
+    overrides = []
+    for name in ("workflows", "models", "backends"):
+        values = _nested_list(doc.get(name))
+        if values:
+            overrides.append(f"{name}: " + ", ".join(values))
+    override_text = "; ".join(overrides) if overrides else "—"
+    visibility = _esc(_visibility_summary(record))
     return (
         "<tr>"
-        f"<td><code>{profile_id}</code></td>"
-        f"<td>{label}</td>"
+        f'<td><div class="cell-main">{label}</div><div class="cell-sub"><code>{profile_id}</code></div></td>'
+        f"<td>{_esc(_profile_access_summary(record))}</td>"
         f"<td>{protocols}</td>"
-        f"<td>{workflows}</td>"
+        f"<td>{_esc(override_text)}</td>"
+        f"<td>{_esc(_profile_guardrail_summary(record))}</td>"
         f"<td>{visibility}</td>"
         "</tr>"
     )
@@ -243,6 +392,47 @@ def _table(headers: Iterable[str], rows: Iterable[str], *, empty: str) -> str:
     return f"<table><thead><tr>{header_html}</tr></thead><tbody>{body_html}</tbody></table>"
 
 
+def _connection_panel(*, base_url: str) -> str:
+    return (
+        '<div class="connect">'
+        '<div><div class="label">Base URL</div>'
+        f'<code>{_esc(base_url)}</code></div>'
+        '<div><div class="label">Runtime key</div>'
+        '<code>Authorization: Bearer opk_...</code></div>'
+        '<div><div class="label">First checks</div>'
+        '<code>GET /health</code> <code>GET /v1/models</code></div>'
+        "</div>"
+    )
+
+
+def _access_issues(
+    apps: list[Mapping[str, Any]],
+    profiles_by_id: Mapping[str, Mapping[str, Any]],
+    active_keys_by_app: Mapping[str, int],
+) -> str:
+    items: list[str] = []
+    if not apps:
+        items.append("Create an App before minting a runtime key.")
+    for app in apps:
+        app_id = str(app.get("id") or "")
+        app_name = str(app.get("name") or app_id or "unnamed app")
+        profile_id = _app_profile_id(app)
+        if profile_id != "default-local" and profile_id not in profiles_by_id:
+            items.append(f"{app_name} points at missing Profile {profile_id}.")
+        if active_keys_by_app.get(app_id, 0) < 1:
+            items.append(f"{app_name} has no active runtime key.")
+    if not profiles_by_id:
+        items.append("No stored Profiles yet; Apps fall back to local defaults.")
+    if not items:
+        items.append("No access blockers in the admin store.")
+
+    return (
+        '<ul class="problem-list">'
+        + "".join(f"<li>{_esc(item)}</li>" for item in items)
+        + "</ul>"
+    )
+
+
 def _flow_form(
     apps: list[Mapping[str, Any]],
     users: list[Mapping[str, Any]],
@@ -259,7 +449,7 @@ def _flow_form(
     )
     if not app_options:
         app_options = '<option value="" disabled selected>No apps yet — create one above</option>'
-    user_options = '<option value="">Service app</option>' + "".join(
+    user_options = '<option value="">No user owner</option>' + "".join(
         f'<option value="{_esc(user.get("id"))}">'
         f'{_esc(user.get("email") or user.get("name") or user.get("id"))}'
         "</option>"
@@ -272,9 +462,9 @@ def _flow_form(
         for profile in profiles
     )
     return (
-        '<p class="hint">For a human, create a Personal app owned by that User and attach a Profile. For bots or shared integrations, create a Service app. Then mint one <code>opk_...</code> key and paste it into the tool with base URL <code>https://ai.vivid.fish/v1</code>. The raw key is shown once.</p>'
+        '<p class="hint">For a human, create a Personal app owned by that User and attach a Profile. For bots or shared integrations, create a Service app. Then mint one <code>opk_...</code> key and paste it into the tool. The raw key is shown once.</p>'
         '<form class="flow" method="post" action="' + _esc(create_app_action) + '" data-create-app>'
-        "<label>Create access boundary:</label>"
+        "<label>Create App:</label>"
         '<div class="stack">'
         '<input type="text" name="name" placeholder="App name" required>'
         '<select name="kind"><option value="service">Service app</option><option value="personal">Personal app</option></select>'
@@ -289,7 +479,7 @@ def _flow_form(
         '<form class="flow" method="post" data-action-template="'
         + _esc(create_key_action_template)
         + '" data-mint-key>'
-        "<label>Mint an API key for an access boundary:</label>"
+        "<label>Mint runtime key:</label>"
         '<div class="row">'
         f'<select name="app_id" required>{app_options}</select>'
         '<input type="text" name="label" placeholder="Key label">'
@@ -318,6 +508,7 @@ def render_admin_dashboard(
     snapshot: Mapping[str, Any],
     *,
     title: str = "Vivid Fish AI Gateway Admin",
+    base_url: str = "https://ai.vivid.fish/v1",
     create_app_action: str = "/admin/api/apps",
     create_key_action_template: str = "/admin/api/apps/{app_id}/keys",
 ) -> str:
@@ -341,6 +532,14 @@ def render_admin_dashboard(
     discovery_links = list(snapshot.get("discovery_links") or [])
     actor = snapshot.get("actor") or {}
     actor_label = actor.get("email") or actor.get("subject") or "anonymous"
+    profiles_by_id = {_profile_id(p): p for p in profiles}
+    active_keys_by_app: dict[str, int] = {}
+    for credential in credentials:
+        if _is_revoked(credential):
+            continue
+        app_id = str(credential.get("app_id") or "")
+        if app_id:
+            active_keys_by_app[app_id] = active_keys_by_app.get(app_id, 0) + 1
 
     counts = snapshot.get("counts") or {
         "users": len(users),
@@ -364,8 +563,15 @@ def render_admin_dashboard(
     )
 
     apps_table = _table(
-        ["ID", "Name", "Owner", "Profile", "Created"],
-        (_app_row(a) for a in apps),
+        ["App", "Owner", "Effective access", "Keys", "Status", "Created"],
+        (
+            _app_row(
+                a,
+                profiles_by_id=profiles_by_id,
+                active_keys_by_app=active_keys_by_app,
+            )
+            for a in apps
+        ),
         empty="No apps yet — create one below.",
     )
     users_table = _table(
@@ -374,7 +580,7 @@ def render_admin_dashboard(
         empty="No users yet.",
     )
     profiles_table = _table(
-        ["ID", "Label", "Protocols", "Workflows", "Visibility"],
+        ["Profile", "Selectors", "Protocols", "Overrides", "Guardrails", "Visibility"],
         (_profile_row(p) for p in profiles),
         empty="No app profiles configured.",
     )
@@ -398,6 +604,8 @@ def render_admin_dashboard(
     )
 
     discovery_html = _discovery_links(discovery_links)
+    connection_html = _connection_panel(base_url=base_url)
+    issues_html = _access_issues(apps, profiles_by_id, active_keys_by_app)
 
     return (
         "<!doctype html>"
@@ -434,7 +642,15 @@ def render_admin_dashboard(
         f'<div class="actor">Signed in as <strong>{_esc(actor_label)}</strong></div>'
         "</header>"
         "<main>"
+        '<div class="hero">'
+        "<div>"
+        "<h2>Give someone the right AI access without teaching them the gateway.</h2>"
+        '<p>Normal users need a base URL, a runtime key, and a clear statement of what works for them. Admins need to see who can use what, what is blocked, and what needs attention.</p>'
+        "</div>"
+        + connection_html
+        + "</div>"
         + _section("Overview", f'<div class="counts">{counts_html}</div>')
+        + _section("Needs attention", issues_html)
         + _section("Give Access", flow_html)
         + _section("Apps", apps_table)
         + _section("Users", users_table)

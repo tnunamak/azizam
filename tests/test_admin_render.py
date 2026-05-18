@@ -106,8 +106,8 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_includes_create_app_and_mint_key_flow(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn("Create access boundary", html)
-        self.assertIn("Mint an API key", html)
+        self.assertIn("Create App", html)
+        self.assertIn("Mint runtime key", html)
         self.assertIn("Personal app owned by that User", html)
         self.assertIn("https://ai.vivid.fish/v1", html)
         self.assertIn('action="/admin/api/apps"', html)
@@ -152,6 +152,7 @@ class AdminRenderSecurityTests(unittest.TestCase):
     def test_html_escapes_untrusted_strings(self) -> None:
         snapshot = _snapshot()
         snapshot["apps"][0]["name"] = "<script>alert('xss')</script>"
+        snapshot["profiles"][0]["protocols"] = ["<script>alert('p')</script>"]
         html = render_admin_dashboard(snapshot)
         self.assertNotIn("<script>alert", html)
         self.assertIn("&lt;script&gt;alert", html)
