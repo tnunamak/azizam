@@ -80,6 +80,16 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
 
+    def test_root_redirects_to_user_portal(self) -> None:
+        response = self.client.get("/", follow_redirects=False)
+        self.assertEqual(response.status_code, 302, response.text)
+        self.assertEqual(response.headers["location"], "/me")
+
+    def test_legacy_firehose_redirects_to_status_dashboard(self) -> None:
+        response = self.client.get("/firehose", follow_redirects=False)
+        self.assertEqual(response.status_code, 301, response.text)
+        self.assertEqual(response.headers["location"], "/status")
+
     def test_well_known_ai_gateway_is_public(self) -> None:
         response = self.client.get("/.well-known/ai-gateway")
         self.assertEqual(response.status_code, 200, response.text)

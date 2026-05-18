@@ -10701,9 +10701,10 @@ async def v1_status(request: Request):
 # -----------------------------------------------------------------------------
 # Status dashboard
 #
-# One page only: the maximalist server-rendered HTML lives at `/`. The old
-# `/firehose` URL is kept as a 301 → `/` for backwards compatibility. The
-# previous Next.js page under status-page/out is no longer served.
+# The product root is a browser entry point, so `/` redirects to `/me`.
+# The maximalist server-rendered operator status page lives at `/status`.
+# The old `/firehose` URL is kept as a 301 → `/status` for compatibility.
+# The previous Next.js page under status-page/out is no longer served.
 # -----------------------------------------------------------------------------
 
 async def _render_status_html(request: Request) -> Response:
@@ -10743,16 +10744,21 @@ async def _render_status_html(request: Request) -> Response:
 
 
 @app.get("/", include_in_schema=False)
+async def root_browser_entrypoint():
+    return RedirectResponse("/me", status_code=302)
+
+
+@app.get("/status", include_in_schema=False)
 async def status_dashboard_index(request: Request):
     return await _render_status_html(request)
 
 
 @app.get("/firehose", include_in_schema=False)
 async def status_dashboard_firehose(request: Request):
-    """Backwards compatibility: redirect old `/firehose` URL to `/`."""
+    """Backwards compatibility: redirect old `/firehose` URL to `/status`."""
     return Response(
         status_code=301,
-        headers={"location": "/", "cache-control": "no-store"},
+        headers={"location": "/status", "cache-control": "no-store"},
     )
 
 

@@ -131,7 +131,8 @@ OIDC browser login is configured under `admin.oidc` in `proxy_config.yml`.
 The browser entry point is `/login`; `/me/login` and `/admin/login` are
 compatibility redirects into that route. After login, normal users land on
 `/me`, while admins can follow the Admin link from `/me` or go directly to
-`/admin`.
+`/admin`. The site root `/` is also a browser entry point and redirects to
+`/me`, never to an API-key error page.
 Secrets should come from environment variables:
 
 ```yaml
@@ -208,8 +209,8 @@ those remain admin-plane actions.
 
 ## Request Auth Rules
 
-All gateway runtime traffic requires a valid App API key. `/health`, `/me`,
-`/me/api/session`, and the `/.well-known/*` discovery surfaces are public.
+All gateway runtime traffic requires a valid App API key. `/`, `/health`,
+`/me`, `/me/api/session`, and the `/.well-known/*` discovery surfaces are public.
 `/me` is a shell only: it does not show private capability, model, or job data
 until the browser sends either the signed OIDC session cookie or the user's
 `opk_...` key to the normal authenticated runtime APIs. State-changing

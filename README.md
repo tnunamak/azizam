@@ -18,7 +18,9 @@ The canonical public host is **`https://ai.vivid.fish`**. The original **`https:
 
 Agents and apps can start without local repo context by fetching the public discovery surface (no auth required):
 
+- `GET /` — browser entry point; redirects to `/me`
 - `GET /health`
+- `GET /login` — browser OIDC login entry point when configured
 - `GET /me` — normal-user portal for checking a runtime key, SDK settings,
   capabilities, and recent media jobs
 - `GET /me/api/session` — signed-OIDC account view for Apps and non-secret
@@ -45,6 +47,11 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 
 | Method + Path | Backend | Purpose |
 |---|---|---|
+| `GET  /` | proxy | Browser entry point; redirects to `/me` |
+| `GET  /login` | proxy + OIDC | Browser sign-in entry point; redirects back to `/me` or `/admin` |
+| `GET  /me` | proxy | Normal-user portal for account, SDK settings, effective access, and owned keys |
+| `GET  /admin` | proxy | Admin dashboard; browser sessions redirect through `/login` |
+| `GET  /status` | proxy | Operator status dashboard; loopback is frictionless, remote access requires a runtime key |
 | `GET  /health` | proxy | Liveness; public, no auth |
 | `GET  /v1/models` | active LLM backend | List models; augments with currently loaded GGUF |
 | `GET  /v1/voices`, `GET /v1/audio/voices` | proxy (static) | List TTS voices |
@@ -160,7 +167,7 @@ scripts/
   doctor.py                    # Operator/agent smoke checks for health, auth, manifests, and workflow bindings
   check_workflow_drift.py      # Verifies every .ui.json's API-format extraction still matches the committed *.json
   convert_api_to_ui.py         # Round-trips API-format graph back into UI-format
-status-page/                   # Next.js status dashboard (uses /v1/status + /v1/metrics)
+status-page/                   # Legacy Next.js status dashboard source; not served by the proxy
 inbox/                         # Operational notes / audits / proposals (kept as history)
 ```
 
@@ -226,19 +233,15 @@ curl -s http://127.0.0.1:5000/v1/models -H "Authorization: Bearer opk_..."
 ./test_e2e.sh
 ```
 
-The status page (Next.js, in `status-page/`) is a separate static build and is served independently.
+The operator status page is served by the proxy at `/status`. The product root
+`/` redirects normal browser users to `/me`.
 
 ## Status page
 
-A static Next.js dashboard lives under `status-page/` and renders backend health, disk/GPU rollup, recent renders, and queue depth from `/v1/status` and `/v1/metrics`. Build with:
-
-```bash
-cd status-page
-npm install
-npm run build  # outputs to ./out
-```
-
-Serve `status-page/out/` from any static host or behind the proxy.
+The server-rendered `/status` dashboard shows backend health, disk/GPU rollup,
+recent renders, and queue depth from the same cached status data used by
+`/v1/status`. Loopback access is frictionless for the local operator; remote
+status access still requires a runtime key.
 
 ## Metrics persistence
 
@@ -262,7 +265,7 @@ Sampling cadence is driven by a single `asyncio` task in `metrics_sampler.py`:
 
 A WAL checkpoint is performed on shutdown. On startup the file is `PRAGMA integrity_check`-ed; a corrupt DB is renamed to `metrics.db.broken-{ts}` and a fresh one is created.
 
-The `/v1/status` payload exposes a `metrics` block with windowed aggregates (5 min / 1 h / 24 h) and 24-hour series suitable for sparklines, and the firehose status page renders a "Trends" section using inline-SVG sparklines (no JavaScript).
+The `/v1/status` payload exposes a `metrics` block with windowed aggregates (5 min / 1 h / 24 h) and 24-hour series suitable for sparklines, and `/status` renders a "Trends" section using inline-SVG sparklines (no JavaScript).
 
 ## Operational notes
 
