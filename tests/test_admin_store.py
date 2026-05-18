@@ -72,6 +72,11 @@ class TestSchema(AdminStoreTestBase):
         aud = admin_store.record_audit("ping", path=self.db)
         self.assertTrue(aud["id"].startswith("aud_"))
 
+    def test_ensure_service_account_is_idempotent(self) -> None:
+        first = admin_store.ensure_service_account("dashboard", path=self.db)
+        second = admin_store.ensure_service_account("dashboard", path=self.db)
+        self.assertEqual(first["id"], second["id"])
+
 
 class TestOidcUpsert(AdminStoreTestBase):
     def test_first_login_creates_user(self) -> None:
@@ -134,6 +139,23 @@ class TestPersonalApp(AdminStoreTestBase):
     def test_personal_app_requires_owner(self) -> None:
         with self.assertRaises(ValueError):
             admin_store.create_app("orphan", kind="personal", path=self.db)
+
+    def test_list_apps_returns_all_apps(self) -> None:
+        user = admin_store.upsert_oidc_user("iss", "sub", path=self.db)
+        personal = admin_store.ensure_personal_app_for_user(
+            user["id"], path=self.db
+        )
+        svc = admin_store.ensure_service_account("svc", path=self.db)
+        service = admin_store.create_app(
+            "svc-app",
+            kind="service",
+            owner_service_account_id=svc["id"],
+            path=self.db,
+        )
+        self.assertEqual(
+            [app["id"] for app in admin_store.list_apps(path=self.db)],
+            [personal["id"], service["id"]],
+        )
 
 
 class TestCredentialInvariants(AdminStoreTestBase):
@@ -306,6 +328,19 @@ class TestCredentialLifecycle(AdminStoreTestBase):
         self.assertIsNone(
             admin_store.find_credential_by_hash("missing", path=self.db)
         )
+
+    def test_list_credentials_includes_revoked_for_admin_views(self) -> None:
+        cred = admin_store.create_credential_hash(
+            subject_kind="app",
+            subject_id=self.app["id"],
+            hash=_hash("listed"),
+            prefix="sk",
+            path=self.db,
+        )
+        admin_store.revoke_credential(cred["id"], path=self.db)
+        rows = admin_store.list_credentials(path=self.db)
+        self.assertEqual([row["id"] for row in rows], [cred["id"]])
+        self.assertIsNotNone(rows[0]["revoked_at"])
 
     def test_scopes_roundtrip(self) -> None:
         cred = admin_store.create_credential_hash(

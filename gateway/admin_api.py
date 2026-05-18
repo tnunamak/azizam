@@ -56,10 +56,11 @@ class AdminContext:
     subject: str
     email: str | None = None
     roles: frozenset[str] = field(default_factory=frozenset)
+    auth_method: str | None = None
 
     @property
     def is_admin(self) -> bool:
-        return "admin" in self.roles or "superadmin" in self.roles
+        return bool({"owner", "admin", "superadmin"} & set(self.roles))
 
 
 class AdminAuthError(Exception):
@@ -175,6 +176,18 @@ def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResp
                 "admin role required",
                 status_code=status.HTTP_403_FORBIDDEN,
                 code="admin_forbidden",
+            )
+        )
+    if (
+        ctx.auth_method == "session"
+        and request.method not in {"GET", "HEAD", "OPTIONS"}
+        and request.headers.get("x-ai-gateway-admin-action") != "1"
+    ):
+        return _auth_error_response(
+            AdminAuthError(
+                "admin session mutation requires same-origin admin action header",
+                status_code=status.HTTP_403_FORBIDDEN,
+                code="admin_action_header_required",
             )
         )
     return ctx
@@ -379,7 +392,14 @@ def create_admin_router(
                 "invalid_app",
                 "app name is required",
             ).as_response()
-        record = store.create_app(data=body, actor=ctx)
+        try:
+            record = store.create_app(data=body, actor=ctx)
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_app",
+                str(exc),
+            ).as_response()
         return JSONResponse(
             status_code=status.HTTP_201_CREATED, content={"app": record}
         )
@@ -412,7 +432,14 @@ def create_admin_router(
                 "invalid_profile",
                 str(exc),
             ).as_response()
-        record = store.create_profile(data=body, actor=ctx)
+        try:
+            record = store.create_profile(data=body, actor=ctx)
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_profile",
+                str(exc),
+            ).as_response()
         return JSONResponse(
             status_code=status.HTTP_201_CREATED, content={"profile": record}
         )
@@ -432,7 +459,14 @@ def create_admin_router(
                 "app_not_found",
                 f"app {app_id!r} not found",
             ).as_response()
-        record = store.create_credential(app_id=app_id, data=body, actor=ctx)
+        try:
+            record = store.create_credential(app_id=app_id, data=body, actor=ctx)
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_credential",
+                str(exc),
+            ).as_response()
         # The store is allowed (and expected) to return a one-time ``api_key``
         # here. List/read endpoints scrub it.
         return JSONResponse(

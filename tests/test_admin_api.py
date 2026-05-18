@@ -210,6 +210,46 @@ class AdminAuthTests(unittest.TestCase):
         self.assertEqual(body["actor"]["subject"], "u_owner")
         self.assertIn("apps", body["counts"])
 
+    def test_owner_role_is_admin_capable(self) -> None:
+        def owner_auth(_request: Request) -> AdminContext:
+            return AdminContext(
+                subject="u_owner",
+                email="owner@example.com",
+                roles=frozenset({"owner"}),
+            )
+
+        app = FastAPI()
+        app.include_router(create_admin_router(FakeAdminStore(), auth=owner_auth))
+        resp = TestClient(app).get("/admin/api/overview")
+        self.assertEqual(resp.status_code, 200, resp.text)
+
+    def test_cookie_session_mutations_require_admin_action_header(self) -> None:
+        def session_auth(_request: Request) -> AdminContext:
+            return AdminContext(
+                subject="u_owner",
+                email="owner@example.com",
+                roles=frozenset({"owner"}),
+                auth_method="session",
+            )
+
+        app = FastAPI()
+        app.include_router(create_admin_router(FakeAdminStore(), auth=session_auth))
+        client = TestClient(app)
+
+        blocked = client.post("/admin/api/apps", json={"name": "brother-laptop"})
+        self.assertEqual(blocked.status_code, 403, blocked.text)
+        self.assertEqual(
+            blocked.json()["error"]["code"],
+            "admin_action_header_required",
+        )
+
+        allowed = client.post(
+            "/admin/api/apps",
+            json={"name": "brother-laptop"},
+            headers={"x-ai-gateway-admin-action": "1"},
+        )
+        self.assertEqual(allowed.status_code, 201, allowed.text)
+
 
 class AdminAppKeyFlowTests(unittest.TestCase):
     def test_create_app_then_mint_key_returns_one_time_key(self) -> None:

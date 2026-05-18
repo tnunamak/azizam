@@ -209,6 +209,22 @@ def _coerce_scopes(values: Any) -> tuple[str, ...]:
     return cleaned or ("openid", "email", "profile")
 
 
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    raise OIDCConfigError(f"expected boolean value, got {value!r}")
+
+
 def _coerce_signing_key(raw: Any) -> bytes:
     if raw is None:
         raise OIDCConfigError("signing_key is required")
@@ -249,7 +265,7 @@ def load_oidc_config(
     """
     env_map: Mapping[str, str] = env or {}
 
-    enabled = bool(data.get("enabled", False))
+    enabled = _coerce_bool(data.get("enabled"), default=False)
 
     client_secret = data.get("client_secret") or ""
     if not client_secret:
@@ -277,8 +293,8 @@ def load_oidc_config(
     cookie = CookieConfig(
         name=str(cookie_data.get("name", CookieConfig.name)),
         max_age_seconds=int(cookie_data.get("max_age_seconds", CookieConfig.max_age_seconds)),
-        secure=bool(cookie_data.get("secure", CookieConfig.secure)),
-        http_only=bool(cookie_data.get("http_only", CookieConfig.http_only)),
+        secure=_coerce_bool(cookie_data.get("secure"), default=CookieConfig.secure),
+        http_only=_coerce_bool(cookie_data.get("http_only"), default=CookieConfig.http_only),
         same_site=str(cookie_data.get("same_site", CookieConfig.same_site)).lower(),
         path=str(cookie_data.get("path", CookieConfig.path)),
         domain=(str(cookie_data["domain"]) if cookie_data.get("domain") else None),
@@ -729,9 +745,9 @@ def bootstrap_admin_role(
        single-operator bootstrap path.
     3. If the email is listed in ``config.admin_emails``, they get
        ``admin``.
-    4. Otherwise they get ``none`` — they can browse the dashboard but
-       can't mutate admin state. Callers may choose to reject ``none`` at
-       the route layer.
+    4. Otherwise they get ``none`` — callers can keep the signed identity
+       around for a future read-only surface, but admin routes should reject
+       it unless they explicitly support non-admin viewing.
 
     ``existing_roles`` is expected to be a ``{email: role}`` mapping; the
     actual persistence is up to the caller.

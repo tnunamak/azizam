@@ -75,8 +75,8 @@ The gateway uses a small, stable set of nouns across docs, code, and receipts. T
 
 - **User** — a human principal, typically authenticated via OIDC (e.g. the self-hoster, a family member, a friend).
 - **ServiceAccount** — a non-human principal that owns one or more apps and the credentials they use.
-- **Credential** — a bearer-token secret (an `opk_...` App API key, an OIDC session, or a downstream provider key); always stored as a hash where possible.
-- **AdminRole** — a named bundle of admin permissions (e.g. read-only operator vs full owner).
+- **Credential** — a bearer-token secret (an `opk_...` App API key, an `oak_...` admin API key, an OIDC session, or a downstream provider key); always stored as a hash where possible.
+- **AdminRole** — a named admin permission bundle. The current control plane treats `owner`/`admin`/`superadmin` as admin-capable; finer-grained endpoint permissions are a future extension.
 - **AuditEvent** — an immutable record of an admin-plane action (key minted, profile changed, role assigned, etc.).
 
 **Runtime plane** (what gets executed for an end user):
@@ -111,16 +111,24 @@ The printed `opk_...` value is the bearer key apps send as `Authorization: Beare
 
 Per-key downstream overrides are supported — any one App API key can map to different upstream credentials per provider (TabbyAPI key, TTS auth header, etc.). See [`proxy_api_keys.example.yml`](proxy_api_keys.example.yml) for the structure.
 
+Admin/control-plane credentials are separate. Bootstrap a service-account admin key with:
+
+```bash
+./venv/bin/python proxy.py generate-admin-key owner-cli
+```
+
+The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser admin login is available at `/admin/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`.
+
 ### Give a family member a key
 
 The shortest "share my gateway with another human" flow:
 
-1. **OIDC User.** The family member signs in to the gateway's admin UI (or, today, asks the owner to provision them) and becomes a **User** in the admin plane.
+1. **OIDC User.** The family member signs in to the gateway's admin UI and becomes a **User** in the admin plane.
 2. **Personal App.** They register one **App** for themselves — e.g. `aunt-mary-chat`. An App is a named consumer, not a person; one User can own several Apps.
 3. **Profile.** The App is attached to a **Profile** that grants only what they need (e.g. `openai.chat` + `openai.audio`, no native passthrough, `cloud_allowed: false`, `status_visibility.level: basic`).
-4. **App API key.** Mint a bearer token for that App (`generate-key aunt-mary-chat`). They paste it once into their chat app of choice as the OpenAI API key, with base URL `https://ai.vivid.fish/v1`.
+4. **App API key.** Mint a bearer token for that App with `POST /admin/api/apps/{app_id}/keys`. They paste the returned `opk_...` value once into their chat app of choice as the OpenAI API key, with base URL `https://ai.vivid.fish/v1`.
 
-Rotation is per-App, not per-human: re-running `generate-key aunt-mary-chat` mints a new key while preserving the App's Profile and downstream mapping. The User remains the same.
+Rotation is per-App, not per-human: revoke the old Credential and mint a new key while preserving the App's Profile and downstream mapping. The User remains the same.
 
 See [`AUTH_GUIDE.md`](AUTH_GUIDE.md) for the full key-generation and rotation workflow.
 
@@ -177,14 +185,15 @@ Edit `proxy_config.yml`. The shipped config assumes:
 
 Adjust hosts, ports, model paths, and role mappings as needed.
 
-### 3. Create your first proxy key
+### 3. Create your first keys
 
 ```bash
 cp proxy_api_keys.example.yml proxy_api_keys.yml
-./venv/bin/python proxy.py generate-key first-client
+./venv/bin/python proxy.py generate-key first-app
+./venv/bin/python proxy.py generate-admin-key owner-cli
 ```
 
-That command rewrites `proxy_api_keys.yml` to add a hashed entry and prints the `opk_...` bearer token once. The token is never recoverable from disk.
+`generate-key` rewrites `proxy_api_keys.yml` to add a hashed App entry and prints the `opk_...` bearer token once. `generate-admin-key` initializes the durable admin store and prints one `oak_...` admin token. Neither token is recoverable from disk.
 
 ### 4. Start the proxy
 

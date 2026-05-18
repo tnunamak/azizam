@@ -19,7 +19,8 @@ The product entity is an **App**.
 - **ServiceAccount** — a non-human principal that owns Apps and Credentials.
 - **App** — a registered consumer of the gateway (LibreChat, Continue, an agent).
 - **Profile** — the policy bundle attached to an App.
-- **Credential** — a hashed App API key (`opk_...`) or an OIDC session.
+- **Credential** — a hashed bearer secret: App API key (`opk_...`),
+  admin API key (`oak_...`), OIDC session, or downstream provider key.
 - **AdminRole** / **AuditEvent** — admin-plane permission bundle and audit trail.
 
 The invariant: every executed request resolves an App + Profile + policy
@@ -88,14 +89,63 @@ generate a new key for the same App name and update that app's configuration.
 If the same `<app-name>` already exists, the command rotates that App's API
 key while preserving its downstream mapping, Profile block, and audit trail.
 
+`generate-key` is the legacy-compatible App-key path. It remains useful for a
+single-user install and for apps already wired to `proxy_api_keys.yml`, but it
+is not the control plane. New multi-user/admin workflows should use
+`/admin`, `/admin/api/*`, and the durable admin database.
+
+## Admin Control Plane
+
+The control plane is separate from the runtime `/v1` plane.
+
+- App keys (`opk_...`) call `/v1`, `/api`, and `/gateway/v1`.
+- Admin keys (`oak_...`) and signed OIDC dashboard sessions call `/admin` and
+  `/admin/api/*`.
+- An App key cannot administer the gateway, and an admin key should not be put
+  into OpenAI-compatible apps.
+
+Bootstrap the first service-account admin key from the gateway directory:
+
+```bash
+./venv/bin/python proxy.py generate-admin-key owner-cli
+```
+
+The command initializes the durable admin store if needed and prints one
+`oak_...` key. Use it only for admin-plane requests:
+
+```bash
+curl -s https://ai.vivid.fish/admin/api/overview \
+  -H "Authorization: Bearer oak_..."
+```
+
+OIDC browser login is configured under `admin.oidc` in `proxy_config.yml`.
+Secrets should come from environment variables:
+
+```yaml
+admin:
+  db_path: data/admin.db
+  oidc:
+    enabled: true
+    issuer: https://idp.example.com
+    client_id: vivid-fish-ai-gateway
+    client_secret_env: AI_GATEWAY_OIDC_CLIENT_SECRET
+    redirect_uri: https://ai.vivid.fish/admin/oidc/callback
+    signing_key_env: AI_GATEWAY_ADMIN_SESSION_KEY
+    allowed_email_domains: ["vivid.fish"]
+    admin_emails: ["owner@vivid.fish"]
+```
+
+The first allowed OIDC login becomes `owner` if no owner exists yet. Later
+allowed logins get the configured role or no admin role until an owner grants
+one.
+
 ## Give A Family Member Access
 
 Concrete walkthrough of the canonical "share my gateway with another human"
 flow:
 
-1. **OIDC User.** The family member signs in to the gateway's admin UI (or, in
-   the current SLVP, asks the owner) and becomes a **User** in the admin
-   plane.
+1. **OIDC User.** The family member signs in to the gateway's admin UI and
+   becomes a **User** in the admin plane.
 2. **Personal App.** Register one App for them — `aunt-mary-chat` — owned by
    their User. One human can own several Apps; one App is a single API key
    with a single Profile.
@@ -112,16 +162,24 @@ flow:
      status_visibility:
        level: basic
    ```
-4. **App API key.** Mint the bearer token:
+4. **App API key.** Mint the bearer token through the admin plane:
    ```bash
-   ./venv/bin/python proxy.py generate-key aunt-mary-chat
+   curl -s https://ai.vivid.fish/admin/api/apps \
+     -H "Authorization: Bearer oak_..." \
+     -H "Content-Type: application/json" \
+     -d '{"name":"aunt-mary-chat","kind":"personal","owner_user_id":"user_...","profile_id":"prof_..."}'
+
+   curl -s https://ai.vivid.fish/admin/api/apps/app_.../keys \
+     -H "Authorization: Bearer oak_..." \
+     -H "Content-Type: application/json" \
+     -d '{"label":"Aunt Mary laptop"}'
    ```
    They paste the printed `opk_...` value once, as the OpenAI API key, into
    their chat app of choice (LibreChat, Open WebUI, an iOS shortcut, etc.)
    with base URL `https://ai.vivid.fish/v1`.
 
-Rotation stays per-App: `generate-key aunt-mary-chat` again rotates the API
-key while leaving the User, the Profile, and the audit history intact.
+Rotation stays per-App: revoke the old Credential and mint a new key for the
+same App while leaving the User, the Profile, and the audit history intact.
 
 ## Request Auth Rules
 

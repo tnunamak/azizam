@@ -91,7 +91,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         self.assertTrue(html.startswith("<!doctype html>"))
         self.assertIn("</html>", html)
-        self.assertIn("Admin · openai-proxy", html)
+        self.assertIn("Vivid Fish AI Gateway Admin", html)
 
     def test_uses_App_terminology_not_Client(self) -> None:
         html = render_admin_dashboard(_snapshot())
@@ -109,6 +109,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("Create an app", html)
         self.assertIn("Mint an API key", html)
         self.assertIn('action="/admin/api/apps"', html)
+        self.assertIn("x-ai-gateway-admin-action", html)
         # Mint-key form must reference the key creation endpoint template.
         self.assertIn("/admin/api/apps/{app_id}/keys", html)
 

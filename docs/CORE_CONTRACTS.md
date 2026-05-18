@@ -24,7 +24,7 @@ receipts.
 |----------------|-------------------------------------------------------------------------|
 | `User`         | A human principal, typically authenticated via OIDC.                    |
 | `ServiceAccount` | A non-human principal that owns Apps and Credentials.                 |
-| `Credential`   | A hashed bearer token (App API key, OIDC session, downstream provider). |
+| `Credential`   | A hashed bearer token (App API key, admin key, OIDC session, downstream provider). |
 | `AdminRole`    | A named bundle of admin-plane permissions.                              |
 | `AuditEvent`   | An immutable record of an admin-plane action.                           |
 
@@ -95,6 +95,15 @@ Anthropic/Ollama protocol frontends:
   the `/gateway/v1/media/jobs` surface. The live proxy now executes
   `image.generate` jobs from this surface and returns completed image payloads
   at `/gateway/v1/media/jobs/{job_id}/content`.
+- `gateway/admin_store.py` — durable SQLite control-plane store for Users,
+  ServiceAccounts, Apps, Profiles, Credentials, AdminRoles, and AuditEvents.
+- `gateway/admin_api.py` / `gateway/admin_runtime.py` — `/admin/api/*`
+  router and runtime adapter for creating Apps, minting one-time App keys,
+  revoking Credentials, listing audit events, and simulating profile policy.
+- `gateway/admin_oidc.py` — pure OIDC/session helpers for the browser admin
+  login path; `proxy.py` provides the network adapter and signed-cookie wiring.
+- `gateway/admin_render.py` — compact server-rendered admin dashboard at
+  `/admin`, intentionally backed by the same admin API/store nouns.
 
 Backend adapter extraction, a richer live capability inventory, resource
 claims, generic gateway assets, and broader media-job adapters described below
@@ -437,6 +446,25 @@ exclusive: false
 
 Early versions can be estimates. The important rule is that media and model
 lifecycle requests should not be opaque to the gateway.
+
+Resource policy is also where operator modes and maintenance states belong.
+Examples: `llm-only` mode can reserve VRAM for a large reasoning model and
+disable image/video queues; `maintenance` can drain a Provider before restart;
+per-App/Profile budgets can cap queue wait, concurrency, GPU seconds, or
+fallback use. These constraints must be visible to policy, receipts, and
+capability discovery instead of being hidden in backend-specific scripts.
+
+The admission boundary is:
+
+```text
+auth/quota -> capability health -> mode policy -> resource lease -> adapter
+```
+
+Standard outcomes should be boring and machine-readable: `202 queued`,
+`429 rate_limited`, `503 unavailable_or_maintenance`, and `409 mode_conflict`.
+Capability health uses `available`, `degraded`, `draining`, `maintenance`, and
+`unavailable`; resource leases use `requested`, `granted`, `renewed`,
+`released`, `denied`, and `expired`.
 
 ## Route Receipt
 

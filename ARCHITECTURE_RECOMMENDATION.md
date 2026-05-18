@@ -494,6 +494,10 @@ The scheduler must know:
 - timeout budget
 - backend lifecycle state
 - operational safety signals
+- operator mode constraints (`normal`, `llm-only`, `media-only`,
+  `maintenance`, custom)
+- per-App/profile concurrency and usage budgets
+- degraded-mode rules when a Provider is down, warming, draining, or queued
 
 Resource claims should look like data:
 
@@ -513,6 +517,61 @@ claims:
     estimate_mb: 5000
 ```
 
+Scheduling policy should also be data, not hidden conditionals:
+
+```yaml
+mode: llm-only
+constraints:
+  - kind: provider_state
+    provider: comfyui.local
+    state: disabled
+    reason: reserving_vram_for_llm
+  - kind: queue_budget
+    profile: family-chat
+    max_wait_seconds: 15
+  - kind: concurrency
+    profile: image-agent
+    max_running: 1
+  - kind: usage_budget
+    app: brother-laptop
+    window: day
+    max_gpu_seconds: 600
+```
+
+Admission happens before an expensive backend is touched:
+
+```text
+request
+  -> auth/quota
+  -> capability health
+  -> mode policy
+  -> resource lease decision
+  -> backend adapter
+```
+
+The outcome should be explicit HTTP behavior:
+
+- `202` when accepted into a durable queue
+- `429` when the App/Profile has exceeded a quota or concurrency budget
+- `503` when a capability is unavailable or under maintenance
+- `409` when the request conflicts with the current operator mode
+
+Capability health is per capability and provider, not a single global boolean:
+
+```yaml
+capability: image.generate
+provider: comfyui.local
+state: maintenance # available | degraded | draining | maintenance | unavailable
+reason: reserving_vram_for_llm
+observed_at: 2026-05-17T12:00:00Z
+retry_after_seconds: 900
+```
+
+Resource leases should have a tiny lifecycle: `requested -> granted ->
+renewed -> released`, with `denied` and `expired` as terminal outcomes. A
+lease can represent GPU VRAM, a model slot, a long-running media queue slot, or
+an exclusive mode such as "smart LLM owns gpu0".
+
 The SLVP scheduler can be simple:
 
 - per-backend semaphores
@@ -521,6 +580,9 @@ The SLVP scheduler can be simple:
 - cancellation propagation
 - timeout budgets
 - advisory resource warnings
+- explicit maintenance/drain states that fail or queue before execution
+- operator-selectable mode profiles that can disable whole capability classes
+  without editing every App Profile
 
 But its boundary must exist early, because hidden backend-level restarts and
 silent model swaps do not scale.
@@ -604,7 +666,7 @@ together.
 ```text
 User           OIDC-authenticated human (owner, family member, friend)
 ServiceAccount Non-human principal that owns Apps and Credentials
-Credential     Hashed bearer secret (App API key, OIDC session, provider key)
+Credential     Hashed bearer secret (App API key, admin key, OIDC session, provider key)
 AdminRole      Named permission bundle for admin actions
 AuditEvent     Immutable record of an admin-plane action
 ```
@@ -689,17 +751,20 @@ Profiles are not hardcoded special-case behavior. They are test/config bundles.
 The self-hoster-friendly flow that this architecture must support end-to-end:
 
 1. **OIDC User.** The family member signs in to the gateway and becomes a
-   `User` in the admin plane (today: provisioned manually; target: OIDC).
+   `User` in the admin plane. Browser login is `/admin/login` when
+   `admin.oidc` is configured; service-account admin keys exist for CLI and
+   automation.
 2. **Personal App.** They register one `App` they own — `aunt-mary-chat`.
 3. **Profile.** A narrow Profile is attached:
    `protocols: [openai.chat, openai.audio]`, `cloud_allowed: false`,
    `native_passthrough: { enabled: false }`, `status_visibility.level: basic`.
-4. **App API key.** The owner runs `generate-key aunt-mary-chat`. The
-   `opk_...` value is shown once and pasted into the App's config with base
-   URL `https://ai.vivid.fish/v1`.
+4. **App API key.** The owner mints an App Credential through `/admin/api`
+   (`POST /admin/api/apps/{app_id}/keys`). The returned `opk_...` value is
+   shown once and pasted into the App's config with base URL
+   `https://ai.vivid.fish/v1`.
 
 Rotation is per-App; the User and Profile survive key rotation. Revocation
-removes the key entry — the User and AuditEvent history remain.
+marks the Credential revoked — the User and AuditEvent history remain.
 
 ## Normalized Events And Route Receipts
 

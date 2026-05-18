@@ -32,7 +32,7 @@ import hashlib
 import hmac
 import secrets
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
@@ -41,7 +41,7 @@ from typing import Any, Callable, Mapping, Optional
 import httpx
 import yaml
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 # Local: status dashboard backend.
@@ -51,7 +51,31 @@ import metrics_store
 import metrics_sampler
 import responses_store
 import responses_translator
-from gateway import media_jobs, receipt_store
+from gateway import admin_store, media_jobs, receipt_store
+from gateway.admin_api import AdminAuthError, create_admin_router
+from gateway.admin_oidc import (
+    IDTokenClaimsError,
+    OIDCConfigError,
+    PKCEPair,
+    SessionError,
+    StateRecord,
+    authorization_url,
+    bootstrap_admin_role,
+    consume_state,
+    encode_session_cookie,
+    generate_nonce,
+    generate_pkce_pair,
+    load_oidc_config,
+    record_state,
+    session_from_claims,
+    validate_id_token_claims,
+)
+from gateway.admin_render import render_admin_dashboard
+from gateway.admin_runtime import (
+    AdminAuthenticator,
+    AdminSQLiteStore,
+    create_admin_service_account_key,
+)
 from gateway.api import create_gateway_router
 from gateway.audio_extensions import (
     bind_audio_workflow_extensions,
@@ -305,6 +329,7 @@ _pin_mismatch_warned: set = set()
 
 # Auth
 auth_cfg = config.get("auth", {})
+admin_cfg = config.get("admin", {}) or {}
 
 # Health
 HEALTH_CHECK_TIMEOUT = 5
@@ -939,6 +964,79 @@ AUTH_PROFILE_STRICT = bool_from_config(
 )
 
 
+def _admin_db_path() -> Path:
+    raw = (
+        os.environ.get("AI_GATEWAY_ADMIN_DB")
+        or os.environ.get("OPENAI_PROXY_ADMIN_DB")
+        or admin_cfg.get("db_path")
+        or "data/admin.db"
+    )
+    path = Path(str(raw))
+    if path.is_absolute():
+        return path
+    return Path(__file__).parent / path
+
+
+def _admin_session_signing_key() -> bytes | None:
+    raw = admin_cfg.get("session_signing_key") or ""
+    env_name = admin_cfg.get("session_signing_key_env") or ""
+    if env_name:
+        raw = os.environ.get(str(env_name), raw)
+    raw = os.environ.get("AI_GATEWAY_ADMIN_SESSION_KEY", raw)
+    raw = os.environ.get("OPENAI_PROXY_ADMIN_SESSION_KEY", raw)
+    if not raw:
+        return None
+    key = str(raw).encode("utf-8")
+    if len(key) < 32:
+        print(
+            "[proxy] WARNING: admin session signing key is shorter than 32 bytes; "
+            "browser sessions disabled",
+            flush=True,
+        )
+        return None
+    return key
+
+
+def _load_admin_oidc_config():
+    oidc_cfg = admin_cfg.get("oidc") or {}
+    if not isinstance(oidc_cfg, Mapping):
+        oidc_cfg = {}
+    if (
+        oidc_cfg.get("enabled")
+        and not oidc_cfg.get("signing_key")
+        and not oidc_cfg.get("signing_key_env")
+    ):
+        session_env = admin_cfg.get("session_signing_key_env")
+        if session_env:
+            oidc_cfg = dict(oidc_cfg)
+            oidc_cfg["signing_key_env"] = session_env
+        elif admin_cfg.get("session_signing_key"):
+            oidc_cfg = dict(oidc_cfg)
+            oidc_cfg["signing_key"] = admin_cfg.get("session_signing_key")
+    try:
+        return load_oidc_config(oidc_cfg, env=os.environ)
+    except OIDCConfigError as e:
+        print(f"[proxy] WARNING: admin OIDC disabled: {e}", flush=True)
+        return load_oidc_config({"enabled": False})
+
+
+ADMIN_DB_PATH = _admin_db_path()
+ADMIN_OIDC_CONFIG = _load_admin_oidc_config()
+ADMIN_OIDC_STATES: dict[str, StateRecord] = {}
+ADMIN_OIDC_JWKS_CACHE: dict[str, Any] = {}
+ADMIN_SESSION_SIGNING_KEY = (
+    ADMIN_OIDC_CONFIG.signing_key
+    if ADMIN_OIDC_CONFIG.enabled
+    else _admin_session_signing_key()
+)
+ADMIN_STORE = AdminSQLiteStore(ADMIN_DB_PATH)
+ADMIN_AUTH = AdminAuthenticator(
+    ADMIN_STORE,
+    signing_key=ADMIN_SESSION_SIGNING_KEY,
+    cookie=ADMIN_OIDC_CONFIG.cookie,
+)
+
+
 AuthIdentity = RuntimeIdentity
 
 
@@ -1247,6 +1345,33 @@ def handle_cli_command() -> bool:
             print("Usage: python3 proxy.py refresh-openai-models", file=sys.stderr)
             sys.exit(2)
         sys.exit(asyncio.run(refresh_openai_model_aliases()))
+
+    if sys.argv[1] == "generate-admin-key":
+        if len(sys.argv) not in (3, 4):
+            print(
+                "Usage: python3 proxy.py generate-admin-key <service-account-name> [role]",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        name = sys.argv[2].strip()
+        role = sys.argv[3].strip() if len(sys.argv) == 4 else "owner"
+        if not name:
+            print("Service account name cannot be empty.", file=sys.stderr)
+            sys.exit(2)
+        if role not in {"owner", "admin", "superadmin"}:
+            print("Role must be one of: owner, admin, superadmin.", file=sys.stderr)
+            sys.exit(2)
+        admin_store.init_db(ADMIN_DB_PATH)
+        api_key, credential, assignment = create_admin_service_account_key(
+            name, role=role, path=ADMIN_DB_PATH
+        )
+        print(f"Created AI Gateway admin key for service account {name}.")
+        print(f"Stored key hash in {ADMIN_DB_PATH}.")
+        print(f"Credential id: {credential['id']} ({credential['prefix']}...)")
+        print(f"Role assignment: {assignment['role']}")
+        print("Use this key only for /admin/api control-plane calls:")
+        print(api_key)
+        return True
 
     if sys.argv[1] != "generate-key":
         return False
@@ -6578,6 +6703,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Media job store failed to start: {e}", flush=True)
 
+    try:
+        ADMIN_STORE.init_db()
+        print(f"[proxy] Admin store initialized (db={ADMIN_DB_PATH})", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Admin store failed to start: {e}", flush=True)
+
     yield
 
     state.shutdown_requested = True
@@ -6791,11 +6922,266 @@ app.include_router(
 )
 
 
+async def _admin_oidc_config_with_discovery():
+    cfg = ADMIN_OIDC_CONFIG
+    if not cfg.enabled:
+        return cfg
+    if cfg.authorization_endpoint and cfg.token_endpoint and cfg.jwks_uri:
+        return cfg
+    discovery_url = f"{cfg.issuer.rstrip('/')}/.well-known/openid-configuration"
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(discovery_url)
+        response.raise_for_status()
+        metadata = response.json()
+    return replace(
+        cfg,
+        authorization_endpoint=cfg.authorization_endpoint
+        or str(metadata.get("authorization_endpoint", "")),
+        token_endpoint=cfg.token_endpoint or str(metadata.get("token_endpoint", "")),
+        jwks_uri=cfg.jwks_uri or str(metadata.get("jwks_uri", "")),
+    )
+
+
+async def _oidc_exchange_code(code: str, *, config, pkce: PKCEPair) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(
+            config.token_endpoint,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": config.redirect_uri,
+                "client_id": config.client_id,
+                "client_secret": config.client_secret,
+                "code_verifier": pkce.verifier,
+            },
+            headers={"accept": "application/json"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("OIDC token endpoint returned non-object JSON")
+    return payload
+
+
+async def _oidc_verify_id_token(id_token: str, *, config) -> Mapping[str, Any]:
+    jwks = ADMIN_OIDC_JWKS_CACHE.get(config.jwks_uri)
+    if jwks is None:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(config.jwks_uri)
+            response.raise_for_status()
+            jwks = response.json()
+        ADMIN_OIDC_JWKS_CACHE[config.jwks_uri] = jwks
+    from authlib.jose import JsonWebKey, jwt
+
+    key_set = JsonWebKey.import_key_set(jwks)
+    claims = jwt.decode(id_token, key_set)
+    claims.validate(leeway=config.clock_skew_seconds)
+    return dict(claims)
+
+
+def _existing_admin_roles_by_email() -> dict[str, str]:
+    roles_by_email: dict[str, str] = {}
+    for user in admin_store.list_users(path=ADMIN_STORE.path):
+        email = str(user.get("email") or "").strip().lower()
+        if not email:
+            continue
+        roles = admin_store.list_admin_roles(
+            subject_kind="user",
+            subject_id=user["id"],
+            path=ADMIN_STORE.path,
+        )
+        role_names = {str(role["role"]) for role in roles}
+        if "owner" in role_names:
+            roles_by_email[email] = "owner"
+        elif "admin" in role_names:
+            roles_by_email[email] = "admin"
+    return roles_by_email
+
+
+def _safe_admin_return_to(value: str | None) -> str:
+    if not value:
+        return "/admin"
+    if not value.startswith("/") or value.startswith("//"):
+        return "/admin"
+    if value.startswith("/admin"):
+        return value
+    return "/admin"
+
+
+app.include_router(
+    create_admin_router(
+        ADMIN_STORE,
+        auth=ADMIN_AUTH,
+        profile_resolver=ADMIN_STORE.profile_for_id,
+    )
+)
+
+
+@app.get("/admin", include_in_schema=False)
+async def admin_dashboard(request: Request):
+    try:
+        actor = ADMIN_AUTH(request)
+    except AdminAuthError as exc:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "code": exc.code,
+                    "message": exc.message,
+                }
+            }),
+            status_code=exc.status_code,
+            media_type="application/json",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    snapshot = ADMIN_STORE.dashboard_snapshot(actor)
+    body = render_admin_dashboard(
+        snapshot,
+        title="Vivid Fish AI Gateway Admin",
+    )
+    return Response(
+        content=body,
+        status_code=200,
+        media_type="text/html; charset=utf-8",
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.get("/admin/login", include_in_schema=False)
+async def admin_login(request: Request):
+    if not ADMIN_OIDC_CONFIG.enabled:
+        return Response(
+            content=(
+                "OIDC browser login is not configured on this gateway yet. "
+                "Use `python proxy.py generate-admin-key <name>` for /admin/api "
+                "or configure admin.oidc before using browser login."
+            ),
+            status_code=501,
+            media_type="text/plain; charset=utf-8",
+        )
+    try:
+        cfg = await _admin_oidc_config_with_discovery()
+        nonce = generate_nonce()
+        pkce = generate_pkce_pair()
+        return_to = _safe_admin_return_to(request.query_params.get("return_to"))
+        state = record_state(
+            ADMIN_OIDC_STATES,
+            nonce=nonce,
+            pkce_verifier=pkce.verifier,
+            return_to=return_to,
+        )
+        return RedirectResponse(
+            authorization_url(cfg, state=state.state, nonce=nonce, pkce=pkce),
+            status_code=302,
+        )
+    except Exception as e:  # noqa: BLE001
+        return Response(
+            content=f"OIDC login failed to start: {str(e)[:200]}",
+            status_code=500,
+            media_type="text/plain; charset=utf-8",
+        )
+
+
+@app.get("/admin/oidc/callback", include_in_schema=False)
+async def admin_oidc_callback(request: Request):
+    if not ADMIN_OIDC_CONFIG.enabled:
+        return Response(status_code=404)
+    error = request.query_params.get("error")
+    if error:
+        return Response(
+            content=f"OIDC provider returned error: {error}",
+            status_code=400,
+            media_type="text/plain; charset=utf-8",
+        )
+    code = request.query_params.get("code")
+    state_value = request.query_params.get("state")
+    if not code or not state_value:
+        return Response(
+            content="OIDC callback missing code or state",
+            status_code=400,
+            media_type="text/plain; charset=utf-8",
+        )
+    try:
+        state = consume_state(ADMIN_OIDC_STATES, state_value)
+        cfg = await _admin_oidc_config_with_discovery()
+        tokens = await _oidc_exchange_code(
+            code,
+            config=cfg,
+            pkce=PKCEPair(
+                verifier=state.pkce_verifier,
+                challenge="already-sent",
+            ),
+        )
+        id_token = tokens.get("id_token")
+        if not isinstance(id_token, str) or not id_token:
+            raise ValueError("token endpoint did not return id_token")
+        claims = await _oidc_verify_id_token(id_token, config=cfg)
+        validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
+        user = admin_store.upsert_oidc_user(
+            cfg.issuer,
+            str(claims["sub"]),
+            email=str(claims.get("email") or ""),
+            display_name=str(claims.get("name") or claims.get("email") or ""),
+            path=ADMIN_STORE.path,
+        )
+        role = bootstrap_admin_role(
+            str(claims.get("email") or ""),
+            config=cfg,
+            existing_roles=_existing_admin_roles_by_email(),
+        )
+        if role in {"owner", "admin"}:
+            admin_store.assign_admin_role(
+                role=role,
+                subject_kind="user",
+                subject_id=user["id"],
+                granted_by="oidc",
+                path=ADMIN_STORE.path,
+            )
+        session_claims = {
+            "sub": user["id"],
+            "email": claims.get("email") or "",
+        }
+        session = session_from_claims(
+            session_claims,
+            role=role,
+            cookie=cfg.cookie,
+        )
+        response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
+        response.set_cookie(
+            cfg.cookie.name,
+            encode_session_cookie(session, signing_key=cfg.signing_key),
+            max_age=cfg.cookie.max_age_seconds,
+            secure=cfg.cookie.secure,
+            httponly=cfg.cookie.http_only,
+            samesite=cfg.cookie.same_site,
+            path=cfg.cookie.path,
+            domain=cfg.cookie.domain,
+        )
+        return response
+    except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as e:
+        return Response(
+            content=f"OIDC callback failed: {str(e)[:200]}",
+            status_code=400,
+            media_type="text/plain; charset=utf-8",
+        )
+
+
+@app.post("/admin/logout", include_in_schema=False)
+async def admin_logout():
+    response = RedirectResponse("/admin/login", status_code=302)
+    response.delete_cookie(
+        ADMIN_OIDC_CONFIG.cookie.name,
+        path=ADMIN_OIDC_CONFIG.cookie.path,
+        domain=ADMIN_OIDC_CONFIG.cookie.domain,
+    )
+    return response
+
+
 # Endpoint paths excluded from the firehose per-key request counter.
 # These are health/status probes hammered by the dashboard itself or
 # routes that don't represent real "API caller" activity.
 _FIREHOSE_NO_RECORD_PREFIXES = (
     "/health",
+    "/admin",
     "/v1/status",
     "/v1/audio/health",
     "/_next/",

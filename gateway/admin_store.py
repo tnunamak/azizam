@@ -355,6 +355,27 @@ def create_service_account(
     return _row_to_dict(row)  # type: ignore[return-value]
 
 
+def ensure_service_account(
+    name: str,
+    *,
+    description: str | None = None,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Return a service account by name, creating it when missing."""
+    if not name:
+        raise ValueError("service account name is required")
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM service_accounts WHERE name = ?", (name,)
+        ).fetchone()
+    if row is not None:
+        return _row_to_dict(row)  # type: ignore[return-value]
+    return create_service_account(
+        name, description=description, now=now, path=path
+    )
+
+
 def get_service_account(
     svc_id: str, *, path: Path = DB_PATH
 ) -> dict[str, Any] | None:
@@ -524,6 +545,14 @@ def get_app(app_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
     return _row_to_dict(row)
 
 
+def list_apps(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM apps ORDER BY created_at ASC"
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
+
+
 def list_apps_for_user(
     user_id: str, *, path: Path = DB_PATH
 ) -> list[dict[str, Any]]:
@@ -684,6 +713,14 @@ def list_active_credentials(
         rows = conn.execute(
             f"SELECT * FROM credentials WHERE {where} ORDER BY created_at ASC",
             params,
+        ).fetchall()
+    return [_credential_row_to_dict(r) for r in rows]
+
+
+def list_credentials(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM credentials ORDER BY created_at ASC"
         ).fetchall()
     return [_credential_row_to_dict(r) for r in rows]
 
@@ -901,6 +938,7 @@ __all__ = [
     "get_user",
     "list_users",
     "create_service_account",
+    "ensure_service_account",
     "get_service_account",
     "create_profile",
     "get_profile",
@@ -908,11 +946,13 @@ __all__ = [
     "create_app",
     "ensure_personal_app_for_user",
     "get_app",
+    "list_apps",
     "list_apps_for_user",
     "create_credential_hash",
     "revoke_credential",
     "get_credential",
     "find_credential_by_hash",
+    "list_credentials",
     "list_active_credentials",
     "assign_admin_role",
     "revoke_admin_role",

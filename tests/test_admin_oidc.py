@@ -133,6 +133,22 @@ class TestConfigLoad(unittest.TestCase):
         self.assertTrue(cookie.http_only)
         self.assertEqual(cookie.same_site, "lax")
 
+    def test_string_booleans_are_parsed_explicitly(self) -> None:
+        cfg = load_oidc_config({
+            "enabled": "false",
+            "cookie": {
+                "secure": "false",
+                "http_only": "false",
+            },
+        })
+        self.assertFalse(cfg.enabled)
+        self.assertFalse(cfg.cookie.secure)
+        self.assertFalse(cfg.cookie.http_only)
+
+    def test_unknown_boolean_string_is_rejected(self) -> None:
+        with self.assertRaises(OIDCConfigError):
+            load_oidc_config({"enabled": "sometimes"})
+
 
 class TestAuthorizationURL(unittest.TestCase):
     def test_includes_state_nonce_pkce_scopes(self) -> None:

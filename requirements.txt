@@ -5,3 +5,4 @@ pyyaml>=6.0
 python-multipart
 websockets>=12.0
 Pillow>=10.0
+authlib>=1.7.2

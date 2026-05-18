@@ -59,6 +59,8 @@ _DASHBOARD_CSS = """
   form.flow { display: grid; gap: 0.75rem; }
   form.flow .row { display: grid; gap: 0.5rem;
                    grid-template-columns: minmax(0, 1fr) auto; }
+  form.flow .stack { display: grid; gap: 0.5rem;
+                     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
   form.flow label { font-size: 0.85rem; color: #9aa3b8; }
   form.flow input, form.flow select { background: #0f1320;
                    border: 1px solid #1f2330; color: #e6e8ef;
@@ -77,6 +79,9 @@ _DASHBOARD_CSS = """
            border-radius: 4px; background: #1f2330; color: #9aa3b8; }
   .badge.revoked { background: #3b1f24; color: #fca5a5; }
   .badge.active { background: #173a26; color: #86efac; }
+  .result { white-space: pre-wrap; background: #0f1320; border: 1px solid #1f2330;
+            border-radius: 8px; padding: 0.75rem; min-height: 2.5rem;
+            color: #dbeafe; }
 """
 
 
@@ -116,7 +121,7 @@ def _is_revoked(record: Mapping[str, Any]) -> bool:
 def _credential_row(record: Mapping[str, Any]) -> str:
     cred_id = _esc(record.get("id") or record.get("credential_id"))
     app_id = _esc(record.get("app_id"))
-    label = _esc(record.get("label") or record.get("name") or "—")
+    label = _esc(record.get("label") or record.get("display_name") or record.get("name") or "—")
     created = _esc(record.get("created_at") or "—")
     revoked = _is_revoked(record)
     badge_class = "revoked" if revoked else "active"
@@ -214,6 +219,8 @@ def _table(headers: Iterable[str], rows: Iterable[str], *, empty: str) -> str:
 
 def _flow_form(
     apps: list[Mapping[str, Any]],
+    users: list[Mapping[str, Any]],
+    profiles: list[Mapping[str, Any]],
     *,
     create_app_action: str,
     create_key_action_template: str,
@@ -226,26 +233,43 @@ def _flow_form(
     )
     if not app_options:
         app_options = '<option value="" disabled selected>No apps yet — create one above</option>'
-    key_action = _esc(create_key_action_template.replace("{app_id}", ""))
+    user_options = '<option value="">Service app</option>' + "".join(
+        f'<option value="{_esc(user.get("id"))}">'
+        f'{_esc(user.get("email") or user.get("name") or user.get("id"))}'
+        "</option>"
+        for user in users
+    )
+    profile_options = '<option value="">Default profile</option>' + "".join(
+        f'<option value="{_esc(profile.get("id"))}">'
+        f'{_esc(profile.get("label") or profile.get("name") or profile.get("id"))}'
+        "</option>"
+        for profile in profiles
+    )
     return (
-        '<form class="flow" method="post" action="' + _esc(create_app_action) + '">'
-        "<label>Create an app (e.g. <em>brother-laptop</em>):</label>"
-        '<div class="row">'
+        '<form class="flow" method="post" action="' + _esc(create_app_action) + '" data-create-app>'
+        "<label>Create an app:</label>"
+        '<div class="stack">'
         '<input type="text" name="name" placeholder="App name" required>'
+        '<select name="kind"><option value="service">Service app</option><option value="personal">Personal app</option></select>'
+        f'<select name="owner_user_id">{user_options}</select>'
+        f'<select name="profile_id">{profile_options}</select>'
+        "</div>"
+        '<div class="row">'
+        "<span></span>"
         '<button type="submit">Create app</button>'
         "</div>"
         "</form>"
         '<form class="flow" method="post" data-action-template="'
         + _esc(create_key_action_template)
-        + '" onsubmit="this.action=this.dataset.actionTemplate.replace('
-        "'{app_id}', this.app_id.value); return true;\">"
+        + '" data-mint-key>'
         "<label>Mint an API key for an existing app:</label>"
         '<div class="row">'
         f'<select name="app_id" required>{app_options}</select>'
+        '<input type="text" name="label" placeholder="Key label">'
         '<button type="submit">Mint key</button>'
         "</div>"
-        '<input type="hidden" name="placeholder_action" value="' + key_action + '">'
         "</form>"
+        '<pre class="result" id="admin-flow-result" aria-live="polite"></pre>'
     )
 
 
@@ -266,7 +290,7 @@ def _discovery_links(links: Iterable[Mapping[str, Any] | tuple[str, str]]) -> st
 def render_admin_dashboard(
     snapshot: Mapping[str, Any],
     *,
-    title: str = "Admin · openai-proxy",
+    title: str = "Vivid Fish AI Gateway Admin",
     create_app_action: str = "/admin/api/apps",
     create_key_action_template: str = "/admin/api/apps/{app_id}/keys",
 ) -> str:
@@ -340,6 +364,8 @@ def render_admin_dashboard(
 
     flow_html = _flow_form(
         apps,
+        users,
+        profiles,
         create_app_action=create_app_action,
         create_key_action_template=create_key_action_template,
     )
@@ -353,6 +379,25 @@ def render_admin_dashboard(
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{_esc(title)}</title>"
         f"<style>{_DASHBOARD_CSS}</style>"
+        "<script>"
+        "document.addEventListener('DOMContentLoaded',()=>{"
+        "const out=document.getElementById('admin-flow-result');"
+        "const show=v=>{out.textContent=typeof v==='string'?v:JSON.stringify(v,null,2)};"
+        "const json=async(url,body)=>{const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','x-ai-gateway-admin-action':'1'},body:JSON.stringify(body)});"
+        "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
+        "if(!r.ok){throw data}return data};"
+        "document.querySelector('[data-create-app]')?.addEventListener('submit',async e=>{e.preventDefault();"
+        "const f=e.currentTarget,fd=new FormData(f);const body={name:fd.get('name'),kind:fd.get('kind')||'service'};"
+        "if(fd.get('owner_user_id')) body.owner_user_id=fd.get('owner_user_id');"
+        "if(fd.get('profile_id')) body.profile_id=fd.get('profile_id');"
+        "try{const data=await json(f.action,body);show(data);setTimeout(()=>location.reload(),800)}catch(err){show(err)}});"
+        "document.querySelector('[data-mint-key]')?.addEventListener('submit',async e=>{e.preventDefault();"
+        "const f=e.currentTarget,fd=new FormData(f),appId=fd.get('app_id');"
+        "const body={}; if(fd.get('label')) body.label=fd.get('label');"
+        "const url=f.dataset.actionTemplate.replace('{app_id}',encodeURIComponent(appId));"
+        "try{show(await json(url,body))}catch(err){show(err)}});"
+        "});"
+        "</script>"
         "</head><body>"
         "<header>"
         f"<h1>{_esc(title)}</h1>"
