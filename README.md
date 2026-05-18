@@ -21,8 +21,7 @@ Agents and apps can start without local repo context by fetching the public disc
 - `GET /` — browser account portal
 - `GET /health`
 - `GET /login` — browser OIDC login entry point when configured
-- `GET /me` — stable alias for the browser account portal; checks a runtime key, SDK settings,
-  capabilities, and recent media jobs
+- `GET /me` — legacy browser alias; redirects to `/`
 - `GET /me/api/session` — signed-OIDC account view for Apps and non-secret
   runtime-key records owned by the current user
 - `POST /me/api/access-request` — signed-OIDC request to create a pending
@@ -49,7 +48,7 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 |---|---|---|
 | `GET  /` | proxy | Browser account portal |
 | `GET  /login` | proxy + OIDC | Browser sign-in entry point; redirects back to `/` or `/admin` |
-| `GET  /me` | proxy | Stable alias for the account portal |
+| `GET  /me` | proxy | Legacy browser alias; redirects to `/` |
 | `GET  /admin` | proxy | Admin dashboard; browser sessions redirect through `/login` |
 | `GET  /status` | proxy | Operator status dashboard; loopback is frictionless, remote access requires a runtime key |
 | `GET  /health` | proxy | Liveness; public, no auth |
@@ -112,7 +111,7 @@ The legacy term **"client"** is preserved only in compatibility contexts (OpenAI
 
 ## Auth
 
-All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health`, `/`, `/me`, `/me/api/session`, and the `/.well-known/*` discovery surfaces are public. The account portal does not expose private data by itself; the browser uses either the signed OIDC session cookie or a pasted `opk_...` key to check effective access. Pasted keys are kept in browser session storage, not long-lived local storage.
+All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health`, `/`, `/me`, `/me/api/session`, and the `/.well-known/*` discovery surfaces are public. `/me` redirects to `/`; the account portal does not expose private data by itself. The browser uses either the signed OIDC session cookie or a pasted `opk_...` key to check effective access. Pasted keys are kept in browser session storage, not long-lived local storage.
 
 App API keys are stored as sha256 hashes in `proxy_api_keys.yml` (gitignored). Generate or rotate one with:
 
@@ -234,7 +233,7 @@ curl -s http://127.0.0.1:5000/v1/models -H "Authorization: Bearer opk_..."
 ```
 
 The operator status page is served by the proxy at `/status`. The product root
-`/` serves the normal account portal; `/me` is the stable alias.
+`/` serves the account portal; `/me` is a legacy browser redirect to `/`.
 
 ## Status page
 

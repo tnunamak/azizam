@@ -1,147 +1,88 @@
-"""Server-side HTML rendering for the normal-user gateway portal.
+"""Server-side HTML rendering for the gateway's user-facing landing page.
 
 ``render_user_portal`` is intentionally pure. The live app serves the page at
-``/me`` and the browser uses either the signed OIDC session cookie or the
-user's pasted runtime ``opk_`` key to call existing gateway APIs. That keeps
-the first useful user surface small: no new authorization model, no duplicated
-policy, and no server-side handling of pasted runtime keys.
+``/`` (with ``/me`` redirecting here as a legacy browser alias) and the
+browser uses either the signed OIDC session cookie or the user's pasted
+runtime ``opk_`` key to call existing gateway APIs. That keeps the first
+useful user surface small: no new authorization model, no duplicated policy,
+and no server-side handling of pasted runtime keys.
+
+The page shares its chrome (header, nav, sign-out affordance) with
+``/admin`` via :mod:`gateway.gateway_shell` so the site reads as one app.
 """
 
 from __future__ import annotations
 
-import html
-import json
 from typing import Any, Mapping
+
+from gateway.gateway_shell import (
+    SHELL_CSS,
+    can_admin,
+    esc,
+    json_for_script,
+    render_shell_header,
+    user_role,
+)
 
 __all__ = ["render_user_portal"]
 
 
-_USER_PORTAL_CSS = """
-  :root {
-    color-scheme: dark;
-    --bg: oklch(16% 0.018 245);
-    --panel: oklch(21% 0.02 245);
-    --panel-2: oklch(25% 0.024 245);
-    --line: oklch(35% 0.03 245);
-    --text: oklch(93% 0.018 245);
-    --muted: oklch(73% 0.034 245);
-    --soft: oklch(62% 0.04 245);
-    --accent: oklch(78% 0.15 168);
-    --accent-ink: oklch(15% 0.028 168);
-    --warn: oklch(83% 0.13 74);
-    --warn-bg: oklch(27% 0.065 74);
-    --bad: oklch(80% 0.13 28);
-    --bad-bg: oklch(27% 0.062 28);
-    --good: oklch(82% 0.13 150);
-    --good-bg: oklch(26% 0.056 150);
-    --radius: 8px;
-    --space-1: 0.25rem;
-    --space-2: 0.5rem;
-    --space-3: 0.75rem;
-    --space-4: 1rem;
-    --space-6: 1.5rem;
-    --space-8: 2rem;
-    --space-12: 3rem;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  }
-  button, input { font: inherit; }
-  header {
-    min-height: 4rem;
-    padding: var(--space-4) clamp(var(--space-4), 3vw, var(--space-8));
-    border-bottom: 1px solid var(--line);
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-4);
-    align-items: center;
-    background: oklch(17.5% 0.02 245);
-    position: sticky;
-    top: 0;
-    z-index: 2;
-  }
-  header h1 { margin: 0; font-size: 1rem; letter-spacing: 0; }
-  header nav { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  a {
-    color: oklch(82% 0.11 168);
-    text-decoration: none;
-  }
-  header a, .pill {
-    display: inline-flex;
-    align-items: center;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    color: var(--muted);
-    padding: 0.35rem 0.65rem;
-    min-height: 2.75rem;
-    font-size: 0.84rem;
-    background: var(--panel);
-  }
-  main {
-    width: min(980px, calc(100% - clamp(2rem, 6vw, 4rem)));
-    margin: 0 auto;
-    padding: var(--space-6) 0 var(--space-12);
-    display: grid;
-    gap: var(--space-6);
-  }
-  .label {
-    color: var(--muted);
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  section {
-    border-top: 1px solid var(--line);
-    padding-top: var(--space-6);
-  }
-  section h2 {
-    margin: 0 0 var(--space-3);
-    font-size: 0.9rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .grid {
-    display: grid;
-    gap: var(--space-4);
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  }
-  .flow, .card {
+_PAGE_CSS = """
+  .lead { color: var(--muted); margin: 0; line-height: 1.55; }
+  .card {
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
     padding: var(--space-4);
-  }
-  .flow {
     display: grid;
     gap: var(--space-3);
+    align-content: start;
   }
+  .card h3 { margin: 0; font-size: 1rem; }
+  .card p { margin: 0; color: var(--muted); line-height: 1.5; }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .hero {
+    display: grid;
+    gap: var(--space-3);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: var(--space-5);
+  }
+  .hero h2 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: var(--text);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .hero .actions a, .hero .actions button { font-size: 0.95rem; }
   .row {
     display: grid;
     gap: var(--space-2);
     grid-template-columns: minmax(0, 1fr) auto auto;
   }
   input {
-    background: oklch(14.5% 0.016 245);
+    background: oklch(14.5% 0.016 250);
     color: var(--text);
     border: 1px solid var(--line);
     border-radius: 6px;
-    padding: 0.72rem 0.8rem;
+    padding: 0.65rem 0.8rem;
     min-height: 2.75rem;
     min-width: 0;
   }
   input:focus-visible, button:focus-visible, a:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus);
     outline-offset: 2px;
   }
   button {
     border: 1px solid transparent;
     border-radius: 6px;
-    padding: 0.72rem 0.9rem;
+    padding: 0.65rem 1rem;
     min-height: 2.75rem;
     color: var(--accent-ink);
     background: var(--accent);
@@ -154,13 +95,31 @@ _USER_PORTAL_CSS = """
     border-color: var(--line);
   }
   button:hover { filter: brightness(1.06); }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--text);
+    background: var(--panel-2);
+    padding: 0.4rem 0.85rem;
+    min-height: 2.5rem;
+    font-size: 0.88rem;
+  }
+  .pill.primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: transparent;
+    font-weight: 650;
+  }
+  .pill.primary:hover { text-decoration: none; filter: brightness(1.06); }
   .message {
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    background: oklch(14.5% 0.016 245);
+    background: oklch(14.5% 0.016 250);
     color: var(--muted);
     padding: var(--space-3);
-    line-height: 1.45;
+    line-height: 1.5;
   }
   .message:empty { display: none; }
   .message.good { color: var(--good); background: var(--good-bg); }
@@ -169,7 +128,7 @@ _USER_PORTAL_CSS = """
   .snippet {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    background: oklch(14.5% 0.016 245);
+    background: oklch(14.5% 0.016 250);
     border: 1px solid var(--line);
     border-radius: var(--radius);
     padding: var(--space-3);
@@ -178,35 +137,16 @@ _USER_PORTAL_CSS = """
     font-size: 0.86rem;
     line-height: 1.55;
   }
-  .card {
+  .grid {
     display: grid;
-    gap: var(--space-3);
-    align-content: start;
-  }
-  .card h3 {
-    margin: 0;
-    font-size: 1rem;
-    letter-spacing: 0;
-  }
-  .card .actions {
-    display: grid;
-    gap: var(--space-2);
-  }
-  .card p {
-    color: var(--muted);
-    line-height: 1.45;
-    margin: 0;
-  }
-  .meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
+    gap: var(--space-4);
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   }
   .badge {
     display: inline-flex;
     align-items: center;
     min-height: 1.6rem;
-    padding: 0.18rem 0.5rem;
+    padding: 0.18rem 0.55rem;
     border-radius: 999px;
     border: 1px solid var(--line);
     background: var(--panel-2);
@@ -216,94 +156,47 @@ _USER_PORTAL_CSS = """
   .badge.good { color: var(--good); background: var(--good-bg); }
   .badge.bad { color: var(--bad); background: var(--bad-bg); }
   .badge.warn { color: var(--warn); background: var(--warn-bg); }
-  .list {
-    display: grid;
-    gap: var(--space-3);
-  }
+  .meta { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .list { display: grid; gap: var(--space-3); }
   .credential-row {
     display: grid;
     gap: var(--space-2);
-    padding: var(--space-3) 0 0;
+    padding-top: var(--space-3);
+    margin-top: var(--space-3);
     border-top: 1px solid var(--line);
   }
-  .credential-row:first-child { padding-top: 0; border-top: 0; }
-  .credential-row h3 {
-    margin: 0;
-    font-size: 0.94rem;
-    letter-spacing: 0;
-  }
-  .credential-row p { margin: 0; }
-  .empty { color: var(--muted); font-style: italic; }
+  .credential-row:first-of-type { padding-top: 0; margin-top: 0; border-top: 0; }
+  .credential-row h3 { margin: 0; font-size: 0.94rem; }
+  .credential-row p { margin: 0; color: var(--muted); }
+  .empty { color: var(--muted); }
   .two-col {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: var(--space-4);
   }
-  .access-group {
-    display: grid;
-    gap: var(--space-3);
-    align-content: start;
-  }
+  .access-group { display: grid; gap: var(--space-3); align-content: start; }
   .access-group h3 {
     margin: 0;
     color: var(--muted);
-    font-size: 0.86rem;
+    font-size: 0.78rem;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.1em;
   }
-  @media (max-width: 820px) {
-    header { align-items: flex-start; flex-direction: column; }
-    main { width: min(100% - 2rem, 980px); }
+  @media (max-width: 720px) {
     .row { grid-template-columns: 1fr; }
   }
 """
 
 
-def _esc(value: Any) -> str:
-    if value is None:
-        return ""
-    return html.escape(str(value), quote=True)
-
-
-def _json_for_script(value: str) -> str:
-    return (
-        json.dumps(value)
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-    )
-
-
-def _account_badge(text: Any, cls: str = "") -> str:
-    return f'<span class="badge {cls}">{_esc(text)}</span>'
-
-
-def _user_role(account: Mapping[str, Any] | None) -> str:
-    if not account or not account.get("authenticated"):
-        return "none"
-    user = account.get("user") if isinstance(account.get("user"), Mapping) else {}
-    return str(user.get("role") or "none")
-
-
-def _can_admin(account: Mapping[str, Any] | None) -> bool:
-    return _user_role(account) in {"owner", "admin", "superadmin"}
-
-
-def _header_nav(account: Mapping[str, Any] | None) -> str:
-    links = []
-    if _can_admin(account):
-        links.append(("/admin", "Admin"))
-    return "".join(
-        f'<a href="{_esc(href)}">{_esc(label)}</a>'
-        for href, label in links
-    )
+def _badge(text: Any, cls: str = "") -> str:
+    return f'<span class="badge {cls}">{esc(text)}</span>'
 
 
 def _credential_html(record: Mapping[str, Any]) -> str:
-    credential_id = _esc(record.get("id"))
-    prefix = _esc(record.get("prefix") or "key")
-    label = _esc(record.get("display_name") or "Runtime key")
-    created = _esc(record.get("created_at") or "created")
+    credential_id = esc(record.get("id"))
+    prefix = esc(record.get("prefix") or "key")
+    label = esc(record.get("display_name") or "Runtime key")
+    created = esc(record.get("created_at") or "created")
     active = bool(record.get("active"))
     status = "active" if active else "revoked"
     status_class = "good" if active else "bad"
@@ -321,7 +214,7 @@ def _credential_html(record: Mapping[str, Any]) -> str:
         f"<h3>{label}</h3>"
         f"<p><code>{prefix}</code> · {created}</p>"
         '<div class="meta">'
-        + _account_badge(status, status_class)
+        + _badge(status, status_class)
         + "</div>"
         + (f'<div class="actions">{action}</div>' if action else "")
         + "</div>"
@@ -329,24 +222,21 @@ def _credential_html(record: Mapping[str, Any]) -> str:
 
 
 def _app_html(app: Mapping[str, Any]) -> str:
-    app_id = _esc(app.get("id"))
-    name = _esc(app.get("name") or app_id or "App")
-    kind = _esc(app.get("kind") or "app")
+    app_id = esc(app.get("id"))
+    name = esc(app.get("name") or app_id or "App")
+    kind = esc(app.get("kind") or "app")
     profile = app.get("profile") if isinstance(app.get("profile"), Mapping) else None
     profile_name = "Awaiting operator profile"
     profile_id = app.get("profile_id") or ""
-    profile_badge = _account_badge("profile needed", "warn")
+    profile_badge = _badge("profile needed", "warn")
     if profile:
         profile_name = str(profile.get("name") or profile.get("policy_id") or profile_id)
         profile_id = profile.get("id") or profile_id
-        profile_badge = _account_badge(
+        profile_badge = _badge(
             "missing profile" if profile.get("missing") else profile_id,
             "bad" if profile.get("missing") else "",
         )
-    credentials = [
-        c for c in app.get("credentials", [])
-        if isinstance(c, Mapping)
-    ]
+    credentials = [c for c in app.get("credentials", []) if isinstance(c, Mapping)]
     credential_html = (
         "".join(_credential_html(c) for c in credentials)
         if credentials
@@ -362,16 +252,16 @@ def _app_html(app: Mapping[str, Any]) -> str:
         if can_mint
         else (
             '<p class="empty">An operator needs to attach a Profile before '
-            'this App can mint runtime keys.</p>'
+            "this App can mint runtime keys.</p>"
         )
     )
     return (
         '<article class="card">'
         f"<h3>{name}</h3>"
-        f"<p>{kind} App · Profile: {_esc(profile_name)}</p>"
+        f"<p>{kind} App · Profile: {esc(profile_name)}</p>"
         '<div class="meta">'
         + profile_badge
-        + _account_badge(f"{app.get('active_credentials') or 0} active keys", "good")
+        + _badge(f"{app.get('active_credentials') or 0} active keys", "good")
         + "</div>"
         + mint_html
         + '<div class="list">'
@@ -381,160 +271,182 @@ def _app_html(app: Mapping[str, Any]) -> str:
     )
 
 
-def _account_section(
-    account: Mapping[str, Any] | None,
-    *,
-    oidc_enabled: bool,
-    login_url: str,
-    logout_url: str,
-) -> str:
-    account = account or {"authenticated": False, "apps": []}
-    if not account.get("authenticated"):
-        action = (
-            f'<a class="pill" href="{_esc(login_url)}">Sign in with OIDC</a>'
-            if oidc_enabled
-            else '<span class="pill">OIDC login not configured</span>'
-        )
-        return (
-            '<section aria-labelledby="account-heading">'
-            '<h2 id="account-heading">Account</h2>'
-            '<div class="card">'
-            "<h3>Not signed in</h3>"
-            "<p>Sign in to manage Apps assigned to your account.</p>"
-            f'<div class="meta">{action}</div>'
-            "</div>"
-            "</section>"
-        )
+def _signed_out_hero(*, oidc_enabled: bool, login_url: str) -> str:
+    primary = (
+        f'<a class="pill primary" href="{esc(login_url)}">Sign in with OIDC</a>'
+        if oidc_enabled
+        else '<span class="pill">OIDC login not configured</span>'
+    )
+    return (
+        '<section aria-labelledby="hero-heading">'
+        '<div class="hero">'
+        '<h2 id="hero-heading">Start with an account or key</h2>'
+        '<p class="lead">Sign in to manage Apps and runtime keys. Paste an '
+        "<code>opk_</code> key only if an operator already gave you one; "
+        "the browser stores it in this tab.</p>"
+        f'<div class="actions">{primary}</div>'
+        "</div>"
+        "</section>"
+    )
 
-    user = account.get("user") if isinstance(account.get("user"), Mapping) else {}
-    user_label = _esc(user.get("email") or user.get("name") or "signed-in user")
-    raw_role = _user_role(account)
+
+def _signed_in_account(account: Mapping[str, Any]) -> str:
+    user_value = account.get("user")
+    user = user_value if isinstance(user_value, Mapping) else {}
+    user_label = esc(user.get("email") or user.get("name") or "signed-in user")
+    raw_role = user_role(account)
     role_label = raw_role if raw_role in {"owner", "admin", "superadmin"} else "user"
     apps = [a for a in account.get("apps", []) if isinstance(a, Mapping)]
-    can_admin = _can_admin(account)
+    is_admin = can_admin(account)
     empty_html = (
-        '<div class="card"><h3>No owned Apps</h3>'
-        "<p>Create or assign Apps in Admin.</p>"
-        '<div class="meta"><a class="pill" href="/admin">Open Admin</a></div>'
-        "</div>"
-        if can_admin
+        '<article class="card"><h3>No owned Apps</h3>'
+        "<p>Create or assign Apps from Admin.</p>"
+        '<div class="actions"><a class="pill" href="/admin">Open Admin</a></div>'
+        "</article>"
+        if is_admin
         else (
-            '<div class="card"><h3>No Apps yet</h3>'
-            "<p>Request access to create a pending Personal App.</p>"
+            '<article class="card"><h3>No Apps yet</h3>'
+            "<p>Request access to create a pending Personal App. An operator "
+            "will attach a Profile so you can mint runtime keys.</p>"
             '<form class="actions" data-request-access>'
             '<button type="submit">Request access</button>'
-            "</form></div>"
+            "</form></article>"
         )
     )
     apps_html = (
-        "".join(_app_html(app) for app in apps)
-        if apps else empty_html
+        "".join(_app_html(app) for app in apps) if apps else empty_html
     )
     return (
-        '<section aria-labelledby="account-heading">'
-        '<h2 id="account-heading">Account</h2>'
-        '<div class="card">'
-        f"<h3>{user_label}</h3>"
-        "<p>Apps own runtime keys.</p>"
-        '<div class="meta">'
-        + _account_badge(f"role {_esc(role_label)}")
-        + f'<a class="pill" href="{_esc(logout_url)}">Sign out</a>'
-        + "</div>"
-        "</div>"
+        '<section aria-labelledby="apps-heading">'
+        '<h2 id="apps-heading">Apps</h2>'
+        '<p class="hint">'
+        + f"Signed in as {user_label} · role {esc(role_label)}. "
+        + "Apps own runtime keys; revoke a key to cut its access immediately."
+        + "</p>"
         '<div id="account-result" class="message"></div>'
         f'<div class="grid">{apps_html}</div>'
         "</section>"
     )
 
 
+def _runtime_key_section() -> str:
+    return (
+        '<section aria-labelledby="runtime-heading">'
+        '<h2 id="runtime-heading">Check access</h2>'
+        '<p class="hint">Paste an <code>opk_</code> key to inspect access for '
+        "any App from this browser. The key stays in this tab only.</p>"
+        '<div class="card">'
+        '<div class="row">'
+        '<input id="runtime-key" type="password" autocomplete="off" spellcheck="false" '
+        'placeholder="opk_..." aria-describedby="connect-result">'
+        '<button id="check-key" type="button">Check access</button>'
+        '<button id="forget-key" class="secondary" type="button">Forget</button>'
+        "</div>"
+        '<div id="connect-result" class="message">'
+        "Paste an opk_ key to test access from this browser."
+        "</div>"
+        "</div>"
+        "</section>"
+    )
+
+
+def _settings_section() -> str:
+    return (
+        '<section aria-labelledby="settings-heading">'
+        '<h2 id="settings-heading">Connection settings</h2>'
+        '<p class="hint">Point an OpenAI-compatible client at the gateway. '
+        "Other protocols use the same base URL with their own paths.</p>"
+        '<div id="openai-snippet" class="snippet"></div>'
+        "</section>"
+    )
+
+
+def _access_section() -> str:
+    return (
+        '<section aria-labelledby="access-heading">'
+        '<h2 id="access-heading">Access</h2>'
+        '<p class="hint" id="access-empty-hint">Check a key to load capabilities, '
+        "models, and recent jobs.</p>"
+        '<div class="two-col">'
+        '<div class="access-group">'
+        '<h3>Capabilities</h3>'
+        '<div id="capabilities" class="list"></div>'
+        '</div>'
+        '<div class="access-group">'
+        '<h3>Models</h3>'
+        '<div id="models" class="list"></div>'
+        '</div>'
+        '<div class="access-group">'
+        '<h3>Recent Jobs</h3>'
+        '<div id="jobs" class="list"></div>'
+        '</div>'
+        "</div>"
+        "</section>"
+    )
+
+
 def render_user_portal(
     *,
-    title: str = "My AI Gateway",
+    title: str = "AI Gateway",
     public_base_url: str = "https://ai.vivid.fish",
     account: Mapping[str, Any] | None = None,
     oidc_enabled: bool = False,
-    login_url: str = "/login?return_to=/me",
+    login_url: str = "/login?return_to=/",
     logout_url: str = "/me/logout",
     csrf_token: str = "",
 ) -> str:
-    """Return the normal-user HTML portal.
-
-    The page stores a runtime key only in the user's browser and uses the
-    gateway-native APIs for effective-access checks. It is safe to serve
-    without authentication because it exposes no private server data by itself.
-    """
+    """Return the normal-user HTML portal."""
     base = public_base_url.rstrip("/") or "https://ai.vivid.fish"
-    base_json = _json_for_script(base)
-    csrf_json = _json_for_script(csrf_token)
-    title_text = _esc(title)
-    account_html = _account_section(
-        account,
-        oidc_enabled=oidc_enabled,
-        login_url=login_url,
-        logout_url=logout_url,
+    base_json = json_for_script(base)
+    csrf_json = json_for_script(csrf_token)
+    title_text = esc(title)
+
+    is_signed_in = bool(account and account.get("authenticated"))
+    show_admin = can_admin(account)
+    actor_label = None
+    if is_signed_in and account is not None:
+        user_value = account.get("user")
+        user = user_value if isinstance(user_value, Mapping) else {}
+        actor_label = (
+            str(user.get("email") or user.get("name") or "signed in")
+            if user
+            else "signed in"
+        )
+
+    header_html = render_shell_header(
+        title=title,
+        current="account",
+        show_admin=show_admin,
+        actor_label=actor_label,
+        logout_url=logout_url if is_signed_in else None,
     )
-    nav_html = _header_nav(account)
-    nav_block = (
-        '<nav aria-label="Gateway links">' + nav_html + "</nav>"
-        if nav_html else ""
+
+    if is_signed_in:
+        primary_section = _signed_in_account(account or {})
+    else:
+        primary_section = _signed_out_hero(
+            oidc_enabled=oidc_enabled, login_url=login_url
+        )
+
+    body = (
+        primary_section
+        + _runtime_key_section()
+        + _settings_section()
+        + _access_section()
     )
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title_text}</title>
-  <style>{_USER_PORTAL_CSS}</style>
+  <style>{SHELL_CSS}{_PAGE_CSS}</style>
 </head>
 <body>
-  <header>
-    <h1>{title_text}</h1>
-    {nav_block}
-  </header>
-  <main>
-    {account_html}
-
-    <section aria-labelledby="connect-heading">
-      <h2 id="connect-heading">Runtime Key</h2>
-      <div class="flow">
-        <label class="label" for="runtime-key">App API key</label>
-        <div class="row">
-          <input id="runtime-key" type="password" autocomplete="off" spellcheck="false"
-                 placeholder="opk_..." aria-describedby="connect-result">
-          <button id="check-key" type="button">Check Access</button>
-          <button id="forget-key" class="secondary" type="button">Forget</button>
-        </div>
-        <div id="connect-result" class="message">Paste an opk_ key to test access from this browser.</div>
-      </div>
-    </section>
-
-    <section aria-labelledby="examples-heading">
-      <h2 id="examples-heading">Settings</h2>
-      <div class="flow">
-        <div class="label" id="settings-label">OpenAI-compatible</div>
-        <div id="openai-snippet" class="snippet"></div>
-      </div>
-    </section>
-
-    <section aria-labelledby="access-heading">
-      <h2 id="access-heading">Access</h2>
-      <div class="two-col">
-        <div class="access-group">
-          <h3>Capabilities</h3>
-          <div id="capabilities" class="list">
-            <p class="empty">Check a key to load access.</p>
-          </div>
-        </div>
-        <div class="access-group">
-          <h3>Models</h3>
-          <div id="models" class="list"></div>
-        </div>
-        <div class="access-group">
-          <h3>Recent Jobs</h3>
-          <div id="jobs" class="list"></div>
-        </div>
-      </div>
-    </section>
+  {header_html}
+  <main class="shell-main">
+    {body}
   </main>
   <script>
 (() => {{
@@ -715,6 +627,8 @@ def render_user_portal(
         getJson("/v1/models"),
         getJson("/gateway/v1/media/jobs?limit=12")
       ]);
+      const emptyHint = $("access-empty-hint");
+      if (emptyHint) emptyHint.style.display = "none";
       renderCapabilities(caps);
       renderModels(models);
       renderJobs(jobs);

@@ -16,126 +16,111 @@ Data-plane copy uses **App**, not "Client", per the project convention.
 
 from __future__ import annotations
 
-import html
-import json
 from typing import Any, Iterable, Mapping
+
+from gateway.gateway_shell import (
+    SHELL_CSS,
+    esc as _esc,
+    json_for_script as _json_for_script,
+    render_shell_header,
+)
 
 __all__ = ["render_admin_dashboard"]
 
 
-_DASHBOARD_CSS = """
-  :root {
-    color-scheme: dark;
-    --bg: oklch(17% 0.018 255);
-    --surface: oklch(21% 0.019 255);
-    --surface-2: oklch(25% 0.02 255);
-    --line: oklch(34% 0.026 255);
-    --muted: oklch(72% 0.035 255);
-    --text: oklch(92% 0.018 255);
-    --good-bg: oklch(27% 0.055 150);
-    --good: oklch(82% 0.13 150);
-    --warn-bg: oklch(30% 0.07 65);
-    --warn: oklch(84% 0.14 75);
-    --bad-bg: oklch(27% 0.065 25);
-    --bad: oklch(82% 0.13 25);
-    --focus: oklch(67% 0.16 235);
-  }
-  * { box-sizing: border-box; }
-  body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0;
-         background: var(--bg); color: var(--text); }
-  header { padding: 1rem clamp(1rem, 3vw, 1.75rem); border-bottom: 1px solid var(--line);
-           display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-           background: oklch(18.5% 0.02 255); position: sticky; top: 0; z-index: 2; }
-  header h1 { font-size: 1.05rem; margin: 0; letter-spacing: 0; }
-  header .actor { font-size: 0.85rem; color: var(--muted); }
-  header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
-  header a { color: oklch(83% 0.09 235); text-decoration: none; font-size: 0.86rem; }
-  main { padding: 1.25rem clamp(1rem, 3vw, 2rem) 2rem; display: grid; gap: 1.25rem;
-         grid-template-columns: minmax(0, 1fr); max-width: 1120px;
-         margin: 0 auto; }
-  section { display: grid; gap: 0.75rem; }
-  section h2 { font-size: 0.88rem; margin: 0;
-               letter-spacing: 0.08em; text-transform: uppercase;
-               color: var(--muted); }
-  .summary { display: flex; flex-wrap: wrap; gap: 0.5rem; color: var(--muted); }
+_PAGE_CSS = """
+  .summary { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--muted); }
   .summary strong { color: var(--text); }
-  .summary span { background: var(--surface); border: 1px solid var(--line);
-                  border-radius: 999px; padding: 0.45rem 0.7rem; }
-  .runtime-settings { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
-                      padding: 0.75rem; background: var(--surface); border: 1px solid var(--line);
-                      border-radius: 8px; }
+  .summary span { background: var(--panel); border: 1px solid var(--line);
+                  border-radius: 999px; padding: 0.45rem 0.75rem; }
+  .runtime-settings { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center;
+                      padding: 0.75rem; background: var(--panel); border: 1px solid var(--line);
+                      border-radius: var(--radius); }
   .runtime-settings .label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase;
                              letter-spacing: 0.08em; }
   .runtime-settings code, td code { font-family: ui-monospace, monospace; font-size: 0.86em;
-                                    background: oklch(15.5% 0.016 255); padding: 0.12rem 0.35rem;
+                                    background: oklch(15.5% 0.016 250); padding: 0.12rem 0.35rem;
                                     border: 1px solid var(--line); border-radius: 4px; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
-          background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+          background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
           overflow: hidden; }
-  th, td { text-align: left; padding: 0.5rem 0.75rem;
+  th, td { text-align: left; padding: 0.55rem 0.75rem;
            border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-weight: 500; color: var(--muted); }
   tr:last-child td { border-bottom: none; }
   .cell-main { font-weight: 650; color: var(--text); }
   .cell-sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.2rem; }
-  form.flow { display: grid; gap: 0.75rem; background: var(--surface);
-              border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem; }
-  form.flow .row { display: grid; gap: 0.5rem;
+  form.flow { display: grid; gap: 0.75rem; background: var(--panel);
+              border: 1px solid var(--line); border-radius: var(--radius); padding: 0.9rem; }
+  form.flow .row { display: grid; gap: var(--space-2);
                    grid-template-columns: minmax(0, 1fr) auto; }
-  form.flow .stack { display: grid; gap: 0.5rem;
+  form.flow .stack { display: grid; gap: var(--space-2);
                      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
   form.flow label { font-size: 0.85rem; color: var(--muted); }
-  form.flow input, form.flow select, form.flow textarea { background: oklch(15.5% 0.016 255);
-                   border: 1px solid var(--line); color: var(--text);
-                   min-height: 2.75rem; padding: 0.5rem 0.65rem; border-radius: 6px; }
+  form.flow input, form.flow select, form.flow textarea {
+    background: oklch(15.5% 0.016 250);
+    border: 1px solid var(--line); color: var(--text);
+    min-height: 2.75rem; padding: 0.5rem 0.65rem; border-radius: 6px;
+  }
   form.flow textarea { min-height: 5rem; resize: vertical; font-family: ui-monospace, monospace; }
   form.flow .check { display: flex; align-items: center; gap: 0.45rem; color: var(--muted); }
-  form.flow .check input { width: auto; }
-  form.flow button { background: var(--focus); color: oklch(12% 0.02 255); border: 0;
+  form.flow .check input { width: auto; min-height: 0; }
+  form.flow button { background: var(--focus); color: oklch(12% 0.02 250); border: 0;
                      min-height: 2.75rem; padding: 0.55rem 1rem; border-radius: 6px;
                      cursor: pointer; font-weight: 600; }
   form.flow button:hover { filter: brightness(1.08); }
+  form.flow input:focus-visible, form.flow select:focus-visible, form.flow textarea:focus-visible,
+  form.flow button:focus-visible, .panel summary:focus-visible {
+    outline: 2px solid var(--focus); outline-offset: 2px;
+  }
   button.inline { background: var(--bad-bg); color: var(--bad); border: 1px solid oklch(40% 0.08 25);
-                  min-height: 2.75rem; padding: 0.3rem 0.55rem; border-radius: 6px; cursor: pointer; }
+                  min-height: 2.5rem; padding: 0.3rem 0.65rem; border-radius: 6px; cursor: pointer; }
   button.inline:hover { filter: brightness(1.08); }
-  .hint { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
-  .badge { font-size: 0.75rem; padding: 0.15rem 0.45rem;
-           border-radius: 4px; background: var(--surface-2); color: var(--muted); }
-  .badge.revoked, .badge.problem { background: var(--bad-bg); color: var(--bad); }
-  .badge.active, .badge.ready { background: var(--good-bg); color: var(--good); }
-  .badge.warn, .badge.attention { background: var(--warn-bg); color: var(--warn); }
-  .problem-list { display: grid; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
-  .problem-list li { background: var(--surface); border: 1px solid var(--line);
-                     border-radius: 8px; padding: 0.65rem 0.75rem; }
-  .result { white-space: pre-wrap; background: oklch(15.5% 0.016 255); border: 1px solid var(--line);
-            border-radius: 8px; padding: 0.75rem;
-            color: oklch(90% 0.05 235); }
+  .badge { font-size: 0.75rem; padding: 0.18rem 0.5rem;
+           border-radius: 999px; background: var(--panel-2); color: var(--muted);
+           border: 1px solid var(--line); display: inline-flex; align-items: center; }
+  .badge.revoked, .badge.problem { background: var(--bad-bg); color: var(--bad); border-color: transparent; }
+  .badge.active, .badge.ready { background: var(--good-bg); color: var(--good); border-color: transparent; }
+  .badge.warn, .badge.attention { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+  .problem-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+  .problem-list li { background: var(--panel); border: 1px solid var(--line);
+                     border-radius: var(--radius); padding: 0.65rem 0.75rem; }
+  .start-card {
+    display: grid;
+    gap: var(--space-2);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: var(--space-4);
+  }
+  .start-card h3 { margin: 0; font-size: 1rem; }
+  .start-card p { margin: 0; color: var(--muted); line-height: 1.5; }
+  .start-card a {
+    justify-self: start;
+    min-height: 2.5rem;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.4rem 0.8rem;
+    background: var(--panel-2);
+    color: var(--text);
+  }
+  .start-card a:hover { text-decoration: none; filter: brightness(1.06); }
+  .result { white-space: pre-wrap; background: oklch(15.5% 0.016 250); border: 1px solid var(--line);
+            border-radius: var(--radius); padding: 0.75rem;
+            color: oklch(90% 0.05 235); font-family: ui-monospace, monospace; font-size: 0.86rem; }
   .result:empty { display: none; }
-  details.panel { background: var(--surface); border: 1px solid var(--line);
-                  border-radius: 8px; padding: 0.9rem; }
-  details.panel summary { cursor: pointer; color: var(--text); font-weight: 650; }
+  details.panel { background: var(--panel); border: 1px solid var(--line);
+                  border-radius: var(--radius); padding: 0.9rem; }
+  details.panel summary { cursor: pointer; color: var(--text); font-weight: 650;
+                          min-height: 2rem; display: inline-flex; align-items: center; }
   details.panel form.flow { margin-top: 0.75rem; background: transparent; border: 0; padding: 0; }
   @media (max-width: 760px) {
-    header { align-items: flex-start; flex-direction: column; }
     table { display: block; overflow-x: auto; }
     form.flow .row { grid-template-columns: 1fr; }
   }
 """
-
-
-def _esc(value: Any) -> str:
-    if value is None:
-        return ""
-    return html.escape(str(value), quote=True)
-
-
-def _json_for_script(value: str) -> str:
-    return (
-        json.dumps(value)
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-    )
 
 
 def _summary_bar(items: Iterable[tuple[str, Any]]) -> str:
@@ -449,6 +434,20 @@ def _access_issues(
     )
 
 
+def _start_card(apps: list[Mapping[str, Any]]) -> str:
+    if apps:
+        return ""
+    return (
+        '<div class="start-card">'
+        "<h3>No Apps yet</h3>"
+        "<p>Create an App, attach a Profile if it needs one, then mint an "
+        "<code>opk_</code> runtime key. Apps are the unit you hand to people, "
+        "agents, and services.</p>"
+        '<a href="#create-app">Create App</a>'
+        "</div>"
+    )
+
+
 def _flow_form(
     apps: list[Mapping[str, Any]],
     users: list[Mapping[str, Any]],
@@ -463,8 +462,6 @@ def _flow_form(
         "</option>"
         for app in apps
     )
-    if not app_options:
-        app_options = '<option value="" disabled selected>Create an App first</option>'
     user_options = '<option value="">No user owner</option>' + "".join(
         f'<option value="{_esc(user.get("id"))}">'
         f'{_esc(user.get("email") or user.get("name") or user.get("id"))}'
@@ -477,8 +474,10 @@ def _flow_form(
         "</option>"
         for profile in profiles
     )
-    return (
-        '<form class="flow" method="post" action="' + _esc(create_app_action) + '" data-create-app>'
+    create_form = (
+        '<form class="flow" id="create-app" method="post" action="'
+        + _esc(create_app_action)
+        + '" data-create-app>'
         "<label>Create App</label>"
         '<div class="stack">'
         '<input type="text" name="name" placeholder="App name" aria-label="App name" required>'
@@ -491,6 +490,11 @@ def _flow_form(
         '<button type="submit">Create app</button>'
         "</div>"
         "</form>"
+    )
+    if not app_options:
+        return create_form
+
+    mint_form = (
         '<form class="flow" method="post" data-action-template="'
         + _esc(create_key_action_template)
         + '" data-mint-key>'
@@ -502,6 +506,7 @@ def _flow_form(
         "</div>"
         "</form>"
     )
+    return create_form + mint_form
 
 
 def _profile_form(
@@ -595,12 +600,13 @@ def _policy_simulator_form(
 def render_admin_dashboard(
     snapshot: Mapping[str, Any],
     *,
-    title: str = "Vivid Fish AI Gateway Admin",
+    title: str = "AI Gateway Admin",
     base_url: str = "https://ai.vivid.fish/v1",
     create_app_action: str = "/admin/api/apps",
     create_profile_action: str = "/admin/api/profiles",
     create_key_action_template: str = "/admin/api/apps/{app_id}/keys",
     policy_simulate_action: str = "/admin/api/policy/simulate",
+    logout_url: str = "/me/logout",
 ) -> str:
     """Render a server-side HTML admin dashboard from a snapshot dict.
 
@@ -687,9 +693,13 @@ def render_admin_dashboard(
         profiles,
         create_profile_action=create_profile_action,
     )
-    policy_simulator_html = _policy_simulator_form(
-        profiles,
-        policy_simulate_action=policy_simulate_action,
+    policy_simulator_html = (
+        _policy_simulator_form(
+            profiles,
+            policy_simulate_action=policy_simulate_action,
+        )
+        if profiles
+        else ""
     )
 
     connection_html = _connection_panel(base_url=base_url)
@@ -698,13 +708,21 @@ def render_admin_dashboard(
     access_html = connection_html + flow_html + result_html
     profiles_html = profile_form_html + profiles_table
 
+    header_html = render_shell_header(
+        title=title,
+        current="admin",
+        show_admin=True,
+        actor_label=str(actor_label),
+        logout_url=logout_url,
+    )
+
     return (
         "<!doctype html>"
         '<html lang="en"><head>'
         '<meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{_esc(title)}</title>"
-        f"<style>{_DASHBOARD_CSS}</style>"
+        f"<style>{SHELL_CSS}{_PAGE_CSS}</style>"
         "<script>"
         "document.addEventListener('DOMContentLoaded',()=>{"
         "const out=document.getElementById('admin-flow-result');"
@@ -746,13 +764,9 @@ def render_admin_dashboard(
         "});"
         "</script>"
         "</head><body>"
-        "<header>"
-        f"<h1>{_esc(title)}</h1><nav>"
-        '<a href="/">Account</a><a href="/status">Status</a>'
-        f'<span class="actor">Signed in as <strong>{_esc(actor_label)}</strong></span>'
-        "</nav>"
-        "</header>"
-        "<main>"
+        + header_html
+        + '<main class="shell-main">'
+        + _section("Start", _start_card(apps))
         + _section("Overview", summary_html)
         + _section("Needs attention", issues_html)
         + _section("Access", access_html)

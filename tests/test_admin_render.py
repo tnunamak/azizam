@@ -91,7 +91,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         self.assertTrue(html.startswith("<!doctype html>"))
         self.assertIn("</html>", html)
-        self.assertIn("Vivid Fish AI Gateway Admin", html)
+        self.assertIn("AI Gateway Admin", html)
 
     def test_uses_App_terminology_not_Client(self) -> None:
         html = render_admin_dashboard(_snapshot())
@@ -193,6 +193,27 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn('href="/">Account</a>', html)
         self.assertIn('href="/status">Status</a>', html)
 
+    def test_admin_chrome_marks_admin_as_active_and_offers_sign_out(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        # The admin link must be visible in the shared header and marked active.
+        self.assertRegex(html, r'<a [^>]*href="/admin"[^>]*aria-current="page"')
+        # A visible Sign out affordance is required on every admin page.
+        self.assertIn('href="/me/logout">Sign out</a>', html)
+        # Header shares the same brand chrome as the user portal.
+        self.assertIn('class="shell-header"', html)
+        self.assertIn('class="shell-main"', html)
+        self.assertIn('aria-label="AI Gateway home"', html)
+        self.assertIn(">AI Gateway</span>", html)
+        # The signed-in actor is still surfaced in the header.
+        self.assertIn("owner@example.com", html)
+
+    def test_admin_logout_url_is_configurable(self) -> None:
+        html = render_admin_dashboard(
+            _snapshot(),
+            logout_url="/custom/logout",
+        )
+        self.assertIn('href="/custom/logout">Sign out</a>', html)
+
 
 class AdminRenderSecurityTests(unittest.TestCase):
     def test_does_not_leak_raw_api_key_even_if_snapshot_includes_one(
@@ -216,8 +237,12 @@ class AdminRenderSecurityTests(unittest.TestCase):
     def test_renders_empty_snapshot_without_crashing(self) -> None:
         html = render_admin_dashboard({})
         self.assertTrue(html.startswith("<!doctype html>"))
+        self.assertIn("No Apps yet", html)
+        self.assertIn('href="#create-app"', html)
         self.assertIn("Create App", html)
         self.assertIn("Create an App before minting a runtime key.", html)
+        self.assertNotIn("Mint runtime key", html)
+        self.assertNotIn(">Policy test<", html)
         self.assertNotIn("No users yet", html)
         self.assertNotIn("No audit entries yet", html)
         self.assertNotIn(">Users<", html)

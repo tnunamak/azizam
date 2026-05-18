@@ -20,10 +20,10 @@ class UserPortalRenderTests(unittest.TestCase):
         )
         self.assertTrue(html.startswith("<!doctype html>"))
         self.assertIn("</html>", html)
-        self.assertIn("My AI Gateway", html)
+        self.assertIn("AI Gateway", html)
         self.assertIn("Account", html)
         self.assertIn("Sign in with OIDC", html)
-        self.assertIn('/login?return_to=/me', html)
+        self.assertIn('/login?return_to=/', html)
         self.assertIn("/gateway/v1/capabilities", html)
         self.assertIn("/gateway/v1/media/jobs", html)
         self.assertIn("/v1/models", html)
@@ -34,8 +34,8 @@ class UserPortalRenderTests(unittest.TestCase):
 
     def test_uses_normal_user_language(self) -> None:
         html = render_user_portal()
-        self.assertIn("Runtime Key", html)
-        self.assertIn("Settings", html)
+        self.assertIn("Check access", html)
+        self.assertIn("Connection settings", html)
         self.assertIn("Access", html)
         self.assertNotIn("Use your local AI stack", html)
         self.assertNotIn("Failure Meanings", html)
@@ -122,6 +122,36 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("Request access", html)
         self.assertIn("data-request-access", html)
         self.assertIn("x-ai-gateway-csrf", html)
+
+    def test_signed_out_landing_uses_shared_shell_and_clear_hero(self) -> None:
+        html = render_user_portal(oidc_enabled=True)
+        # Shared shell chrome.
+        self.assertIn('class="shell-header"', html)
+        self.assertIn('class="shell-main"', html)
+        self.assertIn('aria-label="AI Gateway home"', html)
+        self.assertIn(">AI Gateway</span>", html)
+        # Account is the current page; Status is always linked; Admin hidden.
+        self.assertRegex(html, r'<a [^>]*href="/"[^>]*aria-current="page"')
+        self.assertIn('href="/status">Status</a>', html)
+        self.assertNotIn('href="/admin"', html)
+        # Hero copy points the user at the two ways to start.
+        self.assertIn("Start with an account or key", html)
+        self.assertIn("opk_", html)
+        # No Sign out affordance when not signed in.
+        self.assertNotIn(">Sign out</a>", html)
+
+    def test_signed_in_user_sees_logout_affordance_in_shell(self) -> None:
+        html = render_user_portal(
+            oidc_enabled=True,
+            account={
+                "authenticated": True,
+                "user": {"email": "user@example.com", "role": "none"},
+                "apps": [],
+            },
+        )
+        self.assertIn('href="/me/logout">Sign out</a>', html)
+        # The actor email surfaces in the header chrome.
+        self.assertIn("user@example.com", html)
 
     def test_html_escapes_untrusted_values(self) -> None:
         html = render_user_portal(

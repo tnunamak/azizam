@@ -197,13 +197,13 @@ class AdminRuntimeTests(unittest.TestCase):
             AdminContext(subject="svc_test", roles=frozenset({"owner"}))
         )
         hrefs = {link["href"] for link in snapshot["discovery_links"]}
-        self.assertIn("/me", hrefs)
+        self.assertIn("/", hrefs)
         self.assertIn("/.well-known/ai-gateway", hrefs)
         self.assertIn("/admin/api/overview", hrefs)
         self.assertNotIn("/gateway/v1/capabilities", hrefs)
         self.assertTrue(
             all(
-                h == "/me"
+                h == "/"
                 or h.startswith("/admin/")
                 or h.startswith("/.well-known/")
                 for h in hrefs

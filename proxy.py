@@ -7034,14 +7034,14 @@ def _safe_admin_return_to(value: str | None, *, default: str = "/admin") -> str:
     if not value.startswith("/") or value.startswith("//"):
         return default
     if value in {"/", "/me"}:
-        return value
+        return "/"
     if value.startswith("/admin"):
         return value
     return default
 
 
 def _login_url(*, return_to: str) -> str:
-    safe_return_to = _safe_admin_return_to(return_to, default="/me")
+    safe_return_to = _safe_admin_return_to(return_to, default="/")
     return f"/login?return_to={quote(safe_return_to, safe='')}"
 
 
@@ -7128,12 +7128,12 @@ app.include_router(
 
 @app.get("/me/login", include_in_schema=False)
 async def user_portal_login():
-    return RedirectResponse(_login_url(return_to="/me"), status_code=302)
+    return RedirectResponse(_login_url(return_to="/"), status_code=302)
 
 
 @app.get("/me/logout", include_in_schema=False)
 async def user_portal_logout():
-    response = RedirectResponse("/me", status_code=302)
+    response = RedirectResponse("/", status_code=302)
     response.delete_cookie(
         ADMIN_OIDC_CONFIG.cookie.name,
         path=ADMIN_OIDC_CONFIG.cookie.path,
@@ -7146,7 +7146,7 @@ def _render_user_portal_response(request: Request, *, login_return_to: str) -> R
     session = _oidc_session_from_request(request)
     account = build_user_portal_snapshot(session, path=ADMIN_STORE.path)
     body = render_user_portal(
-        title="My AI Gateway",
+        title="AI Gateway",
         public_base_url=_public_base_url(request) or "https://ai.vivid.fish",
         account=account,
         oidc_enabled=ADMIN_OIDC_CONFIG.enabled,
@@ -7163,7 +7163,7 @@ def _render_user_portal_response(request: Request, *, login_return_to: str) -> R
 
 @app.get("/me", include_in_schema=False)
 async def user_portal(request: Request):
-    return _render_user_portal_response(request, login_return_to="/me")
+    return RedirectResponse("/", status_code=302)
 
 
 @app.get("/me/api/session", include_in_schema=False)
@@ -7275,7 +7275,7 @@ async def admin_dashboard(request: Request):
     snapshot = ADMIN_STORE.dashboard_snapshot(actor)
     body = render_admin_dashboard(
         snapshot,
-        title="Vivid Fish AI Gateway Admin",
+        title="AI Gateway Admin",
     )
     return Response(
         content=body,
@@ -10705,8 +10705,8 @@ async def v1_status(request: Request):
 # -----------------------------------------------------------------------------
 # Status dashboard
 #
-# The product root is the browser account portal. `/me` remains a stable alias
-# for agents, docs, and existing bookmarks.
+# The product root is the browser account portal. `/me` remains a legacy
+# browser alias that redirects here; `/me/api/*` stays the user account API.
 # The maximalist server-rendered operator status page lives at `/status`.
 # The old `/firehose` URL is kept as a 301 → `/status` for compatibility.
 # The previous Next.js page under status-page/out is no longer served.

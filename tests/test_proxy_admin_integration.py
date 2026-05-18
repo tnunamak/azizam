@@ -142,9 +142,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
     def test_admin_dashboard_renders_with_admin_key(self) -> None:
         response = self.client.get("/admin", headers=self._auth())
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertIn("Vivid Fish AI Gateway Admin", response.text)
+        self.assertIn("AI Gateway Admin", response.text)
         self.assertIn("Create App", response.text)
-        self.assertIn("Mint runtime key", response.text)
+        self.assertIn("No Apps yet", response.text)
+        self.assertNotIn("Mint runtime key", response.text)
 
     def test_admin_dashboard_requires_admin_auth(self) -> None:
         response = self.client.get("/admin")
@@ -339,7 +340,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
     def test_legacy_login_routes_redirect_to_single_login_entrypoint(self) -> None:
         self.assertEqual(
             self.client.get("/me/login", follow_redirects=False).headers["location"],
-            "/login?return_to=%2Fme",
+            "/login?return_to=%2F",
         )
         self.assertEqual(
             self.client.get(
@@ -374,7 +375,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(login.status_code, 302, login.text)
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
-        self.assertEqual(record.return_to, "/me")
+        self.assertEqual(record.return_to, "/")
 
         async def fake_exchange(_code, *, config, pkce):
             return {"id_token": "fake.id.token"}
@@ -399,11 +400,11 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 follow_redirects=False,
             )
         self.assertEqual(callback.status_code, 302, callback.text)
-        self.assertEqual(callback.headers["location"], "/me")
+        self.assertEqual(callback.headers["location"], "/")
         self.assertEqual(self.client.get("/admin").status_code, 403)
         self.assertEqual(
             self.client.get("/me/login", follow_redirects=False).headers["location"],
-            "/login?return_to=%2Fme",
+            "/login?return_to=%2F",
         )
 
     def test_user_portal_shows_oidc_owned_apps_and_self_manages_keys(self) -> None:
@@ -468,7 +469,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         csrf = csrf_token_for_session(session, signing_key=cfg.signing_key)
 
-        page = self.client.get("/me")
+        page = self.client.get("/")
         self.assertEqual(page.status_code, 200, page.text)
         self.assertIn("brother@example.com", page.text)
         self.assertIn("brother-laptop", page.text)
@@ -507,7 +508,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
         logout = self.client.get("/me/logout", follow_redirects=False)
         self.assertEqual(logout.status_code, 302)
-        self.assertEqual(logout.headers["location"], "/me")
+        self.assertEqual(logout.headers["location"], "/")
 
     def test_user_portal_access_request_creates_pending_personal_app(self) -> None:
         cfg = OIDCConfig(
