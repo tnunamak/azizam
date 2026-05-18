@@ -74,6 +74,39 @@ Scope discipline lives in `docs/SLVP_SCOPE.md`. The short rule: keep broad
 local needs expressible through adapters, workflow manifests, and native lanes;
 promote only repeated, testable concepts into core protocol semantics.
 
+## Simplicity Revision
+
+The gateway should not become a noun museum. The public/operator model stays
+small:
+
+```text
+User -> owns App -> has Profile -> has Keys -> produces Activity
+```
+
+These are the concepts a self-hoster should operate in the dashboard:
+
+- **Users**: people authenticated by OIDC.
+- **Apps**: access boundaries for tools, devices, agents, or family members.
+- **Profiles**: reusable permission bundles attached to Apps.
+- **Keys**: rotatable bearer secrets for Apps or admin automation.
+- **Activity**: usage, audit, jobs, receipts, and errors rendered as facts.
+
+Everything else is internal data unless it earns its way into the UI:
+
+- **Capability** is a fact about what can run now.
+- **Workflow** is a typed binding for media/native power.
+- **Provider** is an operator-facing backend only on status/config screens.
+- **Job** is the durable shape for long work.
+- **Receipt** is a body-free fact for debugging and audit.
+- **ResourceClaim** is an admission decision input, not a product noun.
+- **UsageRecord** is an accounting fact, not a thing users manage directly.
+
+Introduce a new user-facing noun only when it has an independent lifecycle and
+the target user must deliberately create, grant, rotate, inspect, or delete it.
+Otherwise keep it as fields or events under App/Profile/Activity. This is the
+Rich-Hickey-simple line for the project: separate facts that change
+independently; avoid abstractions that only rename code paths.
+
 ## Product Thesis
 
 Target the self-hoster who already has more than one engine:
@@ -228,6 +261,8 @@ Architecture implication:
 
 - Anthropic Messages is a P0 public protocol, not a later novelty.
 - Tool-call normalization belongs in `chat.generate`, not as OpenAI-only glue.
+- Dashboard wording should stay in App/Profile/Key language; agent/coding users
+  should not need to learn scheduler or workflow internals to connect a tool.
 
 ### 2. Multi-Backend GPU Tinkerer
 
@@ -248,6 +283,8 @@ Architecture implication:
   metadata
 - OpenAI-compatible inference adapters are not enough; native management
   adapters matter
+- Provider/resource detail belongs in diagnostics and status, not the ordinary
+  "give someone access" flow.
 
 ### 3. Local Multimodal Workflow Builder
 
@@ -267,6 +304,9 @@ Architecture implication:
 
 - ComfyUI is a workflow runtime, not a public protocol
 - workflow manifests and media jobs are core gateway concepts
+- Workflow manifests should feel like named tools with typed controls, not a
+  second programming language users must understand before they can generate
+  an image, sound, or video.
 
 ## Design Principles
 
@@ -334,14 +374,15 @@ Local or Hosted Backend
 Side planes:
 
 ```text
-Credential/Tenant Plane
-Capability Registry
-Workflow Registry
-Lifecycle Providers
-Normalized Event Store
-Diagnostics And Compatibility Harness
-Asset Store
+Access Plane       Users, Apps, Profiles, Keys
+Runtime Facts      Capabilities, Workflows, Providers, Jobs, Receipts, Usage
+Operator Tools     Diagnostics, Compatibility Harness, Assets, Lifecycle
 ```
+
+Only the Access Plane should dominate the dashboard. Runtime Facts and Operator
+Tools exist so sophisticated users can debug and extend the gateway, but they
+should be reached from concrete tasks such as "why was this request denied?",
+"what is down?", or "what controls does this workflow expose?"
 
 ## Protocol Frontends
 
@@ -655,45 +696,43 @@ Effective capability is the merge of:
 When runtime probes and static config disagree, the gateway should surface the
 disagreement and avoid overclaiming.
 
-## Credential And Tenant Plane
+## Access Plane
 
 Preserve and generalize what the current implementation already does well, but
-formalize the noun set so admin- and runtime-plane concerns stop blurring
-together.
+keep the operator-facing surface small so admin- and runtime-plane concerns
+stop blurring together.
 
-**Admin-plane nouns** (who can operate this gateway):
-
-```text
-User           OIDC-authenticated human (owner, family member, friend)
-ServiceAccount Non-human principal that owns Apps and Credentials
-Credential     Hashed bearer secret (App API key, admin key, OIDC session, provider key)
-AdminRole      Named permission bundle for admin actions
-AuditEvent     Immutable record of an admin-plane action
-```
-
-**Runtime-plane nouns** (what gets executed for an end user):
+The public model is:
 
 ```text
-App         A registered consumer (LibreChat, Continue, an agent, ...)
-Profile     Policy bundle attached to the App
-Credential  The App's API key + per-key downstream overrides
-Capability  Runtime fact about a Provider/model
-Provider    A configured backend (TabbyAPI, llama.cpp, ComfyUI, TTS, ...)
-Workflow    Typed manifest mapping portable inputs to backend bindings
-Job         Durable async execution record
-Receipt     Body-free record of one request
-UsageRecord Per-App tokens/seconds/bytes/GPU-time
+User      Human identity from OIDC
+App       Access boundary for a tool, device, agent, or family member
+Profile   Permission bundle attached to an App
+Key       Rotatable secret for an App or admin automation
+Activity  Usage, audit, receipts, jobs, and errors as facts
 ```
+
+Implementation still has durable facts such as ServiceAccount, Credential,
+AdminRole, AuditEvent, Capability, Provider, Workflow, Job, Receipt, and
+UsageRecord. Those are real data. They should not all become top-level product
+concepts unless the operator must manage them directly.
 
 The legacy entity names (`AuthIdentity`, `CredentialMapping`, `Policy`) survive
-inside the implementation, but the product-facing nouns above are what the
-docs, discovery surfaces, and operator UI should expose. The word "client"
-remains valid only for compatibility uses (SDK names, audience tiers,
+inside the implementation, but product docs, discovery surfaces, and operator UI
+should stay centered on Users, Apps, Profiles, Keys, and Activity. The word
+"client" remains valid only for compatibility uses (SDK names, audience tiers,
 protocol-level wording); the consumer entity in product docs is an **App**.
 
 The load-bearing invariant is the same one stated in `docs/CORE_CONTRACTS.md`:
 a request without a resolved App + Profile + policy decision is never
-executed, and every executed request produces exactly one Receipt.
+executed, and every executed request produces exactly one body-free Activity
+fact/Receipt.
+
+Required key behavior:
+
+```text
+generate -> store hash -> use -> rotate -> revoke -> audit
+```
 
 Required behavior:
 
@@ -715,12 +754,21 @@ There are two separate token concerns:
 
 Do not conflate them.
 
-## App Profiles
+## App Templates And Profiles
+
+Do not overload "profile." There are two related but different things:
+
+- **Policy Profile**: authorization for an App. This is the durable
+  `Profile` attached to an App.
+- **App Template**: setup help for Open WebUI, LibreChat, Continue, Daisy,
+  etc. This is documentation/tests/defaults, not an authorization grant by
+  itself.
 
 Named keys such as `open-webui`, `librechat`, `claude-test`, and `daisy` imply
-app-specific behavior.
+app-specific behavior, but the dashboard should expose them as templates that
+create an App with a recommended Policy Profile and compatibility checks.
 
-Add app profiles for:
+Add App Templates for:
 
 - Open WebUI
 - LibreChat
@@ -742,20 +790,22 @@ Profiles should define:
 - tool-call expectation
 - model discovery behavior
 - compatibility smoke tests
-- recommended key scopes
+- recommended Profile fields
 
-Profiles are not hardcoded special-case behavior. They are test/config bundles.
+Templates are not hardcoded special-case routing. They are setup recipes,
+compatibility tests, and defaults. The attached Policy Profile remains the
+actual authorization boundary.
 
 ### Concrete flow: give a family member a key
 
 The self-hoster-friendly flow that this architecture must support end-to-end:
 
-1. **OIDC User.** The family member signs in to the gateway and becomes a
-   `User` in the admin plane. Browser login is `/admin/login` when
-   `admin.oidc` is configured; service-account admin keys exist for CLI and
-   automation.
-2. **Personal App.** They register one `App` they own — `aunt-mary-chat`.
-3. **Profile.** A narrow Profile is attached:
+1. **OIDC User.** The family member signs in once so the gateway has their
+   `User` row. Browser login is `/admin/login` when `admin.oidc` is
+   configured; service-account admin keys exist for CLI and automation.
+2. **Personal App.** An owner/admin creates one `App` owned by that User —
+   `aunt-mary-chat`. The App is the access boundary, not the person.
+3. **Policy Profile.** A narrow Profile is attached:
    `protocols: [openai.chat, openai.audio]`, `cloud_allowed: false`,
    `native_passthrough: { enabled: false }`, `status_visibility.level: basic`.
 4. **App API key.** The owner mints an App Credential through `/admin/api`
@@ -763,8 +813,10 @@ The self-hoster-friendly flow that this architecture must support end-to-end:
    shown once and pasted into the App's config with base URL
    `https://ai.vivid.fish/v1`.
 
-Rotation is per-App; the User and Profile survive key rotation. Revocation
-marks the Credential revoked — the User and AuditEvent history remain.
+Rotation is per-App; the User and Profile survive key rotation. Dashboard
+key-minting should inherit the App's current Profile by default. Per-key
+Profile overrides are exceptional and should be used only for narrower or
+temporary access.
 
 ## Normalized Events And Route Receipts
 
@@ -1114,7 +1166,7 @@ backend. Do not claim broad compatibility without passing tests.
 - Add durable SQLite event/job/usage tables.
 - Add route receipts for current handlers.
 - Split status into public/user/admin tiers.
-- Promote per-key scopes and app profiles.
+- Promote per-key scopes and stored Policy Profiles.
 
 ### Phase 2: Define Core Contracts
 
@@ -1184,8 +1236,8 @@ Do not make the gateway:
 4. Which health signals block scheduling by default: disk, thermal, Xid, VRAM
    over-budget, workflow drift?
 5. Should backend-native passthrough be disabled by default except for admin keys?
-6. Should app profiles ship as config templates or as compatibility harness
-   fixtures first?
+6. Should App Templates ship as dashboard setup recipes or compatibility
+   harness fixtures first?
 7. Is SQLite sufficient as the durable event/job store for the self-hosted SLVP?
 
 ## Success Criteria

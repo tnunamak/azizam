@@ -56,14 +56,19 @@ The product should not promote every local trick into core. It should provide
 clear extension points so local tricks can be expressed, tested, and shared when
 they become generally useful.
 
-## Control-Plane Nouns (Brief)
+## Product Model (Brief)
 
-The SLVP control plane has two small noun sets. Detail lives in
-`docs/CORE_CONTRACTS.md`; the short version:
+Detail lives in `docs/CORE_CONTRACTS.md`; the short version the dashboard
+should optimize for is:
 
-- **Admin plane:** User, ServiceAccount, Credential, AdminRole, AuditEvent.
-- **Runtime plane:** App, Profile, Credential, Capability, Provider, Workflow,
-  Job, Receipt, UsageRecord.
+```text
+User -> owns App -> has Profile -> has Keys -> produces Activity
+```
+
+Capabilities, Providers, Workflows, Jobs, Receipts, UsageRecords, resource
+claims, service accounts, roles, and audit events are still real internal
+facts. They should surface when they answer a concrete operator question, not
+as concepts every family member or app integrator has to learn.
 
 Invariant: every executed request resolves an App + Profile + policy decision
 before it runs, and produces exactly one body-free Receipt. Anything that
@@ -77,9 +82,9 @@ Core should include:
 - backend adapter contract
 - workflow manifest schema
 - media job/assets API
-- credential/tenant plane
+- access plane: Users, Apps, Profiles, Keys
 - route receipts
-- app profiles and compatibility harness
+- app templates, policy Profiles, and compatibility harness
 - diagnostics
 - resource-aware scheduling boundary
 - native passthrough lanes with policy controls

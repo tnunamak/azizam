@@ -13,10 +13,25 @@ The goal is not to freeze implementation details. The goal is to make every
 important boundary explicit enough that compatibility, routing, native power
 use, and diagnostics can evolve without turning into one large special case.
 
-## Control-Plane Nouns
+## Product Model And Internal Facts
 
-The gateway has two small noun sets. They are stable across docs, code, and
-receipts.
+The operator-facing model should stay small. The dashboard and docs should
+mostly speak this language:
+
+```text
+User -> owns App -> has Profile -> has Keys -> produces Activity
+```
+
+| Product noun | Meaning |
+|--------------|---------|
+| `User`       | A human principal, typically authenticated via OIDC. |
+| `App`        | An access boundary for a tool, device, agent, or family member. |
+| `Profile`    | A reusable permission bundle attached to an App. |
+| `Key`        | A rotatable bearer secret for an App or admin automation. |
+| `Activity`   | Usage, audit events, receipts, jobs, and errors rendered as facts. |
+
+The code can and should store more precise facts. They are stable contracts,
+but they do not all need to be first-class dashboard nouns.
 
 ### Admin Plane
 
@@ -41,6 +56,12 @@ receipts.
 | `Job`          | A durable, asynchronous execution record for media work.                |
 | `Receipt`      | A body-free record of one request: identity, decision, accepted/rejected/ignored inputs. |
 | `UsageRecord`  | Per-App tokens/seconds/bytes/GPU-time aggregations.                     |
+
+Rule for adding a new product-facing noun: it must have an independent
+lifecycle and the target user must deliberately create, grant, rotate, inspect,
+or delete it. Otherwise keep it as fields or events under App/Profile/Activity.
+This keeps the system Rich-Hickey-simple: separate facts that change
+independently, without inventing abstractions that merely rename code paths.
 
 The product invariant — load-bearing across every contract below:
 
@@ -124,8 +145,9 @@ protocol request
 ```
 
 Compatibility endpoints can hide this from clients. Internally, the gateway
-should not skip these concepts once a request affects routing, native controls,
-credentials, resource use, or durable assets.
+should not skip these decisions once a request affects routing, native controls,
+credentials, resource use, or durable assets. This is a processing pipeline,
+not a mandate to expose every step as a product object.
 
 ## Authority Boundary
 
@@ -145,6 +167,18 @@ Every privileged request should resolve:
 - allowed fallback policy
 - allowed status/receipt visibility
 - allowed resource/lifecycle actions
+
+Keep the authority graph minimal until behavior forces a new fact. While only
+global owner/admin users attach Profiles, there is no separate grant object in
+the core model. If non-admin App owners are allowed to choose or switch
+Profiles, then the missing fact becomes concrete:
+
+```text
+User may attach this Profile to this App
+```
+
+Until then, "who may attach a Profile?" is just an admin permission check, not
+a new product noun.
 
 The output is a policy decision:
 

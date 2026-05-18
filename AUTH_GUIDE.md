@@ -13,15 +13,24 @@ The legacy term "client" is preserved only inside protocol/SDK compatibility
 contexts (the OpenAI Python "client", "client receipts" as an audience tier).
 The product entity is an **App**.
 
-## Control-plane nouns at a glance
+## Access model at a glance
 
-- **User** — a human, typically authenticated via OIDC (owner, family member, friend).
-- **ServiceAccount** — a non-human principal that owns Apps and Credentials.
-- **App** — a registered consumer of the gateway (LibreChat, Continue, an agent).
+```text
+User -> owns App -> has Profile -> has Keys -> produces Activity
+```
+
+- **User** — a human, typically authenticated via OIDC.
+- **App** — an access boundary for a tool, device, agent, or family member.
 - **Profile** — the policy bundle attached to an App.
-- **Credential** — a hashed bearer secret: App API key (`opk_...`),
-  admin API key (`oak_...`), OIDC session, or downstream provider key.
-- **AdminRole** / **AuditEvent** — admin-plane permission bundle and audit trail.
+- **Key** — a rotatable bearer secret, usually an App API key (`opk_...`) or
+  admin automation key (`oak_...`).
+- **Activity** — usage, audit events, receipts, jobs, and errors rendered as
+  facts.
+
+Service accounts, credentials, admin roles, audit events, capabilities,
+providers, workflows, jobs, receipts, and usage records are still precise
+internal facts. Most operators should meet them through App/Profile/Key screens
+or Activity views, not as a pile of top-level concepts.
 
 The invariant: every executed request resolves an App + Profile + policy
 decision before it runs, and produces exactly one body-free **Receipt**.
@@ -295,7 +304,7 @@ The gateway reloads `proxy_api_keys.yml` when it changes, so adding, rotating,
 or deleting an App API key does not require a service restart. Profile blocks
 (see below) reload alongside the entries they live on.
 
-## App Profiles
+## Policy Profiles
 
 A Profile is the authorization and audience boundary attached to an App. In
 the durable admin store, Apps point at stored Profiles and App keys inherit
