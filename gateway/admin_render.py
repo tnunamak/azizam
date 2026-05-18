@@ -69,6 +69,10 @@ _DASHBOARD_CSS = """
                      padding: 0.55rem 1rem; border-radius: 6px;
                      cursor: pointer; font-weight: 600; }
   form.flow button:hover { background: #2563eb; }
+  button.inline { background: #3b1f24; color: #fca5a5; border: 1px solid #7f1d1d;
+                  padding: 0.3rem 0.55rem; border-radius: 6px; cursor: pointer; }
+  button.inline:hover { background: #4c1d24; }
+  .hint { margin: 0 0 0.9rem 0; color: #9aa3b8; font-size: 0.9rem; line-height: 1.45; }
   ul.links { list-style: none; padding: 0; margin: 0;
              display: flex; flex-wrap: wrap; gap: 0.5rem; }
   ul.links a { color: #93c5fd; text-decoration: none;
@@ -120,12 +124,22 @@ def _is_revoked(record: Mapping[str, Any]) -> bool:
 
 def _credential_row(record: Mapping[str, Any]) -> str:
     cred_id = _esc(record.get("id") or record.get("credential_id"))
+    raw_cred_id = str(record.get("id") or record.get("credential_id") or "")
     app_id = _esc(record.get("app_id"))
     label = _esc(record.get("label") or record.get("display_name") or record.get("name") or "—")
     created = _esc(record.get("created_at") or "—")
     revoked = _is_revoked(record)
     badge_class = "revoked" if revoked else "active"
     badge_text = "revoked" if revoked else "active"
+    action = (
+        "—"
+        if revoked or not raw_cred_id
+        else (
+            '<button class="inline" type="button" data-revoke-credential="'
+            + _esc(raw_cred_id)
+            + '">Revoke</button>'
+        )
+    )
     return (
         "<tr>"
         f"<td><code>{cred_id}</code></td>"
@@ -133,6 +147,7 @@ def _credential_row(record: Mapping[str, Any]) -> str:
         f"<td>{label}</td>"
         f"<td>{created}</td>"
         f'<td><span class="badge {badge_class}">{badge_text}</span></td>'
+        f"<td>{action}</td>"
         "</tr>"
     )
 
@@ -246,6 +261,7 @@ def _flow_form(
         for profile in profiles
     )
     return (
+        '<p class="hint">Register an App, mint one <code>opk_...</code> key, then paste it into that App with base URL <code>https://ai.vivid.fish/v1</code>. The raw key is shown once.</p>'
         '<form class="flow" method="post" action="' + _esc(create_app_action) + '" data-create-app>'
         "<label>Create an app:</label>"
         '<div class="stack">'
@@ -352,7 +368,7 @@ def render_admin_dashboard(
         empty="No app profiles configured.",
     )
     credentials_table = _table(
-        ["ID", "App", "Label", "Created", "Status"],
+        ["ID", "App", "Label", "Created", "Status", "Action"],
         (_credential_row(c) for c in credentials),
         empty="No credentials issued.",
     )
@@ -396,6 +412,9 @@ def render_admin_dashboard(
         "const body={}; if(fd.get('label')) body.label=fd.get('label');"
         "const url=f.dataset.actionTemplate.replace('{app_id}',encodeURIComponent(appId));"
         "try{show(await json(url,body))}catch(err){show(err)}});"
+        "document.querySelectorAll('[data-revoke-credential]').forEach(btn=>btn.addEventListener('click',async e=>{"
+        "const id=e.currentTarget.dataset.revokeCredential;"
+        "try{show(await json('/admin/api/credentials/'+encodeURIComponent(id)+'/revoke',{}));setTimeout(()=>location.reload(),800)}catch(err){show(err)}}));"
         "});"
         "</script>"
         "</head><body>"
@@ -411,6 +430,6 @@ def render_admin_dashboard(
         + _section("App profiles", profiles_table)
         + _section("Credentials", credentials_table)
         + _section("Audit log", audit_table)
-        + _section("Discovery", discovery_html)
+        + _section("Admin links", discovery_html)
         + "</main></body></html>"
     )

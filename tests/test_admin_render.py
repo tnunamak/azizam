@@ -80,8 +80,8 @@ def _snapshot() -> dict:
             },
         ],
         "discovery_links": [
-            {"label": "Capabilities", "href": "/gateway/v1/capabilities"},
-            {"label": "Workflows", "href": "/gateway/v1/workflows"},
+            {"label": "Gateway metadata", "href": "/.well-known/ai-gateway"},
+            {"label": "Admin overview", "href": "/admin/api/overview"},
         ],
     }
 
@@ -108,10 +108,14 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         self.assertIn("Create an app", html)
         self.assertIn("Mint an API key", html)
+        self.assertIn("Register an App", html)
+        self.assertIn("https://ai.vivid.fish/v1", html)
         self.assertIn('action="/admin/api/apps"', html)
         self.assertIn("x-ai-gateway-admin-action", html)
         # Mint-key form must reference the key creation endpoint template.
         self.assertIn("/admin/api/apps/{app_id}/keys", html)
+        self.assertIn("Revoke", html)
+        self.assertIn("/admin/api/credentials/", html)
 
     def test_includes_app_and_user_records(self) -> None:
         html = render_admin_dashboard(_snapshot())
@@ -129,8 +133,9 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_discovery_links_render_as_anchors(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn('href="/gateway/v1/capabilities"', html)
-        self.assertIn('href="/gateway/v1/workflows"', html)
+        self.assertIn('href="/.well-known/ai-gateway"', html)
+        self.assertIn('href="/admin/api/overview"', html)
+        self.assertIn(">Admin links<", html)
 
 
 class AdminRenderSecurityTests(unittest.TestCase):

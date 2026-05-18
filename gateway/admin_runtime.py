@@ -259,10 +259,15 @@ class AdminSQLiteStore:
             "credentials": credentials,
             "audit": audit,
             "discovery_links": [
-                {"label": "Capabilities", "href": "/gateway/v1/capabilities"},
-                {"label": "Workflows", "href": "/gateway/v1/workflows"},
-                {"label": "Receipts", "href": "/gateway/v1/receipts"},
-                {"label": "AI Gateway metadata", "href": "/.well-known/ai-gateway"},
+                {"label": "Gateway metadata", "href": "/.well-known/ai-gateway"},
+                {
+                    "label": "Agent skill",
+                    "href": "/.well-known/skills/openai-proxy-gateway/SKILL.md",
+                },
+                {"label": "Admin overview", "href": "/admin/api/overview"},
+                {"label": "Apps JSON", "href": "/admin/api/apps"},
+                {"label": "Profiles JSON", "href": "/admin/api/profiles"},
+                {"label": "Audit JSON", "href": "/admin/api/audit"},
             ],
         }
 
