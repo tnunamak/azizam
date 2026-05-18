@@ -128,6 +128,10 @@ curl -s https://ai.vivid.fish/admin/api/overview \
 ```
 
 OIDC browser login is configured under `admin.oidc` in `proxy_config.yml`.
+The browser entry point is `/login`; `/me/login` and `/admin/login` are
+compatibility redirects into that route. After login, normal users land on
+`/me`, while admins can follow the Admin link from `/me` or go directly to
+`/admin`.
 Secrets should come from environment variables:
 
 ```yaml

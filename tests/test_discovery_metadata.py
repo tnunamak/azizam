@@ -27,6 +27,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("openai", {p["id"] for p in metadata["protocols"]})
         self.assertIn("anthropic", {p["id"] for p in metadata["protocols"]})
         self.assertIn("ollama", {p["id"] for p in metadata["protocols"]})
+        self.assertEqual(metadata["links"]["login"], "/login")
         self.assertEqual(metadata["links"]["user_portal"], "/me")
         self.assertEqual(metadata["links"]["user_session"], "/me/api/session")
         self.assertEqual(

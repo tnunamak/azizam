@@ -123,7 +123,7 @@ Admin/control-plane credentials are separate. Bootstrap a service-account admin 
 ./venv/bin/python proxy.py generate-admin-key owner-cli
 ```
 
-The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser admin login is available at `/admin/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. The dashboard can create Apps, Profiles, and runtime keys, revoke credentials, and simulate policy decisions before handing someone access.
+The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser login starts at `/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. Admins are Users with an admin-capable role, so signed-in admins also see an Admin link from `/me`. The dashboard can create Apps, Profiles, and runtime keys, revoke credentials, and simulate policy decisions before handing someone access.
 
 ### Give a family member a key
 

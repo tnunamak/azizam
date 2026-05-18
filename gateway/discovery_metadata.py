@@ -90,6 +90,7 @@ def build_gateway_discovery_metadata(
     """Return unauthenticated public metadata for agent/client discovery."""
     links = {
         "health": "/health",
+        "login": "/login",
         "user_portal": "/me",
         "user_session": "/me/api/session",
         "user_access_request": "/me/api/access-request",

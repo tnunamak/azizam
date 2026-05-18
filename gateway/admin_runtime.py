@@ -317,6 +317,11 @@ class AdminAuthenticator:
                                 signing_key=self.signing_key,
                             ),
                         )
+                    raise AdminAuthError(
+                        "admin role required",
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        code="admin_forbidden",
+                    )
                 except SessionError:
                     pass
 

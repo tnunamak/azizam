@@ -37,6 +37,7 @@ from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Mapping, Optional
+from urllib.parse import quote
 
 import httpx
 import yaml
@@ -7027,16 +7028,21 @@ def _existing_admin_roles_by_email() -> dict[str, str]:
     return roles_by_email
 
 
-def _safe_admin_return_to(value: str | None) -> str:
+def _safe_admin_return_to(value: str | None, *, default: str = "/admin") -> str:
     if not value:
-        return "/admin"
+        return default
     if not value.startswith("/") or value.startswith("//"):
-        return "/admin"
+        return default
     if value == "/me":
         return value
     if value.startswith("/admin"):
         return value
-    return "/admin"
+    return default
+
+
+def _login_url(*, return_to: str) -> str:
+    safe_return_to = _safe_admin_return_to(return_to, default="/me")
+    return f"/login?return_to={quote(safe_return_to, safe='')}"
 
 
 def _oidc_session_from_request(request: Request):
@@ -7122,7 +7128,7 @@ app.include_router(
 
 @app.get("/me/login", include_in_schema=False)
 async def user_portal_login():
-    return RedirectResponse("/admin/login?return_to=/me", status_code=302)
+    return RedirectResponse(_login_url(return_to="/me"), status_code=302)
 
 
 @app.get("/me/logout", include_in_schema=False)
@@ -7145,6 +7151,7 @@ async def user_portal(request: Request):
         public_base_url=_public_base_url(request) or "https://ai.vivid.fish",
         account=account,
         oidc_enabled=ADMIN_OIDC_CONFIG.enabled,
+        login_url=_login_url(return_to="/me"),
         csrf_token=_csrf_token_for_oidc_session(session) if session else "",
     )
     return Response(
@@ -7244,6 +7251,12 @@ async def admin_dashboard(request: Request):
     try:
         actor = ADMIN_AUTH(request)
     except AdminAuthError as exc:
+        if (
+            exc.status_code == 401
+            and ADMIN_OIDC_CONFIG.enabled
+            and not request.headers.get("authorization")
+        ):
+            return RedirectResponse(_login_url(return_to="/admin"), status_code=302)
         return Response(
             content=json.dumps({
                 "error": {
@@ -7268,8 +7281,7 @@ async def admin_dashboard(request: Request):
     )
 
 
-@app.get("/admin/login", include_in_schema=False)
-async def admin_login(request: Request):
+async def _start_browser_login(request: Request, *, default_return_to: str) -> Response:
     if not ADMIN_OIDC_CONFIG.enabled:
         return Response(
             content=(
@@ -7284,7 +7296,10 @@ async def admin_login(request: Request):
         cfg = await _admin_oidc_config_with_discovery()
         nonce = generate_nonce()
         pkce = generate_pkce_pair()
-        return_to = _safe_admin_return_to(request.query_params.get("return_to"))
+        return_to = _safe_admin_return_to(
+            request.query_params.get("return_to"),
+            default=default_return_to,
+        )
         state = record_state(
             ADMIN_OIDC_STATES,
             nonce=nonce,
@@ -7301,6 +7316,20 @@ async def admin_login(request: Request):
             status_code=500,
             media_type="text/plain; charset=utf-8",
         )
+
+
+@app.get("/login", include_in_schema=False)
+async def browser_login(request: Request):
+    return await _start_browser_login(request, default_return_to="/me")
+
+
+@app.get("/admin/login", include_in_schema=False)
+async def admin_login_compat(request: Request):
+    return_to = _safe_admin_return_to(
+        request.query_params.get("return_to"),
+        default="/admin",
+    )
+    return RedirectResponse(_login_url(return_to=return_to), status_code=302)
 
 
 @app.get("/admin/oidc/callback", include_in_schema=False)
@@ -7389,7 +7418,7 @@ async def admin_oidc_callback(request: Request):
 
 @app.post("/admin/logout", include_in_schema=False)
 async def admin_logout():
-    response = RedirectResponse("/admin/login", status_code=302)
+    response = RedirectResponse(_login_url(return_to="/admin"), status_code=302)
     response.delete_cookie(
         ADMIN_OIDC_CONFIG.cookie.name,
         path=ADMIN_OIDC_CONFIG.cookie.path,

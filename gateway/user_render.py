@@ -305,6 +305,31 @@ def _account_badge(text: Any, cls: str = "") -> str:
     return f'<span class="badge {cls}">{_esc(text)}</span>'
 
 
+def _user_role(account: Mapping[str, Any] | None) -> str:
+    if not account or not account.get("authenticated"):
+        return "none"
+    user = account.get("user") if isinstance(account.get("user"), Mapping) else {}
+    return str(user.get("role") or "none")
+
+
+def _can_admin(account: Mapping[str, Any] | None) -> bool:
+    return _user_role(account) in {"owner", "admin", "superadmin"}
+
+
+def _header_nav(account: Mapping[str, Any] | None) -> str:
+    links = [
+        ('/.well-known/ai-gateway', "Discovery"),
+        ("/llms.txt", "llms.txt"),
+        ("/health", "Health"),
+    ]
+    if _can_admin(account):
+        links.append(("/admin", "Admin"))
+    return "".join(
+        f'<a href="{_esc(href)}">{_esc(label)}</a>'
+        for href, label in links
+    )
+
+
 def _credential_html(record: Mapping[str, Any]) -> str:
     credential_id = _esc(record.get("id"))
     prefix = _esc(record.get("prefix") or "key")
@@ -414,8 +439,8 @@ def _account_section(
 
     user = account.get("user") if isinstance(account.get("user"), Mapping) else {}
     user_label = _esc(user.get("email") or user.get("name") or "signed-in user")
-    raw_role = str(user.get("role") or "none")
-    role_label = raw_role if raw_role in {"owner", "admin"} else "user"
+    raw_role = _user_role(account)
+    role_label = raw_role if raw_role in {"owner", "admin", "superadmin"} else "user"
     apps = [a for a in account.get("apps", []) if isinstance(a, Mapping)]
     apps_html = (
         "".join(_app_html(app) for app in apps)
@@ -451,7 +476,7 @@ def render_user_portal(
     public_base_url: str = "https://ai.vivid.fish",
     account: Mapping[str, Any] | None = None,
     oidc_enabled: bool = False,
-    login_url: str = "/me/login",
+    login_url: str = "/login?return_to=/me",
     logout_url: str = "/me/logout",
     csrf_token: str = "",
 ) -> str:
@@ -471,6 +496,7 @@ def render_user_portal(
         login_url=login_url,
         logout_url=logout_url,
     )
+    nav_html = _header_nav(account)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -483,9 +509,7 @@ def render_user_portal(
   <header>
     <h1>{title_text}</h1>
     <nav aria-label="Gateway links">
-      <a href="/.well-known/ai-gateway">Discovery</a>
-      <a href="/llms.txt">llms.txt</a>
-      <a href="/health">Health</a>
+      {nav_html}
     </nav>
   </header>
   <main>

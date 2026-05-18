@@ -23,6 +23,7 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("My AI Gateway", html)
         self.assertIn("Account", html)
         self.assertIn("Sign in with OIDC", html)
+        self.assertIn('/login?return_to=/me', html)
         self.assertIn("/gateway/v1/capabilities", html)
         self.assertIn("/gateway/v1/media/jobs", html)
         self.assertIn("/v1/models", html)
@@ -84,7 +85,21 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("data-mint-owned-key", html)
         self.assertIn("data-revoke-owned-key", html)
         self.assertIn("credential-row", html)
+        self.assertNotIn('href="/admin"', html)
         self.assertNotIn("hash", html)
+
+    def test_signed_in_admin_gets_admin_nav_from_user_portal(self) -> None:
+        html = render_user_portal(
+            oidc_enabled=True,
+            account={
+                "authenticated": True,
+                "user": {"email": "owner@example.com", "role": "owner"},
+                "apps": [],
+            },
+        )
+        self.assertIn('href="/admin"', html)
+        self.assertIn(">Admin<", html)
+        self.assertIn("role owner", html)
 
     def test_signed_in_user_without_apps_can_request_access(self) -> None:
         html = render_user_portal(

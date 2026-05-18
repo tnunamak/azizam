@@ -150,6 +150,30 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "admin_unauthenticated")
 
+    def test_admin_dashboard_redirects_browser_to_login_when_oidc_enabled(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset({"owner@example.com"}),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        response = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(response.status_code, 302, response.text)
+        self.assertEqual(response.headers["location"], "/login?return_to=%2Fadmin")
+
     def test_oidc_login_callback_creates_signed_admin_session(self) -> None:
         cfg = OIDCConfig(
             enabled=True,
@@ -171,7 +195,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.cookie = cfg.cookie
 
         login = self.client.get(
-            "/admin/login?return_to=/admin", follow_redirects=False
+            "/login?return_to=/admin", follow_redirects=False
         )
         self.assertEqual(login.status_code, 302, login.text)
         self.assertIn("https://idp.example/authorize", login.headers["location"])
@@ -228,7 +252,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
 
-        login = self.client.get("/admin/login", follow_redirects=False)
+        login = self.client.get("/login?return_to=/admin", follow_redirects=False)
         self.assertEqual(login.status_code, 302, login.text)
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
 
@@ -258,7 +282,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertIn("custom_admin_session=", callback.headers.get("set-cookie", ""))
         self.assertEqual(self.client.get("/admin").status_code, 200)
 
-    def test_oidc_return_to_is_limited_to_admin_paths(self) -> None:
+    def test_oidc_return_to_is_limited_to_safe_browser_paths(self) -> None:
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
@@ -279,12 +303,12 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.cookie = cfg.cookie
 
         login = self.client.get(
-            "/admin/login?return_to=https://evil.example/steal",
+            "/login?return_to=https://evil.example/steal",
             follow_redirects=False,
         )
         self.assertEqual(login.status_code, 302, login.text)
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
-        self.assertEqual(record.return_to, "/admin")
+        self.assertEqual(record.return_to, "/me")
 
         async def fake_exchange(_code, *, config, pkce):
             return {"id_token": "fake.id.token"}
@@ -309,7 +333,20 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 follow_redirects=False,
             )
         self.assertEqual(callback.status_code, 302, callback.text)
-        self.assertEqual(callback.headers["location"], "/admin")
+        self.assertEqual(callback.headers["location"], "/me")
+
+    def test_legacy_login_routes_redirect_to_single_login_entrypoint(self) -> None:
+        self.assertEqual(
+            self.client.get("/me/login", follow_redirects=False).headers["location"],
+            "/login?return_to=%2Fme",
+        )
+        self.assertEqual(
+            self.client.get(
+                "/admin/login?return_to=/admin",
+                follow_redirects=False,
+            ).headers["location"],
+            "/login?return_to=%2Fadmin",
+        )
 
     def test_oidc_return_to_allows_user_portal(self) -> None:
         cfg = OIDCConfig(
@@ -332,7 +369,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.cookie = cfg.cookie
 
         login = self.client.get(
-            "/admin/login?return_to=/me", follow_redirects=False
+            "/login?return_to=/me", follow_redirects=False
         )
         self.assertEqual(login.status_code, 302, login.text)
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
@@ -362,10 +399,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(callback.status_code, 302, callback.text)
         self.assertEqual(callback.headers["location"], "/me")
-        self.assertEqual(self.client.get("/admin").status_code, 401)
+        self.assertEqual(self.client.get("/admin").status_code, 403)
         self.assertEqual(
             self.client.get("/me/login", follow_redirects=False).headers["location"],
-            "/admin/login?return_to=/me",
+            "/login?return_to=%2Fme",
         )
 
     def test_user_portal_shows_oidc_owned_apps_and_self_manages_keys(self) -> None:
