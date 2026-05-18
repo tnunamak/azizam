@@ -260,6 +260,7 @@ class AdminSQLiteStore:
             "credentials": credentials,
             "audit": audit,
             "discovery_links": [
+                {"label": "User portal", "href": "/me"},
                 {"label": "Gateway metadata", "href": "/.well-known/ai-gateway"},
                 {
                     "label": "Agent skill",

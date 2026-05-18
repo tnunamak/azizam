@@ -19,6 +19,8 @@ The canonical public host is **`https://ai.vivid.fish`**. The original **`https:
 Agents and apps can start without local repo context by fetching the public discovery surface (no auth required):
 
 - `GET /health`
+- `GET /me` — normal-user portal for checking a runtime key, SDK settings,
+  capabilities, and recent media jobs
 - `GET /.well-known/ai-gateway` — canonical gateway metadata document
 - `GET /.well-known/openai-proxy` — compatibility alias (identical body)
 - `GET /llms.txt`
@@ -99,7 +101,7 @@ The legacy term **"client"** is preserved only in compatibility contexts (OpenAI
 
 ## Auth
 
-All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health` and the `/.well-known/*` discovery surfaces are public.
+All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health`, `/me`, and the `/.well-known/*` discovery surfaces are public. `/me` does not expose private data by itself; the browser uses the pasted `opk_...` key to check effective access.
 
 App API keys are stored as sha256 hashes in `proxy_api_keys.yml` (gitignored). Generate or rotate one with:
 
@@ -117,7 +119,7 @@ Admin/control-plane credentials are separate. Bootstrap a service-account admin 
 ./venv/bin/python proxy.py generate-admin-key owner-cli
 ```
 
-The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser admin login is available at `/admin/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`.
+The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser admin login is available at `/admin/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. The dashboard can create Apps, Profiles, and runtime keys, revoke credentials, and simulate policy decisions before handing someone access.
 
 ### Give a family member a key
 
@@ -126,7 +128,7 @@ The shortest "share my gateway with another human" flow:
 1. **OIDC User.** The family member signs in once so the admin store has their **User** row. They do not need a global admin role.
 2. **Personal App.** An owner/admin creates one **Personal App** owned by that User — e.g. `aunt-mary-chat`. An App is the access boundary, not the person.
 3. **Profile.** The App is attached to a **Profile** that grants only what they need (e.g. `openai.chat` + `openai.audio`, no native passthrough, `cloud_allowed: false`, `status_visibility.level: basic`). This is what controls their normal access limits.
-4. **App API key.** Mint a bearer token for that App with `POST /admin/api/apps/{app_id}/keys`. They paste the returned `opk_...` value once into their chat app of choice as the OpenAI API key, with base URL `https://ai.vivid.fish/v1`.
+4. **App API key.** Mint a bearer token for that App with `POST /admin/api/apps/{app_id}/keys`. They can visit `https://ai.vivid.fish/me`, paste the returned `opk_...` value locally in the browser, and confirm their base URL, SDK settings, capabilities, and media-job access before configuring their chat app.
 
 Rotation is per-App, not per-human: revoke the old Credential and mint a new key while preserving the App's Profile and downstream mapping. Dashboard-minted keys inherit the App's current Profile unless an explicit per-key override is requested.
 

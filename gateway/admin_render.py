@@ -89,9 +89,12 @@ _DASHBOARD_CSS = """
   form.flow .stack { display: grid; gap: 0.5rem;
                      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
   form.flow label { font-size: 0.85rem; color: var(--muted); }
-  form.flow input, form.flow select { background: oklch(15.5% 0.016 255);
+  form.flow input, form.flow select, form.flow textarea { background: oklch(15.5% 0.016 255);
                    border: 1px solid var(--line); color: var(--text);
                    padding: 0.5rem 0.65rem; border-radius: 6px; }
+  form.flow textarea { min-height: 5rem; resize: vertical; font-family: ui-monospace, monospace; }
+  form.flow .check { display: flex; align-items: center; gap: 0.45rem; color: var(--muted); }
+  form.flow .check input { width: auto; }
   form.flow button { background: var(--focus); color: oklch(12% 0.02 255); border: 0;
                      padding: 0.55rem 1rem; border-radius: 6px;
                      cursor: pointer; font-weight: 600; }
@@ -486,7 +489,94 @@ def _flow_form(
         '<button type="submit">Mint key</button>'
         "</div>"
         "</form>"
-        '<pre class="result" id="admin-flow-result" aria-live="polite"></pre>'
+    )
+
+
+def _profile_form(
+    profiles: list[Mapping[str, Any]],
+    *,
+    create_profile_action: str,
+) -> str:
+    existing = ", ".join(_profile_id(profile) for profile in profiles)
+    existing_html = (
+        f'<div class="hint">Existing Profiles: <code>{_esc(existing)}</code></div>'
+        if existing
+        else '<div class="hint">No stored Profiles yet.</div>'
+    )
+    return (
+        '<p class="hint">Create reusable access bundles from metadata selectors. Leave a selector blank when it should not constrain access; use the JSON field for unusual local overrides.</p>'
+        + existing_html
+        + '<form class="flow" method="post" action="'
+        + _esc(create_profile_action)
+        + '" data-create-profile>'
+        "<label>Create Profile:</label>"
+        '<div class="stack">'
+        '<input type="text" name="id" placeholder="profile id" required>'
+        '<input type="text" name="label" placeholder="Label">'
+        '<select name="status_visibility">'
+        '<option value="basic">Basic status</option>'
+        '<option value="standard">Standard status</option>'
+        '<option value="full">Full status</option>'
+        '<option value="none">No status</option>'
+        "</select>"
+        '<input type="text" name="protocols" placeholder="protocols: openai, anthropic">'
+        '<input type="text" name="intents" placeholder="intents: chat, image.generate">'
+        '<input type="text" name="exposure" placeholder="exposure: default, opt_in">'
+        '<input type="text" name="trust_tiers" placeholder="trust: stable, experimental">'
+        '<input type="text" name="resource_tiers" placeholder="resources: interactive, batch">'
+        '<input type="text" name="tags" placeholder="tags: local, image, family">'
+        "</div>"
+        '<div class="stack">'
+        '<label class="check"><input type="checkbox" name="cloud_allowed"> Allow cloud fallback</label>'
+        '<label class="check"><input type="checkbox" name="native_passthrough"> Allow native passthrough</label>'
+        "</div>"
+        '<textarea name="advanced_json" spellcheck="false" placeholder="{&quot;models&quot;:[&quot;local-chat&quot;]}"></textarea>'
+        '<div class="row">'
+        "<span></span>"
+        '<button type="submit">Create profile</button>'
+        "</div>"
+        "</form>"
+    )
+
+
+def _policy_simulator_form(
+    profiles: list[Mapping[str, Any]],
+    *,
+    policy_simulate_action: str,
+) -> str:
+    profile_options = '<option value="">Local default</option>' + "".join(
+        f'<option value="{_esc(_profile_id(profile))}">'
+        f'{_esc(profile.get("label") or profile.get("name") or _profile_id(profile))}'
+        "</option>"
+        for profile in profiles
+    )
+    return (
+        '<p class="hint">Check a Profile against the same request facts the gateway policy layer evaluates before you hand someone a key.</p>'
+        '<form class="flow" method="post" action="'
+        + _esc(policy_simulate_action)
+        + '" data-simulate-policy>'
+        "<label>Simulate request:</label>"
+        '<div class="stack">'
+        f'<select name="profile">{profile_options}</select>'
+        '<input type="text" name="protocol" placeholder="protocol: openai.images">'
+        '<input type="text" name="intent" placeholder="intent: image.edit">'
+        '<input type="text" name="workflow" placeholder="workflow id">'
+        '<input type="text" name="model" placeholder="model id">'
+        '<input type="text" name="backend" placeholder="backend: comfyui">'
+        '<input type="text" name="capability_exposure" placeholder="exposure: default">'
+        '<input type="text" name="capability_trust_tier" placeholder="trust: stable">'
+        '<input type="text" name="capability_resource_tier" placeholder="resource: batch">'
+        '<input type="text" name="capability_tags" placeholder="tags: image, controlnet">'
+        "</div>"
+        '<div class="stack">'
+        '<label class="check"><input type="checkbox" name="requires_cloud_fallback"> Requires cloud fallback</label>'
+        '<label class="check"><input type="checkbox" name="native_passthrough"> Native passthrough request</label>'
+        "</div>"
+        '<div class="row">'
+        "<span></span>"
+        '<button type="submit">Simulate</button>'
+        "</div>"
+        "</form>"
     )
 
 
@@ -510,7 +600,9 @@ def render_admin_dashboard(
     title: str = "Vivid Fish AI Gateway Admin",
     base_url: str = "https://ai.vivid.fish/v1",
     create_app_action: str = "/admin/api/apps",
+    create_profile_action: str = "/admin/api/profiles",
     create_key_action_template: str = "/admin/api/apps/{app_id}/keys",
+    policy_simulate_action: str = "/admin/api/policy/simulate",
 ) -> str:
     """Render a server-side HTML admin dashboard from a snapshot dict.
 
@@ -602,10 +694,19 @@ def render_admin_dashboard(
         create_app_action=create_app_action,
         create_key_action_template=create_key_action_template,
     )
+    profile_form_html = _profile_form(
+        profiles,
+        create_profile_action=create_profile_action,
+    )
+    policy_simulator_html = _policy_simulator_form(
+        profiles,
+        policy_simulate_action=policy_simulate_action,
+    )
 
     discovery_html = _discovery_links(discovery_links)
     connection_html = _connection_panel(base_url=base_url)
     issues_html = _access_issues(apps, profiles_by_id, active_keys_by_app)
+    result_html = '<pre class="result" id="admin-flow-result" aria-live="polite"></pre>'
 
     return (
         "<!doctype html>"
@@ -618,9 +719,26 @@ def render_admin_dashboard(
         "document.addEventListener('DOMContentLoaded',()=>{"
         "const out=document.getElementById('admin-flow-result');"
         "const show=v=>{out.textContent=typeof v==='string'?v:JSON.stringify(v,null,2)};"
+        "const list=v=>String(v||'').split(/[\\s,]+/).map(x=>x.trim()).filter(Boolean);"
         "const json=async(url,body)=>{const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','x-ai-gateway-admin-action':'1'},body:JSON.stringify(body)});"
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
+        "document.querySelector('[data-create-profile]')?.addEventListener('submit',async e=>{e.preventDefault();"
+        "const f=e.currentTarget,fd=new FormData(f);const profile={id:String(fd.get('id')||'').trim(),status_visibility:{level:fd.get('status_visibility')||'basic'},fallback:{cloud_allowed:fd.get('cloud_allowed')==='on'},native_passthrough:{enabled:fd.get('native_passthrough')==='on'}};"
+        "const protocols=list(fd.get('protocols'));if(protocols.length) profile.protocols=protocols;"
+        "const allow={};['intents','exposure','trust_tiers','resource_tiers','tags'].forEach(k=>{const v=list(fd.get(k));if(v.length) allow[k]=v});if(Object.keys(allow).length) profile.allow=allow;"
+        "const extra=String(fd.get('advanced_json')||'').trim();"
+        "try{if(extra){Object.assign(profile,JSON.parse(extra))}"
+        "const body={name:fd.get('label')||profile.id,label:fd.get('label')||profile.id,profile};"
+        "const data=await json(f.action,body);show(data);setTimeout(()=>location.reload(),800)}catch(err){show(err)}});"
+        "document.querySelector('[data-simulate-policy]')?.addEventListener('submit',async e=>{e.preventDefault();"
+        "const f=e.currentTarget,fd=new FormData(f),request={};"
+        "['protocol','intent','workflow','model','backend','capability_exposure','capability_trust_tier','capability_resource_tier'].forEach(k=>{const v=String(fd.get(k)||'').trim();if(v)request[k]=v});"
+        "const tags=list(fd.get('capability_tags'));if(tags.length)request.capability_tags=tags;"
+        "if(fd.get('requires_cloud_fallback')==='on')request.requires_cloud_fallback=true;"
+        "if(fd.get('native_passthrough')==='on')request.native_passthrough=true;"
+        "const profile=fd.get('profile')||{id:'default-local'};"
+        "try{show(await json(f.action,{profile,request}))}catch(err){show(err)}});"
         "document.querySelector('[data-create-app]')?.addEventListener('submit',async e=>{e.preventDefault();"
         "const f=e.currentTarget,fd=new FormData(f);const body={name:fd.get('name'),kind:fd.get('kind')||'service'};"
         "if(fd.get('owner_user_id')) body.owner_user_id=fd.get('owner_user_id');"
@@ -652,6 +770,9 @@ def render_admin_dashboard(
         + _section("Overview", f'<div class="counts">{counts_html}</div>')
         + _section("Needs attention", issues_html)
         + _section("Give Access", flow_html)
+        + _section("Create access profile", profile_form_html)
+        + _section("Simulate access", policy_simulator_html)
+        + _section("Action result", result_html)
         + _section("Apps", apps_table)
         + _section("Users", users_table)
         + _section("App profiles", profiles_table)

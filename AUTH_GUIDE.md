@@ -183,9 +183,11 @@ flow:
      -H "Content-Type: application/json" \
      -d '{"label":"Aunt Mary laptop"}'
    ```
-   They paste the printed `opk_...` value once, as the OpenAI API key, into
-   their chat app of choice (LibreChat, Open WebUI, an iOS shortcut, etc.)
-   with base URL `https://ai.vivid.fish/v1`.
+   They can visit `https://ai.vivid.fish/me`, paste the printed `opk_...`
+   value locally in the browser, and verify the base URL, SDK snippets,
+   effective capabilities, and recent media jobs visible to that key. Then
+   they paste the same key into their chat app of choice (LibreChat, Open
+   WebUI, an iOS shortcut, etc.) with base URL `https://ai.vivid.fish/v1`.
 
 Rotation stays per-App: revoke the old Credential and mint a new key for the
 same App while leaving the User, the Profile, and the audit history intact.
@@ -195,8 +197,10 @@ temporary exception.
 
 ## Request Auth Rules
 
-All gateway traffic requires a valid App API key. `/health` and the
-`/.well-known/*` discovery surfaces are the only public endpoints by default.
+All gateway runtime traffic requires a valid App API key. `/health`, `/me`,
+and the `/.well-known/*` discovery surfaces are public. `/me` is a shell only:
+it does not show private capability, model, or job data until the browser sends
+the user's `opk_...` key to the normal authenticated runtime APIs.
 
 Accepted auth headers:
 

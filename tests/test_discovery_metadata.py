@@ -27,6 +27,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("openai", {p["id"] for p in metadata["protocols"]})
         self.assertIn("anthropic", {p["id"] for p in metadata["protocols"]})
         self.assertIn("ollama", {p["id"] for p in metadata["protocols"]})
+        self.assertEqual(metadata["links"]["user_portal"], "/me")
         self.assertEqual(
             metadata["absolute_links"]["capabilities"],
             "http://gw/gateway/v1/capabilities",
@@ -80,7 +81,15 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertEqual(body["object"], "ai_gateway_discovery")
         self.assertEqual(body["service"]["product"], "Vivid Fish AI Gateway")
         self.assertEqual(body["service"]["canonical_host"], "https://ai.vivid.fish")
+        self.assertEqual(body["links"]["user_portal"], "/me")
         self.assertIn("/gateway/v1/capabilities", body["links"].values())
+
+    def test_user_portal_is_public(self) -> None:
+        response = self.client.get("/me")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
+        self.assertIn("My AI Gateway", response.text)
+        self.assertIn("/gateway/v1/capabilities", response.text)
 
     def test_openai_proxy_alias_matches_discovery_shape(self) -> None:
         response = self.client.get("/.well-known/openai-proxy")

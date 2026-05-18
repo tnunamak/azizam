@@ -117,6 +117,25 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("Revoke", html)
         self.assertIn("/admin/api/credentials/", html)
 
+    def test_includes_create_profile_flow(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn("Create Profile", html)
+        self.assertIn('action="/admin/api/profiles"', html)
+        self.assertIn("data-create-profile", html)
+        self.assertIn("name=\"intents\"", html)
+        self.assertIn("name=\"resource_tiers\"", html)
+        self.assertIn("name=\"advanced_json\"", html)
+        self.assertIn("Allow cloud fallback", html)
+        self.assertIn("Allow native passthrough", html)
+
+    def test_includes_policy_simulation_flow(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn("Simulate request", html)
+        self.assertIn('action="/admin/api/policy/simulate"', html)
+        self.assertIn("data-simulate-policy", html)
+        self.assertIn("name=\"capability_tags\"", html)
+        self.assertIn("Requires cloud fallback", html)
+
     def test_includes_app_and_user_records(self) -> None:
         html = render_admin_dashboard(_snapshot())
         self.assertIn("brother-laptop", html)
@@ -170,10 +189,14 @@ class AdminRenderCustomEndpointsTests(unittest.TestCase):
         html = render_admin_dashboard(
             _snapshot(),
             create_app_action="/custom/admin/apps",
+            create_profile_action="/custom/admin/profiles",
             create_key_action_template="/custom/admin/apps/{app_id}/keys",
+            policy_simulate_action="/custom/admin/simulate",
         )
         self.assertIn('action="/custom/admin/apps"', html)
+        self.assertIn('action="/custom/admin/profiles"', html)
         self.assertIn("/custom/admin/apps/{app_id}/keys", html)
+        self.assertIn('action="/custom/admin/simulate"', html)
 
     def test_counts_are_derived_when_omitted(self) -> None:
         snapshot = _snapshot()

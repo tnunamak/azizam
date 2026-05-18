@@ -78,6 +78,7 @@ from gateway.admin_runtime import (
     runtime_identity_for_app_credential_hash,
 )
 from gateway.api import create_gateway_router
+from gateway.user_render import render_user_portal
 from gateway.audio_extensions import (
     bind_audio_workflow_extensions,
     detect_unknown_audio_fields,
@@ -7027,6 +7028,20 @@ app.include_router(
 )
 
 
+@app.get("/me", include_in_schema=False)
+async def user_portal(request: Request):
+    body = render_user_portal(
+        title="My AI Gateway",
+        public_base_url=_public_base_url(request) or "https://ai.vivid.fish",
+    )
+    return Response(
+        content=body,
+        status_code=200,
+        media_type="text/html; charset=utf-8",
+        headers={"cache-control": "no-store"},
+    )
+
+
 @app.get("/admin", include_in_schema=False)
 async def admin_dashboard(request: Request):
     try:
@@ -7203,7 +7218,7 @@ _FIREHOSE_NO_RECORD_PREFIXES = (
     "/.well-known/",
 )
 # Exact paths (not prefixes) that should be excluded too.
-_FIREHOSE_NO_RECORD_EXACT = {"/", "/llms.txt"}
+_FIREHOSE_NO_RECORD_EXACT = {"/", "/me", "/llms.txt"}
 
 # Map known successful-response paths to a synthesized event-type for the
 # Recent activity timeline. We don't peek at request bodies — the path tells
