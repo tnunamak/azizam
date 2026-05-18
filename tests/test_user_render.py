@@ -21,7 +21,6 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertTrue(html.startswith("<!doctype html>"))
         self.assertIn("</html>", html)
         self.assertIn("AI Gateway", html)
-        self.assertIn("Account", html)
         self.assertIn("Sign in with OIDC", html)
         self.assertIn('/login?return_to=/', html)
         self.assertIn("/gateway/v1/capabilities", html)
@@ -131,8 +130,8 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn('class="shell-main"', html)
         self.assertIn('aria-label="AI Gateway home"', html)
         self.assertIn(">AI Gateway</span>", html)
-        # Account is the current page; operator-only links stay hidden.
-        self.assertRegex(html, r'<a [^>]*href="/"[^>]*aria-current="page"')
+        # Signed-out chrome has no inert section nav; operator-only links stay hidden.
+        self.assertNotIn('class="shell-nav"', html)
         self.assertNotIn('href="/status"', html)
         self.assertNotIn('href="/admin"', html)
         # Hero copy points the user at the two ways to start.
@@ -151,7 +150,9 @@ class UserPortalRenderTests(unittest.TestCase):
             },
         )
         self.assertIn('href="/me/logout">Sign out</a>', html)
+        self.assertNotIn('href="/">Account</a>', html)
         self.assertNotIn('href="/status"', html)
+        self.assertNotIn('href="/admin"', html)
         # The actor email surfaces in the header chrome.
         self.assertIn("user@example.com", html)
 

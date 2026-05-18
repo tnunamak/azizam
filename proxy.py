@@ -7035,6 +7035,8 @@ def _safe_admin_return_to(value: str | None, *, default: str = "/admin") -> str:
         return default
     if value in {"/", "/me"}:
         return "/"
+    if value == "/status":
+        return value
     if value.startswith("/admin"):
         return value
     return default
@@ -10663,14 +10665,25 @@ async def v1_status(request: Request):
 
     Auth: bearer token required UNLESS the request originates from 127.0.0.1
     (loopback bypass — local browsers + curl from the host get a friction-free
-    view; remote users authenticate with a proxy key as usual).
+    view; remote callers authenticate with an admin session or admin key).
     """
     client_host = (request.client.host if request.client else "") or ""
     is_loopback = client_host in ("127.0.0.1", "::1", "localhost")
     if not is_loopback:
-        auth_context = authenticate_request(request, "/v1/status")
-        if isinstance(auth_context, Response):
-            return auth_context
+        try:
+            ADMIN_AUTH(request)
+        except AdminAuthError as exc:
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "code": exc.code,
+                        "message": exc.message,
+                    }
+                }),
+                status_code=exc.status_code,
+                media_type="application/json",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     try:
         payload = await status_endpoint.get_cached_status(config)
@@ -10719,10 +10732,24 @@ async def _render_status_html(request: Request) -> Response:
     if not is_loopback:
         try:
             ADMIN_AUTH(request)
-        except AdminAuthError:
-            auth_context = authenticate_request(request, request.url.path)
-            if isinstance(auth_context, Response):
-                return auth_context
+        except AdminAuthError as exc:
+            if (
+                exc.status_code == 401
+                and ADMIN_OIDC_CONFIG.enabled
+                and not request.headers.get("authorization")
+            ):
+                return RedirectResponse(_login_url(return_to="/status"), status_code=302)
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "code": exc.code,
+                        "message": exc.message,
+                    }
+                }),
+                status_code=exc.status_code,
+                media_type="application/json",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
     try:
         payload = await status_endpoint.get_cached_status(config)
     except Exception as e:  # noqa: BLE001

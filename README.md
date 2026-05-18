@@ -50,7 +50,7 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `GET  /login` | proxy + OIDC | Browser sign-in entry point; redirects back to `/` or `/admin` |
 | `GET  /me` | proxy | Legacy browser alias; redirects to `/` |
 | `GET  /admin` | proxy | Admin dashboard; browser sessions redirect through `/login` |
-| `GET  /status` | proxy | Operator status dashboard; loopback is frictionless, remote access requires a runtime key |
+| `GET  /status` | proxy | Operator status dashboard; loopback is frictionless, remote access requires admin auth |
 | `GET  /health` | proxy | Liveness; public, no auth |
 | `GET  /v1/models` | active LLM backend | List models; augments with currently loaded GGUF |
 | `GET  /v1/voices`, `GET /v1/audio/voices` | proxy (static) | List TTS voices |
@@ -148,7 +148,7 @@ See [`AUTH_GUIDE.md`](AUTH_GUIDE.md) for the full key-generation and rotation wo
 
 ```
 proxy.py                       # Main FastAPI app: routing, auth, ComfyUI orchestration
-status_endpoint.py             # /v1/status — backend health, GPU/disk/queue rollup, image/video capability matrix
+status_endpoint.py             # /v1/status — admin/loopback backend health, GPU/disk/queue rollup
 firehose_metrics.py            # /v1/metrics firehose — recent renders, jobs, events
 proxy_config.yml               # All backend wiring, video aliases, cache config, role mappings
 proxy_api_keys.example.yml     # Hash-only key store template (commit)
@@ -240,7 +240,10 @@ The operator status page is served by the proxy at `/status`. The product root
 The server-rendered `/status` dashboard shows backend health, disk/GPU rollup,
 recent renders, and queue depth from the same cached status data used by
 `/v1/status`. Loopback access is frictionless for the local operator; remote
-status access still requires a runtime key.
+status access requires an admin OIDC session or `oak_...` admin key. Client
+liveness probes should use the public `/health` route, and clients should use
+normal authenticated compatibility APIs such as `/v1/models` for runtime
+capability checks.
 
 ## Metrics persistence
 

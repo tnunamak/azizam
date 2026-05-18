@@ -363,7 +363,7 @@ def _settings_section() -> str:
 
 def _access_section() -> str:
     return (
-        '<section aria-labelledby="access-heading">'
+        '<section id="access-section" aria-labelledby="access-heading" hidden>'
         '<h2 id="access-heading">Access</h2>'
         '<p class="hint" id="access-empty-hint">Check a key to load capabilities, '
         "models, and recent jobs.</p>"
@@ -416,6 +416,7 @@ def render_user_portal(
     header_html = render_shell_header(
         title=title,
         current="account",
+        show_account=show_admin,
         show_admin=show_admin,
         show_status=show_admin,
         actor_label=actor_label,
@@ -628,6 +629,8 @@ def render_user_portal(
         getJson("/v1/models"),
         getJson("/gateway/v1/media/jobs?limit=12")
       ]);
+      const accessSection = $("access-section");
+      if (accessSection) accessSection.hidden = false;
       const emptyHint = $("access-empty-hint");
       if (emptyHint) emptyHint.style.display = "none";
       renderCapabilities(caps);

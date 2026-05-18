@@ -219,6 +219,7 @@ def render_shell_header(
     title: str = "AI Gateway",
     brand: str = "AI Gateway",
     current: str = "",
+    show_account: bool = True,
     show_admin: bool = False,
     show_status: bool = False,
     actor_label: str | None = None,
@@ -232,9 +233,9 @@ def render_shell_header(
     ``logout_url`` is set, a Sign out link. The brand always links to ``/``.
     """
 
-    links: list[str] = [
-        _nav_link("/", "Account", active=current == "account"),
-    ]
+    links: list[str] = []
+    if show_account:
+        links.append(_nav_link("/", "Account", active=current == "account"))
     if show_admin:
         links.append(_nav_link("/admin", "Admin", active=current == "admin"))
     if show_status:
@@ -254,6 +255,15 @@ def render_shell_header(
     if logout_url:
         logout_html = f'<a href="{esc(logout_url)}">Sign out</a>'
 
+    nav_html = actor_html + "".join(links) + logout_html
+    nav_block = (
+        '<nav class="shell-nav" aria-label="Site sections">'
+        + nav_html
+        + "</nav>"
+        if nav_html
+        else ""
+    )
+
     return (
         '<header class="shell-header" role="banner">'
         '<div class="shell-header-inner">'
@@ -261,11 +271,7 @@ def render_shell_header(
         '<span class="shell-brand-dot" aria-hidden="true"></span>'
         f"<span>{esc(brand)}</span>"
         "</a>"
-        '<nav class="shell-nav" aria-label="Site sections">'
-        + actor_html
-        + "".join(links)
-        + logout_html
-        + "</nav>"
-        "</div>"
+        + nav_block
+        + "</div>"
         "</header>"
     )

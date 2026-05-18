@@ -711,6 +711,7 @@ def render_admin_dashboard(
     header_html = render_shell_header(
         title=title,
         current="admin",
+        show_account=True,
         show_admin=True,
         show_status=True,
         actor_label=str(actor_label),

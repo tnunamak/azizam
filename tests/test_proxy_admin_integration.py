@@ -272,6 +272,62 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
 
+    def test_status_dashboard_redirects_browser_to_login_when_oidc_enabled(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset({"owner@example.com"}),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        response = self.client.get("/status", follow_redirects=False)
+        self.assertEqual(response.status_code, 302, response.text)
+        self.assertEqual(response.headers["location"], "/login?return_to=%2Fstatus")
+
+    def test_v1_status_accepts_admin_key(self) -> None:
+        async def fake_status(_config):
+            return {"generated_at": 0, "banner": "ok", "errors": {}}
+
+        with patch.object(proxy.status_endpoint, "get_cached_status", fake_status):
+            response = self.client.get("/v1/status", headers=self._auth())
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["banner"], "ok")
+
+    def test_v1_status_rejects_app_runtime_key(self) -> None:
+        created = self.client.post(
+            "/admin/api/apps",
+            json={"name": "status-not-admin"},
+            headers=self._auth(),
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        app_id = created.json()["app"]["id"]
+        key_response = self.client.post(
+            f"/admin/api/apps/{app_id}/keys",
+            json={"label": "App key"},
+            headers=self._auth(),
+        )
+        self.assertEqual(key_response.status_code, 201, key_response.text)
+        app_key = key_response.json()["credential"]["api_key"]
+
+        response = self.client.get(
+            "/v1/status",
+            headers={"Authorization": f"Bearer {app_key}"},
+        )
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["error"]["code"], "admin_forbidden")
+
     def test_oidc_login_uses_configured_cookie_name(self) -> None:
         cfg = OIDCConfig(
             enabled=True,
