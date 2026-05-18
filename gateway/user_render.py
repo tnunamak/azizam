@@ -3,9 +3,9 @@
 ``render_user_portal`` is intentionally pure. The live app serves the page at
 ``/`` (with ``/me`` redirecting here as a legacy browser alias) and the
 browser uses either the signed OIDC session cookie or the user's pasted
-runtime ``opk_`` key to call existing gateway APIs. That keeps the first
+``opk_`` API key to call existing gateway APIs. That keeps the first
 useful user surface small: no new authorization model, no duplicated policy,
-and no server-side handling of pasted runtime keys.
+and no server-side handling of pasted API keys.
 
 The page shares its chrome (header, nav, sign-out affordance) with
 ``/admin`` via :mod:`gateway.gateway_shell` so the site reads as one app.
@@ -21,7 +21,6 @@ from gateway.gateway_shell import (
     esc,
     json_for_script,
     render_shell_header,
-    user_role,
 )
 
 __all__ = ["render_user_portal"]
@@ -40,6 +39,7 @@ _PAGE_CSS = """
   }
   .card h3 { margin: 0; font-size: 1rem; }
   .card p { margin: 0; color: var(--muted); line-height: 1.5; }
+  .card .key-note { font-size: 0.88rem; }
   .actions {
     display: flex;
     flex-wrap: wrap;
@@ -125,6 +125,15 @@ _PAGE_CSS = """
   .message.good { color: var(--good); background: var(--good-bg); }
   .message.warn { color: var(--warn); background: var(--warn-bg); }
   .message.bad { color: var(--bad); background: var(--bad-bg); }
+  .message .secret {
+    display: grid;
+    gap: var(--space-2);
+  }
+  .message .secret code {
+    display: block;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
   .snippet {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -195,24 +204,24 @@ def _badge(text: Any, cls: str = "") -> str:
 def _credential_html(record: Mapping[str, Any]) -> str:
     credential_id = esc(record.get("id"))
     prefix = esc(record.get("prefix") or "key")
-    label = esc(record.get("display_name") or "Runtime key")
+    label = esc(record.get("display_name") or "API key")
     created = esc(record.get("created_at") or "created")
     active = bool(record.get("active"))
-    status = "active" if active else "revoked"
+    status = "active" if active else "deleted"
     status_class = "good" if active else "bad"
     action = (
         '<button class="secondary" type="button" data-revoke-owned-key="'
         + credential_id
-        + '" aria-label="Revoke runtime key '
+        + '" aria-label="Delete API key '
         + label
-        + '">Revoke</button>'
+        + '">Delete key</button>'
         if active and credential_id
         else ""
     )
     return (
         '<div class="credential-row">'
         f"<h3>{label}</h3>"
-        f"<p><code>{prefix}</code> · {created}</p>"
+        f"<p>Prefix <code>{prefix}</code> · {created}</p>"
         '<div class="meta">'
         + _badge(status, status_class)
         + "</div>"
@@ -221,49 +230,58 @@ def _credential_html(record: Mapping[str, Any]) -> str:
     )
 
 
-def _app_html(app: Mapping[str, Any]) -> str:
+def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) -> str:
     app_id = esc(app.get("id"))
     name = esc(app.get("name") or app_id or "App")
-    kind = esc(app.get("kind") or "app")
     profile = app.get("profile") if isinstance(app.get("profile"), Mapping) else None
-    profile_name = "Default local"
-    profile_id = app.get("profile_id") or ""
-    profile_badge = _badge("inherited profile")
+    permission_text = "your account permissions"
+    raw_profile_id = str(app.get("profile_id") or "")
+    permission_badge = _badge("account permissions")
     if profile:
-        profile_name = str(profile.get("name") or profile.get("policy_id") or profile_id)
-        profile_id = profile.get("id") or profile_id
+        raw_profile_id = str(profile.get("id") or raw_profile_id)
         inherited = bool(profile.get("inherited"))
-        profile_badge = _badge(
-            "missing profile"
-            if profile.get("missing")
-            else ("inherited profile" if inherited else profile_id),
-            "bad" if profile.get("missing") else "",
-        )
+        if profile.get("missing"):
+            permission_text = "permissions that are currently unavailable"
+            permission_badge = _badge("permissions unavailable", "bad")
+        elif show_permission_details:
+            permission_text = str(
+                profile.get("name")
+                or profile.get("policy_id")
+                or raw_profile_id
+                or "account permissions"
+            )
+            permission_badge = _badge(
+                "inherited permissions" if inherited else "custom permissions"
+            )
+        elif not inherited:
+            permission_text = "custom account permissions"
+            permission_badge = _badge("custom permissions")
     credentials = [c for c in app.get("credentials", []) if isinstance(c, Mapping)]
     credential_html = (
         "".join(_credential_html(c) for c in credentials)
         if credentials
-        else '<p class="empty">No runtime keys for this App yet.</p>'
+        else '<p class="empty">No API keys for this App yet.</p>'
     )
     can_mint = bool(app.get("can_mint_keys"))
     mint_html = (
         '<form class="actions" data-mint-owned-key="' + app_id + '">'
-        '<input type="text" name="label" placeholder="New key label" '
-        'aria-label="New runtime key label">'
-        '<button type="submit">Mint key</button>'
+        '<input type="text" name="label" placeholder="Key label, e.g. MacBook or Open WebUI" '
+        'aria-label="API key label">'
+        '<button type="submit">Create key</button>'
+        '<p class="key-note">The label is just a reminder. The full key is shown once after creation.</p>'
         "</form>"
         if can_mint
         else (
-            '<p class="empty">This App cannot mint keys until its inherited '
-            "Profile is available.</p>"
+            '<p class="empty">This App cannot create keys until its '
+            "permissions are available.</p>"
         )
     )
     return (
         '<article class="card">'
         f"<h3>{name}</h3>"
-        f"<p>{kind} App · Profile: {esc(profile_name)}</p>"
+        f"<p>Use this App for one tool or workflow. Its keys use {esc(permission_text)}.</p>"
         '<div class="meta">'
-        + profile_badge
+        + permission_badge
         + _badge(f"{app.get('active_credentials') or 0} active keys", "good")
         + "</div>"
         + mint_html
@@ -284,7 +302,7 @@ def _signed_out_hero(*, oidc_enabled: bool, login_url: str) -> str:
         '<section aria-labelledby="hero-heading">'
         '<div class="hero">'
         '<h2 id="hero-heading">Start with an account or key</h2>'
-        '<p class="lead">Sign in to create Apps and runtime keys. Paste an '
+        '<p class="lead">Sign in to create Apps and API keys. Paste an '
         "<code>opk_</code> key if you already have one; "
         "the browser stores it in this tab.</p>"
         f'<div class="actions">{primary}</div>'
@@ -297,56 +315,63 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     user_value = account.get("user")
     user = user_value if isinstance(user_value, Mapping) else {}
     user_label = esc(user.get("email") or user.get("name") or "signed-in user")
-    raw_role = user_role(account)
-    role_label = raw_role if raw_role in {"owner", "admin", "superadmin"} else "user"
     apps = [a for a in account.get("apps", []) if isinstance(a, Mapping)]
     is_admin = can_admin(account)
-    empty_html = (
-        '<article class="card"><h3>No owned Apps</h3>'
-        "<p>Create your own App here, or use Admin for shared service Apps.</p>"
-        '<div class="actions"><a class="pill" href="/admin">Open Admin</a></div>'
-        "</article>"
-        if is_admin
-        else (
-            '<article class="card"><h3>No Apps yet</h3>'
-            "<p>Create a Personal App that inherits your account permissions, "
-            "then mint an API key for your tools.</p>"
-            '<form class="actions" data-request-access>'
-            '<button type="submit">Create App</button>'
-            "</form></article>"
-        )
+    create_help = (
+        "Create one App for each tool or workflow you connect. Name it after "
+        "that tool, then create keys inside it."
+    )
+    create_form = (
+        '<form class="card" data-create-owned-app>'
+        "<h3>New App</h3>"
+        f"<p>{create_help}</p>"
+        '<div class="row">'
+        '<input type="text" name="name" placeholder="App name, e.g. Open WebUI" '
+        'aria-label="App name" required maxlength="80">'
+        '<button type="submit">Create App</button>'
+        "</div>"
+        "</form>"
     )
     apps_html = (
-        "".join(_app_html(app) for app in apps) if apps else empty_html
+        f'<div class="grid">{"".join(_app_html(app, show_permission_details=is_admin) for app in apps)}</div>'
+        if apps
+        else ""
+    )
+    admin_hint = (
+        ' <a href="/admin">Admin</a> manages shared Apps and permission Profiles.'
+        if is_admin
+        else ""
     )
     return (
         '<section aria-labelledby="apps-heading">'
-        '<h2 id="apps-heading">Apps</h2>'
+        '<h2 id="apps-heading">Your Apps</h2>'
         '<p class="hint">'
-        + f"Signed in as {user_label} · role {esc(role_label)}. "
-        + "Apps own runtime keys; revoke a key to cut its access immediately."
+        + f"Signed in as {user_label}. "
+        + "An App is one client, tool, workflow, or script. A key label names where that key is stored."
+        + admin_hint
         + "</p>"
-        '<div id="account-result" class="message"></div>'
-        f'<div class="grid">{apps_html}</div>'
-        "</section>"
+        + '<div id="account-result" class="message"></div>'
+        + create_form
+        + apps_html
+        + "</section>"
     )
 
 
 def _runtime_key_section() -> str:
     return (
         '<section aria-labelledby="runtime-heading">'
-        '<h2 id="runtime-heading">Check access</h2>'
-        '<p class="hint">Paste an <code>opk_</code> key to inspect access for '
-        "any App from this browser. The key stays in this tab only.</p>"
+        '<h2 id="runtime-heading">Check an API key</h2>'
+        '<p class="hint">Paste an <code>opk_</code> key if you already have one. '
+        "This only checks the key from this browser tab.</p>"
         '<div class="card">'
         '<div class="row">'
         '<input id="runtime-key" type="password" autocomplete="off" spellcheck="false" '
         'placeholder="opk_..." aria-describedby="connect-result">'
         '<button id="check-key" type="button">Check access</button>'
-        '<button id="forget-key" class="secondary" type="button">Forget</button>'
+        '<button id="forget-key" class="secondary" type="button">Clear pasted key</button>'
         "</div>"
         '<div id="connect-result" class="message">'
-        "Paste an opk_ key to test access from this browser."
+        "No key is pasted in this tab."
         "</div>"
         "</div>"
         "</section>"
@@ -482,6 +507,37 @@ def render_user_portal(
     accountResult.textContent = text;
   }}
 
+  async function copyText(text, button) {{
+    try {{
+      await navigator.clipboard.writeText(text);
+      if (button) button.textContent = "Copied";
+    }} catch (_) {{
+      if (button) button.textContent = "Copy failed";
+    }}
+  }}
+
+  function showMintedKey(key) {{
+    const accountResult = $("account-result");
+    if (!accountResult) return;
+    accountResult.className = "message good";
+    accountResult.textContent = "";
+    const wrap = document.createElement("div");
+    wrap.className = "secret";
+    const text = document.createElement("p");
+    text.textContent = "Copy this API key now. It will not be shown again.";
+    const code = document.createElement("code");
+    code.textContent = key;
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.textContent = "Copy key";
+    copy.addEventListener("click", () => copyText(key, copy));
+    actions.append(copy);
+    wrap.append(text, code, actions);
+    accountResult.append(wrap);
+  }}
+
   function runtimeKey() {{
     return keyInput.value.trim();
   }}
@@ -492,7 +548,7 @@ def render_user_portal(
 
   function updateKeyState() {{
     if (runtimeKey()) {{
-      setMessage("Key is stored in this browser. Check access to refresh.");
+      setMessage("A key is pasted in this tab. Check access to inspect it.");
     }}
   }}
 
@@ -509,15 +565,15 @@ def render_user_portal(
     return body;
   }}
 
-  async function postAccountJson(path, body = {{}}) {{
+  async function postAccountJson(path, body = {{}}, method = "POST") {{
     const response = await fetch(path, {{
-      method: "POST",
+      method,
       headers: {{
         "content-type": "application/json",
         "x-ai-gateway-user-action": "1",
         "x-ai-gateway-csrf": csrfToken
       }},
-      body: JSON.stringify(body),
+      body: method === "DELETE" ? undefined : JSON.stringify(body),
       cache: "no-store"
     }});
     const text = await response.text();
@@ -620,7 +676,7 @@ def render_user_portal(
 
   async function checkAccess() {{
     if (!runtimeKey()) {{
-      setMessage("Paste an opk_ runtime key first.", "warn");
+      setMessage("Paste an opk_ API key first.", "warn");
       return;
     }}
     sessionStorage.setItem(storageKey, runtimeKey());
@@ -652,7 +708,7 @@ def render_user_portal(
   $("forget-key").addEventListener("click", () => {{
     sessionStorage.removeItem(storageKey);
     keyInput.value = "";
-    setMessage("Forgot the key in this tab.");
+    setMessage("Cleared the pasted key from this tab.");
   }});
   keyInput.addEventListener("keydown", (event) => {{
     if (event.key === "Enter") checkAccess();
@@ -660,6 +716,24 @@ def render_user_portal(
 
   keyInput.value = sessionStorage.getItem(storageKey) || "";
   updateKeyState();
+
+  document.querySelector("[data-create-owned-app]")?.addEventListener("submit", async (event) => {{
+    event.preventDefault();
+    const form = event.currentTarget;
+    const name = String(new FormData(form).get("name") || "").trim();
+    if (!name) {{
+      setAccountMessage("Name the App before creating it.", "warn");
+      return;
+    }}
+    setAccountMessage("Creating App...");
+    try {{
+      await postAccountJson("/me/api/apps", {{ name }});
+      setAccountMessage("App created. Reloading account view...", "good");
+      setTimeout(() => location.reload(), 800);
+    }} catch (error) {{
+      setAccountMessage(error.message || "App creation failed.", "bad");
+    }}
+  }});
 
   document.querySelector("[data-request-access]")?.addEventListener("submit", async (event) => {{
     event.preventDefault();
@@ -669,7 +743,7 @@ def render_user_portal(
       setAccountMessage("App created. Reloading account view...", "good");
       setTimeout(() => location.reload(), 800);
     }} catch (error) {{
-      setAccountMessage(error.message || "Access request failed.", "bad");
+      setAccountMessage(error.message || "App creation failed.", "bad");
     }}
   }});
 
@@ -678,11 +752,15 @@ def render_user_portal(
       event.preventDefault();
       const appId = form.dataset.mintOwnedKey;
       const label = new FormData(form).get("label") || "";
-      setAccountMessage("Minting key...");
+      setAccountMessage("Creating key...");
       try {{
         const data = await postAccountJson("/me/api/apps/" + encodeURIComponent(appId) + "/keys", {{ label }});
         const key = data && data.credential && data.credential.api_key;
-        setAccountMessage(key ? "New key: " + key : "Key minted. Reload to see the credential list.", "good");
+        if (key) {{
+          showMintedKey(key);
+        }} else {{
+          setAccountMessage("Key created. Reload to see it in the list.", "good");
+        }}
       }} catch (error) {{
         setAccountMessage(error.message || "Key mint failed.", "bad");
       }}
@@ -692,13 +770,16 @@ def render_user_portal(
   document.querySelectorAll("[data-revoke-owned-key]").forEach((button) => {{
     button.addEventListener("click", async () => {{
       const credentialId = button.dataset.revokeOwnedKey;
-      setAccountMessage("Revoking key...");
+      if (!confirm("Delete this API key? Apps using it will lose access immediately.")) {{
+        return;
+      }}
+      setAccountMessage("Deleting key...");
       try {{
-        await postAccountJson("/me/api/credentials/" + encodeURIComponent(credentialId) + "/revoke", {{}});
-        setAccountMessage("Key revoked. Reloading account view...", "good");
+        await postAccountJson("/me/api/credentials/" + encodeURIComponent(credentialId), {{}}, "DELETE");
+        setAccountMessage("Key deleted. Reloading account view...", "good");
         setTimeout(() => location.reload(), 800);
       }} catch (error) {{
-        setAccountMessage(error.message || "Key revoke failed.", "bad");
+        setAccountMessage(error.message || "Key deletion failed.", "bad");
       }}
     }});
   }});

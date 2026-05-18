@@ -23,9 +23,13 @@ Agents and apps can start without local repo context by fetching the public disc
 - `GET /login` — browser OIDC login entry point when configured
 - `GET /me` — legacy browser alias; redirects to `/`
 - `GET /me/api/session` — signed-OIDC account view for Apps and non-secret
-  runtime-key records owned by the current user
-- `POST /me/api/access-request` — signed-OIDC self-service Personal App
-  creation; the App inherits the user's default permissions
+  API-key records owned by the current user
+- `POST /me/api/apps` — signed-OIDC self-service App creation; the App
+  inherits the user's default permissions
+- `POST /me/api/apps/{app_id}/keys` — create an API key for an App the
+  signed-in user owns
+- `DELETE /me/api/credentials/{credential_id}` — delete a key the signed-in
+  user owns
 - `GET /.well-known/ai-gateway` — canonical gateway metadata document
 - `GET /.well-known/openai-proxy` — compatibility alias (identical body)
 - `GET /llms.txt`
@@ -129,18 +133,18 @@ Admin/control-plane credentials are separate. Bootstrap a service-account admin 
 ./venv/bin/python proxy.py generate-admin-key owner-cli
 ```
 
-The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser login starts at `/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. Admins are Users with an admin-capable role, so signed-in admins also see an Admin link from the account portal. The dashboard can create Apps, Profiles, and runtime keys, revoke credentials, and simulate policy decisions before handing someone access.
+The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser login starts at `/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. Admins are Users with an admin-capable role, so signed-in admins also see an Admin link from the account portal. The dashboard can create Apps, Profiles, and API keys, revoke credentials, and simulate policy decisions before handing someone access.
 
 ### Give a family member a key
 
 The shortest "share my gateway with another human" flow:
 
 1. **OIDC User.** The family member signs in once so the admin store has their **User** row. They do not need a global admin role.
-2. **Personal App.** The account portal creates or returns their self-service **Personal App**. An App is the access boundary, not the person.
+2. **Personal App.** The account portal lets them create one or more self-service **Personal Apps**. An App is the access boundary for a tool, workflow, or script; it is not the person.
 3. **Inherited Profile.** The App inherits the user's default Profile, controlled by `admin.user_defaults` and any admin-set Profile mappings. Admins can still attach an explicit App/Profile override when a narrower or broader boundary is needed.
-4. **App API key.** The user mints their own `opk_...` key from the account portal and can revoke it later. They can also paste an existing key locally in the browser to confirm their base URL, SDK settings, capabilities, and media-job access before configuring their chat app.
+4. **App API key.** The user creates their own `opk_...` key from the account portal and can delete it later. They can also paste an existing key locally in the browser to confirm their base URL, SDK settings, capabilities, and media-job access before configuring their chat app.
 
-Rotation is per-App, not per-human: revoke the old Credential and mint a new key while preserving the App's Profile and downstream mapping. Dashboard-minted keys inherit the App's current Profile unless an explicit per-key override is requested.
+Rotation is per-App, not per-human: delete the old Credential and create a new key while preserving the App's Profile and downstream mapping. Dashboard-minted keys inherit the App's current Profile unless an explicit per-key override is requested.
 
 See [`AUTH_GUIDE.md`](AUTH_GUIDE.md) for the full key-generation and rotation workflow.
 

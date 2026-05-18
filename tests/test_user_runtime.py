@@ -16,6 +16,7 @@ from gateway.runtime_auth import hash_api_key  # noqa: E402
 from gateway.user_runtime import (  # noqa: E402
     UserPortalError,
     build_user_portal_snapshot,
+    create_user_app,
     mint_user_app_key,
     request_user_access,
     revoke_user_app_key,
@@ -152,6 +153,19 @@ class UserRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(snapshot["apps"][0]["effective_profile_id"], self.profile["id"])
         self.assertTrue(snapshot["apps"][0]["can_mint_keys"])
+
+    def test_user_can_create_named_apps(self) -> None:
+        created = create_user_app(self.session, name="Open WebUI", path=self.db)
+        self.assertEqual(created["app"]["name"], "Open WebUI")
+        self.assertEqual(created["app"]["effective_profile_id"], "default-local")
+
+        apps = admin_store.list_apps_for_user(self.user["id"], path=self.db)
+        self.assertEqual({app["name"] for app in apps}, {"user-laptop", "Open WebUI"})
+
+    def test_user_app_name_is_required(self) -> None:
+        with self.assertRaises(UserPortalError) as ctx:
+            create_user_app(self.session, name="   ", path=self.db)
+        self.assertEqual(ctx.exception.code, "app_name_required")
 
     def test_user_cannot_revoke_another_users_app_key(self) -> None:
         other = admin_store.upsert_oidc_user(

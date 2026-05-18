@@ -594,9 +594,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertTrue(credential["api_key"].startswith("opk_"))
         self.assertNotIn("hash", credential)
 
-        revoked = self.client.post(
-            f"/me/api/credentials/{credential['id']}/revoke",
-            json={},
+        revoked = self.client.delete(
+            f"/me/api/credentials/{credential['id']}",
             headers={
                 "x-ai-gateway-user-action": "1",
                 "x-ai-gateway-csrf": csrf,
@@ -648,8 +647,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         csrf = csrf_token_for_session(session, signing_key=cfg.signing_key)
 
         requested = self.client.post(
-            "/me/api/access-request",
-            json={},
+            "/me/api/apps",
+            json={"name": "New user laptop"},
             headers={
                 "x-ai-gateway-user-action": "1",
                 "x-ai-gateway-csrf": csrf,
@@ -661,6 +660,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             requested.json()["app"]["effective_profile_id"],
             "default-local",
         )
+        self.assertEqual(requested.json()["app"]["name"], "New user laptop")
 
         minted = self.client.post(
             f"/me/api/apps/{requested.json()['app']['id']}/keys",

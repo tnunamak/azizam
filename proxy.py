@@ -85,6 +85,7 @@ from gateway.user_render import render_user_portal
 from gateway.user_runtime import (
     UserPortalError,
     build_user_portal_snapshot,
+    create_user_app,
     mint_user_app_key,
     request_user_access,
     revoke_user_app_key,
@@ -7274,6 +7275,15 @@ def _require_user_action_header(request: Request, session) -> JSONResponse | Non
     )
 
 
+def _require_user_self_service() -> None:
+    if not _user_self_service_enabled():
+        raise UserPortalError(
+            "self_service_disabled",
+            "App self-service is disabled for this gateway.",
+            status_code=403,
+        )
+
+
 app.include_router(
     create_admin_router(
         ADMIN_STORE,
@@ -7345,6 +7355,37 @@ async def user_portal_session(request: Request):
     )
 
 
+@app.post("/me/api/apps", include_in_schema=False)
+async def user_portal_create_app(request: Request):
+    try:
+        session = _require_user_session(request)
+        _require_user_self_service()
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = body.get("name") if isinstance(body, Mapping) else ""
+    try:
+        payload = create_user_app(
+            session,
+            name=str(name or ""),
+            default_profile_id=_default_profile_id_for_session(session),
+            path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=201,
+        content=payload,
+        headers={"cache-control": "no-store"},
+    )
+
+
 @app.post("/me/api/apps/{app_id}/keys", include_in_schema=False)
 async def user_portal_mint_key(app_id: str, request: Request):
     try:
@@ -7380,6 +7421,7 @@ async def user_portal_mint_key(app_id: str, request: Request):
 async def user_portal_request_access(request: Request):
     try:
         session = _require_user_session(request)
+        _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -7400,6 +7442,7 @@ async def user_portal_request_access(request: Request):
     )
 
 
+@app.delete("/me/api/credentials/{credential_id}", include_in_schema=False)
 @app.post("/me/api/credentials/{credential_id}/revoke", include_in_schema=False)
 async def user_portal_revoke_key(credential_id: str, request: Request):
     try:

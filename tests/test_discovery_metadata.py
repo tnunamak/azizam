@@ -31,6 +31,11 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertEqual(metadata["links"]["user_portal"], "/")
         self.assertEqual(metadata["links"]["user_portal_alias"], "/me")
         self.assertEqual(metadata["links"]["user_session"], "/me/api/session")
+        self.assertEqual(metadata["links"]["user_apps"], "/me/api/apps")
+        self.assertEqual(
+            metadata["links"]["user_api_key"],
+            "/me/api/credentials/{credential_id}",
+        )
         self.assertEqual(
             metadata["links"]["user_access_request"],
             "/me/api/access-request",

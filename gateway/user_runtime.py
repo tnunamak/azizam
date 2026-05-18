@@ -1,8 +1,8 @@
 """Normal-user account view over the durable admin store.
 
 The user portal is intentionally read-mostly. It lets a signed-in OIDC user
-see Apps they own, see non-secret runtime-key records, mint another key for an
-App they already own, and revoke their own App keys. It never grants Profiles
+see Apps they own, see non-secret API-key records, create another key for an
+App they already own, and delete their own App keys. It never grants Profiles
 or changes App ownership; those remain admin-plane actions.
 """
 
@@ -19,6 +19,7 @@ from gateway.runtime_auth import hash_api_key
 __all__ = [
     "UserPortalError",
     "build_user_portal_snapshot",
+    "create_user_app",
     "mint_user_app_key",
     "request_user_access",
     "revoke_user_app_key",
@@ -149,7 +150,7 @@ def _app_profile_for_self_service(
     if admin_store.get_profile(str(profile_id), path=path) is None:
         raise UserPortalError(
             "profile_missing",
-            "This App's inherited Profile is missing; ask the operator to repair access",
+            "This App's inherited permissions are unavailable; ask the operator to repair access",
             status_code=403,
         )
     return str(profile_id)
@@ -249,7 +250,7 @@ def mint_user_app_key(
     default_profile_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Mint a runtime key for an App already owned by ``session.subject``."""
+    """Create an API key for an App already owned by ``session.subject``."""
     user = _user_from_session(session, path=path)
     app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
     _app_profile_for_self_service(
@@ -279,6 +280,56 @@ def mint_user_app_key(
     out["active"] = True
     out["api_key"] = api_key
     return out
+
+
+def create_user_app(
+    session: AdminSession,
+    *,
+    name: str,
+    default_profile_id: str | None = None,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Create a new user-owned App that inherits the user's default policy."""
+    user = _user_from_session(session, path=path)
+    cleaned_name = " ".join(str(name or "").split())
+    if not cleaned_name:
+        raise UserPortalError(
+            "app_name_required",
+            "Name the App before creating it.",
+            status_code=400,
+        )
+    if len(cleaned_name) > 80:
+        raise UserPortalError(
+            "app_name_too_long",
+            "App names must be 80 characters or fewer.",
+            status_code=400,
+        )
+    app = admin_store.create_app(
+        cleaned_name,
+        kind="personal",
+        owner_user_id=str(user["id"]),
+        path=path,
+    )
+    admin_store.record_audit(
+        "app.self_create",
+        actor_kind="user",
+        actor_id=str(user["id"]),
+        target_kind="app",
+        target_id=str(app["id"]),
+        metadata={"email": user.get("email"), "name": cleaned_name},
+        path=path,
+    )
+    return {
+        "app": {
+            "id": app.get("id"),
+            "kind": app.get("kind"),
+            "name": app.get("name"),
+            "profile_id": app.get("default_profile_id"),
+            "effective_profile_id": default_profile_id or "default-local",
+            "profile": _default_profile_summary(default_profile_id, path=path),
+            "profile_required": False,
+        }
+    }
 
 
 def request_user_access(
@@ -335,13 +386,13 @@ def revoke_user_app_key(
     *,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Revoke a runtime key for an App owned by ``session.subject``."""
+    """Delete an API key for an App owned by ``session.subject``."""
     user = _user_from_session(session, path=path)
     before = admin_store.get_credential(credential_id, path=path)
     if before is None or before.get("subject_kind") != "app":
         raise UserPortalError(
             "credential_not_found",
-            "Runtime key not found for this account",
+            "API key not found for this account",
             status_code=404,
         )
     app_id = str(before.get("app_id") or before.get("subject_id") or "")

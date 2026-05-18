@@ -39,8 +39,8 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertNotIn("Use your local AI stack", html)
         self.assertNotIn("Failure Meanings", html)
         self.assertNotIn("ANTHROPIC_BASE_URL", html)
-        self.assertNotIn("Create App", html)
         self.assertNotIn("Mint runtime key", html)
+        self.assertNotIn("runtime key", html)
         self.assertNotIn("/admin/api", html)
 
     def test_does_not_render_real_api_key_material(self) -> None:
@@ -83,9 +83,14 @@ class UserPortalRenderTests(unittest.TestCase):
         )
         self.assertIn("user@example.com", html)
         self.assertIn("user-laptop", html)
-        self.assertIn("Family chat", html)
+        self.assertNotIn("Family chat", html)
+        self.assertIn("account permissions", html)
         self.assertIn("data-mint-owned-key", html)
         self.assertIn("data-revoke-owned-key", html)
+        self.assertIn("Create key", html)
+        self.assertIn("Delete key", html)
+        self.assertIn("Copy key", html)
+        self.assertIn("The full key is shown once", html)
         self.assertIn("credential-row", html)
         self.assertNotIn('href="/admin"', html)
         self.assertNotIn(">Discovery<", html)
@@ -104,12 +109,13 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn('href="/admin"', html)
         self.assertIn(">Admin<", html)
         self.assertIn('href="/status">Status</a>', html)
-        self.assertIn("role owner", html)
-        self.assertIn("No owned Apps", html)
+        self.assertNotIn("role owner", html)
+        self.assertIn("permission Profiles", html)
+        self.assertIn("New App", html)
         self.assertNotIn('<form class="actions" data-request-access>', html)
         self.assertNotIn("<button type=\"submit\">Request access</button>", html)
 
-    def test_signed_in_user_without_apps_can_request_access(self) -> None:
+    def test_signed_in_user_without_apps_can_create_apps(self) -> None:
         html = render_user_portal(
             oidc_enabled=True,
             account={
@@ -119,9 +125,11 @@ class UserPortalRenderTests(unittest.TestCase):
             },
             csrf_token="csrf-token",
         )
-        self.assertIn("Create a Personal App", html)
+        self.assertIn("New App", html)
+        self.assertIn("App name, e.g. Open WebUI", html)
         self.assertIn("<button type=\"submit\">Create App</button>", html)
-        self.assertIn("data-request-access", html)
+        self.assertIn("data-create-owned-app", html)
+        self.assertNotIn("No Apps yet", html)
         self.assertIn("x-ai-gateway-csrf", html)
 
     def test_signed_out_landing_uses_shared_shell_and_clear_hero(self) -> None:
