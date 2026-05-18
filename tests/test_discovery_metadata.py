@@ -28,7 +28,8 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("anthropic", {p["id"] for p in metadata["protocols"]})
         self.assertIn("ollama", {p["id"] for p in metadata["protocols"]})
         self.assertEqual(metadata["links"]["login"], "/login")
-        self.assertEqual(metadata["links"]["user_portal"], "/me")
+        self.assertEqual(metadata["links"]["user_portal"], "/")
+        self.assertEqual(metadata["links"]["user_portal_alias"], "/me")
         self.assertEqual(metadata["links"]["user_session"], "/me/api/session")
         self.assertEqual(
             metadata["links"]["user_access_request"],
@@ -80,10 +81,11 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
 
-    def test_root_redirects_to_user_portal(self) -> None:
+    def test_root_serves_user_portal(self) -> None:
         response = self.client.get("/", follow_redirects=False)
-        self.assertEqual(response.status_code, 302, response.text)
-        self.assertEqual(response.headers["location"], "/me")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
+        self.assertIn("My AI Gateway", response.text)
 
     def test_legacy_firehose_redirects_to_status_dashboard(self) -> None:
         response = self.client.get("/firehose", follow_redirects=False)
@@ -97,7 +99,8 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertEqual(body["object"], "ai_gateway_discovery")
         self.assertEqual(body["service"]["product"], "Vivid Fish AI Gateway")
         self.assertEqual(body["service"]["canonical_host"], "https://ai.vivid.fish")
-        self.assertEqual(body["links"]["user_portal"], "/me")
+        self.assertEqual(body["links"]["user_portal"], "/")
+        self.assertEqual(body["links"]["user_portal_alias"], "/me")
         self.assertIn("/gateway/v1/capabilities", body["links"].values())
 
     def test_user_portal_is_public(self) -> None:

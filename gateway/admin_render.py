@@ -43,48 +43,43 @@ _DASHBOARD_CSS = """
   * { box-sizing: border-box; }
   body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0;
          background: var(--bg); color: var(--text); }
-  header { padding: 1rem clamp(1rem, 3vw, 2rem); border-bottom: 1px solid var(--line);
+  header { padding: 1rem clamp(1rem, 3vw, 1.75rem); border-bottom: 1px solid var(--line);
            display: flex; align-items: center; justify-content: space-between; gap: 1rem;
            background: oklch(18.5% 0.02 255); position: sticky; top: 0; z-index: 2; }
   header h1 { font-size: 1.05rem; margin: 0; letter-spacing: 0; }
   header .actor { font-size: 0.85rem; color: var(--muted); }
-  main { padding: 0 clamp(1rem, 3vw, 2rem) 2rem; display: grid; gap: 0;
-         grid-template-columns: minmax(0, 1fr); max-width: 1280px;
+  header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  header a { color: oklch(83% 0.09 235); text-decoration: none; font-size: 0.86rem; }
+  main { padding: 1.25rem clamp(1rem, 3vw, 2rem) 2rem; display: grid; gap: 1.25rem;
+         grid-template-columns: minmax(0, 1fr); max-width: 1120px;
          margin: 0 auto; }
-  section { border-top: 1px solid var(--line); padding: 1.25rem 0; }
-  section h2 { font-size: 0.92rem; margin: 0 0 0.75rem 0;
+  section { display: grid; gap: 0.75rem; }
+  section h2 { font-size: 0.88rem; margin: 0;
                letter-spacing: 0.08em; text-transform: uppercase;
                color: var(--muted); }
-  .hero { display: grid; gap: 1rem; padding: 1.4rem 0 1.25rem;
-          grid-template-columns: minmax(0, 1fr); }
-  .hero h2 { color: var(--text); font-size: clamp(1.7rem, 3vw, 2.8rem);
-             line-height: 1.03; max-width: 17ch; margin: 0; letter-spacing: 0; }
-  .hero p { color: var(--muted); margin: 0; max-width: 68ch; line-height: 1.5; }
-  .connect { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-             padding: 1rem; background: var(--surface); border: 1px solid var(--line);
-             border-radius: 8px; }
-  .connect .label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase;
-                    letter-spacing: 0.08em; margin-bottom: 0.3rem; }
-  .connect code, td code { font-family: ui-monospace, monospace; font-size: 0.86em;
-                           background: oklch(15.5% 0.016 255); padding: 0.12rem 0.35rem;
-                           border: 1px solid var(--line); border-radius: 4px; }
-  .counts { display: grid; grid-template-columns: repeat(auto-fit,
-             minmax(140px, 1fr)); gap: 0.75rem; }
-  .count { background: var(--surface); border: 1px solid var(--line);
-           padding: 0.75rem 1rem; border-radius: 8px; }
-  .count .label { font-size: 0.75rem; color: var(--muted);
-                  text-transform: uppercase; letter-spacing: 0.05em; }
-  .count .value { font-size: 1.5rem; font-weight: 600;
-                  margin-top: 0.25rem; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  .summary { display: flex; flex-wrap: wrap; gap: 0.5rem; color: var(--muted); }
+  .summary strong { color: var(--text); }
+  .summary span { background: var(--surface); border: 1px solid var(--line);
+                  border-radius: 999px; padding: 0.45rem 0.7rem; }
+  .runtime-settings { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
+                      padding: 0.75rem; background: var(--surface); border: 1px solid var(--line);
+                      border-radius: 8px; }
+  .runtime-settings .label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase;
+                             letter-spacing: 0.08em; }
+  .runtime-settings code, td code { font-family: ui-monospace, monospace; font-size: 0.86em;
+                                    background: oklch(15.5% 0.016 255); padding: 0.12rem 0.35rem;
+                                    border: 1px solid var(--line); border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
+          background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+          overflow: hidden; }
   th, td { text-align: left; padding: 0.5rem 0.75rem;
            border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-weight: 500; color: var(--muted); }
   tr:last-child td { border-bottom: none; }
-  .empty { color: var(--muted); font-style: italic; }
   .cell-main { font-weight: 650; color: var(--text); }
   .cell-sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.2rem; }
-  form.flow { display: grid; gap: 0.75rem; }
+  form.flow { display: grid; gap: 0.75rem; background: var(--surface);
+              border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem; }
   form.flow .row { display: grid; gap: 0.5rem;
                    grid-template-columns: minmax(0, 1fr) auto; }
   form.flow .stack { display: grid; gap: 0.5rem;
@@ -103,14 +98,7 @@ _DASHBOARD_CSS = """
   button.inline { background: var(--bad-bg); color: var(--bad); border: 1px solid oklch(40% 0.08 25);
                   min-height: 2.75rem; padding: 0.3rem 0.55rem; border-radius: 6px; cursor: pointer; }
   button.inline:hover { filter: brightness(1.08); }
-  .hint { margin: 0 0 0.9rem 0; color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
-  ul.links { list-style: none; padding: 0; margin: 0;
-             display: flex; flex-wrap: wrap; gap: 0.5rem; }
-  ul.links a { display: inline-flex; align-items: center; min-height: 2.75rem;
-               color: oklch(83% 0.09 235); text-decoration: none;
-               background: var(--surface); border: 1px solid var(--line);
-               padding: 0.35rem 0.6rem; border-radius: 999px;
-               font-size: 0.85rem; }
+  .hint { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
   .badge { font-size: 0.75rem; padding: 0.15rem 0.45rem;
            border-radius: 4px; background: var(--surface-2); color: var(--muted); }
   .badge.revoked, .badge.problem { background: var(--bad-bg); color: var(--bad); }
@@ -120,8 +108,13 @@ _DASHBOARD_CSS = """
   .problem-list li { background: var(--surface); border: 1px solid var(--line);
                      border-radius: 8px; padding: 0.65rem 0.75rem; }
   .result { white-space: pre-wrap; background: oklch(15.5% 0.016 255); border: 1px solid var(--line);
-            border-radius: 8px; padding: 0.75rem; min-height: 2.5rem;
+            border-radius: 8px; padding: 0.75rem;
             color: oklch(90% 0.05 235); }
+  .result:empty { display: none; }
+  details.panel { background: var(--surface); border: 1px solid var(--line);
+                  border-radius: 8px; padding: 0.9rem; }
+  details.panel summary { cursor: pointer; color: var(--text); font-weight: 650; }
+  details.panel form.flow { margin-top: 0.75rem; background: transparent; border: 0; padding: 0; }
   @media (max-width: 760px) {
     header { align-items: flex-start; flex-direction: column; }
     table { display: block; overflow-x: auto; }
@@ -145,18 +138,14 @@ def _json_for_script(value: str) -> str:
     )
 
 
-def _count_card(label: str, value: Any) -> str:
+def _summary_bar(items: Iterable[tuple[str, Any]]) -> str:
     return (
-        '<div class="count">'
-        f'<div class="label">{_esc(label)}</div>'
-        f'<div class="value">{_esc(value)}</div>'
-        "</div>"
-    )
-
-
-def _empty_row(columns: int, message: str) -> str:
-    return (
-        f'<tr><td colspan="{columns}" class="empty">{_esc(message)}</td></tr>'
+        '<div class="summary">'
+        + "".join(
+            f"<span><strong>{_esc(value)}</strong> {_esc(label)}</span>"
+            for label, value in items
+        )
+        + "</div>"
     )
 
 
@@ -406,28 +395,28 @@ def _audit_row(record: Mapping[str, Any]) -> str:
 
 
 def _section(title: str, body: str) -> str:
+    if not body.strip():
+        return ""
     return f"<section><h2>{_esc(title)}</h2>{body}</section>"
 
 
-def _table(headers: Iterable[str], rows: Iterable[str], *, empty: str) -> str:
+def _table(headers: Iterable[str], rows: Iterable[str]) -> str:
     headers_list = list(headers)
     header_html = "".join(f"<th>{_esc(h)}</th>" for h in headers_list)
     rows_list = list(rows)
     if not rows_list:
-        rows_list = [_empty_row(len(headers_list) or 1, empty)]
+        return ""
     body_html = "".join(rows_list)
     return f"<table><thead><tr>{header_html}</tr></thead><tbody>{body_html}</tbody></table>"
 
 
 def _connection_panel(*, base_url: str) -> str:
     return (
-        '<div class="connect">'
-        '<div><div class="label">Base URL</div>'
-        f'<code>{_esc(base_url)}</code></div>'
-        '<div><div class="label">Runtime key</div>'
-        '<code>Authorization: Bearer opk_...</code></div>'
-        '<div><div class="label">First checks</div>'
-        '<code>GET /health</code> <code>GET /v1/models</code></div>'
+        '<div class="runtime-settings">'
+        '<span class="label">Runtime base URL</span>'
+        f'<code>{_esc(base_url)}</code>'
+        '<span class="label">Key header</span>'
+        '<code>Authorization: Bearer opk_...</code>'
         "</div>"
     )
 
@@ -450,10 +439,8 @@ def _access_issues(
             items.append(f"{app_name} points at missing Profile {profile_id}.")
         if active_keys_by_app.get(app_id, 0) < 1:
             items.append(f"{app_name} has no active runtime key.")
-    if not profiles_by_id:
-        items.append("No stored Profiles yet; Apps fall back to local defaults.")
     if not items:
-        items.append("No access blockers in the admin store.")
+        return ""
 
     return (
         '<ul class="problem-list">'
@@ -477,7 +464,7 @@ def _flow_form(
         for app in apps
     )
     if not app_options:
-        app_options = '<option value="" disabled selected>No apps yet — create one above</option>'
+        app_options = '<option value="" disabled selected>Create an App first</option>'
     user_options = '<option value="">No user owner</option>' + "".join(
         f'<option value="{_esc(user.get("id"))}">'
         f'{_esc(user.get("email") or user.get("name") or user.get("id"))}'
@@ -491,9 +478,8 @@ def _flow_form(
         for profile in profiles
     )
     return (
-        '<p class="hint">For a human, create a Personal app owned by that User and attach a Profile. For bots or shared integrations, create a Service app. Then mint one <code>opk_...</code> key and paste it into the tool. The raw key is shown once.</p>'
         '<form class="flow" method="post" action="' + _esc(create_app_action) + '" data-create-app>'
-        "<label>Create App:</label>"
+        "<label>Create App</label>"
         '<div class="stack">'
         '<input type="text" name="name" placeholder="App name" aria-label="App name" required>'
         '<select name="kind" aria-label="App kind"><option value="service">Service app</option><option value="personal">Personal app</option></select>'
@@ -508,7 +494,7 @@ def _flow_form(
         '<form class="flow" method="post" data-action-template="'
         + _esc(create_key_action_template)
         + '" data-mint-key>'
-        "<label>Mint runtime key:</label>"
+        "<label>Mint runtime key</label>"
         '<div class="row">'
         f'<select name="app_id" aria-label="App for runtime key" required>{app_options}</select>'
         '<input type="text" name="label" placeholder="Key label" aria-label="Runtime key label">'
@@ -530,12 +516,11 @@ def _profile_form(
         else '<div class="hint">No stored Profiles yet.</div>'
     )
     return (
-        '<p class="hint">Create reusable access bundles from metadata selectors. Leave a selector blank when it should not constrain access; use the JSON field for unusual local overrides.</p>'
-        + existing_html
+        existing_html
         + '<form class="flow" method="post" action="'
         + _esc(create_profile_action)
         + '" data-create-profile>'
-        "<label>Create Profile:</label>"
+        "<label>Create Profile</label>"
         '<div class="stack">'
         '<input type="text" name="id" placeholder="profile id" aria-label="Profile id" required>'
         '<input type="text" name="label" placeholder="Label" aria-label="Profile label">'
@@ -577,11 +562,11 @@ def _policy_simulator_form(
         for profile in profiles
     )
     return (
-        '<p class="hint">Check a Profile against the same request facts the gateway policy layer evaluates before you hand someone a key.</p>'
+        '<details class="panel"><summary>Simulate access</summary>'
         '<form class="flow" method="post" action="'
         + _esc(policy_simulate_action)
         + '" data-simulate-policy>'
-        "<label>Simulate request:</label>"
+        "<label>Request facts</label>"
         '<div class="stack">'
         f'<select name="profile" aria-label="Profile to simulate">{profile_options}</select>'
         '<input type="text" name="protocol" placeholder="protocol: openai.images" aria-label="Request protocol">'
@@ -603,21 +588,8 @@ def _policy_simulator_form(
         '<button type="submit">Simulate</button>'
         "</div>"
         "</form>"
+        "</details>"
     )
-
-
-def _discovery_links(links: Iterable[Mapping[str, Any] | tuple[str, str]]) -> str:
-    items: list[str] = []
-    for link in links:
-        if isinstance(link, Mapping):
-            label = link.get("label") or link.get("name") or link.get("href")
-            href = link.get("href") or link.get("url") or "#"
-        else:
-            label, href = link
-        items.append(f'<li><a href="{_esc(href)}">{_esc(label)}</a></li>')
-    if not items:
-        return '<p class="empty">No discovery links configured.</p>'
-    return f'<ul class="links">{"".join(items)}</ul>'
 
 
 def render_admin_dashboard(
@@ -638,8 +610,6 @@ def render_admin_dashboard(
     * ``counts``: pre-computed counts dict (otherwise derived from lists)
     * ``apps``, ``users``, ``profiles``, ``credentials``, ``audit``: lists
       of mapping records
-    * ``discovery_links``: iterable of ``{label, href}`` mappings or
-      ``(label, href)`` tuples
     """
 
     apps = list(snapshot.get("apps") or [])
@@ -647,7 +617,6 @@ def render_admin_dashboard(
     profiles = list(snapshot.get("profiles") or [])
     credentials = list(snapshot.get("credentials") or [])
     audit = list(snapshot.get("audit") or [])
-    discovery_links = list(snapshot.get("discovery_links") or [])
     actor = snapshot.get("actor") or {}
     actor_label = actor.get("email") or actor.get("subject") or "anonymous"
     csrf_json = _json_for_script(str(actor.get("csrf_token") or ""))
@@ -670,14 +639,12 @@ def render_admin_dashboard(
         ),
     }
 
-    counts_html = "".join(
-        _count_card(label, counts.get(key, 0))
-        for label, key in (
-            ("Apps", "apps"),
-            ("Users", "users"),
-            ("Profiles", "profiles"),
-            ("Credentials", "credentials"),
-            ("Active keys", "active_credentials"),
+    summary_html = _summary_bar(
+        (
+            ("Apps", counts.get("apps", 0)),
+            ("Users", counts.get("users", 0)),
+            ("Profiles", counts.get("profiles", 0)),
+            ("active keys", counts.get("active_credentials", 0)),
         )
     )
 
@@ -691,27 +658,22 @@ def render_admin_dashboard(
             )
             for a in apps
         ),
-        empty="No apps yet — create one below.",
     )
     users_table = _table(
         ["ID", "Name", "Email", "Roles"],
         (_user_row(u) for u in users),
-        empty="No users yet.",
     )
     profiles_table = _table(
         ["Profile", "Selectors", "Protocols", "Overrides", "Guardrails", "Visibility"],
         (_profile_row(p) for p in profiles),
-        empty="No app profiles configured.",
     )
     credentials_table = _table(
         ["ID", "App", "Label", "Created", "Status", "Action"],
         (_credential_row(c) for c in credentials),
-        empty="No credentials issued.",
     )
     audit_table = _table(
         ["When", "Actor", "Action", "Target", "Detail"],
         (_audit_row(e) for e in audit),
-        empty="No audit entries yet.",
     )
 
     flow_html = _flow_form(
@@ -730,10 +692,11 @@ def render_admin_dashboard(
         policy_simulate_action=policy_simulate_action,
     )
 
-    discovery_html = _discovery_links(discovery_links)
     connection_html = _connection_panel(base_url=base_url)
     issues_html = _access_issues(apps, profiles_by_id, active_keys_by_app)
     result_html = '<pre class="result" id="admin-flow-result" aria-live="polite"></pre>'
+    access_html = connection_html + flow_html + result_html
+    profiles_html = profile_form_html + profiles_table
 
     return (
         "<!doctype html>"
@@ -784,28 +747,20 @@ def render_admin_dashboard(
         "</script>"
         "</head><body>"
         "<header>"
-        f"<h1>{_esc(title)}</h1>"
-        f'<div class="actor">Signed in as <strong>{_esc(actor_label)}</strong></div>'
+        f"<h1>{_esc(title)}</h1><nav>"
+        '<a href="/">Account</a><a href="/status">Status</a>'
+        f'<span class="actor">Signed in as <strong>{_esc(actor_label)}</strong></span>'
+        "</nav>"
         "</header>"
         "<main>"
-        '<div class="hero">'
-        "<div>"
-        "<h2>Give someone the right AI access without teaching them the gateway.</h2>"
-        '<p>Normal users need a base URL, a runtime key, and a clear statement of what works for them. Admins need to see who can use what, what is blocked, and what needs attention.</p>'
-        "</div>"
-        + connection_html
-        + "</div>"
-        + _section("Overview", f'<div class="counts">{counts_html}</div>')
+        + _section("Overview", summary_html)
         + _section("Needs attention", issues_html)
-        + _section("Give Access", flow_html)
-        + _section("Create access profile", profile_form_html)
-        + _section("Simulate access", policy_simulator_html)
-        + _section("Action result", result_html)
+        + _section("Access", access_html)
+        + _section("Profiles", profiles_html)
+        + _section("Policy test", policy_simulator_html)
         + _section("Apps", apps_table)
         + _section("Users", users_table)
-        + _section("App profiles", profiles_table)
-        + _section("Credentials", credentials_table)
-        + _section("Audit log", audit_table)
-        + _section("Admin links", discovery_html)
+        + _section("Keys", credentials_table)
+        + _section("Audit", audit_table)
         + "</main></body></html>"
     )

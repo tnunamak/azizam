@@ -18,10 +18,10 @@ The canonical public host is **`https://ai.vivid.fish`**. The original **`https:
 
 Agents and apps can start without local repo context by fetching the public discovery surface (no auth required):
 
-- `GET /` — browser entry point; redirects to `/me`
+- `GET /` — browser account portal
 - `GET /health`
 - `GET /login` — browser OIDC login entry point when configured
-- `GET /me` — normal-user portal for checking a runtime key, SDK settings,
+- `GET /me` — stable alias for the browser account portal; checks a runtime key, SDK settings,
   capabilities, and recent media jobs
 - `GET /me/api/session` — signed-OIDC account view for Apps and non-secret
   runtime-key records owned by the current user
@@ -47,9 +47,9 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 
 | Method + Path | Backend | Purpose |
 |---|---|---|
-| `GET  /` | proxy | Browser entry point; redirects to `/me` |
-| `GET  /login` | proxy + OIDC | Browser sign-in entry point; redirects back to `/me` or `/admin` |
-| `GET  /me` | proxy | Normal-user portal for account, SDK settings, effective access, and owned keys |
+| `GET  /` | proxy | Browser account portal |
+| `GET  /login` | proxy + OIDC | Browser sign-in entry point; redirects back to `/` or `/admin` |
+| `GET  /me` | proxy | Stable alias for the account portal |
 | `GET  /admin` | proxy | Admin dashboard; browser sessions redirect through `/login` |
 | `GET  /status` | proxy | Operator status dashboard; loopback is frictionless, remote access requires a runtime key |
 | `GET  /health` | proxy | Liveness; public, no auth |
@@ -112,7 +112,7 @@ The legacy term **"client"** is preserved only in compatibility contexts (OpenAI
 
 ## Auth
 
-All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health`, `/me`, `/me/api/session`, and the `/.well-known/*` discovery surfaces are public. `/me` does not expose private data by itself; the browser uses either the signed OIDC session cookie or a pasted `opk_...` key to check effective access. Pasted keys are kept in browser session storage, not long-lived local storage.
+All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health`, `/`, `/me`, `/me/api/session`, and the `/.well-known/*` discovery surfaces are public. The account portal does not expose private data by itself; the browser uses either the signed OIDC session cookie or a pasted `opk_...` key to check effective access. Pasted keys are kept in browser session storage, not long-lived local storage.
 
 App API keys are stored as sha256 hashes in `proxy_api_keys.yml` (gitignored). Generate or rotate one with:
 
@@ -130,7 +130,7 @@ Admin/control-plane credentials are separate. Bootstrap a service-account admin 
 ./venv/bin/python proxy.py generate-admin-key owner-cli
 ```
 
-The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser login starts at `/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. Admins are Users with an admin-capable role, so signed-in admins also see an Admin link from `/me`. The dashboard can create Apps, Profiles, and runtime keys, revoke credentials, and simulate policy decisions before handing someone access.
+The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser login starts at `/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. Admins are Users with an admin-capable role, so signed-in admins also see an Admin link from the account portal. The dashboard can create Apps, Profiles, and runtime keys, revoke credentials, and simulate policy decisions before handing someone access.
 
 ### Give a family member a key
 
@@ -139,7 +139,7 @@ The shortest "share my gateway with another human" flow:
 1. **OIDC User.** The family member signs in once so the admin store has their **User** row. They do not need a global admin role.
 2. **Personal App.** An owner/admin creates one **Personal App** owned by that User — e.g. `aunt-mary-chat`. An App is the access boundary, not the person.
 3. **Profile.** The App is attached to a **Profile** that grants only what they need (e.g. `openai.chat` + `openai.audio`, no native passthrough, `cloud_allowed: false`, `status_visibility.level: basic`). This is what controls their normal access limits.
-4. **App API key.** Mint a bearer token for that App with `POST /admin/api/apps/{app_id}/keys`. They can visit `https://ai.vivid.fish/me`, sign in with OIDC or paste the returned `opk_...` value locally in the browser, and confirm their base URL, SDK settings, capabilities, and media-job access before configuring their chat app. A signed-in user can request a pending Personal App, and can mint or revoke runtime keys only for Apps they already own after an operator has attached a Profile; they cannot change Profiles or grant themselves new access.
+4. **App API key.** Mint a bearer token for that App with `POST /admin/api/apps/{app_id}/keys`. They can visit `https://ai.vivid.fish/`, sign in with OIDC or paste the returned `opk_...` value locally in the browser, and confirm their base URL, SDK settings, capabilities, and media-job access before configuring their chat app. A signed-in user can request a pending Personal App, and can mint or revoke runtime keys only for Apps they already own after an operator has attached a Profile; they cannot change Profiles or grant themselves new access.
 
 Rotation is per-App, not per-human: revoke the old Credential and mint a new key while preserving the App's Profile and downstream mapping. Dashboard-minted keys inherit the App's current Profile unless an explicit per-key override is requested.
 
@@ -234,7 +234,7 @@ curl -s http://127.0.0.1:5000/v1/models -H "Authorization: Bearer opk_..."
 ```
 
 The operator status page is served by the proxy at `/status`. The product root
-`/` redirects normal browser users to `/me`.
+`/` serves the normal account portal; `/me` is the stable alias.
 
 ## Status page
 

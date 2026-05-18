@@ -96,7 +96,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
     def test_uses_App_terminology_not_Client(self) -> None:
         html = render_admin_dashboard(_snapshot())
         # Data plane noun is "App". The dashboard must mention it.
-        self.assertIn(">Apps<", html)
+        self.assertIn("Create App", html)
         # Make sure the dashboard never names the data-plane "Client".
         # Lowercase mentions ("clients") would also fail this assertion.
         self.assertNotRegex(
@@ -108,7 +108,6 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         self.assertIn("Create App", html)
         self.assertIn("Mint runtime key", html)
-        self.assertIn("Personal app owned by that User", html)
         self.assertIn("https://ai.vivid.fish/v1", html)
         self.assertIn('action="/admin/api/apps"', html)
         self.assertIn("x-ai-gateway-admin-action", html)
@@ -131,7 +130,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_includes_policy_simulation_flow(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn("Simulate request", html)
+        self.assertIn("Simulate access", html)
         self.assertIn('action="/admin/api/policy/simulate"', html)
         self.assertIn("data-simulate-policy", html)
         self.assertIn("name=\"capability_tags\"", html)
@@ -186,11 +185,13 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("active", html)
         self.assertIn("revoked", html)
 
-    def test_discovery_links_render_as_anchors(self) -> None:
+    def test_omits_discovery_links_from_clean_admin_chrome(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn('href="/.well-known/ai-gateway"', html)
-        self.assertIn('href="/admin/api/overview"', html)
-        self.assertIn(">Admin links<", html)
+        self.assertNotIn('href="/.well-known/ai-gateway"', html)
+        self.assertNotIn('href="/admin/api/overview"', html)
+        self.assertNotIn(">Admin links<", html)
+        self.assertIn('href="/">Account</a>', html)
+        self.assertIn('href="/status">Status</a>', html)
 
 
 class AdminRenderSecurityTests(unittest.TestCase):
@@ -215,9 +216,12 @@ class AdminRenderSecurityTests(unittest.TestCase):
     def test_renders_empty_snapshot_without_crashing(self) -> None:
         html = render_admin_dashboard({})
         self.assertTrue(html.startswith("<!doctype html>"))
-        self.assertIn("No apps yet", html)
-        self.assertIn("No users yet", html)
-        self.assertIn("No audit entries yet", html)
+        self.assertIn("Create App", html)
+        self.assertIn("Create an App before minting a runtime key.", html)
+        self.assertNotIn("No users yet", html)
+        self.assertNotIn("No audit entries yet", html)
+        self.assertNotIn(">Users<", html)
+        self.assertNotIn(">Audit<", html)
 
 
 class AdminRenderCustomEndpointsTests(unittest.TestCase):
@@ -239,7 +243,7 @@ class AdminRenderCustomEndpointsTests(unittest.TestCase):
         snapshot.pop("counts")
         html = render_admin_dashboard(snapshot)
         # 2 apps in the fixture.
-        self.assertRegex(html, r'Apps</div>\s*<div class="value">2</div>')
+        self.assertRegex(html, r'<strong>2</strong> Apps')
 
 
 if __name__ == "__main__":

@@ -7033,7 +7033,7 @@ def _safe_admin_return_to(value: str | None, *, default: str = "/admin") -> str:
         return default
     if not value.startswith("/") or value.startswith("//"):
         return default
-    if value == "/me":
+    if value in {"/", "/me"}:
         return value
     if value.startswith("/admin"):
         return value
@@ -7142,8 +7142,7 @@ async def user_portal_logout():
     return response
 
 
-@app.get("/me", include_in_schema=False)
-async def user_portal(request: Request):
+def _render_user_portal_response(request: Request, *, login_return_to: str) -> Response:
     session = _oidc_session_from_request(request)
     account = build_user_portal_snapshot(session, path=ADMIN_STORE.path)
     body = render_user_portal(
@@ -7151,7 +7150,7 @@ async def user_portal(request: Request):
         public_base_url=_public_base_url(request) or "https://ai.vivid.fish",
         account=account,
         oidc_enabled=ADMIN_OIDC_CONFIG.enabled,
-        login_url=_login_url(return_to="/me"),
+        login_url=_login_url(return_to=login_return_to),
         csrf_token=_csrf_token_for_oidc_session(session) if session else "",
     )
     return Response(
@@ -7160,6 +7159,11 @@ async def user_portal(request: Request):
         media_type="text/html; charset=utf-8",
         headers={"cache-control": "no-store"},
     )
+
+
+@app.get("/me", include_in_schema=False)
+async def user_portal(request: Request):
+    return _render_user_portal_response(request, login_return_to="/me")
 
 
 @app.get("/me/api/session", include_in_schema=False)
@@ -7320,7 +7324,7 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
 
 @app.get("/login", include_in_schema=False)
 async def browser_login(request: Request):
-    return await _start_browser_login(request, default_return_to="/me")
+    return await _start_browser_login(request, default_return_to="/")
 
 
 @app.get("/admin/login", include_in_schema=False)
@@ -10701,7 +10705,8 @@ async def v1_status(request: Request):
 # -----------------------------------------------------------------------------
 # Status dashboard
 #
-# The product root is a browser entry point, so `/` redirects to `/me`.
+# The product root is the browser account portal. `/me` remains a stable alias
+# for agents, docs, and existing bookmarks.
 # The maximalist server-rendered operator status page lives at `/status`.
 # The old `/firehose` URL is kept as a 301 → `/status` for compatibility.
 # The previous Next.js page under status-page/out is no longer served.
@@ -10744,8 +10749,8 @@ async def _render_status_html(request: Request) -> Response:
 
 
 @app.get("/", include_in_schema=False)
-async def root_browser_entrypoint():
-    return RedirectResponse("/me", status_code=302)
+async def root_browser_entrypoint(request: Request):
+    return _render_user_portal_response(request, login_return_to="/")
 
 
 @app.get("/status", include_in_schema=False)

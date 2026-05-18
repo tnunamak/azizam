@@ -143,7 +143,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         response = self.client.get("/admin", headers=self._auth())
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIn("Vivid Fish AI Gateway Admin", response.text)
-        self.assertIn(">Apps<", response.text)
+        self.assertIn("Create App", response.text)
+        self.assertIn("Mint runtime key", response.text)
 
     def test_admin_dashboard_requires_admin_auth(self) -> None:
         response = self.client.get("/admin")
@@ -308,7 +309,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(login.status_code, 302, login.text)
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
-        self.assertEqual(record.return_to, "/me")
+        self.assertEqual(record.return_to, "/")
 
         async def fake_exchange(_code, *, config, pkce):
             return {"id_token": "fake.id.token"}
@@ -333,7 +334,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 follow_redirects=False,
             )
         self.assertEqual(callback.status_code, 302, callback.text)
-        self.assertEqual(callback.headers["location"], "/me")
+        self.assertEqual(callback.headers["location"], "/")
 
     def test_legacy_login_routes_redirect_to_single_login_entrypoint(self) -> None:
         self.assertEqual(
