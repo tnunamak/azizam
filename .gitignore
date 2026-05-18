@@ -32,6 +32,13 @@ data/receipts.db-wal
 data/receipts.db-shm
 data/receipts.db.broken-*
 
+# Admin/control-plane persistence. Runtime state; never commit hashes,
+# sessions, or audit rows from a live deployment.
+data/admin.db
+data/admin.db-wal
+data/admin.db-shm
+data/admin.db.broken-*
+
 # GPU incident snapshots — ephemeral diagnostic captures written by
 # ~/.local/bin/gpu-incident-watcher
 data/incidents/
