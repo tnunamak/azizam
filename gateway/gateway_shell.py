@@ -61,6 +61,7 @@ SHELL_CSS = """
     --gutter: clamp(1.25rem, 4vw, 2rem);
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { height: 100%; }
   body {
     margin: 0;

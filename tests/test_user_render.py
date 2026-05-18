@@ -134,6 +134,12 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertNotIn('class="shell-nav"', html)
         self.assertNotIn('href="/status"', html)
         self.assertNotIn('href="/admin"', html)
+        # The access section is empty before a key check and must stay visually hidden.
+        self.assertIn("[hidden] { display: none !important; }", html)
+        self.assertIn(
+            '<section id="access-section" aria-labelledby="access-heading" hidden>',
+            html,
+        )
         # Hero copy points the user at the two ways to start.
         self.assertIn("Start with an account or key", html)
         self.assertIn("opk_", html)
