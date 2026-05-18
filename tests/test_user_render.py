@@ -104,6 +104,7 @@ class UserPortalRenderTests(unittest.TestCase):
         )
         self.assertIn('href="/admin"', html)
         self.assertIn(">Admin<", html)
+        self.assertIn('href="/status">Status</a>', html)
         self.assertIn("role owner", html)
         self.assertIn("No owned Apps", html)
         self.assertNotIn('<form class="actions" data-request-access>', html)
@@ -130,9 +131,9 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn('class="shell-main"', html)
         self.assertIn('aria-label="AI Gateway home"', html)
         self.assertIn(">AI Gateway</span>", html)
-        # Account is the current page; Status is always linked; Admin hidden.
+        # Account is the current page; operator-only links stay hidden.
         self.assertRegex(html, r'<a [^>]*href="/"[^>]*aria-current="page"')
-        self.assertIn('href="/status">Status</a>', html)
+        self.assertNotIn('href="/status"', html)
         self.assertNotIn('href="/admin"', html)
         # Hero copy points the user at the two ways to start.
         self.assertIn("Start with an account or key", html)
@@ -150,6 +151,7 @@ class UserPortalRenderTests(unittest.TestCase):
             },
         )
         self.assertIn('href="/me/logout">Sign out</a>', html)
+        self.assertNotIn('href="/status"', html)
         # The actor email surfaces in the header chrome.
         self.assertIn("user@example.com", html)
 

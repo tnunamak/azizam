@@ -220,6 +220,7 @@ def render_shell_header(
     brand: str = "AI Gateway",
     current: str = "",
     show_admin: bool = False,
+    show_status: bool = False,
     actor_label: str | None = None,
     logout_url: str | None = None,
     extra_pills: Iterable[tuple[str, str]] = (),
@@ -236,7 +237,8 @@ def render_shell_header(
     ]
     if show_admin:
         links.append(_nav_link("/admin", "Admin", active=current == "admin"))
-    links.append(_nav_link("/status", "Status", active=current == "status"))
+    if show_status:
+        links.append(_nav_link("/status", "Status", active=current == "status"))
 
     for href, label in extra_pills:
         links.append(_nav_link(href, label, active=False))

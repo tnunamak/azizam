@@ -712,6 +712,7 @@ def render_admin_dashboard(
         title=title,
         current="admin",
         show_admin=True,
+        show_status=True,
         actor_label=str(actor_label),
         logout_url=logout_url,
     )

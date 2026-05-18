@@ -234,6 +234,44 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(dashboard.status_code, 200, dashboard.text)
         self.assertIn("owner@example.com", dashboard.text)
 
+    def test_status_dashboard_accepts_admin_oidc_session(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset({"owner@example.com"}),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        session = session_from_claims(
+            {"sub": "u_owner", "email": "owner@example.com"},
+            role="owner",
+            cookie=cfg.cookie,
+        )
+        self.client.cookies.set(
+            cfg.cookie.name,
+            encode_session_cookie(session, signing_key=cfg.signing_key),
+        )
+
+        async def fake_status(_config):
+            return {"generated_at": 0, "banner": "ok", "errors": {}}
+
+        with patch.object(proxy.status_endpoint, "get_cached_status", fake_status):
+            response = self.client.get("/status")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
+
     def test_oidc_login_uses_configured_cookie_name(self) -> None:
         cfg = OIDCConfig(
             enabled=True,

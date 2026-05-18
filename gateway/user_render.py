@@ -417,6 +417,7 @@ def render_user_portal(
         title=title,
         current="account",
         show_admin=show_admin,
+        show_status=show_admin,
         actor_label=actor_label,
         logout_url=logout_url if is_signed_in else None,
     )

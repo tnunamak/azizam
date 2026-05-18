@@ -10717,9 +10717,12 @@ async def _render_status_html(request: Request) -> Response:
     client_host = (request.client.host if request.client else "") or ""
     is_loopback = client_host in ("127.0.0.1", "::1", "localhost")
     if not is_loopback:
-        auth_context = authenticate_request(request, request.url.path)
-        if isinstance(auth_context, Response):
-            return auth_context
+        try:
+            ADMIN_AUTH(request)
+        except AdminAuthError:
+            auth_context = authenticate_request(request, request.url.path)
+            if isinstance(auth_context, Response):
+                return auth_context
     try:
         payload = await status_endpoint.get_cached_status(config)
     except Exception as e:  # noqa: BLE001
