@@ -44,6 +44,9 @@ VALID_AUDIENCES = ("client", "admin", "internal")
 EXECUTION_MODES = ("sync", "async", "job")
 LIFECYCLE_STATES = ("unknown", "cold", "warming", "warm", "stopping", "stopped")
 HEALTH_STATES = ("unknown", "healthy", "degraded", "unhealthy")
+EXPOSURE_CLASSES = ("default", "opt_in", "admin", "disabled")
+TRUST_TIERS = ("stable", "experimental", "private", "admin")
+RESOURCE_TIERS = ("interactive", "batch", "expensive")
 
 
 @dataclass(frozen=True)
@@ -103,6 +106,10 @@ class Capability:
     output_modalities: tuple[str, ...] = ()
     execution: str = "sync"
     streaming: bool = False
+    exposure: str = "default"
+    trust_tier: str = "stable"
+    resource_tier: str = "interactive"
+    tags: tuple[str, ...] = ()
     lifecycle: str = "unknown"
     health: str = "unknown"
     policy_available: bool = True
@@ -124,6 +131,25 @@ class Capability:
             raise ValueError(
                 f"health must be one of {HEALTH_STATES!r}, got {self.health!r}"
             )
+        if self.exposure not in EXPOSURE_CLASSES:
+            raise ValueError(
+                f"exposure must be one of {EXPOSURE_CLASSES!r}, got {self.exposure!r}"
+            )
+        if self.trust_tier not in TRUST_TIERS:
+            raise ValueError(
+                f"trust_tier must be one of {TRUST_TIERS!r}, got {self.trust_tier!r}"
+            )
+        if self.resource_tier not in RESOURCE_TIERS:
+            raise ValueError(
+                "resource_tier must be one of "
+                f"{RESOURCE_TIERS!r}, got {self.resource_tier!r}"
+            )
+        if isinstance(self.tags, (str, bytes)):
+            raise ValueError("tags must be an iterable of strings")
+        tags = tuple(dict.fromkeys(self.tags))
+        if not all(isinstance(tag, str) for tag in tags):
+            raise ValueError("tags must be an iterable of strings")
+        object.__setattr__(self, "tags", tags)
 
     @property
     def available(self) -> bool:
@@ -188,6 +214,10 @@ def summarize_capability(capability: Capability, audience: str) -> dict[str, Any
         "output_modalities": list(capability.output_modalities),
         "execution": capability.execution,
         "streaming": capability.streaming,
+        "exposure": capability.exposure,
+        "trust_tier": capability.trust_tier,
+        "resource_tier": capability.resource_tier,
+        "tags": list(capability.tags),
         "available": capability.available,
         "caveats": list(capability.caveats),
     }
@@ -287,6 +317,18 @@ def capability_from_workflow_record(
         output_modalities=output_modalities,
         execution=execution,
         streaming=streaming,
+        exposure=_manifest_string(manifest, "exposure", default="default"),
+        trust_tier=_manifest_string(
+            manifest,
+            "trust_tier",
+            default="stable" if record.identity.trusted else "experimental",
+        ),
+        resource_tier=_manifest_string(
+            manifest,
+            "resource_tier",
+            default="batch" if execution == "job" else "interactive",
+        ),
+        tags=_manifest_tags(manifest),
         lifecycle="unknown",
         health="unknown",
         policy_available=True,
@@ -319,6 +361,10 @@ def capability_with_policy_view(
         workflow=capability.workflow,
         model=capability.model,
         backend=capability.backend,
+        capability_exposure=capability.exposure,
+        capability_trust_tier=capability.trust_tier,
+        capability_resource_tier=capability.resource_tier,
+        capability_tags=frozenset(capability.tags),
     )
     decision = evaluate(profile, effective_request)
     return capability.with_policy_decision(decision)
@@ -409,6 +455,26 @@ def _intent_asset_modality(intent: str) -> str | None:
     return None
 
 
+def _manifest_string(
+    manifest: dict[str, Any], key: str, *, default: str
+) -> str:
+    value = manifest.get(key)
+    if isinstance(value, str) and value:
+        return value
+    return default
+
+
+def _manifest_tags(manifest: dict[str, Any]) -> tuple[str, ...]:
+    value = manifest.get("tags")
+    if not isinstance(value, list):
+        return ()
+    tags: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item and item not in tags:
+            tags.append(item)
+    return tuple(tags)
+
+
 def _check_audience(audience: str) -> None:
     if audience not in VALID_AUDIENCES:
         raise ValueError(
@@ -423,6 +489,9 @@ __all__ = [
     "EXECUTION_MODES",
     "LIFECYCLE_STATES",
     "HEALTH_STATES",
+    "EXPOSURE_CLASSES",
+    "TRUST_TIERS",
+    "RESOURCE_TIERS",
     "capability_from_workflow_record",
     "capability_with_policy_view",
     "summarize_capability",

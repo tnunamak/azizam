@@ -4228,6 +4228,7 @@ async def proxy_comfy_request(
             auth_context,
             model=str(model) if model is not None else None,
             workflow=_policy_workflow_for_receipt(receipt),
+            manifest=manifest,
         )
         if decision.denied:
             return _policy_denied_response(decision)
@@ -4588,6 +4589,7 @@ async def proxy_comfy_edit_request(
                     auth_context,
                     model=str(model) if model is not None else None,
                     workflow=_policy_workflow_for_receipt(receipt),
+                    manifest=manifest,
                 )
                 if decision.denied:
                     return _policy_denied_response(decision)
@@ -6847,6 +6849,10 @@ def _capability_for_profile(
             workflow=capability.workflow,
             model=capability.model,
             backend=capability.backend,
+            capability_exposure=capability.exposure,
+            capability_trust_tier=capability.trust_tier,
+            capability_resource_tier=capability.resource_tier,
+            capability_tags=capability.tags,
         ),
     )
 
@@ -7445,7 +7451,9 @@ def _apply_image_route_policy(
     *,
     model: str | None = None,
     workflow: str | None = None,
+    manifest: Mapping[str, Any] | None = None,
 ) -> PolicyDecision:
+    metadata = _image_manifest_policy_metadata(manifest)
     return evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -7454,9 +7462,50 @@ def _apply_image_route_policy(
             model=model,
             workflow=workflow,
             backend=receipt.backend,
+            capability_exposure=metadata["exposure"],
+            capability_trust_tier=metadata["trust_tier"],
+            capability_resource_tier=metadata["resource_tier"],
+            capability_tags=metadata["tags"],
         ),
         receipt,
     )
+
+
+def _image_manifest_policy_metadata(
+    manifest: Mapping[str, Any] | None,
+) -> dict[str, object]:
+    if manifest is None:
+        return {
+            "exposure": "default",
+            "trust_tier": "stable",
+            "resource_tier": "batch",
+            "tags": (),
+        }
+
+    trusted = bool(manifest.get("trusted", False))
+    tags_raw = manifest.get("tags")
+    tags: list[str] = []
+    if isinstance(tags_raw, list):
+        tags = [tag for tag in tags_raw if isinstance(tag, str) and tag]
+    return {
+        "exposure": _manifest_string_field(manifest, "exposure", "default"),
+        "trust_tier": _manifest_string_field(
+            manifest, "trust_tier", "stable" if trusted else "experimental"
+        ),
+        "resource_tier": _manifest_string_field(
+            manifest, "resource_tier", "batch"
+        ),
+        "tags": tuple(dict.fromkeys(tags)),
+    }
+
+
+def _manifest_string_field(
+    manifest: Mapping[str, Any], key: str, default: str
+) -> str:
+    value = manifest.get(key)
+    if isinstance(value, str) and value:
+        return value
+    return default
 
 
 def _policy_workflow_for_receipt(receipt: RouteReceipt | None) -> str | None:
@@ -7886,6 +7935,7 @@ async def _proxy_offset_inpaint_tile_request(
             auth_context,
             model=model,
             workflow=_policy_workflow_for_receipt(receipt),
+            manifest=manifest,
         )
         if decision.denied:
             return _policy_denied_response(decision)
@@ -9451,6 +9501,31 @@ async def gateway_image_generations_media_job(request: Request):
         return response
 
     model = str(body.get("model", COMFY_DEFAULT_MODEL))
+    manifest = _find_image_manifest("image.generate", model)
+    if receipt is not None:
+        receipt.requested_workflow = model
+        if manifest is not None:
+            receipt.resolved_workflow = str(manifest.get("id") or model)
+            identity = manifest_identity(manifest)
+            receipt.attach_manifest(
+                manifest_id=identity.id,
+                manifest_version=identity.version,
+                manifest_hash=identity.manifest_hash,
+            )
+        else:
+            _attach_image_manifest_if_available(receipt, "image.generate", model)
+    decision = _apply_image_route_policy(
+        receipt,
+        auth_context,
+        model=model,
+        workflow=_policy_workflow_for_receipt(receipt),
+        manifest=manifest,
+    )
+    if decision.denied:
+        response = _policy_denied_response(decision)
+        finish_image_route_receipt(receipt, response)
+        return response
+
     profile = _profile_for_auth_context(auth_context)
     job = media_jobs.MediaJob(
         intent="image.generate",
@@ -11161,6 +11236,43 @@ _OPENAI_COMPAT_JSON_BODY_OPENAPI = {
     },
 }
 
+_OPENAI_PROXY_POLICY = {
+    "/v1/chat/completions": ("openai.chat", "chat.completions"),
+    "/v1/completions": ("openai.chat", "text.completions"),
+    "/v1/embeddings": ("openai.embeddings", "text.embeddings"),
+}
+
+
+def _openai_proxy_policy_decision(
+    auth_context: AuthContext,
+    request_path: str,
+    body: bytes,
+) -> PolicyDecision | None:
+    spec = _OPENAI_PROXY_POLICY.get(request_path)
+    if spec is None:
+        return None
+
+    model: str | None = None
+    try:
+        body_json = json.loads(body)
+        if isinstance(body_json, Mapping) and isinstance(body_json.get("model"), str):
+            model = body_json["model"]
+    except Exception:
+        pass
+
+    protocol, intent = spec
+    return evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol=protocol,
+            intent=intent,
+            model=model,
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="interactive",
+        ),
+    )
+
 
 @app.post("/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def chat_completions(request: Request):
@@ -11201,6 +11313,14 @@ async def proxy_request(request: Request, path: str):
     # Determine target backend based on model in request
     target_host = TABBY_HOST  # default
     body_peek = await request.body()
+    policy_decision = _openai_proxy_policy_decision(
+        auth_context,
+        request_path,
+        body_peek,
+    )
+    if policy_decision is not None and policy_decision.denied:
+        return _policy_denied_response(policy_decision)
+
     model_resolution: Optional[ModelResolution] = None
     # Fix 3: vision pre-flight + routing flag. Values: "not-needed", "true",
     # "false". Stamped on the response as X-Vision-Routed.

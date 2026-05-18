@@ -418,6 +418,35 @@ class AdminPolicySimulationTests(unittest.TestCase):
         self.assertFalse(body["decision"]["allowed"])
         self.assertEqual(body["decision"]["decision"], "denied")
 
+    def test_simulate_accepts_capability_selector_metadata(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/policy/simulate",
+            json={
+                "profile": {
+                    "id": "family-chat",
+                    "allow": {
+                        "intents": ["chat.completions"],
+                        "exposure": ["default"],
+                        "trust_tiers": ["stable"],
+                        "resource_tiers": ["interactive"],
+                        "tags": ["coder"],
+                    },
+                },
+                "request": {
+                    "intent": "chat.completions",
+                    "capability_exposure": "default",
+                    "capability_trust_tier": "stable",
+                    "capability_resource_tier": "interactive",
+                    "capability_tags": ["coder", "local"],
+                },
+            },
+            headers=_auth(),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertTrue(resp.json()["decision"]["allowed"])
+
     def test_resolver_can_supply_profile_by_id(self) -> None:
         registry = {
             "brother": AppProfile(id="brother", protocols=frozenset({"openai"})),

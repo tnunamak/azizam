@@ -329,6 +329,25 @@ Allow-lists are conservative by construction:
 - omit a list → "no opinion" for that dimension (no restriction)
 - set a list to `[]` → "deny all" for that dimension
 
+As the gateway grows, avoid managing Profiles as long lists of model and
+workflow IDs. Prefer category selectors backed by capability metadata:
+
+```yaml
+allow:
+  intents: ["chat.completions", "speech.synthesis"]
+  trust_tiers: ["stable"]
+  resource_tiers: ["interactive"]
+  exposure: ["default"]
+fallback:
+  cloud_allowed: false
+native_passthrough:
+  enabled: false
+```
+
+Then a new stable interactive chat model becomes available to matching Apps
+without editing every Profile. Experimental, expensive, native, or admin-power
+workflows remain opt-in through their own metadata.
+
 `status_visibility.level` maps an App to a discovery/receipt audience tier.
 "Client" here is the protocol/audience tier name (kept for compatibility),
 not a product noun — the requester is still an App:

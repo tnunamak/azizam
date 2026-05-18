@@ -13,6 +13,7 @@ from gateway.policy import (  # noqa: E402
     DEFAULT_PROFILE,
     DEFAULT_PROFILE_ID,
     AppProfile,
+    CapabilitySelector,
 )
 from gateway.profiles import (  # noqa: E402
     ProfileLoadError,
@@ -59,6 +60,13 @@ class TestLoadProfileFields(unittest.TestCase):
                 "workflows": ["image.edit.controlnet.example"],
                 "models": ["sdxl-base"],
                 "backends": ["comfyui.local"],
+                "allow": {
+                    "intents": ["image.edit"],
+                    "exposure": ["default", "opt_in"],
+                    "trust_tiers": ["stable"],
+                    "resource_tiers": ["batch"],
+                    "tags": ["controlnet"],
+                },
                 "fallback": {"cloud_allowed": True},
                 "native_passthrough": {
                     "enabled": True,
@@ -78,6 +86,16 @@ class TestLoadProfileFields(unittest.TestCase):
         )
         self.assertEqual(profile.models, frozenset({"sdxl-base"}))
         self.assertEqual(profile.backends, frozenset({"comfyui.local"}))
+        self.assertEqual(
+            profile.allow,
+            CapabilitySelector(
+                intents=frozenset({"image.edit"}),
+                exposure=frozenset({"default", "opt_in"}),
+                trust_tiers=frozenset({"stable"}),
+                resource_tiers=frozenset({"batch"}),
+                tags=frozenset({"controlnet"}),
+            ),
+        )
         self.assertTrue(profile.fallback.cloud_allowed)
         self.assertTrue(profile.native_passthrough.enabled)
         self.assertEqual(
@@ -101,6 +119,8 @@ class TestLoadProfileFields(unittest.TestCase):
         self.assertIsNone(profile.workflows)
         self.assertIsNone(profile.models)
         self.assertIsNone(profile.backends)
+        self.assertIsNone(profile.allow.intents)
+        self.assertIsNone(profile.allow.exposure)
 
     def test_partial_native_passthrough_defaults(self) -> None:
         profile = load_profile(
@@ -164,6 +184,21 @@ class TestLoadProfileValidation(unittest.TestCase):
     def test_fallback_must_be_mapping(self) -> None:
         with self.assertRaises(ProfileLoadError):
             load_profile({"id": "x", "fallback": True})
+
+    def test_allow_must_be_mapping(self) -> None:
+        with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "allow": True})
+
+    def test_allow_rejects_unknown_key(self) -> None:
+        with self.assertRaises(ProfileLoadError) as cm:
+            load_profile({"id": "x", "allow": {"mystery": ["value"]}})
+        self.assertIn("mystery", str(cm.exception))
+
+    def test_allow_fields_must_be_lists_of_strings(self) -> None:
+        with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "allow": {"resource_tiers": "batch"}})
+        with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "allow": {"tags": [1]}})
 
 
 class TestLoadProfileFromEntry(unittest.TestCase):

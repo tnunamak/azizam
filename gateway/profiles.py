@@ -26,6 +26,7 @@ from gateway.policy import (
     DEFAULT_PROFILE_ID,
     VISIBILITY_LEVELS,
     AppProfile,
+    CapabilitySelector,
     FallbackPolicy,
     NativePassthroughPolicy,
     StatusVisibilityPolicy,
@@ -45,9 +46,18 @@ _PROFILE_KEYS = {
     "workflows",
     "models",
     "backends",
+    "allow",
     "fallback",
     "native_passthrough",
     "status_visibility",
+}
+
+_ALLOW_KEYS = {
+    "intents",
+    "exposure",
+    "trust_tiers",
+    "resource_tiers",
+    "tags",
 }
 
 
@@ -102,6 +112,30 @@ def _load_fallback(value: object) -> FallbackPolicy:
             "fallback.cloud_allowed must be a boolean"
         )
     return FallbackPolicy(cloud_allowed=cloud_allowed)
+
+
+def _load_capability_selector(value: object) -> CapabilitySelector:
+    data = _require_mapping(value, where="allow")
+    if not data:
+        return CapabilitySelector()
+
+    unknown = set(data.keys()) - _ALLOW_KEYS
+    if unknown:
+        raise ProfileLoadError(
+            f"unknown allow keys: {sorted(unknown)}"
+        )
+
+    return CapabilitySelector(
+        intents=_coerce_str_set(data.get("intents"), where="allow.intents"),
+        exposure=_coerce_str_set(data.get("exposure"), where="allow.exposure"),
+        trust_tiers=_coerce_str_set(
+            data.get("trust_tiers"), where="allow.trust_tiers"
+        ),
+        resource_tiers=_coerce_str_set(
+            data.get("resource_tiers"), where="allow.resource_tiers"
+        ),
+        tags=_coerce_str_set(data.get("tags"), where="allow.tags"),
+    )
 
 
 def _load_native_passthrough(value: object) -> NativePassthroughPolicy:
@@ -191,6 +225,7 @@ def load_profile(
         backends=_coerce_str_set(
             profile_data.get("backends"), where="backends"
         ),
+        allow=_load_capability_selector(profile_data.get("allow")),
         fallback=_load_fallback(profile_data.get("fallback")),
         native_passthrough=_load_native_passthrough(
             profile_data.get("native_passthrough")

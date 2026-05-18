@@ -183,6 +183,16 @@ def summarize_workflow(record: WorkflowRecord, audience: str) -> dict[str, Any]:
         "schema_version": manifest.get("schema_version"),
         "display_name": manifest.get("display_name"),
         "description": manifest.get("description"),
+        "exposure": _manifest_string(manifest, "exposure", default="default"),
+        "trust_tier": _manifest_string(
+            manifest,
+            "trust_tier",
+            default="stable" if record.identity.trusted else "experimental",
+        ),
+        "resource_tier": _manifest_string(
+            manifest, "resource_tier", default="batch"
+        ),
+        "tags": _manifest_tags(manifest),
         "inputs": _portable_inputs(manifest.get("inputs") or {}),
         "outputs": _portable_outputs(manifest.get("outputs") or {}),
         "supported_backends": record.supported_backends,
@@ -293,6 +303,24 @@ def _binding_summaries(
                 entry["map"] = copy.deepcopy(mapping)
         summaries.append(entry)
     return summaries
+
+
+def _manifest_string(manifest: dict[str, Any], key: str, *, default: str) -> str:
+    value = manifest.get(key)
+    if isinstance(value, str) and value:
+        return value
+    return default
+
+
+def _manifest_tags(manifest: dict[str, Any]) -> list[str]:
+    value = manifest.get("tags")
+    if not isinstance(value, list):
+        return []
+    tags: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item and item not in tags:
+            tags.append(item)
+    return tags
 
 
 def _check_audience(audience: str) -> None:

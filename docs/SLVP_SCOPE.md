@@ -56,6 +56,29 @@ The product should not promote every local trick into core. It should provide
 clear extension points so local tricks can be expressed, tested, and shared when
 they become generally useful.
 
+The anti-micromanagement rule:
+
+```text
+Profiles select capability metadata.
+Capabilities declare metadata.
+Per-model/per-workflow allow-lists are overrides.
+```
+
+Adding a model/workflow/service should usually mean editing that thing's
+manifest or adapter metadata, not every App or Profile. New stable interactive
+chat models can become available automatically to chat Profiles. Experimental,
+expensive, native, or admin-power capabilities require opt-in.
+
+Community fit:
+
+- r/selfhosted wants ordinary admin UX: OIDC, App keys, revoke, audit, preview.
+- r/LocalLLaMA wants model/backend visibility and OpenAI/Anthropic/Ollama
+  compatibility without hiding local power.
+- r/StableDiffusion wants named workflows with typed controls and dependency
+  checks, not a flattened toy image API.
+- The SLVP advisor wants this proven through a few complete flows before
+  building a broad RBAC/quota/scheduler UI.
+
 ## Product Model (Brief)
 
 Detail lives in `docs/CORE_CONTRACTS.md`; the short version the dashboard

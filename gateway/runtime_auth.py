@@ -230,6 +230,10 @@ def make_policy_request(
     workflow: str | None = None,
     model: str | None = None,
     backend: str | None = None,
+    capability_exposure: str | None = None,
+    capability_trust_tier: str | None = None,
+    capability_resource_tier: str | None = None,
+    capability_tags: Iterable[str] | None = None,
     requires_cloud_fallback: bool = False,
     native_passthrough: bool = False,
     native_operation: str | None = None,
@@ -241,12 +245,20 @@ def make_policy_request(
     :mod:`gateway.policy` imports while still benefiting from typed
     keyword-only arguments.
     """
+    if isinstance(capability_tags, (str, bytes)):
+        raise ValueError("capability_tags must be an iterable of strings")
     return PolicyRequest(
         protocol=protocol,
         intent=intent,
         workflow=workflow,
         model=model,
         backend=backend,
+        capability_exposure=capability_exposure,
+        capability_trust_tier=capability_trust_tier,
+        capability_resource_tier=capability_resource_tier,
+        capability_tags=(
+            frozenset(capability_tags) if capability_tags is not None else None
+        ),
         requires_cloud_fallback=requires_cloud_fallback,
         native_passthrough=native_passthrough,
         native_operation=native_operation,

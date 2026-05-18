@@ -260,7 +260,7 @@ They value:
 Architecture implication:
 
 - Anthropic Messages is a P0 public protocol, not a later novelty.
-- Tool-call normalization belongs in `chat.generate`, not as OpenAI-only glue.
+- Tool-call normalization belongs in `chat.completions`, not as OpenAI-only glue.
 - Dashboard wording should stay in App/Profile/Key language; agent/coding users
   should not need to learn scheduler or workflow internals to connect a tool.
 
@@ -307,6 +307,62 @@ Architecture implication:
 - Workflow manifests should feel like named tools with typed controls, not a
   second programming language users must understand before they can generate
   an image, sound, or video.
+
+## Community Fit Decision
+
+The shared ideal across r/selfhosted, r/LocalLLaMA, r/StableDiffusion, and an
+SLVP advisor is not "more settings." It is safe defaults, good escape hatches,
+and almost no repeated permission editing.
+
+| Audience | Ideal experience | Design pressure |
+|---|---|---|
+| r/selfhosted operators | OIDC admin login, App keys, revocation, audit, obvious access previews | normal self-hosted app UX; avoid policy mazes |
+| r/LocalLLaMA users | one OpenAI/Anthropic/Ollama-compatible endpoint, model discovery, routing, honest failures | preserve model/backend visibility and native escape hatches |
+| r/StableDiffusion users | named workflows with typed controls, dependency health, reproducibility, LoRA/ControlNet/seed/denoise control | do not flatten ComfyUI power into a toy image API |
+| SLVP advisor | prove 2-3 flows end-to-end with metadata defaults before building full RBAC/quota/scheduler UI | keep the product model small and implementation facts testable |
+
+The design decision is:
+
+```text
+Profiles grant categories by metadata.
+Manifests/adapters declare metadata.
+Explicit per-model/per-workflow lists are overrides, not the default.
+```
+
+Adding a new model, workflow, or service should normally require editing only
+that thing's manifest/adapter metadata. It should not require touching every
+App or Profile. A new capability becomes visible automatically when its
+metadata matches a Profile; risky capabilities stay opt-in.
+
+Default exposure classes:
+
+```text
+default      Safe for any matching Profile
+opt_in       Requires an explicit Profile selector or allow-list
+admin        Admin/native-power only
+disabled     Not exposed through the gateway
+```
+
+Common selectors:
+
+```text
+intent          chat.completions, image.edit, speech.synthesis, video.generate
+trust_tier      stable, experimental, private, admin
+resource_tier   interactive, batch, expensive
+exposure        default, opt_in, admin, disabled
+backend         comfyui.local, llama.cpp.gpu0, tabby.local
+tags            family-safe, native-power, controlnet, inpaint, music
+```
+
+The dashboard should explain outcomes in human terms:
+
+```text
+This App can use stable interactive chat and speech.
+It cannot use image/video, cloud fallback, native passthrough, or expensive batch jobs.
+```
+
+That explanation is the main UX. The underlying selectors are how the gateway
+avoids micromanagement.
 
 ## Design Principles
 
@@ -405,7 +461,7 @@ P1 frontends:
 
 Do not implement public protocols as backend special cases. An Anthropic route
 should not know that TabbyAPI exists. It should know how to translate Anthropic
-Messages into `chat.generate` and how to render Anthropic event streams/errors.
+Messages into `chat.completions` and how to render Anthropic event streams/errors.
 
 ## Backend Adapters
 
@@ -455,11 +511,11 @@ Use a small but broad discriminated union. Do not build a giant vague
 Initial intent families:
 
 ```text
-chat.generate
+chat.completions
 text.complete
 text.embed
 text.rerank
-speech.synthesize
+speech.synthesis
 speech.transcribe
 audio.translate
 audio.generate
@@ -669,6 +725,10 @@ Every backend adapter should publish an effective capability document.
 It should include:
 
 - supported intents
+- exposure class (`default`, `opt_in`, `admin`, `disabled`)
+- trust tier (`stable`, `experimental`, `private`, `admin`)
+- resource tier (`interactive`, `batch`, `expensive`)
+- tags used by Profiles and templates
 - supported public protocol passthroughs
 - native management operations
 - model list
@@ -695,6 +755,14 @@ Effective capability is the merge of:
 
 When runtime probes and static config disagree, the gateway should surface the
 disagreement and avoid overclaiming.
+
+Capability metadata is the anti-micromanagement contract. A new stable chat
+model marked `intent=chat.completions`, `trust_tier=stable`,
+`resource_tier=interactive`, `exposure=default` should become available to
+matching chat Profiles automatically. A new experimental ControlNet workflow
+marked `intent=image.edit`, `trust_tier=experimental`,
+`resource_tier=batch`, `exposure=opt_in`, `tags=[controlnet]` should not appear
+for family/basic Apps until an operator opts that Profile into the tag or ID.
 
 ## Access Plane
 
@@ -795,6 +863,29 @@ Profiles should define:
 Templates are not hardcoded special-case routing. They are setup recipes,
 compatibility tests, and defaults. The attached Policy Profile remains the
 actual authorization boundary.
+
+Policy Profiles should prefer selectors over enumerating every model/workflow.
+Use explicit allow/deny lists only for narrow Apps, fragile workflows, or
+temporary exceptions.
+
+Example:
+
+```yaml
+id: family-chat
+allow:
+  intents: ["chat.completions", "speech.synthesis"]
+  trust_tiers: ["stable"]
+  resource_tiers: ["interactive"]
+  exposure: ["default"]
+fallback:
+  cloud_allowed: false
+native_passthrough:
+  enabled: false
+```
+
+This Profile should automatically pick up a new stable interactive chat model.
+It should not pick up experimental image/video workflows, expensive batch
+rendering, native provider passthrough, or cloud fallback.
 
 ### Concrete flow: give a family member a key
 

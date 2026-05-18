@@ -275,6 +275,10 @@ _POLICY_REQUEST_FIELDS = frozenset(
         "workflow",
         "model",
         "backend",
+        "capability_exposure",
+        "capability_trust_tier",
+        "capability_resource_tier",
+        "capability_tags",
         "requires_cloud_fallback",
         "native_passthrough",
         "native_operation",
@@ -299,7 +303,27 @@ def _build_policy_request(payload: Any) -> PolicyRequest:
             "invalid_request",
             f"unknown request fields: {sorted(unknown)}",
         )
-    return PolicyRequest(**{k: payload[k] for k in payload})
+    data = dict(payload)
+    if "capability_tags" in data and data["capability_tags"] is not None:
+        tags = data["capability_tags"]
+        if (
+            isinstance(tags, (str, bytes, Mapping))
+            or not isinstance(tags, Iterable)
+        ):
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_request",
+                "capability_tags must be a list of strings",
+            )
+        tag_list = list(tags)
+        if not all(isinstance(tag, str) for tag in tag_list):
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_request",
+                "capability_tags must be a list of strings",
+            )
+        data["capability_tags"] = frozenset(tag_list)
+    return PolicyRequest(**data)
 
 
 def _decision_payload(decision: PolicyDecision) -> dict[str, Any]:

@@ -287,11 +287,15 @@ class TestPolicyBridge(unittest.TestCase):
         request = make_policy_request(
             protocol="openai.chat",
             model="gpt-5",
+            capability_exposure="default",
+            capability_tags=["coder"],
             requires_cloud_fallback=True,
         )
         self.assertIsInstance(request, PolicyRequest)
         self.assertEqual(request.protocol, "openai.chat")
         self.assertEqual(request.model, "gpt-5")
+        self.assertEqual(request.capability_exposure, "default")
+        self.assertEqual(request.capability_tags, frozenset({"coder"}))
         self.assertTrue(request.requires_cloud_fallback)
 
     def test_evaluate_and_apply_writes_receipt_compatible_decision(

@@ -360,7 +360,7 @@ probing, policy, and resource state.
 Example:
 
 ```yaml
-intent: chat.generate
+intent: chat.completions
 model: qwen3-coder
 backend: llama.cpp.gpu1
 input_modalities: ["text"]
@@ -370,7 +370,11 @@ streaming: true
 tools: partial
 state: warm
 available: true
-limits:
+exposure: default
+trust_tier: stable
+resource_tier: interactive
+tags: ["coder"]
+resources:
   max_parallel: 1
 policy:
   local_only: true
@@ -384,6 +388,10 @@ Minimum eligibility fields for routing:
 - intent
 - input and output modalities
 - execution mode
+- exposure class (`default`, `opt_in`, `admin`, `disabled`)
+- trust tier (`stable`, `experimental`, `private`, `admin`)
+- resource tier (`interactive`, `batch`, `expensive`)
+- tags for Profile/template selection
 - streaming support
 - lifecycle state
 - health availability
@@ -391,7 +399,18 @@ Minimum eligibility fields for routing:
 - resource estimate
 - caveats that affect correctness
 
-## App Profile
+These fields keep profile management from becoming a per-model chore. The
+default rule is:
+
+```text
+new capability metadata + existing Profile selectors -> availability decision
+```
+
+Operators should edit every App/Profile only when the new capability introduces
+a new category of risk. Otherwise the capability's own metadata controls
+whether matching Profiles can see it.
+
+## Policy Profile
 
 A Profile is a named policy bundle tied to an App. In the durable admin store,
 Apps point at stored Profiles and App keys inherit that Profile at runtime.
@@ -412,6 +431,28 @@ native_passthrough:
 status_visibility:
   level: basic
 ```
+
+The mature Profile shape should prefer selectors over giant allow-lists:
+
+```yaml
+id: family-chat
+allow:
+  intents: ["chat.completions", "speech.synthesis"]
+  trust_tiers: ["stable"]
+  resource_tiers: ["interactive"]
+  exposure: ["default"]
+fallback:
+  cloud_allowed: false
+native_passthrough:
+  enabled: false
+```
+
+Current implementations may still support direct `protocols`, `workflows`,
+`models`, and `backends` allow-lists. Those remain useful for narrow Apps and
+break-glass overrides, but they should not be the normal way to keep a family
+member, agent, or UI app updated as new models and workflows are installed.
+Operational limits such as `max_parallel` belong to the admission/controller
+contract, not the identity/Profile selector itself.
 
 Protocol strings are concrete (e.g. `openai.chat`, `openai.images`,
 `openai.audio`, `openai.responses`, `anthropic.messages`, `ollama.chat`,

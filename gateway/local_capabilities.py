@@ -305,6 +305,7 @@ def _build_image_capabilities(
                 output_modalities=("image",),
                 execution="job",
                 streaming=False,
+                resource_tier="batch",
                 resources=ResourceEstimate(gpu_required=True),
                 caveats=_workflow_dir_caveats(comfy.get("workflows_dir")),
             )
@@ -319,6 +320,7 @@ def _build_image_capabilities(
                 output_modalities=("image",),
                 execution="job",
                 streaming=False,
+                resource_tier="batch",
                 resources=ResourceEstimate(gpu_required=True),
                 caveats=_workflow_dir_caveats(comfy.get("workflows_dir")),
             )
@@ -348,6 +350,7 @@ def _build_video_capabilities(
         input_modalities=("text",),
         output_modalities=("video",),
         known_files=known_files,
+        resource_tier="expensive",
     )
 
 
@@ -373,6 +376,7 @@ def _build_audio_capabilities(
         input_modalities=("text",),
         output_modalities=("audio",),
         known_files=known_files,
+        resource_tier="batch",
     )
 
 
@@ -385,6 +389,7 @@ def _workflow_family_capabilities(
     input_modalities: tuple[str, ...],
     output_modalities: tuple[str, ...],
     known_files: set[str],
+    resource_tier: str,
 ) -> list[Capability]:
     out: list[Capability] = []
     alias_index: dict[str, list[str]] = {}
@@ -418,6 +423,7 @@ def _workflow_family_capabilities(
                 output_modalities=output_modalities,
                 execution="job",
                 streaming=False,
+                resource_tier=resource_tier,
                 resources=ResourceEstimate(gpu_required=True),
                 caveats=tuple(caveats),
             )

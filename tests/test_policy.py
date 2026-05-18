@@ -14,6 +14,7 @@ from gateway.policy import (  # noqa: E402
     DENIED,
     DEFAULT_PROFILE,
     AppProfile,
+    CapabilitySelector,
     FallbackPolicy,
     NativePassthroughPolicy,
     PolicyDecision,
@@ -72,6 +73,47 @@ class TestEvaluateAllowed(unittest.TestCase):
         self.assertEqual(decision.decision, ALLOWED)
         self.assertIn("no restrictions configured", decision.reasons)
 
+    def test_capability_selectors_allow_matching_metadata(self) -> None:
+        profile = AppProfile(
+            id="family-chat",
+            allow=CapabilitySelector(
+                intents=frozenset({"chat.completions"}),
+                exposure=frozenset({"default"}),
+                trust_tiers=frozenset({"stable"}),
+                resource_tiers=frozenset({"interactive"}),
+                tags=frozenset({"coder"}),
+            ),
+        )
+        request = PolicyRequest(
+            intent="chat.completions",
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="interactive",
+            capability_tags=frozenset({"coder", "local"}),
+        )
+
+        decision = evaluate(profile, request)
+        self.assertEqual(decision.decision, ALLOWED)
+        self.assertTrue(
+            any("resource tier" in reason for reason in decision.reasons),
+            decision.reasons,
+        )
+
+    def test_capability_selectors_skip_missing_metadata_for_compatibility(self) -> None:
+        profile = AppProfile(
+            id="legacy-caller",
+            allow=CapabilitySelector(
+                exposure=frozenset({"default"}),
+                trust_tiers=frozenset({"stable"}),
+                resource_tiers=frozenset({"interactive"}),
+            ),
+        )
+
+        decision = evaluate(profile, PolicyRequest(protocol="openai.chat"))
+
+        self.assertEqual(decision.decision, ALLOWED)
+        self.assertIn("no restrictions configured", decision.reasons)
+
 
 class TestEvaluateDenied(unittest.TestCase):
     def test_protocol_not_in_allow_list_is_denied(self) -> None:
@@ -121,6 +163,62 @@ class TestEvaluateDenied(unittest.TestCase):
             evaluate(profile, PolicyRequest(backend="cloud.openai")).decision,
             DENIED,
         )
+
+    def test_capability_selector_denials(self) -> None:
+        profile = AppProfile(
+            id="family-chat",
+            allow=CapabilitySelector(
+                intents=frozenset({"chat.completions"}),
+                exposure=frozenset({"default"}),
+                trust_tiers=frozenset({"stable"}),
+                resource_tiers=frozenset({"interactive"}),
+                tags=frozenset({"coder"}),
+            ),
+        )
+
+        cases = [
+            (
+                PolicyRequest(intent="image.generate"),
+                "intent 'image.generate'",
+            ),
+            (
+                PolicyRequest(capability_exposure="opt_in"),
+                "exposure 'opt_in'",
+            ),
+            (
+                PolicyRequest(capability_trust_tier="experimental"),
+                "trust tier 'experimental'",
+            ),
+            (
+                PolicyRequest(capability_resource_tier="batch"),
+                "resource tier 'batch'",
+            ),
+            (
+                PolicyRequest(capability_tags=frozenset({"image"})),
+                "capability tags",
+            ),
+        ]
+        for request, reason_fragment in cases:
+            with self.subTest(reason=reason_fragment):
+                decision = evaluate(profile, request)
+                self.assertEqual(decision.decision, DENIED)
+                self.assertIn("policy:capability-selectors", decision.sources)
+                self.assertTrue(
+                    any(reason_fragment in reason for reason in decision.reasons),
+                    decision.reasons,
+                )
+
+    def test_empty_capability_selector_denies_present_dimension(self) -> None:
+        profile = AppProfile(
+            id="locked",
+            allow=CapabilitySelector(resource_tiers=frozenset()),
+        )
+        decision = evaluate(
+            profile,
+            PolicyRequest(capability_resource_tier="interactive"),
+        )
+
+        self.assertEqual(decision.decision, DENIED)
 
 
 class TestDefaultLocalProfile(unittest.TestCase):

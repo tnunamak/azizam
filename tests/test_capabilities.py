@@ -26,6 +26,7 @@ from gateway.policy import (  # noqa: E402
     ALLOWED,
     DENIED,
     AppProfile,
+    CapabilitySelector,
     PolicyDecision,
     PolicyRequest,
     evaluate,
@@ -114,6 +115,10 @@ class CapabilityConstructionTests(unittest.TestCase):
         self.assertEqual(cap.lifecycle, "unknown")
         self.assertEqual(cap.health, "unknown")
         self.assertFalse(cap.streaming)
+        self.assertEqual(cap.exposure, "default")
+        self.assertEqual(cap.trust_tier, "stable")
+        self.assertEqual(cap.resource_tier, "interactive")
+        self.assertEqual(cap.tags, ())
         self.assertTrue(cap.policy_available)
         self.assertTrue(cap.available)
         self.assertEqual(cap.caveats, ())
@@ -127,6 +132,16 @@ class CapabilityConstructionTests(unittest.TestCase):
             Capability(intent="x", backend="b", lifecycle="ablaze")
         with self.assertRaises(ValueError):
             Capability(intent="x", backend="b", health="haunted")
+
+    def test_rejects_unknown_metadata_values(self) -> None:
+        with self.assertRaises(ValueError):
+            Capability(intent="x", backend="b", exposure="public")
+        with self.assertRaises(ValueError):
+            Capability(intent="x", backend="b", trust_tier="trusted")
+        with self.assertRaises(ValueError):
+            Capability(intent="x", backend="b", resource_tier="slow")
+        with self.assertRaises(ValueError):
+            Capability(intent="x", backend="b", tags="coder")
 
     def test_dataclass_is_frozen_and_hashable(self) -> None:
         cap = Capability(intent="x", backend="b")
@@ -176,6 +191,10 @@ class SummarizeCapabilityTests(unittest.TestCase):
             output_modalities=("image",),
             execution="job",
             streaming=False,
+            exposure="opt_in",
+            trust_tier="experimental",
+            resource_tier="batch",
+            tags=("controlnet",),
             lifecycle="warm",
             health="healthy",
             policy_available=True,
@@ -195,6 +214,10 @@ class SummarizeCapabilityTests(unittest.TestCase):
         self.assertEqual(client["input_modalities"], ["text", "image"])
         self.assertEqual(client["output_modalities"], ["image"])
         self.assertEqual(client["workflow"], "image.edit.controlnet.example")
+        self.assertEqual(client["exposure"], "opt_in")
+        self.assertEqual(client["trust_tier"], "experimental")
+        self.assertEqual(client["resource_tier"], "batch")
+        self.assertEqual(client["tags"], ["controlnet"])
         self.assertEqual(client["available"], True)
         self.assertEqual(client["caveats"], ["workflow manifest is untrusted"])
 
@@ -295,6 +318,7 @@ class WorkflowDerivedCapabilityTests(unittest.TestCase):
         self.assertEqual(cap.input_modalities, ("text", "image"))
         self.assertEqual(cap.output_modalities, ("image",))
         self.assertEqual(cap.execution, "job")
+        self.assertEqual(cap.resource_tier, "batch")
         self.assertFalse(cap.streaming)
         self.assertTrue(cap.resources.gpu_required)
         # Trusted manifest contributes no caveat.
@@ -378,6 +402,35 @@ class PolicyIntegrationTests(unittest.TestCase):
         self.assertFalse(denied_view.policy_available)
         self.assertFalse(denied_view.available)
         self.assertIn("profile:image-agent", denied_view.policy_sources)
+
+    def test_capability_with_policy_view_passes_metadata_selectors(self) -> None:
+        profile = AppProfile(
+            id="family-chat",
+            allow=CapabilitySelector(
+                intents=frozenset({"chat.completions"}),
+                exposure=frozenset({"default"}),
+                trust_tiers=frozenset({"stable"}),
+                resource_tiers=frozenset({"interactive"}),
+            ),
+        )
+        permitted = Capability(
+            intent="chat.completions",
+            backend="llama.cpp",
+            resource_tier="interactive",
+        )
+        denied = Capability(
+            intent="image.generate",
+            backend="comfyui",
+            execution="job",
+            resource_tier="batch",
+        )
+
+        self.assertTrue(
+            capability_with_policy_view(permitted, profile).policy_available
+        )
+        self.assertFalse(
+            capability_with_policy_view(denied, profile).policy_available
+        )
 
     def test_capability_with_policy_view_honors_explicit_request(self) -> None:
         # Caller wants to layer cloud-fallback policy on top of capability
