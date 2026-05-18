@@ -35,12 +35,13 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("Check access", html)
         self.assertIn("Connection settings", html)
         self.assertIn("Access", html)
+        self.assertIn("Point an OpenAI-compatible App or SDK tool at the gateway.", html)
         self.assertNotIn("Use your local AI stack", html)
         self.assertNotIn("Failure Meanings", html)
         self.assertNotIn("ANTHROPIC_BASE_URL", html)
+        self.assertNotIn("OpenAI-compatible client", html)
         self.assertNotIn("Mint runtime key", html)
-        self.assertNotIn("runtime key", html)
-        self.assertNotIn("/admin/api", html)
+        self.assertNotIn("Copy this API key now", html)
 
     def test_does_not_render_real_api_key_material(self) -> None:
         html = render_user_portal()
@@ -90,8 +91,12 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("Delete key", html)
         self.assertIn("Delete App", html)
         self.assertIn("View access", html)
+        self.assertIn("Create one App per tool, workflow, or script", html)
+        self.assertNotIn("Create one App per client", html)
         self.assertIn("Copy key", html)
-        self.assertIn("Copy this API key now", html)
+        self.assertIn("Copy this opk_ App API key now", html)
+        self.assertIn("only for Apps and SDK tools", html)
+        self.assertNotIn("Copy this API key now", html)
         self.assertIn("key-row", html)
         self.assertIn("/me/api/credentials/", html)
         self.assertNotIn("location.reload", html)
@@ -99,6 +104,15 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertNotIn(">Discovery<", html)
         self.assertNotIn(">Health<", html)
         self.assertNotIn("hash", html)
+
+    def test_runtime_key_check_rejects_admin_automation_keys(self) -> None:
+        html = render_user_portal()
+        self.assertIn('startsWith("oak_")', html)
+        self.assertIn(
+            "oak_ admin automation keys are for /admin/api and /status, not runtime access",
+            html,
+        )
+        self.assertIn("Paste an opk_ App API key instead.", html)
 
     def test_signed_in_admin_gets_admin_nav_from_user_portal(self) -> None:
         html = render_user_portal(

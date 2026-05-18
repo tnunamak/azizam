@@ -410,7 +410,7 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     apps = [a for a in account.get("apps", []) if isinstance(a, Mapping)]
     is_admin = can_admin(account)
     create_help = (
-        "Create one App per client, workflow, or script. Keys live inside the App."
+        "Create one App per tool, workflow, or script. Keys live inside the App."
     )
     create_form = (
         '<form class="app-create" data-create-owned-app>'
@@ -479,7 +479,7 @@ def _settings_section() -> str:
     return (
         '<section aria-labelledby="settings-heading">'
         '<h2 id="settings-heading">Connection settings</h2>'
-        '<p class="hint">Point an OpenAI-compatible client at the gateway. '
+        '<p class="hint">Point an OpenAI-compatible App or SDK tool at the gateway. '
         "Other protocols use the same base URL with their own paths.</p>"
         '<div id="openai-snippet" class="snippet"></div>'
         "</section>"
@@ -620,7 +620,7 @@ def render_user_portal(
     const wrap = document.createElement("div");
     wrap.className = "secret";
     const text = document.createElement("p");
-    text.textContent = "Copy this API key now. It will not be shown again.";
+    text.textContent = "Copy this opk_ App API key now. It is only for Apps and SDK tools, and it will not be shown again.";
     const code = document.createElement("code");
     code.textContent = key;
     const actions = document.createElement("div");
@@ -636,6 +636,10 @@ def render_user_portal(
 
   function runtimeKey() {{
     return keyInput.value.trim();
+  }}
+
+  function hasAdminAutomationKey() {{
+    return runtimeKey().toLowerCase().startsWith("oak_");
   }}
 
   function authHeaders() {{
@@ -929,6 +933,10 @@ def render_user_portal(
   async function checkAccess() {{
     if (!runtimeKey()) {{
       setMessage("Paste an opk_ API key first.", "warn");
+      return;
+    }}
+    if (hasAdminAutomationKey()) {{
+      setMessage("oak_ admin automation keys are for /admin/api and /status, not runtime access. Paste an opk_ App API key instead.", "bad");
       return;
     }}
     sessionStorage.setItem(storageKey, runtimeKey());

@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway.policy import AppProfile  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
 
 
@@ -201,6 +202,157 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ok.status_code, 200, ok.text)
             self.assertEqual(ok.headers["content-type"], "image/png")
             self.assertEqual(ok.content, raw)
+
+    def test_content_routes_require_image_profile_after_auth(self) -> None:
+        raw_key = "opk_image_policy_test"
+        raw = _png_bytes((16, 17, 18, 255))
+        owner_hash = proxy.hash_api_key(raw_key)
+        asset_id = proxy.store_image_bytes(raw, owner_key_hash=owner_hash)
+        expires = int(proxy.time.time()) + 60
+        sig = proxy._sign_asset_token(asset_id, expires)
+        query = {"expires": str(expires), "sig": sig}
+        client = TestClient(proxy.app)
+        chat_only = AppProfile(
+            id="chat-only",
+            protocols=frozenset({"openai.chat"}),
+        )
+        image_profile = AppProfile(
+            id="image",
+            protocols=frozenset({"openai.images"}),
+        )
+
+        def identity(profile: AppProfile) -> proxy.AuthIdentity:
+            return proxy.AuthIdentity(
+                name="image-policy",
+                key_hash=owner_hash,
+                profile=profile,
+            )
+
+        for path in (
+            f"/v1/images/{asset_id}/content",
+            f"/v1/assets/{asset_id}/content",
+        ):
+            with self.subTest(path=path, profile="chat-only"), patch.object(
+                proxy,
+                "AUTH_ENABLED",
+                True,
+            ), patch.object(
+                proxy,
+                "AUTH_REGISTRY",
+                {owner_hash: identity(chat_only)},
+            ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+                denied = client.get(
+                    path,
+                    params=query,
+                    headers={"Authorization": f"Bearer {raw_key}"},
+                )
+                self.assertEqual(denied.status_code, 403, denied.text)
+                self.assertEqual(denied.json()["error"]["code"], "policy_denied")
+
+            with self.subTest(path=path, profile="image"), patch.object(
+                proxy,
+                "AUTH_ENABLED",
+                True,
+            ), patch.object(
+                proxy,
+                "AUTH_REGISTRY",
+                {owner_hash: identity(image_profile)},
+            ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+                ok = client.get(
+                    path,
+                    params=query,
+                    headers={"Authorization": f"Bearer {raw_key}"},
+                )
+                self.assertEqual(ok.status_code, 200, ok.text)
+                self.assertEqual(ok.headers["content-type"], "image/png")
+                self.assertEqual(ok.content, raw)
+
+    def test_generic_asset_content_uses_asset_kind_profile_after_auth(self) -> None:
+        raw_key = "opk_audio_asset_policy_test"
+        raw = b"RIFF....WAVEfmt "
+        owner_hash = proxy.hash_api_key(raw_key)
+        asset_id = proxy.store_asset_bytes(
+            raw,
+            kind="aud",
+            suffix=".wav",
+            owner_key_hash=owner_hash,
+        )
+        expires = int(proxy.time.time()) + 60
+        sig = proxy._sign_asset_token(asset_id, expires)
+        query = {"expires": str(expires), "sig": sig}
+        client = TestClient(proxy.app)
+        chat_only = AppProfile(
+            id="chat-only",
+            protocols=frozenset({"openai.chat"}),
+        )
+        audio_profile = AppProfile(
+            id="audio",
+            protocols=frozenset({"openai.audio"}),
+        )
+
+        def identity(profile: AppProfile) -> proxy.AuthIdentity:
+            return proxy.AuthIdentity(
+                name="audio-asset-policy",
+                key_hash=owner_hash,
+                profile=profile,
+            )
+
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy,
+            "AUTH_REGISTRY",
+            {owner_hash: identity(chat_only)},
+        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            denied = client.get(
+                f"/v1/assets/{asset_id}/content",
+                params=query,
+                headers={"Authorization": f"Bearer {raw_key}"},
+            )
+            self.assertEqual(denied.status_code, 403, denied.text)
+            self.assertEqual(denied.json()["error"]["code"], "policy_denied")
+
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy,
+            "AUTH_REGISTRY",
+            {owner_hash: identity(audio_profile)},
+        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            ok = client.get(
+                f"/v1/assets/{asset_id}/content",
+                params=query,
+                headers={"Authorization": f"Bearer {raw_key}"},
+            )
+            self.assertEqual(ok.status_code, 200, ok.text)
+            self.assertEqual(ok.headers["content-type"], "audio/wav")
+            self.assertEqual(ok.content, raw)
+
+    def test_invalid_generic_asset_id_uses_signed_asset_validation(self) -> None:
+        raw_key = "opk_invalid_asset_policy_test"
+        owner_hash = proxy.hash_api_key(raw_key)
+        asset_id = "bad_asset_id"
+        expires = int(proxy.time.time()) + 60
+        sig = proxy._sign_asset_token(asset_id, expires)
+        chat_only = AppProfile(
+            id="chat-only",
+            protocols=frozenset({"openai.chat"}),
+        )
+        identity = proxy.AuthIdentity(
+            name="invalid-asset-policy",
+            key_hash=owner_hash,
+            profile=chat_only,
+        )
+
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy,
+            "AUTH_REGISTRY",
+            {owner_hash: identity},
+        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            response = TestClient(proxy.app).get(
+                f"/v1/assets/{asset_id}/content",
+                params={"expires": str(expires), "sig": sig},
+                headers={"Authorization": f"Bearer {raw_key}"},
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["error"]["message"], "Invalid asset id")
 
 
 class TestStartImageRouteReceipt(unittest.TestCase):

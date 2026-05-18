@@ -22,20 +22,34 @@ Use these nouns consistently:
   device.
 - **Profile**: a reusable access policy and runtime envelope. A Profile says
   what an App may use.
-- **Key**: a secret credential issued to one App. Apps can have multiple keys
-  for rotation.
+- **App API key**: an `opk_...` runtime credential issued to one App. Apps can
+  have multiple keys for rotation.
+- **Admin automation key**: an `oak_...` control-plane credential for scripts
+  that manage the gateway itself. It is not an OpenAI-compatible runtime key.
 - **Service**: a backend or workflow host, such as llama.cpp, ComfyUI, STT,
   TTS, or a custom HTTP tool.
 
 The admin mental model should be:
 
 ```text
-This App uses this Key, and the Key runs under this Profile.
+This App uses this App API key, and the key runs under this Profile.
 ```
 
 Do not add another stored abstraction called Access, Plan, Template, or Grant
 unless the implementation proves it needs one. Presets/templates are UI helpers
 for generating existing objects.
+
+Keep the plane split explicit:
+
+```text
+opk_... -> runtime App API key -> /v1, /gateway/v1, model/workflow execution
+oak_... -> admin automation key -> /admin/api, /status, gateway management
+```
+
+`Full runtime access` and `Gateway admin automation` are different products.
+The former can spend GPU/storage/time on runtime capabilities. The latter can
+change gateway configuration, Apps, Profiles, and keys. Never blur them in the
+same creation flow.
 
 ## Prior Art
 
@@ -77,26 +91,82 @@ Reference docs:
    A single App may need current, staging, and retiring keys. Revoking a key
    should preserve App history.
 
-4. **Make Profiles understandable as reusable policies.**
+4. **Separate runtime access from gateway administration.**
+   Runtime App keys are for apps and SDK tools. Admin automation keys are for
+   trusted scripts that mutate gateway state. A broad runtime Profile must not
+   imply control-plane permission.
+
+5. **Make Profiles understandable as reusable policies.**
    A Profile should read like "Family chat: chat only, local stable routes,
    no cloud fallback" before it reads like JSON.
 
-5. **Progressively disclose implementation details.**
+6. **Progressively disclose implementation details.**
    Profile ids, service account owner names, protocol selectors, exact
    intents, status visibility, native passthrough, and raw JSON belong in
    advanced sections.
 
-6. **Treat media workflows as first-class risk/cost surfaces.**
+7. **Treat media workflows as first-class risk/cost surfaces.**
    Image, audio, and video workflows have different latency, VRAM, storage,
    and safety implications from chat.
 
-7. **Never grant newly discovered services implicitly.**
+8. **Never grant newly discovered services implicitly.**
    A service can be available without being allowed by any Profile.
 
-8. **Make denials and routing explainable.**
+9. **Make denials and routing explainable.**
    Self-hosted operators need to know whether a failure was authentication,
    profile denial, upstream unavailable, queue/resource pressure, timeout, or
    invalid request shape.
+
+## Holistic Admin IA
+
+The admin UI should be organized around operator jobs, not storage tables:
+
+- **Apps & Keys**: create App API keys, see active Apps, rotate/revoke runtime
+  keys.
+- **Profiles**: reusable runtime access policies, created from named templates
+  and summarized in plain language.
+- **Workflows**: media workflow catalog, dependency/status checks, manifest
+  controls.
+- **Activity**: receipts, jobs, denials, and audit events.
+- **Status**: backends, queues, GPU/VRAM, and maintenance modes.
+- **Admin**: admin users, admin automation keys, OIDC/config diagnostics.
+
+The current thin dashboard may render several of these on one page, but the
+mental model should follow this IA.
+
+## SLVP Policy Choices
+
+The best first product surface is a short set of named choices:
+
+- **Chat only**
+  - Stable local chat.
+  - No embeddings, media workflows, cloud fallback, native passthrough, or
+    admin access.
+  - Use for family chat, LibreChat, and basic Open WebUI.
+- **Chat + embeddings**
+  - Chat plus retrieval/search embeddings.
+  - No media workflows, backend operation, or admin access.
+  - Use for RAG apps, Continue, local search, and document ingestion.
+- **Media workflows**
+  - Approved image/audio/video workflows with typed manifest controls.
+  - Queue, VRAM, duration, and dependency constraints apply.
+  - No native passthrough or admin access by default.
+- **Full runtime access**
+  - Broad runtime access to local models and workflows.
+  - May include stable, opt-in, experimental, batch, and expensive runtime
+    capabilities, depending on the gateway policy.
+  - Does not grant permission to manage Apps, Profiles, keys, users, or
+    gateway settings.
+- **Gateway admin automation**
+  - Creates an `oak_...` admin automation key, not an `opk_...` App API key.
+  - Can manage gateway control-plane resources according to its role.
+  - Does not imply model/media runtime access.
+- **Advanced native passthrough**
+  - A dangerous modifier or advanced template, not a default option.
+  - Must scope explicit backends and operations and keep audit on by default.
+
+Do not use vague labels like "All local and stable" in the SLVP UI. They
+encode implementation metadata, not an operator decision.
 
 ## Main Workflows
 
@@ -108,12 +178,11 @@ agent, or another shared service.
 Visible fields:
 
 - App or service name
-- Allowed capabilities:
-  - Chat
-  - Embeddings
-  - Images
-  - Audio
-  - Video
+- Runtime access policy:
+  - Chat only
+  - Chat + embeddings
+  - Media workflows
+  - Full runtime access
 
 The primary flow should always create the key. Do not ask "create API key
 now?" in a form whose purpose is key creation. Do not ask for a key label in
@@ -133,21 +202,16 @@ Do not put generated ids, owner overrides, raw policy JSON, or service-account
 language in this first flow. Those controls belong in separate advanced
 maintenance tools, not the primary path.
 
-### Create reusable access policy
+### Create reusable Profile
 
 Use when the admin wants to define a policy that several Apps can share, such
-as Family chat, Coding agents, Image generation, Automation, Experimental, or
-Locked down.
+as Chat only, Chat + embeddings, Media workflows, Full runtime access, or a
+custom advanced policy.
 
 Visible fields:
 
 - Policy name
-- Start from template
-- Allowed capabilities: chat, embeddings, images, audio, video
-- Model/workflow access:
-  - Recommended safe defaults
-  - All local and stable
-  - Only explicitly tagged workflows
+- Start from Profile template
 
 Advanced fields:
 
@@ -158,6 +222,25 @@ Advanced fields:
 - cloud fallback
 - native passthrough
 - raw JSON override
+
+### Create admin automation key
+
+Use when the admin wants a script to manage Apps, Profiles, keys, status, or
+audit data.
+
+Visible fields:
+
+- Automation name
+- Admin role: admin or owner
+
+Rules:
+
+- The generated key is an `oak_...` key and should be shown once.
+- It is for `/admin/api` control-plane calls, not for OpenAI-compatible
+  runtime calls.
+- The UI must warn: "Do not paste this into chat apps, SDK tools, browser
+  code, prompts, logs, or issue trackers."
+- Creating owner automation keys should require an existing owner actor.
 
 ### Rotate or revoke keys
 
@@ -192,6 +275,9 @@ Avoid:
 - deleting Apps as the main revocation path
 - exposing raw ids and JSON in common flows
 - making "Access" a durable product noun when it only means a UI preset
+- implying that Full runtime access can manage the gateway
+- putting admin automation keys into runtime App-key flows
+- creating an `oak_...` key without strong one-time-secret and danger copy
 
 ## SLVP Bar
 
@@ -200,7 +286,8 @@ operator's immediate path.
 
 Ship:
 
-- task-shaped grant flow for service Apps
+- task-shaped App API key creation
+- separate admin automation key creation
 - plain-language reusable Profile creation
 - key creation/revocation with one-time key handling
 - readable summaries of what each App/Profile can use
@@ -213,3 +300,5 @@ Do not ship:
 - service access flows that show duplicated generated names as separate
   required fields
 - UI-only abstractions that become a second policy model
+- vague labels like "All local and stable"
+- any UI that makes `opk_...` and `oak_...` keys feel interchangeable

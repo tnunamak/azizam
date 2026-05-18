@@ -16,8 +16,8 @@ This module is intentionally decoupled from persistent storage and live auth:
   admin plane stays consistent with the live runtime decision logic.
 
 The router never reads files, never reads ``os.environ``, never touches
-``proxy.py``, and never returns raw key material outside the one-time
-``POST /admin/api/apps/{app_id}/keys`` response.
+``proxy.py``, and never returns raw key material outside one-time key creation
+responses.
 """
 
 from __future__ import annotations
@@ -90,8 +90,8 @@ class AdminStore(Protocol):
     """Duck-typed persistence surface.
 
     Implementations may be in-memory, SQLite, etc. All methods return plain
-    JSON-able dicts; raw key material must only ever appear in
-    :meth:`create_credential`'s return value under the key ``"api_key"``.
+    JSON-able dicts; raw key material must only ever appear in one-time key
+    creation return values under the key ``"api_key"``.
     """
 
     def list_users(self) -> list[dict[str, Any]]: ...
@@ -114,6 +114,10 @@ class AdminStore(Protocol):
 
     def create_credential(
         self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
+    def create_admin_automation_key(
+        self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
     def revoke_credential(
@@ -234,7 +238,8 @@ def _scrub_credential(record: Mapping[str, Any]) -> dict[str, Any]:
     Stores must never embed raw keys in list/read records, but this is a
     defence-in-depth pass so a buggy store cannot leak through the admin API.
     """
-    return {k: v for k, v in record.items() if k not in {"api_key", "key", "secret"}}
+    blocked = {"api_key", "key", "secret", "hash", "key_hash"}
+    return {k: v for k, v in record.items() if k not in blocked}
 
 
 def _scrub_credentials(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -505,6 +510,49 @@ def create_admin_router(
             ).as_response()
         # The store is allowed (and expected) to return a one-time ``api_key``
         # here. List/read endpoints scrub it.
+        return JSONResponse(
+            status_code=status.HTTP_201_CREATED, content={"credential": record}
+        )
+
+    @router.post("/admin-keys")
+    async def create_admin_key(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+        except _RouteError as exc:
+            return exc.as_response()
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_admin_key",
+                "admin automation key name is required",
+            ).as_response()
+        role = str(body.get("role") or "admin").strip()
+        if role not in {"admin", "owner"}:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_admin_key",
+                "role must be one of: admin, owner",
+            ).as_response()
+        if role == "owner" and "owner" not in set(ctx.roles):
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN,
+                "admin_role_forbidden",
+                "owner role required to mint owner keys",
+            ).as_response()
+        try:
+            record = store.create_admin_automation_key(
+                data={**body, "role": role}, actor=ctx
+            )
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_admin_key",
+                str(exc),
+            ).as_response()
         return JSONResponse(
             status_code=status.HTTP_201_CREATED, content={"credential": record}
         )

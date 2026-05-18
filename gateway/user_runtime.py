@@ -169,6 +169,21 @@ def _user_from_session(session: AdminSession, *, path: Path) -> dict[str, Any]:
     return user
 
 
+def _live_role_for_user(user_id: str, *, path: Path) -> str:
+    roles = {
+        str(role.get("role") or "")
+        for role in admin_store.list_admin_roles(
+            subject_kind="user",
+            subject_id=user_id,
+            path=path,
+        )
+    }
+    for role in ("owner", "superadmin", "admin"):
+        if role in roles:
+            return role
+    return "none"
+
+
 def _app_payload(
     app: Mapping[str, Any],
     *,
@@ -255,7 +270,7 @@ def build_user_portal_snapshot(
             "id": user.get("id"),
             "email": user.get("email") or session.email,
             "name": user.get("display_name") or user.get("email") or session.email,
-            "role": session.role,
+            "role": _live_role_for_user(str(user["id"]), path=path),
         },
         "apps": apps,
     }

@@ -13,6 +13,11 @@ sys.path.insert(0, str(ROOT))
 
 from gateway import admin_store  # noqa: E402
 from gateway.admin_api import AdminContext, create_admin_router  # noqa: E402
+from gateway.admin_oidc import (  # noqa: E402
+    CookieConfig,
+    encode_session_cookie,
+    session_from_claims,
+)
 from gateway.admin_runtime import (  # noqa: E402
     AdminAuthenticator,
     AdminSQLiteStore,
@@ -43,6 +48,33 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         client = TestClient(app)
         client.headers.update({"Authorization": f"Bearer {key}"})
+        return client
+
+    def _session_client(self, *, user_id: str, role: str = "owner") -> TestClient:
+        signing_key = b"s" * 32
+        cookie = CookieConfig(secure=False)
+        app = FastAPI()
+        app.include_router(
+            create_admin_router(
+                self.store,
+                auth=AdminAuthenticator(
+                    self.store,
+                    signing_key=signing_key,
+                    cookie=cookie,
+                ),
+                profile_resolver=self.store.profile_for_id,
+            )
+        )
+        session = session_from_claims(
+            {"sub": user_id, "email": "owner@example.com"},
+            role=role,
+            cookie=cookie,
+        )
+        client = TestClient(app)
+        client.cookies.set(
+            cookie.name,
+            encode_session_cookie(session, signing_key=signing_key),
+        )
         return client
 
     def test_admin_key_can_create_app_and_app_key(self) -> None:
@@ -86,6 +118,69 @@ class AdminRuntimeTests(unittest.TestCase):
         forbidden = self._client(app_key).get("/admin/api/overview")
         self.assertEqual(forbidden.status_code, 403)
         self.assertEqual(forbidden.json()["error"]["code"], "admin_forbidden")
+
+    def test_dashboard_can_create_admin_automation_key(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        resp = client.post(
+            "/admin/api/admin-keys",
+            json={"name": "key-rotation-script", "role": "admin"},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        credential = resp.json()["credential"]
+        automation_key = credential["api_key"]
+        self.assertTrue(automation_key.startswith("oak_"))
+        self.assertEqual(credential["subject_kind"], "service_account")
+        self.assertEqual(credential["role"], "admin")
+        self.assertNotIn("hash", credential)
+
+        stored = admin_store.find_credential_by_hash(
+            hash_api_key(automation_key), path=self.db
+        )
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["subject_kind"], "service_account")  # type: ignore[index]
+        self.assertIsNone(
+            runtime_identity_for_app_credential_hash(
+                hash_api_key(automation_key),
+                path=self.db,
+            )
+        )
+
+        admin_resp = self._client(automation_key).get("/admin/api/overview")
+        self.assertEqual(admin_resp.status_code, 200, admin_resp.text)
+
+    def test_cli_admin_key_helper_rejects_superadmin_role(self) -> None:
+        with self.assertRaises(ValueError):
+            create_admin_service_account_key(
+                "too-powerful",
+                role="superadmin",
+                path=self.db,
+            )
+
+    def test_session_auth_uses_live_role_assignments(self) -> None:
+        user = admin_store.upsert_oidc_user(
+            "https://idp.example",
+            "owner-subject",
+            email="owner@example.com",
+            display_name="Owner",
+            path=self.db,
+        )
+
+        denied = self._session_client(user_id=user["id"]).get("/admin/api/overview")
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.json()["error"]["code"], "admin_forbidden")
+
+        admin_store.assign_admin_role(
+            role="owner",
+            subject_kind="user",
+            subject_id=user["id"],
+            granted_by="test",
+            path=self.db,
+        )
+        allowed = self._session_client(user_id=user["id"]).get("/admin/api/overview")
+        self.assertEqual(allowed.status_code, 200, allowed.text)
 
     def test_admin_store_app_key_builds_runtime_identity_with_profile(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(

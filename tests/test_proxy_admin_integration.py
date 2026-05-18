@@ -331,8 +331,22 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
 
+        user = admin_store.upsert_oidc_user(
+            cfg.issuer,
+            "status-owner-subject",
+            email="owner@example.com",
+            display_name="Owner",
+            path=self.db,
+        )
+        admin_store.assign_admin_role(
+            role="owner",
+            subject_kind="user",
+            subject_id=user["id"],
+            granted_by="test",
+            path=self.db,
+        )
         session = session_from_claims(
-            {"sub": "u_owner", "email": "owner@example.com"},
+            {"sub": user["id"], "email": "owner@example.com"},
             role="owner",
             cookie=cfg.cookie,
         )
@@ -348,6 +362,9 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             response = self.client.get("/status")
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
+        self.assertIn("owner@example.com", response.text)
+        self.assertIn('href="/me/logout">Sign out</a>', response.text)
+        self.assertIn('href="/status" aria-current="page">Status</a>', response.text)
 
     def test_status_dashboard_redirects_browser_to_login_when_oidc_enabled(self) -> None:
         cfg = OIDCConfig(

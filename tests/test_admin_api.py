@@ -125,6 +125,32 @@ class FakeAdminStore:
         # Caller of create_credential gets the one-time raw key.
         return {**stored, "api_key": raw_key}
 
+    def create_admin_automation_key(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        cred_id = self._id("cred")
+        raw_key = f"oak_test_{cred_id}_secret"
+        stored = {
+            "id": cred_id,
+            "subject_kind": "service_account",
+            "subject_id": self._id("svc"),
+            "label": f"{data['name']} admin automation key",
+            "prefix": raw_key[:18],
+            "role": data.get("role") or "admin",
+            "created_at": "2026-05-17T00:00:00Z",
+            "revoked_at": None,
+        }
+        self.credentials[cred_id] = stored
+        self.audit.append(
+            {
+                "at": "2026-05-17T00:00:00Z",
+                "actor": actor.subject,
+                "action": "admin_key.create",
+                "target": cred_id,
+            }
+        )
+        return {**stored, "api_key": raw_key}
+
     def revoke_credential(
         self, *, credential_id: str, actor: AdminContext
     ) -> dict[str, Any] | None:
@@ -332,6 +358,56 @@ class AdminAppKeyFlowTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"]["code"], "invalid_app")
+
+
+class AdminAutomationKeyFlowTests(unittest.TestCase):
+    def test_admin_can_create_admin_automation_key(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/admin-keys",
+            json={"name": "key-rotation-script", "role": "admin"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        cred = resp.json()["credential"]
+        self.assertTrue(cred["api_key"].startswith("oak_"))
+        self.assertEqual(cred["subject_kind"], "service_account")
+        self.assertEqual(cred["role"], "admin")
+
+        audit_resp = client.get("/admin/api/audit", headers=_auth())
+        self.assertNotIn("oak_test_", audit_resp.text)
+        self.assertIn("admin_key.create", audit_resp.text)
+
+    def test_admin_automation_key_requires_name(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/admin-keys",
+            json={},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["code"], "invalid_admin_key")
+
+    def test_admin_automation_key_rejects_superadmin_role(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/admin-keys",
+            json={"name": "too-powerful", "role": "superadmin"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["code"], "invalid_admin_key")
+        self.assertIn("admin, owner", resp.json()["error"]["message"])
+
+    def test_admin_role_cannot_mint_owner_key(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/admin-keys",
+            json={"name": "too-powerful", "role": "owner"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error"]["code"], "admin_role_forbidden")
 
 
 class AdminCredentialRevocationTests(unittest.TestCase):

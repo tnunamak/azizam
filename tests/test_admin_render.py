@@ -14,7 +14,11 @@ from gateway.admin_render import render_admin_dashboard  # noqa: E402
 
 def _snapshot() -> dict:
     return {
-        "actor": {"subject": "u_owner", "email": "owner@example.com"},
+        "actor": {
+            "subject": "u_owner",
+            "email": "owner@example.com",
+            "roles": ["owner"],
+        },
         "counts": {
             "users": 1,
             "apps": 2,
@@ -108,6 +112,13 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         self.assertIn("Create App", html)
         self.assertIn("Create key for existing App", html)
+        self.assertIn("Create App API key", html)
+        self.assertIn('aria-label="App for App API key"', html)
+        self.assertNotIn("Create runtime key", html)
+        self.assertNotIn('aria-label="App for runtime key"', html)
+        self.assertIn("Create admin automation key", html)
+        self.assertIn("oak_", html)
+        self.assertIn("/admin/api/admin-keys", html)
         self.assertIn('action="/admin/api/apps"', html)
         self.assertIn("x-ai-gateway-admin-action", html)
         self.assertIn("x-ai-gateway-csrf", html)
@@ -121,22 +132,22 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("Create reusable access policy", html)
         self.assertIn('action="/admin/api/profiles"', html)
         self.assertIn("data-create-profile", html)
-        self.assertIn("name=\"capabilities\"", html)
-        self.assertIn("name=\"model_access\"", html)
+        self.assertIn("name=\"profile_preset\"", html)
         self.assertIn("name=\"advanced_json\"", html)
         self.assertIn("Allow cloud fallback", html)
         self.assertIn("Allow native passthrough", html)
 
     def test_create_profile_offers_policy_templates_and_simple_options(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn('<option value="family_chat">Family chat</option>', html)
-        self.assertIn('<option value="coding_agents">Coding agents</option>', html)
+        self.assertIn('<option value="chat_only">Chat only</option>', html)
+        self.assertIn('<option value="chat_embeddings">Chat + embeddings</option>', html)
+        self.assertIn('<option value="media_workflows">Media workflows</option>', html)
+        self.assertIn('<option value="full_runtime">Full runtime access</option>', html)
         self.assertIn('name="profile_preset"', html)
         self.assertIn('value="openai" checked> OpenAI-compatible', html)
-        self.assertIn('value="chat" checked> Chat', html)
-        self.assertIn('value="images"> Images', html)
-        self.assertIn("Recommended safe defaults", html)
-        self.assertIn("profilePresets={family_chat:", html)
+        self.assertIn("policyTemplates={chat_only:", html)
+        self.assertIn("full_runtime:{label:'Full runtime access'", html)
+        self.assertNotIn("All local and stable", html)
         self.assertNotIn('placeholder="protocols: openai, anthropic"', html)
 
     def test_create_profile_keeps_advanced_json_in_optional_disclosure(self) -> None:
@@ -152,11 +163,12 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         profile_index = html.index("data-create-profile")
         self.assertLess(service_index, app_index)
         self.assertLess(service_index, profile_index)
-        self.assertIn("Create an API key", html)
+        self.assertIn("Create App API key", html)
         self.assertIn('name="service_name"', html)
         self.assertIn('placeholder="App or service name, e.g. LibreChat"', html)
-        self.assertIn('name="service_capabilities" value="chat" checked', html)
-        self.assertIn("Create App and API key", html)
+        self.assertIn('name="policy_template" value="chat_only" checked', html)
+        self.assertIn('name="policy_template" value="full_runtime"', html)
+        self.assertIn("Create App API key", html)
         self.assertNotIn('value="librechat.vivid.fish"', html)
         self.assertNotIn('name="mint_key"', html)
         self.assertNotIn("Advanced policy fields", html)
@@ -167,12 +179,8 @@ class AdminRenderHappyPathTests(unittest.TestCase):
     ) -> None:
         html = render_admin_dashboard(_snapshot())
         branch = html[html.index("if(serviceForm)") : html.index("if(profileForm)")]
-        self.assertIn("values(fd,'service_capabilities')", branch)
-        self.assertIn("protocols:['openai']", branch)
-        self.assertIn("intents", branch)
-        self.assertIn("exposure:['default']", branch)
-        self.assertIn("trust_tiers:['stable']", branch)
-        self.assertIn("resource_tiers:['interactive']", branch)
+        self.assertIn("buildProfile(templateId", branch)
+        self.assertIn("policyTemplates[templateId]", branch)
         self.assertIn("serviceSlug", branch)
         self.assertIn("kind:'service'", branch)
         self.assertIn("owner_service_account_name:serviceName", branch)
@@ -189,6 +197,26 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn('action="/admin/api/profiles"', html)
         self.assertIn('data-app-action="/admin/api/apps"', html)
         self.assertIn('data-key-action-template="/admin/api/apps/{app_id}/keys"', html)
+
+    def test_admin_automation_key_flow_is_separate_from_runtime_keys(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn("Create admin automation key", html)
+        self.assertIn("data-create-admin-key", html)
+        self.assertIn('action="/admin/api/admin-keys"', html)
+        self.assertIn("It is not an OpenAI-compatible runtime key.", html)
+        self.assertIn("Admin automation", html)
+        branch = html[html.index("if(adminKeyForm)") : html.index("if(profileForm)")]
+        self.assertIn("body={name:fd.get('name'),role:fd.get('role')||'admin'}", branch)
+        self.assertIn("json(f.action,body)", branch)
+        self.assertIn("showSecret(data,'Admin automation key created", branch)
+        self.assertIn("admin-keys", html)
+        self.assertIn('<option value="owner">Owner</option>', html)
+
+    def test_admin_automation_owner_role_is_disabled_for_non_owner(self) -> None:
+        snapshot = _snapshot()
+        snapshot["actor"]["roles"] = ["admin"]
+        html = render_admin_dashboard(snapshot)
+        self.assertIn('<option value="owner" disabled>Owner (owner role required)</option>', html)
 
     def test_create_app_can_choose_existing_profile_and_clear_ownership(self) -> None:
         html = render_admin_dashboard(_snapshot())
@@ -288,7 +316,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         key_form_branch = html[
             html.index("if(keyForm)") : html.index("document.addEventListener('click'")
         ]
-        self.assertIn("await refreshMain();show(data)", key_form_branch)
+        self.assertIn("await refreshMain();showSecret(data", key_form_branch)
         profile_form_branch = html[html.index("if(profileForm)") : html.index("if(simForm)")]
         app_form_branch = html[html.index("if(appForm)") : html.index("if(keyForm)")]
         service_form_branch = html[
@@ -296,7 +324,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         ]
         self.assertIn("await refreshMain();show(data)", profile_form_branch)
         self.assertIn("await refreshMain();show(data)", app_form_branch)
-        self.assertIn("await refreshMain();show(data)", service_form_branch)
+        self.assertIn("await refreshMain();showSecret(data", service_form_branch)
 
     def test_admin_logout_url_is_configurable(self) -> None:
         html = render_admin_dashboard(
@@ -349,11 +377,13 @@ class AdminRenderCustomEndpointsTests(unittest.TestCase):
             create_app_action="/custom/admin/apps",
             create_profile_action="/custom/admin/profiles",
             create_key_action_template="/custom/admin/apps/{app_id}/keys",
+            create_admin_key_action="/custom/admin/admin-keys",
             policy_simulate_action="/custom/admin/simulate",
         )
         self.assertIn('action="/custom/admin/apps"', html)
         self.assertIn('action="/custom/admin/profiles"', html)
         self.assertIn("/custom/admin/apps/{app_id}/keys", html)
+        self.assertIn('action="/custom/admin/admin-keys"', html)
         self.assertIn('action="/custom/admin/simulate"', html)
 
     def test_overview_counts_are_not_rendered(self) -> None:

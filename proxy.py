@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-OpenAI Proxy - Unified OpenAI-compatible API for multiple backends.
-Served externally at openai.vivid.fish (Traefik on 192.168.1.4 → 192.168.1.180:5000).
+Vivid Fish AI Gateway - Unified OpenAI-compatible API for multiple backends.
+Served externally at ai.vivid.fish (Traefik on 192.168.1.4 → 192.168.1.180:5000).
 
 Routes requests to:
 - TabbyAPI (Qwen3-VL) for chat/completions/vision
@@ -113,7 +113,13 @@ from gateway.discovery_metadata import (
     build_llms_txt,
     build_skill_catalog,
 )
-from gateway.local_capabilities import build_local_capabilities
+from gateway.local_capabilities import (
+    INTENT_AUDIO_GENERATE,
+    INTENT_SPEECH,
+    INTENT_TRANSCRIPTIONS,
+    INTENT_VIDEO_GENERATE,
+    build_local_capabilities,
+)
 from gateway.extensions import ExtensionError
 from gateway.image_extensions import (
     STANDARD_IMAGE_EDIT_FIELDS,
@@ -1142,7 +1148,7 @@ def _admin_role_for_user_id(user_id: str) -> str:
 def _default_profile_id_for_session(session) -> str | None:
     return _default_profile_id_for_user(
         email=str(getattr(session, "email", "") or ""),
-        role=str(getattr(session, "role", "") or "none"),
+        role=_admin_role_for_user_id(str(getattr(session, "subject", "") or "")),
     )
 
 
@@ -1525,8 +1531,8 @@ def handle_cli_command() -> bool:
         if not name:
             print("Service account name cannot be empty.", file=sys.stderr)
             sys.exit(2)
-        if role not in {"owner", "admin", "superadmin"}:
-            print("Role must be one of: owner, admin, superadmin.", file=sys.stderr)
+        if role not in {"owner", "admin"}:
+            print("Role must be one of: owner, admin.", file=sys.stderr)
             sys.exit(2)
         admin_store.init_db(ADMIN_DB_PATH)
         api_key, credential, assignment = create_admin_service_account_key(
@@ -6729,7 +6735,7 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
-    print(f"[proxy] OpenAI Proxy starting on port {PROXY_PORT}", flush=True)
+    print(f"[proxy] Vivid Fish AI Gateway starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TabbyAPI backend: {TABBY_HOST}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
@@ -7967,6 +7973,9 @@ async def list_voices(request: Request):
     auth_context = authenticate_request(request, request.url.path)
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(auth_context, request.url.path)
+    if policy_response is not None:
+        return policy_response
 
     # Single source of truth: derive every voice the speech endpoint accepts.
     # If you can pass it to /v1/audio/speech, you can find it here.
@@ -7991,6 +8000,9 @@ async def audio_speech(request: Request):
     auth_context = authenticate_request(request, "/v1/audio/speech")
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/speech")
+    if policy_response is not None:
+        return policy_response
     return await proxy_tts_request(request, auth_context)
 
 
@@ -8000,6 +8012,11 @@ async def audio_transcriptions(request: Request):
     auth_context = authenticate_request(request, "/v1/audio/transcriptions")
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(
+        auth_context, "/v1/audio/transcriptions"
+    )
+    if policy_response is not None:
+        return policy_response
     return await proxy_stt_request(request, auth_context)
 
 
@@ -8119,6 +8136,166 @@ def _policy_denied_response(decision: PolicyDecision) -> Response:
         status_code=403,
         media_type="application/json",
     )
+
+
+_RUNTIME_ROUTE_POLICY: dict[str, dict[str, Any]] = {
+    "/v1/audio/speech": {
+        "protocol": "openai.audio",
+        "intent": INTENT_SPEECH,
+        "backend": "tts",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "interactive",
+    },
+    "/v1/audio/transcriptions": {
+        "protocol": "openai.audio",
+        "intent": INTENT_TRANSCRIPTIONS,
+        "backend": "stt",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "interactive",
+    },
+    "/v1/audio/generate": {
+        "protocol": "openai.audio",
+        "intent": INTENT_AUDIO_GENERATE,
+        "backend": "comfyui",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "batch",
+    },
+    "/v1/audio/models": {
+        "protocol": "openai.audio",
+        "intent": "models.list",
+    },
+    "/v1/audio/voices": {
+        "protocol": "openai.audio",
+        "intent": INTENT_SPEECH,
+        "backend": "tts",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "interactive",
+    },
+    "/v1/voices": {
+        "protocol": "openai.audio",
+        "intent": INTENT_SPEECH,
+        "backend": "tts",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "interactive",
+    },
+    "/gateway/v1/media/jobs/{job_id}/content": {
+        "protocol": "openai.images",
+        "intent": "image.generate",
+        "backend": "comfyui",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "batch",
+    },
+    "/v1/images/{image_id}/content": {
+        "protocol": "openai.images",
+        "intent": "image.generate",
+        "backend": "comfyui",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "batch",
+    },
+    "/v1/assets/{asset_id}/content": {
+        "protocol": "openai.images",
+        "intent": "image.generate",
+        "backend": "comfyui",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "batch",
+    },
+    "/v1/videos": {
+        "protocol": "openai.video",
+        "intent": INTENT_VIDEO_GENERATE,
+        "backend": "comfyui",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "expensive",
+    },
+    "/v1/videos/{video_id}": {
+        "protocol": "openai.video",
+        "intent": INTENT_VIDEO_GENERATE,
+        "backend": "comfyui",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "expensive",
+    },
+    "/v1/videos/{video_id}/content": {
+        "protocol": "openai.video",
+        "intent": INTENT_VIDEO_GENERATE,
+        "backend": "comfyui",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "expensive",
+    },
+    "/v1/models": {
+        "protocol": "openai.models",
+        "intent": "models.list",
+    },
+}
+
+
+_ASSET_CONTENT_ROUTE_POLICY_BY_KIND: dict[str, dict[str, Any]] = {
+    "img": _RUNTIME_ROUTE_POLICY["/v1/assets/{asset_id}/content"],
+    "aud": {
+        "protocol": "openai.audio",
+        "intent": INTENT_AUDIO_GENERATE,
+        "backend": "comfyui",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "batch",
+    },
+    "vid": {
+        "protocol": "openai.video",
+        "intent": INTENT_VIDEO_GENERATE,
+        "backend": "comfyui",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "expensive",
+    },
+}
+
+
+def _asset_content_route_policy(asset_id: str) -> dict[str, Any] | None:
+    parsed = _parse_asset_id(asset_id)
+    if parsed is None:
+        return None
+    kind, _ = parsed
+    return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get(kind)
+
+
+def _runtime_route_policy_decision(
+    auth_context: AuthContext,
+    request_path: str,
+    *,
+    policy: Mapping[str, Any] | None = None,
+) -> PolicyDecision | None:
+    route_policy = policy or _RUNTIME_ROUTE_POLICY.get(request_path)
+    if route_policy is None:
+        return None
+    return evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(**route_policy),
+    )
+
+
+def _enforce_runtime_route_policy(
+    auth_context: AuthContext,
+    request_path: str,
+    *,
+    policy: Mapping[str, Any] | None = None,
+) -> Response | None:
+    decision = _runtime_route_policy_decision(
+        auth_context,
+        request_path,
+        policy=policy,
+    )
+    if decision is not None and decision.denied:
+        return _policy_denied_response(decision)
+    return None
 
 
 _SAFE_IMAGE_INPUT_NAMES = ("model", "size", "n", "response_format", "background", "prompt", "image")
@@ -10193,6 +10370,12 @@ async def gateway_media_job_content(job_id: str, request: Request):
     )
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(
+        auth_context,
+        "/gateway/v1/media/jobs/{job_id}/content",
+    )
+    if policy_response is not None:
+        return policy_response
     job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
     if job is None:
         return Response(
@@ -10298,6 +10481,12 @@ async def images_content(image_id: str, request: Request):
     auth_context = authenticate_request(request, "/v1/images/{image_id}/content")
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(
+        auth_context,
+        "/v1/images/{image_id}/content",
+    )
+    if policy_response is not None:
+        return policy_response
     return _signed_asset_content_response(
         image_id,
         request,
@@ -10314,6 +10503,15 @@ async def assets_content(asset_id: str, request: Request):
     auth_context = authenticate_request(request, "/v1/assets/{asset_id}/content")
     if isinstance(auth_context, Response):
         return auth_context
+    route_policy = _asset_content_route_policy(asset_id)
+    if route_policy is not None:
+        policy_response = _enforce_runtime_route_policy(
+            auth_context,
+            "/v1/assets/{asset_id}/content",
+            policy=route_policy,
+        )
+        if policy_response is not None:
+            return policy_response
     return _signed_asset_content_response(
         asset_id,
         request,
@@ -10398,6 +10596,9 @@ async def videos_create(request: Request):
     auth_context = authenticate_request(request, "/v1/videos")
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/videos")
+    if policy_response is not None:
+        return policy_response
     return await proxy_comfy_video_create(request, auth_context)
 
 
@@ -10407,6 +10608,11 @@ async def videos_status(video_id: str, request: Request):
     auth_context = authenticate_request(request, "/v1/videos/{video_id}")
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(
+        auth_context, "/v1/videos/{video_id}"
+    )
+    if policy_response is not None:
+        return policy_response
     return await proxy_comfy_video_status(video_id, auth_context)
 
 
@@ -10416,6 +10622,11 @@ async def videos_content(video_id: str, request: Request):
     auth_context = authenticate_request(request, "/v1/videos/{video_id}/content")
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(
+        auth_context, "/v1/videos/{video_id}/content"
+    )
+    if policy_response is not None:
+        return policy_response
     return await proxy_comfy_video_content(video_id, auth_context)
 
 
@@ -10763,6 +10974,9 @@ async def audio_generate(request: Request):
     auth_context = authenticate_request(request, "/v1/audio/generate")
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/generate")
+    if policy_response is not None:
+        return policy_response
     return await proxy_audio_generate(request, auth_context)
 
 
@@ -10772,6 +10986,9 @@ async def audio_models(request: Request):
     auth_context = authenticate_request(request, "/v1/audio/models")
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/models")
+    if policy_response is not None:
+        return policy_response
     models = []
     for name, cfg in AUDIO_WORKFLOWS_CFG.items():
         models.append({
@@ -10924,6 +11141,9 @@ async def list_models(request: Request):
     auth_context = authenticate_request(request, "/v1/models")
     if isinstance(auth_context, Response):
         return auth_context
+    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/models")
+    if policy_response is not None:
+        return policy_response
 
     # Forward to whichever backend is active so OpenAI-style aliases stay intact.
     active = await get_active_backend()
@@ -11064,7 +11284,7 @@ async def v1_status(request: Request):
 async def _render_status_html(request: Request) -> Response:
     """Build a payload from /v1/status and render the dashboard HTML."""
     try:
-        ADMIN_AUTH(request)
+        actor = ADMIN_AUTH(request)
     except AdminAuthError as exc:
         if (
             exc.status_code == 401
@@ -11091,9 +11311,16 @@ async def _render_status_html(request: Request) -> Response:
     try:
         from firehose_render import render_html
         # Use the request's Host header so the page header reflects the
-        # address bar (loopback dev vs. external openai.vivid.fish).
+        # address bar (loopback dev vs. external ai.vivid.fish).
         host_hdr = request.headers.get("host") or ""
-        body = render_html(payload, host=host_hdr)
+        actor_label = actor.email or actor.subject
+        logout_url = "/me/logout" if actor.auth_method == "session" else None
+        body = render_html(
+            payload,
+            host=host_hdr,
+            actor_label=actor_label,
+            logout_url=logout_url,
+        )
     except Exception as e:  # noqa: BLE001
         import traceback as _tb
         _tb_str = _tb.format_exc()
@@ -11599,6 +11826,15 @@ async def create_response(request: Request):
         if not isinstance(req_body, dict):
             return _responses_error("Request body must be a JSON object.", code="invalid_request_error")
 
+        decision = _protocol_policy_decision(
+            auth_context,
+            protocol="openai.chat",
+            intent="chat.responses",
+            model=req_body.get("model") if isinstance(req_body.get("model"), str) else None,
+        )
+        if decision.denied:
+            return _policy_denied_response(decision)
+
         try:
             extension_result = validate_responses_extensions(req_body)
         except ExtensionError as e:
@@ -11779,6 +12015,13 @@ async def retrieve_response(response_id: str, request: Request):
     auth_context = authenticate_request(request, "/v1/responses")
     if isinstance(auth_context, Response):
         return auth_context
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol="openai.chat",
+        intent="chat.responses",
+    )
+    if decision.denied:
+        return _policy_denied_response(decision)
     try:
         row = responses_store.get(response_id)
     except Exception as e:  # noqa: BLE001
@@ -11803,6 +12046,13 @@ async def delete_response(response_id: str, request: Request):
     auth_context = authenticate_request(request, "/v1/responses")
     if isinstance(auth_context, Response):
         return auth_context
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol="openai.chat",
+        intent="chat.responses",
+    )
+    if decision.denied:
+        return _policy_denied_response(decision)
     try:
         existed = responses_store.delete(response_id)
     except Exception as e:  # noqa: BLE001

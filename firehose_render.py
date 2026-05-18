@@ -1,7 +1,7 @@
 """
-Server-side HTML renderer for the openai.vivid.fish status dashboard.
+Server-side HTML renderer for the ai.vivid.fish status dashboard.
 
-This is the only status page now — `/` and `/firehose` both serve it.
+The operator dashboard is served at `/status`; `/firehose` redirects there.
 
 Sections are grouped by purpose (banner & alerts → live activity → resources
 → capabilities → recent output → identity activity → diagnostics) and the
@@ -14,8 +14,11 @@ from __future__ import annotations
 import datetime as _dt
 import html
 import json
+import re
 import time
 from typing import Any, Optional
+
+from gateway.gateway_shell import SHELL_CSS, render_shell_header
 
 
 def _esc(s: Any) -> str:
@@ -226,11 +229,22 @@ def _kv_table(rows: list[tuple[str, Any]]) -> str:
     return "".join(out)
 
 
-def render_html(payload: dict, *, host: Optional[str] = None) -> str:
+def render_html(
+    payload: dict,
+    *,
+    host: Optional[str] = None,
+    actor_label: Optional[str] = None,
+    logout_url: Optional[str] = None,
+    show_account: bool = True,
+    show_admin: bool = True,
+    show_status: bool = True,
+) -> str:
     """Render the status page from a /v1/status payload.
 
-    ``host`` should be the request's ``Host`` header so the page header
-    matches the address bar (loopback dev vs. ``openai.vivid.fish`` prod).
+    ``host`` should be the request's ``Host`` header so the status banner
+    matches the address bar (loopback dev vs. ``ai.vivid.fish`` prod).
+    ``actor_label`` and ``logout_url`` are optional shared-shell chrome inputs
+    for callers that already have authenticated actor context.
 
     Section layout:
       Top: banner + reasons + meta links.
@@ -244,18 +258,80 @@ def render_html(payload: dict, *, host: Optional[str] = None) -> str:
       Group 7 — Diagnostics (collapsed by default; driver, daisy, drift,
                 config snapshot, vram measurements, errors).
     """
-    display_host = (host or "openai.vivid.fish").strip() or "openai.vivid.fish"
+    display_host = (host or "ai.vivid.fish").strip() or "ai.vivid.fish"
     parts: list[str] = []
     # Use str.replace, not .format — the template contains CSS braces that
     # would otherwise need to be doubled.
     parts.append(_HTML_HEAD_TEMPLATE.replace(
         "__TITLE__", _esc(f"{display_host} · firehose"),
+    ).replace(
+        "__SHELL_CSS__", SHELL_CSS,
     ))
+    parts.append(render_shell_header(
+        current="status",
+        show_account=show_account,
+        show_admin=show_admin,
+        show_status=show_status,
+        actor_label=actor_label,
+        logout_url=logout_url,
+    ))
+    parts.append('<main class="shell-main status-firehose">')
     parts.append(_render_banner(payload, host=display_host))
     parts.append(_render_critical_strip(payload))
     parts.append(_render_export_links(payload))
 
-    def _section(title: str, body: str, *, collapsed: bool = False) -> str:
+    def _is_empty_section_body(body: str) -> bool:
+        text = re.sub(r"<[^>]+>", " ", body or "")
+        text = re.sub(r"\s+", " ", text).strip().lower()
+        if not text:
+            return True
+        empty_markers = (
+            "no jobs in flight",
+            "no slots reported",
+            "no backend probes",
+            "unavailable",
+            "no videos",
+            "no images",
+            "no keys configured",
+            "no recent events",
+            "no matching recent errors",
+            "none discovered",
+            "none",
+            "no data yet",
+        )
+        return any(text == marker or text.startswith(marker) for marker in empty_markers)
+
+    def _section(
+        title: str,
+        body: str,
+        *,
+        collapsed: bool = False,
+        hide_empty: bool = True,
+    ) -> str:
+        section_inputs: dict[str, tuple[str, ...]] = {
+            "Swap & websocket state": ("swap_state", "comfy_ws_state"),
+            "Budgets": ("budgets",),
+            "Disk pressure": ("disk",),
+            "Thermal": ("thermal",),
+            "CPU & system load": ("cpu",),
+            "Models / LLM": ("models",),
+            "Video capabilities": ("capabilities",),
+            "Image capabilities": ("image_capabilities",),
+            "Recent activity timeline": ("recent_events",),
+            "Backend readiness": ("models", "backends", "aux_health"),
+            "Recent errors (4xx/5xx)": ("recent_events",),
+            "Quick test endpoints": ("__manual_status_tools__",),
+            "Time-series trends": ("metrics",),
+            "Driver & kernel events": ("driver",),
+            "Daisy audit": ("daisy",),
+            "VRAM measurements (image batcher)": ("budgets",),
+            "Configuration snapshot": ("config_snapshot",),
+        }
+        required_inputs = section_inputs.get(title)
+        if hide_empty and required_inputs and not any(payload.get(key) for key in required_inputs):
+            return ""
+        if hide_empty and _is_empty_section_body(body):
+            return ""
         if collapsed:
             return (
                 f'<section><details><summary class="h2-summary">'
@@ -264,61 +340,81 @@ def render_html(payload: dict, *, host: Optional[str] = None) -> str:
             )
         return f'<section><h2>{_esc(title)}</h2>{body}</section>'
 
+    def _append_group(label: str, sections: list[tuple[str, str] | tuple[str, str, bool]]) -> None:
+        rendered: list[str] = []
+        for spec in sections:
+            title = spec[0]
+            body = spec[1]
+            collapsed = bool(spec[2]) if len(spec) > 2 else False
+            html = _section(title, body, collapsed=collapsed)
+            if html:
+                rendered.append(html)
+        if rendered:
+            parts.append(f'<div class="group-label">{_esc(label)}</div>')
+            parts.extend(rendered)
+
     parts.append(_render_alert_box(payload))
 
-    parts.append('<div class="group-label">Live activity</div>')
-    parts.append(_section("Live video jobs", _render_video_jobs(payload.get("video_jobs") or [])))
-    parts.append(_section("ComfyUI queue", _render_comfy_queue(payload)))
-    parts.append(_section("LLM slots", _render_slots((payload.get("models") or {}).get("slots") or [])))
-    parts.append(_section("Swap & websocket state", _render_swap_state(payload)))
+    _append_group("Live activity", [
+        ("Live video jobs", _render_video_jobs(payload.get("video_jobs") or [])),
+        ("ComfyUI queue", _render_comfy_queue(payload)),
+        ("LLM slots", _render_slots((payload.get("models") or {}).get("slots") or [])),
+        ("Swap & websocket state", _render_swap_state(payload)),
+    ])
 
-    parts.append('<div class="group-label">Health</div>')
-    parts.append(_section("Backends", _render_backends(payload.get("backends") or [])))
-    parts.append(_section("GPUs (live)", _render_gpus(payload.get("gpus") or [])))
-    parts.append(_section("Auxiliary backend health", _render_aux_health(payload.get("aux_health") or {})))
+    _append_group("Health", [
+        ("Backends", _render_backends(payload.get("backends") or [])),
+        ("GPUs (live)", _render_gpus(payload.get("gpus") or [])),
+        ("Auxiliary backend health", _render_aux_health(payload.get("aux_health") or {})),
+    ])
 
-    parts.append('<div class="group-label">Resources</div>')
-    parts.append(_section("Per-service VRAM attribution", _render_vram_attribution(payload.get("vram_attribution") or {})))
-    parts.append(_section("Per-service RAM attribution", _render_ram_attribution(payload.get("ram_attribution") or {})))
-    parts.append(_section("Budgets", _render_budgets(payload.get("budgets") or {})))
-    parts.append(_section("Disk pressure", _render_disk(payload.get("disk") or {})))
-    parts.append(_section("Image cache", _render_image_cache(payload.get("image_cache"))))
-    parts.append(_section("Thermal", _render_thermal(payload.get("thermal") or {})))
-    parts.append(_section("CPU & system load", _render_cpu(payload.get("cpu") or {})))
+    _append_group("Resources", [
+        ("Per-service VRAM attribution", _render_vram_attribution(payload.get("vram_attribution") or {})),
+        ("Per-service RAM attribution", _render_ram_attribution(payload.get("ram_attribution") or {})),
+        ("Budgets", _render_budgets(payload.get("budgets") or {})),
+        ("Disk pressure", _render_disk(payload.get("disk") or {})),
+        ("Image cache", _render_image_cache(payload.get("image_cache"))),
+        ("Thermal", _render_thermal(payload.get("thermal") or {})),
+        ("CPU & system load", _render_cpu(payload.get("cpu") or {})),
+    ])
 
-    parts.append('<div class="group-label">Capabilities</div>')
-    parts.append(_section("Models / LLM", _render_models(payload.get("models") or {}, gpus=payload.get("gpus") or [])))
-    parts.append(_section("Video capabilities", _render_video_caps(payload.get("capabilities") or [])))
-    parts.append(_section("Image capabilities", _render_image_caps(payload.get("image_capabilities") or [])))
-    parts.append(_section("Voices summary", _render_voices(payload.get("voices_summary"))))
+    _append_group("Capabilities", [
+        ("Models / LLM", _render_models(payload.get("models") or {}, gpus=payload.get("gpus") or [])),
+        ("Video capabilities", _render_video_caps(payload.get("capabilities") or [])),
+        ("Image capabilities", _render_image_caps(payload.get("image_capabilities") or [])),
+        ("Voices summary", _render_voices(payload.get("voices_summary"))),
+    ])
 
-    parts.append('<div class="group-label">Recent output</div>')
-    parts.append(_section("Recent videos", _render_recent_videos(payload.get("recent_videos") or [])))
-    parts.append(_section("Recent images", _render_recent_images(payload.get("recent_images") or [])))
+    _append_group("Recent output", [
+        ("Recent videos", _render_recent_videos(payload.get("recent_videos") or [])),
+        ("Recent images", _render_recent_images(payload.get("recent_images") or [])),
+    ])
 
-    parts.append('<div class="group-label">Identity</div>')
-    parts.append(_section(
-        "Activity since last restart (or 24h, whichever shorter)",
-        _render_auth_keys(payload.get("auth_keys") or [], window=payload.get("auth_keys_window") or {}),
-    ))
-    parts.append(_section("Recent activity timeline", _render_recent_events(payload.get("recent_events") or [])))
+    _append_group("Identity", [
+        (
+            "Activity since last restart (or 24h, whichever shorter)",
+            _render_auth_keys(payload.get("auth_keys") or [], window=payload.get("auth_keys_window") or {}),
+        ),
+        ("Recent activity timeline", _render_recent_events(payload.get("recent_events") or [])),
+        ("Repo state", _render_repo_state(payload.get("repo_state") or {})),
+        ("Backend readiness", _render_backend_readiness(payload)),
+        ("Recent errors (4xx/5xx)", _render_recent_errors(payload.get("recent_events") or []), True),
+        ("Quick test endpoints", _render_quick_test(), True),
+        ("ComfyUI custom nodes", _render_comfy_custom_nodes(payload.get("comfy_custom_nodes") or []), True),
+    ])
 
-    parts.append(_section("Repo state", _render_repo_state(payload.get("repo_state") or {})))
-    parts.append(_section("Backend readiness", _render_backend_readiness(payload)))
-    parts.append(_section("Recent errors (4xx/5xx)", _render_recent_errors(payload.get("recent_events") or []), collapsed=True))
-    parts.append(_section("Quick test endpoints", _render_quick_test(), collapsed=True))
-    parts.append(_section("ComfyUI custom nodes", _render_comfy_custom_nodes(payload.get("comfy_custom_nodes") or []), collapsed=True))
+    _append_group("Trends", [
+        ("Time-series trends", _render_trends(payload.get("metrics") or {})),
+    ])
 
-    parts.append('<div class="group-label">Trends</div>')
-    parts.append(_section("Time-series trends", _render_trends(payload.get("metrics") or {})))
-
-    parts.append('<div class="group-label">Diagnostics</div>')
-    parts.append(_section("Driver & kernel events", _render_driver(payload.get("driver") or {}), collapsed=True))
-    parts.append(_section("ComfyUI view (system_stats)", _render_comfy_view(payload.get("comfy_view")), collapsed=True))
-    parts.append(_section("Daisy audit", _render_daisy(payload.get("daisy") or {}), collapsed=True))
-    parts.append(_section("Workflow drift", _render_workflow_drift(payload.get("workflow_drift")), collapsed=True))
-    parts.append(_section("VRAM measurements (image batcher)", _render_vram_estimates(payload.get("budgets") or {}), collapsed=True))
-    parts.append(_section("Configuration snapshot", _render_config_snapshot(payload.get("config_snapshot") or {}), collapsed=True))
+    _append_group("Diagnostics", [
+        ("Driver & kernel events", _render_driver(payload.get("driver") or {}), True),
+        ("ComfyUI view (system_stats)", _render_comfy_view(payload.get("comfy_view")), True),
+        ("Daisy audit", _render_daisy(payload.get("daisy") or {}), True),
+        ("Workflow drift", _render_workflow_drift(payload.get("workflow_drift")), True),
+        ("VRAM measurements (image batcher)", _render_vram_estimates(payload.get("budgets") or {}), True),
+        ("Configuration snapshot", _render_config_snapshot(payload.get("config_snapshot") or {}), True),
+    ])
     # Show errors un-collapsed when present so misbehaving probes surface.
     # Hide the section entirely when there are no errors — an empty "none"
     # row is just visual noise.
@@ -332,6 +428,7 @@ def render_html(payload: dict, *, host: Optional[str] = None) -> str:
         if commit else ""
     )
     parts.append(_HTML_FOOT_TEMPLATE.replace("__VERSION_HTML__", version_html))
+    parts.append("</main></body></html>")
     return "".join(parts)
 
 
@@ -346,75 +443,80 @@ _HTML_HEAD_TEMPLATE = """<!doctype html>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,300;1,6..72,400;1,6..72,500;1,6..72,600&display=swap" rel="stylesheet">
 <style>
-  :root {--dive-abyss:#040912;--dive-deep:#08182C;--dive-hull:#0F2742;--dive-marine:#1B3A6B;--dive-rule:#2A4F75;--dive-fog:#8FB6D9;--dive-surf:#5DC1E0;--dive-shoal:#A6E3DE;--dive-foam:#F4F1E6;--dive-sand:#EAD9A8;--dive-sun:#FFCB47;--dive-biolum:#2DE0E6;--dive-biolum2:#9CFCD7;--dive-coral:#FF4B8C;--dive-amber:#FF8C42;--dive-octopus:#C84B6E;--dive-kelp:#4A7860;color-scheme:dark;}
-  body { background:var(--dive-abyss); color:var(--dive-foam); font-family:'Geist',-apple-system,system-ui,sans-serif; margin:0; padding:24px; line-height:1.45; }
-  h1 { font-size:18px; margin:0 0 4px; color:var(--dive-foam); font-weight:600; }
-  h2 { font-size:14px; letter-spacing:.04em; text-transform:uppercase; color:var(--dive-shoal); margin:32px 0 8px; padding-bottom:4px; border-bottom:1px solid var(--dive-rule); font-weight:600; }
-  h3 { font-size:12px; color:var(--dive-fog); margin:14px 0 6px; font-weight:500; }
-  section { margin-bottom:8px; }
-  table { border-collapse:collapse; font-size:12px; width:100%; margin:4px 0 12px; background:var(--dive-hull); border:1px solid var(--dive-marine); }
-  th,td { border:1px solid var(--dive-marine); padding:4px 8px; text-align:left; vertical-align:top; }
-  th { color:var(--dive-sand); font-weight:600; background:var(--dive-deep); }
+__SHELL_CSS__
+  html, body { max-width:100%; overflow-x:hidden; }
+  .status-firehose { --shell-max: 1440px; display:block; }
+  .status-firehose h1 { font-size:18px; margin:0 0 4px; color:var(--text); font-weight:600; }
+  .status-firehose h2 { font-size:14px; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); margin:32px 0 8px; padding-bottom:4px; border-bottom:1px solid var(--line); font-weight:600; }
+  .status-firehose h3 { font-size:12px; color:var(--muted); margin:14px 0 6px; font-weight:500; }
+  .status-firehose section { margin-bottom:8px; overflow-x:auto; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; }
+  .status-firehose table { border-collapse:collapse; font-size:12px; width:100%; min-width:max-content; margin:4px 0 12px; background:var(--panel); border:1px solid var(--line); }
+  .status-firehose th,.status-firehose td { border:1px solid var(--line); padding:4px 8px; text-align:left; vertical-align:top; }
+  .status-firehose th { color:var(--text); font-weight:600; background:var(--panel-2); }
   table.kv th { width:200px; }
-  td.mono,th.mono,code,pre { font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; color:var(--dive-biolum); }
-  pre { white-space:pre-wrap; word-break:break-word; background:var(--dive-deep); border:1px solid var(--dive-marine); padding:8px; }
-  .banner { padding:12px 16px; border-radius:6px; margin-bottom:16px; background:var(--dive-hull); border:1px solid var(--dive-marine); }
-  .banner.ok { background:linear-gradient(135deg,rgba(45,224,230,0.08),rgba(154,227,222,0.06)); border:1px solid var(--dive-biolum); }
-  .banner.warn { background:linear-gradient(135deg,rgba(255,203,71,0.08),rgba(255,140,66,0.06)); border:1px solid var(--dive-amber); }
-  .banner.bad { background:linear-gradient(135deg,rgba(255,75,140,0.08),rgba(200,75,110,0.06)); border:1px solid var(--dive-coral); }
-  .banner-badge.ok { background:rgba(45,224,230,0.15); border:1px solid var(--dive-biolum); color:var(--dive-biolum); }
-  .banner-badge.warn { background:rgba(255,203,71,0.15); border:1px solid var(--dive-sun); color:var(--dive-sun); }
-  .banner-badge.bad { background:rgba(255,75,140,0.15); border:1px solid var(--dive-coral); color:var(--dive-coral); }
-  .pill { display:inline-block; padding:1px 6px; border-radius:99px; font-size:10.5px; border:1px solid var(--dive-marine); background:var(--dive-hull); color:var(--dive-shoal); margin-right:4px; }
-  .pill.ok { background:rgba(154,227,222,0.1); color:var(--dive-biolum); border-color:var(--dive-shoal); }
-  .pill.warn { background:rgba(255,203,71,0.1); color:var(--dive-sun); border-color:var(--dive-amber); }
-  .pill.bad { background:rgba(255,75,140,0.1); color:var(--dive-coral); border-color:var(--dive-octopus); }
-  .pill.muted { color:var(--dive-fog); }
-  .bar { background:var(--dive-marine); height:6px; border-radius:99px; overflow:hidden; margin:4px 0; border:1px solid var(--dive-rule); }
-  .bar>span { display:block; height:100%; background:var(--dive-biolum); }
-  .bar.warn>span { background:var(--dive-sun); }
-  .bar.bad>span { background:var(--dive-coral); }
-  .bar.ok>span { background:var(--dive-biolum2); }
+  .status-firehose td.mono,.status-firehose th.mono,.status-firehose code,.status-firehose pre { font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; color:var(--accent); }
+  .status-firehose pre { white-space:pre-wrap; word-break:break-word; background:var(--panel); border:1px solid var(--line); padding:8px; }
+  .banner { padding:12px 16px; border-radius:var(--radius); margin-bottom:16px; background:var(--panel); border:1px solid var(--line); }
+  .banner.ok { background:color-mix(in oklch,var(--good-bg) 28%,var(--panel)); border-color:var(--good); }
+  .banner.warn { background:color-mix(in oklch,var(--warn-bg) 32%,var(--panel)); border-color:var(--warn); }
+  .banner.bad { background:color-mix(in oklch,var(--bad-bg) 32%,var(--panel)); border-color:var(--bad); }
+  .banner-badge.ok { background:var(--good-bg); border:1px solid var(--good); color:var(--good); }
+  .banner-badge.warn { background:var(--warn-bg); border:1px solid var(--warn); color:var(--warn); }
+  .banner-badge.bad { background:var(--bad-bg); border:1px solid var(--bad); color:var(--bad); }
+  .pill { display:inline-block; padding:1px 6px; border-radius:99px; font-size:10.5px; border:1px solid var(--line); background:var(--panel); color:var(--muted); margin-right:4px; }
+  .pill.ok { background:var(--good-bg); color:var(--good); border-color:var(--good); }
+  .pill.warn { background:var(--warn-bg); color:var(--warn); border-color:var(--warn); }
+  .pill.bad { background:var(--bad-bg); color:var(--bad); border-color:var(--bad); }
+  .pill.muted { color:var(--muted); }
+  .bar { background:var(--panel-2); height:6px; border-radius:99px; overflow:hidden; margin:4px 0; border:1px solid var(--line); }
+  .bar>span { display:block; height:100%; background:var(--accent); }
+  .bar.warn>span { background:var(--warn); }
+  .bar.bad>span { background:var(--bad); }
+  .bar.ok>span { background:var(--good); }
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:8px; }
-  .card { background:var(--dive-hull); border:1px solid var(--dive-marine); padding:8px 10px; border-radius:4px; }
-  .card:hover { border-color:var(--dive-rule); background:linear-gradient(135deg,rgba(45,224,230,0.05),transparent); }
-  .muted { color:var(--dive-fog); }
-  .err { color:var(--dive-coral); }
-  a { color:var(--dive-biolum); text-decoration:none; }
-  a:hover { color:var(--dive-biolum2); text-decoration:underline; }
-  hr { border:none; border-top:1px solid var(--dive-marine); margin:8px 0; }
-  details { margin:4px 0; }
-  summary { cursor:pointer; color:var(--dive-shoal); font-size:12px; list-style:revert; user-select:none; }
-  summary.h2-summary { color:var(--dive-shoal); }
-  summary.h2-summary h2 { display:inline-block!important; border:0!important; padding-bottom:0!important; margin:0!important; }
-  summary.h2-summary::after { content:" (click to expand)"; color:var(--dive-fog); font-size:10.5px; font-weight:400; text-transform:none; letter-spacing:0; }
-  details[open] summary.h2-summary::after { content:" (click to collapse)"; }
-  details>.details-body { padding-top:6px; padding-left:6px; border-left:2px solid var(--dive-biolum); margin-left:4px; margin-top:6px; }
-  .group-label { font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--dive-fog); margin:24px 0 4px; padding:4px 8px; background:rgba(45,224,230,0.05); border-radius:4px; border-left:3px solid var(--dive-biolum); font-weight:600; }
-  .alert-box { margin:0 0 16px; border:1px solid var(--dive-coral); background:rgba(255,75,140,0.08); border-radius:6px; padding:8px 12px; }
-  .alert-row { padding:4px 0; font-size:13px; color:var(--dive-foam); }
-  .alert-row.bad { color:var(--dive-coral); }
-  .alert-row.warn { color:var(--dive-sun); }
-  .alert-row+.alert-row { border-top:1px dashed var(--dive-marine); padding-top:6px; margin-top:4px; }
+  .card { background:var(--panel); border:1px solid var(--line); padding:8px 10px; border-radius:4px; }
+  .card:hover { border-color:var(--soft); background:var(--panel-2); }
+  .muted { color:var(--muted); }
+  .err { color:var(--bad); }
+  .status-firehose a { color:var(--link); text-decoration:none; }
+  .status-firehose a:hover { color:var(--accent); text-decoration:underline; }
+  .status-firehose hr { border:none; border-top:1px solid var(--line); margin:8px 0; }
+  .status-firehose details { margin:4px 0; }
+  .status-firehose summary { cursor:pointer; color:var(--accent); font-size:12px; list-style:revert; user-select:none; }
+  .status-firehose summary.h2-summary { color:var(--accent); }
+  .status-firehose summary.h2-summary h2 { display:inline-block!important; border:0!important; padding-bottom:0!important; margin:0!important; }
+  .status-firehose summary.h2-summary::after { content:" (click to expand)"; color:var(--muted); font-size:10.5px; font-weight:400; text-transform:none; letter-spacing:0; }
+  .status-firehose details[open] summary.h2-summary::after { content:" (click to collapse)"; }
+  .status-firehose details>.details-body { padding-top:6px; margin-top:6px; overflow-x:auto; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; }
+  .group-label { font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin:24px 0 4px; padding:4px 8px; background:var(--panel); border-radius:4px; border:1px solid var(--line); font-weight:600; }
+  .alert-box { margin:0 0 16px; border:1px solid var(--bad); background:var(--bad-bg); border-radius:var(--radius); padding:8px 12px; }
+  .alert-row { padding:4px 0; font-size:13px; color:var(--text); }
+  .alert-row.bad { color:var(--bad); }
+  .alert-row.warn { color:var(--warn); }
+  .alert-row+.alert-row { border-top:1px dashed var(--line); padding-top:6px; margin-top:4px; }
   .small { font-size:10.5px; }
   .right { float:right; }
   .nowrap { white-space:nowrap; }
-  @keyframes biolum-pulse { 0%,100%{text-shadow:0 0 10px var(--dive-biolum),0 0 20px rgba(45,224,230,0.5);opacity:1;}50%{text-shadow:0 0 20px var(--dive-biolum),0 0 40px rgba(45,224,230,0.7);opacity:0.95;} }
-  .banner.ok h1 { animation:biolum-pulse 4s ease-in-out infinite; }
-  footer { margin-top:32px; padding-top:12px; border-top:1px solid var(--dive-marine); color:var(--dive-fog); font-size:11px; }
+  footer { margin-top:32px; padding-top:12px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+  @media (max-width: 680px) {
+    .status-firehose { padding-inline:var(--space-3); }
+    .status-firehose table { width:max-content; max-width:none; }
+    .grid { grid-template-columns:minmax(0,1fr); }
+    table.kv { min-width:100%; }
+    table.kv th { width:auto; min-width:120px; }
+  }
 </style>
 </head><body>
 """
 
 
 _HTML_FOOT_TEMPLATE = """
-<footer style="margin-top:32px; padding-top:12px; border-top:1px solid #1c2128; color:#7c8794; font-size:11px;">
+<footer>
   Auto-refreshing every 10s via &lt;meta http-equiv="refresh"&gt;. For programmatic access,
   poll <a href="/v1/status">/v1/status</a> directly (bearer token required).
   · <a href="https://github.com/Vivid-Fish/openai-proxy" target="_blank" rel="noopener">github.com/Vivid-Fish/openai-proxy</a>
   __VERSION_HTML__
 </footer>
-</body></html>
 """
 
 
@@ -437,7 +539,7 @@ def _render_banner(p: dict, *, host: Optional[str] = None) -> str:
     except Exception:
         cache_age_str = "—"
     abs_gen = _abs_utc(gen) or "—"
-    display_host = (host or "openai.vivid.fish").strip() or "openai.vivid.fish"
+    display_host = (host or "ai.vivid.fish").strip() or "ai.vivid.fish"
     reasons = p.get("banner_reasons") or []
     reasons_html = ""
     if reasons:
@@ -2520,31 +2622,31 @@ def _render_quick_test() -> str:
     # these, but for self-hosted-stack users the local names are more honest.
     examples = [
         ("Chat completion",
-         'curl -s https://openai.vivid.fish/v1/chat/completions \\\n'
+         'curl -s https://ai.vivid.fish/v1/chat/completions \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"default","messages":[{"role":"user","content":"hi"}]}\''),
         ("Image generation",
-         'curl -s https://openai.vivid.fish/v1/images/generations \\\n'
+         'curl -s https://ai.vivid.fish/v1/images/generations \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"flux2-klein-4b","prompt":"a calico cat","size":"512x512"}\''),
         ("Text-to-speech",
-         'curl -s https://openai.vivid.fish/v1/audio/speech \\\n'
+         'curl -s https://ai.vivid.fish/v1/audio/speech \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"voxtral-4b-tts","voice":"nova","input":"hello"}\' --output out.mp3'),
         ("Speech-to-text",
-         'curl -s https://openai.vivid.fish/v1/audio/transcriptions \\\n'
+         'curl -s https://ai.vivid.fish/v1/audio/transcriptions \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -F "file=@audio.mp3" -F "model=parakeet-tdt-0.6b-v3"'),
         ("Video — text-to-video",
-         'curl -s https://openai.vivid.fish/v1/videos \\\n'
+         'curl -s https://ai.vivid.fish/v1/videos \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"ltx-2.3-distilled","prompt":"a calico cat playing chess","seconds":5}\''),
         ("Video — image-to-video",
-         'curl -s https://openai.vivid.fish/v1/videos \\\n'
+         'curl -s https://ai.vivid.fish/v1/videos \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"ltx-2.3-distilled","prompt":"camera dolly in","input_image_url":"…"}\''),
@@ -2595,7 +2697,7 @@ def _sparkline(
     *,
     width: int = 120,
     height: int = 24,
-    color: str = "var(--dive-biolum)",
+    color: str = "var(--accent)",
     fill: bool = False,
 ) -> str:
     """Stateless inline SVG sparkline. Each datum is (ts, value)."""
@@ -2632,7 +2734,7 @@ def _bar_sparkline(
     *,
     width: int = 120,
     height: int = 24,
-    color: str = "var(--dive-amber)",
+    color: str = "var(--warn)",
 ) -> str:
     """Bar-chart sparkline for discrete-event counts (e.g. Xid 109 hourly)."""
     if not points:
@@ -2716,7 +2818,7 @@ def _render_trends(metrics: dict) -> str:
     ]
     for g in metrics.get("gpus") or []:
         idx = g.get("index")
-        spark = _sparkline(g.get("vram_pct_24h_series") or [], color="var(--dive-biolum)", fill=True)
+        spark = _sparkline(g.get("vram_pct_24h_series") or [], color="var(--accent)", fill=True)
         vram_rows.append(
             f'<tr><td>GPU {_esc(idx)}</td>'
             f'<td>{_fmt_pct(g.get("vram_pct_max_5min"))}</td>'
@@ -2740,12 +2842,12 @@ def _render_trends(metrics: dict) -> str:
                 continue
             change_gb = info.get("avail_change_24h_gb")
             ttf = info.get("time_to_full_estimate_hours")
-            change_color = "var(--dive-biolum)"
+            change_color = "var(--accent)"
             if isinstance(change_gb, (int, float)):
                 if change_gb < -1.0:
-                    change_color = "var(--dive-coral)"
+                    change_color = "var(--bad)"
                 elif change_gb > 1.0:
-                    change_color = "var(--dive-biolum2)"
+                    change_color = "var(--good)"
             spark = _sparkline(info.get("series_24h") or [], color=change_color, fill=True)
             ttf_html = ""
             if isinstance(ttf, (int, float)):
@@ -2776,7 +2878,7 @@ def _render_trends(metrics: dict) -> str:
         ]
         for k in sorted(per_key_rpm.keys()):
             rpm = per_key_rpm.get(k)
-            spark = _sparkline(per_key_series.get(k) or [], color="var(--dive-biolum)")
+            spark = _sparkline(per_key_series.get(k) or [], color="var(--accent)")
             rpm_str = f"{rpm:.2f}" if isinstance(rpm, (int, float)) else "—"
             key_rows.append(
                 f'<tr><td class="mono">{_esc(k)}</td>'
@@ -2789,7 +2891,7 @@ def _render_trends(metrics: dict) -> str:
     # Xid 109 hourly bar chart.
     xid_hourly = trends.get("xid_109_hourly_24h") or []
     if xid_hourly:
-        bars = _bar_sparkline(xid_hourly, color="var(--dive-coral)", width=240, height=32)
+        bars = _bar_sparkline(xid_hourly, color="var(--bad)", width=240, height=32)
         total = trends.get("xid_109_24h_count")
         last_hour = trends.get("xid_109_60min_count")
         parts.append('<h3>Xid 109 events (hourly, last 24 h)</h3>')

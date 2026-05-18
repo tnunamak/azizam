@@ -36,6 +36,8 @@ from gateway.runtime_auth import RuntimeIdentity, hash_api_key
 APP_KEY_PREFIX = "opk_"
 ADMIN_KEY_PREFIX = "oak_"
 DEFAULT_SERVICE_ACCOUNT = "gateway-admin"
+ADMIN_CONTROL_ROLES = frozenset({"owner", "admin", "superadmin"})
+ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
 
 
 def generate_app_api_key() -> str:
@@ -214,6 +216,55 @@ class AdminSQLiteStore:
         out["api_key"] = api_key
         return out
 
+    def create_admin_automation_key(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        name = str(data.get("name") or "").strip()
+        if not name:
+            raise ValueError("admin automation key name is required")
+        role = str(data.get("role") or "admin").strip()
+        if role not in ADMIN_KEY_CREATABLE_ROLES:
+            raise ValueError("role must be one of: owner, admin")
+        service_account = admin_store.ensure_service_account(
+            name,
+            description="Owner for an admin automation key created from the dashboard.",
+            path=self.path,
+        )
+        api_key = generate_admin_api_key()
+        credential = admin_store.create_credential_hash(
+            subject_kind="service_account",
+            subject_id=service_account["id"],
+            hash=hash_api_key(api_key),
+            prefix=_key_prefix(api_key),
+            display_name=f"{name} admin automation key",
+            path=self.path,
+        )
+        assignment = admin_store.assign_admin_role(
+            role=role,
+            subject_kind="service_account",
+            subject_id=service_account["id"],
+            granted_by=actor.subject,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            "admin_key.create",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="credential",
+            target_id=credential["id"],
+            metadata={
+                "service_account": name,
+                "role": role,
+                "prefix": credential["prefix"],
+            },
+            path=self.path,
+        )
+        out = _sanitize_credential(credential)
+        out["api_key"] = api_key
+        out["role"] = assignment["role"]
+        out["service_account"] = service_account["name"]
+        return out
+
     def revoke_credential(
         self, *, credential_id: str, actor: AdminContext
     ) -> dict[str, Any] | None:
@@ -255,6 +306,7 @@ class AdminSQLiteStore:
             "actor": {
                 "subject": actor.subject,
                 "email": actor.email,
+                "roles": sorted(actor.roles),
                 "csrf_token": actor.csrf_token or "",
             },
             "counts": {
@@ -307,11 +359,17 @@ class AdminAuthenticator:
                         token,
                         signing_key=self.signing_key,
                     )
-                    if session.role in {"owner", "admin", "superadmin"}:
+                    roles = admin_store.list_admin_roles(
+                        subject_kind="user",
+                        subject_id=session.subject,
+                        path=self.store.path,
+                    )
+                    role_names = frozenset(str(role["role"]) for role in roles)
+                    if ADMIN_CONTROL_ROLES & role_names:
                         return AdminContext(
                             subject=session.subject,
                             email=session.email,
-                            roles=frozenset({session.role}),
+                            roles=role_names,
                             auth_method="session",
                             csrf_token=csrf_token_for_session(
                                 session,
@@ -348,7 +406,7 @@ class AdminAuthenticator:
             path=self.store.path,
         )
         role_names = frozenset(str(role["role"]) for role in roles)
-        if not ({"owner", "admin", "superadmin"} & role_names):
+        if not (ADMIN_CONTROL_ROLES & role_names):
             raise AdminAuthError(
                 "admin role required",
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -434,6 +492,8 @@ def create_admin_service_account_key(
     path: Path = admin_store.DB_PATH,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     """Create a control-plane service-account key and role assignment."""
+    if role not in ADMIN_KEY_CREATABLE_ROLES:
+        raise ValueError("role must be one of: owner, admin")
     service_account = admin_store.ensure_service_account(name, path=path)
     api_key = generate_admin_api_key()
     credential = admin_store.create_credential_hash(
