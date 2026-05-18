@@ -65,8 +65,8 @@ Reference docs:
 ## UX Principles
 
 1. **Start from a task, not a schema.**
-   The primary flow is "Grant access to LibreChat" or "Create a family chat
-   policy", not "create service account, profile id, app name, protocol,
+   The primary flow is "Create an API key for an app" or "Create a family
+   chat policy", not "create service account, profile id, app name, protocol,
    intent, tags, JSON".
 
 2. **Keep Apps and Profiles separate.**
@@ -100,22 +100,24 @@ Reference docs:
 
 ## Main Workflows
 
-### Grant access to a service App
+### Create an API key for an App
 
 Use when the admin wants to connect LibreChat, Open WebUI, Continue, a bot, an
 agent, or another shared service.
 
 Visible fields:
 
-- Service app name
-- What it may use, as a small preset list:
-  - OpenAI-compatible chat
-  - Chat and embeddings
-  - Image generation
-  - Media workflows
-  - Everything local and stable
-- Create API key now
-- Optional key label
+- App or service name
+- Allowed capabilities:
+  - Chat
+  - Embeddings
+  - Images
+  - Audio
+  - Video
+
+The primary flow should always create the key. Do not ask "create API key
+now?" in a form whose purpose is key creation. Do not ask for a key label in
+the SLVP flow; derive it from the App name.
 
 Derived fields:
 
@@ -127,10 +129,9 @@ Derived fields:
 - intent list
 - tags
 
-Advanced fields:
-
-- generated Profile/App/owner overrides
-- raw policy JSON override
+Do not put generated ids, owner overrides, raw policy JSON, or service-account
+language in this first flow. Those controls belong in separate advanced
+maintenance tools, not the primary path.
 
 ### Create reusable access policy
 

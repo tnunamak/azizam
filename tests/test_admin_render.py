@@ -108,7 +108,6 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         self.assertIn("Create App", html)
         self.assertIn("Create key for existing App", html)
-        self.assertIn("https://ai.vivid.fish/v1", html)
         self.assertIn('action="/admin/api/apps"', html)
         self.assertIn("x-ai-gateway-admin-action", html)
         self.assertIn("x-ai-gateway-csrf", html)
@@ -128,7 +127,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("Allow cloud fallback", html)
         self.assertIn("Allow native passthrough", html)
 
-    def test_create_profile_offers_librechat_preset_and_simple_options(self) -> None:
+    def test_create_profile_offers_policy_templates_and_simple_options(self) -> None:
         html = render_admin_dashboard(_snapshot())
         self.assertIn('<option value="family_chat">Family chat</option>', html)
         self.assertIn('<option value="coding_agents">Coding agents</option>', html)
@@ -153,28 +152,30 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         profile_index = html.index("data-create-profile")
         self.assertLess(service_index, app_index)
         self.assertLess(service_index, profile_index)
-        self.assertIn("Grant service access", html)
+        self.assertIn("Create an API key", html)
         self.assertIn('name="service_name"', html)
-        self.assertIn("OpenAI-compatible chat", html)
-        self.assertIn('value="librechat.vivid.fish"', html)
-        self.assertIn('name="mint_key" checked', html)
-        self.assertIn("<summary>Advanced policy fields</summary>", html)
-        self.assertIn('aria-label="Raw service access policy JSON"', html)
+        self.assertIn('placeholder="App or service name, e.g. LibreChat"', html)
+        self.assertIn('name="service_capabilities" value="chat" checked', html)
+        self.assertIn("Create App and API key", html)
+        self.assertNotIn('value="librechat.vivid.fish"', html)
+        self.assertNotIn('name="mint_key"', html)
+        self.assertNotIn("Advanced policy fields", html)
+        self.assertNotIn("Raw service access policy JSON", html)
 
     def test_service_access_flow_builds_librechat_profile_and_service_app(
         self,
     ) -> None:
         html = render_admin_dashboard(_snapshot())
         branch = html[html.index("if(serviceForm)") : html.index("if(profileForm)")]
-        self.assertIn("template=accessTemplates", branch)
-        self.assertIn("protocols:template.protocols", branch)
-        self.assertIn("intents:template.intents", branch)
+        self.assertIn("values(fd,'service_capabilities')", branch)
+        self.assertIn("protocols:['openai']", branch)
+        self.assertIn("intents", branch)
         self.assertIn("exposure:['default']", branch)
         self.assertIn("trust_tiers:['stable']", branch)
         self.assertIn("resource_tiers:['interactive']", branch)
         self.assertIn("serviceSlug", branch)
         self.assertIn("kind:'service'", branch)
-        self.assertIn("owner_service_account_name:owner", branch)
+        self.assertIn("owner_service_account_name:serviceName", branch)
         self.assertIn("storedProfileId=(createdProfile.profile&&createdProfile.profile.id)", branch)
         self.assertIn("profile_id:storedProfileId", branch)
 
@@ -328,11 +329,13 @@ class AdminRenderSecurityTests(unittest.TestCase):
         html = render_admin_dashboard({})
         self.assertTrue(html.startswith("<!doctype html>"))
         self.assertIn("No Apps yet", html)
-        self.assertIn('href="#grant-service-access"', html)
-        self.assertIn("Grant access", html)
-        self.assertIn("Create an App before minting a runtime key.", html)
+        self.assertIn('href="#create-api-key"', html)
+        self.assertIn("Create API key", html)
+        self.assertNotIn("Create an App before minting a runtime key.", html)
         self.assertNotIn("Mint runtime key", html)
         self.assertNotIn(">Policy test<", html)
+        self.assertNotIn(">Overview<", html)
+        self.assertNotIn(">Needs attention<", html)
         self.assertNotIn("No users yet", html)
         self.assertNotIn("No audit entries yet", html)
         self.assertNotIn(">Users<", html)
@@ -353,12 +356,12 @@ class AdminRenderCustomEndpointsTests(unittest.TestCase):
         self.assertIn("/custom/admin/apps/{app_id}/keys", html)
         self.assertIn('action="/custom/admin/simulate"', html)
 
-    def test_counts_are_derived_when_omitted(self) -> None:
+    def test_overview_counts_are_not_rendered(self) -> None:
         snapshot = _snapshot()
         snapshot.pop("counts")
         html = render_admin_dashboard(snapshot)
-        # 2 apps in the fixture.
-        self.assertRegex(html, r'<strong>2</strong> Apps')
+        self.assertNotIn(">Overview<", html)
+        self.assertNotRegex(html, r"<strong>2</strong> Apps")
 
 
 if __name__ == "__main__":

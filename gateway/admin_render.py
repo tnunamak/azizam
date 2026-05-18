@@ -129,17 +129,6 @@ _PAGE_CSS = """
 """
 
 
-def _summary_bar(items: Iterable[tuple[str, Any]]) -> str:
-    return (
-        '<div class="summary">'
-        + "".join(
-            f"<span><strong>{_esc(value)}</strong> {_esc(label)}</span>"
-            for label, value in items
-        )
-        + "</div>"
-    )
-
-
 def _format_optional_list(value: Any) -> str:
     if not value:
         return "—"
@@ -424,52 +413,15 @@ def _table(headers: Iterable[str], rows: Iterable[str]) -> str:
     return f"<table><thead><tr>{header_html}</tr></thead><tbody>{body_html}</tbody></table>"
 
 
-def _connection_panel(*, base_url: str) -> str:
-    return (
-        '<div class="runtime-settings">'
-        '<span class="label">Runtime base URL</span>'
-        f'<code>{_esc(base_url)}</code>'
-        '<span class="label">Key header</span>'
-        '<code>Authorization: Bearer opk_...</code>'
-        "</div>"
-    )
-
-
-def _access_issues(
-    apps: list[Mapping[str, Any]],
-    profiles_by_id: Mapping[str, Mapping[str, Any]],
-    active_keys_by_app: Mapping[str, int],
-) -> str:
-    items: list[str] = []
-    if not apps:
-        items.append("Create an App before minting a runtime key.")
-    for app in apps:
-        app_id = str(app.get("id") or "")
-        app_name = str(app.get("name") or app_id or "unnamed app")
-        profile_id = _app_profile_id(app)
-        if profile_id != "default-local" and profile_id not in profiles_by_id:
-            items.append(f"{app_name} points at missing Profile {profile_id}.")
-        if active_keys_by_app.get(app_id, 0) < 1:
-            items.append(f"{app_name} has no active runtime key.")
-    if not items:
-        return ""
-
-    return (
-        '<ul class="problem-list">'
-        + "".join(f"<li>{_esc(item)}</li>" for item in items)
-        + "</ul>"
-    )
-
-
 def _start_card(apps: list[Mapping[str, Any]]) -> str:
     if apps:
         return ""
     return (
         '<div class="start-card">'
         "<h3>No Apps yet</h3>"
-        "<p>Grant access to a service, tool, agent, or person. The gateway "
-        "will create the App, policy, and runtime key from that task.</p>"
-        '<a href="#grant-service-access">Grant access</a>'
+        "<p>Create an API key for an app, bot, agent, or service. The gateway "
+        "will create the matching App and access policy for you.</p>"
+        '<a href="#create-api-key">Create API key</a>'
         "</div>"
     )
 
@@ -536,7 +488,6 @@ def _flow_form(
         "<label>Create runtime key</label>"
         '<div class="row">'
         f'<select name="app_id" aria-label="App for runtime key" required>{app_options}</select>'
-        '<input type="text" name="label" placeholder="Key label" aria-label="Runtime key label">'
         '<button type="submit">Create key</button>'
         "</div>"
         "</form>"
@@ -552,38 +503,27 @@ def _service_access_form(
     create_key_action_template: str,
 ) -> str:
     return (
-        '<form class="flow" id="grant-service-access" method="post" action="'
+        '<form class="flow" id="create-api-key" method="post" action="'
         + _esc(create_profile_action)
         + '" data-create-service-access data-app-action="'
         + _esc(create_app_action)
         + '" data-key-action-template="'
         + _esc(create_key_action_template)
         + '">'
-        "<label>Grant service access</label>"
+        "<label>Create an API key</label>"
         '<div class="stack">'
-        '<input type="text" name="service_name" value="librechat.vivid.fish" aria-label="Service app name" required>'
-        '<select name="access_template" aria-label="What this service can use">'
-        '<option value="openai_chat" selected>OpenAI-compatible chat</option>'
-        '<option value="chat_embeddings">Chat and embeddings</option>'
-        '<option value="image_generation">Image generation</option>'
-        '<option value="media_workflows">Media workflows</option>'
-        '<option value="local_stable">Everything local and stable</option>'
-        "</select>"
-        '<label class="check"><input type="checkbox" name="mint_key" checked> Create API key now</label>'
-        '<input type="text" name="key_label" placeholder="Key label, optional" aria-label="API key label">'
+        '<input type="text" name="service_name" placeholder="App or service name, e.g. LibreChat" aria-label="App or service name" required>'
+        '<div class="inline-options" aria-label="Allowed capabilities">'
+        '<label class="check"><input type="checkbox" name="service_capabilities" value="chat" checked> Chat</label>'
+        '<label class="check"><input type="checkbox" name="service_capabilities" value="embeddings"> Embeddings</label>'
+        '<label class="check"><input type="checkbox" name="service_capabilities" value="images"> Images</label>'
+        '<label class="check"><input type="checkbox" name="service_capabilities" value="audio"> Audio</label>'
+        '<label class="check"><input type="checkbox" name="service_capabilities" value="video"> Video</label>'
         "</div>"
-        '<details class="panel"><summary>Advanced policy fields</summary>'
-        '<div class="stack">'
-        '<input type="text" name="profile_id" placeholder="Generated from service name" aria-label="Generated profile id override">'
-        '<input type="text" name="profile_label" placeholder="Generated from service name" aria-label="Generated profile label override">'
-        '<input type="text" name="owner_service_account_name" placeholder="Defaults to service app name" aria-label="Service owner override">'
-        '<input type="text" name="app_name" placeholder="Defaults to service app name" aria-label="App name override">'
         "</div>"
-        '<textarea name="advanced_json" spellcheck="false" aria-label="Raw service access policy JSON" placeholder="{&quot;profile&quot;:{},&quot;app&quot;:{},&quot;key&quot;:{}}"></textarea>'
-        "</details>"
         '<div class="row">'
         "<span></span>"
-        '<button type="submit">Grant access</button>'
+        '<button type="submit">Create App and API key</button>'
         "</div>"
         "</form>"
     )
@@ -715,7 +655,6 @@ def render_admin_dashboard(
     ``snapshot`` keys (all optional):
 
     * ``actor``: mapping with ``subject`` / ``email`` for the current admin
-    * ``counts``: pre-computed counts dict (otherwise derived from lists)
     * ``apps``, ``users``, ``profiles``, ``credentials``, ``audit``: lists
       of mapping records
     """
@@ -736,25 +675,6 @@ def render_admin_dashboard(
         app_id = str(credential.get("app_id") or "")
         if app_id:
             active_keys_by_app[app_id] = active_keys_by_app.get(app_id, 0) + 1
-
-    counts = snapshot.get("counts") or {
-        "users": len(users),
-        "apps": len(apps),
-        "profiles": len(profiles),
-        "credentials": len(credentials),
-        "active_credentials": sum(
-            1 for c in credentials if not _is_revoked(c)
-        ),
-    }
-
-    summary_html = _summary_bar(
-        (
-            ("Apps", counts.get("apps", 0)),
-            ("Users", counts.get("users", 0)),
-            ("Profiles", counts.get("profiles", 0)),
-            ("active keys", counts.get("active_credentials", 0)),
-        )
-    )
 
     apps_table = _table(
         ["App", "Owner", "Effective access", "Keys", "Status", "Created"],
@@ -809,10 +729,8 @@ def render_admin_dashboard(
         else ""
     )
 
-    connection_html = _connection_panel(base_url=base_url)
-    issues_html = _access_issues(apps, profiles_by_id, active_keys_by_app)
     result_html = '<pre class="result" id="admin-flow-result" aria-live="polite"></pre>'
-    access_html = connection_html + service_access_html + flow_html + result_html
+    access_html = service_access_html + flow_html + result_html
     profiles_html = profile_form_html + profiles_table
 
     header_html = render_shell_header(
@@ -841,7 +759,6 @@ def render_admin_dashboard(
         "const values=(fd,k)=>fd.getAll(k).flatMap(list);"
         "const slug=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'access';"
         "const title=s=>String(s||'').split(/[._-]+/).filter(Boolean).map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' ')||'Access';"
-        "const accessTemplates={openai_chat:{label:'OpenAI-compatible chat',protocols:['openai'],intents:['chat'],tags:['chat']},chat_embeddings:{label:'Chat and embeddings',protocols:['openai'],intents:['chat','embeddings'],tags:['chat','embeddings']},image_generation:{label:'Image generation',protocols:['openai'],intents:['image.generate'],tags:['image']},media_workflows:{label:'Media workflows',protocols:['openai'],intents:['image.generate','image.edit','audio.generate','video.generate'],tags:['media']},local_stable:{label:'Everything local and stable',protocols:['openai','anthropic'],intents:['chat','embeddings','image.generate','image.edit','audio.transcribe','audio.speech','audio.generate','video.generate'],tags:['local','stable']}};"
         "const profilePresets={family_chat:{protocols:['openai'],tags:['family','chat'],capabilities:['chat'],exposure:'default',trust:'stable',resources:'interactive'},coding_agents:{protocols:['openai','anthropic'],tags:['agents','coding'],capabilities:['chat','embeddings'],exposure:'default',trust:'stable',resources:'interactive'},image_tools:{protocols:['openai'],tags:['image'],capabilities:['images'],exposure:'opt_in',trust:'stable',resources:'interactive'},automation:{protocols:['openai'],tags:['automation'],capabilities:['chat','embeddings'],exposure:'default',trust:'stable',resources:'batch'},custom:{protocols:['openai'],tags:[],capabilities:['chat'],exposure:'default',trust:'stable',resources:'interactive'}};"
         "const capabilityIntents={chat:['chat'],embeddings:['embeddings'],images:['image.generate','image.edit'],audio:['audio.transcribe','audio.speech','audio.generate'],video:['video.generate']};"
         "const refreshMain=async()=>{const r=await fetch('/admin',{credentials:'same-origin',cache:'no-store'});"
@@ -854,15 +771,13 @@ def render_admin_dashboard(
         "document.addEventListener('submit',async e=>{"
         "const serviceForm=e.target.closest('[data-create-service-access]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]');"
         "if(!serviceForm&&!profileForm&&!simForm&&!appForm&&!keyForm)return;e.preventDefault();"
-        "if(serviceForm){const f=serviceForm,fd=new FormData(f);const serviceName=String(fd.get('service_name')||'').trim();const template=accessTemplates[fd.get('access_template')]||accessTemplates.openai_chat;const serviceSlug=slug(serviceName);const profileId=String(fd.get('profile_id')||'').trim()||serviceSlug+'-'+slug(template.label);const profileLabel=String(fd.get('profile_label')||'').trim()||title(serviceName)+' '+template.label;const appName=String(fd.get('app_name')||'').trim()||serviceName;const owner=String(fd.get('owner_service_account_name')||'').trim()||serviceName;const profile={id:profileId,protocols:template.protocols,allow:{intents:template.intents,exposure:['default'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:[...new Set([serviceSlug,...template.tags])]},status_visibility:{level:'basic'},fallback:{cloud_allowed:false},native_passthrough:{enabled:false}};"
-        "let extra={};try{const raw=String(fd.get('advanced_json')||'').trim();if(raw)extra=JSON.parse(raw)}catch(err){show(err);return}"
-        "if(extra.profile)Object.assign(profile,extra.profile);"
-        "const profileBody={name:profileLabel,label:profileLabel,profile,...(extra.profile_body||{})};"
-        "const keyBody={label:String(fd.get('key_label')||'').trim()||title(serviceName)+' API key'};Object.assign(keyBody,extra.key||{});"
+        "if(serviceForm){const f=serviceForm,fd=new FormData(f);const serviceName=String(fd.get('service_name')||'').trim();const serviceSlug=slug(serviceName);const caps=values(fd,'service_capabilities');const selected=caps.length?caps:['chat'];const intents=[...new Set(selected.flatMap(c=>capabilityIntents[c]||[c]))];const profile={id:serviceSlug+'-access',protocols:['openai'],allow:{intents,exposure:['default'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:[...new Set([serviceSlug,...selected])]},status_visibility:{level:'basic'},fallback:{cloud_allowed:false},native_passthrough:{enabled:false}};"
+        "const profileLabel=title(serviceName)+' access';const profileBody={name:profileLabel,label:profileLabel,profile};"
+        "const keyBody={label:title(serviceName)+' API key'};"
         "try{const createdProfile=await json(f.action,profileBody);const storedProfileId=(createdProfile.profile&&createdProfile.profile.id)||createdProfile.id||profile.id;"
-        "const appBody={name:appName,kind:'service',owner_service_account_name:owner,profile_id:storedProfileId,...(extra.app||{})};"
+        "const appBody={name:serviceName,kind:'service',owner_service_account_name:serviceName,profile_id:storedProfileId};"
         "const createdApp=await json(f.dataset.appAction,appBody);const appId=createdApp.id||createdApp.app_id||(createdApp.app&&createdApp.app.id)||appBody.name;let createdKey=null;"
-        "if(fd.get('mint_key')==='on'){const url=f.dataset.keyActionTemplate.replace('{app_id}',encodeURIComponent(appId));createdKey=await json(url,keyBody)}"
+        "const url=f.dataset.keyActionTemplate.replace('{app_id}',encodeURIComponent(appId));createdKey=await json(url,keyBody);"
         "const data={profile:createdProfile,app:createdApp,key:createdKey};f.reset();await refreshMain();show(data)}catch(err){show(err)}return}"
         "if(profileForm){const f=profileForm,fd=new FormData(f);const preset=profilePresets[fd.get('profile_preset')]||profilePresets.custom;const label=String(fd.get('label')||'').trim();const selectedCaps=values(fd,'capabilities');const caps=selectedCaps.length?selectedCaps:preset.capabilities;const profile={id:String(fd.get('id')||'').trim()||slug(label),protocols:preset.protocols,allow:{intents:[...new Set(caps.flatMap(c=>capabilityIntents[c]||[c]))],exposure:[fd.get('model_access')==='opt_in'?'opt_in':preset.exposure],trust_tiers:[preset.trust],resource_tiers:[preset.resources],tags:preset.tags},status_visibility:{level:fd.get('status_visibility')||'basic'},fallback:{cloud_allowed:fd.get('cloud_allowed')==='on'},native_passthrough:{enabled:fd.get('native_passthrough')==='on'}};"
         "const protocols=values(fd,'protocols');if(protocols.length) profile.protocols=protocols;"
@@ -883,7 +798,7 @@ def render_admin_dashboard(
         "if(fd.get('profile_id')) body.profile_id=fd.get('profile_id');"
         "try{const data=await json(f.action,body);f.reset();await refreshMain();show(data)}catch(err){show(err)}return}"
         "if(keyForm){const f=keyForm,fd=new FormData(f),appId=fd.get('app_id');"
-        "const body={}; if(fd.get('label')) body.label=fd.get('label');"
+        "const body={};"
         "const url=f.dataset.actionTemplate.replace('{app_id}',encodeURIComponent(appId));"
         "try{const data=await json(url,body);f.reset();await refreshMain();show(data)}catch(err){show(err)}}});"
         "document.addEventListener('click',async e=>{const btn=e.target.closest('[data-revoke-credential]');"
@@ -895,9 +810,7 @@ def render_admin_dashboard(
         + header_html
         + '<main class="shell-main">'
         + _section("Start", _start_card(apps))
-        + _section("Overview", summary_html)
-        + _section("Needs attention", issues_html)
-        + _section("Grant access", access_html)
+        + _section("API keys", access_html)
         + _section("Access policies", profiles_html)
         + _section("Test access", policy_simulator_html)
         + _section("Apps", apps_table)
