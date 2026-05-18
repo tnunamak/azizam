@@ -87,6 +87,11 @@ Community fit:
 - The SLVP advisor wants this proven through a few complete flows before
   building a broad RBAC/quota/scheduler UI.
 
+Admin access UX research and prior-art notes live in
+`docs/ADMIN_ACCESS_UX_RESEARCH.md`. That note is the reference for why the UI
+uses task-shaped grant flows while preserving Apps, Profiles, and Keys as the
+durable access model.
+
 ## Product Model (Brief)
 
 Detail lives in `docs/CORE_CONTRACTS.md`; the short version the dashboard
