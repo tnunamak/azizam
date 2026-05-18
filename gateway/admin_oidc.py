@@ -63,6 +63,7 @@ __all__ = [
     "authorization_url",
     "bootstrap_admin_role",
     "consume_state",
+    "csrf_token_for_session",
     "encode_session_cookie",
     "decode_session_cookie",
     "generate_pkce_pair",
@@ -681,6 +682,21 @@ def encode_session_cookie(session: AdminSession, *, signing_key: bytes) -> str:
     signing_input = f"{_SESSION_VERSION}.{payload_b64}".encode("ascii")
     mac = hmac.new(signing_key, signing_input, hashlib.sha256).digest()
     return f"{_SESSION_VERSION}.{payload_b64}.{_b64url(mac)}"
+
+
+def csrf_token_for_session(session: AdminSession, *, signing_key: bytes) -> str:
+    """Return the same-origin mutation token for a signed browser session."""
+    if len(signing_key) < _MIN_SIGNING_KEY_BYTES:
+        raise SessionError("signing_key too short")
+    session_nonce = session.session_id or (
+        f"{session.subject}:{int(session.issued_at)}:{int(session.expires_at)}"
+    )
+    mac = hmac.new(
+        signing_key,
+        f"csrf:{session_nonce}".encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    return _b64url(mac)
 
 
 def decode_session_cookie(

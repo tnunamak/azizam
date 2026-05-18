@@ -250,6 +250,38 @@ class AdminAuthTests(unittest.TestCase):
         )
         self.assertEqual(allowed.status_code, 201, allowed.text)
 
+    def test_cookie_session_mutations_require_csrf_when_available(self) -> None:
+        def session_auth(_request: Request) -> AdminContext:
+            return AdminContext(
+                subject="u_owner",
+                email="owner@example.com",
+                roles=frozenset({"owner"}),
+                auth_method="session",
+                csrf_token="csrf-token",
+            )
+
+        app = FastAPI()
+        app.include_router(create_admin_router(FakeAdminStore(), auth=session_auth))
+        client = TestClient(app)
+
+        action_only = client.post(
+            "/admin/api/apps",
+            json={"name": "brother-laptop"},
+            headers={"x-ai-gateway-admin-action": "1"},
+        )
+        self.assertEqual(action_only.status_code, 403, action_only.text)
+        self.assertEqual(action_only.json()["error"]["code"], "admin_csrf_required")
+
+        allowed = client.post(
+            "/admin/api/apps",
+            json={"name": "brother-laptop"},
+            headers={
+                "x-ai-gateway-admin-action": "1",
+                "x-ai-gateway-csrf": "csrf-token",
+            },
+        )
+        self.assertEqual(allowed.status_code, 201, allowed.text)
+
 
 class AdminAppKeyFlowTests(unittest.TestCase):
     def test_create_app_then_mint_key_returns_one_time_key(self) -> None:

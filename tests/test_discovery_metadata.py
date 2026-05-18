@@ -28,6 +28,11 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("anthropic", {p["id"] for p in metadata["protocols"]})
         self.assertIn("ollama", {p["id"] for p in metadata["protocols"]})
         self.assertEqual(metadata["links"]["user_portal"], "/me")
+        self.assertEqual(metadata["links"]["user_session"], "/me/api/session")
+        self.assertEqual(
+            metadata["links"]["user_access_request"],
+            "/me/api/access-request",
+        )
         self.assertEqual(
             metadata["absolute_links"]["capabilities"],
             "http://gw/gateway/v1/capabilities",

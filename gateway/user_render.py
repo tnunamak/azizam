@@ -1,17 +1,17 @@
 """Server-side HTML rendering for the normal-user gateway portal.
 
 ``render_user_portal`` is intentionally pure. The live app serves the page at
-``/me`` and the browser uses the user's runtime ``opk_`` key to call existing
-gateway APIs. That keeps the first useful user surface small: no new session
-model, no duplicated authorization, and no server-side handling of raw runtime
-keys.
+``/me`` and the browser uses either the signed OIDC session cookie or the
+user's pasted runtime ``opk_`` key to call existing gateway APIs. That keeps
+the first useful user surface small: no new authorization model, no duplicated
+policy, and no server-side handling of pasted runtime keys.
 """
 
 from __future__ import annotations
 
 import html
 import json
-from typing import Any
+from typing import Any, Mapping
 
 __all__ = ["render_user_portal"]
 
@@ -71,10 +71,13 @@ _USER_PORTAL_CSS = """
     text-decoration: none;
   }
   header a, .pill {
+    display: inline-flex;
+    align-items: center;
     border: 1px solid var(--line);
     border-radius: 999px;
     color: var(--muted);
     padding: 0.35rem 0.65rem;
+    min-height: 2.75rem;
     font-size: 0.84rem;
     background: var(--panel);
   }
@@ -124,7 +127,11 @@ _USER_PORTAL_CSS = """
     text-transform: uppercase;
     letter-spacing: 0.08em;
   }
-  .status-line strong { font-size: 0.95rem; }
+  .status-line strong {
+    font-size: 0.95rem;
+    overflow-wrap: anywhere;
+    text-align: right;
+  }
   section {
     border-top: 1px solid var(--line);
     padding-top: var(--space-6);
@@ -162,6 +169,7 @@ _USER_PORTAL_CSS = """
     border: 1px solid var(--line);
     border-radius: 6px;
     padding: 0.72rem 0.8rem;
+    min-height: 2.75rem;
     min-width: 0;
   }
   input:focus-visible, button:focus-visible, a:focus-visible {
@@ -172,6 +180,7 @@ _USER_PORTAL_CSS = """
     border: 1px solid transparent;
     border-radius: 6px;
     padding: 0.72rem 0.9rem;
+    min-height: 2.75rem;
     color: var(--accent-ink);
     background: var(--accent);
     font-weight: 650;
@@ -217,6 +226,10 @@ _USER_PORTAL_CSS = """
     font-size: 1rem;
     letter-spacing: 0;
   }
+  .card .actions {
+    display: grid;
+    gap: var(--space-2);
+  }
   .card p {
     color: var(--muted);
     line-height: 1.45;
@@ -245,6 +258,19 @@ _USER_PORTAL_CSS = """
     display: grid;
     gap: var(--space-3);
   }
+  .credential-row {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3) 0 0;
+    border-top: 1px solid var(--line);
+  }
+  .credential-row:first-child { padding-top: 0; border-top: 0; }
+  .credential-row h3 {
+    margin: 0;
+    font-size: 0.94rem;
+    letter-spacing: 0;
+  }
+  .credential-row p { margin: 0; }
   .empty { color: var(--muted); font-style: italic; }
   .two-col {
     display: grid;
@@ -275,10 +301,159 @@ def _json_for_script(value: str) -> str:
     )
 
 
+def _account_badge(text: Any, cls: str = "") -> str:
+    return f'<span class="badge {cls}">{_esc(text)}</span>'
+
+
+def _credential_html(record: Mapping[str, Any]) -> str:
+    credential_id = _esc(record.get("id"))
+    prefix = _esc(record.get("prefix") or "key")
+    label = _esc(record.get("display_name") or "Runtime key")
+    created = _esc(record.get("created_at") or "created")
+    active = bool(record.get("active"))
+    status = "active" if active else "revoked"
+    status_class = "good" if active else "bad"
+    action = (
+        '<button class="secondary" type="button" data-revoke-owned-key="'
+        + credential_id
+        + '" aria-label="Revoke runtime key '
+        + label
+        + '">Revoke</button>'
+        if active and credential_id
+        else ""
+    )
+    return (
+        '<div class="credential-row">'
+        f"<h3>{label}</h3>"
+        f"<p><code>{prefix}</code> · {created}</p>"
+        '<div class="meta">'
+        + _account_badge(status, status_class)
+        + "</div>"
+        + (f'<div class="actions">{action}</div>' if action else "")
+        + "</div>"
+    )
+
+
+def _app_html(app: Mapping[str, Any]) -> str:
+    app_id = _esc(app.get("id"))
+    name = _esc(app.get("name") or app_id or "App")
+    kind = _esc(app.get("kind") or "app")
+    profile = app.get("profile") if isinstance(app.get("profile"), Mapping) else None
+    profile_name = "Awaiting operator profile"
+    profile_id = app.get("profile_id") or ""
+    profile_badge = _account_badge("profile needed", "warn")
+    if profile:
+        profile_name = str(profile.get("name") or profile.get("policy_id") or profile_id)
+        profile_id = profile.get("id") or profile_id
+        profile_badge = _account_badge(
+            "missing profile" if profile.get("missing") else profile_id,
+            "bad" if profile.get("missing") else "",
+        )
+    credentials = [
+        c for c in app.get("credentials", [])
+        if isinstance(c, Mapping)
+    ]
+    credential_html = (
+        "".join(_credential_html(c) for c in credentials)
+        if credentials
+        else '<p class="empty">No runtime keys for this App yet.</p>'
+    )
+    can_mint = bool(app.get("can_mint_keys"))
+    mint_html = (
+        '<form class="actions" data-mint-owned-key="' + app_id + '">'
+        '<input type="text" name="label" placeholder="New key label" '
+        'aria-label="New runtime key label">'
+        '<button type="submit">Mint key</button>'
+        "</form>"
+        if can_mint
+        else (
+            '<p class="empty">An operator needs to attach a Profile before '
+            'this App can mint runtime keys.</p>'
+        )
+    )
+    return (
+        '<article class="card">'
+        f"<h3>{name}</h3>"
+        f"<p>{kind} App · Profile: {_esc(profile_name)}</p>"
+        '<div class="meta">'
+        + profile_badge
+        + _account_badge(f"{app.get('active_credentials') or 0} active keys", "good")
+        + "</div>"
+        + mint_html
+        + '<div class="list">'
+        + credential_html
+        + "</div>"
+        + "</article>"
+    )
+
+
+def _account_section(
+    account: Mapping[str, Any] | None,
+    *,
+    oidc_enabled: bool,
+    login_url: str,
+    logout_url: str,
+) -> str:
+    account = account or {"authenticated": False, "apps": []}
+    if not account.get("authenticated"):
+        action = (
+            f'<a class="pill" href="{_esc(login_url)}">Sign in with OIDC</a>'
+            if oidc_enabled
+            else '<span class="pill">OIDC login not configured</span>'
+        )
+        return (
+            '<section aria-labelledby="account-heading">'
+            '<h2 id="account-heading">Account</h2>'
+            '<div class="card">'
+            "<h3>Not signed in</h3>"
+            "<p>You can still paste a runtime key below. Sign in to see Apps and keys already assigned to your account.</p>"
+            f'<div class="meta">{action}</div>'
+            "</div>"
+            "</section>"
+        )
+
+    user = account.get("user") if isinstance(account.get("user"), Mapping) else {}
+    user_label = _esc(user.get("email") or user.get("name") or "signed-in user")
+    raw_role = str(user.get("role") or "none")
+    role_label = raw_role if raw_role in {"owner", "admin"} else "user"
+    apps = [a for a in account.get("apps", []) if isinstance(a, Mapping)]
+    apps_html = (
+        "".join(_app_html(app) for app in apps)
+        if apps
+        else (
+            '<div class="card"><h3>No Apps assigned</h3>'
+            "<p>Request access to create a pending Personal App. An operator still chooses the Profile and limits before keys can be minted.</p>"
+            '<form class="actions" data-request-access>'
+            '<button type="submit">Request access</button>'
+            "</form></div>"
+        )
+    )
+    return (
+        '<section aria-labelledby="account-heading">'
+        '<h2 id="account-heading">Account</h2>'
+        '<div class="card">'
+        f"<h3>{user_label}</h3>"
+        "<p>These Apps are owned by your OIDC account. Profiles and access limits are still controlled by the operator.</p>"
+        '<div class="meta">'
+        + _account_badge(f"role {_esc(role_label)}")
+        + f'<a class="pill" href="{_esc(logout_url)}">Sign out</a>'
+        + "</div>"
+        "</div>"
+        '<div id="account-result" class="message">Account actions show one-time key values here.</div>'
+        f'<div class="grid">{apps_html}</div>'
+        "</section>"
+    )
+
+
 def render_user_portal(
     *,
     title: str = "My AI Gateway",
     public_base_url: str = "https://ai.vivid.fish",
+    account: Mapping[str, Any] | None = None,
+    oidc_enabled: bool = False,
+    login_url: str = "/me/login",
+    logout_url: str = "/me/logout",
+    csrf_token: str = "",
 ) -> str:
     """Return the normal-user HTML portal.
 
@@ -288,7 +463,14 @@ def render_user_portal(
     """
     base = public_base_url.rstrip("/") or "https://ai.vivid.fish"
     base_json = _json_for_script(base)
+    csrf_json = _json_for_script(csrf_token)
     title_text = _esc(title)
+    account_html = _account_section(
+        account,
+        oidc_enabled=oidc_enabled,
+        login_url=login_url,
+        logout_url=logout_url,
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -321,6 +503,8 @@ def render_user_portal(
         <div class="status-line"><span>Jobs</span><strong id="job-count">Unknown</strong></div>
       </aside>
     </div>
+
+    {account_html}
 
     <section aria-labelledby="connect-heading">
       <h2 id="connect-heading">Connect</h2>
@@ -386,6 +570,7 @@ def render_user_portal(
   <script>
 (() => {{
   const publicBase = {base_json};
+  const csrfToken = {csrf_json};
   const storageKey = "vivid_fish_ai_gateway_runtime_key";
   const $ = (id) => document.getElementById(id);
   const keyInput = $("runtime-key");
@@ -417,6 +602,13 @@ def render_user_portal(
     result.textContent = text;
   }}
 
+  function setAccountMessage(text, kind = "") {{
+    const accountResult = $("account-result");
+    if (!accountResult) return;
+    accountResult.className = "message" + (kind ? " " + kind : "");
+    accountResult.textContent = text;
+  }}
+
   function runtimeKey() {{
     return keyInput.value.trim();
   }}
@@ -440,6 +632,28 @@ def render_user_portal(
       throw new Error(response.status + " " + message);
     }}
     return body;
+  }}
+
+  async function postAccountJson(path, body = {{}}) {{
+    const response = await fetch(path, {{
+      method: "POST",
+      headers: {{
+        "content-type": "application/json",
+        "x-ai-gateway-user-action": "1",
+        "x-ai-gateway-csrf": csrfToken
+      }},
+      body: JSON.stringify(body),
+      cache: "no-store"
+    }});
+    const text = await response.text();
+    let data = {{}};
+    try {{ data = text ? JSON.parse(text) : {{}}; }} catch (_) {{ data = {{ raw: text }}; }}
+    if (!response.ok) {{
+      const err = data && data.error;
+      const message = err && (err.message || err.code) ? (err.message || err.code) : response.statusText;
+      throw new Error(response.status + " " + message);
+    }}
+    return data;
   }}
 
   function badge(text, cls = "") {{
@@ -537,7 +751,7 @@ def render_user_portal(
       setMessage("Paste an opk_ runtime key first.", "warn");
       return;
     }}
-    localStorage.setItem(storageKey, runtimeKey());
+    sessionStorage.setItem(storageKey, runtimeKey());
     updateKeyState();
     setMessage("Checking access...");
     try {{
@@ -559,17 +773,59 @@ def render_user_portal(
 
   $("check-key").addEventListener("click", checkAccess);
   $("forget-key").addEventListener("click", () => {{
-    localStorage.removeItem(storageKey);
+    sessionStorage.removeItem(storageKey);
     keyInput.value = "";
     updateKeyState();
-    setMessage("Forgot the key in this browser.");
+    setMessage("Forgot the key in this tab.");
   }});
   keyInput.addEventListener("keydown", (event) => {{
     if (event.key === "Enter") checkAccess();
   }});
 
-  keyInput.value = localStorage.getItem(storageKey) || "";
+  keyInput.value = sessionStorage.getItem(storageKey) || "";
   updateKeyState();
+
+  document.querySelector("[data-request-access]")?.addEventListener("submit", async (event) => {{
+    event.preventDefault();
+    setAccountMessage("Requesting access...");
+    try {{
+      await postAccountJson("/me/api/access-request", {{}});
+      setAccountMessage("Access request recorded. Reloading account view...", "good");
+      setTimeout(() => location.reload(), 800);
+    }} catch (error) {{
+      setAccountMessage(error.message || "Access request failed.", "bad");
+    }}
+  }});
+
+  document.querySelectorAll("[data-mint-owned-key]").forEach((form) => {{
+    form.addEventListener("submit", async (event) => {{
+      event.preventDefault();
+      const appId = form.dataset.mintOwnedKey;
+      const label = new FormData(form).get("label") || "";
+      setAccountMessage("Minting key...");
+      try {{
+        const data = await postAccountJson("/me/api/apps/" + encodeURIComponent(appId) + "/keys", {{ label }});
+        const key = data && data.credential && data.credential.api_key;
+        setAccountMessage(key ? "New key: " + key : "Key minted. Reload to see the credential list.", "good");
+      }} catch (error) {{
+        setAccountMessage(error.message || "Key mint failed.", "bad");
+      }}
+    }});
+  }});
+
+  document.querySelectorAll("[data-revoke-owned-key]").forEach((button) => {{
+    button.addEventListener("click", async () => {{
+      const credentialId = button.dataset.revokeOwnedKey;
+      setAccountMessage("Revoking key...");
+      try {{
+        await postAccountJson("/me/api/credentials/" + encodeURIComponent(credentialId) + "/revoke", {{}});
+        setAccountMessage("Key revoked. Reloading account view...", "good");
+        setTimeout(() => location.reload(), 800);
+      }} catch (error) {{
+        setAccountMessage(error.message || "Key revoke failed.", "bad");
+      }}
+    }});
+  }});
 }})();
   </script>
 </body>

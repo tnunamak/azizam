@@ -13,7 +13,13 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import admin_store  # noqa: E402
-from gateway.admin_oidc import CookieConfig, OIDCConfig  # noqa: E402
+from gateway.admin_oidc import (  # noqa: E402
+    CookieConfig,
+    OIDCConfig,
+    csrf_token_for_session,
+    encode_session_cookie,
+    session_from_claims,
+)
 from gateway.admin_runtime import create_admin_service_account_key  # noqa: E402
 
 
@@ -304,6 +310,226 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(callback.status_code, 302, callback.text)
         self.assertEqual(callback.headers["location"], "/admin")
+
+    def test_oidc_return_to_allows_user_portal(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset({"owner@example.com"}),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        login = self.client.get(
+            "/admin/login?return_to=/me", follow_redirects=False
+        )
+        self.assertEqual(login.status_code, 302, login.text)
+        state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
+        self.assertEqual(record.return_to, "/me")
+
+        async def fake_exchange(_code, *, config, pkce):
+            return {"id_token": "fake.id.token"}
+
+        async def fake_verify(_id_token, *, config):
+            return {
+                "iss": cfg.issuer,
+                "aud": cfg.client_id,
+                "sub": "brother-subject",
+                "email": "brother@example.com",
+                "email_verified": True,
+                "nonce": record.nonce,
+                "exp": 4_000_000_000,
+                "iat": 1_700_000_000,
+            }
+
+        with patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
+            proxy, "_oidc_verify_id_token", fake_verify
+        ):
+            callback = self.client.get(
+                f"/admin/oidc/callback?state={state}&code=abc",
+                follow_redirects=False,
+            )
+        self.assertEqual(callback.status_code, 302, callback.text)
+        self.assertEqual(callback.headers["location"], "/me")
+        self.assertEqual(self.client.get("/admin").status_code, 401)
+        self.assertEqual(
+            self.client.get("/me/login", follow_redirects=False).headers["location"],
+            "/admin/login?return_to=/me",
+        )
+
+    def test_user_portal_shows_oidc_owned_apps_and_self_manages_keys(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset({"owner@example.com"}),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        user = admin_store.upsert_oidc_user(
+            cfg.issuer,
+            "brother-subject",
+            email="brother@example.com",
+            display_name="Brother",
+            path=self.db,
+        )
+        profile = self.client.post(
+            "/admin/api/profiles",
+            json={
+                "name": "brother-chat",
+                "profile": {
+                    "id": "brother-chat",
+                    "protocols": ["openai.chat"],
+                },
+            },
+            headers=self._auth(),
+        ).json()["profile"]
+        created = self.client.post(
+            "/admin/api/apps",
+            json={
+                "name": "brother-laptop",
+                "kind": "personal",
+                "owner_user_id": user["id"],
+                "profile_id": profile["id"],
+            },
+            headers=self._auth(),
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        app_id = created.json()["app"]["id"]
+
+        session = session_from_claims(
+            {"sub": user["id"], "email": "brother@example.com"},
+            role="none",
+            cookie=cfg.cookie,
+        )
+        self.client.cookies.set(
+            cfg.cookie.name,
+            encode_session_cookie(session, signing_key=cfg.signing_key),
+        )
+        csrf = csrf_token_for_session(session, signing_key=cfg.signing_key)
+
+        page = self.client.get("/me")
+        self.assertEqual(page.status_code, 200, page.text)
+        self.assertIn("brother@example.com", page.text)
+        self.assertIn("brother-laptop", page.text)
+
+        session_resp = self.client.get("/me/api/session")
+        self.assertEqual(session_resp.status_code, 200, session_resp.text)
+        self.assertEqual(session_resp.json()["apps"][0]["id"], app_id)
+        self.assertNotIn("hash", repr(session_resp.json()))
+
+        missing_header = self.client.post(f"/me/api/apps/{app_id}/keys", json={})
+        self.assertEqual(missing_header.status_code, 403)
+
+        minted = self.client.post(
+            f"/me/api/apps/{app_id}/keys",
+            json={"label": "Brother laptop"},
+            headers={
+                "x-ai-gateway-user-action": "1",
+                "x-ai-gateway-csrf": csrf,
+            },
+        )
+        self.assertEqual(minted.status_code, 201, minted.text)
+        credential = minted.json()["credential"]
+        self.assertTrue(credential["api_key"].startswith("opk_"))
+        self.assertNotIn("hash", credential)
+
+        revoked = self.client.post(
+            f"/me/api/credentials/{credential['id']}/revoke",
+            json={},
+            headers={
+                "x-ai-gateway-user-action": "1",
+                "x-ai-gateway-csrf": csrf,
+            },
+        )
+        self.assertEqual(revoked.status_code, 200, revoked.text)
+        self.assertFalse(revoked.json()["credential"]["active"])
+
+        logout = self.client.get("/me/logout", follow_redirects=False)
+        self.assertEqual(logout.status_code, 302)
+        self.assertEqual(logout.headers["location"], "/me")
+
+    def test_user_portal_access_request_creates_pending_personal_app(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset({"owner@example.com"}),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        user = admin_store.upsert_oidc_user(
+            cfg.issuer,
+            "new-subject",
+            email="new@example.com",
+            display_name="New",
+            path=self.db,
+        )
+        session = session_from_claims(
+            {"sub": user["id"], "email": "new@example.com"},
+            role="none",
+            cookie=cfg.cookie,
+        )
+        self.client.cookies.set(
+            cfg.cookie.name,
+            encode_session_cookie(session, signing_key=cfg.signing_key),
+        )
+        csrf = csrf_token_for_session(session, signing_key=cfg.signing_key)
+
+        requested = self.client.post(
+            "/me/api/access-request",
+            json={},
+            headers={
+                "x-ai-gateway-user-action": "1",
+                "x-ai-gateway-csrf": csrf,
+            },
+        )
+        self.assertEqual(requested.status_code, 201, requested.text)
+        self.assertTrue(requested.json()["app"]["profile_required"])
+
+        denied = self.client.post(
+            f"/me/api/apps/{requested.json()['app']['id']}/keys",
+            json={},
+            headers={
+                "x-ai-gateway-user-action": "1",
+                "x-ai-gateway-csrf": csrf,
+            },
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self.assertEqual(denied.json()["error"]["code"], "profile_required")
 
 
 if __name__ == "__main__":

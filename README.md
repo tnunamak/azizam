@@ -21,6 +21,10 @@ Agents and apps can start without local repo context by fetching the public disc
 - `GET /health`
 - `GET /me` — normal-user portal for checking a runtime key, SDK settings,
   capabilities, and recent media jobs
+- `GET /me/api/session` — signed-OIDC account view for Apps and non-secret
+  runtime-key records owned by the current user
+- `POST /me/api/access-request` — signed-OIDC request to create a pending
+  Personal App for operator approval
 - `GET /.well-known/ai-gateway` — canonical gateway metadata document
 - `GET /.well-known/openai-proxy` — compatibility alias (identical body)
 - `GET /llms.txt`
@@ -101,7 +105,7 @@ The legacy term **"client"** is preserved only in compatibility contexts (OpenAI
 
 ## Auth
 
-All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health`, `/me`, and the `/.well-known/*` discovery surfaces are public. `/me` does not expose private data by itself; the browser uses the pasted `opk_...` key to check effective access.
+All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health`, `/me`, `/me/api/session`, and the `/.well-known/*` discovery surfaces are public. `/me` does not expose private data by itself; the browser uses either the signed OIDC session cookie or a pasted `opk_...` key to check effective access. Pasted keys are kept in browser session storage, not long-lived local storage.
 
 App API keys are stored as sha256 hashes in `proxy_api_keys.yml` (gitignored). Generate or rotate one with:
 
@@ -128,7 +132,7 @@ The shortest "share my gateway with another human" flow:
 1. **OIDC User.** The family member signs in once so the admin store has their **User** row. They do not need a global admin role.
 2. **Personal App.** An owner/admin creates one **Personal App** owned by that User — e.g. `aunt-mary-chat`. An App is the access boundary, not the person.
 3. **Profile.** The App is attached to a **Profile** that grants only what they need (e.g. `openai.chat` + `openai.audio`, no native passthrough, `cloud_allowed: false`, `status_visibility.level: basic`). This is what controls their normal access limits.
-4. **App API key.** Mint a bearer token for that App with `POST /admin/api/apps/{app_id}/keys`. They can visit `https://ai.vivid.fish/me`, paste the returned `opk_...` value locally in the browser, and confirm their base URL, SDK settings, capabilities, and media-job access before configuring their chat app.
+4. **App API key.** Mint a bearer token for that App with `POST /admin/api/apps/{app_id}/keys`. They can visit `https://ai.vivid.fish/me`, sign in with OIDC or paste the returned `opk_...` value locally in the browser, and confirm their base URL, SDK settings, capabilities, and media-job access before configuring their chat app. A signed-in user can request a pending Personal App, and can mint or revoke runtime keys only for Apps they already own after an operator has attached a Profile; they cannot change Profiles or grant themselves new access.
 
 Rotation is per-App, not per-human: revoke the old Credential and mint a new key while preserving the App's Profile and downstream mapping. Dashboard-minted keys inherit the App's current Profile unless an explicit per-key override is requested.
 

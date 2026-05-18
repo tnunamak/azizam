@@ -41,7 +41,7 @@ from typing import Any, Callable, Mapping, Optional
 import httpx
 import yaml
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse
+from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 # Local: status dashboard backend.
@@ -62,6 +62,8 @@ from gateway.admin_oidc import (
     authorization_url,
     bootstrap_admin_role,
     consume_state,
+    csrf_token_for_session,
+    decode_session_cookie,
     encode_session_cookie,
     generate_nonce,
     generate_pkce_pair,
@@ -79,6 +81,13 @@ from gateway.admin_runtime import (
 )
 from gateway.api import create_gateway_router
 from gateway.user_render import render_user_portal
+from gateway.user_runtime import (
+    UserPortalError,
+    build_user_portal_snapshot,
+    mint_user_app_key,
+    request_user_access,
+    revoke_user_app_key,
+)
 from gateway.audio_extensions import (
     bind_audio_workflow_extensions,
     detect_unknown_audio_fields,
@@ -7006,6 +7015,15 @@ def _existing_admin_roles_by_email() -> dict[str, str]:
             roles_by_email[email] = "owner"
         elif "admin" in role_names:
             roles_by_email[email] = "admin"
+    service_roles = admin_store.list_admin_roles(
+        subject_kind="service_account",
+        path=ADMIN_STORE.path,
+    )
+    service_role_names = {str(role["role"]) for role in service_roles}
+    if "owner" in service_role_names:
+        roles_by_email["__service_account_owner__"] = "owner"
+    elif "admin" in service_role_names:
+        roles_by_email["__service_account_admin__"] = "admin"
     return roles_by_email
 
 
@@ -7014,9 +7032,83 @@ def _safe_admin_return_to(value: str | None) -> str:
         return "/admin"
     if not value.startswith("/") or value.startswith("//"):
         return "/admin"
+    if value == "/me":
+        return value
     if value.startswith("/admin"):
         return value
     return "/admin"
+
+
+def _oidc_session_from_request(request: Request):
+    if not ADMIN_OIDC_CONFIG.enabled:
+        return None
+    raw = request.cookies.get(ADMIN_OIDC_CONFIG.cookie.name)
+    if not raw:
+        return None
+    try:
+        return decode_session_cookie(
+            raw,
+            signing_key=ADMIN_OIDC_CONFIG.signing_key,
+        )
+    except SessionError:
+        return None
+
+
+def _csrf_token_for_oidc_session(session) -> str:
+    signing_key = ADMIN_AUTH.signing_key or ADMIN_SESSION_SIGNING_KEY
+    if not signing_key:
+        return ""
+    try:
+        return csrf_token_for_session(
+            session,
+            signing_key=signing_key,
+        )
+    except SessionError:
+        return ""
+
+
+def _require_user_session(request: Request):
+    session = _oidc_session_from_request(request)
+    if session is None:
+        raise UserPortalError(
+            "login_required",
+            "Sign in before managing account keys",
+            status_code=401,
+        )
+    return session
+
+
+def _user_action_response_error(exc: UserPortalError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": exc.code, "message": exc.message}},
+    )
+
+
+def _require_user_action_header(request: Request, session) -> JSONResponse | None:
+    if request.headers.get("x-ai-gateway-user-action") == "1":
+        expected = _csrf_token_for_oidc_session(session)
+        supplied = request.headers.get("x-ai-gateway-csrf") or ""
+        if expected and hmac.compare_digest(supplied, expected):
+            return None
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": {
+                    "code": "user_csrf_required",
+                    "message": "valid x-ai-gateway-csrf header required",
+                }
+            },
+        )
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": {
+                "code": "user_action_header_required",
+                "message": "x-ai-gateway-user-action header required",
+            }
+        },
+    )
 
 
 app.include_router(
@@ -7028,16 +7120,121 @@ app.include_router(
 )
 
 
+@app.get("/me/login", include_in_schema=False)
+async def user_portal_login():
+    return RedirectResponse("/admin/login?return_to=/me", status_code=302)
+
+
+@app.get("/me/logout", include_in_schema=False)
+async def user_portal_logout():
+    response = RedirectResponse("/me", status_code=302)
+    response.delete_cookie(
+        ADMIN_OIDC_CONFIG.cookie.name,
+        path=ADMIN_OIDC_CONFIG.cookie.path,
+        domain=ADMIN_OIDC_CONFIG.cookie.domain,
+    )
+    return response
+
+
 @app.get("/me", include_in_schema=False)
 async def user_portal(request: Request):
+    session = _oidc_session_from_request(request)
+    account = build_user_portal_snapshot(session, path=ADMIN_STORE.path)
     body = render_user_portal(
         title="My AI Gateway",
         public_base_url=_public_base_url(request) or "https://ai.vivid.fish",
+        account=account,
+        oidc_enabled=ADMIN_OIDC_CONFIG.enabled,
+        csrf_token=_csrf_token_for_oidc_session(session) if session else "",
     )
     return Response(
         content=body,
         status_code=200,
         media_type="text/html; charset=utf-8",
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.get("/me/api/session", include_in_schema=False)
+async def user_portal_session(request: Request):
+    session = _oidc_session_from_request(request)
+    return JSONResponse(
+        status_code=200,
+        content=build_user_portal_snapshot(session, path=ADMIN_STORE.path),
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/apps/{app_id}/keys", include_in_schema=False)
+async def user_portal_mint_key(app_id: str, request: Request):
+    try:
+        session = _require_user_session(request)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    label = body.get("label") if isinstance(body, Mapping) else None
+    try:
+        credential = mint_user_app_key(
+            session,
+            app_id,
+            label=str(label).strip() if label else None,
+            path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=201,
+        content={"credential": credential},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/access-request", include_in_schema=False)
+async def user_portal_request_access(request: Request):
+    try:
+        session = _require_user_session(request)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        payload = request_user_access(session, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=201,
+        content=payload,
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/credentials/{credential_id}/revoke", include_in_schema=False)
+async def user_portal_revoke_key(credential_id: str, request: Request):
+    try:
+        session = _require_user_session(request)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        credential = revoke_user_app_key(
+            session,
+            credential_id,
+            path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
+        content={"credential": credential},
         headers={"cache-control": "no-store"},
     )
 
@@ -7207,6 +7404,7 @@ async def admin_logout():
 _FIREHOSE_NO_RECORD_PREFIXES = (
     "/health",
     "/admin",
+    "/me/",
     "/v1/status",
     "/v1/audio/health",
     "/_next/",

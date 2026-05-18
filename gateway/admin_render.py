@@ -17,6 +17,7 @@ Data-plane copy uses **App**, not "Client", per the project convention.
 from __future__ import annotations
 
 import html
+import json
 from typing import Any, Iterable, Mapping
 
 __all__ = ["render_admin_dashboard"]
@@ -91,21 +92,22 @@ _DASHBOARD_CSS = """
   form.flow label { font-size: 0.85rem; color: var(--muted); }
   form.flow input, form.flow select, form.flow textarea { background: oklch(15.5% 0.016 255);
                    border: 1px solid var(--line); color: var(--text);
-                   padding: 0.5rem 0.65rem; border-radius: 6px; }
+                   min-height: 2.75rem; padding: 0.5rem 0.65rem; border-radius: 6px; }
   form.flow textarea { min-height: 5rem; resize: vertical; font-family: ui-monospace, monospace; }
   form.flow .check { display: flex; align-items: center; gap: 0.45rem; color: var(--muted); }
   form.flow .check input { width: auto; }
   form.flow button { background: var(--focus); color: oklch(12% 0.02 255); border: 0;
-                     padding: 0.55rem 1rem; border-radius: 6px;
+                     min-height: 2.75rem; padding: 0.55rem 1rem; border-radius: 6px;
                      cursor: pointer; font-weight: 600; }
   form.flow button:hover { filter: brightness(1.08); }
   button.inline { background: var(--bad-bg); color: var(--bad); border: 1px solid oklch(40% 0.08 25);
-                  padding: 0.3rem 0.55rem; border-radius: 6px; cursor: pointer; }
+                  min-height: 2.75rem; padding: 0.3rem 0.55rem; border-radius: 6px; cursor: pointer; }
   button.inline:hover { filter: brightness(1.08); }
   .hint { margin: 0 0 0.9rem 0; color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
   ul.links { list-style: none; padding: 0; margin: 0;
              display: flex; flex-wrap: wrap; gap: 0.5rem; }
-  ul.links a { color: oklch(83% 0.09 235); text-decoration: none;
+  ul.links a { display: inline-flex; align-items: center; min-height: 2.75rem;
+               color: oklch(83% 0.09 235); text-decoration: none;
                background: var(--surface); border: 1px solid var(--line);
                padding: 0.35rem 0.6rem; border-radius: 999px;
                font-size: 0.85rem; }
@@ -132,6 +134,15 @@ def _esc(value: Any) -> str:
     if value is None:
         return ""
     return html.escape(str(value), quote=True)
+
+
+def _json_for_script(value: str) -> str:
+    return (
+        json.dumps(value)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
 
 
 def _count_card(label: str, value: Any) -> str:
@@ -169,8 +180,7 @@ def _profile_doc(record: Mapping[str, Any] | None) -> Mapping[str, Any]:
 def _profile_id(record: Mapping[str, Any] | None) -> str:
     if not record:
         return "default-local"
-    doc = _profile_doc(record)
-    return str(doc.get("id") or record.get("id") or "default-local")
+    return str(record.get("id") or _profile_doc(record).get("id") or "default-local")
 
 
 def _nested_mapping(value: Any) -> Mapping[str, Any]:
@@ -260,6 +270,8 @@ def _credential_row(record: Mapping[str, Any]) -> str:
         else (
             '<button class="inline" type="button" data-revoke-credential="'
             + _esc(raw_cred_id)
+            + '" aria-label="Revoke credential '
+            + _esc(raw_cred_id)
             + '">Revoke</button>'
         )
     )
@@ -276,12 +288,16 @@ def _credential_row(record: Mapping[str, Any]) -> str:
 
 
 def _app_profile_id(record: Mapping[str, Any]) -> str:
-    return str(
+    profile_id = (
         record.get("default_profile_id")
         or record.get("profile_id")
         or record.get("profile")
-        or "default-local"
     )
+    if profile_id:
+        return str(profile_id)
+    if record.get("kind") == "personal" or record.get("owner_user_id"):
+        return ""
+    return "default-local"
 
 
 def _app_row(
@@ -305,19 +321,27 @@ def _app_row(
     active_keys = active_keys_by_app.get(raw_app_id, 0)
     status_class = "ready"
     status_text = "ready"
-    if profile_id != "default-local" and profile is None:
+    if not profile_id:
+        status_class = "problem"
+        status_text = "needs profile"
+    elif profile_id != "default-local" and profile is None:
         status_class = "problem"
         status_text = "profile missing"
     elif active_keys < 1:
         status_class = "attention"
         status_text = "needs key"
-    access = _profile_access_summary(profile)
+    access = (
+        "operator must attach a Profile"
+        if not profile_id
+        else _profile_access_summary(profile)
+    )
+    profile_label = profile_id or "profile required"
     created = _esc(record.get("created_at") or "—")
     return (
         "<tr>"
         f'<td><div class="cell-main">{name}</div><div class="cell-sub"><code>{app_id}</code></div></td>'
         f"<td>{owner}</td>"
-        f'<td><div><code>{_esc(profile_id)}</code></div><div class="cell-sub">{_esc(access)}</div></td>'
+        f'<td><div><code>{_esc(profile_label)}</code></div><div class="cell-sub">{_esc(access)}</div></td>'
         f"<td>{_esc(active_keys)} active</td>"
         f'<td><span class="badge {status_class}">{status_text}</span></td>'
         f"<td>{created}</td>"
@@ -420,7 +444,9 @@ def _access_issues(
         app_id = str(app.get("id") or "")
         app_name = str(app.get("name") or app_id or "unnamed app")
         profile_id = _app_profile_id(app)
-        if profile_id != "default-local" and profile_id not in profiles_by_id:
+        if not profile_id:
+            items.append(f"{app_name} has no Profile yet.")
+        elif profile_id != "default-local" and profile_id not in profiles_by_id:
             items.append(f"{app_name} points at missing Profile {profile_id}.")
         if active_keys_by_app.get(app_id, 0) < 1:
             items.append(f"{app_name} has no active runtime key.")
@@ -469,10 +495,10 @@ def _flow_form(
         '<form class="flow" method="post" action="' + _esc(create_app_action) + '" data-create-app>'
         "<label>Create App:</label>"
         '<div class="stack">'
-        '<input type="text" name="name" placeholder="App name" required>'
-        '<select name="kind"><option value="service">Service app</option><option value="personal">Personal app</option></select>'
-        f'<select name="owner_user_id">{user_options}</select>'
-        f'<select name="profile_id">{profile_options}</select>'
+        '<input type="text" name="name" placeholder="App name" aria-label="App name" required>'
+        '<select name="kind" aria-label="App kind"><option value="service">Service app</option><option value="personal">Personal app</option></select>'
+        f'<select name="owner_user_id" aria-label="User owner">{user_options}</select>'
+        f'<select name="profile_id" aria-label="App Profile">{profile_options}</select>'
         "</div>"
         '<div class="row">'
         "<span></span>"
@@ -484,8 +510,8 @@ def _flow_form(
         + '" data-mint-key>'
         "<label>Mint runtime key:</label>"
         '<div class="row">'
-        f'<select name="app_id" required>{app_options}</select>'
-        '<input type="text" name="label" placeholder="Key label">'
+        f'<select name="app_id" aria-label="App for runtime key" required>{app_options}</select>'
+        '<input type="text" name="label" placeholder="Key label" aria-label="Runtime key label">'
         '<button type="submit">Mint key</button>'
         "</div>"
         "</form>"
@@ -511,26 +537,26 @@ def _profile_form(
         + '" data-create-profile>'
         "<label>Create Profile:</label>"
         '<div class="stack">'
-        '<input type="text" name="id" placeholder="profile id" required>'
-        '<input type="text" name="label" placeholder="Label">'
-        '<select name="status_visibility">'
+        '<input type="text" name="id" placeholder="profile id" aria-label="Profile id" required>'
+        '<input type="text" name="label" placeholder="Label" aria-label="Profile label">'
+        '<select name="status_visibility" aria-label="Status visibility">'
         '<option value="basic">Basic status</option>'
         '<option value="standard">Standard status</option>'
         '<option value="full">Full status</option>'
         '<option value="none">No status</option>'
         "</select>"
-        '<input type="text" name="protocols" placeholder="protocols: openai, anthropic">'
-        '<input type="text" name="intents" placeholder="intents: chat, image.generate">'
-        '<input type="text" name="exposure" placeholder="exposure: default, opt_in">'
-        '<input type="text" name="trust_tiers" placeholder="trust: stable, experimental">'
-        '<input type="text" name="resource_tiers" placeholder="resources: interactive, batch">'
-        '<input type="text" name="tags" placeholder="tags: local, image, family">'
+        '<input type="text" name="protocols" placeholder="protocols: openai, anthropic" aria-label="Allowed protocols">'
+        '<input type="text" name="intents" placeholder="intents: chat, image.generate" aria-label="Allowed intents">'
+        '<input type="text" name="exposure" placeholder="exposure: default, opt_in" aria-label="Allowed exposure tiers">'
+        '<input type="text" name="trust_tiers" placeholder="trust: stable, experimental" aria-label="Allowed trust tiers">'
+        '<input type="text" name="resource_tiers" placeholder="resources: interactive, batch" aria-label="Allowed resource tiers">'
+        '<input type="text" name="tags" placeholder="tags: local, image, family" aria-label="Allowed tags">'
         "</div>"
         '<div class="stack">'
         '<label class="check"><input type="checkbox" name="cloud_allowed"> Allow cloud fallback</label>'
         '<label class="check"><input type="checkbox" name="native_passthrough"> Allow native passthrough</label>'
         "</div>"
-        '<textarea name="advanced_json" spellcheck="false" placeholder="{&quot;models&quot;:[&quot;local-chat&quot;]}"></textarea>'
+        '<textarea name="advanced_json" spellcheck="false" aria-label="Advanced profile JSON" placeholder="{&quot;models&quot;:[&quot;local-chat&quot;]}"></textarea>'
         '<div class="row">'
         "<span></span>"
         '<button type="submit">Create profile</button>'
@@ -557,16 +583,16 @@ def _policy_simulator_form(
         + '" data-simulate-policy>'
         "<label>Simulate request:</label>"
         '<div class="stack">'
-        f'<select name="profile">{profile_options}</select>'
-        '<input type="text" name="protocol" placeholder="protocol: openai.images">'
-        '<input type="text" name="intent" placeholder="intent: image.edit">'
-        '<input type="text" name="workflow" placeholder="workflow id">'
-        '<input type="text" name="model" placeholder="model id">'
-        '<input type="text" name="backend" placeholder="backend: comfyui">'
-        '<input type="text" name="capability_exposure" placeholder="exposure: default">'
-        '<input type="text" name="capability_trust_tier" placeholder="trust: stable">'
-        '<input type="text" name="capability_resource_tier" placeholder="resource: batch">'
-        '<input type="text" name="capability_tags" placeholder="tags: image, controlnet">'
+        f'<select name="profile" aria-label="Profile to simulate">{profile_options}</select>'
+        '<input type="text" name="protocol" placeholder="protocol: openai.images" aria-label="Request protocol">'
+        '<input type="text" name="intent" placeholder="intent: image.edit" aria-label="Request intent">'
+        '<input type="text" name="workflow" placeholder="workflow id" aria-label="Workflow id">'
+        '<input type="text" name="model" placeholder="model id" aria-label="Model id">'
+        '<input type="text" name="backend" placeholder="backend: comfyui" aria-label="Backend id">'
+        '<input type="text" name="capability_exposure" placeholder="exposure: default" aria-label="Capability exposure">'
+        '<input type="text" name="capability_trust_tier" placeholder="trust: stable" aria-label="Capability trust tier">'
+        '<input type="text" name="capability_resource_tier" placeholder="resource: batch" aria-label="Capability resource tier">'
+        '<input type="text" name="capability_tags" placeholder="tags: image, controlnet" aria-label="Capability tags">'
         "</div>"
         '<div class="stack">'
         '<label class="check"><input type="checkbox" name="requires_cloud_fallback"> Requires cloud fallback</label>'
@@ -624,6 +650,7 @@ def render_admin_dashboard(
     discovery_links = list(snapshot.get("discovery_links") or [])
     actor = snapshot.get("actor") or {}
     actor_label = actor.get("email") or actor.get("subject") or "anonymous"
+    csrf_json = _json_for_script(str(actor.get("csrf_token") or ""))
     profiles_by_id = {_profile_id(p): p for p in profiles}
     active_keys_by_app: dict[str, int] = {}
     for credential in credentials:
@@ -718,9 +745,10 @@ def render_admin_dashboard(
         "<script>"
         "document.addEventListener('DOMContentLoaded',()=>{"
         "const out=document.getElementById('admin-flow-result');"
+        f"const csrfToken={csrf_json};"
         "const show=v=>{out.textContent=typeof v==='string'?v:JSON.stringify(v,null,2)};"
         "const list=v=>String(v||'').split(/[\\s,]+/).map(x=>x.trim()).filter(Boolean);"
-        "const json=async(url,body)=>{const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','x-ai-gateway-admin-action':'1'},body:JSON.stringify(body)});"
+        "const json=async(url,body)=>{const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken},body:JSON.stringify(body)});"
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
         "document.querySelector('[data-create-profile]')?.addEventListener('submit',async e=>{e.preventDefault();"

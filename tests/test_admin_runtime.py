@@ -183,9 +183,14 @@ class AdminRuntimeTests(unittest.TestCase):
         client.post(f"/admin/api/apps/{app_id}/keys", json={})
 
         snapshot = self.store.dashboard_snapshot(
-            AdminContext(subject="svc_test", roles=frozenset({"owner"}))
+            AdminContext(
+                subject="svc_test",
+                roles=frozenset({"owner"}),
+                csrf_token="csrf-token",
+            )
         )
         self.assertNotIn("hash", repr(snapshot))
+        self.assertEqual(snapshot["actor"]["csrf_token"], "csrf-token")
 
     def test_dashboard_links_are_admin_or_public_routes(self) -> None:
         snapshot = self.store.dashboard_snapshot(

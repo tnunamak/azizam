@@ -23,6 +23,7 @@ The router never reads files, never reads ``os.environ``, never touches
 from __future__ import annotations
 
 import json
+import hmac
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
@@ -57,6 +58,7 @@ class AdminContext:
     email: str | None = None
     roles: frozenset[str] = field(default_factory=frozenset)
     auth_method: str | None = None
+    csrf_token: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -181,15 +183,25 @@ def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResp
     if (
         ctx.auth_method == "session"
         and request.method not in {"GET", "HEAD", "OPTIONS"}
-        and request.headers.get("x-ai-gateway-admin-action") != "1"
     ):
-        return _auth_error_response(
-            AdminAuthError(
-                "admin session mutation requires same-origin admin action header",
-                status_code=status.HTTP_403_FORBIDDEN,
-                code="admin_action_header_required",
+        if ctx.csrf_token:
+            supplied = request.headers.get("x-ai-gateway-csrf") or ""
+            if not hmac.compare_digest(supplied, ctx.csrf_token):
+                return _auth_error_response(
+                    AdminAuthError(
+                        "admin session mutation requires a valid CSRF token",
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        code="admin_csrf_required",
+                    )
+                )
+        elif request.headers.get("x-ai-gateway-admin-action") != "1":
+            return _auth_error_response(
+                AdminAuthError(
+                    "admin session mutation requires same-origin admin action header",
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    code="admin_action_header_required",
+                )
             )
-        )
     return ctx
 
 

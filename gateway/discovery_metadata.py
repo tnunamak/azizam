@@ -91,6 +91,8 @@ def build_gateway_discovery_metadata(
     links = {
         "health": "/health",
         "user_portal": "/me",
+        "user_session": "/me/api/session",
+        "user_access_request": "/me/api/access-request",
         "openapi": "/openapi.json",
         "llms_txt": "/llms.txt",
         "skill_catalog": "/.well-known/skills",

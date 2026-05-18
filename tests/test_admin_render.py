@@ -112,6 +112,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("https://ai.vivid.fish/v1", html)
         self.assertIn('action="/admin/api/apps"', html)
         self.assertIn("x-ai-gateway-admin-action", html)
+        self.assertIn("x-ai-gateway-csrf", html)
         # Mint-key form must reference the key creation endpoint template.
         self.assertIn("/admin/api/apps/{app_id}/keys", html)
         self.assertIn("Revoke", html)
@@ -141,6 +142,41 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("brother-laptop", html)
         self.assertIn("kitchen-tablet", html)
         self.assertIn("owner@example.com", html)
+
+    def test_app_profile_lookup_uses_durable_profile_id(self) -> None:
+        snapshot = _snapshot()
+        snapshot["profiles"] = [
+            {
+                "id": "prof_db_1",
+                "label": "Chat profile",
+                "profile": {
+                    "id": "policy-chat",
+                    "protocols": ["openai.chat"],
+                },
+            }
+        ]
+        snapshot["apps"] = [snapshot["apps"][0]]
+        snapshot["apps"][0]["profile_id"] = "prof_db_1"
+        html = render_admin_dashboard(snapshot)
+        self.assertIn("prof_db_1", html)
+        self.assertNotIn("profile missing", html)
+
+    def test_personal_app_without_profile_is_pending_not_default_local(self) -> None:
+        snapshot = _snapshot()
+        snapshot["apps"] = [
+            {
+                "id": "app_pending",
+                "kind": "personal",
+                "name": "new-user-access",
+                "owner_user_id": "u_owner",
+                "created_at": "2026-05-17T00:01:00Z",
+            }
+        ]
+        snapshot["credentials"] = []
+        html = render_admin_dashboard(snapshot)
+        self.assertIn("needs profile", html)
+        self.assertIn("profile required", html)
+        self.assertIn("new-user-access has no Profile yet.", html)
 
     def test_credentials_table_marks_revoked_status(self) -> None:
         html = render_admin_dashboard(_snapshot())

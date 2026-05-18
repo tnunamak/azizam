@@ -23,6 +23,7 @@ from gateway.admin_oidc import (  # noqa: E402
     authorization_url,
     bootstrap_admin_role,
     consume_state,
+    csrf_token_for_session,
     decode_session_cookie,
     encode_session_cookie,
     generate_nonce,
@@ -445,6 +446,18 @@ class TestSessionCookie(unittest.TestCase):
         # And the literal secret bytes are not anywhere in the cookie blob.
         for leaked in ("RAW.JWT.SHOULD_NEVER_LEAK", "AT_SHOULD_NEVER_LEAK", "RT_SHOULD_NEVER_LEAK"):
             self.assertNotIn(leaked, token)
+
+    def test_csrf_token_is_stable_for_session_and_key_bound(self) -> None:
+        sess = self._session()
+        token = csrf_token_for_session(sess, signing_key=SIGNING_KEY)
+        self.assertEqual(
+            token,
+            csrf_token_for_session(sess, signing_key=SIGNING_KEY),
+        )
+        self.assertNotEqual(
+            token,
+            csrf_token_for_session(sess, signing_key=b"b" * 32),
+        )
 
 
 class TestBootstrapRole(unittest.TestCase):

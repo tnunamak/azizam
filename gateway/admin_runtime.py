@@ -22,7 +22,12 @@ from fastapi import Request, status
 
 from gateway import admin_store
 from gateway.admin_api import AdminAuthError, AdminContext
-from gateway.admin_oidc import CookieConfig, SessionError, decode_session_cookie
+from gateway.admin_oidc import (
+    CookieConfig,
+    SessionError,
+    csrf_token_for_session,
+    decode_session_cookie,
+)
 from gateway.policy import DEFAULT_PROFILE
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key
@@ -246,7 +251,11 @@ class AdminSQLiteStore:
         credentials = self.list_credentials()
         audit = self.recent_audit(limit=50)
         return {
-            "actor": {"subject": actor.subject, "email": actor.email},
+            "actor": {
+                "subject": actor.subject,
+                "email": actor.email,
+                "csrf_token": actor.csrf_token or "",
+            },
             "counts": {
                 "users": len(users),
                 "apps": len(apps),
@@ -303,6 +312,10 @@ class AdminAuthenticator:
                             email=session.email,
                             roles=frozenset({session.role}),
                             auth_method="session",
+                            csrf_token=csrf_token_for_session(
+                                session,
+                                signing_key=self.signing_key,
+                            ),
                         )
                 except SessionError:
                     pass
