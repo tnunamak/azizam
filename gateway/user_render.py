@@ -28,7 +28,7 @@ __all__ = ["render_user_portal"]
 
 _PAGE_CSS = """
   .lead { color: var(--muted); margin: 0; line-height: 1.55; }
-  .card {
+  .card, .app-card, .app-create {
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -37,13 +37,13 @@ _PAGE_CSS = """
     gap: var(--space-3);
     align-content: start;
   }
-  .card h3 { margin: 0; font-size: 1rem; }
-  .card p { margin: 0; color: var(--muted); line-height: 1.5; }
-  .card .key-note { font-size: 0.88rem; }
-  .actions {
+  .card h3, .app-card h3, .app-create h3 { margin: 0; font-size: 1rem; }
+  .card p, .app-card p, .app-create p { margin: 0; color: var(--muted); line-height: 1.5; }
+  .actions, .key-actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
+    align-items: center;
   }
   .hero {
     display: grid;
@@ -61,10 +61,20 @@ _PAGE_CSS = """
     letter-spacing: 0;
   }
   .hero .actions a, .hero .actions button { font-size: 0.95rem; }
-  .row {
+  .row, .key-form {
     display: grid;
     gap: var(--space-2);
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+  .field {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .field span {
+    color: var(--muted);
+    font-size: 0.8rem;
   }
   input {
     background: oklch(14.5% 0.016 250);
@@ -92,6 +102,11 @@ _PAGE_CSS = """
   button.secondary {
     background: var(--panel-2);
     color: var(--text);
+    border-color: var(--line);
+  }
+  button.danger {
+    color: var(--bad);
+    background: transparent;
     border-color: var(--line);
   }
   button:hover { filter: brightness(1.06); }
@@ -146,10 +161,20 @@ _PAGE_CSS = """
     font-size: 0.86rem;
     line-height: 1.55;
   }
-  .grid {
+  .apps-list {
     display: grid;
     gap: var(--space-4);
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+  .app-card-header, .key-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-3);
+    align-items: start;
+  }
+  .app-card-title {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
   }
   .badge {
     display: inline-flex;
@@ -166,21 +191,16 @@ _PAGE_CSS = """
   .badge.bad { color: var(--bad); background: var(--bad-bg); }
   .badge.warn { color: var(--warn); background: var(--warn-bg); }
   .meta { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .list { display: grid; gap: var(--space-3); }
-  .credential-row {
-    display: grid;
-    gap: var(--space-2);
-    padding-top: var(--space-3);
-    margin-top: var(--space-3);
-    border-top: 1px solid var(--line);
-  }
-  .credential-row:first-of-type { padding-top: 0; margin-top: 0; border-top: 0; }
-  .credential-row h3 { margin: 0; font-size: 0.94rem; }
-  .credential-row p { margin: 0; color: var(--muted); }
-  .empty { color: var(--muted); }
+  .list, .key-list { display: grid; gap: var(--space-2); }
+  .key-list { border-top: 1px solid var(--line); padding-top: var(--space-2); }
+  .key-row { padding: var(--space-2) 0; }
+  .key-row + .key-row { border-top: 1px solid var(--line); }
+  .key-row h3 { margin: 0; font-size: 0.94rem; }
+  .key-row p { margin: 0; color: var(--muted); }
+  .key-note, .empty { color: var(--muted); font-size: 0.88rem; }
   .two-col {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
     gap: var(--space-4);
   }
   .access-group { display: grid; gap: var(--space-3); align-content: start; }
@@ -192,7 +212,8 @@ _PAGE_CSS = """
     letter-spacing: 0.1em;
   }
   @media (max-width: 720px) {
-    .row { grid-template-columns: 1fr; }
+    .row, .key-form, .app-card-header, .key-row { grid-template-columns: 1fr; }
+    .key-actions button, .actions button { width: 100%; }
   }
 """
 
@@ -201,31 +222,89 @@ def _badge(text: Any, cls: str = "") -> str:
     return f'<span class="badge {cls}">{esc(text)}</span>'
 
 
+def _client_account(account: Mapping[str, Any] | None, *, show_permission_details: bool) -> dict[str, Any]:
+    if not account:
+        return {"authenticated": False, "apps": []}
+    user_value = account.get("user")
+    user = user_value if isinstance(user_value, Mapping) else {}
+    apps: list[dict[str, Any]] = []
+    for app_value in account.get("apps", []):
+        if not isinstance(app_value, Mapping):
+            continue
+        app: dict[str, Any] = {
+            "id": app_value.get("id"),
+            "kind": app_value.get("kind"),
+            "name": app_value.get("name"),
+            "disabled_at": app_value.get("disabled_at"),
+            "can_mint_keys": app_value.get("can_mint_keys"),
+            "active_credentials": app_value.get("active_credentials"),
+            "created_at": app_value.get("created_at"),
+            "credentials": [
+                _sanitize_client_credential(credential)
+                for credential in app_value.get("credentials", [])
+                if isinstance(credential, Mapping)
+            ],
+        }
+        profile = app_value.get("profile")
+        if isinstance(profile, Mapping):
+            safe_profile = {
+                "id": profile.get("id"),
+                "missing": bool(profile.get("missing")),
+                "inherited": profile.get("inherited"),
+            }
+            if show_permission_details:
+                safe_profile["name"] = profile.get("name")
+                safe_profile["policy_id"] = profile.get("policy_id")
+            app["profile"] = safe_profile
+        apps.append(app)
+    return {
+        "authenticated": bool(account.get("authenticated")),
+        "user": {
+            "email": user.get("email"),
+            "name": user.get("name"),
+            "role": user.get("role"),
+        },
+        "apps": apps,
+    }
+
+
+def _sanitize_client_credential(credential: Mapping[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "id",
+        "prefix",
+        "display_name",
+        "created_at",
+        "expires_at",
+        "active",
+    }
+    return {key: credential.get(key) for key in allowed if key in credential}
+
+
 def _credential_html(record: Mapping[str, Any]) -> str:
+    if not record.get("active", True):
+        return ""
     credential_id = esc(record.get("id"))
     prefix = esc(record.get("prefix") or "key")
     label = esc(record.get("display_name") or "API key")
     created = esc(record.get("created_at") or "created")
-    active = bool(record.get("active"))
-    status = "active" if active else "deleted"
-    status_class = "good" if active else "bad"
-    action = (
-        '<button class="secondary" type="button" data-revoke-owned-key="'
+    return (
+        '<div class="key-row" data-key-row="' + credential_id + '">'
+        "<div>"
+        f"<h3>{label}</h3>"
+        f"<p>Prefix <code>{prefix}</code> · {created}</p>"
+        "</div>"
+        '<div class="key-actions">'
+        '<button class="secondary" type="button" data-view-owned-key="'
+        + credential_id
+        + '" data-key-label="'
+        + label
+        + '">View access</button>'
+        '<button class="danger" type="button" data-revoke-owned-key="'
         + credential_id
         + '" aria-label="Delete API key '
         + label
         + '">Delete key</button>'
-        if active and credential_id
-        else ""
-    )
-    return (
-        '<div class="credential-row">'
-        f"<h3>{label}</h3>"
-        f"<p>Prefix <code>{prefix}</code> · {created}</p>"
-        '<div class="meta">'
-        + _badge(status, status_class)
-        + "</div>"
-        + (f'<div class="actions">{action}</div>' if action else "")
+        "</div>"
         + "</div>"
     )
 
@@ -256,7 +335,11 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
         elif not inherited:
             permission_text = "custom account permissions"
             permission_badge = _badge("custom permissions")
-    credentials = [c for c in app.get("credentials", []) if isinstance(c, Mapping)]
+    credentials = [
+        c
+        for c in app.get("credentials", [])
+        if isinstance(c, Mapping) and c.get("active", True)
+    ]
     credential_html = (
         "".join(_credential_html(c) for c in credentials)
         if credentials
@@ -264,11 +347,11 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
     )
     can_mint = bool(app.get("can_mint_keys"))
     mint_html = (
-        '<form class="actions" data-mint-owned-key="' + app_id + '">'
-        '<input type="text" name="label" placeholder="Key label, e.g. MacBook or Open WebUI" '
-        'aria-label="API key label">'
+        '<form class="key-form" data-mint-owned-key="' + app_id + '">'
+        '<label class="field"><span>New API key</span>'
+        '<input type="text" name="label" placeholder="MacBook, Open WebUI, deploy script" '
+        'aria-label="API key label"></label>'
         '<button type="submit">Create key</button>'
-        '<p class="key-note">The label is just a reminder. The full key is shown once after creation.</p>'
         "</form>"
         if can_mint
         else (
@@ -277,15 +360,24 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
         )
     )
     return (
-        '<article class="card">'
+        '<article class="app-card" data-app-card="' + app_id + '">'
+        '<div class="app-card-header">'
+        '<div class="app-card-title">'
         f"<h3>{name}</h3>"
         f"<p>Use this App for one tool or workflow. Its keys use {esc(permission_text)}.</p>"
         '<div class="meta">'
         + permission_badge
         + _badge(f"{app.get('active_credentials') or 0} active keys", "good")
         + "</div>"
+        "</div>"
+        '<button class="danger" type="button" data-delete-owned-app="'
+        + app_id
+        + '" data-app-name="'
+        + name
+        + '">Delete App</button>'
+        "</div>"
         + mint_html
-        + '<div class="list">'
+        + '<div class="key-list" data-key-list="' + app_id + '">'
         + credential_html
         + "</div>"
         + "</article>"
@@ -318,24 +410,24 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     apps = [a for a in account.get("apps", []) if isinstance(a, Mapping)]
     is_admin = can_admin(account)
     create_help = (
-        "Create one App for each tool or workflow you connect. Name it after "
-        "that tool, then create keys inside it."
+        "Create one App per client, workflow, or script. Keys live inside the App."
     )
     create_form = (
-        '<form class="card" data-create-owned-app>'
+        '<form class="app-create" data-create-owned-app>'
         "<h3>New App</h3>"
         f"<p>{create_help}</p>"
         '<div class="row">'
-        '<input type="text" name="name" placeholder="App name, e.g. Open WebUI" '
-        'aria-label="App name" required maxlength="80">'
+        '<label class="field"><span>App name</span>'
+        '<input type="text" name="name" placeholder="Open WebUI, Cline, render pipeline" '
+        'aria-label="App name" required maxlength="80"></label>'
         '<button type="submit">Create App</button>'
         "</div>"
         "</form>"
     )
     apps_html = (
-        f'<div class="grid">{"".join(_app_html(app, show_permission_details=is_admin) for app in apps)}</div>'
+        f'<div id="apps-list" class="apps-list">{"".join(_app_html(app, show_permission_details=is_admin) for app in apps)}</div>'
         if apps
-        else ""
+        else '<div id="apps-list" class="apps-list"></div>'
     )
     admin_hint = (
         ' <a href="/admin">Admin</a> manages shared Apps and permission Profiles.'
@@ -347,7 +439,7 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
         '<h2 id="apps-heading">Your Apps</h2>'
         '<p class="hint">'
         + f"Signed in as {user_label}. "
-        + "An App is one client, tool, workflow, or script. A key label names where that key is stored."
+        + "Use View access on any key to see what it can do."
         + admin_hint
         + "</p>"
         + '<div id="account-result" class="message"></div>'
@@ -357,12 +449,17 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     )
 
 
-def _runtime_key_section() -> str:
+def _runtime_key_section(*, signed_in: bool = False) -> str:
+    heading = "Check another key" if signed_in else "Check an API key"
+    hint = (
+        "Use this only for a key that is not listed above."
+        if signed_in
+        else "Paste an <code>opk_</code> key if you already have one."
+    )
     return (
         '<section aria-labelledby="runtime-heading">'
-        '<h2 id="runtime-heading">Check an API key</h2>'
-        '<p class="hint">Paste an <code>opk_</code> key if you already have one. '
-        "This only checks the key from this browser tab.</p>"
+        f'<h2 id="runtime-heading">{heading}</h2>'
+        f'<p class="hint">{hint} This only checks the key from this browser tab.</p>'
         '<div class="card">'
         '<div class="row">'
         '<input id="runtime-key" type="password" autocomplete="off" spellcheck="false" '
@@ -393,20 +490,15 @@ def _access_section() -> str:
     return (
         '<section id="access-section" aria-labelledby="access-heading" hidden>'
         '<h2 id="access-heading">Access</h2>'
-        '<p class="hint" id="access-empty-hint">Check a key to load capabilities, '
-        "models, and recent jobs.</p>"
+        '<p class="hint" id="access-summary"></p>'
         '<div class="two-col">'
-        '<div class="access-group">'
+        '<div id="capabilities-group" class="access-group" hidden>'
         '<h3>Capabilities</h3>'
         '<div id="capabilities" class="list"></div>'
         '</div>'
-        '<div class="access-group">'
-        '<h3>Models</h3>'
+        '<div id="models-group" class="access-group" hidden>'
+        '<h3>Models and workflows</h3>'
         '<div id="models" class="list"></div>'
-        '</div>'
-        '<div class="access-group">'
-        '<h3>Recent Jobs</h3>'
-        '<div id="jobs" class="list"></div>'
         '</div>'
         "</div>"
         "</section>"
@@ -431,6 +523,9 @@ def render_user_portal(
 
     is_signed_in = bool(account and account.get("authenticated"))
     show_admin = can_admin(account)
+    account_json = json_for_script(
+        _client_account(account, show_permission_details=show_admin)
+    )
     actor_label = None
     if is_signed_in and account is not None:
         user_value = account.get("user")
@@ -460,7 +555,7 @@ def render_user_portal(
 
     body = (
         primary_section
-        + _runtime_key_section()
+        + _runtime_key_section(signed_in=is_signed_in)
         + _settings_section()
         + _access_section()
     )
@@ -482,6 +577,7 @@ def render_user_portal(
 (() => {{
   const publicBase = {base_json};
   const csrfToken = {csrf_json};
+  let accountSnapshot = {account_json};
   const storageKey = "vivid_fish_ai_gateway_runtime_key";
   const $ = (id) => document.getElementById(id);
   const keyInput = $("runtime-key");
@@ -565,15 +661,18 @@ def render_user_portal(
     return body;
   }}
 
-  async function postAccountJson(path, body = {{}}, method = "POST") {{
+  async function accountJson(path, options = {{}}) {{
+    const method = options.method || "GET";
+    const body = options.body;
+    const headers = {{
+      "x-ai-gateway-user-action": "1",
+      "x-ai-gateway-csrf": csrfToken
+    }};
+    if (body !== undefined) headers["content-type"] = "application/json";
     const response = await fetch(path, {{
       method,
-      headers: {{
-        "content-type": "application/json",
-        "x-ai-gateway-user-action": "1",
-        "x-ai-gateway-csrf": csrfToken
-      }},
-      body: method === "DELETE" ? undefined : JSON.stringify(body),
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store"
     }});
     const text = await response.text();
@@ -608,14 +707,162 @@ def render_user_portal(
     return article;
   }}
 
+  function text(value, fallback = "") {{
+    if (value === null || value === undefined || value === "") return fallback;
+    return String(value);
+  }}
+
+  function activeCredentials(app) {{
+    return (Array.isArray(app.credentials) ? app.credentials : [])
+      .filter((credential) => credential && credential.active !== false);
+  }}
+
+  function permissionInfo(app) {{
+    const profile = app && typeof app.profile === "object" ? app.profile : null;
+    if (profile && profile.missing) {{
+      return {{ text: "permissions unavailable", badge: "permissions unavailable", cls: "bad" }};
+    }}
+    if (profile && profile.inherited === false) {{
+      return {{ text: "custom account permissions", badge: "custom permissions", cls: "" }};
+    }}
+    return {{ text: "your account permissions", badge: "account permissions", cls: "" }};
+  }}
+
+  function renderCredential(credential) {{
+    const row = document.createElement("div");
+    row.className = "key-row";
+    row.dataset.keyRow = text(credential.id);
+
+    const info = document.createElement("div");
+    const title = document.createElement("h3");
+    title.textContent = text(credential.display_name, "API key");
+    const details = document.createElement("p");
+    const prefix = document.createElement("code");
+    prefix.textContent = text(credential.prefix, "key");
+    details.append("Prefix ", prefix, " · " + text(credential.created_at, "created"));
+    info.append(title, details);
+
+    const actions = document.createElement("div");
+    actions.className = "key-actions";
+    const inspect = document.createElement("button");
+    inspect.type = "button";
+    inspect.className = "secondary";
+    inspect.dataset.viewOwnedKey = text(credential.id);
+    inspect.dataset.keyLabel = title.textContent;
+    inspect.textContent = "View access";
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "danger";
+    del.dataset.revokeOwnedKey = text(credential.id);
+    del.textContent = "Delete key";
+    actions.append(inspect, del);
+
+    row.append(info, actions);
+    return row;
+  }}
+
+  function renderApp(app) {{
+    const appId = text(app.id);
+    const credentials = activeCredentials(app);
+    const permission = permissionInfo(app);
+    const article = document.createElement("article");
+    article.className = "app-card";
+    article.dataset.appCard = appId;
+
+    const header = document.createElement("div");
+    header.className = "app-card-header";
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "app-card-title";
+    const title = document.createElement("h3");
+    title.textContent = text(app.name, appId || "App");
+    const help = document.createElement("p");
+    help.textContent = "Use this App for one tool or workflow. Its keys use " + permission.text + ".";
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.append(
+      badge(permission.badge, permission.cls),
+      badge(credentials.length + " active keys", "good")
+    );
+    titleWrap.append(title, help, meta);
+    const deleteApp = document.createElement("button");
+    deleteApp.type = "button";
+    deleteApp.className = "danger";
+    deleteApp.dataset.deleteOwnedApp = appId;
+    deleteApp.dataset.appName = title.textContent;
+    deleteApp.textContent = "Delete App";
+    header.append(titleWrap);
+    if (app.can_delete !== false) header.append(deleteApp);
+
+    const form = document.createElement("form");
+    form.className = "key-form";
+    form.dataset.mintOwnedKey = appId;
+    const label = document.createElement("label");
+    label.className = "field";
+    const labelText = document.createElement("span");
+    labelText.textContent = "New API key";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.name = "label";
+    input.placeholder = "MacBook, Open WebUI, deploy script";
+    input.setAttribute("aria-label", "API key label");
+    label.append(labelText, input);
+    const createKey = document.createElement("button");
+    createKey.type = "submit";
+    createKey.textContent = "Create key";
+    form.append(label, createKey);
+
+    const list = document.createElement("div");
+    list.className = "key-list";
+    list.dataset.keyList = appId;
+    if (credentials.length) {{
+      credentials.forEach((credential) => list.appendChild(renderCredential(credential)));
+    }} else {{
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "No API keys for this App yet.";
+      list.appendChild(empty);
+    }}
+
+    article.append(header);
+    if (app.can_mint_keys !== false) article.append(form);
+    article.append(list);
+    return article;
+  }}
+
+  function renderApps(apps) {{
+    const root = $("apps-list");
+    if (!root) return;
+    root.textContent = "";
+    const visible = (Array.isArray(apps) ? apps : [])
+      .filter((app) => app && !app.disabled_at);
+    if (!visible.length) {{
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "No Apps yet.";
+      root.appendChild(empty);
+      return;
+    }}
+    visible.forEach((app) => root.appendChild(renderApp(app)));
+  }}
+
+  async function refreshAccount() {{
+    const snapshot = await accountJson("/me/api/session");
+    accountSnapshot = snapshot;
+    renderApps(snapshot.apps || []);
+    return snapshot;
+  }}
+
   function renderCapabilities(payload) {{
+    const group = $("capabilities-group");
     const root = $("capabilities");
+    if (!root || !group) return 0;
     root.textContent = "";
     const caps = Array.isArray(payload.capabilities) ? payload.capabilities : [];
     if (!caps.length) {{
-      root.innerHTML = '<p class="empty">No capabilities were returned for this key.</p>';
-      return;
+      group.hidden = true;
+      return 0;
     }}
+    group.hidden = false;
     caps.forEach((cap) => {{
       const name = cap.workflow || cap.model || cap.intent || "capability";
       const modalities = []
@@ -638,40 +885,45 @@ def render_user_portal(
         ].concat((cap.tags || []).slice(0, 4).map((tag) => ({{ text: tag }})))
       ));
     }});
+    return caps.length;
   }}
 
   function renderModels(payload) {{
+    const group = $("models-group");
     const root = $("models");
+    if (!root || !group) return 0;
     root.textContent = "";
-    const data = Array.isArray(payload.data) ? payload.data : [];
+    const modelPayload = payload.models && Array.isArray(payload.models.data)
+      ? payload.models
+      : payload;
+    const data = Array.isArray(modelPayload.data) ? modelPayload.data : [];
     if (!data.length) {{
-      root.innerHTML = '<p class="empty">No OpenAI-compatible models were returned.</p>';
-      return;
+      group.hidden = true;
+      return 0;
     }}
+    group.hidden = false;
     data.slice(0, 24).forEach((model) => {{
       const id = model.id || model.model || "model";
-      root.appendChild(card(id, model.owned_by ? "owned by " + model.owned_by : "OpenAI-compatible model", [
-        {{ text: model.object || "model" }}
+      root.appendChild(card(id, model.intent || (model.owned_by ? "owned by " + model.owned_by : "OpenAI-compatible"), [
+        {{ text: model.object || "model" }},
+        {{ text: model.available === false ? "unavailable" : "available", cls: model.available === false ? "warn" : "good" }}
       ]));
     }});
+    return data.length;
   }}
 
-  function renderJobs(payload) {{
-    const root = $("jobs");
-    root.textContent = "";
-    const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
-    if (!jobs.length) {{
-      root.innerHTML = '<p class="empty">No recent media jobs are visible to this key.</p>';
-      return;
+  function renderAccess(payload, label) {{
+    const accessSection = $("access-section");
+    if (accessSection) accessSection.hidden = false;
+    const capCount = renderCapabilities(payload);
+    const modelCount = renderModels(payload.models || payload);
+    const summary = $("access-summary");
+    if (summary) {{
+      const denied = Number(payload.denied_count || 0);
+      const suffix = denied ? " " + denied + " blocked by policy." : "";
+      summary.textContent = label + ": " + capCount + " capabilities, " + modelCount + " models/workflows." + suffix;
     }}
-    jobs.slice(0, 12).forEach((job) => {{
-      const status = job.status || "unknown";
-      const cls = status === "succeeded" || status === "completed" ? "good" : status === "failed" || status === "canceled" ? "bad" : "warn";
-      root.appendChild(card(job.job_id || "media job", job.intent || "media job", [
-        {{ text: status, cls }},
-        {{ text: job.created_at || "created" }}
-      ]));
-    }});
+    return {{ capCount, modelCount }};
   }}
 
   async function checkAccess() {{
@@ -683,22 +935,12 @@ def render_user_portal(
     updateKeyState();
     setMessage("Checking access...");
     try {{
-      const [caps, models, jobs] = await Promise.all([
+      const [caps, models] = await Promise.all([
         getJson("/gateway/v1/capabilities"),
-        getJson("/v1/models"),
-        getJson("/gateway/v1/media/jobs?limit=12")
+        getJson("/v1/models")
       ]);
-      const accessSection = $("access-section");
-      if (accessSection) accessSection.hidden = false;
-      const emptyHint = $("access-empty-hint");
-      if (emptyHint) emptyHint.style.display = "none";
-      renderCapabilities(caps);
-      renderModels(models);
-      renderJobs(jobs);
-      const capCount = Array.isArray(caps.capabilities) ? caps.capabilities.length : 0;
-      const modelCount = Array.isArray(models.data) ? models.data.length : 0;
-      const jobCount = Array.isArray(jobs.jobs) ? jobs.jobs.length : 0;
-      setMessage("Key works. Loaded " + capCount + " capabilities, " + modelCount + " models, " + jobCount + " recent jobs.", "good");
+      const counts = renderAccess({{ ...caps, models }}, "Pasted key");
+      setMessage("Key works. Loaded " + counts.capCount + " capabilities and " + counts.modelCount + " models/workflows.", "good");
     }} catch (error) {{
       setMessage(error.message || "Access check failed.", "bad");
     }}
@@ -717,71 +959,106 @@ def render_user_portal(
   keyInput.value = sessionStorage.getItem(storageKey) || "";
   updateKeyState();
 
-  document.querySelector("[data-create-owned-app]")?.addEventListener("submit", async (event) => {{
+  renderApps((accountSnapshot && accountSnapshot.apps) || []);
+
+  document.addEventListener("submit", async (event) => {{
+    const createForm = event.target.closest("[data-create-owned-app]");
+    const keyForm = event.target.closest("[data-mint-owned-key]");
+    if (!createForm && !keyForm) return;
     event.preventDefault();
-    const form = event.currentTarget;
-    const name = String(new FormData(form).get("name") || "").trim();
-    if (!name) {{
-      setAccountMessage("Name the App before creating it.", "warn");
-      return;
-    }}
-    setAccountMessage("Creating App...");
-    try {{
-      await postAccountJson("/me/api/apps", {{ name }});
-      setAccountMessage("App created. Reloading account view...", "good");
-      setTimeout(() => location.reload(), 800);
-    }} catch (error) {{
-      setAccountMessage(error.message || "App creation failed.", "bad");
-    }}
-  }});
 
-  document.querySelector("[data-request-access]")?.addEventListener("submit", async (event) => {{
-    event.preventDefault();
-    setAccountMessage("Creating App...");
-    try {{
-      await postAccountJson("/me/api/access-request", {{}});
-      setAccountMessage("App created. Reloading account view...", "good");
-      setTimeout(() => location.reload(), 800);
-    }} catch (error) {{
-      setAccountMessage(error.message || "App creation failed.", "bad");
-    }}
-  }});
-
-  document.querySelectorAll("[data-mint-owned-key]").forEach((form) => {{
-    form.addEventListener("submit", async (event) => {{
-      event.preventDefault();
-      const appId = form.dataset.mintOwnedKey;
-      const label = new FormData(form).get("label") || "";
-      setAccountMessage("Creating key...");
-      try {{
-        const data = await postAccountJson("/me/api/apps/" + encodeURIComponent(appId) + "/keys", {{ label }});
-        const key = data && data.credential && data.credential.api_key;
-        if (key) {{
-          showMintedKey(key);
-        }} else {{
-          setAccountMessage("Key created. Reload to see it in the list.", "good");
-        }}
-      }} catch (error) {{
-        setAccountMessage(error.message || "Key mint failed.", "bad");
-      }}
-    }});
-  }});
-
-  document.querySelectorAll("[data-revoke-owned-key]").forEach((button) => {{
-    button.addEventListener("click", async () => {{
-      const credentialId = button.dataset.revokeOwnedKey;
-      if (!confirm("Delete this API key? Apps using it will lose access immediately.")) {{
+    if (createForm) {{
+      const name = String(new FormData(createForm).get("name") || "").trim();
+      if (!name) {{
+        setAccountMessage("Name the App before creating it.", "warn");
         return;
       }}
+      setAccountMessage("Creating App...");
+      try {{
+        await accountJson("/me/api/apps", {{ method: "POST", body: {{ name }} }});
+        createForm.reset();
+        await refreshAccount();
+        setAccountMessage("App created.", "good");
+      }} catch (error) {{
+        setAccountMessage(error.message || "App creation failed.", "bad");
+      }}
+      return;
+    }}
+
+    const appId = keyForm.dataset.mintOwnedKey;
+    const label = new FormData(keyForm).get("label") || "";
+    setAccountMessage("Creating key...");
+    try {{
+      const data = await accountJson(
+        "/me/api/apps/" + encodeURIComponent(appId) + "/keys",
+        {{ method: "POST", body: {{ label }} }}
+      );
+      const key = data && data.credential && data.credential.api_key;
+      if (key) showMintedKey(key);
+      keyForm.reset();
+      await refreshAccount();
+      if (!key) setAccountMessage("Key created.", "good");
+    }} catch (error) {{
+      setAccountMessage(error.message || "Key creation failed.", "bad");
+    }}
+  }});
+
+  document.addEventListener("click", async (event) => {{
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    const inspect = target.closest("[data-view-owned-key]");
+    if (inspect) {{
+      const credentialId = inspect.dataset.viewOwnedKey;
+      const label = inspect.dataset.keyLabel || "Selected key";
+      setAccountMessage("Loading access...");
+      try {{
+        const payload = await accountJson(
+          "/me/api/credentials/" + encodeURIComponent(credentialId) + "/access"
+        );
+        renderAccess(payload, label);
+        setAccountMessage("Access loaded.", "good");
+      }} catch (error) {{
+        setAccountMessage(error.message || "Access check failed.", "bad");
+      }}
+      return;
+    }}
+
+    const deleteKey = target.closest("[data-revoke-owned-key]");
+    if (deleteKey) {{
+      const credentialId = deleteKey.dataset.revokeOwnedKey;
+      if (!confirm("Delete this API key? Apps using it will lose access immediately.")) return;
       setAccountMessage("Deleting key...");
       try {{
-        await postAccountJson("/me/api/credentials/" + encodeURIComponent(credentialId), {{}}, "DELETE");
-        setAccountMessage("Key deleted. Reloading account view...", "good");
-        setTimeout(() => location.reload(), 800);
+        await accountJson(
+          "/me/api/credentials/" + encodeURIComponent(credentialId),
+          {{ method: "DELETE" }}
+        );
+        await refreshAccount();
+        setAccountMessage("Key deleted.", "good");
       }} catch (error) {{
         setAccountMessage(error.message || "Key deletion failed.", "bad");
       }}
-    }});
+      return;
+    }}
+
+    const deleteApp = target.closest("[data-delete-owned-app]");
+    if (deleteApp) {{
+      const appId = deleteApp.dataset.deleteOwnedApp;
+      const appName = deleteApp.dataset.appName || "this App";
+      if (!confirm("Delete " + appName + "? Its API keys will stop working immediately.")) return;
+      setAccountMessage("Deleting App...");
+      try {{
+        await accountJson(
+          "/me/api/apps/" + encodeURIComponent(appId),
+          {{ method: "DELETE" }}
+        );
+        await refreshAccount();
+        setAccountMessage("App deleted.", "good");
+      }} catch (error) {{
+        setAccountMessage(error.message || "App deletion failed.", "bad");
+      }}
+    }}
   }});
 }})();
   </script>

@@ -128,6 +128,71 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("Allow cloud fallback", html)
         self.assertIn("Allow native passthrough", html)
 
+    def test_create_profile_offers_librechat_preset_and_simple_options(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn('<option value="librechat">LibreChat chat app</option>', html)
+        self.assertIn('name="profile_preset"', html)
+        self.assertIn('value="openai" checked> OpenAI protocol', html)
+        self.assertIn('value="chat" checked> Chat', html)
+        self.assertIn('value="interactive">Interactive resources', html)
+        self.assertIn("librechat-chat", html)
+        self.assertIn("profilePresets={librechat:", html)
+        self.assertNotIn('placeholder="protocols: openai, anthropic"', html)
+
+    def test_create_profile_keeps_advanced_json_in_optional_disclosure(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn("<summary>Advanced JSON</summary>", html)
+        self.assertIn('name="advanced_json"', html)
+        self.assertIn("</details>", html)
+
+    def test_service_access_flow_renders_above_generic_forms(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        service_index = html.index("data-create-service-access")
+        app_index = html.index("data-create-app")
+        profile_index = html.index("data-create-profile")
+        self.assertLess(service_index, app_index)
+        self.assertLess(service_index, profile_index)
+        self.assertIn("Create service access", html)
+        self.assertIn('name="owner_service_account_name"', html)
+        self.assertIn('value="librechat.vivid.fish"', html)
+        self.assertIn('name="mint_key" checked', html)
+        self.assertIn('aria-label="Advanced service access JSON"', html)
+
+    def test_service_access_flow_builds_librechat_profile_and_service_app(
+        self,
+    ) -> None:
+        html = render_admin_dashboard(_snapshot())
+        branch = html[html.index("if(serviceForm)") : html.index("if(profileForm)")]
+        self.assertIn("protocols:values(fd,'protocols')", branch)
+        self.assertIn("intents:values(fd,'intents')", branch)
+        self.assertIn("exposure:['default']", branch)
+        self.assertIn("trust_tiers:['stable']", branch)
+        self.assertIn("resource_tiers:['interactive']", branch)
+        self.assertIn("tags:values(fd,'tags')", branch)
+        self.assertIn("kind:'service'", branch)
+        self.assertIn("owner_service_account_name:fd.get('owner_service_account_name')", branch)
+        self.assertIn("storedProfileId=(createdProfile.profile&&createdProfile.profile.id)", branch)
+        self.assertIn("profile_id:storedProfileId", branch)
+
+    def test_service_access_flow_calls_profile_app_key_endpoints(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        branch = html[html.index("if(serviceForm)") : html.index("if(profileForm)")]
+        self.assertIn("createdProfile=await json(f.action,profileBody)", branch)
+        self.assertIn("createdApp=await json(f.dataset.appAction,appBody)", branch)
+        self.assertIn("f.dataset.keyActionTemplate.replace('{app_id}'", branch)
+        self.assertIn("createdKey=await json(url,keyBody)", branch)
+        self.assertIn('action="/admin/api/profiles"', html)
+        self.assertIn('data-app-action="/admin/api/apps"', html)
+        self.assertIn('data-key-action-template="/admin/api/apps/{app_id}/keys"', html)
+
+    def test_create_app_can_choose_existing_profile_and_clear_ownership(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn("Service-owned", html)
+        self.assertIn("Personal/user-owned", html)
+        self.assertIn("No user owner (service-owned)", html)
+        self.assertIn('aria-label="Existing Profile for App"', html)
+        self.assertIn('<option value="default-local">Default local (default-local)</option>', html)
+
     def test_includes_policy_simulation_flow(self) -> None:
         html = render_admin_dashboard(_snapshot())
         self.assertIn("Simulate access", html)
@@ -208,6 +273,25 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn(">AI Gateway</span>", html)
         # The signed-in actor is still surfaced in the header.
         self.assertIn("owner@example.com", html)
+
+    def test_admin_mutations_update_without_page_reload(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        self.assertNotIn("location.reload", html)
+        self.assertNotIn("window.location", html)
+        self.assertIn("refreshMain", html)
+        self.assertIn("DOMParser", html)
+        key_form_branch = html[
+            html.index("if(keyForm)") : html.index("document.addEventListener('click'")
+        ]
+        self.assertIn("await refreshMain();show(data)", key_form_branch)
+        profile_form_branch = html[html.index("if(profileForm)") : html.index("if(simForm)")]
+        app_form_branch = html[html.index("if(appForm)") : html.index("if(keyForm)")]
+        service_form_branch = html[
+            html.index("if(serviceForm)") : html.index("if(profileForm)")
+        ]
+        self.assertIn("await refreshMain();show(data)", profile_form_branch)
+        self.assertIn("await refreshMain();show(data)", app_form_branch)
+        self.assertIn("await refreshMain();show(data)", service_form_branch)
 
     def test_admin_logout_url_is_configurable(self) -> None:
         html = render_admin_dashboard(

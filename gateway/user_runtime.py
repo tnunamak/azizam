@@ -1,9 +1,9 @@
 """Normal-user account view over the durable admin store.
 
-The user portal is intentionally read-mostly. It lets a signed-in OIDC user
-see Apps they own, see non-secret API-key records, create another key for an
-App they already own, and delete their own App keys. It never grants Profiles
-or changes App ownership; those remain admin-plane actions.
+The user portal is intentionally narrow. It lets a signed-in OIDC user create
+user-owned Apps, see non-secret API-key records, create keys for Apps they own,
+inspect owned-key access, and delete their own keys or Apps. It never grants
+Profiles or changes App ownership; those remain admin-plane actions.
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ __all__ = [
     "UserPortalError",
     "build_user_portal_snapshot",
     "create_user_app",
+    "delete_user_app",
+    "get_user_app_credential",
     "mint_user_app_key",
     "request_user_access",
     "revoke_user_app_key",
@@ -103,13 +105,13 @@ def _default_profile_summary(profile_id: str | None, *, path: Path) -> dict[str,
 
 def _credentials_for_app(app_id: str, *, path: Path) -> list[dict[str, Any]]:
     credentials = []
-    for record in admin_store.list_credentials(path=path):
-        if record.get("subject_kind") != "app":
-            continue
-        if record.get("app_id") != app_id:
-            continue
+    for record in admin_store.list_active_credentials(
+        subject_kind="app",
+        app_id=app_id,
+        path=path,
+    ):
         item = _sanitize_credential(record)
-        item["active"] = _credential_active(record)
+        item["active"] = True
         credentials.append(item)
     return credentials
 
@@ -167,6 +169,45 @@ def _user_from_session(session: AdminSession, *, path: Path) -> dict[str, Any]:
     return user
 
 
+def _app_payload(
+    app: Mapping[str, Any],
+    *,
+    default_profile_id: str | None,
+    path: Path,
+) -> dict[str, Any]:
+    profile_id = app.get("default_profile_id")
+    effective_profile_id = _effective_profile_id(
+        app,
+        default_profile_id=default_profile_id,
+    )
+    credentials = _credentials_for_app(str(app["id"]), path=path)
+    profile = (
+        _profile_summary(str(profile_id), path=path)
+        if profile_id
+        else _default_profile_summary(default_profile_id, path=path)
+    )
+    return {
+        "id": app.get("id"),
+        "kind": app.get("kind"),
+        "name": app.get("name"),
+        "disabled_at": app.get("disabled_at"),
+        "default_profile_id": profile_id,
+        "profile_id": profile_id,
+        "effective_profile_id": effective_profile_id or "default-local",
+        "profile": profile,
+        "can_mint_keys": (
+            not app.get("disabled_at")
+            and not (profile or {}).get("missing")
+        ),
+        "can_delete": not bool(app.get("disabled_at")),
+        "inherits_profile": not bool(profile_id),
+        "profile_required": False,
+        "credentials": credentials,
+        "active_credentials": len(credentials),
+        "created_at": app.get("created_at"),
+    }
+
+
 def build_user_portal_snapshot(
     session: AdminSession | None,
     *,
@@ -200,35 +241,13 @@ def build_user_portal_snapshot(
 
     apps: list[dict[str, Any]] = []
     for app in admin_store.list_apps_for_user(user["id"], path=path):
-        profile_id = app.get("default_profile_id")
-        effective_profile_id = _effective_profile_id(
+        if app.get("disabled_at"):
+            continue
+        apps.append(_app_payload(
             app,
             default_profile_id=default_profile_id,
-        )
-        credentials = _credentials_for_app(str(app["id"]), path=path)
-        profile = (
-            _profile_summary(str(profile_id), path=path)
-            if profile_id
-            else _default_profile_summary(default_profile_id, path=path)
-        )
-        apps.append({
-            "id": app.get("id"),
-            "kind": app.get("kind"),
-            "name": app.get("name"),
-            "disabled_at": app.get("disabled_at"),
-            "profile_id": profile_id,
-            "effective_profile_id": effective_profile_id or "default-local",
-            "profile": profile,
-            "can_mint_keys": (
-                not app.get("disabled_at")
-                and not (profile or {}).get("missing")
-            ),
-            "inherits_profile": not bool(profile_id),
-            "profile_required": False,
-            "credentials": credentials,
-            "active_credentials": sum(1 for c in credentials if c.get("active")),
-            "created_at": app.get("created_at"),
-        })
+            path=path,
+        ))
 
     return {
         "authenticated": True,
@@ -308,6 +327,7 @@ def create_user_app(
         cleaned_name,
         kind="personal",
         owner_user_id=str(user["id"]),
+        default_profile_id=default_profile_id,
         path=path,
     )
     admin_store.record_audit(
@@ -319,15 +339,42 @@ def create_user_app(
         metadata={"email": user.get("email"), "name": cleaned_name},
         path=path,
     )
+    return {"app": _app_payload(app, default_profile_id=default_profile_id, path=path)}
+
+
+def delete_user_app(
+    session: AdminSession,
+    app_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Remove a user-owned App from self-service use and revoke its active keys."""
+    user = _user_from_session(session, path=path)
+    app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    revoked = 0
+    for credential in admin_store.list_active_credentials(
+        subject_kind="app",
+        app_id=str(app["id"]),
+        path=path,
+    ):
+        if admin_store.revoke_credential(str(credential["id"]), path=path):
+            revoked += 1
+    disabled = admin_store.disable_app(str(app["id"]), path=path) or app
+    admin_store.record_audit(
+        "app.self_delete",
+        actor_kind="user",
+        actor_id=str(user["id"]),
+        target_kind="app",
+        target_id=str(app["id"]),
+        metadata={"email": user.get("email"), "revoked_credentials": revoked},
+        path=path,
+    )
     return {
         "app": {
-            "id": app.get("id"),
-            "kind": app.get("kind"),
-            "name": app.get("name"),
-            "profile_id": app.get("default_profile_id"),
-            "effective_profile_id": default_profile_id or "default-local",
-            "profile": _default_profile_summary(default_profile_id, path=path),
-            "profile_required": False,
+            "id": disabled.get("id"),
+            "name": disabled.get("name"),
+            "disabled_at": disabled.get("disabled_at"),
+            "revoked_credentials": revoked,
         }
     }
 
@@ -344,12 +391,8 @@ def request_user_access(
     app = admin_store.ensure_personal_app_for_user(
         str(user["id"]),
         name=f"{label} personal access",
+        default_profile_id=default_profile_id,
         path=path,
-    )
-    profile = (
-        _profile_summary(str(app.get("default_profile_id")), path=path)
-        if app.get("default_profile_id")
-        else _default_profile_summary(default_profile_id, path=path)
     )
     admin_store.record_audit(
         "app.self_create",
@@ -365,19 +408,31 @@ def request_user_access(
         },
         path=path,
     )
-    return {
-        "app": {
-            "id": app.get("id"),
-            "kind": app.get("kind"),
-            "name": app.get("name"),
-            "profile_id": app.get("default_profile_id"),
-            "effective_profile_id": (
-                app.get("default_profile_id") or default_profile_id or "default-local"
-            ),
-            "profile": profile,
-            "profile_required": False,
-        }
-    }
+    return {"app": _app_payload(app, default_profile_id=default_profile_id, path=path)}
+
+
+def get_user_app_credential(
+    session: AdminSession,
+    credential_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Return an active App credential owned by ``session.subject``."""
+    user = _user_from_session(session, path=path)
+    credential = admin_store.get_credential(credential_id, path=path)
+    if (
+        credential is None
+        or credential.get("subject_kind") != "app"
+        or not _credential_active(credential)
+    ):
+        raise UserPortalError(
+            "credential_not_found",
+            "API key not found for this account",
+            status_code=404,
+        )
+    app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
+    _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    return credential
 
 
 def revoke_user_app_key(
@@ -388,15 +443,8 @@ def revoke_user_app_key(
 ) -> dict[str, Any]:
     """Delete an API key for an App owned by ``session.subject``."""
     user = _user_from_session(session, path=path)
-    before = admin_store.get_credential(credential_id, path=path)
-    if before is None or before.get("subject_kind") != "app":
-        raise UserPortalError(
-            "credential_not_found",
-            "API key not found for this account",
-            status_code=404,
-        )
+    before = get_user_app_credential(session, credential_id, path=path)
     app_id = str(before.get("app_id") or before.get("subject_id") or "")
-    _app_belongs_to_user(app_id, str(user["id"]), path=path)
     admin_store.revoke_credential(credential_id, path=path)
     after = admin_store.get_credential(credential_id, path=path) or before
     admin_store.record_audit(

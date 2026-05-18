@@ -525,6 +525,15 @@ def ensure_personal_app_for_user(
             "ORDER BY created_at ASC LIMIT 1",
             (user_id,),
         ).fetchone()
+        if row is not None and default_profile_id and not row["default_profile_id"]:
+            conn.execute(
+                "UPDATE apps SET default_profile_id = ? WHERE id = ?",
+                (default_profile_id, row["id"]),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM apps WHERE id = ?", (row["id"],)
+            ).fetchone()
     if row is not None:
         return _row_to_dict(row)  # type: ignore[return-value]
     return create_app(
@@ -539,6 +548,28 @@ def ensure_personal_app_for_user(
 
 def get_app(app_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
     with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM apps WHERE id = ?", (app_id,)
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def disable_app(
+    app_id: str, *, now: int | None = None, path: Path = DB_PATH
+) -> dict[str, Any] | None:
+    """Mark an App disabled. Idempotent; returns the current row when found."""
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM apps WHERE id = ?", (app_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "UPDATE apps SET disabled_at = COALESCE(disabled_at, ?) WHERE id = ?",
+            (ts, app_id),
+        )
+        conn.commit()
         row = conn.execute(
             "SELECT * FROM apps WHERE id = ?", (app_id,)
         ).fetchone()
@@ -946,6 +977,7 @@ __all__ = [
     "create_app",
     "ensure_personal_app_for_user",
     "get_app",
+    "disable_app",
     "list_apps",
     "list_apps_for_user",
     "create_credential_hash",

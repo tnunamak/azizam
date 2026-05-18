@@ -116,6 +116,12 @@ _PAGE_CSS = """
   details.panel summary { cursor: pointer; color: var(--text); font-weight: 650;
                           min-height: 2rem; display: inline-flex; align-items: center; }
   details.panel form.flow { margin-top: 0.75rem; background: transparent; border: 0; padding: 0; }
+  .choice-grid { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+  .choice-card { display: grid; gap: 0.3rem; padding: 0.75rem; border: 1px solid var(--line);
+                 border-radius: 6px; background: oklch(14.5% 0.015 250); color: var(--muted); }
+  .choice-card input { margin-right: 0.4rem; }
+  .choice-card strong { color: var(--text); }
+  .inline-options { display: flex; flex-wrap: wrap; gap: 0.55rem 1rem; }
   @media (max-width: 760px) {
     table { display: block; overflow-x: auto; }
     form.flow .row { grid-template-columns: 1fr; }
@@ -460,7 +466,7 @@ def _flow_form(
         "</option>"
         for app in apps
     )
-    user_options = '<option value="">No user owner</option>' + "".join(
+    user_options = '<option value="">No user owner (service-owned)</option>' + "".join(
         f'<option value="{_esc(user.get("id"))}">'
         f'{_esc(user.get("email") or user.get("name") or user.get("id"))}'
         "</option>"
@@ -469,6 +475,7 @@ def _flow_form(
     profile_options = '<option value="">Default profile</option>' + "".join(
         f'<option value="{_esc(profile.get("id"))}">'
         f'{_esc(profile.get("label") or profile.get("name") or profile.get("id"))}'
+        f' ({_esc(profile.get("id"))})'
         "</option>"
         for profile in profiles
     )
@@ -479,9 +486,14 @@ def _flow_form(
         "<label>Create App</label>"
         '<div class="stack">'
         '<input type="text" name="name" placeholder="App name" aria-label="App name" required>'
-        '<select name="kind" aria-label="App kind"><option value="service">Service app</option><option value="personal">Personal app</option></select>'
-        f'<select name="owner_user_id" aria-label="User owner">{user_options}</select>'
-        f'<select name="profile_id" aria-label="App Profile">{profile_options}</select>'
+        '<div class="choice-grid" aria-label="App ownership">'
+        '<label class="choice-card"><span><input type="radio" name="kind" value="service" checked>'
+        '<strong>Service-owned</strong></span><span>No user owner; use this for LibreChat, bots, and shared services.</span></label>'
+        '<label class="choice-card"><span><input type="radio" name="kind" value="personal">'
+        '<strong>Personal/user-owned</strong></span><span>Attach the App to a user for individual access.</span></label>'
+        "</div>"
+        f'<select name="owner_user_id" aria-label="User owner for personal App">{user_options}</select>'
+        f'<select name="profile_id" aria-label="Existing Profile for App">{profile_options}</select>'
         "</div>"
         '<div class="row">'
         "<span></span>"
@@ -507,6 +519,45 @@ def _flow_form(
     return create_form + mint_form
 
 
+def _service_access_form(
+    *,
+    create_app_action: str,
+    create_profile_action: str,
+    create_key_action_template: str,
+) -> str:
+    return (
+        '<form class="flow" method="post" action="'
+        + _esc(create_profile_action)
+        + '" data-create-service-access data-app-action="'
+        + _esc(create_app_action)
+        + '" data-key-action-template="'
+        + _esc(create_key_action_template)
+        + '">'
+        "<label>Create service access</label>"
+        '<div class="stack">'
+        '<input type="text" name="owner_service_account_name" value="librechat.vivid.fish" aria-label="Service account name" required>'
+        '<input type="text" name="profile_id" value="librechat-vivid-fish" aria-label="Profile id" required>'
+        '<input type="text" name="profile_label" value="LibreChat vivid.fish" aria-label="Profile label" required>'
+        '<input type="text" name="app_name" value="librechat.vivid.fish" aria-label="App name" required>'
+        '<label class="check"><input type="checkbox" name="mint_key" checked> Mint API key now</label>'
+        '<input type="text" name="key_label" value="LibreChat service key" aria-label="API key label">'
+        "</div>"
+        '<div class="inline-options" aria-label="LibreChat access">'
+        '<label class="check"><input type="checkbox" name="protocols" value="openai" checked> OpenAI protocol</label>'
+        '<label class="check"><input type="checkbox" name="intents" value="chat" checked> Chat intent</label>'
+        '<label class="check"><input type="checkbox" name="tags" value="librechat" checked> LibreChat tag</label>'
+        "</div>"
+        '<details class="panel"><summary>Advanced JSON</summary>'
+        '<textarea name="advanced_json" spellcheck="false" aria-label="Advanced service access JSON" placeholder="{&quot;profile&quot;:{},&quot;app&quot;:{},&quot;key&quot;:{}}"></textarea>'
+        "</details>"
+        '<div class="row">'
+        "<span></span>"
+        '<button type="submit">Create service access</button>'
+        "</div>"
+        "</form>"
+    )
+
+
 def _profile_form(
     profiles: list[Mapping[str, Any]],
     *,
@@ -525,26 +576,41 @@ def _profile_form(
         + '" data-create-profile>'
         "<label>Create Profile</label>"
         '<div class="stack">'
-        '<input type="text" name="id" placeholder="profile id" aria-label="Profile id" required>'
-        '<input type="text" name="label" placeholder="Label" aria-label="Profile label">'
+        '<select name="profile_preset" aria-label="Profile preset">'
+        '<option value="librechat">LibreChat chat app</option>'
+        '<option value="local_chat">Local chat service</option>'
+        '<option value="image_tools">Image generation tools</option>'
+        '<option value="custom">Custom profile</option>'
+        "</select>"
+        '<input type="text" name="id" placeholder="librechat-chat" aria-label="Profile id" required>'
+        '<input type="text" name="label" placeholder="LibreChat chat profile" aria-label="Profile label">'
         '<select name="status_visibility" aria-label="Status visibility">'
-        '<option value="basic">Basic status</option>'
         '<option value="standard">Standard status</option>'
+        '<option value="basic">Basic status</option>'
         '<option value="full">Full status</option>'
         '<option value="none">No status</option>'
         "</select>"
-        '<input type="text" name="protocols" placeholder="protocols: openai, anthropic" aria-label="Allowed protocols">'
-        '<input type="text" name="intents" placeholder="intents: chat, image.generate" aria-label="Allowed intents">'
-        '<input type="text" name="exposure" placeholder="exposure: default, opt_in" aria-label="Allowed exposure tiers">'
-        '<input type="text" name="trust_tiers" placeholder="trust: stable, experimental" aria-label="Allowed trust tiers">'
-        '<input type="text" name="resource_tiers" placeholder="resources: interactive, batch" aria-label="Allowed resource tiers">'
-        '<input type="text" name="tags" placeholder="tags: local, image, family" aria-label="Allowed tags">'
+        '<div class="inline-options" aria-label="Allowed protocols">'
+        '<label class="check"><input type="checkbox" name="protocols" value="openai" checked> OpenAI protocol</label>'
+        '<label class="check"><input type="checkbox" name="protocols" value="anthropic"> Anthropic protocol</label>'
+        "</div>"
+        '<div class="inline-options" aria-label="Allowed intents">'
+        '<label class="check"><input type="checkbox" name="intents" value="chat" checked> Chat</label>'
+        '<label class="check"><input type="checkbox" name="intents" value="image.generate"> Image generation</label>'
+        '<label class="check"><input type="checkbox" name="intents" value="audio.transcribe"> Audio transcription</label>'
+        "</div>"
+        '<select name="exposure" aria-label="Exposure tier"><option value="default">Default exposure</option><option value="opt_in">Opt-in exposure</option></select>'
+        '<select name="trust_tiers" aria-label="Trust tier"><option value="stable">Stable models</option><option value="experimental">Experimental models</option></select>'
+        '<select name="resource_tiers" aria-label="Resource tier"><option value="interactive">Interactive resources</option><option value="batch">Batch resources</option></select>'
+        '<input type="text" name="tags" placeholder="optional tags: librechat, chat" aria-label="Allowed tags">'
         "</div>"
         '<div class="stack">'
         '<label class="check"><input type="checkbox" name="cloud_allowed"> Allow cloud fallback</label>'
         '<label class="check"><input type="checkbox" name="native_passthrough"> Allow native passthrough</label>'
         "</div>"
+        '<details class="panel"><summary>Advanced JSON</summary>'
         '<textarea name="advanced_json" spellcheck="false" aria-label="Advanced profile JSON" placeholder="{&quot;models&quot;:[&quot;local-chat&quot;]}"></textarea>'
+        "</details>"
         '<div class="row">'
         "<span></span>"
         '<button type="submit">Create profile</button>'
@@ -687,6 +753,11 @@ def render_admin_dashboard(
         create_app_action=create_app_action,
         create_key_action_template=create_key_action_template,
     )
+    service_access_html = _service_access_form(
+        create_app_action=create_app_action,
+        create_profile_action=create_profile_action,
+        create_key_action_template=create_key_action_template,
+    )
     profile_form_html = _profile_form(
         profiles,
         create_profile_action=create_profile_action,
@@ -703,7 +774,7 @@ def render_admin_dashboard(
     connection_html = _connection_panel(base_url=base_url)
     issues_html = _access_issues(apps, profiles_by_id, active_keys_by_app)
     result_html = '<pre class="result" id="admin-flow-result" aria-live="polite"></pre>'
-    access_html = connection_html + flow_html + result_html
+    access_html = connection_html + service_access_html + flow_html + result_html
     profiles_html = profile_form_html + profiles_table
 
     header_html = render_shell_header(
@@ -725,42 +796,57 @@ def render_admin_dashboard(
         f"<style>{SHELL_CSS}{_PAGE_CSS}</style>"
         "<script>"
         "document.addEventListener('DOMContentLoaded',()=>{"
-        "const out=document.getElementById('admin-flow-result');"
         f"const csrfToken={csrf_json};"
-        "const show=v=>{out.textContent=typeof v==='string'?v:JSON.stringify(v,null,2)};"
+        "const show=v=>{const out=document.getElementById('admin-flow-result');"
+        "if(out)out.textContent=typeof v==='string'?v:JSON.stringify(v,null,2)};"
         "const list=v=>String(v||'').split(/[\\s,]+/).map(x=>x.trim()).filter(Boolean);"
+        "const values=(fd,k)=>fd.getAll(k).flatMap(list);"
+        "const profilePresets={librechat:{protocols:['openai'],allow:{intents:['chat'],exposure:['default'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:['librechat','chat']}},local_chat:{protocols:['openai'],allow:{intents:['chat'],exposure:['default'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:['local','chat']}},image_tools:{protocols:['openai'],allow:{intents:['image.generate'],exposure:['opt_in'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:['image']}}};"
+        "const refreshMain=async()=>{const r=await fetch('/admin',{credentials:'same-origin',cache:'no-store'});"
+        "if(!r.ok)return;const html=await r.text();const doc=new DOMParser().parseFromString(html,'text/html');"
+        "const next=doc.querySelector('main.shell-main'),main=document.querySelector('main.shell-main');"
+        "if(next&&main)main.replaceWith(next)};"
         "const json=async(url,body)=>{const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken},body:JSON.stringify(body)});"
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
-        "document.querySelector('[data-create-profile]')?.addEventListener('submit',async e=>{e.preventDefault();"
-        "const f=e.currentTarget,fd=new FormData(f);const profile={id:String(fd.get('id')||'').trim(),status_visibility:{level:fd.get('status_visibility')||'basic'},fallback:{cloud_allowed:fd.get('cloud_allowed')==='on'},native_passthrough:{enabled:fd.get('native_passthrough')==='on'}};"
-        "const protocols=list(fd.get('protocols'));if(protocols.length) profile.protocols=protocols;"
-        "const allow={};['intents','exposure','trust_tiers','resource_tiers','tags'].forEach(k=>{const v=list(fd.get(k));if(v.length) allow[k]=v});if(Object.keys(allow).length) profile.allow=allow;"
+        "document.addEventListener('submit',async e=>{"
+        "const serviceForm=e.target.closest('[data-create-service-access]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]');"
+        "if(!serviceForm&&!profileForm&&!simForm&&!appForm&&!keyForm)return;e.preventDefault();"
+        "if(serviceForm){const f=serviceForm,fd=new FormData(f);const profile={id:String(fd.get('profile_id')||'').trim(),protocols:values(fd,'protocols'),allow:{intents:values(fd,'intents'),exposure:['default'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:values(fd,'tags')},status_visibility:{level:'basic'},fallback:{cloud_allowed:false},native_passthrough:{enabled:false}};"
+        "let extra={};try{const raw=String(fd.get('advanced_json')||'').trim();if(raw)extra=JSON.parse(raw)}catch(err){show(err);return}"
+        "if(extra.profile)Object.assign(profile,extra.profile);"
+        "const profileBody={name:fd.get('profile_label')||profile.id,label:fd.get('profile_label')||profile.id,profile,...(extra.profile_body||{})};"
+        "const keyBody={};if(fd.get('key_label'))keyBody.label=fd.get('key_label');Object.assign(keyBody,extra.key||{});"
+        "try{const createdProfile=await json(f.action,profileBody);const storedProfileId=(createdProfile.profile&&createdProfile.profile.id)||createdProfile.id||profile.id;"
+        "const appBody={name:fd.get('app_name'),kind:'service',owner_service_account_name:fd.get('owner_service_account_name'),profile_id:storedProfileId,...(extra.app||{})};"
+        "const createdApp=await json(f.dataset.appAction,appBody);const appId=createdApp.id||createdApp.app_id||(createdApp.app&&createdApp.app.id)||appBody.name;let createdKey=null;"
+        "if(fd.get('mint_key')==='on'){const url=f.dataset.keyActionTemplate.replace('{app_id}',encodeURIComponent(appId));createdKey=await json(url,keyBody)}"
+        "const data={profile:createdProfile,app:createdApp,key:createdKey};f.reset();await refreshMain();show(data)}catch(err){show(err)}return}"
+        "if(profileForm){const f=profileForm,fd=new FormData(f);const preset=profilePresets[fd.get('profile_preset')]||{};const profile=JSON.parse(JSON.stringify(preset));profile.id=String(fd.get('id')||'').trim();profile.status_visibility={level:fd.get('status_visibility')||'basic'};profile.fallback={cloud_allowed:fd.get('cloud_allowed')==='on'};profile.native_passthrough={enabled:fd.get('native_passthrough')==='on'};"
+        "const protocols=values(fd,'protocols');if(protocols.length) profile.protocols=protocols;"
+        "const allow={...(profile.allow||{})};['intents','exposure','trust_tiers','resource_tiers','tags'].forEach(k=>{const v=values(fd,k);if(v.length) allow[k]=v});if(Object.keys(allow).length) profile.allow=allow;"
         "const extra=String(fd.get('advanced_json')||'').trim();"
         "try{if(extra){Object.assign(profile,JSON.parse(extra))}"
         "const body={name:fd.get('label')||profile.id,label:fd.get('label')||profile.id,profile};"
-        "const data=await json(f.action,body);show(data);setTimeout(()=>location.reload(),800)}catch(err){show(err)}});"
-        "document.querySelector('[data-simulate-policy]')?.addEventListener('submit',async e=>{e.preventDefault();"
-        "const f=e.currentTarget,fd=new FormData(f),request={};"
+        "const data=await json(f.action,body);f.reset();await refreshMain();show(data)}catch(err){show(err)}return}"
+        "if(simForm){const f=simForm,fd=new FormData(f),request={};"
         "['protocol','intent','workflow','model','backend','capability_exposure','capability_trust_tier','capability_resource_tier'].forEach(k=>{const v=String(fd.get(k)||'').trim();if(v)request[k]=v});"
         "const tags=list(fd.get('capability_tags'));if(tags.length)request.capability_tags=tags;"
         "if(fd.get('requires_cloud_fallback')==='on')request.requires_cloud_fallback=true;"
         "if(fd.get('native_passthrough')==='on')request.native_passthrough=true;"
         "const profile=fd.get('profile')||{id:'default-local'};"
-        "try{show(await json(f.action,{profile,request}))}catch(err){show(err)}});"
-        "document.querySelector('[data-create-app]')?.addEventListener('submit',async e=>{e.preventDefault();"
-        "const f=e.currentTarget,fd=new FormData(f);const body={name:fd.get('name'),kind:fd.get('kind')||'service'};"
+        "try{show(await json(f.action,{profile,request}))}catch(err){show(err)}return}"
+        "if(appForm){const f=appForm,fd=new FormData(f);const body={name:fd.get('name'),kind:fd.get('kind')||'service'};"
         "if(fd.get('owner_user_id')) body.owner_user_id=fd.get('owner_user_id');"
         "if(fd.get('profile_id')) body.profile_id=fd.get('profile_id');"
-        "try{const data=await json(f.action,body);show(data);setTimeout(()=>location.reload(),800)}catch(err){show(err)}});"
-        "document.querySelector('[data-mint-key]')?.addEventListener('submit',async e=>{e.preventDefault();"
-        "const f=e.currentTarget,fd=new FormData(f),appId=fd.get('app_id');"
+        "try{const data=await json(f.action,body);f.reset();await refreshMain();show(data)}catch(err){show(err)}return}"
+        "if(keyForm){const f=keyForm,fd=new FormData(f),appId=fd.get('app_id');"
         "const body={}; if(fd.get('label')) body.label=fd.get('label');"
         "const url=f.dataset.actionTemplate.replace('{app_id}',encodeURIComponent(appId));"
-        "try{show(await json(url,body))}catch(err){show(err)}});"
-        "document.querySelectorAll('[data-revoke-credential]').forEach(btn=>btn.addEventListener('click',async e=>{"
-        "const id=e.currentTarget.dataset.revokeCredential;"
-        "try{show(await json('/admin/api/credentials/'+encodeURIComponent(id)+'/revoke',{}));setTimeout(()=>location.reload(),800)}catch(err){show(err)}}));"
+        "try{const data=await json(url,body);f.reset();await refreshMain();show(data)}catch(err){show(err)}}});"
+        "document.addEventListener('click',async e=>{const btn=e.target.closest('[data-revoke-credential]');"
+        "if(!btn)return;const id=btn.dataset.revokeCredential;"
+        "try{const data=await json('/admin/api/credentials/'+encodeURIComponent(id)+'/revoke',{});await refreshMain();show(data)}catch(err){show(err)}});"
         "});"
         "</script>"
         "</head><body>"

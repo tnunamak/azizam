@@ -32,9 +32,15 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertEqual(metadata["links"]["user_portal_alias"], "/me")
         self.assertEqual(metadata["links"]["user_session"], "/me/api/session")
         self.assertEqual(metadata["links"]["user_apps"], "/me/api/apps")
+        self.assertEqual(metadata["links"]["user_app"], "/me/api/apps/{app_id}")
+        self.assertEqual(metadata["links"]["media_jobs"], "/gateway/v1/media/jobs")
         self.assertEqual(
             metadata["links"]["user_api_key"],
             "/me/api/credentials/{credential_id}",
+        )
+        self.assertEqual(
+            metadata["links"]["user_api_key_access"],
+            "/me/api/credentials/{credential_id}/access",
         )
         self.assertEqual(
             metadata["links"]["user_access_request"],
@@ -106,6 +112,15 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertEqual(body["service"]["canonical_host"], "https://ai.vivid.fish")
         self.assertEqual(body["links"]["user_portal"], "/")
         self.assertEqual(body["links"]["user_portal_alias"], "/me")
+        self.assertEqual(body["links"]["media_jobs"], "/gateway/v1/media/jobs")
+        self.assertEqual(
+            body["absolute_links"]["user_portal"],
+            "http://testserver/",
+        )
+        self.assertEqual(
+            body["absolute_links"]["user_portal_alias"],
+            "http://testserver/me",
+        )
         self.assertIn("/gateway/v1/capabilities", body["links"].values())
 
     def test_user_portal_alias_redirects_to_root(self) -> None:

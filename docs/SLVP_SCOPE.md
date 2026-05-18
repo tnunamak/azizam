@@ -29,12 +29,12 @@ Status on `main`:
   `gateway/profiles.py`.
 - `/admin` provides the thin operator loop for Apps, Profiles, runtime keys,
   credential revocation, access-issue previews, and policy simulation.
-- `/me` provides the thin normal-user loop for signed-OIDC account viewing,
-  checking an `opk_...` key, copying SDK settings, viewing effective
-  capabilities, seeing recent media jobs, and minting/revoking keys only for
-  Apps the signed-in user already owns after an operator-attached Profile is
-  present. First-login users can request access, which creates a pending
-  Personal App without granting runtime capability.
+- `/` provides the thin normal-user account portal; `/me` is a legacy browser
+  alias that redirects to `/`. Signed-in users can create and delete their own
+  Personal Apps, mint/revoke their own App keys, inspect an owned key's
+  effective access, paste an `opk_...` key locally for setup help, and copy SDK
+  settings. Media jobs remain on the gateway-native `/gateway/v1/media/jobs`
+  API rather than being a user-page feed.
 - Profile-aware image-route receipts run in
   `/v1/images/generations` and `/v1/images/edits`, recording safe field-name
   accepted/rejected/ignored outcomes, manifest identity, durable persistence,

@@ -189,7 +189,7 @@ def esc(value: Any) -> str:
     return html.escape(str(value), quote=True)
 
 
-def json_for_script(value: str) -> str:
+def json_for_script(value: Any) -> str:
     return (
         json.dumps(value)
         .replace("<", "\\u003c")

@@ -26,8 +26,12 @@ Agents and apps can start without local repo context by fetching the public disc
   API-key records owned by the current user
 - `POST /me/api/apps` — signed-OIDC self-service App creation; the App
   inherits the user's default permissions
+- `DELETE /me/api/apps/{app_id}` — delete a signed-in user's App and revoke
+  its active keys
 - `POST /me/api/apps/{app_id}/keys` — create an API key for an App the
   signed-in user owns
+- `GET /me/api/credentials/{credential_id}/access` — inspect capabilities for
+  a key owned by the signed-in user without pasting the secret
 - `DELETE /me/api/credentials/{credential_id}` — delete a key the signed-in
   user owns
 - `GET /.well-known/ai-gateway` — canonical gateway metadata document
@@ -54,7 +58,7 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `GET  /login` | proxy + OIDC | Browser sign-in entry point; redirects back to `/` or `/admin` |
 | `GET  /me` | proxy | Legacy browser alias; redirects to `/` |
 | `GET  /admin` | proxy | Admin dashboard; browser sessions redirect through `/login` |
-| `GET  /status` | proxy | Operator status dashboard; loopback is frictionless, remote access requires admin auth |
+| `GET  /status` | proxy | Operator status dashboard; requires admin OIDC session or `oak_...` admin key |
 | `GET  /health` | proxy | Liveness; public, no auth |
 | `GET  /v1/models` | active LLM backend | List models; augments with currently loaded GGUF |
 | `GET  /v1/voices`, `GET /v1/audio/voices` | proxy (static) | List TTS voices |
@@ -142,7 +146,7 @@ The shortest "share my gateway with another human" flow:
 1. **OIDC User.** The family member signs in once so the admin store has their **User** row. They do not need a global admin role.
 2. **Personal App.** The account portal lets them create one or more self-service **Personal Apps**. An App is the access boundary for a tool, workflow, or script; it is not the person.
 3. **Inherited Profile.** The App inherits the user's default Profile, controlled by `admin.user_defaults` and any admin-set Profile mappings. Admins can still attach an explicit App/Profile override when a narrower or broader boundary is needed.
-4. **App API key.** The user creates their own `opk_...` key from the account portal and can delete it later. They can also paste an existing key locally in the browser to confirm their base URL, SDK settings, capabilities, and media-job access before configuring their chat app.
+4. **App API key.** The user creates their own `opk_...` key from the account portal and can delete it later. They can also inspect any key they own, or paste an external key locally in the browser, to confirm the base URL, SDK settings, and effective capabilities before configuring their chat app.
 
 Rotation is per-App, not per-human: delete the old Credential and create a new key while preserving the App's Profile and downstream mapping. Dashboard-minted keys inherit the App's current Profile unless an explicit per-key override is requested.
 
@@ -152,7 +156,7 @@ See [`AUTH_GUIDE.md`](AUTH_GUIDE.md) for the full key-generation and rotation wo
 
 ```
 proxy.py                       # Main FastAPI app: routing, auth, ComfyUI orchestration
-status_endpoint.py             # /v1/status — admin/loopback backend health, GPU/disk/queue rollup
+status_endpoint.py             # /v1/status — admin-only backend health, GPU/disk/queue rollup
 firehose_metrics.py            # /v1/metrics firehose — recent renders, jobs, events
 proxy_config.yml               # All backend wiring, video aliases, cache config, role mappings
 proxy_api_keys.example.yml     # Hash-only key store template (commit)
@@ -243,8 +247,8 @@ The operator status page is served by the proxy at `/status`. The product root
 
 The server-rendered `/status` dashboard shows backend health, disk/GPU rollup,
 recent renders, and queue depth from the same cached status data used by
-`/v1/status`. Loopback access is frictionless for the local operator; remote
-status access requires an admin OIDC session or `oak_...` admin key. Client
+`/v1/status`. Status access requires an admin OIDC session or `oak_...` admin
+key, including from loopback. Client
 liveness probes should use the public `/health` route, and clients should use
 normal authenticated compatibility APIs such as `/v1/models` for runtime
 capability checks.

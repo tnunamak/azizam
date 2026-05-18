@@ -239,6 +239,78 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(len(apps), 1)
         self.assertEqual(apps[0]["kind"], "personal")
 
+    def test_oidc_login_auto_provision_persists_resolved_default_profile(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset(),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        profile = admin_store.create_profile(
+            "OIDC user default",
+            {"id": "oidc-user-default", "protocols": ["openai.chat"]},
+            path=self.db,
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        login = self.client.get("/login?return_to=/me", follow_redirects=False)
+        state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
+
+        async def fake_exchange(_code, *, config, pkce):
+            self.assertEqual(pkce.verifier, record.pkce_verifier)
+            return {"id_token": "fake.id.token"}
+
+        async def fake_verify(_id_token, *, config):
+            return {
+                "iss": cfg.issuer,
+                "aud": cfg.client_id,
+                "sub": "oidc-auto-subject",
+                "email": "user@example.com",
+                "email_verified": True,
+                "nonce": record.nonce,
+                "exp": 4_000_000_000,
+                "iat": 1_700_000_000,
+            }
+
+        self.assertEqual(login.status_code, 302, login.text)
+        with patch.object(
+            proxy,
+            "user_defaults_cfg",
+            {
+                "self_service_apps": True,
+                "auto_create_personal_app": True,
+                "default_profile_id": profile["id"],
+            },
+        ), patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
+            proxy, "_oidc_verify_id_token", fake_verify
+        ):
+            callback = self.client.get(
+                f"/admin/oidc/callback?state={state}&code=abc",
+                follow_redirects=False,
+            )
+
+        self.assertEqual(callback.status_code, 302, callback.text)
+        user = next(
+            user
+            for user in admin_store.list_users(path=self.db)
+            if user["issuer"] == "https://idp.example"
+            and user["subject"] == "oidc-auto-subject"
+        )
+        apps = admin_store.list_apps_for_user(user["id"], path=self.db)
+        self.assertEqual(len(apps), 1)
+        self.assertEqual(apps[0]["default_profile_id"], profile["id"])
+
     def test_status_dashboard_accepts_admin_oidc_session(self) -> None:
         cfg = OIDCConfig(
             enabled=True,
@@ -309,6 +381,32 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             response = self.client.get("/v1/status", headers=self._auth())
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["banner"], "ok")
+
+    def test_status_routes_reject_unauthenticated_loopback(self) -> None:
+        proxy.ADMIN_OIDC_CONFIG = OIDCConfig(
+            enabled=False,
+            issuer="",
+            client_id="",
+            client_secret="",
+            redirect_uri="",
+            scopes=(),
+            allowed_email_domains=frozenset(),
+            admin_emails=frozenset(),
+            signing_key=b"",
+            cookie=CookieConfig(secure=False),
+        )
+        client = TestClient(proxy.app, client=("127.0.0.1", 50000))
+
+        html = client.get("/status")
+        self.assertEqual(html.status_code, 401, html.text)
+        self.assertEqual(html.json()["error"]["code"], "admin_unauthenticated")
+
+        json_resp = client.get("/v1/status")
+        self.assertEqual(json_resp.status_code, 401, json_resp.text)
+        self.assertEqual(
+            json_resp.json()["error"]["code"],
+            "admin_unauthenticated",
+        )
 
     def test_v1_status_rejects_app_runtime_key(self) -> None:
         created = self.client.post(
@@ -594,6 +692,17 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertTrue(credential["api_key"].startswith("opk_"))
         self.assertNotIn("hash", credential)
 
+        access = self.client.get(
+            f"/me/api/credentials/{credential['id']}/access",
+            headers={
+                "x-ai-gateway-user-action": "1",
+                "x-ai-gateway-csrf": csrf,
+            },
+        )
+        self.assertEqual(access.status_code, 200, access.text)
+        self.assertEqual(access.json()["credential"]["id"], credential["id"])
+        self.assertIn("capabilities", access.json())
+
         revoked = self.client.delete(
             f"/me/api/credentials/{credential['id']}",
             headers={
@@ -682,6 +791,169 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             },
         )
         self.assertEqual(capabilities.status_code, 200, capabilities.text)
+
+        deleted = self.client.delete(
+            f"/me/api/apps/{requested.json()['app']['id']}",
+            headers={
+                "x-ai-gateway-user-action": "1",
+                "x-ai-gateway-csrf": csrf,
+            },
+        )
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(deleted.json()["app"]["revoked_credentials"], 1)
+
+        session_resp = self.client.get("/me/api/session")
+        self.assertEqual(session_resp.status_code, 200, session_resp.text)
+        self.assertEqual(session_resp.json()["apps"], [])
+
+    def test_user_self_service_flag_blocks_app_and_key_mutations(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset({"owner@example.com"}),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+        user = admin_store.upsert_oidc_user(
+            cfg.issuer,
+            "limited-subject",
+            email="limited@example.com",
+            display_name="Limited",
+            path=self.db,
+        )
+        app = admin_store.create_app(
+            "limited-laptop",
+            kind="personal",
+            owner_user_id=user["id"],
+            path=self.db,
+        )
+        session = session_from_claims(
+            {"sub": user["id"], "email": "limited@example.com"},
+            role="none",
+            cookie=cfg.cookie,
+        )
+        self.client.cookies.set(
+            cfg.cookie.name,
+            encode_session_cookie(session, signing_key=cfg.signing_key),
+        )
+        csrf = csrf_token_for_session(session, signing_key=cfg.signing_key)
+
+        with patch.object(proxy, "user_defaults_cfg", {"self_service_apps": False}):
+            created = self.client.post(
+                "/me/api/apps",
+                json={"name": "Blocked"},
+                headers={
+                    "x-ai-gateway-user-action": "1",
+                    "x-ai-gateway-csrf": csrf,
+                },
+            )
+            self.assertEqual(created.status_code, 403)
+            self.assertEqual(created.json()["error"]["code"], "self_service_disabled")
+
+            minted = self.client.post(
+                f"/me/api/apps/{app['id']}/keys",
+                json={"label": "Blocked"},
+                headers={
+                    "x-ai-gateway-user-action": "1",
+                    "x-ai-gateway-csrf": csrf,
+                },
+            )
+            self.assertEqual(minted.status_code, 403)
+            self.assertEqual(minted.json()["error"]["code"], "self_service_disabled")
+
+            deleted = self.client.delete(
+                f"/me/api/apps/{app['id']}",
+                headers={
+                    "x-ai-gateway-user-action": "1",
+                    "x-ai-gateway-csrf": csrf,
+                },
+            )
+            self.assertEqual(deleted.status_code, 403)
+            self.assertEqual(deleted.json()["error"]["code"], "self_service_disabled")
+
+    def test_self_service_flag_blocks_dynamic_legacy_profile_inheritance(self) -> None:
+        user = admin_store.upsert_oidc_user(
+            "https://idp.example",
+            "existing-subject",
+            email="existing@example.com",
+            display_name="Existing",
+            path=self.db,
+        )
+        profile = admin_store.create_profile(
+            "Existing user default",
+            {"id": "existing-user-default", "protocols": ["openai.chat"]},
+            path=self.db,
+        )
+        app = admin_store.create_app(
+            "existing-laptop",
+            kind="personal",
+            owner_user_id=user["id"],
+            path=self.db,
+        )
+
+        with patch.object(
+            proxy,
+            "user_defaults_cfg",
+            {
+                "self_service_apps": True,
+                "default_profile_id": profile["id"],
+            },
+        ):
+            self.assertEqual(proxy._inherited_profile_id_for_app(app), profile["id"])
+
+        self.assertIsNone(
+            admin_store.get_app(app["id"], path=self.db)["default_profile_id"]
+        )
+
+        with patch.object(
+            proxy,
+            "user_defaults_cfg",
+            {
+                "self_service_apps": False,
+                "default_profile_id": profile["id"],
+            },
+        ):
+            self.assertIsNone(proxy._inherited_profile_id_for_app(app))
+
+    def test_startup_auto_provision_persists_resolved_default_profile(self) -> None:
+        user = admin_store.upsert_oidc_user(
+            "https://idp.example",
+            "startup-subject",
+            email="startup@example.com",
+            display_name="Startup",
+            path=self.db,
+        )
+        profile = admin_store.create_profile(
+            "Startup user default",
+            {"id": "startup-user-default", "protocols": ["openai.chat"]},
+            path=self.db,
+        )
+
+        with patch.object(
+            proxy,
+            "user_defaults_cfg",
+            {
+                "self_service_apps": True,
+                "auto_create_personal_app": True,
+                "default_profile_id": profile["id"],
+            },
+        ):
+            self.assertEqual(proxy._provision_existing_user_personal_apps(), 1)
+
+        apps = admin_store.list_apps_for_user(user["id"], path=self.db)
+        self.assertEqual(len(apps), 1)
+        self.assertEqual(apps[0]["default_profile_id"], profile["id"])
 
 
 if __name__ == "__main__":

@@ -86,6 +86,8 @@ from gateway.user_runtime import (
     UserPortalError,
     build_user_portal_snapshot,
     create_user_app,
+    delete_user_app,
+    get_user_app_credential,
     mint_user_app_key,
     request_user_access,
     revoke_user_app_key,
@@ -99,6 +101,7 @@ from gateway.capabilities import (
     ResourceEstimate,
     capability_from_workflow_record,
     capability_with_policy_view,
+    summarize_capabilities,
 )
 from gateway.chat_extensions import (
     validate_chat_completions_extensions,
@@ -1170,9 +1173,14 @@ def _provision_existing_user_personal_apps() -> int:
         if any(app.get("kind") == "personal" for app in before):
             continue
         label = user.get("email") or user.get("display_name") or user_id
+        default_profile_id = _default_profile_id_for_user(
+            email=str(user.get("email") or ""),
+            role=_admin_role_for_user_id(user_id),
+        )
         app = admin_store.ensure_personal_app_for_user(
             user_id,
             name=f"{label} personal access",
+            default_profile_id=default_profile_id,
             path=ADMIN_STORE.path,
         )
         admin_store.record_audit(
@@ -1184,13 +1192,7 @@ def _provision_existing_user_personal_apps() -> int:
             metadata={
                 "email": user.get("email"),
                 "via": "startup_auto_provision",
-                "effective_profile_id": (
-                    _default_profile_id_for_user(
-                        email=str(user.get("email") or ""),
-                        role=_admin_role_for_user_id(user_id),
-                    )
-                    or "default-local"
-                ),
+                "effective_profile_id": default_profile_id or "default-local",
             },
             path=ADMIN_STORE.path,
         )
@@ -7024,8 +7026,7 @@ def _capability_for_profile(
     )
 
 
-def _gateway_capabilities_provider(request: Request) -> list[Capability]:
-    auth_context = _auth_context_from_scope(request)
+def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Capability]:
     capabilities = list(build_local_capabilities(
         config,
         enabled_flags={
@@ -7055,6 +7056,43 @@ def _gateway_capabilities_provider(request: Request) -> list[Capability]:
         _capability_for_profile(capability, auth_context)
         for capability in capabilities
     ]
+
+
+def _gateway_capabilities_provider(request: Request) -> list[Capability]:
+    return _gateway_capabilities_for_auth_context(_auth_context_from_scope(request))
+
+
+def _user_access_catalog_for_auth_context(auth_context: AuthContext) -> dict[str, Any]:
+    capabilities = _gateway_capabilities_for_auth_context(auth_context)
+    allowed = [
+        capability
+        for capability in capabilities
+        if capability.policy_available is not False
+    ]
+    catalog = summarize_capabilities(allowed, audience="client")
+    model_rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for cap in catalog.get("capabilities", []):
+        if not isinstance(cap, Mapping):
+            continue
+        for field, object_type in (("model", "model"), ("workflow", "workflow")):
+            value = cap.get(field)
+            if not value:
+                continue
+            key = str(value)
+            if key in seen:
+                continue
+            seen.add(key)
+            model_rows.append({
+                "id": key,
+                "object": object_type,
+                "intent": cap.get("intent"),
+                "available": cap.get("available"),
+            })
+    catalog["models"] = {"object": "list", "data": model_rows}
+    catalog["allowed_count"] = len(allowed)
+    catalog["denied_count"] = max(0, len(capabilities) - len(allowed))
+    return catalog
 
 
 def _gateway_audience_resolver(request: Request) -> str:
@@ -7386,10 +7424,36 @@ async def user_portal_create_app(request: Request):
     )
 
 
+@app.delete("/me/api/apps/{app_id}", include_in_schema=False)
+async def user_portal_delete_app(app_id: str, request: Request):
+    try:
+        session = _require_user_session(request)
+        _require_user_self_service()
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        payload = delete_user_app(
+            session,
+            app_id,
+            path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
+        content=payload,
+        headers={"cache-control": "no-store"},
+    )
+
+
 @app.post("/me/api/apps/{app_id}/keys", include_in_schema=False)
 async def user_portal_mint_key(app_id: str, request: Request):
     try:
         session = _require_user_session(request)
+        _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -7438,6 +7502,46 @@ async def user_portal_request_access(request: Request):
     return JSONResponse(
         status_code=201,
         content=payload,
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.get("/me/api/credentials/{credential_id}/access", include_in_schema=False)
+async def user_portal_credential_access(credential_id: str, request: Request):
+    try:
+        session = _require_user_session(request)
+        credential = get_user_app_credential(
+            session,
+            credential_id,
+            path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    identity = runtime_identity_for_app_credential_hash(
+        str(credential.get("hash") or ""),
+        inherited_profile_id_for_app=_inherited_profile_id_for_app,
+        path=ADMIN_STORE.path,
+    )
+    if identity is None:
+        return _user_action_response_error(
+            UserPortalError(
+                "credential_unavailable",
+                "API key access is unavailable for this account",
+                status_code=404,
+            )
+        )
+    catalog = _user_access_catalog_for_auth_context(AuthContext(identity=identity))
+    return JSONResponse(
+        status_code=200,
+        content={
+            "credential": {
+                "id": credential.get("id"),
+                "prefix": credential.get("prefix"),
+                "display_name": credential.get("display_name"),
+                "app_id": credential.get("app_id") or credential.get("subject_id"),
+            },
+            **catalog,
+        },
         headers={"cache-control": "no-store"},
     )
 
@@ -7610,9 +7714,14 @@ async def admin_oidc_callback(request: Request):
             )
         if _user_self_service_enabled() and _auto_create_personal_app_enabled():
             label = user.get("email") or user.get("display_name") or user["id"]
+            default_profile_id = _default_profile_id_for_user(
+                email=str(user.get("email") or ""),
+                role=role,
+            )
             app = admin_store.ensure_personal_app_for_user(
                 str(user["id"]),
                 name=f"{label} personal access",
+                default_profile_id=default_profile_id,
                 path=ADMIN_STORE.path,
             )
             admin_store.record_audit(
@@ -7624,13 +7733,7 @@ async def admin_oidc_callback(request: Request):
                 metadata={
                     "email": user.get("email"),
                     "via": "oidc_login",
-                    "effective_profile_id": (
-                        _default_profile_id_for_user(
-                            email=str(user.get("email") or ""),
-                            role=role,
-                        )
-                        or "default-local"
-                    ),
+                    "effective_profile_id": default_profile_id or "default-local",
                 },
                 path=ADMIN_STORE.path,
             )
@@ -10902,29 +11005,21 @@ async def list_models(request: Request):
 
 @app.get("/v1/status")
 async def v1_status(request: Request):
-    """Consolidated status JSON for the dashboard.
-
-    Auth: bearer token required UNLESS the request originates from 127.0.0.1
-    (loopback bypass — local browsers + curl from the host get a friction-free
-    view; remote callers authenticate with an admin session or admin key).
-    """
-    client_host = (request.client.host if request.client else "") or ""
-    is_loopback = client_host in ("127.0.0.1", "::1", "localhost")
-    if not is_loopback:
-        try:
-            ADMIN_AUTH(request)
-        except AdminAuthError as exc:
-            return Response(
-                content=json.dumps({
-                    "error": {
-                        "code": exc.code,
-                        "message": exc.message,
-                    }
-                }),
-                status_code=exc.status_code,
-                media_type="application/json",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    """Consolidated admin-only status JSON for the dashboard."""
+    try:
+        ADMIN_AUTH(request)
+    except AdminAuthError as exc:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "code": exc.code,
+                    "message": exc.message,
+                }
+            }),
+            status_code=exc.status_code,
+            media_type="application/json",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     try:
         payload = await status_endpoint.get_cached_status(config)
@@ -10968,29 +11063,26 @@ async def v1_status(request: Request):
 
 async def _render_status_html(request: Request) -> Response:
     """Build a payload from /v1/status and render the dashboard HTML."""
-    client_host = (request.client.host if request.client else "") or ""
-    is_loopback = client_host in ("127.0.0.1", "::1", "localhost")
-    if not is_loopback:
-        try:
-            ADMIN_AUTH(request)
-        except AdminAuthError as exc:
-            if (
-                exc.status_code == 401
-                and ADMIN_OIDC_CONFIG.enabled
-                and not request.headers.get("authorization")
-            ):
-                return RedirectResponse(_login_url(return_to="/status"), status_code=302)
-            return Response(
-                content=json.dumps({
-                    "error": {
-                        "code": exc.code,
-                        "message": exc.message,
-                    }
-                }),
-                status_code=exc.status_code,
-                media_type="application/json",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    try:
+        ADMIN_AUTH(request)
+    except AdminAuthError as exc:
+        if (
+            exc.status_code == 401
+            and ADMIN_OIDC_CONFIG.enabled
+            and not request.headers.get("authorization")
+        ):
+            return RedirectResponse(_login_url(return_to="/status"), status_code=302)
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "code": exc.code,
+                    "message": exc.message,
+                }
+            }),
+            status_code=exc.status_code,
+            media_type="application/json",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     try:
         payload = await status_endpoint.get_cached_status(config)
     except Exception as e:  # noqa: BLE001

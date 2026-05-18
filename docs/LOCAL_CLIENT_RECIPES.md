@@ -55,7 +55,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `GET /v1/voices`, `GET /v1/audio/voices` | OpenAI Audio | Voice list. |
 | `POST /v1/audio/generate`, `GET /v1/audio/models` | Native | Music/SFX/voice models. |
 | `POST /v1/videos`, `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content` | OpenAI-shaped video | |
-| `GET /v1/status` | Native | Operational status. |
+| `GET /v1/status` | Admin | Operational status; requires admin auth. |
 | `POST /v1/messages` | Anthropic Messages | Non-streaming translator over chat completions. |
 | `GET /api/tags` | Ollama-compatible | Model list from configured catalog. |
 | `POST /api/chat`, `POST /api/generate` | Ollama-compatible | Non-streaming translators over chat completions. |
@@ -749,5 +749,6 @@ docs and commit history.
 - Streaming clients must respect server-side idle timeouts on
   `/v1/chat/completions` and `/v1/completions`. A long stall in an
   intermediate proxy/CDN will surface as a dropped stream to the SDK.
-- When a client misbehaves, check `/v1/status` first, then `/gateway/v1/receipts`
-  for the specific `request_id`, before opening logs.
+- When a client misbehaves, use an admin session/key to check `/v1/status`,
+  then inspect `/gateway/v1/receipts` for the specific `request_id` before
+  opening logs.

@@ -43,7 +43,7 @@ Proxy status observations:
 - ComfyUI is connected via websocket and queue is idle.
 - TabbyAPI is down but expected as standby.
 - `daisy` key is active and high-traffic; anonymous unauthenticated traffic is hitting random WordPress/PHP exploit paths.
-- `/v1/status` exposes rich machine state without requiring the same auth path as normal `/v1` traffic.
+- `/v1/status` exposes rich machine state and therefore belongs behind the admin auth path.
 
 ## Architecture Questions Raised
 

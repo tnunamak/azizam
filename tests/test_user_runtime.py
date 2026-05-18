@@ -17,6 +17,7 @@ from gateway.user_runtime import (  # noqa: E402
     UserPortalError,
     build_user_portal_snapshot,
     create_user_app,
+    delete_user_app,
     mint_user_app_key,
     request_user_access,
     revoke_user_app_key,
@@ -97,6 +98,9 @@ class UserRuntimeTests(unittest.TestCase):
         )
         self.assertFalse(revoked["active"])
         self.assertIsNotNone(revoked["revoked_at"])
+        snapshot = build_user_portal_snapshot(self.session, path=self.db)
+        self.assertEqual(snapshot["apps"][0]["credentials"], [])
+        self.assertEqual(snapshot["apps"][0]["active_credentials"], 0)
 
     def test_access_request_creates_self_service_app_with_inherited_mint_power(self) -> None:
         new_user = admin_store.upsert_oidc_user(
@@ -118,6 +122,7 @@ class UserRuntimeTests(unittest.TestCase):
         self.assertFalse(requested["app"]["profile_required"])
         self.assertEqual(requested["app"]["effective_profile_id"], "default-local")
         snapshot = build_user_portal_snapshot(session, path=self.db)
+        self.assertEqual(requested["app"], snapshot["apps"][0])
         self.assertTrue(snapshot["apps"][0]["can_mint_keys"])
         self.assertTrue(snapshot["apps"][0]["inherits_profile"])
 
@@ -145,27 +150,63 @@ class UserRuntimeTests(unittest.TestCase):
             default_profile_id=self.profile["id"],
             path=self.db,
         )
+        stored = admin_store.get_app(requested["app"]["id"], path=self.db)
+        self.assertEqual(stored["default_profile_id"], self.profile["id"])
+        self.assertEqual(requested["app"]["default_profile_id"], self.profile["id"])
+        self.assertEqual(requested["app"]["profile_id"], self.profile["id"])
         self.assertEqual(requested["app"]["effective_profile_id"], self.profile["id"])
-        snapshot = build_user_portal_snapshot(
-            session,
-            default_profile_id=self.profile["id"],
-            path=self.db,
-        )
+        self.assertFalse(requested["app"]["inherits_profile"])
+        snapshot = build_user_portal_snapshot(session, path=self.db)
+        self.assertEqual(requested["app"], snapshot["apps"][0])
         self.assertEqual(snapshot["apps"][0]["effective_profile_id"], self.profile["id"])
         self.assertTrue(snapshot["apps"][0]["can_mint_keys"])
 
     def test_user_can_create_named_apps(self) -> None:
-        created = create_user_app(self.session, name="Open WebUI", path=self.db)
+        created = create_user_app(
+            self.session,
+            name="Open WebUI",
+            default_profile_id=self.profile["id"],
+            path=self.db,
+        )
+        stored = admin_store.get_app(created["app"]["id"], path=self.db)
+        self.assertEqual(stored["default_profile_id"], self.profile["id"])
         self.assertEqual(created["app"]["name"], "Open WebUI")
-        self.assertEqual(created["app"]["effective_profile_id"], "default-local")
+        self.assertEqual(created["app"]["default_profile_id"], self.profile["id"])
+        self.assertEqual(created["app"]["profile_id"], self.profile["id"])
+        self.assertEqual(created["app"]["effective_profile_id"], self.profile["id"])
+        self.assertFalse(created["app"]["inherits_profile"])
 
         apps = admin_store.list_apps_for_user(self.user["id"], path=self.db)
         self.assertEqual({app["name"] for app in apps}, {"user-laptop", "Open WebUI"})
+        snapshot_app = next(
+            app for app in build_user_portal_snapshot(self.session, path=self.db)["apps"]
+            if app["id"] == created["app"]["id"]
+        )
+        self.assertEqual(created["app"], snapshot_app)
 
     def test_user_app_name_is_required(self) -> None:
         with self.assertRaises(UserPortalError) as ctx:
             create_user_app(self.session, name="   ", path=self.db)
         self.assertEqual(ctx.exception.code, "app_name_required")
+
+    def test_user_can_delete_owned_app_and_hide_it_from_snapshot(self) -> None:
+        credential = mint_user_app_key(
+            self.session,
+            self.app["id"],
+            label="Laptop",
+            path=self.db,
+        )
+
+        deleted = delete_user_app(self.session, self.app["id"], path=self.db)
+
+        self.assertEqual(deleted["app"]["id"], self.app["id"])
+        self.assertEqual(deleted["app"]["revoked_credentials"], 1)
+        disabled = admin_store.get_app(self.app["id"], path=self.db)
+        self.assertIsNotNone(disabled["disabled_at"])
+        stored_credential = admin_store.get_credential(credential["id"], path=self.db)
+        self.assertIsNotNone(stored_credential["revoked_at"])
+        snapshot = build_user_portal_snapshot(self.session, path=self.db)
+        self.assertEqual(snapshot["apps"], [])
 
     def test_user_cannot_revoke_another_users_app_key(self) -> None:
         other = admin_store.upsert_oidc_user(
