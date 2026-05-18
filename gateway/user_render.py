@@ -82,55 +82,17 @@ _USER_PORTAL_CSS = """
     background: var(--panel);
   }
   main {
-    width: min(1240px, calc(100% - clamp(2rem, 6vw, 4rem)));
+    width: min(980px, calc(100% - clamp(2rem, 6vw, 4rem)));
     margin: 0 auto;
-    padding: var(--space-8) 0 var(--space-12);
+    padding: var(--space-6) 0 var(--space-12);
     display: grid;
-    gap: var(--space-8);
+    gap: var(--space-6);
   }
-  .hero {
-    display: grid;
-    grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
-    gap: var(--space-8);
-    align-items: end;
-  }
-  .hero h2 {
-    margin: 0;
-    max-width: 16ch;
-    font-size: clamp(2rem, 4vw, 4rem);
-    line-height: 1;
-    letter-spacing: 0;
-  }
-  .hero p {
-    margin: var(--space-4) 0 0;
-    max-width: 68ch;
-    color: var(--muted);
-    line-height: 1.55;
-  }
-  .status-panel {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: var(--space-4);
-    display: grid;
-    gap: var(--space-3);
-  }
-  .status-line {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-3);
-    align-items: baseline;
-  }
-  .status-line span:first-child, .label {
+  .label {
     color: var(--muted);
     font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-  }
-  .status-line strong {
-    font-size: 0.95rem;
-    overflow-wrap: anywhere;
-    text-align: right;
   }
   section {
     border-top: 1px solid var(--line);
@@ -193,7 +155,6 @@ _USER_PORTAL_CSS = """
   }
   button:hover { filter: brightness(1.06); }
   .message {
-    min-height: 2.5rem;
     border: 1px solid var(--line);
     border-radius: var(--radius);
     background: oklch(14.5% 0.016 245);
@@ -201,6 +162,7 @@ _USER_PORTAL_CSS = """
     padding: var(--space-3);
     line-height: 1.45;
   }
+  .message:empty { display: none; }
   .message.good { color: var(--good); background: var(--good-bg); }
   .message.warn { color: var(--warn); background: var(--warn-bg); }
   .message.bad { color: var(--bad); background: var(--bad-bg); }
@@ -277,10 +239,21 @@ _USER_PORTAL_CSS = """
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: var(--space-4);
   }
+  .access-group {
+    display: grid;
+    gap: var(--space-3);
+    align-content: start;
+  }
+  .access-group h3 {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.86rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
   @media (max-width: 820px) {
     header { align-items: flex-start; flex-direction: column; }
-    main { width: min(100% - 2rem, 1240px); padding-top: var(--space-6); }
-    .hero { grid-template-columns: 1fr; align-items: start; }
+    main { width: min(100% - 2rem, 980px); }
     .row { grid-template-columns: 1fr; }
   }
 """
@@ -317,11 +290,7 @@ def _can_admin(account: Mapping[str, Any] | None) -> bool:
 
 
 def _header_nav(account: Mapping[str, Any] | None) -> str:
-    links = [
-        ('/.well-known/ai-gateway', "Discovery"),
-        ("/llms.txt", "llms.txt"),
-        ("/health", "Health"),
-    ]
+    links = []
     if _can_admin(account):
         links.append(("/admin", "Admin"))
     return "".join(
@@ -431,7 +400,7 @@ def _account_section(
             '<h2 id="account-heading">Account</h2>'
             '<div class="card">'
             "<h3>Not signed in</h3>"
-            "<p>You can still paste a runtime key below. Sign in to see Apps and keys already assigned to your account.</p>"
+            "<p>Sign in to manage Apps assigned to your account.</p>"
             f'<div class="meta">{action}</div>'
             "</div>"
             "</section>"
@@ -442,29 +411,37 @@ def _account_section(
     raw_role = _user_role(account)
     role_label = raw_role if raw_role in {"owner", "admin", "superadmin"} else "user"
     apps = [a for a in account.get("apps", []) if isinstance(a, Mapping)]
-    apps_html = (
-        "".join(_app_html(app) for app in apps)
-        if apps
+    can_admin = _can_admin(account)
+    empty_html = (
+        '<div class="card"><h3>No owned Apps</h3>'
+        "<p>Create or assign Apps in Admin.</p>"
+        '<div class="meta"><a class="pill" href="/admin">Open Admin</a></div>'
+        "</div>"
+        if can_admin
         else (
-            '<div class="card"><h3>No Apps assigned</h3>'
-            "<p>Request access to create a pending Personal App. An operator still chooses the Profile and limits before keys can be minted.</p>"
+            '<div class="card"><h3>No Apps yet</h3>'
+            "<p>Request access to create a pending Personal App.</p>"
             '<form class="actions" data-request-access>'
             '<button type="submit">Request access</button>'
             "</form></div>"
         )
+    )
+    apps_html = (
+        "".join(_app_html(app) for app in apps)
+        if apps else empty_html
     )
     return (
         '<section aria-labelledby="account-heading">'
         '<h2 id="account-heading">Account</h2>'
         '<div class="card">'
         f"<h3>{user_label}</h3>"
-        "<p>These Apps are owned by your OIDC account. Profiles and access limits are still controlled by the operator.</p>"
+        "<p>Apps own runtime keys.</p>"
         '<div class="meta">'
         + _account_badge(f"role {_esc(role_label)}")
         + f'<a class="pill" href="{_esc(logout_url)}">Sign out</a>'
         + "</div>"
         "</div>"
-        '<div id="account-result" class="message">Account actions show one-time key values here.</div>'
+        '<div id="account-result" class="message"></div>'
         f'<div class="grid">{apps_html}</div>'
         "</section>"
     )
@@ -497,6 +474,10 @@ def render_user_portal(
         logout_url=logout_url,
     )
     nav_html = _header_nav(account)
+    nav_block = (
+        '<nav aria-label="Gateway links">' + nav_html + "</nav>"
+        if nav_html else ""
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -508,86 +489,50 @@ def render_user_portal(
 <body>
   <header>
     <h1>{title_text}</h1>
-    <nav aria-label="Gateway links">
-      {nav_html}
-    </nav>
+    {nav_block}
   </header>
   <main>
-    <div class="hero">
-      <div>
-        <h2>Use your local AI stack with less guessing.</h2>
-        <p>This page checks a runtime key against the gateway and shows the
-        models, media workflows, job routes, and SDK settings that key can use.
-        Permissions are controlled by the operator in the admin console.</p>
-      </div>
-      <aside class="status-panel" aria-label="Connection summary">
-        <div class="status-line"><span>Base URL</span><strong id="base-url"></strong></div>
-        <div class="status-line"><span>Key</span><strong id="key-state">Not checked</strong></div>
-        <div class="status-line"><span>Capabilities</span><strong id="cap-count">Unknown</strong></div>
-        <div class="status-line"><span>Jobs</span><strong id="job-count">Unknown</strong></div>
-      </aside>
-    </div>
-
     {account_html}
 
     <section aria-labelledby="connect-heading">
-      <h2 id="connect-heading">Connect</h2>
+      <h2 id="connect-heading">Runtime Key</h2>
       <div class="flow">
-        <label class="label" for="runtime-key">Runtime API key</label>
+        <label class="label" for="runtime-key">App API key</label>
         <div class="row">
           <input id="runtime-key" type="password" autocomplete="off" spellcheck="false"
                  placeholder="opk_..." aria-describedby="connect-result">
           <button id="check-key" type="button">Check Access</button>
           <button id="forget-key" class="secondary" type="button">Forget</button>
         </div>
-        <div id="connect-result" class="message">Paste a runtime key to test what this browser can use.</div>
+        <div id="connect-result" class="message">Paste an opk_ key to test access from this browser.</div>
       </div>
     </section>
 
     <section aria-labelledby="examples-heading">
-      <h2 id="examples-heading">Use It</h2>
-      <div class="grid">
-        <article class="card">
-          <h3>OpenAI-compatible</h3>
-          <div id="openai-snippet" class="snippet"></div>
-        </article>
-        <article class="card">
-          <h3>Anthropic Messages</h3>
-          <div id="anthropic-snippet" class="snippet"></div>
-        </article>
-        <article class="card">
-          <h3>Gateway-native jobs</h3>
-          <div id="jobs-snippet" class="snippet"></div>
-        </article>
+      <h2 id="examples-heading">Settings</h2>
+      <div class="flow">
+        <div class="label" id="settings-label">OpenAI-compatible</div>
+        <div id="openai-snippet" class="snippet"></div>
       </div>
     </section>
 
     <section aria-labelledby="access-heading">
-      <h2 id="access-heading">Effective Access</h2>
-      <div id="capabilities" class="list">
-        <p class="empty">Check a key to load available models and workflows.</p>
-      </div>
-    </section>
-
-    <section aria-labelledby="inventory-heading">
-      <h2 id="inventory-heading">Inventory</h2>
+      <h2 id="access-heading">Access</h2>
       <div class="two-col">
-        <div id="models" class="list">
-          <p class="empty">Model list has not been loaded yet.</p>
+        <div class="access-group">
+          <h3>Capabilities</h3>
+          <div id="capabilities" class="list">
+            <p class="empty">Check a key to load access.</p>
+          </div>
         </div>
-        <div id="jobs" class="list">
-          <p class="empty">Recent media jobs have not been loaded yet.</p>
+        <div class="access-group">
+          <h3>Models</h3>
+          <div id="models" class="list"></div>
         </div>
-      </div>
-    </section>
-
-    <section aria-labelledby="failures-heading">
-      <h2 id="failures-heading">Failure Meanings</h2>
-      <div class="grid">
-        <article class="card"><h3>401</h3><p>The key is missing, mistyped, expired, or revoked.</p></article>
-        <article class="card"><h3>403</h3><p>The key is valid, but its assigned profile does not allow that request.</p></article>
-        <article class="card"><h3>409</h3><p>The request conflicts with the current workflow or job state.</p></article>
-        <article class="card"><h3>503</h3><p>A backend is down, disabled for the current mode, or unavailable.</p></article>
+        <div class="access-group">
+          <h3>Recent Jobs</h3>
+          <div id="jobs" class="list"></div>
+        </div>
       </div>
     </section>
   </main>
@@ -601,24 +546,11 @@ def render_user_portal(
   const result = $("connect-result");
   const baseUrl = publicBase.replace(/\\/$/, "");
 
-  $("base-url").textContent = baseUrl + "/v1";
   $("openai-snippet").textContent = [
     'export OPENAI_BASE_URL="' + baseUrl + '/v1"',
     'export OPENAI_API_KEY="opk_..."',
     "",
     'curl "$OPENAI_BASE_URL/models" -H "Authorization: Bearer $OPENAI_API_KEY"'
-  ].join("\\n");
-  $("anthropic-snippet").textContent = [
-    'export ANTHROPIC_BASE_URL="' + baseUrl + '/v1"',
-    'export ANTHROPIC_API_KEY="opk_..."',
-    "",
-    "POST /v1/messages with Authorization: Bearer $ANTHROPIC_API_KEY"
-  ].join("\\n");
-  $("jobs-snippet").textContent = [
-    'curl "' + baseUrl + '/gateway/v1/media/jobs" \\\\',
-    '  -H "Authorization: Bearer opk_..." \\\\',
-    '  -H "Content-Type: application/json" \\\\',
-    "  -d '{{\\"intent\\":\\"image.generate\\",\\"model\\":\\"...\\"}}'"
   ].join("\\n");
 
   function setMessage(text, kind = "") {{
@@ -642,7 +574,9 @@ def render_user_portal(
   }}
 
   function updateKeyState() {{
-    $("key-state").textContent = runtimeKey() ? "Stored in this browser" : "Not checked";
+    if (runtimeKey()) {{
+      setMessage("Key is stored in this browser. Check access to refresh.");
+    }}
   }}
 
   async function getJson(path) {{
@@ -705,8 +639,6 @@ def render_user_portal(
     const root = $("capabilities");
     root.textContent = "";
     const caps = Array.isArray(payload.capabilities) ? payload.capabilities : [];
-    const allowed = caps.filter((cap) => cap.available !== false);
-    $("cap-count").textContent = allowed.length + " usable";
     if (!caps.length) {{
       root.innerHTML = '<p class="empty">No capabilities were returned for this key.</p>';
       return;
@@ -755,7 +687,6 @@ def render_user_portal(
     const root = $("jobs");
     root.textContent = "";
     const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
-    $("job-count").textContent = jobs.length + " recent";
     if (!jobs.length) {{
       root.innerHTML = '<p class="empty">No recent media jobs are visible to this key.</p>';
       return;
@@ -787,10 +718,11 @@ def render_user_portal(
       renderCapabilities(caps);
       renderModels(models);
       renderJobs(jobs);
-      setMessage("Key works. This is the effective access visible to normal users and agents.", "good");
+      const capCount = Array.isArray(caps.capabilities) ? caps.capabilities.length : 0;
+      const modelCount = Array.isArray(models.data) ? models.data.length : 0;
+      const jobCount = Array.isArray(jobs.jobs) ? jobs.jobs.length : 0;
+      setMessage("Key works. Loaded " + capCount + " capabilities, " + modelCount + " models, " + jobCount + " recent jobs.", "good");
     }} catch (error) {{
-      $("cap-count").textContent = "Unknown";
-      $("job-count").textContent = "Unknown";
       setMessage(error.message || "Access check failed.", "bad");
     }}
   }}
@@ -799,7 +731,6 @@ def render_user_portal(
   $("forget-key").addEventListener("click", () => {{
     sessionStorage.removeItem(storageKey);
     keyInput.value = "";
-    updateKeyState();
     setMessage("Forgot the key in this tab.");
   }});
   keyInput.addEventListener("keydown", (event) => {{

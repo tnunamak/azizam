@@ -28,15 +28,18 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("/gateway/v1/media/jobs", html)
         self.assertIn("/v1/models", html)
         self.assertIn("OPENAI_BASE_URL", html)
-        self.assertIn("ANTHROPIC_BASE_URL", html)
         self.assertIn("opk_...", html)
         self.assertIn("sessionStorage", html)
         self.assertNotIn("localStorage", html)
 
     def test_uses_normal_user_language(self) -> None:
         html = render_user_portal()
-        self.assertIn("Effective Access", html)
-        self.assertIn("Permissions are controlled by the operator", html)
+        self.assertIn("Runtime Key", html)
+        self.assertIn("Settings", html)
+        self.assertIn("Access", html)
+        self.assertNotIn("Use your local AI stack", html)
+        self.assertNotIn("Failure Meanings", html)
+        self.assertNotIn("ANTHROPIC_BASE_URL", html)
         self.assertNotIn("Create App", html)
         self.assertNotIn("Mint runtime key", html)
         self.assertNotIn("/admin/api", html)
@@ -86,6 +89,8 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("data-revoke-owned-key", html)
         self.assertIn("credential-row", html)
         self.assertNotIn('href="/admin"', html)
+        self.assertNotIn(">Discovery<", html)
+        self.assertNotIn(">Health<", html)
         self.assertNotIn("hash", html)
 
     def test_signed_in_admin_gets_admin_nav_from_user_portal(self) -> None:
@@ -100,6 +105,9 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn('href="/admin"', html)
         self.assertIn(">Admin<", html)
         self.assertIn("role owner", html)
+        self.assertIn("No owned Apps", html)
+        self.assertNotIn('<form class="actions" data-request-access>', html)
+        self.assertNotIn("<button type=\"submit\">Request access</button>", html)
 
     def test_signed_in_user_without_apps_can_request_access(self) -> None:
         html = render_user_portal(
