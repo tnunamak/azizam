@@ -257,3 +257,14 @@ auth:
     - /health
   api_key_env: TABBY_API_KEY
   admin_key_env: TABBY_ADMIN_KEY
+admin:
+  db_path: data/admin.db
+  oidc:
+    enabled: true
+    issuer: https://id.vivid.fish/realms/vivid-fish
+    client_id: vivid-fish-ai-gateway
+    client_secret_env: AI_GATEWAY_OIDC_CLIENT_SECRET
+    redirect_uri: https://ai.vivid.fish/admin/oidc/callback
+    signing_key_env: AI_GATEWAY_ADMIN_SESSION_KEY
+    admin_emails:
+      - tim.nunamaker@gmail.com
