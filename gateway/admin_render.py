@@ -183,18 +183,38 @@ def _profile_access_summary(record: Mapping[str, Any] | None) -> str:
     tags = _nested_list(allow.get("tags"))
 
     if intents or trust or resources or exposure or tags:
-        parts: list[str] = []
+        labels: list[str] = []
+        intent_labels = {
+            "chat": "chat",
+            "chat.completions": "chat",
+            "embedding": "embeddings",
+            "embeddings": "embeddings",
+            "image.generate": "image generation",
+            "image.edit": "image editing",
+            "audio.transcribe": "audio transcription",
+            "audio.speech": "text to speech",
+            "audio.generate": "music/audio generation",
+            "video.generate": "video generation",
+        }
+        for intent in intents:
+            labels.append(intent_labels.get(intent, intent))
+        if not labels and tags:
+            labels.extend(tags)
+        if not labels:
+            labels.append("selected local capabilities")
+        summary = ", ".join(dict.fromkeys(labels))
+        guardrails: list[str] = []
         if exposure:
-            parts.append("exposure " + ", ".join(exposure))
+            guardrails.append("default access" if "default" in exposure else "opt-in access")
         if trust:
-            parts.append("trust " + ", ".join(trust))
+            guardrails.append(
+                "stable" if trust == ["stable"] else "stable and experimental"
+            )
         if resources:
-            parts.append("resources " + ", ".join(resources))
-        if intents:
-            parts.append("intents " + ", ".join(intents))
-        if tags:
-            parts.append("tags " + ", ".join(tags))
-        return "; ".join(parts)
+            guardrails.append(
+                "interactive" if resources == ["interactive"] else ", ".join(resources)
+            )
+        return summary + (f" ({'; '.join(guardrails)})" if guardrails else "")
 
     protocols = _nested_list(doc.get("protocols"))
     workflows = _nested_list(doc.get("workflows"))
@@ -348,19 +368,22 @@ def _profile_row(record: Mapping[str, Any]) -> str:
     doc = _profile_doc(record)
     profile_id = _esc(_profile_id(record))
     label = _esc(record.get("label") or record.get("name") or "—")
-    protocols = _format_optional_list(doc.get("protocols"))
     overrides = []
     for name in ("workflows", "models", "backends"):
         values = _nested_list(doc.get(name))
         if values:
-            overrides.append(f"{name}: " + ", ".join(values))
-    override_text = "; ".join(overrides) if overrides else "—"
+            label_name = {
+                "workflows": "workflows",
+                "models": "models",
+                "backends": "backends",
+            }[name]
+            overrides.append(f"{label_name}: " + ", ".join(values))
+    override_text = "; ".join(overrides) if overrides else "All matching local routes"
     visibility = _esc(_visibility_summary(record))
     return (
         "<tr>"
         f'<td><div class="cell-main">{label}</div><div class="cell-sub"><code>{profile_id}</code></div></td>'
         f"<td>{_esc(_profile_access_summary(record))}</td>"
-        f"<td>{protocols}</td>"
         f"<td>{_esc(override_text)}</td>"
         f"<td>{_esc(_profile_guardrail_summary(record))}</td>"
         f"<td>{visibility}</td>"
@@ -444,10 +467,9 @@ def _start_card(apps: list[Mapping[str, Any]]) -> str:
     return (
         '<div class="start-card">'
         "<h3>No Apps yet</h3>"
-        "<p>Create an App, attach a Profile if it needs one, then mint an "
-        "<code>opk_</code> runtime key. Apps are the unit you hand to people, "
-        "agents, and services.</p>"
-        '<a href="#create-app">Create App</a>'
+        "<p>Grant access to a service, tool, agent, or person. The gateway "
+        "will create the App, policy, and runtime key from that task.</p>"
+        '<a href="#grant-service-access">Grant access</a>'
         "</div>"
     )
 
@@ -480,10 +502,11 @@ def _flow_form(
         for profile in profiles
     )
     create_form = (
+        '<details class="panel"><summary>Advanced: create App manually</summary>'
         '<form class="flow" id="create-app" method="post" action="'
         + _esc(create_app_action)
         + '" data-create-app>'
-        "<label>Create App</label>"
+        "<label>Create App manually</label>"
         '<div class="stack">'
         '<input type="text" name="name" placeholder="App name" aria-label="App name" required>'
         '<div class="choice-grid" aria-label="App ownership">'
@@ -500,21 +523,24 @@ def _flow_form(
         '<button type="submit">Create app</button>'
         "</div>"
         "</form>"
+        "</details>"
     )
     if not app_options:
         return create_form
 
     mint_form = (
+        '<details class="panel"><summary>Create key for existing App</summary>'
         '<form class="flow" method="post" data-action-template="'
         + _esc(create_key_action_template)
         + '" data-mint-key>'
-        "<label>Mint runtime key</label>"
+        "<label>Create runtime key</label>"
         '<div class="row">'
         f'<select name="app_id" aria-label="App for runtime key" required>{app_options}</select>'
         '<input type="text" name="label" placeholder="Key label" aria-label="Runtime key label">'
-        '<button type="submit">Mint key</button>'
+        '<button type="submit">Create key</button>'
         "</div>"
         "</form>"
+        "</details>"
     )
     return create_form + mint_form
 
@@ -526,33 +552,38 @@ def _service_access_form(
     create_key_action_template: str,
 ) -> str:
     return (
-        '<form class="flow" method="post" action="'
+        '<form class="flow" id="grant-service-access" method="post" action="'
         + _esc(create_profile_action)
         + '" data-create-service-access data-app-action="'
         + _esc(create_app_action)
         + '" data-key-action-template="'
         + _esc(create_key_action_template)
         + '">'
-        "<label>Create service access</label>"
+        "<label>Grant service access</label>"
         '<div class="stack">'
-        '<input type="text" name="owner_service_account_name" value="librechat.vivid.fish" aria-label="Service account name" required>'
-        '<input type="text" name="profile_id" value="librechat-vivid-fish" aria-label="Profile id" required>'
-        '<input type="text" name="profile_label" value="LibreChat vivid.fish" aria-label="Profile label" required>'
-        '<input type="text" name="app_name" value="librechat.vivid.fish" aria-label="App name" required>'
-        '<label class="check"><input type="checkbox" name="mint_key" checked> Mint API key now</label>'
-        '<input type="text" name="key_label" value="LibreChat service key" aria-label="API key label">'
+        '<input type="text" name="service_name" value="librechat.vivid.fish" aria-label="Service app name" required>'
+        '<select name="access_template" aria-label="What this service can use">'
+        '<option value="openai_chat" selected>OpenAI-compatible chat</option>'
+        '<option value="chat_embeddings">Chat and embeddings</option>'
+        '<option value="image_generation">Image generation</option>'
+        '<option value="media_workflows">Media workflows</option>'
+        '<option value="local_stable">Everything local and stable</option>'
+        "</select>"
+        '<label class="check"><input type="checkbox" name="mint_key" checked> Create API key now</label>'
+        '<input type="text" name="key_label" placeholder="Key label, optional" aria-label="API key label">'
         "</div>"
-        '<div class="inline-options" aria-label="LibreChat access">'
-        '<label class="check"><input type="checkbox" name="protocols" value="openai" checked> OpenAI protocol</label>'
-        '<label class="check"><input type="checkbox" name="intents" value="chat" checked> Chat intent</label>'
-        '<label class="check"><input type="checkbox" name="tags" value="librechat" checked> LibreChat tag</label>'
+        '<details class="panel"><summary>Advanced policy fields</summary>'
+        '<div class="stack">'
+        '<input type="text" name="profile_id" placeholder="Generated from service name" aria-label="Generated profile id override">'
+        '<input type="text" name="profile_label" placeholder="Generated from service name" aria-label="Generated profile label override">'
+        '<input type="text" name="owner_service_account_name" placeholder="Defaults to service app name" aria-label="Service owner override">'
+        '<input type="text" name="app_name" placeholder="Defaults to service app name" aria-label="App name override">'
         "</div>"
-        '<details class="panel"><summary>Advanced JSON</summary>'
-        '<textarea name="advanced_json" spellcheck="false" aria-label="Advanced service access JSON" placeholder="{&quot;profile&quot;:{},&quot;app&quot;:{},&quot;key&quot;:{}}"></textarea>'
+        '<textarea name="advanced_json" spellcheck="false" aria-label="Raw service access policy JSON" placeholder="{&quot;profile&quot;:{},&quot;app&quot;:{},&quot;key&quot;:{}}"></textarea>'
         "</details>"
         '<div class="row">'
         "<span></span>"
-        '<button type="submit">Create service access</button>'
+        '<button type="submit">Grant access</button>'
         "</div>"
         "</form>"
     )
@@ -574,46 +605,53 @@ def _profile_form(
         + '<form class="flow" method="post" action="'
         + _esc(create_profile_action)
         + '" data-create-profile>'
-        "<label>Create Profile</label>"
+        "<label>Create reusable access policy</label>"
         '<div class="stack">'
-        '<select name="profile_preset" aria-label="Profile preset">'
-        '<option value="librechat">LibreChat chat app</option>'
-        '<option value="local_chat">Local chat service</option>'
-        '<option value="image_tools">Image generation tools</option>'
-        '<option value="custom">Custom profile</option>'
+        '<input type="text" name="label" placeholder="Family chat" aria-label="Policy name" required>'
+        '<select name="profile_preset" aria-label="Start from">'
+        '<option value="family_chat">Family chat</option>'
+        '<option value="coding_agents">Coding agents</option>'
+        '<option value="image_tools">Image generation</option>'
+        '<option value="automation">Automation</option>'
+        '<option value="custom">Custom policy</option>'
         "</select>"
-        '<input type="text" name="id" placeholder="librechat-chat" aria-label="Profile id" required>'
-        '<input type="text" name="label" placeholder="LibreChat chat profile" aria-label="Profile label">'
-        '<select name="status_visibility" aria-label="Status visibility">'
-        '<option value="standard">Standard status</option>'
+        '<div class="inline-options" aria-label="Allowed capabilities">'
+        '<label class="check"><input type="checkbox" name="capabilities" value="chat" checked> Chat</label>'
+        '<label class="check"><input type="checkbox" name="capabilities" value="embeddings"> Embeddings</label>'
+        '<label class="check"><input type="checkbox" name="capabilities" value="images"> Images</label>'
+        '<label class="check"><input type="checkbox" name="capabilities" value="audio"> Audio</label>'
+        '<label class="check"><input type="checkbox" name="capabilities" value="video"> Video</label>'
+        "</div>"
+        '<select name="model_access" aria-label="Model and workflow access">'
+        '<option value="recommended">Recommended safe defaults</option>'
+        '<option value="all_local">All local and stable</option>'
+        '<option value="opt_in">Only explicitly tagged workflows</option>'
+        "</select>"
+        "</div>"
+        '<details class="panel"><summary>Advanced policy details</summary>'
+        '<div class="stack">'
+        '<input type="text" name="id" placeholder="Generated from policy name" aria-label="Policy id override">'
+        '<select name="status_visibility" aria-label="Status detail">'
         '<option value="basic">Basic status</option>'
+        '<option value="standard">Standard status</option>'
         '<option value="full">Full status</option>'
         '<option value="none">No status</option>'
         "</select>"
         '<div class="inline-options" aria-label="Allowed protocols">'
-        '<label class="check"><input type="checkbox" name="protocols" value="openai" checked> OpenAI protocol</label>'
-        '<label class="check"><input type="checkbox" name="protocols" value="anthropic"> Anthropic protocol</label>'
+        '<label class="check"><input type="checkbox" name="protocols" value="openai" checked> OpenAI-compatible</label>'
+        '<label class="check"><input type="checkbox" name="protocols" value="anthropic"> Anthropic-compatible</label>'
         "</div>"
-        '<div class="inline-options" aria-label="Allowed intents">'
-        '<label class="check"><input type="checkbox" name="intents" value="chat" checked> Chat</label>'
-        '<label class="check"><input type="checkbox" name="intents" value="image.generate"> Image generation</label>'
-        '<label class="check"><input type="checkbox" name="intents" value="audio.transcribe"> Audio transcription</label>'
-        "</div>"
-        '<select name="exposure" aria-label="Exposure tier"><option value="default">Default exposure</option><option value="opt_in">Opt-in exposure</option></select>'
-        '<select name="trust_tiers" aria-label="Trust tier"><option value="stable">Stable models</option><option value="experimental">Experimental models</option></select>'
-        '<select name="resource_tiers" aria-label="Resource tier"><option value="interactive">Interactive resources</option><option value="batch">Batch resources</option></select>'
-        '<input type="text" name="tags" placeholder="optional tags: librechat, chat" aria-label="Allowed tags">'
+        '<input type="text" name="tags" placeholder="optional tags: family, agents" aria-label="Policy tags">'
         "</div>"
         '<div class="stack">'
         '<label class="check"><input type="checkbox" name="cloud_allowed"> Allow cloud fallback</label>'
         '<label class="check"><input type="checkbox" name="native_passthrough"> Allow native passthrough</label>'
         "</div>"
-        '<details class="panel"><summary>Advanced JSON</summary>'
-        '<textarea name="advanced_json" spellcheck="false" aria-label="Advanced profile JSON" placeholder="{&quot;models&quot;:[&quot;local-chat&quot;]}"></textarea>'
+        '<textarea name="advanced_json" spellcheck="false" aria-label="Raw policy JSON" placeholder="{&quot;models&quot;:[&quot;local-chat&quot;]}"></textarea>'
         "</details>"
         '<div class="row">'
         "<span></span>"
-        '<button type="submit">Create profile</button>'
+        '<button type="submit">Create policy</button>'
         "</div>"
         "</form>"
     )
@@ -734,7 +772,7 @@ def render_admin_dashboard(
         (_user_row(u) for u in users),
     )
     profiles_table = _table(
-        ["Profile", "Selectors", "Protocols", "Overrides", "Guardrails", "Visibility"],
+        ["Access policy", "Allowed use", "Specific routes", "Guardrails", "Status"],
         (_profile_row(p) for p in profiles),
     )
     credentials_table = _table(
@@ -801,7 +839,11 @@ def render_admin_dashboard(
         "if(out)out.textContent=typeof v==='string'?v:JSON.stringify(v,null,2)};"
         "const list=v=>String(v||'').split(/[\\s,]+/).map(x=>x.trim()).filter(Boolean);"
         "const values=(fd,k)=>fd.getAll(k).flatMap(list);"
-        "const profilePresets={librechat:{protocols:['openai'],allow:{intents:['chat'],exposure:['default'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:['librechat','chat']}},local_chat:{protocols:['openai'],allow:{intents:['chat'],exposure:['default'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:['local','chat']}},image_tools:{protocols:['openai'],allow:{intents:['image.generate'],exposure:['opt_in'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:['image']}}};"
+        "const slug=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'access';"
+        "const title=s=>String(s||'').split(/[._-]+/).filter(Boolean).map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' ')||'Access';"
+        "const accessTemplates={openai_chat:{label:'OpenAI-compatible chat',protocols:['openai'],intents:['chat'],tags:['chat']},chat_embeddings:{label:'Chat and embeddings',protocols:['openai'],intents:['chat','embeddings'],tags:['chat','embeddings']},image_generation:{label:'Image generation',protocols:['openai'],intents:['image.generate'],tags:['image']},media_workflows:{label:'Media workflows',protocols:['openai'],intents:['image.generate','image.edit','audio.generate','video.generate'],tags:['media']},local_stable:{label:'Everything local and stable',protocols:['openai','anthropic'],intents:['chat','embeddings','image.generate','image.edit','audio.transcribe','audio.speech','audio.generate','video.generate'],tags:['local','stable']}};"
+        "const profilePresets={family_chat:{protocols:['openai'],tags:['family','chat'],capabilities:['chat'],exposure:'default',trust:'stable',resources:'interactive'},coding_agents:{protocols:['openai','anthropic'],tags:['agents','coding'],capabilities:['chat','embeddings'],exposure:'default',trust:'stable',resources:'interactive'},image_tools:{protocols:['openai'],tags:['image'],capabilities:['images'],exposure:'opt_in',trust:'stable',resources:'interactive'},automation:{protocols:['openai'],tags:['automation'],capabilities:['chat','embeddings'],exposure:'default',trust:'stable',resources:'batch'},custom:{protocols:['openai'],tags:[],capabilities:['chat'],exposure:'default',trust:'stable',resources:'interactive'}};"
+        "const capabilityIntents={chat:['chat'],embeddings:['embeddings'],images:['image.generate','image.edit'],audio:['audio.transcribe','audio.speech','audio.generate'],video:['video.generate']};"
         "const refreshMain=async()=>{const r=await fetch('/admin',{credentials:'same-origin',cache:'no-store'});"
         "if(!r.ok)return;const html=await r.text();const doc=new DOMParser().parseFromString(html,'text/html');"
         "const next=doc.querySelector('main.shell-main'),main=document.querySelector('main.shell-main');"
@@ -812,22 +854,22 @@ def render_admin_dashboard(
         "document.addEventListener('submit',async e=>{"
         "const serviceForm=e.target.closest('[data-create-service-access]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]');"
         "if(!serviceForm&&!profileForm&&!simForm&&!appForm&&!keyForm)return;e.preventDefault();"
-        "if(serviceForm){const f=serviceForm,fd=new FormData(f);const profile={id:String(fd.get('profile_id')||'').trim(),protocols:values(fd,'protocols'),allow:{intents:values(fd,'intents'),exposure:['default'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:values(fd,'tags')},status_visibility:{level:'basic'},fallback:{cloud_allowed:false},native_passthrough:{enabled:false}};"
+        "if(serviceForm){const f=serviceForm,fd=new FormData(f);const serviceName=String(fd.get('service_name')||'').trim();const template=accessTemplates[fd.get('access_template')]||accessTemplates.openai_chat;const serviceSlug=slug(serviceName);const profileId=String(fd.get('profile_id')||'').trim()||serviceSlug+'-'+slug(template.label);const profileLabel=String(fd.get('profile_label')||'').trim()||title(serviceName)+' '+template.label;const appName=String(fd.get('app_name')||'').trim()||serviceName;const owner=String(fd.get('owner_service_account_name')||'').trim()||serviceName;const profile={id:profileId,protocols:template.protocols,allow:{intents:template.intents,exposure:['default'],trust_tiers:['stable'],resource_tiers:['interactive'],tags:[...new Set([serviceSlug,...template.tags])]},status_visibility:{level:'basic'},fallback:{cloud_allowed:false},native_passthrough:{enabled:false}};"
         "let extra={};try{const raw=String(fd.get('advanced_json')||'').trim();if(raw)extra=JSON.parse(raw)}catch(err){show(err);return}"
         "if(extra.profile)Object.assign(profile,extra.profile);"
-        "const profileBody={name:fd.get('profile_label')||profile.id,label:fd.get('profile_label')||profile.id,profile,...(extra.profile_body||{})};"
-        "const keyBody={};if(fd.get('key_label'))keyBody.label=fd.get('key_label');Object.assign(keyBody,extra.key||{});"
+        "const profileBody={name:profileLabel,label:profileLabel,profile,...(extra.profile_body||{})};"
+        "const keyBody={label:String(fd.get('key_label')||'').trim()||title(serviceName)+' API key'};Object.assign(keyBody,extra.key||{});"
         "try{const createdProfile=await json(f.action,profileBody);const storedProfileId=(createdProfile.profile&&createdProfile.profile.id)||createdProfile.id||profile.id;"
-        "const appBody={name:fd.get('app_name'),kind:'service',owner_service_account_name:fd.get('owner_service_account_name'),profile_id:storedProfileId,...(extra.app||{})};"
+        "const appBody={name:appName,kind:'service',owner_service_account_name:owner,profile_id:storedProfileId,...(extra.app||{})};"
         "const createdApp=await json(f.dataset.appAction,appBody);const appId=createdApp.id||createdApp.app_id||(createdApp.app&&createdApp.app.id)||appBody.name;let createdKey=null;"
         "if(fd.get('mint_key')==='on'){const url=f.dataset.keyActionTemplate.replace('{app_id}',encodeURIComponent(appId));createdKey=await json(url,keyBody)}"
         "const data={profile:createdProfile,app:createdApp,key:createdKey};f.reset();await refreshMain();show(data)}catch(err){show(err)}return}"
-        "if(profileForm){const f=profileForm,fd=new FormData(f);const preset=profilePresets[fd.get('profile_preset')]||{};const profile=JSON.parse(JSON.stringify(preset));profile.id=String(fd.get('id')||'').trim();profile.status_visibility={level:fd.get('status_visibility')||'basic'};profile.fallback={cloud_allowed:fd.get('cloud_allowed')==='on'};profile.native_passthrough={enabled:fd.get('native_passthrough')==='on'};"
+        "if(profileForm){const f=profileForm,fd=new FormData(f);const preset=profilePresets[fd.get('profile_preset')]||profilePresets.custom;const label=String(fd.get('label')||'').trim();const selectedCaps=values(fd,'capabilities');const caps=selectedCaps.length?selectedCaps:preset.capabilities;const profile={id:String(fd.get('id')||'').trim()||slug(label),protocols:preset.protocols,allow:{intents:[...new Set(caps.flatMap(c=>capabilityIntents[c]||[c]))],exposure:[fd.get('model_access')==='opt_in'?'opt_in':preset.exposure],trust_tiers:[preset.trust],resource_tiers:[preset.resources],tags:preset.tags},status_visibility:{level:fd.get('status_visibility')||'basic'},fallback:{cloud_allowed:fd.get('cloud_allowed')==='on'},native_passthrough:{enabled:fd.get('native_passthrough')==='on'}};"
         "const protocols=values(fd,'protocols');if(protocols.length) profile.protocols=protocols;"
-        "const allow={...(profile.allow||{})};['intents','exposure','trust_tiers','resource_tiers','tags'].forEach(k=>{const v=values(fd,k);if(v.length) allow[k]=v});if(Object.keys(allow).length) profile.allow=allow;"
+        "const tags=values(fd,'tags');if(tags.length) profile.allow.tags=[...new Set([...(profile.allow.tags||[]),...tags])];if(fd.get('model_access')==='all_local')profile.allow.tags=[...new Set([...(profile.allow.tags||[]),'local','stable'])];"
         "const extra=String(fd.get('advanced_json')||'').trim();"
         "try{if(extra){Object.assign(profile,JSON.parse(extra))}"
-        "const body={name:fd.get('label')||profile.id,label:fd.get('label')||profile.id,profile};"
+        "const body={name:label||profile.id,label:label||profile.id,profile};"
         "const data=await json(f.action,body);f.reset();await refreshMain();show(data)}catch(err){show(err)}return}"
         "if(simForm){const f=simForm,fd=new FormData(f),request={};"
         "['protocol','intent','workflow','model','backend','capability_exposure','capability_trust_tier','capability_resource_tier'].forEach(k=>{const v=String(fd.get(k)||'').trim();if(v)request[k]=v});"
@@ -855,9 +897,9 @@ def render_admin_dashboard(
         + _section("Start", _start_card(apps))
         + _section("Overview", summary_html)
         + _section("Needs attention", issues_html)
-        + _section("Access", access_html)
-        + _section("Profiles", profiles_html)
-        + _section("Policy test", policy_simulator_html)
+        + _section("Grant access", access_html)
+        + _section("Access policies", profiles_html)
+        + _section("Test access", policy_simulator_html)
         + _section("Apps", apps_table)
         + _section("Users", users_table)
         + _section("Keys", credentials_table)
