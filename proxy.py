@@ -60,6 +60,7 @@ from gateway.admin_oidc import (
     PKCEPair,
     SessionError,
     StateRecord,
+    admin_role_from_oidc_claims,
     authorization_url,
     bootstrap_admin_role,
     consume_state,
@@ -7715,6 +7716,8 @@ async def admin_oidc_callback(request: Request):
             config=cfg,
             existing_roles=_existing_admin_roles_by_email(),
         )
+        if role == "none":
+            role = admin_role_from_oidc_claims(claims, config=cfg)
         if role in {"owner", "admin"}:
             admin_store.assign_admin_role(
                 role=role,

@@ -239,6 +239,69 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(len(apps), 1)
         self.assertEqual(apps[0]["kind"], "personal")
 
+    def test_oidc_login_trusted_group_grants_admin_session(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset(),
+            admin_emails=frozenset({"owner@example.com"}),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+            admin_groups=frozenset({"trusted users"}),
+            admin_roles=frozenset({"trusted"}),
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        self.client.get("/login?return_to=/admin", follow_redirects=False)
+        state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
+
+        async def fake_exchange(_code, *, config, pkce):
+            self.assertEqual(pkce.verifier, record.pkce_verifier)
+            return {"id_token": "fake.id.token"}
+
+        async def fake_verify(_id_token, *, config):
+            return {
+                "iss": cfg.issuer,
+                "aud": cfg.client_id,
+                "sub": "trusted-subject",
+                "email": "simon@appears.blue",
+                "email_verified": True,
+                "groups": ["/trusted-users"],
+                "realm_access": {"roles": ["trusted"]},
+                "nonce": record.nonce,
+                "exp": 4_000_000_000,
+                "iat": 1_700_000_000,
+            }
+
+        with patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
+            proxy, "_oidc_verify_id_token", fake_verify
+        ):
+            callback = self.client.get(
+                f"/admin/oidc/callback?state={state}&code=abc",
+                follow_redirects=False,
+            )
+        self.assertEqual(callback.status_code, 302, callback.text)
+
+        dashboard = self.client.get("/admin")
+        self.assertEqual(dashboard.status_code, 200, dashboard.text)
+        self.assertIn("simon@appears.blue", dashboard.text)
+        user = admin_store.list_users(path=self.db)[0]
+        roles = admin_store.list_admin_roles(
+            subject_kind="user",
+            subject_id=user["id"],
+            path=self.db,
+        )
+        self.assertEqual({role["role"] for role in roles}, {"admin"})
+
     def test_oidc_login_auto_provision_persists_resolved_default_profile(self) -> None:
         cfg = OIDCConfig(
             enabled=True,

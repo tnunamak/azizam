@@ -139,6 +139,14 @@ Admin/control-plane credentials are separate. Bootstrap a service-account admin 
 
 The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser login starts at `/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. Admins are Users with an admin-capable role, so signed-in admins also see an Admin link from the account portal. The dashboard can create Apps, Profiles, and API keys, revoke credentials, and simulate policy decisions before handing someone access.
 
+OIDC can grant admin from configured IdP groups or roles without hardcoding a
+deployment's policy into the proxy. Set `admin.oidc.admin_groups` /
+`admin.oidc.admin_roles`, or point `admin_groups_env` / `admin_roles_env` at
+comma-separated environment variables. Group matching accepts common Keycloak
+forms such as `/Trusted`, `trusted`, `trusted-users`, and `trusted users`.
+Claim-based grants create `admin` users only; `owner` remains a bootstrap or
+explicit manual grant.
+
 ### Give a family member a key
 
 The shortest "share my gateway with another human" flow:

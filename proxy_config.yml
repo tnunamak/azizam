@@ -277,3 +277,5 @@ admin:
     signing_key_env: AI_GATEWAY_ADMIN_SESSION_KEY
     admin_emails:
       - tim.nunamaker@gmail.com
+    admin_groups_env: AI_GATEWAY_ADMIN_OIDC_ADMIN_GROUPS
+    admin_roles_env: AI_GATEWAY_ADMIN_OIDC_ADMIN_ROLES

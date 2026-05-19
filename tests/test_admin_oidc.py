@@ -20,6 +20,7 @@ from gateway.admin_oidc import (  # noqa: E402
     OIDCConfigError,
     SessionError,
     StateRecord,
+    admin_role_from_oidc_claims,
     authorization_url,
     bootstrap_admin_role,
     consume_state,
@@ -103,6 +104,44 @@ class TestConfigLoad(unittest.TestCase):
         )
         self.assertEqual(cfg.client_secret, "from-env")
         self.assertEqual(cfg.signing_key, b"k" * 40)
+
+    def test_loads_oidc_admin_groups_and_roles_with_aliases(self) -> None:
+        cfg = load_oidc_config(
+            {
+                "enabled": True,
+                "issuer": "https://i",
+                "client_id": "c",
+                "client_secret": "s",
+                "redirect_uri": "https://x/cb",
+                "signing_key": "a" * 32,
+                "admin_groups": ["/Trusted Users"],
+                "admin_roles": ["trusted-admins"],
+            }
+        )
+        self.assertIn("trusted-users", cfg.admin_groups)
+        self.assertIn("trusted users", cfg.admin_groups)
+        self.assertIn("trusted_admins", cfg.admin_roles)
+
+    def test_loads_oidc_admin_groups_and_roles_from_env(self) -> None:
+        cfg = load_oidc_config(
+            {
+                "enabled": True,
+                "issuer": "https://i",
+                "client_id": "c",
+                "client_secret": "s",
+                "redirect_uri": "https://x/cb",
+                "signing_key": "a" * 32,
+                "admin_groups_env": "ADMIN_GROUPS",
+                "admin_roles_env": "ADMIN_ROLES",
+            },
+            env={
+                "ADMIN_GROUPS": "/Trusted, trusted users",
+                "ADMIN_ROLES": "trusted-admins",
+            },
+        )
+        self.assertIn("trusted", cfg.admin_groups)
+        self.assertIn("trusted-users", cfg.admin_groups)
+        self.assertIn("trusted-admins", cfg.admin_roles)
 
     def test_scopes_must_include_openid(self) -> None:
         with self.assertRaises(OIDCConfigError):
@@ -341,6 +380,29 @@ class TestIDTokenClaims(unittest.TestCase):
                 expected_nonce="NONCE",
             )
 
+    def test_configured_admin_group_is_an_allow_list_path(self) -> None:
+        cfg = make_config(
+            admin_emails=frozenset({"alice@example.com"}),
+            admin_groups=frozenset({"trusted"}),
+        )
+        validate_id_token_claims(
+            self._claims(email="simon@example.com", groups=["/Trusted"]),
+            config=cfg,
+            expected_nonce="NONCE",
+        )
+
+    def test_unmatched_admin_group_does_not_bypass_allow_list(self) -> None:
+        cfg = make_config(
+            admin_emails=frozenset({"alice@example.com"}),
+            admin_groups=frozenset({"trusted"}),
+        )
+        with self.assertRaises(IDTokenClaimsError):
+            validate_id_token_claims(
+                self._claims(email="simon@example.com", groups=["/Everyone"]),
+                config=cfg,
+                expected_nonce="NONCE",
+            )
+
     def test_open_allow_list_permits_anyone(self) -> None:
         cfg = make_config()
         validate_id_token_claims(
@@ -511,6 +573,45 @@ class TestBootstrapRole(unittest.TestCase):
             existing_roles={"alice@example.com": AdminRole.OWNER},
         )
         self.assertEqual(role, AdminRole.ADMIN)
+
+
+class TestOIDCClaimRole(unittest.TestCase):
+    def test_group_claim_can_grant_admin(self) -> None:
+        cfg = make_config(admin_groups=frozenset({"trusted users"}))
+        role = admin_role_from_oidc_claims(
+            {"groups": ["/local-ai/trusted-users"]},
+            config=cfg,
+        )
+        self.assertEqual(role, AdminRole.ADMIN)
+
+    def test_realm_role_claim_can_grant_admin(self) -> None:
+        cfg = make_config(admin_roles=frozenset({"trusted"}))
+        role = admin_role_from_oidc_claims(
+            {"realm_access": {"roles": ["trusted"]}},
+            config=cfg,
+        )
+        self.assertEqual(role, AdminRole.ADMIN)
+
+    def test_client_role_claim_can_grant_admin(self) -> None:
+        cfg = make_config(client_id="ai-gateway", admin_roles=frozenset({"trusted"}))
+        role = admin_role_from_oidc_claims(
+            {
+                "resource_access": {
+                    "ai-gateway": {"roles": ["trusted"]},
+                    "other-client": {"roles": ["trusted"]},
+                }
+            },
+            config=cfg,
+        )
+        self.assertEqual(role, AdminRole.ADMIN)
+
+    def test_unconfigured_claims_do_not_grant_admin(self) -> None:
+        cfg = make_config(admin_groups=frozenset({"trusted-users"}))
+        role = admin_role_from_oidc_claims(
+            {"groups": ["/everyone"]},
+            config=cfg,
+        )
+        self.assertEqual(role, AdminRole.NONE)
 
 
 if __name__ == "__main__":

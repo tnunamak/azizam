@@ -61,6 +61,7 @@ __all__ = [
     "SessionError",
     "StateRecord",
     "authorization_url",
+    "admin_role_from_oidc_claims",
     "bootstrap_admin_role",
     "consume_state",
     "csrf_token_for_session",
@@ -166,6 +167,10 @@ class OIDCConfig:
     jwks_uri: str = ""
     # Allow clock skew when checking ``exp`` / ``iat``.
     clock_skew_seconds: int = 60
+    # Optional IdP-driven admin grants. Keycloak commonly emits groups as
+    # "/trusted-users" and roles under realm_access/resource_access.
+    admin_groups: frozenset[str] = field(default_factory=frozenset)
+    admin_roles: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
         if not self.enabled:
@@ -194,6 +199,60 @@ def _coerce_str_set(values: Any) -> frozenset[str]:
         except TypeError as exc:
             raise OIDCConfigError(f"expected iterable, got {type(values).__name__}") from exc
     return frozenset(str(v).strip().lower() for v in items if str(v).strip())
+
+
+def _access_name_aliases(value: Any) -> frozenset[str]:
+    """Return normalized aliases for IdP group/role names.
+
+    Operators should not have to remember whether Keycloak emitted
+    "trusted users", "trusted-users", "trusted_users", or "/trusted-users".
+    For nested group paths we match both the full path and final segment.
+    """
+    raw = str(value).strip().lower()
+    if not raw:
+        return frozenset()
+    stripped = raw.strip("/")
+    path_parts = [part.strip() for part in stripped.split("/") if part.strip()]
+    candidates = {stripped}
+    if path_parts:
+        candidates.add("/".join(path for path in path_parts if path))
+        candidates.add(path_parts[-1])
+
+    aliases: set[str] = set()
+    for candidate in candidates:
+        compact = " ".join(candidate.split())
+        if not compact:
+            continue
+        aliases.add(compact)
+        words = " ".join(compact.replace("_", " ").replace("-", " ").split())
+        if words:
+            aliases.add(words)
+            aliases.add(words.replace(" ", "-"))
+            aliases.add(words.replace(" ", "_"))
+    return frozenset(alias for alias in aliases if alias)
+
+
+def _coerce_access_name_set(values: Any) -> frozenset[str]:
+    if values is None:
+        return frozenset()
+    if isinstance(values, str):
+        if "," in values or "\n" in values:
+            items: Iterable[Any] = [
+                part.strip()
+                for chunk in values.splitlines()
+                for part in chunk.split(",")
+            ]
+        else:
+            items = [values]
+    else:
+        try:
+            items = list(values)
+        except TypeError as exc:
+            raise OIDCConfigError(f"expected iterable, got {type(values).__name__}") from exc
+    aliases: set[str] = set()
+    for item in items:
+        aliases.update(_access_name_aliases(item))
+    return frozenset(aliases)
 
 
 def _coerce_scopes(values: Any) -> tuple[str, ...]:
@@ -258,6 +317,10 @@ def load_oidc_config(
     * ``scopes`` — string ("openid email profile") or list
     * ``allowed_email_domains`` — list of domains (case-insensitive)
     * ``admin_emails`` — list of emails (case-insensitive)
+    * ``admin_groups`` — OIDC group names/paths that should grant admin
+    * ``admin_roles`` — OIDC realm/client role names that should grant admin
+    * ``admin_groups_env`` / ``admin_roles_env`` — env var names with comma-
+      separated OIDC group/role names
     * ``signing_key`` — literal
     * ``signing_key_env`` — env var name
     * ``cookie`` — nested mapping for :class:`CookieConfig`
@@ -288,6 +351,17 @@ def load_oidc_config(
     else:
         signing_key = _coerce_signing_key(signing_raw)
 
+    admin_groups = data.get("admin_groups")
+    if not admin_groups:
+        groups_env = data.get("admin_groups_env")
+        if groups_env:
+            admin_groups = env_map.get(str(groups_env), "")
+    admin_roles = data.get("admin_roles")
+    if not admin_roles:
+        roles_env = data.get("admin_roles_env")
+        if roles_env:
+            admin_roles = env_map.get(str(roles_env), "")
+
     cookie_data = data.get("cookie") or {}
     if not isinstance(cookie_data, Mapping):
         raise OIDCConfigError("cookie config must be a mapping")
@@ -316,6 +390,8 @@ def load_oidc_config(
         token_endpoint=str(data.get("token_endpoint", "")),
         jwks_uri=str(data.get("jwks_uri", "")),
         clock_skew_seconds=int(data.get("clock_skew_seconds", 60)),
+        admin_groups=_coerce_access_name_set(admin_groups),
+        admin_roles=_coerce_access_name_set(admin_roles),
     )
 
 
@@ -561,7 +637,10 @@ def validate_id_token_claims(
     if email_verified is False:
         raise IDTokenClaimsError("email not verified by IdP")
 
-    if not _email_allowed(email, config):
+    if (
+        not _email_allowed(email, config)
+        and admin_role_from_oidc_claims(claims, config=config) != AdminRole.ADMIN
+    ):
         raise IDTokenClaimsError("email not in allow-list")
 
     return claims
@@ -584,6 +663,61 @@ def _email_allowed(email: str, config: OIDCConfig) -> bool:
         return True
     _, _, domain = email.partition("@")
     return domain in config.allowed_email_domains
+
+
+def _iter_claim_strings(value: Any) -> Iterable[str]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return tuple(str(item) for item in value if item is not None)
+    return ()
+
+
+def _claim_values_match(value: Any, allowed: frozenset[str]) -> bool:
+    if not allowed:
+        return False
+    allowed_aliases: set[str] = set()
+    for item in allowed:
+        allowed_aliases.update(_access_name_aliases(item))
+    for item in _iter_claim_strings(value):
+        if _access_name_aliases(item) & allowed_aliases:
+            return True
+    return False
+
+
+def admin_role_from_oidc_claims(
+    claims: Mapping[str, Any],
+    *,
+    config: OIDCConfig,
+) -> str:
+    """Return an admin role granted by configured OIDC groups/roles.
+
+    This deliberately grants only ``admin``. ``owner`` remains an explicit
+    bootstrap/manual concept, while "trusted users" can be managed in the
+    IdP as the normal admin set for this gateway.
+    """
+    if _claim_values_match(claims.get("groups"), config.admin_groups):
+        return AdminRole.ADMIN
+
+    realm_access = claims.get("realm_access")
+    if isinstance(realm_access, Mapping) and _claim_values_match(
+        realm_access.get("roles"),
+        config.admin_roles,
+    ):
+        return AdminRole.ADMIN
+
+    resource_access = claims.get("resource_access")
+    if isinstance(resource_access, Mapping):
+        client_access = resource_access.get(config.client_id)
+        if isinstance(client_access, Mapping) and _claim_values_match(
+            client_access.get("roles"),
+            config.admin_roles,
+        ):
+            return AdminRole.ADMIN
+
+    return AdminRole.NONE
 
 
 # ---------------------------------------------------------------------------
