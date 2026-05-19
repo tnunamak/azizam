@@ -45,6 +45,8 @@ _PAGE_CSS = """
       radial-gradient(circle at 18% -10%, rgba(123,196,200,0.14), transparent 30rem),
       radial-gradient(circle at 100% 8%, rgba(212,154,166,0.10), transparent 24rem),
       var(--vf-bg);
+    background-repeat: no-repeat;
+    background-size: 100% 38rem, 100% 34rem, auto;
   }
   .shell-main {
     max-width: 960px;
@@ -114,6 +116,14 @@ _PAGE_CSS = """
     align-items: center;
     background: var(--vf-panel);
   }
+  .base-card h2 {
+    margin: 0;
+    color: var(--vf-subtle);
+    font-size: 0.74rem;
+    font-weight: 750;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
   .base-card code {
     color: var(--text);
     font-size: 1rem;
@@ -162,11 +172,12 @@ _PAGE_CSS = """
     cursor: pointer;
   }
   button.icon-button {
-    width: 2.75rem;
-    padding: 0;
+    min-width: 6.25rem;
+    padding: 0 0.85rem;
     color: var(--vf-accent);
     background: var(--panel-2);
     border-color: var(--line);
+    white-space: nowrap;
   }
   button.secondary {
     background: var(--panel-2);
@@ -209,6 +220,30 @@ _PAGE_CSS = """
   .message.good { color: var(--good); background: var(--good-bg); }
   .message.warn { color: var(--warn); background: var(--warn-bg); }
   .message.bad { color: var(--bad); background: var(--bad-bg); }
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: var(--space-4);
+    z-index: 20;
+    width: min(28rem, calc(100vw - 2rem));
+    padding: var(--space-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: oklch(14.5% 0.016 250);
+    color: var(--text);
+    box-shadow: 0 18px 48px rgba(0,0,0,0.26);
+    transform: translate(-50%, calc(100% + var(--space-6)));
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+  .toast.show {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+  .toast.good { color: var(--good); background: var(--good-bg); }
+  .toast.warn { color: var(--warn); background: var(--warn-bg); }
+  .toast.bad { color: var(--bad); background: var(--bad-bg); }
   .message .secret {
     display: grid;
     gap: var(--space-2);
@@ -219,8 +254,10 @@ _PAGE_CSS = """
     overflow-wrap: anywhere;
   }
   .snippet {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
     background: oklch(14.5% 0.016 250);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -290,19 +327,7 @@ _PAGE_CSS = """
     padding: var(--space-4);
     text-align: center;
   }
-  .two-col {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
-    gap: var(--space-4);
-  }
-  .access-group { display: grid; gap: var(--space-3); align-content: start; }
-  .access-group h3 {
-    margin: 0;
-    color: var(--muted);
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
+  .access-list { display: grid; gap: var(--space-2); }
   @media (max-width: 720px) {
     .hero h2 { font-size: 2.6rem; }
     .section-head h2 { font-size: 1.7rem; }
@@ -543,6 +568,7 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
         + "</p>"
         "</div>"
         + '<div id="account-result" class="message"></div>'
+        + '<div id="account-toast" class="toast" role="status" aria-live="polite"></div>'
         + _base_url_card()
         + create_form
         + apps_html
@@ -555,10 +581,10 @@ def _base_url_card() -> str:
         '<section aria-labelledby="base-url-heading">'
         '<div class="base-card">'
         '<div>'
-        '<p class="eyebrow">base url</p>'
-        '<h2 id="base-url-heading" class="sr-only">Base URL</h2>'
+        '<h2 id="base-url-heading">Base URL</h2>'
         '<code id="base-url-display"></code>'
         '<p>Gateway reachable. Use this for OpenAI-compatible SDKs and tools.</p>'
+        '<div id="openai-snippet" class="snippet"></div>'
         "</div>"
         '<button class="icon-button" type="button" id="copy-base-url" aria-label="Copy base URL">Copy</button>'
         "</div>"
@@ -566,17 +592,12 @@ def _base_url_card() -> str:
     )
 
 
-def _runtime_key_section(*, signed_in: bool = False) -> str:
-    heading = "Check another key" if signed_in else "Check an API key"
-    hint = (
-        "Use this only for a key that is not listed above."
-        if signed_in
-        else "Paste an <code>opk_</code> key if you already have one."
-    )
+def _runtime_key_section() -> str:
     return (
         '<section aria-labelledby="runtime-heading">'
-        f'<h2 id="runtime-heading">{heading}</h2>'
-        f'<p class="hint">{hint} This only checks the key from this browser tab.</p>'
+        '<h2 id="runtime-heading">Check an API key</h2>'
+        '<p class="hint">Paste an <code>opk_</code> key if you already have one. '
+        "This only checks the key from this browser tab.</p>"
         '<div class="card">'
         '<div class="row runtime-key-row">'
         '<input id="runtime-key" type="password" autocomplete="off" spellcheck="false" '
@@ -592,32 +613,12 @@ def _runtime_key_section(*, signed_in: bool = False) -> str:
     )
 
 
-def _settings_section() -> str:
-    return (
-        '<section aria-labelledby="settings-heading" class="settings-section">'
-        '<h2 id="settings-heading">Connection settings</h2>'
-        '<p class="hint">Point an OpenAI-compatible App or SDK tool at the gateway. '
-        "Other protocols use the same base URL with their own paths.</p>"
-        '<div id="openai-snippet" class="snippet"></div>'
-        "</section>"
-    )
-
-
 def _access_section() -> str:
     return (
         '<section id="access-section" aria-labelledby="access-heading" hidden>'
         '<h2 id="access-heading">Access</h2>'
         '<p class="hint" id="access-summary"></p>'
-        '<div class="two-col">'
-        '<div id="capabilities-group" class="access-group" hidden>'
-        '<h3>Capabilities</h3>'
-        '<div id="capabilities" class="list"></div>'
-        '</div>'
-        '<div id="models-group" class="access-group" hidden>'
-        '<h3>Models and workflows</h3>'
-        '<div id="models" class="list"></div>'
-        '</div>'
-        "</div>"
+        '<div id="access-list" class="access-list"></div>'
         "</section>"
     )
 
@@ -672,9 +673,8 @@ def render_user_portal(
 
     body = (
         primary_section
-        + _runtime_key_section(signed_in=is_signed_in)
+        + ("" if is_signed_in else _runtime_key_section())
         + ("" if is_signed_in else _base_url_card())
-        + _settings_section()
         + _access_section()
     )
 
@@ -704,12 +704,10 @@ def render_user_portal(
   const baseUrlDisplay = $("base-url-display");
   if (baseUrlDisplay) baseUrlDisplay.textContent = baseUrl + "/v1";
 
-  $("openai-snippet").textContent = [
-    'export OPENAI_BASE_URL="' + baseUrl + '/v1"',
-    'export OPENAI_API_KEY="opk_..."',
-    "",
-    'curl "$OPENAI_BASE_URL/models" -H "Authorization: Bearer $OPENAI_API_KEY"'
-  ].join("\\n");
+  const openaiSnippet = $("openai-snippet");
+  if (openaiSnippet) {{
+    openaiSnippet.textContent = 'export OPENAI_BASE_URL="' + baseUrl + '/v1" OPENAI_API_KEY="opk_..."';
+  }}
 
   const copyBaseUrl = $("copy-base-url");
   if (copyBaseUrl) {{
@@ -721,19 +719,42 @@ def render_user_portal(
     result.textContent = text;
   }}
 
-  function setAccountMessage(text, kind = "") {{
+  let toastTimer = 0;
+  function clearAccountResult() {{
     const accountResult = $("account-result");
     if (!accountResult) return;
-    accountResult.className = "message" + (kind ? " " + kind : "");
-    accountResult.textContent = text;
+    accountResult.className = "message";
+    accountResult.textContent = "";
+  }}
+
+  function setAccountMessage(text, kind = "") {{
+    const toast = $("account-toast");
+    if (!toast) return;
+    clearAccountResult();
+    window.clearTimeout(toastTimer);
+    toast.className = "toast" + (kind ? " " + kind : "") + " show";
+    toast.textContent = text;
+    toastTimer = window.setTimeout(() => {{
+      toast.className = "toast" + (kind ? " " + kind : "");
+    }}, kind === "bad" ? 6500 : 3000);
   }}
 
   async function copyText(text, button) {{
+    const original = button ? (button.dataset.copyLabel || button.textContent || "Copy") : "";
+    if (button) button.dataset.copyLabel = original;
     try {{
       await navigator.clipboard.writeText(text);
       if (button) button.textContent = "Copied";
     }} catch (_) {{
-      if (button) button.textContent = "Copy failed";
+      if (button) button.textContent = "Failed";
+    }} finally {{
+      if (button) {{
+        window.setTimeout(() => {{
+          if (button.textContent === "Copied" || button.textContent === "Failed") {{
+            button.textContent = button.dataset.copyLabel || original || "Copy";
+          }}
+        }}, 1300);
+      }}
     }}
   }}
 
@@ -760,7 +781,7 @@ def render_user_portal(
   }}
 
   function runtimeKey() {{
-    return keyInput.value.trim();
+    return keyInput ? keyInput.value.trim() : "";
   }}
 
   function hasAdminAutomationKey() {{
@@ -832,7 +853,8 @@ def render_user_portal(
     const meta = document.createElement("div");
     meta.className = "meta";
     badges.forEach((item) => meta.appendChild(badge(item.text, item.cls)));
-    article.append(h, p, meta);
+    article.append(h, p);
+    if (badges.length) article.append(meta);
     return article;
   }}
 
@@ -883,6 +905,7 @@ def render_user_portal(
     del.type = "button";
     del.className = "danger";
     del.dataset.revokeOwnedKey = text(credential.id);
+    del.setAttribute("aria-label", "Delete API key " + title.textContent);
     del.textContent = "Delete key";
     actions.append(inspect, del);
 
@@ -981,78 +1004,113 @@ def render_user_portal(
     return snapshot;
   }}
 
-  function renderCapabilities(payload) {{
-    const group = $("capabilities-group");
-    const root = $("capabilities");
-    if (!root || !group) return 0;
-    root.textContent = "";
-    const caps = Array.isArray(payload.capabilities) ? payload.capabilities : [];
-    if (!caps.length) {{
-      group.hidden = true;
-      return 0;
+  function humanizeId(value, fallback = "Gateway item") {{
+    const raw = text(value, fallback);
+    const prefixes = [
+      ["image.generate.", "Image generation: "],
+      ["image.edit.", "Image editing: "],
+      ["audio.generate.", "Audio generation: "],
+      ["speech.synthesis.", "Text to speech: "],
+      ["speech.transcription.", "Speech to text: "],
+      ["video.generate.", "Video: "],
+      ["chat.", "Chat: "],
+      ["embedding.", "Embeddings: "]
+    ];
+    for (const pair of prefixes) {{
+      if (raw.startsWith(pair[0])) {{
+        return pair[1] + raw.slice(pair[0].length).replace(/[._:-]+/g, " ").replace(/\\s+/g, " ").trim();
+      }}
     }}
-    group.hidden = false;
-    caps.forEach((cap) => {{
-      const name = cap.workflow || cap.model || cap.intent || "capability";
-      const modalities = []
-        .concat(cap.input_modalities || [])
-        .concat("->")
-        .concat(cap.output_modalities || [])
-        .join(" ");
-      const caveats = Array.isArray(cap.caveats) && cap.caveats.length
-        ? " Caveats: " + cap.caveats.join("; ")
-        : "";
-      root.appendChild(card(
-        name,
-        (cap.intent || "unknown intent") + " - " + (modalities || "modalities not declared") + caveats,
-        [
-          {{ text: cap.available === false ? "denied or unavailable" : "available", cls: cap.available === false ? "bad" : "good" }},
-          {{ text: cap.execution || "sync" }},
-          {{ text: cap.resource_tier || "resource" }},
-          {{ text: cap.trust_tier || "trust" }},
-          {{ text: cap.exposure || "exposure" }}
-        ].concat((cap.tags || []).slice(0, 4).map((tag) => ({{ text: tag }})))
-      ));
-    }});
-    return caps.length;
+    return raw.replace(/[._:-]+/g, " ").replace(/\\s+/g, " ").trim()
+      .replace(/\\b\\w/g, (char) => char.toUpperCase()) || fallback;
   }}
 
-  function renderModels(payload) {{
-    const group = $("models-group");
-    const root = $("models");
-    if (!root || !group) return 0;
+  function intentDescription(intent) {{
+    const descriptions = {{
+      "chat": "Chat with local language models.",
+      "chat.completions": "Chat with OpenAI-compatible local language models.",
+      "text.completions": "Generate or complete text.",
+      "text.embeddings": "Create embeddings for search, retrieval, and memory.",
+      "embeddings": "Create embeddings for search, retrieval, and memory.",
+      "image.generate": "Generate images.",
+      "image.edit": "Edit, inpaint, or restyle images.",
+      "speech.synthesis": "Generate spoken audio from text.",
+      "speech.transcription": "Transcribe speech to text.",
+      "audio.generate": "Generate music, loops, or sound effects.",
+      "video.generate": "Generate video jobs.",
+      "models.list": "List available models."
+    }};
+    return descriptions[text(intent)] || "Allowed by this key.";
+  }}
+
+  function modalityDescription(item) {{
+    const input = Array.isArray(item.input_modalities) ? item.input_modalities.filter(Boolean) : [];
+    const output = Array.isArray(item.output_modalities) ? item.output_modalities.filter(Boolean) : [];
+    const parts = [];
+    if (input.length) parts.push("Accepts " + input.join(", ") + ".");
+    if (output.length) parts.push("Returns " + output.join(", ") + ".");
+    return parts.join(" ");
+  }}
+
+  function describeCapability(cap) {{
+    const title = humanizeId(cap.label || cap.name || cap.workflow || cap.model || cap.intent);
+    const declared = text(cap.description);
+    const modalities = modalityDescription(cap);
+    const caveats = Array.isArray(cap.caveats) && cap.caveats.length
+      ? " Note: " + cap.caveats.join("; ")
+      : "";
+    return {{
+      title,
+      body: (declared || intentDescription(cap.intent)) + (modalities ? " " + modalities : "") + caveats
+    }};
+  }}
+
+  function describeModel(model) {{
+    const id = model.id || model.model || "Model";
+    return {{
+      title: humanizeId(id, "Model"),
+      body: text(model.description) || intentDescription(model.intent || "chat.completions")
+    }};
+  }}
+
+  function renderAccessItems(payload) {{
+    const root = $("access-list");
+    if (!root) return {{ capCount: 0, modelCount: 0 }};
     root.textContent = "";
+    const caps = Array.isArray(payload.capabilities) ? payload.capabilities : [];
     const modelPayload = payload.models && Array.isArray(payload.models.data)
       ? payload.models
       : payload;
     const data = Array.isArray(modelPayload.data) ? modelPayload.data : [];
-    if (!data.length) {{
-      group.hidden = true;
-      return 0;
-    }}
-    group.hidden = false;
-    data.slice(0, 24).forEach((model) => {{
-      const id = model.id || model.model || "model";
-      root.appendChild(card(id, model.intent || (model.owned_by ? "owned by " + model.owned_by : "OpenAI-compatible"), [
-        {{ text: model.object || "model" }},
-        {{ text: model.available === false ? "unavailable" : "available", cls: model.available === false ? "warn" : "good" }}
-      ]));
+    caps.forEach((cap) => {{
+      const item = describeCapability(cap);
+      root.appendChild(card(item.title, item.body));
     }});
-    return data.length;
+    data.slice(0, 24).forEach((model) => {{
+      const item = describeModel(model);
+      root.appendChild(card(item.title, item.body));
+    }});
+    if (!caps.length && !data.length) {{
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "This key works, but no access details were returned.";
+      root.appendChild(empty);
+    }}
+    return {{ capCount: caps.length, modelCount: data.length }};
   }}
 
   function renderAccess(payload, label) {{
     const accessSection = $("access-section");
     if (accessSection) accessSection.hidden = false;
-    const capCount = renderCapabilities(payload);
-    const modelCount = renderModels(payload.models || payload);
+    const counts = renderAccessItems(payload);
     const summary = $("access-summary");
     if (summary) {{
       const denied = Number(payload.denied_count || 0);
-      const suffix = denied ? " " + denied + " blocked by policy." : "";
-      summary.textContent = label + ": " + capCount + " capabilities, " + modelCount + " models/workflows." + suffix;
+      const total = counts.capCount + counts.modelCount;
+      const suffix = denied ? " " + denied + " hidden by policy." : "";
+      summary.textContent = label + " can use " + total + " available items." + suffix;
     }}
-    return {{ capCount, modelCount }};
+    return counts;
   }}
 
   async function checkAccess() {{
@@ -1073,24 +1131,31 @@ def render_user_portal(
         getJson("/v1/models")
       ]);
       const counts = renderAccess({{ ...caps, models }}, "Pasted key");
-      setMessage("Key works. Loaded " + counts.capCount + " capabilities and " + counts.modelCount + " models/workflows.", "good");
+      const total = counts.capCount + counts.modelCount;
+      setMessage("Key works. Loaded " + total + " available items.", "good");
     }} catch (error) {{
       setMessage(error.message || "Access check failed.", "bad");
     }}
   }}
 
-  $("check-key").addEventListener("click", checkAccess);
-  $("forget-key").addEventListener("click", () => {{
-    sessionStorage.removeItem(storageKey);
-    keyInput.value = "";
-    setMessage("Cleared the pasted key from this tab.");
-  }});
-  keyInput.addEventListener("keydown", (event) => {{
-    if (event.key === "Enter") checkAccess();
-  }});
+  const checkKey = $("check-key");
+  const forgetKey = $("forget-key");
+  if (checkKey && keyInput) {{
+    checkKey.addEventListener("click", checkAccess);
+    if (forgetKey) {{
+      forgetKey.addEventListener("click", () => {{
+        sessionStorage.removeItem(storageKey);
+        keyInput.value = "";
+        setMessage("Cleared the pasted key from this tab.");
+      }});
+    }}
+    keyInput.addEventListener("keydown", (event) => {{
+      if (event.key === "Enter") checkAccess();
+    }});
 
-  keyInput.value = sessionStorage.getItem(storageKey) || "";
-  updateKeyState();
+    keyInput.value = sessionStorage.getItem(storageKey) || "";
+    updateKeyState();
+  }}
 
   renderApps((accountSnapshot && accountSnapshot.apps) || []);
 

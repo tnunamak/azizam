@@ -33,9 +33,9 @@ class UserPortalRenderTests(unittest.TestCase):
     def test_uses_normal_user_language(self) -> None:
         html = render_user_portal()
         self.assertIn("Check access", html)
-        self.assertIn("Connection settings", html)
+        self.assertIn("Base URL", html)
         self.assertIn("Access", html)
-        self.assertIn("Point an OpenAI-compatible App or SDK tool at the gateway.", html)
+        self.assertIn("Gateway reachable. Use this for OpenAI-compatible SDKs and tools.", html)
         self.assertNotIn("Use your local AI stack", html)
         self.assertNotIn("Failure Meanings", html)
         self.assertNotIn("ANTHROPIC_BASE_URL", html)
@@ -87,6 +87,8 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("account permissions", html)
         self.assertIn("base-url-display", html)
         self.assertIn("copy-base-url", html)
+        self.assertNotIn("Check another key", html)
+        self.assertNotIn('id="runtime-key"', html)
         self.assertIn("data-mint-owned-key", html)
         self.assertIn("data-revoke-owned-key", html)
         self.assertIn("Create key", html)
@@ -152,6 +154,60 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("No Apps yet", html)
         self.assertIn("x-ai-gateway-csrf", html)
 
+    def test_base_url_area_keeps_copy_and_openai_setup_compact(self) -> None:
+        html = render_user_portal(public_base_url="https://gw.example")
+        self.assertIn('id="openai-snippet" class="snippet"', html)
+        self.assertIn(
+            'export OPENAI_BASE_URL="\' + baseUrl + \'/v1" OPENAI_API_KEY="opk_..."',
+            html,
+        )
+        self.assertNotIn('curl "$OPENAI_BASE_URL/models"', html)
+        self.assertNotIn("Connection settings", html)
+        self.assertIn("min-width: 6.25rem;", html)
+        self.assertIn("white-space: nowrap;", html)
+        self.assertIn('button.textContent = "Copied";', html)
+        self.assertIn('button.textContent = "Failed";', html)
+        self.assertIn("button.dataset.copyLabel", html)
+
+    def test_transient_messages_and_background_do_not_shift_or_tile(self) -> None:
+        html = render_user_portal(
+            account={
+                "authenticated": True,
+                "user": {"email": "user@example.com", "role": "none"},
+                "apps": [],
+            },
+        )
+        self.assertIn("background-repeat: no-repeat;", html)
+        self.assertIn("background-size: 100% 38rem, 100% 34rem, auto;", html)
+        self.assertIn('id="account-toast" class="toast"', html)
+        self.assertIn("toastTimer = window.setTimeout", html)
+        self.assertIn(".message:empty { display: none; }", html)
+        self.assertNotIn(".message:empty { visibility: hidden; }", html)
+
+    def test_access_results_are_single_column_without_noisy_badges(self) -> None:
+        html = render_user_portal()
+        self.assertIn('id="access-list" class="access-list"', html)
+        self.assertIn("function renderAccessItems(payload)", html)
+        self.assertIn("available items", html)
+        self.assertIn("function humanizeId(value", html)
+        self.assertIn("function intentDescription(intent)", html)
+        self.assertIn("Generate music, loops, or sound effects.", html)
+        self.assertNotIn("capabilities-group", html)
+        self.assertNotIn("models-group", html)
+        self.assertNotIn("<h3>Capabilities</h3>", html)
+        self.assertNotIn("<h3>Models and workflows</h3>", html)
+        self.assertNotIn('text: cap.available === false ? "denied or unavailable" : "available"', html)
+        self.assertNotIn('text: model.object || "model"', html)
+        self.assertNotIn('text: cap.execution || "sync"', html)
+        self.assertNotIn("models/workflows", html)
+
+    def test_client_rendered_delete_key_controls_are_labelled(self) -> None:
+        html = render_user_portal()
+        self.assertIn(
+            'del.setAttribute("aria-label", "Delete API key " + title.textContent);',
+            html,
+        )
+
     def test_signed_out_landing_uses_shared_shell_and_clear_hero(self) -> None:
         html = render_user_portal(oidc_enabled=True)
         # Shared shell chrome.
@@ -215,7 +271,7 @@ class UserPortalRenderTests(unittest.TestCase):
         )
         self.assertIn("Your Apps", html)
         self.assertIn("Create an App", html)
-        self.assertIn("base url", html)
+        self.assertIn("Base URL", html)
         self.assertIn("View access", html)
         self.assertNotIn("Profile editor", html)
         self.assertNotIn("Which profile", html)

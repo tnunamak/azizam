@@ -184,8 +184,23 @@ _PAGE_CSS = """
   .choice-card input { margin-right: 0.4rem; }
   .choice-card strong { color: var(--text); }
   .inline-options { display: flex; flex-wrap: wrap; gap: 0.55rem 1rem; }
-  .template-strip { display: grid; gap: 0.55rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
-  .template-card { border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem; background: oklch(14.5% 0.015 250); }
+  .template-strip { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  .template-card {
+    display: grid;
+    grid-template-columns: 1.2rem minmax(0, 1fr);
+    gap: 0.65rem;
+    align-items: start;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.8rem;
+    background: oklch(14.5% 0.015 250);
+    cursor: pointer;
+  }
+  .template-card:has(input:checked) {
+    background: color-mix(in oklch, var(--focus), transparent 90%);
+    border-color: color-mix(in oklch, var(--focus), var(--line) 35%);
+  }
+  .template-card input { width: 1rem; min-height: 1rem; margin: 0.15rem 0 0; accent-color: var(--focus); }
   .template-card strong { display: block; color: var(--text); }
   .template-card span { display: block; margin-top: 0.25rem; color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
   @media (max-width: 760px) {
@@ -679,34 +694,27 @@ def _profile_form(
     *,
     create_profile_action: str,
 ) -> str:
-    existing = ", ".join(_profile_id(profile) for profile in profiles)
-    existing_html = (
-        f'<div class="hint">Existing Profiles: <code>{_esc(existing)}</code></div>'
-        if existing
-        else '<div class="hint">No stored Profiles yet.</div>'
-    )
     return (
-        existing_html
-        + '<form class="flow" method="post" action="'
+        '<form class="flow" method="post" action="'
         + _esc(create_profile_action)
         + '" data-create-profile>'
-        "<label>Create reusable access policy</label>"
-        '<p class="form-note">Start from a template, then name it for the person or service it describes. Detailed policy fields stay in Advanced.</p>'
+        "<label>Create Profile</label>"
+        '<p class="form-note">Profiles are reusable permission templates assigned by admins to people and shared Apps. Start from a template, name it, and adjust details only when needed.</p>'
+        '<p class="form-note"><strong>Start from a template</strong> — templates name the most common policies so you do not reinvent them.</p>'
         '<div class="template-strip" aria-label="Profile templates">'
-        '<div class="template-card"><strong>Chat only</strong><span>Local chat and completions.</span></div>'
-        '<div class="template-card"><strong>Chat + embeddings</strong><span>Retrieval/search without media access.</span></div>'
-        '<div class="template-card"><strong>Media workflows</strong><span>Approved image, audio, and video jobs.</span></div>'
-        '<div class="template-card"><strong>Full runtime access</strong><span>Broad runtime use, no admin powers.</span></div>'
+        '<label class="template-card"><input type="radio" name="profile_preset" value="chat_only" checked>'
+        '<span><strong>Chat only</strong><span>For a person, chatbot, or simple agent that only needs stable local language models.</span></span></label>'
+        '<label class="template-card"><input type="radio" name="profile_preset" value="chat_embeddings">'
+        '<span><strong>Chat + embeddings</strong><span>For RAG tools, document search, code indexes, and memory features.</span></span></label>'
+        '<label class="template-card"><input type="radio" name="profile_preset" value="media_workflows">'
+        '<span><strong>Media workflows</strong><span>For image, audio, and video jobs. Queue and GPU limits still apply.</span></span></label>'
+        '<label class="template-card"><input type="radio" name="profile_preset" value="full_runtime">'
+        '<span><strong>Full runtime</strong><span>For trusted power users and internal agents that need broad runtime access.</span></span></label>'
+        '<label class="template-card"><input type="radio" name="profile_preset" value="custom">'
+        '<span><strong>Blank · advanced</strong><span>Start small, then override the generated policy in Advanced.</span></span></label>'
         "</div>"
         '<div class="stack">'
         '<input type="text" name="label" placeholder="Profile name, e.g. Family chat" aria-label="Profile name" required>'
-        '<select name="profile_preset" aria-label="Start from">'
-        '<option value="chat_only">Chat only</option>'
-        '<option value="chat_embeddings">Chat + embeddings</option>'
-        '<option value="media_workflows">Media workflows</option>'
-        '<option value="full_runtime">Full runtime access</option>'
-        '<option value="custom">Custom policy</option>'
-        "</select>"
         "</div>"
         '<details class="panel"><summary>Advanced policy details</summary>'
         '<div class="stack">'
@@ -731,7 +739,7 @@ def _profile_form(
         "</details>"
         '<div class="row">'
         "<span></span>"
-        '<button type="submit">Create policy</button>'
+        '<button type="submit">Create Profile</button>'
         "</div>"
         "</form>"
     )
@@ -938,7 +946,7 @@ def render_admin_dashboard(
         "if(out)out.textContent=typeof v==='string'?v:JSON.stringify(v,null,2);if(wrap)wrap.hidden=false};"
         "const message=(text,kind='')=>{const el=document.getElementById('admin-flow-message');if(!el)return;"
         "el.className='message'+(kind?' '+kind:'');el.textContent=text};"
-        "const copyText=async(text,button)=>{try{await navigator.clipboard.writeText(text);if(button)button.textContent='Copied'}catch(_){if(button)button.textContent='Copy failed'}};"
+        "const copyText=async(text,button)=>{const original=button?(button.dataset.copyLabel||button.textContent||'Copy'):'';if(button)button.dataset.copyLabel=original;try{await navigator.clipboard.writeText(text);if(button)button.textContent='Copied'}catch(_){if(button)button.textContent='Failed'}finally{if(button)setTimeout(()=>{if(button.textContent==='Copied'||button.textContent==='Failed')button.textContent=button.dataset.copyLabel||original||'Copy'},1300)}};"
         "const showError=err=>{raw(err);message((err&&err.error&&(err.error.message||err.error.code))||err.message||'Request failed','bad')};"
         "const show=v=>{raw(v);message('Done.','good')};"
         "const showSecret=(v,lead,warning)=>{raw(v);const key=(v&&v.credential&&v.credential.api_key)||(v&&v.key&&v.key.credential&&v.key.credential.api_key);const el=document.getElementById('admin-flow-message');"

@@ -129,7 +129,11 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_includes_create_profile_flow(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn("Create reusable access policy", html)
+        self.assertIn("Create Profile", html)
+        self.assertIn(
+            "Profiles are reusable permission templates assigned by admins to people and shared Apps.",
+            html,
+        )
         self.assertIn('action="/admin/api/profiles"', html)
         self.assertIn("data-create-profile", html)
         self.assertIn("name=\"profile_preset\"", html)
@@ -139,14 +143,23 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_create_profile_offers_policy_templates_and_simple_options(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn('<option value="chat_only">Chat only</option>', html)
-        self.assertIn('<option value="chat_embeddings">Chat + embeddings</option>', html)
-        self.assertIn('<option value="media_workflows">Media workflows</option>', html)
-        self.assertIn('<option value="full_runtime">Full runtime access</option>', html)
+        self.assertIn(
+            'name="profile_preset" value="chat_only" checked',
+            html,
+        )
+        self.assertIn('name="profile_preset" value="chat_embeddings"', html)
+        self.assertIn('name="profile_preset" value="media_workflows"', html)
+        self.assertIn('name="profile_preset" value="full_runtime"', html)
+        self.assertIn("stable local language models", html)
+        self.assertIn("trusted power users and internal agents", html)
+        self.assertIn("Blank · advanced", html)
         self.assertIn('name="profile_preset"', html)
         self.assertIn('value="openai" checked> OpenAI-compatible', html)
         self.assertIn("policyTemplates={chat_only:", html)
         self.assertIn("full_runtime:{label:'Full runtime access'", html)
+        self.assertNotIn('<select name="profile_preset"', html)
+        self.assertNotIn("chat · completions · stable", html)
+        self.assertNotIn("Existing Profiles:", html)
         self.assertNotIn("All local and stable", html)
         self.assertNotIn('placeholder="protocols: openai, anthropic"', html)
 
@@ -335,6 +348,8 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         self.assertNotIn("location.reload", html)
         self.assertNotIn("window.location", html)
+        self.assertNotIn("Copy failed", html)
+        self.assertIn("button.dataset.copyLabel", html)
         self.assertIn("refreshMain", html)
         self.assertIn("DOMParser", html)
         key_form_branch = html[
