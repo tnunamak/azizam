@@ -126,6 +126,9 @@ _PAGE_CSS = """
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: end;
   }
+  .runtime-key-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
   .field {
     display: grid;
     gap: var(--space-1);
@@ -303,7 +306,7 @@ _PAGE_CSS = """
   @media (max-width: 720px) {
     .hero h2 { font-size: 2.6rem; }
     .section-head h2 { font-size: 1.7rem; }
-    .row, .key-form, .app-card-header, .key-row, .base-card { grid-template-columns: 1fr; }
+    .row, .runtime-key-row, .key-form, .app-card-header, .key-row, .base-card { grid-template-columns: 1fr; }
     .key-actions button, .actions button { width: 100%; }
     .base-card button { width: 100%; }
   }
@@ -575,7 +578,7 @@ def _runtime_key_section(*, signed_in: bool = False) -> str:
         f'<h2 id="runtime-heading">{heading}</h2>'
         f'<p class="hint">{hint} This only checks the key from this browser tab.</p>'
         '<div class="card">'
-        '<div class="row">'
+        '<div class="row runtime-key-row">'
         '<input id="runtime-key" type="password" autocomplete="off" spellcheck="false" '
         'placeholder="opk_..." aria-describedby="connect-result">'
         '<button id="check-key" type="button">Check access</button>'
