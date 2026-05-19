@@ -21,7 +21,7 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertTrue(html.startswith("<!doctype html>"))
         self.assertIn("</html>", html)
         self.assertIn("AI Gateway", html)
-        self.assertIn("Sign in with OIDC", html)
+        self.assertIn("Continue with vivid.fish ID", html)
         self.assertIn('/login?return_to=/', html)
         self.assertIn("/gateway/v1/capabilities", html)
         self.assertIn("/v1/models", html)
@@ -85,6 +85,8 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("user-laptop", html)
         self.assertNotIn("Family chat", html)
         self.assertIn("account permissions", html)
+        self.assertIn("base-url-display", html)
+        self.assertIn("copy-base-url", html)
         self.assertIn("data-mint-owned-key", html)
         self.assertIn("data-revoke-owned-key", html)
         self.assertIn("Create key", html)
@@ -92,6 +94,7 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("Delete App", html)
         self.assertIn("View access", html)
         self.assertIn("Create one App per tool, workflow, or script", html)
+        self.assertIn("Its keys stay inside that App", html)
         self.assertNotIn("Create one App per client", html)
         self.assertIn("Copy key", html)
         self.assertIn("Copy this opk_ App API key now", html)
@@ -128,7 +131,7 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn('href="/status">Status</a>', html)
         self.assertNotIn("role owner", html)
         self.assertIn("permission Profiles", html)
-        self.assertIn("New App", html)
+        self.assertIn("Create an App", html)
         self.assertNotIn('<form class="actions" data-request-access>', html)
         self.assertNotIn("<button type=\"submit\">Request access</button>", html)
 
@@ -142,7 +145,7 @@ class UserPortalRenderTests(unittest.TestCase):
             },
             csrf_token="csrf-token",
         )
-        self.assertIn("New App", html)
+        self.assertIn("Create an App", html)
         self.assertIn("Open WebUI, Cline, render pipeline", html)
         self.assertIn("<button type=\"submit\">Create App</button>", html)
         self.assertIn("data-create-owned-app", html)
@@ -166,8 +169,10 @@ class UserPortalRenderTests(unittest.TestCase):
             '<section id="access-section" aria-labelledby="access-heading" hidden>',
             html,
         )
-        # Hero copy points the user at the two ways to start.
-        self.assertIn("Start with an account or key", html)
+        # Hero copy points the user at the thin sign-in/create-key path.
+        self.assertIn("Tim&apos;s gateway. Now yours, too.", html)
+        self.assertIn("One OpenAI-compatible base URL", html)
+        self.assertIn("create Apps", html)
         self.assertIn("opk_", html)
         # No Sign out affordance when not signed in.
         self.assertNotIn(">Sign out</a>", html)
@@ -198,6 +203,26 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertNotIn("</script><script>", html)
         self.assertIn("&lt;script&gt;alert", html)
         self.assertIn("\\u003c/script\\u003e", html)
+
+    def test_design_contract_keeps_normal_user_surface_thin(self) -> None:
+        html = render_user_portal(
+            oidc_enabled=True,
+            account={
+                "authenticated": True,
+                "user": {"email": "thin@example.com", "role": "none"},
+                "apps": [],
+            },
+        )
+        self.assertIn("Your Apps", html)
+        self.assertIn("Create an App", html)
+        self.assertIn("base url", html)
+        self.assertIn("View access", html)
+        self.assertNotIn("Profile editor", html)
+        self.assertNotIn("Which profile", html)
+        self.assertNotIn("permission Profiles", html)
+        self.assertNotIn("policy matrix", html)
+        self.assertNotIn("Chat only", html)
+        self.assertNotIn("Full runtime access", html)
 
 
 if __name__ == "__main__":

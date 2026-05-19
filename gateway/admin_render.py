@@ -7,9 +7,9 @@ returns a complete HTML page. It performs no I/O, opens no templates, and
 never imports persistence or auth modules.
 
 The page is intentionally simple but real: it shows the apps, users, app
-profiles, credentials (without raw key material), audit entries, and
-discovery links, and it includes an HTML form for the "give my brother an
-API key" flow — create an app, then mint a key against it.
+profiles, credentials (without raw key material), and audit entries. It also
+includes the operator flows for shared App API keys, profile templates, admin
+automation keys, and policy simulation.
 
 Data-plane copy uses **App**, not "Client", per the project convention.
 """
@@ -30,6 +30,30 @@ __all__ = ["render_admin_dashboard"]
 
 
 _PAGE_CSS = """
+  .operator-hero {
+    display: grid;
+    gap: var(--space-3);
+    padding: clamp(1rem, 4vw, 1.5rem);
+    background:
+      linear-gradient(135deg, oklch(18% 0.04 205), oklch(14% 0.025 250) 52%, oklch(18% 0.035 170));
+    border: 1px solid color-mix(in oklch, var(--line), oklch(72% 0.11 190) 35%);
+    border-radius: var(--radius);
+  }
+  .operator-hero h1 { margin: 0; font-size: 3rem; line-height: 1; }
+  .operator-hero p { margin: 0; max-width: 62rem; color: var(--muted); line-height: 1.55; }
+  .operator-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .operator-strip a, .operator-strip span {
+    min-height: 2.25rem;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.35rem 0.7rem;
+    background: oklch(16% 0.022 230);
+    color: var(--text);
+  }
+  .operator-strip a:hover { text-decoration: none; filter: brightness(1.06); }
+  .section-intro { margin: -0.25rem 0 var(--space-3); color: var(--muted); line-height: 1.5; max-width: 58rem; }
   .summary { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--muted); }
   .summary strong { color: var(--text); }
   .summary span { background: var(--panel); border: 1px solid var(--line);
@@ -70,6 +94,7 @@ _PAGE_CSS = """
                      min-height: 2.75rem; padding: 0.55rem 1rem; border-radius: 6px;
                      cursor: pointer; font-weight: 600; }
   form.flow button:hover { filter: brightness(1.08); }
+  form.flow .form-note { margin: 0; color: var(--muted); line-height: 1.5; }
   form.flow input:focus-visible, form.flow select:focus-visible, form.flow textarea:focus-visible,
   form.flow button:focus-visible, .panel summary:focus-visible {
     outline: 2px solid var(--focus); outline-offset: 2px;
@@ -159,7 +184,12 @@ _PAGE_CSS = """
   .choice-card input { margin-right: 0.4rem; }
   .choice-card strong { color: var(--text); }
   .inline-options { display: flex; flex-wrap: wrap; gap: 0.55rem 1rem; }
+  .template-strip { display: grid; gap: 0.55rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+  .template-card { border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem; background: oklch(14.5% 0.015 250); }
+  .template-card strong { display: block; color: var(--text); }
+  .template-card span { display: block; margin-top: 0.25rem; color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
   @media (max-width: 760px) {
+    .operator-hero h1 { font-size: 2.2rem; }
     table { display: block; overflow-x: auto; }
     form.flow .row { grid-template-columns: 1fr; }
   }
@@ -457,10 +487,33 @@ def _audit_row(record: Mapping[str, Any]) -> str:
     )
 
 
-def _section(title: str, body: str) -> str:
+def _operator_intro() -> str:
+    return (
+        '<section class="operator-hero" aria-labelledby="operator-title">'
+        '<div class="cell-sub">admin · ai.vivid.fish</div>'
+        '<h1 id="operator-title">Operating</h1>'
+        "<p>Manage who can use the gateway, what shared Apps can do, and how "
+        "automation touches admin APIs. Profiles stay here as operator tools; "
+        "people and apps only receive the access you assign.</p>"
+        '<nav class="operator-strip" aria-label="Admin sections">'
+        '<a href="#access">Access</a>'
+        '<a href="#shared-apps">Shared Apps</a>'
+        '<a href="#profiles">Profiles</a>'
+        '<a href="#debug-access">Debug/Test access</a>'
+        '<a href="#data-views">Data views</a>'
+        '<span><code>opk_</code>&nbsp;runtime App keys</span>'
+        '<span><code>oak_</code>&nbsp;admin automation</span>'
+        "</nav>"
+        "</section>"
+    )
+
+
+def _section(title: str, body: str, *, section_id: str = "", intro: str = "") -> str:
     if not body.strip():
         return ""
-    return f"<section><h2>{_esc(title)}</h2>{body}</section>"
+    id_attr = f' id="{_esc(section_id)}"' if section_id else ""
+    intro_html = f'<p class="section-intro">{_esc(intro)}</p>' if intro else ""
+    return f"<section{id_attr}><h2>{_esc(title)}</h2>{intro_html}{body}</section>"
 
 
 def _table(headers: Iterable[str], rows: Iterable[str]) -> str:
@@ -500,7 +553,7 @@ def _flow_form(
         "</option>"
         for app in apps
     )
-    user_options = '<option value="">No user owner (service-owned)</option>' + "".join(
+    user_options = '<option value="">No user owner (shared App)</option>' + "".join(
         f'<option value="{_esc(user.get("id"))}">'
         f'{_esc(user.get("email") or user.get("name") or user.get("id"))}'
         "</option>"
@@ -523,7 +576,7 @@ def _flow_form(
         '<input type="text" name="name" placeholder="App name" aria-label="App name" required>'
         '<div class="choice-grid" aria-label="App ownership">'
         '<label class="choice-card"><span><input type="radio" name="kind" value="service" checked>'
-        '<strong>Service-owned</strong></span><span>No user owner; use this for LibreChat, bots, and shared services.</span></label>'
+        '<strong>Shared App</strong></span><span>No user owner; use this for LibreChat, bots, and household tools.</span></label>'
         '<label class="choice-card"><span><input type="radio" name="kind" value="personal">'
         '<strong>Personal/user-owned</strong></span><span>Attach the App to a user for individual access.</span></label>'
         "</div>"
@@ -532,7 +585,7 @@ def _flow_form(
         "</div>"
         '<div class="row">'
         "<span></span>"
-        '<button type="submit">Create app</button>'
+        '<button type="submit">Create App</button>'
         "</div>"
         "</form>"
         "</details>"
@@ -556,7 +609,7 @@ def _flow_form(
     return create_form + mint_form
 
 
-def _service_access_form(
+def _shared_access_form(
     *,
     create_app_action: str,
     create_profile_action: str,
@@ -565,14 +618,15 @@ def _service_access_form(
     return (
         '<form class="flow" id="create-api-key" method="post" action="'
         + _esc(create_profile_action)
-        + '" data-create-service-access data-app-action="'
+        + '" data-create-shared-access data-app-action="'
         + _esc(create_app_action)
         + '" data-key-action-template="'
         + _esc(create_key_action_template)
         + '">'
         "<label>Create App API key</label>"
+        '<p class="form-note">One flow creates the Profile, the shared App, and the one-time <code>opk_</code> runtime key. Use this for LibreChat, bots, shared tools, and SDK integrations.</p>'
         '<div class="stack">'
-        '<input type="text" name="service_name" placeholder="App or service name, e.g. LibreChat" aria-label="App or service name" required>'
+        '<input type="text" name="app_name" placeholder="App name, e.g. LibreChat" aria-label="App name" required>'
         '<div class="choice-grid" aria-label="Runtime access policy">'
         '<label class="choice-card"><span><input type="radio" name="policy_template" value="chat_only" checked>'
         '<strong>Chat only</strong></span><span>Stable local chat. No embeddings, media, cloud fallback, or admin access.</span></label>'
@@ -637,8 +691,15 @@ def _profile_form(
         + _esc(create_profile_action)
         + '" data-create-profile>'
         "<label>Create reusable access policy</label>"
+        '<p class="form-note">Start from a template, then name it for the person or service it describes. Detailed policy fields stay in Advanced.</p>'
+        '<div class="template-strip" aria-label="Profile templates">'
+        '<div class="template-card"><strong>Chat only</strong><span>Local chat and completions.</span></div>'
+        '<div class="template-card"><strong>Chat + embeddings</strong><span>Retrieval/search without media access.</span></div>'
+        '<div class="template-card"><strong>Media workflows</strong><span>Approved image, audio, and video jobs.</span></div>'
+        '<div class="template-card"><strong>Full runtime access</strong><span>Broad runtime use, no admin powers.</span></div>'
+        "</div>"
         '<div class="stack">'
-        '<input type="text" name="label" placeholder="Family chat" aria-label="Policy name" required>'
+        '<input type="text" name="label" placeholder="Profile name, e.g. Family chat" aria-label="Profile name" required>'
         '<select name="profile_preset" aria-label="Start from">'
         '<option value="chat_only">Chat only</option>'
         '<option value="chat_embeddings">Chat + embeddings</option>'
@@ -692,7 +753,8 @@ def _policy_simulator_form(
         '<form class="flow" method="post" action="'
         + _esc(policy_simulate_action)
         + '" data-simulate-policy>'
-        "<label>Request facts</label>"
+        "<label>Debug/Test access</label>"
+        '<p class="form-note">Ask whether a request would be allowed without sending it to a model. Start with a Profile and add only the facts you need.</p>'
         '<div class="stack">'
         f'<select name="profile" aria-label="Profile to simulate">{profile_options}</select>'
         '<input type="text" name="protocol" placeholder="protocol: openai.images" aria-label="Request protocol">'
@@ -797,7 +859,7 @@ def render_admin_dashboard(
         create_app_action=create_app_action,
         create_key_action_template=create_key_action_template,
     )
-    service_access_html = _service_access_form(
+    shared_access_html = _shared_access_form(
         create_app_action=create_app_action,
         create_profile_action=create_profile_action,
         create_key_action_template=create_key_action_template,
@@ -822,8 +884,35 @@ def render_admin_dashboard(
         '<pre class="result" id="admin-flow-result"></pre>'
         "</details>"
     )
-    access_html = service_access_html + flow_html + result_html
+    access_html = shared_access_html + result_html
+    service_apps_html = flow_html
     profiles_html = profile_form_html + profiles_table
+    data_views_html = (
+        _section(
+            "Apps",
+            apps_table,
+            section_id="apps",
+            intro="Shared and personal Apps with their assigned Profile and active opk_ keys.",
+        )
+        + _section(
+            "Users",
+            users_table,
+            section_id="users",
+            intro="People who can sign in or own personal Apps.",
+        )
+        + _section(
+            "Keys",
+            credentials_table,
+            section_id="keys",
+            intro="Credential inventory. Revoke opk_ runtime keys here; oak_ automation keys are created separately above.",
+        )
+        + _section(
+            "Audit",
+            audit_table,
+            section_id="audit",
+            intro="Recent admin and gateway control-plane events.",
+        )
+    )
 
     header_html = render_shell_header(
         title=title,
@@ -872,13 +961,13 @@ def render_admin_dashboard(
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
         "document.addEventListener('submit',async e=>{"
-        "const serviceForm=e.target.closest('[data-create-service-access]'),adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]');"
-        "if(!serviceForm&&!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm)return;e.preventDefault();"
-        "if(serviceForm){const f=serviceForm,fd=new FormData(f);const serviceName=String(fd.get('service_name')||'').trim();const serviceSlug=slug(serviceName);const templateId=fd.get('policy_template')||'chat_only';const profile=buildProfile(templateId,serviceSlug+'-'+slug(policyTemplates[templateId]?.label||'access'));"
-        "const profileLabel=title(serviceName)+' '+(policyTemplates[templateId]?.label||'access');const profileBody={name:profileLabel,label:profileLabel,profile};"
-        "const keyBody={label:title(serviceName)+' API key'};"
+        "const sharedAccessForm=e.target.closest('[data-create-shared-access]'),adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]');"
+        "if(!sharedAccessForm&&!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm)return;e.preventDefault();"
+        "if(sharedAccessForm){const f=sharedAccessForm,fd=new FormData(f);const appName=String(fd.get('app_name')||'').trim();const appSlug=slug(appName);const templateId=fd.get('policy_template')||'chat_only';const profile=buildProfile(templateId,appSlug+'-'+slug(policyTemplates[templateId]?.label||'access'));"
+        "const profileLabel=title(appName)+' '+(policyTemplates[templateId]?.label||'access');const profileBody={name:profileLabel,label:profileLabel,profile};"
+        "const keyBody={label:title(appName)+' API key'};"
         "try{const createdProfile=await json(f.action,profileBody);const storedProfileId=(createdProfile.profile&&createdProfile.profile.id)||createdProfile.id||profile.id;"
-        "const appBody={name:serviceName,kind:'service',owner_service_account_name:serviceName,profile_id:storedProfileId};"
+        "const appBody={name:appName,kind:'service',owner_service_account_name:appName,profile_id:storedProfileId};"
         "const createdApp=await json(f.dataset.appAction,appBody);const appId=createdApp.id||createdApp.app_id||(createdApp.app&&createdApp.app.id)||appBody.name;let createdKey=null;"
         "const url=f.dataset.keyActionTemplate.replace('{app_id}',encodeURIComponent(appId));createdKey=await json(url,keyBody);"
         "const data={profile:createdProfile,app:createdApp,key:createdKey};f.reset();await refreshMain();showSecret(data,'App API key created. Copy it now; it will not be shown again.','Use this opk_ key only in runtime Apps and SDK tools.')}catch(err){showError(err)}return}"
@@ -913,14 +1002,38 @@ def render_admin_dashboard(
         "</head><body>"
         + header_html
         + '<main class="shell-main">'
-        + _section("Start", _start_card(apps))
-        + _section("API keys", access_html)
-        + _section("Admin automation", admin_key_html)
-        + _section("Profiles", profiles_html)
-        + _section("Test access", policy_simulator_html)
-        + _section("Apps", apps_table)
-        + _section("Users", users_table)
-        + _section("Keys", credentials_table)
-        + _section("Audit", audit_table)
+        + _operator_intro()
+        + _section("Start", _start_card(apps), section_id="start")
+        + _section(
+            "Access",
+            access_html,
+            section_id="access",
+            intro="Create shared App access without exposing raw policy JSON. The resulting opk_ key is for runtime requests only.",
+        )
+        + _section(
+            "Shared Apps",
+            service_apps_html,
+            section_id="shared-apps",
+            intro="Use the advanced form only when you need to bind an existing Profile or create an App before minting a key.",
+        )
+        + _section(
+            "Admin automation",
+            admin_key_html,
+            section_id="admin-automation",
+            intro="oak_ keys are for scripts that call admin endpoints. Keep them separate from opk_ runtime App keys.",
+        )
+        + _section(
+            "Profiles",
+            profiles_html,
+            section_id="profiles",
+            intro="Profiles are reusable operator templates. Assign them to people and shared Apps; users never choose them.",
+        )
+        + _section(
+            "Debug/Test access",
+            policy_simulator_html,
+            section_id="debug-access",
+            intro="Check a Profile decision before changing access or while investigating a denial.",
+        )
+        + _section("Data views", data_views_html, section_id="data-views")
         + "</main></body></html>"
     )

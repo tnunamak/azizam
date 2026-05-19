@@ -156,40 +156,40 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn('name="advanced_json"', html)
         self.assertIn("</details>", html)
 
-    def test_service_access_flow_renders_above_generic_forms(self) -> None:
+    def test_shared_access_flow_renders_above_generic_forms(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        service_index = html.index("data-create-service-access")
+        shared_index = html.index("data-create-shared-access")
         app_index = html.index("data-create-app")
         profile_index = html.index("data-create-profile")
-        self.assertLess(service_index, app_index)
-        self.assertLess(service_index, profile_index)
+        self.assertLess(shared_index, app_index)
+        self.assertLess(shared_index, profile_index)
         self.assertIn("Create App API key", html)
-        self.assertIn('name="service_name"', html)
-        self.assertIn('placeholder="App or service name, e.g. LibreChat"', html)
+        self.assertIn('name="app_name"', html)
+        self.assertIn('placeholder="App name, e.g. LibreChat"', html)
         self.assertIn('name="policy_template" value="chat_only" checked', html)
         self.assertIn('name="policy_template" value="full_runtime"', html)
         self.assertIn("Create App API key", html)
         self.assertNotIn('value="librechat.vivid.fish"', html)
         self.assertNotIn('name="mint_key"', html)
         self.assertNotIn("Advanced policy fields", html)
-        self.assertNotIn("Raw service access policy JSON", html)
+        self.assertNotIn("Raw shared access policy JSON", html)
 
-    def test_service_access_flow_builds_librechat_profile_and_service_app(
+    def test_shared_access_flow_builds_librechat_profile_and_shared_app(
         self,
     ) -> None:
         html = render_admin_dashboard(_snapshot())
-        branch = html[html.index("if(serviceForm)") : html.index("if(profileForm)")]
+        branch = html[html.index("if(sharedAccessForm)") : html.index("if(profileForm)")]
         self.assertIn("buildProfile(templateId", branch)
         self.assertIn("policyTemplates[templateId]", branch)
-        self.assertIn("serviceSlug", branch)
+        self.assertIn("appSlug", branch)
         self.assertIn("kind:'service'", branch)
-        self.assertIn("owner_service_account_name:serviceName", branch)
+        self.assertIn("owner_service_account_name:appName", branch)
         self.assertIn("storedProfileId=(createdProfile.profile&&createdProfile.profile.id)", branch)
         self.assertIn("profile_id:storedProfileId", branch)
 
-    def test_service_access_flow_calls_profile_app_key_endpoints(self) -> None:
+    def test_shared_access_flow_calls_profile_app_key_endpoints(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        branch = html[html.index("if(serviceForm)") : html.index("if(profileForm)")]
+        branch = html[html.index("if(sharedAccessForm)") : html.index("if(profileForm)")]
         self.assertIn("createdProfile=await json(f.action,profileBody)", branch)
         self.assertIn("createdApp=await json(f.dataset.appAction,appBody)", branch)
         self.assertIn("f.dataset.keyActionTemplate.replace('{app_id}'", branch)
@@ -220,9 +220,9 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_create_app_can_choose_existing_profile_and_clear_ownership(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn("Service-owned", html)
+        self.assertIn("Shared App", html)
         self.assertIn("Personal/user-owned", html)
-        self.assertIn("No user owner (service-owned)", html)
+        self.assertIn("No user owner (shared App)", html)
         self.assertIn('aria-label="Existing Profile for App"', html)
         self.assertIn('<option value="default-local">Default local (default-local)</option>', html)
 
@@ -290,8 +290,32 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertNotIn('href="/.well-known/ai-gateway"', html)
         self.assertNotIn('href="/admin/api/overview"', html)
         self.assertNotIn(">Admin links<", html)
-        self.assertIn('href="/">Account</a>', html)
+        self.assertIn('href="/">Home</a>', html)
         self.assertIn('href="/status">Status</a>', html)
+
+    def test_admin_dashboard_uses_operator_design_contract(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn(">Operating</h1>", html)
+        self.assertIn('id="access"', html)
+        self.assertIn('id="shared-apps"', html)
+        self.assertIn(">Shared Apps</h2>", html)
+        self.assertIn('id="profiles"', html)
+        self.assertIn('id="debug-access"', html)
+        self.assertIn('id="data-views"', html)
+        self.assertIn("Profiles stay here as operator tools", html)
+        self.assertIn("users never choose them", html)
+        self.assertIn("opk_</code>&nbsp;runtime App keys", html)
+        self.assertIn("oak_</code>&nbsp;admin automation", html)
+
+    def test_profile_creation_is_template_first(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        profile_section = html[html.index('id="profiles"') : html.index('id="debug-access"')]
+        self.assertIn("Start from a template", profile_section)
+        self.assertIn('class="template-strip"', profile_section)
+        self.assertLess(
+            profile_section.index('class="template-strip"'),
+            profile_section.index("<summary>Advanced policy details</summary>"),
+        )
 
     def test_admin_chrome_marks_admin_as_active_and_offers_sign_out(self) -> None:
         html = render_admin_dashboard(_snapshot())
@@ -319,12 +343,12 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("await refreshMain();showSecret(data", key_form_branch)
         profile_form_branch = html[html.index("if(profileForm)") : html.index("if(simForm)")]
         app_form_branch = html[html.index("if(appForm)") : html.index("if(keyForm)")]
-        service_form_branch = html[
-            html.index("if(serviceForm)") : html.index("if(profileForm)")
+        shared_access_branch = html[
+            html.index("if(sharedAccessForm)") : html.index("if(profileForm)")
         ]
         self.assertIn("await refreshMain();show(data)", profile_form_branch)
         self.assertIn("await refreshMain();show(data)", app_form_branch)
-        self.assertIn("await refreshMain();showSecret(data", service_form_branch)
+        self.assertIn("await refreshMain();showSecret(data", shared_access_branch)
 
     def test_admin_logout_url_is_configurable(self) -> None:
         html = render_admin_dashboard(

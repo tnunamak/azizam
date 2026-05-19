@@ -27,8 +27,50 @@ __all__ = ["render_user_portal"]
 
 
 _PAGE_CSS = """
+  :root {
+    --vf-bg: #0A1620;
+    --vf-panel: #0E1E2C;
+    --vf-panel-2: #142A3D;
+    --vf-panel-3: #1C3850;
+    --vf-text: #E8E2D3;
+    --vf-muted: #8FA8BD;
+    --vf-subtle: #5C7589;
+    --vf-accent: #7BC4C8;
+    --vf-accent-2: #D49AA6;
+    --vf-line: rgba(95,145,210,0.14);
+    --vf-line-strong: rgba(125,180,230,0.26);
+  }
+  body {
+    background:
+      radial-gradient(circle at 18% -10%, rgba(123,196,200,0.14), transparent 30rem),
+      radial-gradient(circle at 100% 8%, rgba(212,154,166,0.10), transparent 24rem),
+      var(--vf-bg);
+  }
+  .shell-main {
+    max-width: 960px;
+    gap: var(--space-5);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
   .lead { color: var(--muted); margin: 0; line-height: 1.55; }
-  .card, .app-card, .app-create {
+  .eyebrow {
+    color: var(--vf-subtle);
+    font-size: 0.74rem;
+    font-weight: 750;
+    letter-spacing: 0.16em;
+    margin: 0;
+    text-transform: uppercase;
+  }
+  .card, .app-card, .app-create, .base-card {
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -47,20 +89,37 @@ _PAGE_CSS = """
   }
   .hero {
     display: grid;
-    gap: var(--space-3);
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: var(--space-5);
+    gap: var(--space-4);
+    background:
+      linear-gradient(180deg, rgba(123,196,200,0.07), rgba(123,196,200,0.015)),
+      var(--panel);
+    border: 1px solid var(--vf-line-strong);
+    border-radius: calc(var(--radius) + 6px);
+    padding: clamp(var(--space-4), 4vw, var(--space-6));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 18px 60px rgba(0,0,0,0.18);
   }
   .hero h2 {
     margin: 0;
-    font-size: 1.2rem;
+    max-width: 12ch;
+    font-size: 4.1rem;
+    line-height: 0.98;
     color: var(--text);
     text-transform: none;
     letter-spacing: 0;
   }
+  .hero .lead { max-width: 44rem; font-size: 1.02rem; }
   .hero .actions a, .hero .actions button { font-size: 0.95rem; }
+  .base-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    background: var(--vf-panel);
+  }
+  .base-card code {
+    color: var(--text);
+    font-size: 1rem;
+    overflow-wrap: anywhere;
+  }
+  .base-card p { margin: 0; color: var(--muted); }
   .row, .key-form {
     display: grid;
     gap: var(--space-2);
@@ -98,6 +157,13 @@ _PAGE_CSS = """
     background: var(--accent);
     font-weight: 650;
     cursor: pointer;
+  }
+  button.icon-button {
+    width: 2.75rem;
+    padding: 0;
+    color: var(--vf-accent);
+    background: var(--panel-2);
+    border-color: var(--line);
   }
   button.secondary {
     background: var(--panel-2);
@@ -165,6 +231,22 @@ _PAGE_CSS = """
     display: grid;
     gap: var(--space-4);
   }
+  .section-head {
+    display: grid;
+    gap: var(--space-1);
+  }
+  .section-head h2 {
+    margin: 0;
+    font-size: 2.1rem;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .app-create {
+    background:
+      linear-gradient(180deg, rgba(123,196,200,0.06), transparent),
+      var(--panel);
+    border-color: var(--vf-line-strong);
+  }
   .app-card-header, .key-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -198,6 +280,13 @@ _PAGE_CSS = """
   .key-row h3 { margin: 0; font-size: 0.94rem; }
   .key-row p { margin: 0; color: var(--muted); }
   .key-note, .empty { color: var(--muted); font-size: 0.88rem; }
+  .empty {
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    margin: 0;
+    padding: var(--space-4);
+    text-align: center;
+  }
   .two-col {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
@@ -212,8 +301,11 @@ _PAGE_CSS = """
     letter-spacing: 0.1em;
   }
   @media (max-width: 720px) {
-    .row, .key-form, .app-card-header, .key-row { grid-template-columns: 1fr; }
+    .hero h2 { font-size: 2.6rem; }
+    .section-head h2 { font-size: 1.7rem; }
+    .row, .key-form, .app-card-header, .key-row, .base-card { grid-template-columns: 1fr; }
     .key-actions button, .actions button { width: 100%; }
+    .base-card button { width: 100%; }
   }
 """
 
@@ -386,17 +478,18 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
 
 def _signed_out_hero(*, oidc_enabled: bool, login_url: str) -> str:
     primary = (
-        f'<a class="pill primary" href="{esc(login_url)}">Sign in with OIDC</a>'
+        f'<a class="pill primary" href="{esc(login_url)}">Continue with vivid.fish ID</a>'
         if oidc_enabled
         else '<span class="pill">OIDC login not configured</span>'
     )
     return (
         '<section aria-labelledby="hero-heading">'
         '<div class="hero">'
-        '<h2 id="hero-heading">Start with an account or key</h2>'
-        '<p class="lead">Sign in to create Apps and API keys. Paste an '
-        "<code>opk_</code> key if you already have one; "
-        "the browser stores it in this tab.</p>"
+        '<p class="eyebrow">ai.vivid.fish &middot; invite only</p>'
+        '<h2 id="hero-heading">Tim&apos;s gateway. Now yours, too.</h2>'
+        '<p class="lead">One OpenAI-compatible base URL for the model collection '
+        'in the closet down the hall. Sign in to create Apps, mint '
+        '<code>opk_</code> keys, and see what those keys can do.</p>'
         f'<div class="actions">{primary}</div>'
         "</div>"
         "</section>"
@@ -410,11 +503,12 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     apps = [a for a in account.get("apps", []) if isinstance(a, Mapping)]
     is_admin = can_admin(account)
     create_help = (
-        "Create one App per tool, workflow, or script. Keys live inside the App."
+        "Create one App per tool, workflow, or script. Its keys stay inside that App."
     )
     create_form = (
         '<form class="app-create" data-create-owned-app>'
-        "<h3>New App</h3>"
+        '<p class="eyebrow">new connection</p>'
+        "<h3>Create an App</h3>"
         f"<p>{create_help}</p>"
         '<div class="row">'
         '<label class="field"><span>App name</span>'
@@ -427,7 +521,7 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     apps_html = (
         f'<div id="apps-list" class="apps-list">{"".join(_app_html(app, show_permission_details=is_admin) for app in apps)}</div>'
         if apps
-        else '<div id="apps-list" class="apps-list"></div>'
+        else '<div id="apps-list" class="apps-list"><p class="empty">No Apps yet.</p></div>'
     )
     admin_hint = (
         ' <a href="/admin">Admin</a> manages shared Apps and permission Profiles.'
@@ -436,16 +530,36 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     )
     return (
         '<section aria-labelledby="apps-heading">'
+        '<div class="section-head">'
+        '<p class="eyebrow">account</p>'
         '<h2 id="apps-heading">Your Apps</h2>'
         '<p class="hint">'
         + f"Signed in as {user_label}. "
-        + "Use View access on any key to see what it can do."
+        + "Create an App, mint a key, copy it once, and use View access when a tool fails."
         + admin_hint
         + "</p>"
+        "</div>"
         + '<div id="account-result" class="message"></div>'
+        + _base_url_card()
         + create_form
         + apps_html
         + "</section>"
+    )
+
+
+def _base_url_card() -> str:
+    return (
+        '<section aria-labelledby="base-url-heading">'
+        '<div class="base-card">'
+        '<div>'
+        '<p class="eyebrow">base url</p>'
+        '<h2 id="base-url-heading" class="sr-only">Base URL</h2>'
+        '<code id="base-url-display"></code>'
+        '<p>Gateway reachable. Use this for OpenAI-compatible SDKs and tools.</p>'
+        "</div>"
+        '<button class="icon-button" type="button" id="copy-base-url" aria-label="Copy base URL">Copy</button>'
+        "</div>"
+        "</section>"
     )
 
 
@@ -477,7 +591,7 @@ def _runtime_key_section(*, signed_in: bool = False) -> str:
 
 def _settings_section() -> str:
     return (
-        '<section aria-labelledby="settings-heading">'
+        '<section aria-labelledby="settings-heading" class="settings-section">'
         '<h2 id="settings-heading">Connection settings</h2>'
         '<p class="hint">Point an OpenAI-compatible App or SDK tool at the gateway. '
         "Other protocols use the same base URL with their own paths.</p>"
@@ -556,6 +670,7 @@ def render_user_portal(
     body = (
         primary_section
         + _runtime_key_section(signed_in=is_signed_in)
+        + ("" if is_signed_in else _base_url_card())
         + _settings_section()
         + _access_section()
     )
@@ -583,6 +698,8 @@ def render_user_portal(
   const keyInput = $("runtime-key");
   const result = $("connect-result");
   const baseUrl = publicBase.replace(/\\/$/, "");
+  const baseUrlDisplay = $("base-url-display");
+  if (baseUrlDisplay) baseUrlDisplay.textContent = baseUrl + "/v1";
 
   $("openai-snippet").textContent = [
     'export OPENAI_BASE_URL="' + baseUrl + '/v1"',
@@ -590,6 +707,11 @@ def render_user_portal(
     "",
     'curl "$OPENAI_BASE_URL/models" -H "Authorization: Bearer $OPENAI_API_KEY"'
   ].join("\\n");
+
+  const copyBaseUrl = $("copy-base-url");
+  if (copyBaseUrl) {{
+    copyBaseUrl.addEventListener("click", () => copyText(baseUrl + "/v1", copyBaseUrl));
+  }}
 
   function setMessage(text, kind = "") {{
     result.className = "message" + (kind ? " " + kind : "");

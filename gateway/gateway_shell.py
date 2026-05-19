@@ -31,24 +31,43 @@ __all__ = [
 SHELL_CSS = """
   :root {
     color-scheme: dark;
-    --bg: oklch(16% 0.018 250);
-    --panel: oklch(21% 0.02 250);
-    --panel-2: oklch(25% 0.022 250);
-    --line: oklch(34% 0.028 250);
-    --text: oklch(93% 0.018 250);
-    --muted: oklch(73% 0.034 250);
-    --soft: oklch(62% 0.04 250);
-    --accent: oklch(78% 0.15 168);
-    --accent-ink: oklch(15% 0.028 168);
-    --link: oklch(83% 0.10 220);
-    --warn: oklch(83% 0.13 74);
-    --warn-bg: oklch(27% 0.065 74);
-    --bad: oklch(80% 0.13 28);
-    --bad-bg: oklch(27% 0.062 28);
-    --good: oklch(82% 0.13 150);
-    --good-bg: oklch(26% 0.056 150);
-    --focus: oklch(67% 0.16 235);
-    --radius: 8px;
+    --vf-bg: #0A1620;
+    --vf-surface-1: #0E1E2C;
+    --vf-surface-2: #142A3D;
+    --vf-surface-3: #1C3850;
+    --vf-border: rgba(95, 145, 210, 0.14);
+    --vf-border-strong: rgba(125, 180, 230, 0.26);
+    --vf-text: #E8E2D3;
+    --vf-muted: #8FA8BD;
+    --vf-subtle: #5C7589;
+    --vf-accent: #7BC4C8;
+    --vf-accent-ink: #07151D;
+    --vf-ok: #6FB89A;
+    --vf-warn: #D9B86A;
+    --vf-bad: #D88370;
+    --vf-info: #7FB4C7;
+    --bg: var(--vf-bg);
+    --panel: var(--vf-surface-1);
+    --panel-2: var(--vf-surface-2);
+    --panel-3: var(--vf-surface-3);
+    --line: var(--vf-border);
+    --line-strong: var(--vf-border-strong);
+    --text: var(--vf-text);
+    --muted: var(--vf-muted);
+    --soft: var(--vf-subtle);
+    --accent: var(--vf-accent);
+    --accent-ink: var(--vf-accent-ink);
+    --link: var(--vf-accent);
+    --warn: var(--vf-warn);
+    --warn-bg: color-mix(in srgb, var(--vf-warn) 12%, transparent);
+    --bad: var(--vf-bad);
+    --bad-bg: color-mix(in srgb, var(--vf-bad) 12%, transparent);
+    --good: var(--vf-ok);
+    --good-bg: color-mix(in srgb, var(--vf-ok) 12%, transparent);
+    --focus: var(--vf-accent);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-pill: 999px;
     --space-1: 0.25rem;
     --space-2: 0.5rem;
     --space-3: 0.75rem;
@@ -59,23 +78,31 @@ SHELL_CSS = """
     --space-12: 3rem;
     --shell-max: 1080px;
     --gutter: clamp(1.25rem, 4vw, 2rem);
+    --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --font-serif: 'Newsreader', ui-serif, Georgia, serif;
+    --font-mono: 'JetBrains Mono', 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html, body { height: 100%; }
   body {
     margin: 0;
-    background: var(--bg);
+    background:
+      radial-gradient(circle at 12% -18%, rgba(123, 196, 200, 0.12), transparent 34rem),
+      radial-gradient(circle at 90% 0%, rgba(212, 154, 166, 0.08), transparent 28rem),
+      var(--bg);
     color: var(--text);
-    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font: 15px/1.5 var(--font-sans);
+    letter-spacing: 0;
   }
   button, input, select, textarea { font: inherit; color: inherit; }
   a { color: var(--link); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+  code { font-family: var(--font-mono); font-size: 0.9em; }
   .shell-header {
-    background: oklch(18% 0.02 250);
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
     border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(14px);
     position: sticky;
     top: 0;
     z-index: 5;
@@ -93,18 +120,45 @@ SHELL_CSS = """
   .shell-brand {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-3);
     color: var(--text);
-    font-weight: 650;
-    font-size: 0.98rem;
+    font-weight: 600;
+    font-size: 1rem;
     letter-spacing: 0;
   }
   .shell-brand:hover { text-decoration: none; color: var(--text); }
   .shell-brand-dot {
-    width: 0.6rem; height: 0.6rem;
+    width: 0.7rem; height: 0.7rem;
     background: var(--accent);
-    border-radius: 999px;
-    box-shadow: 0 0 0 3px oklch(24% 0.05 168);
+    border-radius: var(--radius-pill);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  .shell-brand-word {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0;
+    white-space: nowrap;
+  }
+  .shell-brand-word em {
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  .shell-brand-word .dot {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    padding: 0 0.08rem;
+  }
+  .shell-brand-word .fish {
+    font-family: var(--font-mono);
+    font-size: 0.94em;
+    letter-spacing: 0.01em;
+  }
+  .shell-brand-product {
+    color: var(--muted);
+    font-size: 0.9rem;
+    font-weight: 500;
   }
   .shell-brand-sub {
     color: var(--muted);
@@ -122,9 +176,9 @@ SHELL_CSS = """
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
-    min-height: 2.5rem;
-    padding: 0.4rem 0.75rem;
-    border-radius: 999px;
+    min-height: 2.75rem;
+    padding: 0.45rem 0.85rem;
+    border-radius: var(--radius-pill);
     border: 1px solid var(--line);
     background: var(--panel);
     color: var(--muted);
@@ -134,12 +188,12 @@ SHELL_CSS = """
   .shell-nav a:hover, .shell-nav form button:hover {
     color: var(--text);
     text-decoration: none;
-    border-color: oklch(45% 0.03 250);
+    border-color: var(--line-strong);
   }
   .shell-nav a[aria-current="page"] {
     color: var(--text);
     background: var(--panel-2);
-    border-color: oklch(48% 0.03 250);
+    border-color: var(--line-strong);
   }
   .shell-nav .who {
     color: var(--muted);
@@ -174,6 +228,10 @@ SHELL_CSS = """
     margin: 0;
     color: var(--muted);
     line-height: 1.5;
+  }
+  :is(a, button, input, select, textarea, summary):focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 3px;
   }
   @media (max-width: 720px) {
     .shell-header-inner { gap: var(--space-2); }
@@ -236,7 +294,7 @@ def render_shell_header(
 
     links: list[str] = []
     if show_account:
-        links.append(_nav_link("/", "Account", active=current == "account"))
+        links.append(_nav_link("/", "Home", active=current == "account"))
     if show_admin:
         links.append(_nav_link("/admin", "Admin", active=current == "admin"))
     if show_status:
@@ -270,7 +328,10 @@ def render_shell_header(
         '<div class="shell-header-inner">'
         f'<a class="shell-brand" href="/" aria-label="{esc(brand)} home">'
         '<span class="shell-brand-dot" aria-hidden="true"></span>'
-        f"<span>{esc(brand)}</span>"
+        '<span class="shell-brand-word" aria-hidden="true">'
+        '<em>vivid</em><span class="dot">.</span><span class="fish">fish</span>'
+        "</span>"
+        f'<span class="shell-brand-product">{esc(brand)}</span>'
         "</a>"
         + nav_block
         + "</div>"

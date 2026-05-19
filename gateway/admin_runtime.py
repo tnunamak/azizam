@@ -123,7 +123,7 @@ class AdminSQLiteStore:
         else:
             svc = admin_store.ensure_service_account(
                 str(data.get("owner_service_account_name") or DEFAULT_SERVICE_ACCOUNT),
-                description="Default owner for service apps created from the admin dashboard.",
+                description="Default owner for shared Apps created from the admin dashboard.",
                 path=self.path,
             )
             record = admin_store.create_app(

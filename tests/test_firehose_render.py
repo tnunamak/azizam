@@ -27,10 +27,11 @@ def test_render_uses_shared_shell_with_active_status_nav_for_actor() -> None:
     assert 'class="shell-header"' in html
     assert 'class="shell-main status-firehose"' in html
     assert 'aria-label="AI Gateway home"' in html
+    assert "shell-brand-product" in html
     assert ">AI Gateway</span>" in html
     assert 'href="/status" aria-current="page">Status</a>' in html
     assert 'href="/admin">Admin</a>' in html
-    assert 'href="/">Account</a>' in html
+    assert 'href="/">Home</a>' in html
     assert "operator@example.com" in html
     assert 'href="/me/logout">Sign out</a>' in html
     assert "gateway.local" in html
@@ -46,7 +47,7 @@ def test_render_default_status_nav_keeps_status_page_chrome() -> None:
     assert 'class="shell-header"' in html
     assert 'href="/status" aria-current="page">Status</a>' in html
     assert 'href="/admin">Admin</a>' in html
-    assert 'href="/">Account</a>' in html
+    assert 'href="/">Home</a>' in html
     assert "ai.vivid.fish" in html
     assert "openai.vivid.fish" not in html
     assert "Sign out" not in html
