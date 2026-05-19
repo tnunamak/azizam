@@ -20,6 +20,7 @@ from gateway.admin_oidc import (  # noqa: E402
     OIDCConfigError,
     SessionError,
     StateRecord,
+    access_names_from_oidc_claims,
     admin_role_from_oidc_claims,
     authorization_url,
     bootstrap_admin_role,
@@ -604,6 +605,24 @@ class TestOIDCClaimRole(unittest.TestCase):
             config=cfg,
         )
         self.assertEqual(role, AdminRole.ADMIN)
+
+    def test_access_names_from_claims_normalizes_runtime_mapping_inputs(self) -> None:
+        names = access_names_from_oidc_claims(
+            {
+                "groups": ["/local-ai/trusted-users"],
+                "realm_access": {"roles": ["Power Users"]},
+                "resource_access": {
+                    "ai-gateway": {"roles": ["video-team"]},
+                    "other-client": {"roles": ["ignored"]},
+                },
+            },
+            client_id="ai-gateway",
+        )
+        self.assertIn("trusted-users", names["oidc_group"])
+        self.assertIn("trusted users", names["oidc_group"])
+        self.assertIn("power-users", names["oidc_role"])
+        self.assertIn("video team", names["oidc_role"])
+        self.assertNotIn("ignored", names["oidc_role"])
 
     def test_unconfigured_claims_do_not_grant_admin(self) -> None:
         cfg = make_config(admin_groups=frozenset({"trusted-users"}))

@@ -106,6 +106,8 @@ class AdminStore(Protocol):
 
     def list_profiles(self) -> list[dict[str, Any]]: ...
 
+    def get_profile(self, profile_id: str) -> dict[str, Any] | None: ...
+
     def create_profile(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
@@ -122,6 +124,16 @@ class AdminStore(Protocol):
 
     def revoke_credential(
         self, *, credential_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None: ...
+
+    def list_runtime_profile_mappings(self) -> list[dict[str, Any]]: ...
+
+    def create_runtime_profile_mapping(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
+    def disable_runtime_profile_mapping(
+        self, *, mapping_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]: ...
@@ -484,6 +496,68 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_201_CREATED, content={"profile": record}
         )
+
+    @router.get("/runtime-profile-mappings")
+    def list_runtime_profile_mappings(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "mappings": list(store.list_runtime_profile_mappings()),
+            },
+        )
+
+    @router.post("/runtime-profile-mappings")
+    async def create_runtime_profile_mapping(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+        except _RouteError as exc:
+            return exc.as_response()
+        profile_id = str(body.get("profile_id") or "").strip()
+        if profile_id and profile_id != "default-local":
+            if store.get_profile(profile_id) is None:
+                return _RouteError(
+                    status.HTTP_400_BAD_REQUEST,
+                    "invalid_runtime_mapping",
+                    f"profile {profile_id!r} not found",
+                ).as_response()
+        try:
+            record = store.create_runtime_profile_mapping(data=body, actor=ctx)
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_runtime_mapping",
+                str(exc),
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_201_CREATED,
+            content={"mapping": record},
+        )
+
+    @router.delete("/runtime-profile-mappings/{mapping_id}")
+    def disable_runtime_profile_mapping(
+        mapping_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = store.disable_runtime_profile_mapping(
+            mapping_id=mapping_id,
+            actor=ctx,
+        )
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "runtime_mapping_not_found",
+                f"runtime Profile mapping {mapping_id!r} not found",
+            ).as_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"mapping": record})
 
     @router.post("/apps/{app_id}/keys")
     async def create_key(app_id: str, request: Request) -> JSONResponse:

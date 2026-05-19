@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway.policy import AppProfile  # noqa: E402
+from gateway.policy import AppProfile, ModelAccessPolicy  # noqa: E402
 
 
 RAW_KEY = "opk_runtime_policy_test"
@@ -225,6 +225,88 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["object"], "list")
+
+    def test_models_route_filters_profile_model_allowlist(self) -> None:
+        model_locked = AppProfile(
+            id="model-locked",
+            protocols=frozenset({"openai"}),
+            models=frozenset({"default"}),
+        )
+
+        with authenticated_profile(model_locked), patch.object(
+            proxy, "get_active_backend", AsyncMock(return_value="kobold")
+        ), patch.object(proxy.httpx, "AsyncClient", _FakeAsyncClient), patch.object(
+            proxy, "currently_loaded_kobold_model", lambda: None
+        ):
+            response = self.client.get("/v1/models", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        ids = [item["id"] for item in response.json()["data"]]
+        self.assertEqual(ids, ["default"])
+        self.assertEqual(
+            response.json()["vivid_fish_profile_model_allowlist"],
+            ["default"],
+        )
+
+    def test_current_loaded_profile_filters_models_and_denies_other_models(self) -> None:
+        default_role = proxy.ROLES.get("default") if isinstance(proxy.ROLES, dict) else {}
+        loaded_path = str(default_role.get("model") or "/models/default.gguf")
+        current_loaded = AppProfile(
+            id="current-loaded",
+            protocols=frozenset({"openai"}),
+            model_access=ModelAccessPolicy(mode="current_loaded"),
+        )
+
+        with authenticated_profile(current_loaded), patch.object(
+            proxy, "get_active_backend", AsyncMock(return_value="kobold")
+        ), patch.object(proxy.httpx, "AsyncClient", _FakeAsyncClient), patch.object(
+            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+        ):
+            response = self.client.get("/v1/models", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        ids = {item["id"] for item in response.json()["data"]}
+        self.assertIn("default", ids)
+        self.assertNotIn("rp", ids)
+        self.assertEqual(response.json()["vivid_fish_model_access"], "current_loaded")
+
+        with authenticated_profile(current_loaded), patch.object(
+            proxy, "get_active_backend", AsyncMock(return_value="kobold")
+        ), patch.object(
+            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+        ):
+            denied = self.client.post(
+                "/v1/chat/completions",
+                headers=AUTH_HEADERS,
+                json={
+                    "model": "rp",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self.assertEqual(denied.json()["error"]["code"], "policy_denied")
+        self.assertIn("currently loaded", denied.json()["error"]["message"])
+
+    def test_current_loaded_profile_denies_when_no_loaded_model_reported(self) -> None:
+        current_loaded = AppProfile(
+            id="current-loaded",
+            protocols=frozenset({"openai"}),
+            model_access=ModelAccessPolicy(mode="current_loaded"),
+        )
+
+        with authenticated_profile(current_loaded), patch.object(
+            proxy, "get_active_backend", AsyncMock(return_value="kobold")
+        ), patch.object(proxy, "currently_loaded_kobold_model", lambda: None):
+            response = self.client.post(
+                "/v1/embeddings",
+                headers=AUTH_HEADERS,
+                json={"model": "default", "input": "hello"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+        self.assertIn("no loaded LLM", response.json()["error"]["message"])
 
     def test_chat_only_profile_allows_post_responses(self) -> None:
         chat_only = AppProfile(

@@ -83,6 +83,41 @@ def _snapshot() -> dict:
                 "target": "app_1",
             },
         ],
+        "api_surfaces": [
+            {
+                "name": "OpenAI-compatible",
+                "route_base": "/v1",
+                "status": "live",
+                "profile_gates": ["openai"],
+                "clients": ["OpenAI SDKs", "LibreChat"],
+                "description": "Chat, embeddings, image, audio, and video routes.",
+            }
+        ],
+        "services": [
+            {
+                "key": "kobold",
+                "name": "llama-turbo / kobold",
+                "role": "required",
+                "capabilities": ["chat", "completions"],
+                "status": "healthy",
+                "runtime": "loaded LLM: qwen.gguf",
+            }
+        ],
+        "model_visibility": {
+            "mode": "per-Profile catalog or current-loaded LLM",
+            "loaded_model": "qwen.gguf",
+            "list_behavior": "/v1/models is filtered by Profile.",
+            "route_behavior": "Allowed role/catalog requests may swap models.",
+        },
+        "identity_mappings": [
+            {
+                "id": "map_1",
+                "source": "all signed-in users",
+                "scope": "runtime Profile mapping",
+                "profile_id": "default-local",
+                "note": "Managed here. This does not grant admin access.",
+            }
+        ],
         "discovery_links": [
             {"label": "Gateway metadata", "href": "/.well-known/ai-gateway"},
             {"label": "Admin overview", "href": "/admin/api/overview"},
@@ -101,19 +136,17 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         # Data plane noun is "App". The dashboard must mention it.
         self.assertIn("Create App", html)
-        # Make sure the dashboard never names the data-plane "Client".
-        # Lowercase mentions ("clients") would also fail this assertion.
-        self.assertNotRegex(
-            html,
-            r"\bclients?\b",
-        )
+        # Make sure the durable data-plane object is never named "Client".
+        self.assertNotIn("Create Client", html)
+        self.assertNotIn("Client API key", html)
 
     def test_includes_create_app_and_mint_key_flow(self) -> None:
         html = render_admin_dashboard(_snapshot())
         self.assertIn("Create App", html)
         self.assertIn("Create key for existing App", html)
-        self.assertIn("Create App key", html)
+        self.assertIn("Create App</label>", html)
         self.assertIn('aria-label="App for App API key"', html)
+        self.assertIn('name="label" placeholder="Key label (optional)"', html)
         self.assertNotIn("Create runtime key", html)
         self.assertNotIn('aria-label="App for runtime key"', html)
         self.assertIn("Create admin automation key", html)
@@ -131,12 +164,13 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         self.assertIn("Create Profile", html)
         self.assertIn(
-            "Profiles are reusable runtime policies for Apps.",
+            "Profiles are reusable runtime policies.",
             html,
         )
         self.assertIn('action="/admin/api/profiles"', html)
         self.assertIn("data-create-profile", html)
         self.assertIn("name=\"profile_preset\"", html)
+        self.assertIn("name=\"model_access\"", html)
         self.assertIn("name=\"advanced_json\"", html)
         self.assertIn("Allow cloud fallback", html)
         self.assertIn("Allow native passthrough", html)
@@ -148,19 +182,28 @@ class AdminRenderHappyPathTests(unittest.TestCase):
             html,
         )
         self.assertIn('name="profile_preset" value="chat_embeddings"', html)
-        self.assertIn('name="profile_preset" value="media_workflows"', html)
+        self.assertIn('name="profile_preset" value="chat_images"', html)
+        self.assertIn('name="profile_preset" value="image_audio"', html)
+        self.assertIn('name="profile_preset" value="video_media"', html)
         self.assertIn('name="profile_preset" value="full_runtime"', html)
         self.assertIn("stable local language models", html)
         self.assertIn("trusted power users and internal agents", html)
-        self.assertIn("Blank · advanced", html)
+        self.assertIn("Current loaded LLM only", html)
+        self.assertIn("Current loaded LLM: <code>qwen.gguf</code>", html)
+        self.assertIn("Profile preview", html)
+        self.assertIn("policyPreview={chat_only:", html)
+        self.assertIn("Models: configured catalog", html)
         self.assertIn("min-width: 0;", html)
         self.assertIn(".shell-main section", html)
         self.assertIn("minmax(min(15rem, 100%), 1fr)", html)
         self.assertIn(".choice-grid, .template-strip { grid-template-columns: 1fr; }", html)
         self.assertIn('name="profile_preset"', html)
         self.assertIn('value="openai" checked> OpenAI-compatible', html)
+        self.assertIn('value="gateway"> Gateway jobs/discovery', html)
         self.assertIn("policyTemplates={chat_only:", html)
+        self.assertIn("chat_images:{label:'Chat + images'", html)
         self.assertIn("full_runtime:{label:'Full runtime access'", html)
+        self.assertNotIn("media_workflows", html)
         self.assertNotIn('<select name="profile_preset"', html)
         self.assertNotIn("chat · completions · stable", html)
         self.assertNotIn("Existing Profiles:", html)
@@ -173,47 +216,34 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn('name="advanced_json"', html)
         self.assertIn("</details>", html)
 
-    def test_shared_access_flow_renders_above_generic_forms(self) -> None:
+    def test_app_profile_and_key_creation_are_separate_flows(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        shared_index = html.index("data-create-shared-access")
-        app_index = html.index("data-create-app")
-        profile_index = html.index("data-create-profile")
-        self.assertLess(shared_index, app_index)
-        self.assertLess(shared_index, profile_index)
-        self.assertIn("Create App key", html)
-        self.assertIn('name="app_name"', html)
+        app_index = html.index('id="create-app"')
+        profile_index = html.index('data-create-profile><label>Create Profile')
+        key_index = html.index('data-mint-key><label>Create key')
+        self.assertLess(app_index, profile_index)
+        self.assertLess(app_index, key_index)
+        self.assertIn("Create key for existing App", html)
+        self.assertNotIn('name="app_name"', html)
         self.assertIn('placeholder="App name, e.g. LibreChat"', html)
-        self.assertIn('name="policy_template" value="chat_only" checked', html)
-        self.assertIn('name="policy_template" value="full_runtime"', html)
-        self.assertIn("Create App key", html)
+        self.assertNotIn('name="policy_template"', html)
+        self.assertNotIn("data-create-shared-access", html)
         self.assertNotIn('value="librechat.vivid.fish"', html)
         self.assertNotIn('name="mint_key"', html)
         self.assertNotIn("Advanced policy fields", html)
         self.assertNotIn("Raw shared access policy JSON", html)
 
-    def test_shared_access_flow_builds_librechat_profile_and_shared_app(
-        self,
-    ) -> None:
+    def test_create_app_and_key_flows_call_their_own_endpoints(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        branch = html[html.index("if(sharedAccessForm)") : html.index("if(profileForm)")]
-        self.assertIn("buildProfile(templateId", branch)
-        self.assertIn("policyTemplates[templateId]", branch)
-        self.assertIn("appSlug", branch)
-        self.assertIn("kind:'service'", branch)
-        self.assertIn("owner_service_account_name:appName", branch)
-        self.assertIn("storedProfileId=(createdProfile.profile&&createdProfile.profile.id)", branch)
-        self.assertIn("profile_id:storedProfileId", branch)
-
-    def test_shared_access_flow_calls_profile_app_key_endpoints(self) -> None:
-        html = render_admin_dashboard(_snapshot())
-        branch = html[html.index("if(sharedAccessForm)") : html.index("if(profileForm)")]
-        self.assertIn("createdProfile=await json(f.action,profileBody)", branch)
-        self.assertIn("createdApp=await json(f.dataset.appAction,appBody)", branch)
-        self.assertIn("f.dataset.keyActionTemplate.replace('{app_id}'", branch)
-        self.assertIn("createdKey=await json(url,keyBody)", branch)
+        app_branch = html[html.index("if(appForm)") : html.index("if(keyForm)")]
+        key_branch = html[html.index("if(keyForm)") : html.index("document.addEventListener('click'")]
+        self.assertIn("kind:fd.get('kind')||'service'", app_branch)
+        self.assertIn("json(f.action,body)", app_branch)
+        self.assertIn("f.dataset.actionTemplate.replace('{app_id}'", key_branch)
+        self.assertIn("if(label)body.label=label", key_branch)
         self.assertIn('action="/admin/api/profiles"', html)
-        self.assertIn('data-app-action="/admin/api/apps"', html)
-        self.assertIn('data-key-action-template="/admin/api/apps/{app_id}/keys"', html)
+        self.assertIn('action="/admin/api/apps"', html)
+        self.assertIn('data-action-template="/admin/api/apps/{app_id}/keys"', html)
 
     def test_admin_automation_key_flow_is_separate_from_runtime_keys(self) -> None:
         html = render_admin_dashboard(_snapshot())
@@ -313,20 +343,32 @@ class AdminRenderHappyPathTests(unittest.TestCase):
     def test_admin_dashboard_uses_operator_design_contract(self) -> None:
         html = render_admin_dashboard(_snapshot())
         self.assertIn(">Gateway admin</h1>", html)
+        self.assertIn('id="apis"', html)
+        self.assertIn(">APIs</h2>", html)
+        self.assertIn("OpenAI-compatible", html)
+        self.assertIn('id="services"', html)
+        self.assertIn(">Services</h2>", html)
+        self.assertIn("llama-turbo / kobold", html)
+        self.assertIn("Model visibility", html)
         self.assertIn('id="apps-keys"', html)
         self.assertIn(">Apps &amp; Keys</h2>", html)
         self.assertIn('id="profiles"', html)
         self.assertIn('id="admin-keys"', html)
-        self.assertIn('id="debug-access"', html)
-        self.assertIn(">Debug Access</h2>", html)
-        self.assertIn("Profiles stay here as operator tools", html)
-        self.assertIn("users never choose them", html)
+        self.assertIn('id="identity"', html)
+        self.assertIn('id="policy-test"', html)
+        self.assertIn(">Policy Test</h2>", html)
+        self.assertIn("Runtime Profile mappings", html)
+        self.assertIn("data-create-runtime-mapping", html)
+        self.assertIn("/admin/api/runtime-profile-mappings", html)
+        self.assertIn("This does not grant admin access", html)
+        self.assertIn("Apps own runtime keys", html)
+        self.assertIn("users do not hand-edit policy", html)
         self.assertIn("opk_</code>&nbsp;runtime App keys", html)
         self.assertIn("oak_</code>&nbsp;admin automation", html)
 
     def test_profile_creation_is_template_first(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        profile_section = html[html.index('id="profiles"') : html.index('id="debug-access"')]
+        profile_section = html[html.index('id="profiles"') : html.index('id="identity"')]
         self.assertIn("Start from a template", profile_section)
         self.assertIn('class="template-strip"', profile_section)
         self.assertLess(
@@ -354,6 +396,9 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertNotIn("window.location", html)
         self.assertNotIn("Copy failed", html)
         self.assertIn("button.dataset.copyLabel", html)
+        self.assertIn("Copy setup", html)
+        self.assertIn("runtimeBaseUrl", html)
+        self.assertIn("OpenAI-compatible setup: Base URL", html)
         self.assertIn("refreshMain", html)
         self.assertIn("DOMParser", html)
         key_form_branch = html[
@@ -362,12 +407,9 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("await refreshMain();showSecret(data", key_form_branch)
         profile_form_branch = html[html.index("if(profileForm)") : html.index("if(simForm)")]
         app_form_branch = html[html.index("if(appForm)") : html.index("if(keyForm)")]
-        shared_access_branch = html[
-            html.index("if(sharedAccessForm)") : html.index("if(profileForm)")
-        ]
         self.assertIn("await refreshMain();show(data)", profile_form_branch)
         self.assertIn("await refreshMain();show(data)", app_form_branch)
-        self.assertIn("await refreshMain();showSecret(data", shared_access_branch)
+        self.assertIn("await refreshMain();showSecret(data", key_form_branch)
 
     def test_admin_logout_url_is_configurable(self) -> None:
         html = render_admin_dashboard(
@@ -400,8 +442,9 @@ class AdminRenderSecurityTests(unittest.TestCase):
         html = render_admin_dashboard({})
         self.assertTrue(html.startswith("<!doctype html>"))
         self.assertIn("No App keys yet", html)
-        self.assertIn('href="#create-app-key"', html)
-        self.assertIn("Create App key", html)
+        self.assertIn('href="#create-app"', html)
+        self.assertIn("Create App", html)
+        self.assertNotIn("data-create-shared-access", html)
         self.assertNotIn("Create an App before minting a runtime key.", html)
         self.assertNotIn("Mint runtime key", html)
         self.assertNotIn(">Policy test<", html)

@@ -29,6 +29,7 @@ from gateway.policy import (
     CapabilitySelector,
     FallbackPolicy,
     NativePassthroughPolicy,
+    ModelAccessPolicy,
     StatusVisibilityPolicy,
 )
 
@@ -50,6 +51,7 @@ _PROFILE_KEYS = {
     "fallback",
     "native_passthrough",
     "status_visibility",
+    "model_access",
 }
 
 _ALLOW_KEYS = {
@@ -183,6 +185,19 @@ def _load_status_visibility(value: object) -> StatusVisibilityPolicy:
     return StatusVisibilityPolicy(level=level)
 
 
+def _load_model_access(value: object) -> ModelAccessPolicy:
+    data = _require_mapping(value, where="model_access")
+    if not data:
+        return ModelAccessPolicy()
+    mode = data.get("mode", "catalog")
+    if not isinstance(mode, str):
+        raise ProfileLoadError("model_access.mode must be a string")
+    try:
+        return ModelAccessPolicy(mode=mode)
+    except ValueError as exc:
+        raise ProfileLoadError(str(exc)) from exc
+
+
 def load_profile(
     profile_data: object,
     *,
@@ -233,6 +248,7 @@ def load_profile(
         status_visibility=_load_status_visibility(
             profile_data.get("status_visibility")
         ),
+        model_access=_load_model_access(profile_data.get("model_access")),
     )
 
 

@@ -62,6 +62,7 @@ __all__ = [
     "StateRecord",
     "authorization_url",
     "admin_role_from_oidc_claims",
+    "access_names_from_oidc_claims",
     "bootstrap_admin_role",
     "consume_state",
     "csrf_token_for_session",
@@ -718,6 +719,41 @@ def admin_role_from_oidc_claims(
             return AdminRole.ADMIN
 
     return AdminRole.NONE
+
+
+def access_names_from_oidc_claims(
+    claims: Mapping[str, Any],
+    *,
+    client_id: str,
+) -> dict[str, tuple[str, ...]]:
+    """Return normalized OIDC group/role names for runtime Profile mapping.
+
+    The gateway stores aliases rather than raw claims so an admin can map
+    "trusted users", "trusted-users", or "/trusted-users" without caring how
+    the IdP serialized the name on a given login.
+    """
+    groups: set[str] = set()
+    roles: set[str] = set()
+
+    for item in _iter_claim_strings(claims.get("groups")):
+        groups.update(_access_name_aliases(item))
+
+    realm_access = claims.get("realm_access")
+    if isinstance(realm_access, Mapping):
+        for item in _iter_claim_strings(realm_access.get("roles")):
+            roles.update(_access_name_aliases(item))
+
+    resource_access = claims.get("resource_access")
+    if isinstance(resource_access, Mapping):
+        client_access = resource_access.get(client_id)
+        if isinstance(client_access, Mapping):
+            for item in _iter_claim_strings(client_access.get("roles")):
+                roles.update(_access_name_aliases(item))
+
+    return {
+        "oidc_group": tuple(sorted(groups)),
+        "oidc_role": tuple(sorted(roles)),
+    }
 
 
 # ---------------------------------------------------------------------------

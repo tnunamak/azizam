@@ -127,6 +127,91 @@ class TestOidcUpsert(AdminStoreTestBase):
         self.assertEqual(again["display_name"], "K")
 
 
+class TestRuntimeProfileMappings(AdminStoreTestBase):
+    def test_oidc_claims_are_replaced_for_user(self) -> None:
+        user = admin_store.upsert_oidc_user("iss", "sub", path=self.db)
+        admin_store.replace_user_identity_claims(
+            user["id"],
+            {
+                "oidc_group": ["trusted-users", "family"],
+                "oidc_role": ["adminish"],
+            },
+            path=self.db,
+        )
+        admin_store.replace_user_identity_claims(
+            user["id"],
+            {"oidc_group": ["family"], "oidc_role": []},
+            path=self.db,
+        )
+
+        rows = admin_store.list_user_identity_claims(user["id"], path=self.db)
+        self.assertEqual(
+            [(row["claim_kind"], row["claim_value"]) for row in rows],
+            [("oidc_group", "family")],
+        )
+
+    def test_runtime_mapping_resolution_uses_priority(self) -> None:
+        family = admin_store.create_profile(
+            "Family",
+            {"id": "family"},
+            path=self.db,
+        )
+        friend = admin_store.create_profile(
+            "Friend",
+            {"id": "friend"},
+            path=self.db,
+        )
+        admin_store.create_runtime_profile_mapping(
+            source_kind="all_users",
+            source_value=None,
+            profile_id=family["id"],
+            path=self.db,
+        )
+        admin_store.create_runtime_profile_mapping(
+            source_kind="oidc_group",
+            source_value="/trusted-users",
+            profile_id=friend["id"],
+            path=self.db,
+        )
+
+        resolved = admin_store.resolve_runtime_profile_mapping(
+            email="simon@example.com",
+            gateway_role="none",
+            oidc_groups=["trusted-users"],
+            path=self.db,
+        )
+        self.assertEqual(resolved, friend["id"])
+
+    def test_runtime_mapping_can_be_disabled(self) -> None:
+        profile = admin_store.create_profile("Family", {"id": "family"}, path=self.db)
+        mapping = admin_store.create_runtime_profile_mapping(
+            source_kind="domain",
+            source_value="example.com",
+            profile_id=profile["id"],
+            path=self.db,
+        )
+
+        self.assertEqual(
+            admin_store.resolve_runtime_profile_mapping(
+                email="person@example.com",
+                gateway_role="none",
+                path=self.db,
+            ),
+            profile["id"],
+        )
+
+        self.assertTrue(
+            admin_store.disable_runtime_profile_mapping(mapping["id"], path=self.db)
+        )
+        self.assertIsNone(
+            admin_store.resolve_runtime_profile_mapping(
+                email="person@example.com",
+                gateway_role="none",
+                path=self.db,
+            )
+        )
+
+
 class TestPersonalApp(AdminStoreTestBase):
     def test_ensure_is_idempotent(self) -> None:
         user = admin_store.upsert_oidc_user("iss", "sub", path=self.db)

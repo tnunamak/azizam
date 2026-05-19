@@ -36,7 +36,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 from urllib.parse import quote
 
 import httpx
@@ -60,6 +60,7 @@ from gateway.admin_oidc import (
     PKCEPair,
     SessionError,
     StateRecord,
+    access_names_from_oidc_claims,
     admin_role_from_oidc_claims,
     authorization_url,
     bootstrap_admin_role,
@@ -140,7 +141,7 @@ from gateway.video_extensions import (
     STANDARD_VIDEO_CREATE_FIELDS,
     bind_video_workflow_extensions,
 )
-from gateway.policy import DEFAULT_PROFILE, PolicyDecision
+from gateway.policy import DEFAULT_PROFILE, DENIED, PolicyDecision
 from gateway.receipts import RouteReceipt
 from gateway.runtime_auth import (
     RuntimeIdentity,
@@ -1111,8 +1112,38 @@ def _profile_from_map(mapping_name: str, key: str) -> str | None:
     return _profile_ref_to_store_id(raw)
 
 
-def _default_profile_id_for_user(*, email: str, role: str) -> str | None:
+def _stored_oidc_access_names_for_user(user_id: str) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {"oidc_group": [], "oidc_role": []}
+    if not user_id:
+        return out
+    for row in admin_store.list_user_identity_claims(
+        user_id,
+        path=ADMIN_STORE.path,
+    ):
+        kind = str(row.get("claim_kind") or "")
+        if kind in out:
+            out[kind].append(str(row.get("claim_value") or ""))
+    return out
+
+
+def _default_profile_id_for_user(
+    *,
+    email: str,
+    role: str,
+    oidc_groups: Iterable[str] = (),
+    oidc_roles: Iterable[str] = (),
+) -> str | None:
     normalized_email = email.strip().lower()
+    mapped_profile = admin_store.resolve_runtime_profile_mapping(
+        email=normalized_email,
+        gateway_role=role,
+        oidc_groups=oidc_groups,
+        oidc_roles=oidc_roles,
+        path=ADMIN_STORE.path,
+    )
+    if mapped_profile:
+        return _profile_ref_to_store_id(mapped_profile)
+
     if normalized_email:
         profile_id = _profile_from_map("email_profile_ids", normalized_email)
         if profile_id:
@@ -1147,9 +1178,13 @@ def _admin_role_for_user_id(user_id: str) -> str:
 
 
 def _default_profile_id_for_session(session) -> str | None:
+    user_id = str(getattr(session, "subject", "") or "")
+    oidc_access = _stored_oidc_access_names_for_user(user_id)
     return _default_profile_id_for_user(
         email=str(getattr(session, "email", "") or ""),
-        role=_admin_role_for_user_id(str(getattr(session, "subject", "") or "")),
+        role=_admin_role_for_user_id(user_id),
+        oidc_groups=oidc_access["oidc_group"],
+        oidc_roles=oidc_access["oidc_role"],
     )
 
 
@@ -1162,9 +1197,12 @@ def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
     user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
     if user is None:
         return None
+    oidc_access = _stored_oidc_access_names_for_user(owner_user_id)
     return _default_profile_id_for_user(
         email=str(user.get("email") or ""),
         role=_admin_role_for_user_id(owner_user_id),
+        oidc_groups=oidc_access["oidc_group"],
+        oidc_roles=oidc_access["oidc_role"],
     )
 
 
@@ -1180,9 +1218,12 @@ def _provision_existing_user_personal_apps() -> int:
         if any(app.get("kind") == "personal" for app in before):
             continue
         label = user.get("email") or user.get("display_name") or user_id
+        oidc_access = _stored_oidc_access_names_for_user(user_id)
         default_profile_id = _default_profile_id_for_user(
             email=str(user.get("email") or ""),
             role=_admin_role_for_user_id(user_id),
+            oidc_groups=oidc_access["oidc_group"],
+            oidc_roles=oidc_access["oidc_role"],
         )
         app = admin_store.ensure_personal_app_for_user(
             user_id,
@@ -7007,6 +7048,169 @@ def _profile_for_auth_context(auth_context: AuthContext):
     return auth_context.identity.profile
 
 
+def _profile_source_id(auth_context: AuthContext) -> str:
+    return getattr(_profile_for_auth_context(auth_context), "id", "default-local")
+
+
+def _profile_model_access_mode(auth_context: AuthContext) -> str:
+    profile = _profile_for_auth_context(auth_context)
+    model_access = getattr(profile, "model_access", None)
+    return str(getattr(model_access, "mode", "catalog") or "catalog")
+
+
+def _profile_model_allowlist(auth_context: AuthContext):
+    return getattr(_profile_for_auth_context(auth_context), "models", None)
+
+
+def _same_model_path(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    return os.path.normcase(os.path.normpath(left)) == os.path.normcase(
+        os.path.normpath(right)
+    )
+
+
+def _role_catalog_ids_for_loaded_path(
+    *, backend: str, loaded_path: str | None, loaded_model_id: str | None
+) -> set[str]:
+    ids: set[str] = set()
+    loaded_norm = normalize_model_id(loaded_model_id or "")
+    loaded_base = normalize_model_id(os.path.basename(loaded_path or ""))
+    loaded_path_norm = os.path.normcase(os.path.normpath(loaded_path or ""))
+
+    def matches_path(path: Any) -> bool:
+        raw = str(path or "").strip()
+        if not raw:
+            return False
+        raw_norm = os.path.normcase(os.path.normpath(raw))
+        return raw_norm == loaded_path_norm or normalize_model_id(os.path.basename(raw)) in {
+            loaded_norm,
+            loaded_base,
+        }
+
+    if isinstance(ROLES, dict):
+        for role_name, role_def in ROLES.items():
+            if not isinstance(role_def, Mapping) or role_def.get("backend") != backend:
+                continue
+            role_model = role_def.get("model")
+            if role_model:
+                if matches_path(role_model):
+                    ids.add(str(role_name))
+            elif backend == "tabby" and loaded_model_id:
+                # Tabby roles often name a backend without pinning a specific
+                # model path. When that backend is hot, the role is a valid
+                # handle for the current loaded model.
+                ids.add(str(role_name))
+
+    for model_id, spec in MODELS_CATALOG.items():
+        if not isinstance(spec, Mapping) or spec.get("backend") != backend:
+            continue
+        if matches_path(spec.get("path")):
+            ids.add(str(model_id))
+
+    return ids
+
+
+async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> set[str]:
+    """Return public ids that resolve to the currently loaded LLM backend."""
+    try:
+        active = active_backend or await get_active_backend()
+    except Exception:
+        active = None
+
+    ids: set[str] = set()
+    if active == "tabby":
+        loaded = await get_tabby_loaded_model_id()
+        if loaded:
+            ids.add(loaded)
+            ids.update(
+                _role_catalog_ids_for_loaded_path(
+                    backend="tabby",
+                    loaded_path=None,
+                    loaded_model_id=loaded,
+                )
+            )
+        return {item for item in ids if item}
+
+    loaded_path = currently_loaded_kobold_model()
+    if loaded_path:
+        ids.add(loaded_path)
+        basename = os.path.basename(loaded_path)
+        if basename:
+            ids.add(basename)
+        ids.update(
+            _role_catalog_ids_for_loaded_path(
+                backend="kobold",
+                loaded_path=loaded_path,
+                loaded_model_id=basename,
+            )
+        )
+    return {item for item in ids if item}
+
+
+async def _current_loaded_model_policy_decision(
+    auth_context: AuthContext,
+    *,
+    requested_model: str,
+) -> PolicyDecision | None:
+    if _profile_model_access_mode(auth_context) != "current_loaded":
+        return None
+    requested = requested_model.strip()
+    if not requested:
+        return None
+    loaded_ids = await _current_loaded_llm_model_ids()
+    normalized_loaded = {normalize_model_id(item) for item in loaded_ids}
+    if normalize_model_id(requested) in normalized_loaded:
+        return None
+    profile_id = _profile_source_id(auth_context)
+    if normalized_loaded:
+        reason = (
+            f"model {requested!r} is not one of the currently loaded LLM ids: "
+            + ", ".join(sorted(item for item in loaded_ids if not item.startswith("/")))
+        )
+    else:
+        reason = "current-loaded model policy is enabled, but no loaded LLM was reported"
+    return PolicyDecision(
+        decision=DENIED,
+        sources=(f"profile:{profile_id}", "policy:model-access"),
+        reasons=(reason,),
+        visibility_level=_profile_for_auth_context(auth_context).status_visibility.level,
+    )
+
+
+async def _filter_model_list_for_profile(
+    data: list[Any],
+    auth_context: AuthContext,
+) -> tuple[list[Any], dict[str, Any]]:
+    metadata: dict[str, Any] = {}
+    filtered = [item for item in data if isinstance(item, dict)]
+
+    allowlist = _profile_model_allowlist(auth_context)
+    if allowlist is not None:
+        allowed_ids = {normalize_model_id(item) for item in allowlist}
+        filtered = [
+            item
+            for item in filtered
+            if normalize_model_id(str(item.get("id") or "")) in allowed_ids
+        ]
+        metadata["vivid_fish_profile_model_allowlist"] = sorted(allowlist)
+
+    if _profile_model_access_mode(auth_context) == "current_loaded":
+        loaded_ids = await _current_loaded_llm_model_ids()
+        loaded_norm = {normalize_model_id(item) for item in loaded_ids}
+        filtered = [
+            item
+            for item in filtered
+            if normalize_model_id(str(item.get("id") or "")) in loaded_norm
+        ]
+        metadata["vivid_fish_model_access"] = "current_loaded"
+        metadata["vivid_fish_current_model_ids"] = sorted(
+            item for item in loaded_ids if item and not item.startswith("/")
+        )
+
+    return filtered, metadata
+
+
 def _protocol_for_intent(intent: str) -> str:
     if intent.startswith("image."):
         return "openai.images"
@@ -7593,6 +7797,224 @@ async def user_portal_revoke_key(credential_id: str, request: Request):
     )
 
 
+def _admin_api_surfaces() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "OpenAI-compatible",
+            "route_base": "/v1",
+            "status": "live",
+            "profile_gates": ["openai"],
+            "clients": ["OpenAI SDKs", "Open WebUI", "LibreChat", "Continue"],
+            "description": "Chat, completions, responses, embeddings, models, images, audio, and video routes.",
+        },
+        {
+            "name": "Anthropic Messages",
+            "route_base": "/v1/messages",
+            "status": "partial",
+            "profile_gates": ["anthropic"],
+            "clients": ["Claude-shaped coding agents"],
+            "description": "Messages-compatible chat surface backed by local LLM routing.",
+        },
+        {
+            "name": "Ollama-compatible",
+            "route_base": "/api",
+            "status": "partial",
+            "profile_gates": ["ollama"],
+            "clients": ["Ollama SDKs", "local model tools"],
+            "description": "Ollama-shaped chat/generate/tags compatibility where it maps cleanly.",
+        },
+        {
+            "name": "Gateway-native",
+            "route_base": "/gateway/v1",
+            "status": "live",
+            "profile_gates": ["gateway"],
+            "clients": ["agents", "media tooling"],
+            "description": "Capabilities, workflows, receipts, and durable media jobs.",
+        },
+        {
+            "name": "Admin API",
+            "route_base": "/admin/api",
+            "status": "live",
+            "profile_gates": ["admin session", "oak_"],
+            "clients": ["operators", "automation"],
+            "description": "Control-plane API for Apps, Profiles, keys, audit, and policy simulation.",
+        },
+    ]
+
+
+def _status_by_service_name(status_payload: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    out: dict[str, Mapping[str, Any]] = {}
+    for row in status_payload.get("backends") or []:
+        if not isinstance(row, Mapping):
+            continue
+        name = str(row.get("name") or "")
+        if name:
+            out[name] = row
+    return out
+
+
+def _admin_service_runtime_summary(
+    key: str,
+    *,
+    status_payload: Mapping[str, Any],
+) -> str:
+    models = status_payload.get("models") if isinstance(status_payload, Mapping) else {}
+    if not isinstance(models, Mapping):
+        models = {}
+    if key in {"kobold", "tabby"}:
+        loaded = models.get("loaded_llm_name")
+        ctx = models.get("ctx_size")
+        if loaded and ctx:
+            return f"loaded LLM: {loaded}; context {ctx}"
+        if loaded:
+            return f"loaded LLM: {loaded}"
+        return "loaded LLM: unknown"
+    if key == "tts":
+        tts = models.get("tts")
+        if isinstance(tts, Mapping):
+            label = tts.get("label") or tts.get("unit")
+            if label:
+                return f"active TTS: {label}"
+        return "speech synthesis backend"
+    if key == "stt":
+        return "speech transcription backend"
+    if key == "comfyui":
+        image_workflows = models.get("image_workflows")
+        video_aliases = models.get("video_aliases")
+        image_count = len(image_workflows) if isinstance(image_workflows, list) else 0
+        video_count = len(video_aliases) if isinstance(video_aliases, list) else 0
+        queue = status_payload.get("comfy_queue")
+        queue_text = ""
+        if isinstance(queue, Mapping):
+            queue_text = (
+                f"; queue {int(queue.get('running') or 0)} running/"
+                f"{int(queue.get('pending') or 0)} pending"
+            )
+        return f"{image_count} image workflows; {video_count} video aliases{queue_text}"
+    return ""
+
+
+def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+    payload: Mapping[str, Any] = status_payload or {}
+    status_by_name = _status_by_service_name(payload)
+    rows: list[dict[str, Any]] = []
+    for key, raw in (config.get("backends") or {}).items():
+        if not isinstance(raw, Mapping):
+            continue
+        name = str(raw.get("name") or key)
+        live = status_by_name.get(name) or {}
+        live_status = str(live.get("live_status") or live.get("status") or "unknown")
+        role = str(raw.get("role") or "required")
+        if role == "standby" and live_status == "down":
+            live_status = "standby"
+        rows.append(
+            {
+                "key": key,
+                "name": name,
+                "role": role,
+                "capabilities": raw.get("capabilities") or [],
+                "status": live_status,
+                "last_error": live.get("last_error") or "",
+                "note": raw.get("note") or live.get("last_error") or "",
+                "runtime": _admin_service_runtime_summary(
+                    str(key),
+                    status_payload=payload,
+                ),
+            }
+        )
+    return rows
+
+
+def _admin_model_visibility(status_payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    payload: Mapping[str, Any] = status_payload or {}
+    models = payload.get("models") if isinstance(payload, Mapping) else {}
+    loaded = ""
+    if isinstance(models, Mapping):
+        loaded = str(models.get("loaded_llm_name") or "")
+    if not loaded:
+        loaded_path = currently_loaded_kobold_model()
+        loaded = os.path.basename(loaded_path) if loaded_path else ""
+    return {
+        "mode": "per-Profile catalog or current-loaded LLM",
+        "loaded_model": loaded or "unknown",
+        "list_behavior": (
+            "/v1/models is filtered by the caller's Profile; current-loaded "
+            "Profiles only see active loaded LLM ids."
+        ),
+        "route_behavior": (
+            "Allowed role/catalog requests may swap models"
+            if not PIN_LOADED_MODEL
+            else "Global pin_loaded_model prevents automatic LLM swaps"
+        ),
+    }
+
+
+def _admin_identity_mappings() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    source_labels = {
+        "email": "email",
+        "domain": "email domain",
+        "oidc_group": "OIDC group",
+        "oidc_role": "OIDC role",
+        "gateway_role": "gateway admin role",
+        "all_users": "all signed-in users",
+    }
+    for mapping in admin_store.list_runtime_profile_mappings(path=ADMIN_STORE.path):
+        source_kind = str(mapping.get("source_kind") or "")
+        source_value = str(mapping.get("source_value") or "")
+        label = source_labels.get(source_kind, source_kind or "identity")
+        source = label if source_kind == "all_users" else f"{label}: {source_value}"
+        rows.append(
+            {
+                "id": mapping.get("id"),
+                "source": source,
+                "scope": "runtime Profile mapping",
+                "profile_id": _profile_ref_to_store_id(mapping.get("profile_id"))
+                or "default-local",
+                "note": "Managed here. This does not grant admin access.",
+            }
+        )
+
+    def add_mapping(scope: str, mapping_name: str) -> None:
+        mapping = user_defaults_cfg.get(mapping_name)
+        if not isinstance(mapping, Mapping):
+            return
+        for source, profile in sorted(mapping.items()):
+            rows.append(
+                {
+                    "source": f"{scope}: {source}",
+                    "scope": "runtime default",
+                    "profile_id": _profile_ref_to_store_id(profile) or "default-local",
+                    "note": "Applied when a signed-in user creates a personal App.",
+                }
+            )
+
+    add_mapping("gateway role", "role_profile_ids")
+    add_mapping("email domain", "domain_profile_ids")
+    add_mapping("email", "email_profile_ids")
+    default_profile = _profile_ref_to_store_id(user_defaults_cfg.get("default_profile_id"))
+    if default_profile:
+        rows.append(
+            {
+                "source": "all signed-in users",
+                "scope": "runtime default",
+                "profile_id": default_profile,
+                "note": "Fallback when no role, domain, or email mapping matches.",
+            }
+        )
+    if not rows:
+        rows.append(
+            {
+                "source": "all signed-in users",
+                "scope": "runtime default",
+                "profile_id": "default-local",
+                "note": "No custom runtime default mapping is configured.",
+            }
+        )
+    return rows
+
+
 @app.get("/admin", include_in_schema=False)
 async def admin_dashboard(request: Request):
     try:
@@ -7616,6 +8038,15 @@ async def admin_dashboard(request: Request):
             headers={"WWW-Authenticate": "Bearer"},
         )
     snapshot = ADMIN_STORE.dashboard_snapshot(actor)
+    try:
+        status_payload = await status_endpoint.get_cached_status(config)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] admin status enrichment failed: {e}", flush=True)
+        status_payload = {}
+    snapshot["api_surfaces"] = _admin_api_surfaces()
+    snapshot["services"] = _admin_services(status_payload)
+    snapshot["model_visibility"] = _admin_model_visibility(status_payload)
+    snapshot["identity_mappings"] = _admin_identity_mappings()
     body = render_admin_dashboard(
         snapshot,
         title="AI Gateway Admin",
@@ -7721,6 +8152,15 @@ async def admin_oidc_callback(request: Request):
             display_name=str(claims.get("name") or claims.get("email") or ""),
             path=ADMIN_STORE.path,
         )
+        oidc_access_names = access_names_from_oidc_claims(
+            claims,
+            client_id=cfg.client_id,
+        )
+        admin_store.replace_user_identity_claims(
+            str(user["id"]),
+            oidc_access_names,
+            path=ADMIN_STORE.path,
+        )
         role = bootstrap_admin_role(
             str(claims.get("email") or ""),
             config=cfg,
@@ -7741,6 +8181,8 @@ async def admin_oidc_callback(request: Request):
             default_profile_id = _default_profile_id_for_user(
                 email=str(user.get("email") or ""),
                 role=role,
+                oidc_groups=oidc_access_names["oidc_group"],
+                oidc_roles=oidc_access_names["oidc_role"],
             )
             app = admin_store.ensure_personal_app_for_user(
                 str(user["id"]),
@@ -11232,6 +11674,8 @@ async def list_models(request: Request):
                 "vivid_fish_model_path": loaded_gguf,
             })
 
+    data, policy_metadata = await _filter_model_list_for_profile(data, auth_context)
+    upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data
     upstream_payload["object"] = upstream_payload.get("object") or "list"
     return Response(
@@ -12265,6 +12709,13 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                 body_peek = json.dumps(body_json).encode()
             model_name = body_json.get("model", "")
             operation = "chat" if request_path == "/v1/chat/completions" else "completions"
+            if isinstance(model_name, str) and model_name:
+                current_loaded_decision = await _current_loaded_model_policy_decision(
+                    auth_context,
+                    requested_model=model_name,
+                )
+                if current_loaded_decision is not None and current_loaded_decision.denied:
+                    return _policy_denied_response(current_loaded_decision)
             # Fix 3: scan for image content blocks BEFORE routing. We need this
             # decision early because soft-path routing (OpenAI alias on a hot
             # text-only backend) would otherwise drop the images silently.
@@ -12456,6 +12907,16 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             body_json = json.loads(body_peek)
             model_name = body_json.get("model", "")
             if model_name:
+                if isinstance(model_name, str):
+                    current_loaded_decision = await _current_loaded_model_policy_decision(
+                        auth_context,
+                        requested_model=model_name,
+                    )
+                    if (
+                        current_loaded_decision is not None
+                        and current_loaded_decision.denied
+                    ):
+                        return _policy_denied_response(current_loaded_decision)
                 try:
                     model_resolution = resolve_model_for_operation("embeddings", model_name)
                 except ModelCompatibilityError as e:

@@ -14,6 +14,7 @@ from gateway.policy import (  # noqa: E402
     DEFAULT_PROFILE_ID,
     AppProfile,
     CapabilitySelector,
+    ModelAccessPolicy,
 )
 from gateway.profiles import (  # noqa: E402
     ProfileLoadError,
@@ -75,6 +76,7 @@ class TestLoadProfileFields(unittest.TestCase):
                     "audit": False,
                 },
                 "status_visibility": {"level": "full"},
+                "model_access": {"mode": "current_loaded"},
             }
         )
 
@@ -108,6 +110,10 @@ class TestLoadProfileFields(unittest.TestCase):
         )
         self.assertFalse(profile.native_passthrough.audit)
         self.assertEqual(profile.status_visibility.level, "full")
+        self.assertEqual(
+            profile.model_access,
+            ModelAccessPolicy(mode="current_loaded"),
+        )
 
     def test_empty_list_means_deny_all_for_dimension(self) -> None:
         profile = load_profile({"id": "locked", "protocols": []})
@@ -180,6 +186,10 @@ class TestLoadProfileValidation(unittest.TestCase):
             load_profile(
                 {"id": "x", "status_visibility": {"level": "loud"}}
             )
+
+    def test_model_access_mode_must_be_known(self) -> None:
+        with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "model_access": {"mode": "surprise"}})
 
     def test_fallback_must_be_mapping(self) -> None:
         with self.assertRaises(ProfileLoadError):

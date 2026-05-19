@@ -1035,6 +1035,33 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(len(apps), 1)
         self.assertEqual(apps[0]["default_profile_id"], profile["id"])
 
+    def test_runtime_profile_mapping_from_oidc_group_overrides_yaml_defaults(self) -> None:
+        profile = admin_store.create_profile(
+            "Trusted users",
+            {"id": "trusted-users", "protocols": ["openai"]},
+            path=self.db,
+        )
+        admin_store.create_runtime_profile_mapping(
+            source_kind="oidc_group",
+            source_value="/trusted-users",
+            profile_id=profile["id"],
+            path=self.db,
+        )
+
+        with patch.object(
+            proxy,
+            "user_defaults_cfg",
+            {"default_profile_id": "default-local"},
+        ):
+            self.assertEqual(
+                proxy._default_profile_id_for_user(
+                    email="simon@example.com",
+                    role="none",
+                    oidc_groups=["trusted-users"],
+                ),
+                profile["id"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

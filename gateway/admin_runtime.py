@@ -150,6 +150,9 @@ class AdminSQLiteStore:
             for record in admin_store.list_profiles(path=self.path)
         ]
 
+    def get_profile(self, profile_id: str) -> dict[str, Any] | None:
+        return admin_store.get_profile(profile_id, path=self.path)
+
     def create_profile(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
@@ -264,6 +267,81 @@ class AdminSQLiteStore:
         out["role"] = assignment["role"]
         out["service_account"] = service_account["name"]
         return out
+
+    def list_runtime_profile_mappings(self) -> list[dict[str, Any]]:
+        return admin_store.list_runtime_profile_mappings(path=self.path)
+
+    def create_runtime_profile_mapping(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        source_kind = str(data.get("source_kind") or "").strip()
+        source_value = str(data.get("source_value") or "").strip()
+        profile_id = str(data.get("profile_id") or "").strip()
+        if profile_id not in {"", "default-local"} and admin_store.get_profile(
+            profile_id,
+            path=self.path,
+        ) is None:
+            raise ValueError(f"profile {profile_id!r} not found")
+        record = admin_store.create_runtime_profile_mapping(
+            source_kind=source_kind,
+            source_value=source_value,
+            profile_id=profile_id or "default-local",
+            created_by=actor.subject,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            "runtime_profile_mapping.create",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="runtime_profile_mapping",
+            target_id=record["id"],
+            metadata={
+                "source_kind": record.get("source_kind"),
+                "source_value": record.get("source_value"),
+                "profile_id": record.get("profile_id"),
+            },
+            path=self.path,
+        )
+        return record
+
+    def disable_runtime_profile_mapping(
+        self, *, mapping_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None:
+        before = next(
+            (
+                row
+                for row in admin_store.list_runtime_profile_mappings(
+                    include_disabled=True,
+                    path=self.path,
+                )
+                if str(row.get("id") or "") == mapping_id
+            ),
+            None,
+        )
+        if before is None:
+            return None
+        admin_store.disable_runtime_profile_mapping(mapping_id, path=self.path)
+        record = next(
+            (
+                row
+                for row in admin_store.list_runtime_profile_mappings(
+                    include_disabled=True,
+                    path=self.path,
+                )
+                if str(row.get("id") or "") == mapping_id
+            ),
+            before,
+        )
+        admin_store.record_audit(
+            "runtime_profile_mapping.disable",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="runtime_profile_mapping",
+            target_id=mapping_id,
+            metadata={"profile_id": before.get("profile_id")},
+            path=self.path,
+        )
+        return record
 
     def revoke_credential(
         self, *, credential_id: str, actor: AdminContext

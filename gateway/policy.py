@@ -20,6 +20,7 @@ DENIED = "denied"
 NOT_EVALUATED = "not_evaluated"
 
 VISIBILITY_LEVELS = ("none", "basic", "standard", "full")
+MODEL_ACCESS_MODES = ("catalog", "current_loaded")
 
 DEFAULT_PROFILE_ID = "default-local"
 
@@ -64,6 +65,25 @@ class StatusVisibilityPolicy:
 
 
 @dataclass(frozen=True)
+class ModelAccessPolicy:
+    """Runtime model-catalog behavior for LLM routes.
+
+    ``catalog`` uses the configured role/catalog entries plus backend models.
+    ``current_loaded`` only advertises and accepts the model ids that resolve
+    to the active loaded LLM. The runtime supplies that loaded-model fact; this
+    pure policy module only carries the operator's intent.
+    """
+
+    mode: str = "catalog"
+
+    def __post_init__(self) -> None:
+        if self.mode not in MODEL_ACCESS_MODES:
+            raise ValueError(
+                f"model access mode must be one of {MODEL_ACCESS_MODES}"
+            )
+
+
+@dataclass(frozen=True)
 class AppProfile:
     """Named policy bundle attached to an API key or client identity.
 
@@ -85,6 +105,7 @@ class AppProfile:
     status_visibility: StatusVisibilityPolicy = field(
         default_factory=StatusVisibilityPolicy
     )
+    model_access: ModelAccessPolicy = field(default_factory=ModelAccessPolicy)
 
     def with_overrides(self, **changes: object) -> "AppProfile":
         return replace(self, **changes)

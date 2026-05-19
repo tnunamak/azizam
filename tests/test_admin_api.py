@@ -38,6 +38,7 @@ class FakeAdminStore:
             {"id": "default-local", "label": "Default local"}
         ]
         self.credentials: dict[str, dict[str, Any]] = {}
+        self.runtime_mappings: dict[str, dict[str, Any]] = {}
         self.audit: list[dict[str, Any]] = []
         self._next_id = 1
 
@@ -80,6 +81,12 @@ class FakeAdminStore:
     def list_profiles(self) -> list[dict[str, Any]]:
         return list(self.profiles)
 
+    def get_profile(self, profile_id: str) -> dict[str, Any] | None:
+        return next(
+            (profile for profile in self.profiles if profile["id"] == profile_id),
+            None,
+        )
+
     def create_profile(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
@@ -88,6 +95,54 @@ class FakeAdminStore:
             "label": data.get("label") or data.get("id") or "unnamed",
         }
         self.profiles.append(record)
+        return dict(record)
+
+    def list_runtime_profile_mappings(self) -> list[dict[str, Any]]:
+        return [
+            dict(mapping)
+            for mapping in self.runtime_mappings.values()
+            if not mapping.get("disabled_at")
+        ]
+
+    def create_runtime_profile_mapping(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        mapping_id = self._id("map")
+        record = {
+            "id": mapping_id,
+            "source_kind": data.get("source_kind"),
+            "source_value": data.get("source_value") or "*",
+            "profile_id": data.get("profile_id") or "default-local",
+            "created_at": "2026-05-17T00:00:00Z",
+            "created_by": actor.subject,
+            "disabled_at": None,
+        }
+        self.runtime_mappings[mapping_id] = record
+        self.audit.append(
+            {
+                "at": "2026-05-17T00:00:00Z",
+                "actor": actor.subject,
+                "action": "runtime_profile_mapping.create",
+                "target": mapping_id,
+            }
+        )
+        return dict(record)
+
+    def disable_runtime_profile_mapping(
+        self, *, mapping_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None:
+        record = self.runtime_mappings.get(mapping_id)
+        if record is None:
+            return None
+        record["disabled_at"] = "2026-05-17T01:00:00Z"
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "runtime_profile_mapping.disable",
+                "target": mapping_id,
+            }
+        )
         return dict(record)
 
     def list_credentials(self) -> list[dict[str, Any]]:
@@ -486,6 +541,54 @@ class AdminProfileTests(unittest.TestCase):
             [p["id"] for p in resp.json()["profiles"]],
             [p["id"] for p in store.profiles],
         )
+
+
+class AdminRuntimeProfileMappingTests(unittest.TestCase):
+    def test_create_list_and_disable_runtime_profile_mapping(self) -> None:
+        client, _ = _make_client()
+        created = client.post(
+            "/admin/api/runtime-profile-mappings",
+            json={
+                "source_kind": "oidc_group",
+                "source_value": "trusted-users",
+                "profile_id": "default-local",
+            },
+            headers=_auth(),
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        mapping = created.json()["mapping"]
+        self.assertEqual(mapping["source_kind"], "oidc_group")
+
+        listed = client.get(
+            "/admin/api/runtime-profile-mappings",
+            headers=_auth(),
+        )
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(
+            [row["id"] for row in listed.json()["mappings"]],
+            [mapping["id"]],
+        )
+
+        disabled = client.delete(
+            f"/admin/api/runtime-profile-mappings/{mapping['id']}",
+            headers=_auth(),
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        self.assertIsNotNone(disabled.json()["mapping"]["disabled_at"])
+
+    def test_runtime_profile_mapping_rejects_unknown_profile(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/runtime-profile-mappings",
+            json={
+                "source_kind": "oidc_group",
+                "source_value": "trusted-users",
+                "profile_id": "missing",
+            },
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertEqual(resp.json()["error"]["code"], "invalid_runtime_mapping")
 
 
 class AdminPolicySimulationTests(unittest.TestCase):

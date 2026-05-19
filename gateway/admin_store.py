@@ -46,6 +46,15 @@ SCHEMA_VERSION = 1
 
 SUBJECT_KINDS = ("user", "service_account", "app")
 APP_KINDS = ("personal", "service")
+IDENTITY_CLAIM_KINDS = ("oidc_group", "oidc_role")
+RUNTIME_PROFILE_MAPPING_SOURCE_KINDS = (
+    "email",
+    "domain",
+    "oidc_group",
+    "oidc_role",
+    "gateway_role",
+    "all_users",
+)
 
 # Credentials attached to an app are data-plane (a runtime client uses them
 # to call /v1/chat/completions etc.). Credentials attached to a user or
@@ -65,6 +74,17 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at INTEGER,
   UNIQUE(issuer, subject)
 );
+
+CREATE TABLE IF NOT EXISTS user_identity_claims (
+  user_id TEXT NOT NULL,
+  claim_kind TEXT NOT NULL,
+  claim_value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(user_id, claim_kind, claim_value),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS user_identity_claims_lookup
+  ON user_identity_claims(user_id, claim_kind);
 
 CREATE TABLE IF NOT EXISTS service_accounts (
   id TEXT PRIMARY KEY,
@@ -133,6 +153,20 @@ CREATE TABLE IF NOT EXISTS admin_role_assignments (
 );
 CREATE INDEX IF NOT EXISTS admin_role_subject
   ON admin_role_assignments(subject_kind, subject_id);
+
+CREATE TABLE IF NOT EXISTS runtime_profile_mappings (
+  id TEXT PRIMARY KEY,
+  source_kind TEXT NOT NULL,
+  source_value TEXT NOT NULL,
+  profile_id TEXT NOT NULL,
+  priority INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  created_by TEXT,
+  disabled_at INTEGER,
+  UNIQUE(source_kind, source_value, profile_id)
+);
+CREATE INDEX IF NOT EXISTS runtime_profile_mappings_lookup
+  ON runtime_profile_mappings(source_kind, source_value, disabled_at);
 
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,
@@ -322,6 +356,62 @@ def list_users(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
     with _conn(path) as conn:
         rows = conn.execute(
             "SELECT * FROM users ORDER BY created_at ASC"
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# OIDC runtime identity claims
+# ---------------------------------------------------------------------------
+
+
+def _normalize_access_value(value: object) -> str:
+    return " ".join(str(value or "").strip().lower().strip("/").split())
+
+
+def replace_user_identity_claims(
+    user_id: str,
+    claims_by_kind: Mapping[str, Iterable[str]],
+    *,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> None:
+    """Replace the latest OIDC group/role aliases observed for a user."""
+    if not user_id:
+        raise ValueError("user_id is required")
+    ts = _now() if now is None else int(now)
+    rows: list[tuple[str, str]] = []
+    for kind, values in claims_by_kind.items():
+        if kind not in IDENTITY_CLAIM_KINDS:
+            continue
+        for value in values:
+            normalized = _normalize_access_value(value)
+            if normalized:
+                rows.append((kind, normalized))
+
+    with _conn(path) as conn:
+        for kind in IDENTITY_CLAIM_KINDS:
+            conn.execute(
+                "DELETE FROM user_identity_claims "
+                "WHERE user_id = ? AND claim_kind = ?",
+                (user_id, kind),
+            )
+        conn.executemany(
+            "INSERT OR IGNORE INTO user_identity_claims"
+            "(user_id, claim_kind, claim_value, updated_at) VALUES (?, ?, ?, ?)",
+            [(user_id, kind, value, ts) for kind, value in rows],
+        )
+        conn.commit()
+
+
+def list_user_identity_claims(
+    user_id: str, *, path: Path = DB_PATH
+) -> list[dict[str, Any]]:
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM user_identity_claims WHERE user_id = ? "
+            "ORDER BY claim_kind ASC, claim_value ASC",
+            (user_id,),
         ).fetchall()
     return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
 
@@ -871,6 +961,153 @@ def list_admin_roles(
 
 
 # ---------------------------------------------------------------------------
+# runtime profile mappings
+# ---------------------------------------------------------------------------
+
+
+def _normalize_runtime_mapping(
+    source_kind: str,
+    source_value: str | None,
+) -> tuple[str, str]:
+    kind = str(source_kind or "").strip().lower()
+    if kind not in RUNTIME_PROFILE_MAPPING_SOURCE_KINDS:
+        raise ValueError(
+            "source_kind must be one of "
+            f"{RUNTIME_PROFILE_MAPPING_SOURCE_KINDS}"
+        )
+    if kind == "all_users":
+        return kind, "*"
+    value = _normalize_access_value(source_value)
+    if not value:
+        raise ValueError("source_value is required")
+    return kind, value
+
+
+def _default_runtime_mapping_priority(source_kind: str) -> int:
+    return {
+        "email": 10,
+        "domain": 20,
+        "oidc_group": 30,
+        "oidc_role": 40,
+        "gateway_role": 50,
+        "all_users": 100,
+    }[source_kind]
+
+
+def create_runtime_profile_mapping(
+    *,
+    source_kind: str,
+    source_value: str | None,
+    profile_id: str,
+    priority: int | None = None,
+    created_by: str | None = None,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    kind, value = _normalize_runtime_mapping(source_kind, source_value)
+    if not profile_id:
+        raise ValueError("profile_id is required")
+    ts = _now() if now is None else int(now)
+    mapping_id = _gen_id("map")
+    prio = (
+        _default_runtime_mapping_priority(kind)
+        if priority is None
+        else int(priority)
+    )
+    with _conn(path) as conn:
+        existing = conn.execute(
+            "SELECT * FROM runtime_profile_mappings "
+            "WHERE source_kind = ? AND source_value = ? AND profile_id = ?",
+            (kind, value, profile_id),
+        ).fetchone()
+        if existing is not None:
+            conn.execute(
+                "UPDATE runtime_profile_mappings SET disabled_at = NULL, "
+                "priority = ?, created_at = ?, created_by = ? WHERE id = ?",
+                (prio, ts, created_by, existing["id"]),
+            )
+            mapping_id = existing["id"]
+        else:
+            conn.execute(
+                "INSERT INTO runtime_profile_mappings"
+                "(id, source_kind, source_value, profile_id, priority, "
+                "created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mapping_id, kind, value, profile_id, prio, ts, created_by),
+            )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM runtime_profile_mappings WHERE id = ?",
+            (mapping_id,),
+        ).fetchone()
+    return _row_to_dict(row)  # type: ignore[return-value]
+
+
+def disable_runtime_profile_mapping(
+    mapping_id: str,
+    *,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> bool:
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        cur = conn.execute(
+            "UPDATE runtime_profile_mappings SET disabled_at = ? "
+            "WHERE id = ? AND disabled_at IS NULL",
+            (ts, mapping_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def list_runtime_profile_mappings(
+    *,
+    include_disabled: bool = False,
+    path: Path = DB_PATH,
+) -> list[dict[str, Any]]:
+    where = "" if include_disabled else "WHERE disabled_at IS NULL"
+    with _conn(path) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM runtime_profile_mappings {where} "
+            "ORDER BY priority ASC, created_at ASC"
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
+
+
+def resolve_runtime_profile_mapping(
+    *,
+    email: str,
+    gateway_role: str,
+    oidc_groups: Iterable[str] = (),
+    oidc_roles: Iterable[str] = (),
+    path: Path = DB_PATH,
+) -> str | None:
+    email_value = _normalize_access_value(email)
+    _, _, domain = email_value.partition("@")
+    candidates: set[tuple[str, str]] = {("all_users", "*")}
+    if email_value:
+        candidates.add(("email", email_value))
+    if domain:
+        candidates.add(("domain", domain))
+    role_value = _normalize_access_value(gateway_role or "none")
+    if role_value:
+        candidates.add(("gateway_role", role_value))
+    for group in oidc_groups:
+        value = _normalize_access_value(group)
+        if value:
+            candidates.add(("oidc_group", value))
+    for role in oidc_roles:
+        value = _normalize_access_value(role)
+        if value:
+            candidates.add(("oidc_role", value))
+
+    for row in list_runtime_profile_mappings(path=path):
+        pair = (str(row.get("source_kind") or ""), str(row.get("source_value") or ""))
+        if pair in candidates:
+            return str(row.get("profile_id") or "") or None
+    return None
+
+
+# ---------------------------------------------------------------------------
 # audit
 # ---------------------------------------------------------------------------
 
@@ -963,11 +1200,15 @@ __all__ = [
     "SCHEMA_VERSION",
     "SUBJECT_KINDS",
     "APP_KINDS",
+    "IDENTITY_CLAIM_KINDS",
+    "RUNTIME_PROFILE_MAPPING_SOURCE_KINDS",
     "init_db",
     "schema_version",
     "upsert_oidc_user",
     "get_user",
     "list_users",
+    "replace_user_identity_claims",
+    "list_user_identity_claims",
     "create_service_account",
     "ensure_service_account",
     "get_service_account",
@@ -989,6 +1230,10 @@ __all__ = [
     "assign_admin_role",
     "revoke_admin_role",
     "list_admin_roles",
+    "create_runtime_profile_mapping",
+    "disable_runtime_profile_mapping",
+    "list_runtime_profile_mappings",
+    "resolve_runtime_profile_mapping",
     "record_audit",
     "list_audit",
 ]
