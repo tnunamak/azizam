@@ -164,6 +164,8 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertNotIn('curl "$OPENAI_BASE_URL/models"', html)
         self.assertNotIn("Connection settings", html)
         self.assertIn("min-width: 6.25rem;", html)
+        self.assertIn(".base-card > div, .shell-main > section, .section-head", html)
+        self.assertIn("min-width: 0;", html)
         self.assertIn("white-space: nowrap;", html)
         self.assertIn('button.textContent = "Copied";', html)
         self.assertIn('button.textContent = "Failed";', html)

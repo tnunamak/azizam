@@ -80,6 +80,7 @@ _PAGE_CSS = """
     display: grid;
     gap: var(--space-3);
     align-content: start;
+    min-width: 0;
   }
   .card h3, .app-card h3, .app-create h3 { margin: 0; font-size: 1rem; }
   .card p, .app-card p, .app-create p { margin: 0; color: var(--muted); line-height: 1.5; }
@@ -115,6 +116,9 @@ _PAGE_CSS = """
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     background: var(--vf-panel);
+  }
+  .base-card > div, .shell-main > section, .section-head {
+    min-width: 0;
   }
   .base-card h2 {
     margin: 0;
@@ -254,6 +258,7 @@ _PAGE_CSS = """
     overflow-wrap: anywhere;
   }
   .snippet {
+    min-width: 0;
     max-width: 100%;
     white-space: nowrap;
     overflow-x: auto;

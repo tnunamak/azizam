@@ -30,6 +30,16 @@ __all__ = ["render_admin_dashboard"]
 
 
 _PAGE_CSS = """
+  .shell-main section,
+  .shell-main section > div,
+  .operator-hero,
+  .operator-strip,
+  .runtime-settings,
+  details.panel,
+  form.flow {
+    min-width: 0;
+    max-width: 100%;
+  }
   .operator-hero {
     display: grid;
     gap: var(--space-3);
@@ -43,6 +53,7 @@ _PAGE_CSS = """
   .operator-hero p { margin: 0; max-width: 62rem; color: var(--muted); line-height: 1.55; }
   .operator-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .operator-strip a, .operator-strip span {
+    min-width: 0;
     min-height: 2.25rem;
     display: inline-flex;
     align-items: center;
@@ -51,6 +62,7 @@ _PAGE_CSS = """
     padding: 0.35rem 0.7rem;
     background: oklch(16% 0.022 230);
     color: var(--text);
+    white-space: normal;
   }
   .operator-strip a:hover { text-decoration: none; filter: brightness(1.06); }
   .section-intro { margin: -0.25rem 0 var(--space-3); color: var(--muted); line-height: 1.5; max-width: 58rem; }
@@ -76,11 +88,11 @@ _PAGE_CSS = """
   .cell-main { font-weight: 650; color: var(--text); }
   .cell-sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.2rem; }
   form.flow { display: grid; gap: 0.75rem; background: var(--panel);
-              border: 1px solid var(--line); border-radius: var(--radius); padding: 0.9rem; }
+              border: 1px solid var(--line); border-radius: var(--radius); padding: 0.9rem; min-width: 0; }
   form.flow .row { display: grid; gap: var(--space-2);
                    grid-template-columns: minmax(0, 1fr) auto; }
   form.flow .stack { display: grid; gap: var(--space-2);
-                     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+                     grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); }
   form.flow label { font-size: 0.85rem; color: var(--muted); }
   form.flow input, form.flow select, form.flow textarea {
     background: oklch(15.5% 0.016 250);
@@ -174,17 +186,17 @@ _PAGE_CSS = """
             color: oklch(90% 0.05 235); font-family: ui-monospace, monospace; font-size: 0.86rem; }
   .result:empty { display: none; }
   details.panel { background: var(--panel); border: 1px solid var(--line);
-                  border-radius: var(--radius); padding: 0.9rem; }
+                  border-radius: var(--radius); padding: 0.9rem; min-width: 0; }
   details.panel summary { cursor: pointer; color: var(--text); font-weight: 650;
                           min-height: 2rem; display: inline-flex; align-items: center; }
   details.panel form.flow { margin-top: 0.75rem; background: transparent; border: 0; padding: 0; }
-  .choice-grid { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+  .choice-grid { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); }
   .choice-card { display: grid; gap: 0.3rem; padding: 0.75rem; border: 1px solid var(--line);
                  border-radius: 6px; background: oklch(14.5% 0.015 250); color: var(--muted); }
   .choice-card input { margin-right: 0.4rem; }
   .choice-card strong { color: var(--text); }
   .inline-options { display: flex; flex-wrap: wrap; gap: 0.55rem 1rem; }
-  .template-strip { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  .template-strip { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr)); }
   .template-card {
     display: grid;
     grid-template-columns: 1.2rem minmax(0, 1fr);
@@ -195,6 +207,7 @@ _PAGE_CSS = """
     padding: 0.8rem;
     background: oklch(14.5% 0.015 250);
     cursor: pointer;
+    min-width: 0;
   }
   .template-card:has(input:checked) {
     background: color-mix(in oklch, var(--focus), transparent 90%);
@@ -207,6 +220,7 @@ _PAGE_CSS = """
     .operator-hero h1 { font-size: 2.2rem; }
     table { display: block; overflow-x: auto; }
     form.flow .row { grid-template-columns: 1fr; }
+    .choice-grid, .template-strip { grid-template-columns: 1fr; }
   }
 """
 
