@@ -83,6 +83,7 @@ STANDARD_IMAGE_EDIT_FIELDS: frozenset[str] = frozenset(
         "background",
         "user",
         "image",
+        "image[]",
         "images",
         "mask",
         "input_fidelity",

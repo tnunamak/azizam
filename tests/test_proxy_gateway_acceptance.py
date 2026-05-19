@@ -504,6 +504,35 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
         self.assertEqual(response.status_code, 400)
         self.assertIn("denoise", receipt.rejected_inputs)
 
+    async def test_dalle_generation_defaults_to_url_response(self) -> None:
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs):
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 0, "data": []}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy, "configured_downstream_headers", lambda *_a, **_kw: {}
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_request(
+                _StubRequest({"prompt": "x", "model": "dall-e-3"}),
+                proxy.NO_AUTH_CONTEXT,
+                receipt=proxy.start_image_route_receipt(
+                    "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+                ),
+            )
+
+        self.assertEqual(response.status_code, 200, response.body)
+        self.assertEqual(captured.get("response_format"), "url")
+
     async def test_namespaced_extension_is_accepted_when_manifest_exists(
         self,
     ) -> None:

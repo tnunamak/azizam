@@ -62,6 +62,36 @@ class _StubUrlRequest:
     url = SimpleNamespace(scheme="http", netloc="gateway.test")
 
 
+class _StubMultipartForm:
+    def __init__(self, items: list[tuple[str, Any]]) -> None:
+        self._items = items
+
+    def multi_items(self) -> list[tuple[str, Any]]:
+        return list(self._items)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        for item_key, value in self._items:
+            if item_key == key:
+                return value
+        return default
+
+
+class _StubFormRequest:
+    def __init__(self, form: _StubMultipartForm) -> None:
+        self._form = form
+
+    async def form(self) -> _StubMultipartForm:
+        return self._form
+
+
+class _StubUpload:
+    filename = "input.png"
+    content_type = "image/png"
+
+    async def read(self) -> bytes:
+        return _png_bytes((1, 2, 3, 255))
+
+
 class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -102,6 +132,29 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(url_item["asset_id"], b64_item["asset_id"])
         self.assertIn("/v1/images/", url_item["url"])
         self.assertIn("/v1/assets/", url_item["asset_url"])
+
+    async def test_image_edit_accepts_openai_image_array_multipart_field(self) -> None:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _StubFormRequest(
+            _StubMultipartForm([
+                ("image[]", _StubUpload()),
+                ("model", "flux2-klein-4b-edit"),
+            ])
+        )
+
+        with patch.object(proxy, "COMFY_ENABLED", True):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"prompt is required", response.body)
+        self.assertIn("image[]", receipt.accepted_inputs)
+        self.assertNotIn("image[]", receipt.rejected_inputs)
 
     def test_signed_asset_content_serves_cached_image(self) -> None:
         raw = _png_bytes((4, 5, 6, 255))

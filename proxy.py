@@ -3901,6 +3901,13 @@ def _build_image_response_payload(
     )
 
 
+def _default_image_response_format(requested_model: Any) -> str:
+    model_id = normalize_model_id(str(requested_model or ""))
+    if model_id.startswith("dall-e-"):
+        return "url"
+    return "b64_json"
+
+
 async def _generate_images_with_adaptive_batching(
     request: Request,
     client: httpx.AsyncClient,
@@ -4300,7 +4307,10 @@ async def proxy_comfy_request(
             media_type="application/json",
         )
     _record_image_input(receipt, "n")
-    response_format = body.get("response_format", "b64_json")
+    response_format = body.get(
+        "response_format",
+        _default_image_response_format(requested_model),
+    )
     if response_format not in ("b64_json", "url"):
         _record_image_input(receipt, "response_format", rejected_reason="unsupported_value")
         return Response(
@@ -4568,7 +4578,7 @@ async def proxy_comfy_edit_request(
     if unknown_response is not None:
         return unknown_response
 
-    image_file = form.get("image")
+    image_file = form.get("image") or form.get("image[]")
     mask_file = form.get("mask")
     prompt = form.get("prompt", "")
     requested_model = form.get("model", "flux2-klein-4b-edit")
@@ -4639,7 +4649,7 @@ async def proxy_comfy_edit_request(
             status_code=400,
             media_type="application/json"
         )
-    _record_image_input(receipt, "image")
+    _record_image_input(receipt, "image[]" if form.get("image[]") else "image")
 
     if not prompt:
         _record_image_input(receipt, "prompt", rejected_reason="missing")
@@ -12166,6 +12176,35 @@ async def embeddings(request: Request):
     return await proxy_request(request, "v1/embeddings")
 
 
+_BACKEND_PASSTHROUGH_EXACT_PATHS = {
+    "/v1/model",
+    "/v1/model/list",
+}
+_BACKEND_PASSTHROUGH_PREFIXES = (
+    "/v1/model/",
+)
+_KNOWN_UNMAPPED_EXACT_PATHS = {
+    "/manifest",
+}
+
+
+def _should_return_not_found_before_backend(request_path: str) -> bool:
+    """Return True for discovery probes that should not hit backend catch-all."""
+    if request_path in _KNOWN_UNMAPPED_EXACT_PATHS:
+        return True
+    if request_path.startswith("/.well-known/"):
+        return True
+    if request_path == "/v1":
+        return True
+    if request_path.startswith("/v1/"):
+        if request_path in _BACKEND_PASSTHROUGH_EXACT_PATHS:
+            return False
+        if any(request_path.startswith(prefix) for prefix in _BACKEND_PASSTHROUGH_PREFIXES):
+            return False
+        return True
+    return False
+
+
 @app.api_route(
     "/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -12174,6 +12213,18 @@ async def embeddings(request: Request):
 async def proxy_request(request: Request, path: str):
     """Proxy all other requests to TabbyAPI."""
     request_path = f"/{path}"
+    if _should_return_not_found_before_backend(request_path):
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"Path not found: {request_path}",
+                    "type": "invalid_request_error",
+                    "code": "not_found",
+                }
+            }),
+            status_code=404,
+            media_type="application/json",
+        )
 
     auth_context = authenticate_request(request, request_path)
     if isinstance(auth_context, Response):

@@ -163,6 +163,24 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertIn("/gateway/v1/capabilities", paths)
         self.assertNotIn("/{path}", paths)
 
+    def test_unmapped_v1_path_returns_404_not_backend_unavailable(self) -> None:
+        response = self.client.get("/v1/capabilities")
+        self.assertEqual(response.status_code, 404, response.text)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "not_found")
+        self.assertNotEqual(body["error"]["type"], "service_unavailable")
+
+    def test_backend_model_passthrough_is_not_classified_as_unmapped(self) -> None:
+        self.assertFalse(proxy._should_return_not_found_before_backend("/v1/model"))
+        self.assertFalse(proxy._should_return_not_found_before_backend("/v1/model/load"))
+
+    def test_unmapped_discovery_probes_return_404(self) -> None:
+        for path in ("/v1", "/manifest", "/.well-known/openapi"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 404, response.text)
+                self.assertEqual(response.json()["error"]["code"], "not_found")
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main(verbosity=2)
