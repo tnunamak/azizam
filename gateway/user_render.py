@@ -257,6 +257,9 @@ _PAGE_CSS = """
     color: var(--text);
     overflow-wrap: anywhere;
   }
+  .message .secret button, .key-actions button {
+    min-width: 6.25rem;
+  }
   .snippet {
     min-width: 0;
     max-width: 100%;
@@ -489,7 +492,7 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
         '<div class="app-card-header">'
         '<div class="app-card-title">'
         f"<h3>{name}</h3>"
-        f"<p>Use this App for one tool or workflow. Its keys use {esc(permission_text)}.</p>"
+        f"<p>Use this for one tool, workflow, or script. Its keys use {esc(permission_text)}.</p>"
         '<div class="meta">'
         + permission_badge
         + _badge(f"{app.get('active_credentials') or 0} active keys", "good")
@@ -518,11 +521,10 @@ def _signed_out_hero(*, oidc_enabled: bool, login_url: str) -> str:
     return (
         '<section aria-labelledby="hero-heading">'
         '<div class="hero">'
-        '<p class="eyebrow">ai.vivid.fish &middot; invite only</p>'
-        '<h2 id="hero-heading">Tim&apos;s gateway. Now yours, too.</h2>'
-        '<p class="lead">One OpenAI-compatible base URL for the model collection '
-        'in the closet down the hall. Sign in to create Apps, mint '
-        '<code>opk_</code> keys, and see what those keys can do.</p>'
+        '<p class="eyebrow">ai.vivid.fish</p>'
+        '<h2 id="hero-heading">Sign in to use the gateway.</h2>'
+        '<p class="lead">Your vivid.fish account controls the local models, '
+        'media workflows, and API keys you can use.</p>'
         f'<div class="actions">{primary}</div>'
         "</div>"
         "</section>"
@@ -535,9 +537,7 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     user_label = esc(user.get("email") or user.get("name") or "signed-in user")
     apps = [a for a in account.get("apps", []) if isinstance(a, Mapping)]
     is_admin = can_admin(account)
-    create_help = (
-        "Create one App per tool, workflow, or script. Its keys stay inside that App."
-    )
+    create_help = "Create one App for each tool or script that needs an API key."
     create_form = (
         '<form class="app-create" data-create-owned-app>'
         '<p class="eyebrow">new connection</p>'
@@ -554,7 +554,7 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     apps_html = (
         f'<div id="apps-list" class="apps-list">{"".join(_app_html(app, show_permission_details=is_admin) for app in apps)}</div>'
         if apps
-        else '<div id="apps-list" class="apps-list"><p class="empty">No Apps yet.</p></div>'
+        else '<div id="apps-list" class="apps-list"><p class="empty">Create your first App to get an <code>opk_</code> API key.</p></div>'
     )
     admin_hint = (
         ' <a href="/admin">Admin</a> manages shared Apps and permission Profiles.'
@@ -568,15 +568,15 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
         '<h2 id="apps-heading">Your Apps</h2>'
         '<p class="hint">'
         + f"Signed in as {user_label}. "
-        + "Create an App, mint a key, copy it once, and use View access when a tool fails."
+        + "Create an App, mint a key, copy it once, and use View access when you need to inspect what the key can use."
         + admin_hint
         + "</p>"
         "</div>"
         + '<div id="account-result" class="message"></div>'
         + '<div id="account-toast" class="toast" role="status" aria-live="polite"></div>'
-        + _base_url_card()
         + create_form
         + apps_html
+        + _base_url_card()
         + "</section>"
     )
 
@@ -621,7 +621,7 @@ def _runtime_key_section() -> str:
 def _access_section() -> str:
     return (
         '<section id="access-section" aria-labelledby="access-heading" hidden>'
-        '<h2 id="access-heading">Access</h2>'
+        '<h2 id="access-heading">Key access</h2>'
         '<p class="hint" id="access-summary"></p>'
         '<div id="access-list" class="access-list"></div>'
         "</section>"
@@ -678,8 +678,6 @@ def render_user_portal(
 
     body = (
         primary_section
-        + ("" if is_signed_in else _runtime_key_section())
-        + ("" if is_signed_in else _base_url_card())
         + _access_section()
     )
 
@@ -933,7 +931,7 @@ def render_user_portal(
     const title = document.createElement("h3");
     title.textContent = text(app.name, appId || "App");
     const help = document.createElement("p");
-    help.textContent = "Use this App for one tool or workflow. Its keys use " + permission.text + ".";
+    help.textContent = "Use this for one tool, workflow, or script. Its keys use " + permission.text + ".";
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.append(
@@ -995,7 +993,7 @@ def render_user_portal(
     if (!visible.length) {{
       const empty = document.createElement("p");
       empty.className = "empty";
-      empty.textContent = "No Apps yet.";
+      empty.textContent = "Create your first App to get an opk_ API key.";
       root.appendChild(empty);
       return;
     }}

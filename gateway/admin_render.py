@@ -66,6 +66,9 @@ _PAGE_CSS = """
   }
   .operator-strip a:hover { text-decoration: none; filter: brightness(1.06); }
   .section-intro { margin: -0.25rem 0 var(--space-3); color: var(--muted); line-height: 1.5; max-width: 58rem; }
+  .subsection { display: grid; gap: var(--space-2); min-width: 0; }
+  .subsection h3 { margin: 0; font-size: 0.95rem; color: var(--text); }
+  .subsection .section-intro { margin: 0; }
   .summary { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--muted); }
   .summary strong { color: var(--text); }
   .summary span { background: var(--panel); border: 1px solid var(--line);
@@ -145,6 +148,7 @@ _PAGE_CSS = """
     color: oklch(12% 0.02 250);
     border: 0;
     min-height: 2.5rem;
+    min-width: 6.25rem;
     padding: 0.45rem 0.8rem;
     border-radius: 6px;
     cursor: pointer;
@@ -520,16 +524,15 @@ def _operator_intro() -> str:
     return (
         '<section class="operator-hero" aria-labelledby="operator-title">'
         '<div class="cell-sub">admin · ai.vivid.fish</div>'
-        '<h1 id="operator-title">Operating</h1>'
-        "<p>Manage who can use the gateway, what shared Apps can do, and how "
-        "automation touches admin APIs. Profiles stay here as operator tools; "
-        "people and apps only receive the access you assign.</p>"
+        '<h1 id="operator-title">Gateway admin</h1>'
+        "<p>Create App API keys, choose reusable Profiles, revoke keys, debug "
+        "denials, and issue admin automation keys. Profiles stay here as "
+        "operator tools; people and apps only receive what you assign.</p>"
         '<nav class="operator-strip" aria-label="Admin sections">'
-        '<a href="#access">Access</a>'
-        '<a href="#shared-apps">Shared Apps</a>'
+        '<a href="#apps-keys">Apps &amp; Keys</a>'
         '<a href="#profiles">Profiles</a>'
-        '<a href="#debug-access">Debug/Test access</a>'
-        '<a href="#data-views">Data views</a>'
+        '<a href="#admin-keys">Admin Keys</a>'
+        '<a href="#debug-access">Debug Access</a>'
         '<span><code>opk_</code>&nbsp;runtime App keys</span>'
         '<span><code>oak_</code>&nbsp;admin automation</span>'
         "</nav>"
@@ -543,6 +546,13 @@ def _section(title: str, body: str, *, section_id: str = "", intro: str = "") ->
     id_attr = f' id="{_esc(section_id)}"' if section_id else ""
     intro_html = f'<p class="section-intro">{_esc(intro)}</p>' if intro else ""
     return f"<section{id_attr}><h2>{_esc(title)}</h2>{intro_html}{body}</section>"
+
+
+def _subsection(title: str, body: str, *, intro: str = "") -> str:
+    if not body.strip():
+        return ""
+    intro_html = f'<p class="section-intro">{_esc(intro)}</p>' if intro else ""
+    return f'<div class="subsection"><h3>{_esc(title)}</h3>{intro_html}{body}</div>'
 
 
 def _table(headers: Iterable[str], rows: Iterable[str]) -> str:
@@ -560,10 +570,10 @@ def _start_card(apps: list[Mapping[str, Any]]) -> str:
         return ""
     return (
         '<div class="start-card">'
-        "<h3>No Apps yet</h3>"
-        "<p>Create an API key for an app, bot, agent, or service. The gateway "
-        "will create the matching App and access policy for you.</p>"
-        '<a href="#create-api-key">Create API key</a>'
+        "<h3>No App keys yet</h3>"
+        "<p>Create an App API key for a shared tool, bot, agent, or service. "
+        "The gateway will create the matching App and Profile for you.</p>"
+        '<a href="#create-app-key">Create App key</a>'
         "</div>"
     )
 
@@ -645,15 +655,15 @@ def _shared_access_form(
     create_key_action_template: str,
 ) -> str:
     return (
-        '<form class="flow" id="create-api-key" method="post" action="'
+        '<form class="flow" id="create-app-key" method="post" action="'
         + _esc(create_profile_action)
         + '" data-create-shared-access data-app-action="'
         + _esc(create_app_action)
         + '" data-key-action-template="'
         + _esc(create_key_action_template)
         + '">'
-        "<label>Create App API key</label>"
-        '<p class="form-note">One flow creates the Profile, the shared App, and the one-time <code>opk_</code> runtime key. Use this for LibreChat, bots, shared tools, and SDK integrations.</p>'
+        "<label>Create App key</label>"
+        '<p class="form-note">Name the tool and choose what it can use. This creates the reusable Profile, the App, and the one-time <code>opk_</code> runtime key.</p>'
         '<div class="stack">'
         '<input type="text" name="app_name" placeholder="App name, e.g. LibreChat" aria-label="App name" required>'
         '<div class="choice-grid" aria-label="Runtime access policy">'
@@ -669,7 +679,7 @@ def _shared_access_form(
         "</div>"
         '<div class="row">'
         "<span></span>"
-        '<button type="submit">Create App API key</button>'
+        '<button type="submit">Create App key</button>'
         "</div>"
         "</form>"
     )
@@ -713,8 +723,8 @@ def _profile_form(
         + _esc(create_profile_action)
         + '" data-create-profile>'
         "<label>Create Profile</label>"
-        '<p class="form-note">Profiles are reusable permission templates assigned by admins to people and shared Apps. Start from a template, name it, and adjust details only when needed.</p>'
-        '<p class="form-note"><strong>Start from a template</strong> — templates name the most common policies so you do not reinvent them.</p>'
+        '<p class="form-note">Profiles are reusable runtime policies for Apps. Start from a template, name it, and adjust details only when needed.</p>'
+        '<div class="cell-sub">Start from a template</div>'
         '<div class="template-strip" aria-label="Profile templates">'
         '<label class="template-card"><input type="radio" name="profile_preset" value="chat_only" checked>'
         '<span><strong>Chat only</strong><span>For a person, chatbot, or simple agent that only needs stable local language models.</span></span></label>'
@@ -906,34 +916,36 @@ def render_admin_dashboard(
         '<pre class="result" id="admin-flow-result"></pre>'
         "</details>"
     )
-    access_html = shared_access_html + result_html
-    service_apps_html = flow_html
-    profiles_html = profile_form_html + profiles_table
-    data_views_html = (
-        _section(
-            "Apps",
+    apps_keys_html = (
+        _start_card(apps)
+        + shared_access_html
+        + result_html
+        + flow_html
+        + _subsection(
+            "Current Apps",
             apps_table,
-            section_id="apps",
             intro="Shared and personal Apps with their assigned Profile and active opk_ keys.",
         )
-        + _section(
-            "Users",
-            users_table,
-            section_id="users",
-            intro="People who can sign in or own personal Apps.",
-        )
-        + _section(
+        + _subsection(
             "Keys",
             credentials_table,
-            section_id="keys",
-            intro="Credential inventory. Revoke opk_ runtime keys here; oak_ automation keys are created separately above.",
+            intro="Revoke opk_ runtime keys here. oak_ admin automation keys stay separate.",
         )
-        + _section(
-            "Audit",
-            audit_table,
-            section_id="audit",
-            intro="Recent admin and gateway control-plane events.",
-        )
+    )
+    profiles_html = profile_form_html + _subsection(
+        "Current Profiles",
+        profiles_table,
+        intro="Reusable runtime policies that Apps can share.",
+    )
+    people_html = _subsection(
+        "People",
+        users_table,
+        intro="OIDC users who can sign in or own personal Apps.",
+    )
+    activity_html = _subsection(
+        "Audit",
+        audit_table,
+        intro="Recent admin and gateway control-plane events.",
     )
 
     header_html = render_shell_header(
@@ -1025,24 +1037,11 @@ def render_admin_dashboard(
         + header_html
         + '<main class="shell-main">'
         + _operator_intro()
-        + _section("Start", _start_card(apps), section_id="start")
         + _section(
-            "Access",
-            access_html,
-            section_id="access",
-            intro="Create shared App access without exposing raw policy JSON. The resulting opk_ key is for runtime requests only.",
-        )
-        + _section(
-            "Shared Apps",
-            service_apps_html,
-            section_id="shared-apps",
-            intro="Use the advanced form only when you need to bind an existing Profile or create an App before minting a key.",
-        )
-        + _section(
-            "Admin automation",
-            admin_key_html,
-            section_id="admin-automation",
-            intro="oak_ keys are for scripts that call admin endpoints. Keep them separate from opk_ runtime App keys.",
+            "Apps & Keys",
+            apps_keys_html,
+            section_id="apps-keys",
+            intro="Create runtime opk_ keys for shared tools, bots, agents, and SDK integrations. The common flow creates the App and Profile for you.",
         )
         + _section(
             "Profiles",
@@ -1051,11 +1050,18 @@ def render_admin_dashboard(
             intro="Profiles are reusable operator templates. Assign them to people and shared Apps; users never choose them.",
         )
         + _section(
-            "Debug/Test access",
+            "Admin Keys",
+            admin_key_html,
+            section_id="admin-keys",
+            intro="oak_ keys are for scripts that call admin endpoints. Keep them separate from opk_ runtime App keys.",
+        )
+        + _section("People", people_html, section_id="people")
+        + _section(
+            "Debug Access",
             policy_simulator_html,
             section_id="debug-access",
             intro="Check a Profile decision before changing access or while investigating a denial.",
         )
-        + _section("Data views", data_views_html, section_id="data-views")
+        + _section("Activity", activity_html, section_id="activity")
         + "</main></body></html>"
     )

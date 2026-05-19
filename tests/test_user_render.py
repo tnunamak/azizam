@@ -25,17 +25,18 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn('/login?return_to=/', html)
         self.assertIn("/gateway/v1/capabilities", html)
         self.assertIn("/v1/models", html)
-        self.assertIn("OPENAI_BASE_URL", html)
-        self.assertIn("opk_...", html)
         self.assertIn("sessionStorage", html)
         self.assertNotIn("localStorage", html)
 
     def test_uses_normal_user_language(self) -> None:
         html = render_user_portal()
-        self.assertIn("Check access", html)
-        self.assertIn("Base URL", html)
+        self.assertNotIn("Check an API key", html)
+        self.assertNotIn("Base URL", html)
         self.assertIn("Access", html)
-        self.assertIn("Gateway reachable. Use this for OpenAI-compatible SDKs and tools.", html)
+        self.assertNotIn(
+            "Gateway reachable. Use this for OpenAI-compatible SDKs and tools.",
+            html,
+        )
         self.assertNotIn("Use your local AI stack", html)
         self.assertNotIn("Failure Meanings", html)
         self.assertNotIn("ANTHROPIC_BASE_URL", html)
@@ -95,8 +96,8 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("Delete key", html)
         self.assertIn("Delete App", html)
         self.assertIn("View access", html)
-        self.assertIn("Create one App per tool, workflow, or script", html)
-        self.assertIn("Its keys stay inside that App", html)
+        self.assertIn("Create one App for each tool or script", html)
+        self.assertIn("Use this for one tool, workflow, or script", html)
         self.assertNotIn("Create one App per client", html)
         self.assertIn("Copy key", html)
         self.assertIn("Copy this opk_ App API key now", html)
@@ -151,11 +152,18 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("Open WebUI, Cline, render pipeline", html)
         self.assertIn("<button type=\"submit\">Create App</button>", html)
         self.assertIn("data-create-owned-app", html)
-        self.assertIn("No Apps yet", html)
+        self.assertIn("Create your first App to get an", html)
         self.assertIn("x-ai-gateway-csrf", html)
 
     def test_base_url_area_keeps_copy_and_openai_setup_compact(self) -> None:
-        html = render_user_portal(public_base_url="https://gw.example")
+        html = render_user_portal(
+            public_base_url="https://gw.example",
+            account={
+                "authenticated": True,
+                "user": {"email": "user@example.com", "role": "none"},
+                "apps": [],
+            },
+        )
         self.assertIn('id="openai-snippet" class="snippet"', html)
         self.assertIn(
             'export OPENAI_BASE_URL="\' + baseUrl + \'/v1" OPENAI_API_KEY="opk_..."',
@@ -221,17 +229,19 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertNotIn('class="shell-nav"', html)
         self.assertNotIn('href="/status"', html)
         self.assertNotIn('href="/admin"', html)
+        self.assertNotIn('id="runtime-key"', html)
+        self.assertNotIn("No key is pasted in this tab.", html)
+        self.assertNotIn('id="copy-base-url"', html)
         # The access section is empty before a key check and must stay visually hidden.
         self.assertIn("[hidden] { display: none !important; }", html)
         self.assertIn(
             '<section id="access-section" aria-labelledby="access-heading" hidden>',
             html,
         )
-        # Hero copy points the user at the thin sign-in/create-key path.
-        self.assertIn("Tim&apos;s gateway. Now yours, too.", html)
-        self.assertIn("One OpenAI-compatible base URL", html)
-        self.assertIn("create Apps", html)
-        self.assertIn("opk_", html)
+        # Hero copy points the user at the thin sign-in path.
+        self.assertIn("Sign in to use the gateway.", html)
+        self.assertIn("Your vivid.fish account controls", html)
+        self.assertIn("media workflows", html)
         # No Sign out affordance when not signed in.
         self.assertNotIn(">Sign out</a>", html)
 

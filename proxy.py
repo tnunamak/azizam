@@ -7353,6 +7353,11 @@ async def user_portal_logout():
     return response
 
 
+@app.get("/logout", include_in_schema=False)
+async def browser_logout_alias():
+    return await user_portal_logout()
+
+
 def _render_user_portal_response(request: Request, *, login_return_to: str) -> Response:
     session = _oidc_session_from_request(request)
     account = build_user_portal_snapshot(

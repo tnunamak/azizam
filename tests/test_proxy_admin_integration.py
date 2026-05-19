@@ -144,7 +144,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIn("AI Gateway Admin", response.text)
         self.assertIn("Create App", response.text)
-        self.assertIn("No Apps yet", response.text)
+        self.assertIn("No App keys yet", response.text)
         self.assertNotIn("Mint runtime key", response.text)
 
     def test_admin_dashboard_requires_admin_auth(self) -> None:
