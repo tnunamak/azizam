@@ -12161,19 +12161,19 @@ def _openai_proxy_policy_decision(
 @app.post("/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def chat_completions(request: Request):
     """OpenAI-compatible chat completions proxied to the active LLM backend."""
-    return await proxy_request(request, "v1/chat/completions")
+    return await proxy_request(request, "v1/chat/completions", mapped_route=True)
 
 
 @app.post("/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def completions(request: Request):
     """OpenAI-compatible text completions proxied to the active LLM backend."""
-    return await proxy_request(request, "v1/completions")
+    return await proxy_request(request, "v1/completions", mapped_route=True)
 
 
 @app.post("/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def embeddings(request: Request):
     """OpenAI-compatible embeddings proxied to the configured embedding backend."""
-    return await proxy_request(request, "v1/embeddings")
+    return await proxy_request(request, "v1/embeddings", mapped_route=True)
 
 
 _BACKEND_PASSTHROUGH_EXACT_PATHS = {
@@ -12210,10 +12210,10 @@ def _should_return_not_found_before_backend(request_path: str) -> bool:
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     include_in_schema=False,
 )
-async def proxy_request(request: Request, path: str):
+async def proxy_request(request: Request, path: str, *, mapped_route: bool = False):
     """Proxy all other requests to TabbyAPI."""
     request_path = f"/{path}"
-    if _should_return_not_found_before_backend(request_path):
+    if not mapped_route and _should_return_not_found_before_backend(request_path):
         return Response(
             content=json.dumps({
                 "error": {

@@ -314,6 +314,41 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(response.json()["job_id"], "mj_acceptance")
         self.assertEqual(calls[0]["path"], proxy.media_jobs.DB_PATH)
 
+    def test_explicit_openai_proxy_routes_bypass_unmapped_v1_guard(self) -> None:
+        async def fake_false(*_args, **_kwargs):
+            return False
+
+        async def fake_active(*_args, **_kwargs):
+            return "tabby"
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy, "default_model_for_operation", lambda *_args, **_kwargs: "local-default"
+        ), patch.object(
+            proxy, "get_active_backend", fake_active
+        ), patch.object(
+            proxy, "check_tabby_health", fake_false
+        ), patch.object(
+            proxy, "restart_tabby_if_needed", fake_false
+        ):
+            cases = [
+                (
+                    "/v1/chat/completions",
+                    {"messages": [{"role": "user", "content": "ping"}]},
+                ),
+                ("/v1/completions", {"prompt": "ping"}),
+                ("/v1/embeddings", {"input": "ping"}),
+            ]
+            for path, payload in cases:
+                with self.subTest(path=path):
+                    response = client.post(path, json=payload)
+                    self.assertNotEqual(response.status_code, 404, response.text)
+                    self.assertEqual(response.status_code, 503, response.text)
+                    self.assertEqual(
+                        response.json()["error"]["code"],
+                        "backend_unavailable",
+                    )
+
 
 # ---------------------------------------------------------------------------
 # Gateway audience derived from the authenticated profile
