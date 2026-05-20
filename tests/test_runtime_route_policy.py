@@ -466,16 +466,16 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(_CaptureForwardClient.urls, [f"{proxy.KOBOLD_HOST}/v1/chat/completions"])
         ensure_target.assert_not_called()
 
-    def test_backend_native_passthrough_keeps_tabby_default(self) -> None:
+    def test_backend_native_v1_model_passthrough_is_not_public(self) -> None:
         unrestricted = AppProfile(id="runtime", protocols=frozenset({"openai"}))
 
         with authenticated_profile(unrestricted), patch.object(
-            proxy, "check_tabby_health", AsyncMock(return_value=True)
-        ), patch.object(proxy.httpx, "AsyncClient", _CaptureForwardClient):
+            proxy.httpx, "AsyncClient", _CaptureForwardClient
+        ):
             response = self.client.get("/v1/model", headers=AUTH_HEADERS)
 
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(_CaptureForwardClient.urls, [f"{proxy.TABBY_HOST}/v1/model"])
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(_CaptureForwardClient.urls, [])
 
     def test_non_chat_profile_denies_stored_response_routes(self) -> None:
         media_only = AppProfile(

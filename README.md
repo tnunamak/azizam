@@ -77,7 +77,7 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `GET  /v1/videos/{id}/content` | ComfyUI | Fetch rendered MP4 once `status=succeeded` |
 | `GET  /gateway/v1/extensions` | proxy | Live extension namespace and route discovery |
 | `GET  /gateway/v1/models/{model}/capabilities` | proxy | Live model-specific capability and workflow-control discovery |
-| `* /<any other>` | tabby | Catch-all proxy to TabbyAPI (admin/model-load endpoints) |
+| `* /<any other>` | proxy | Unknown routes return 404 instead of falling through to a backend. Tabby-native operations are not public compatibility routes; use the local Tabby port until the explicit provider-native namespace is added. |
 
 Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [`MODEL_COMPATIBILITY.md`](MODEL_COMPATIBILITY.md), and [`OPENCLAW_SETUP.md`](OPENCLAW_SETUP.md):
 

@@ -12778,33 +12778,14 @@ async def embeddings(request: Request):
     return await proxy_request(request, "v1/embeddings", mapped_route=True)
 
 
-_BACKEND_PASSTHROUGH_EXACT_PATHS = {
-    "/v1/model",
-    "/v1/model/list",
-}
-_BACKEND_PASSTHROUGH_PREFIXES = (
-    "/v1/model/",
-)
-_KNOWN_UNMAPPED_EXACT_PATHS = {
-    "/manifest",
-}
-
-
 def _should_return_not_found_before_backend(request_path: str) -> bool:
-    """Return True for discovery probes that should not hit backend catch-all."""
-    if request_path in _KNOWN_UNMAPPED_EXACT_PATHS:
-        return True
-    if request_path.startswith("/.well-known/"):
-        return True
-    if request_path == "/v1":
-        return True
-    if request_path.startswith("/v1/"):
-        if request_path in _BACKEND_PASSTHROUGH_EXACT_PATHS:
-            return False
-        if any(request_path.startswith(prefix) for prefix in _BACKEND_PASSTHROUGH_PREFIXES):
-            return False
-        return True
-    return False
+    """Return True for unmatched public routes.
+
+    Provider-native APIs must be explicitly namespaced and policy-gated. The
+    catch-all exists only so known routes mounted before it can coexist with
+    FastAPI's routing order; it must not become public Tabby passthrough.
+    """
+    return True
 
 
 def _split_reasoning_visible_text(text: Any) -> tuple[Optional[str], Optional[str]]:
@@ -13202,11 +13183,10 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             pass
 
     # For non-completions requests, check if any backend is healthy.
-    # IMPORTANT (Fix 5): Do NOT silently fall through from tabby to kobold.
-    # Catch-all routes (`POST /v1/model/load`, etc.) targeted at tabby are not
-    # interchangeable with kobold's surface — silently flipping returns wildly
-    # different output. Require explicit opt-in via `allow_backend_fallback: true`
-    # in the body.
+    # IMPORTANT: Do NOT silently fall through from tabby to kobold.
+    # Backend-native paths are not interchangeable between services. Public
+    # provider-native access should live under explicit `/gateway/v1/providers/*`
+    # routes, not this catch-all.
     if target_host is None:
         return Response(
             content=json.dumps({
@@ -13258,8 +13238,8 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                         headers={"Retry-After": "10"},
                     )
             else:
-                # Non-completion catch-all (model/load, admin, etc.): never flip
-                # silently — those endpoints are tabby-specific. 503 with retry.
+                # Non-completion catch-all: never flip silently; these paths
+                # are backend-specific. 503 with retry.
                 if not await restart_tabby_if_needed():
                     return Response(
                         content=json.dumps({
