@@ -15,6 +15,7 @@ from gateway.local_capabilities import (  # noqa: E402
     INTENT_AUDIO_GENERATE,
     INTENT_CHAT,
     INTENT_COMPLETIONS,
+    INTENT_EMBEDDINGS,
     INTENT_IMAGE_EDIT,
     INTENT_IMAGE_GENERATE,
     INTENT_SPEECH,
@@ -41,6 +42,11 @@ REPRESENTATIVE_CONFIG: dict = {
         "stt": {
             "name": "parakeet-stt",
             "capabilities": ["audio", "transcriptions"],
+        },
+        "embeddings": {
+            "name": "nomic-embed-text-v1.5 CPU",
+            "capabilities": ["embeddings"],
+            "resources": {"gpu_required": False, "vram_gb_estimate": 0},
         },
         "comfyui": {
             "name": "ComfyUI",
@@ -167,6 +173,14 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         backends = {c.backend for c in completions}
         self.assertEqual(backends, {"tabby", "kobold"})
 
+    def test_embeddings_capability_can_be_cpu_only(self):
+        caps = build_local_capabilities(REPRESENTATIVE_CONFIG)
+        embeddings = _by_intent(caps, INTENT_EMBEDDINGS)
+        self.assertEqual(len(embeddings), 1)
+        self.assertEqual(embeddings[0].backend, "embeddings")
+        self.assertFalse(embeddings[0].resources.gpu_required)
+        self.assertEqual(embeddings[0].resources.vram_gb_estimate, 0)
+
     def test_tts_capability(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)
         speech = _by_intent(caps, INTENT_SPEECH)
@@ -225,6 +239,7 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
             REPRESENTATIVE_CONFIG,
             enabled_flags={
                 "llm": False,
+                "embeddings": False,
                 "tts": False,
                 "stt": False,
                 "images": False,

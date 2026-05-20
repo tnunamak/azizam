@@ -215,7 +215,7 @@ def _build_openai_endpoint_capabilities(
                     output_modalities=("text",),
                     execution="sync",
                     streaming=False,
-                    resources=ResourceEstimate(gpu_required=True),
+                    resources=_resource_estimate(spec, default_gpu_required=False),
                 )
             )
     return out
@@ -457,6 +457,37 @@ def _modalities_for_backend(backend_caps: set[str]) -> tuple[str, ...]:
     if "vision" in backend_caps:
         return ("text", "image")
     return ("text",)
+
+
+def _resource_estimate(
+    spec: Mapping[str, Any],
+    *,
+    default_gpu_required: bool,
+) -> ResourceEstimate:
+    resources = _as_mapping(spec.get("resources"))
+    gpu_required = resources.get("gpu_required", default_gpu_required)
+    if not isinstance(gpu_required, bool):
+        gpu_required = str(gpu_required).strip().lower() in {"1", "true", "yes", "on"}
+
+    vram = resources.get("vram_gb_estimate")
+    try:
+        vram_gb_estimate = float(vram) if vram is not None else None
+    except (TypeError, ValueError):
+        vram_gb_estimate = None
+
+    max_parallel = resources.get("max_parallel")
+    try:
+        max_parallel_value = int(max_parallel) if max_parallel is not None else None
+    except (TypeError, ValueError):
+        max_parallel_value = None
+
+    duration_class = resources.get("duration_class")
+    return ResourceEstimate(
+        gpu_required=gpu_required,
+        vram_gb_estimate=vram_gb_estimate,
+        duration_class=str(duration_class) if duration_class else None,
+        max_parallel=max_parallel_value,
+    )
 
 
 def _workflow_dir_caveats(workflows_dir: Any) -> tuple[str, ...]:

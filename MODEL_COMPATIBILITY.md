@@ -122,9 +122,14 @@ wrong endpoint are rejected.
 
 ## Embeddings
 
-OpenAI embedding models are recognized, but this proxy does not currently define
-a local embedding default. Requests such as `text-embedding-3-small` return a
-clear `400` until a local embedding backend/default is configured.
+OpenAI embedding model aliases are recognized and mapped to the configured
+local embedding default. The current default is `nomic-embed-text-v1.5`,
+served by a dedicated CPU-only llama.cpp embedding backend so it does not claim
+GPU VRAM from the LLM, TTS, or ComfyUI budgets.
+
+Use `/v1/embeddings` or `/openai/v1/embeddings` for OpenAI-compatible clients.
+Ollama-compatible clients may use `/api/embed`, `/ollama/api/embed`,
+`/api/embeddings`, or `/ollama/api/embeddings`.
 
 ## Logs And Responses
 

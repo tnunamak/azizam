@@ -119,8 +119,9 @@ Examples:
 
 - Ollama native: `/ollama/api/tags`, `/ollama/api/show`, `/ollama/api/ps`,
   `/ollama/api/pull`, `/ollama/api/chat`, `/ollama/api/generate`,
-  `keep_alive`. Convenience `/api/*` routes cover the currently supported
-  Ollama subset for existing clients.
+  `/ollama/api/embed`, `/ollama/api/embeddings`, `keep_alive`.
+  Convenience `/api/*` routes cover the currently supported Ollama subset for
+  existing clients.
 - LM Studio native: model list/load/unload/download APIs.
 - llama.cpp native: `/health`, `/props`, `/slots`, `/completion`, `/reranking`.
 - TabbyAPI admin: model load/unload and admin-key-protected operations.

@@ -81,11 +81,12 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `POST /anthropic/v1/messages` | chat pipeline | Anthropic Messages-compatible request/response and SSE streaming; `/v1/messages` remains a convenience route |
 | `GET  /ollama/api/tags` | proxy catalog | Ollama-compatible model list; `/api/tags` remains a convenience route |
 | `POST /ollama/api/chat`, `POST /ollama/api/generate` | chat pipeline | Ollama-compatible chat/generate with NDJSON streaming; `/api/chat` and `/api/generate` remain convenience routes |
+| `POST /ollama/api/embed`, `POST /ollama/api/embeddings` | embeddings backend | Ollama-compatible current and legacy embeddings; `/api/embed`, `/api/embeddings` remain convenience routes |
 | `POST /ollama/api/show`, `GET /ollama/api/ps`, `GET /ollama/api/version` | proxy catalog/status | Ollama-compatible read-only model metadata/status; `/api/show`, `/api/ps`, `/api/version` remain convenience routes |
 | `GET  /v1/voices`, `GET /v1/audio/voices` | proxy (static) | List TTS voices |
 | `POST /v1/chat/completions` | tabby (default) or kobold (auto-routed) | Chat completion (vision-capable on tabby) |
 | `POST /v1/completions` | tabby/kobold | Text completion |
-| `POST /v1/embeddings` | tabby | Embeddings |
+| `POST /v1/embeddings` | nomic CPU embeddings | OpenAI-compatible embeddings; no GPU budget claim |
 | `POST /v1/audio/speech` | Voxtral TTS | OpenAI-compatible TTS, voice-mapped |
 | `POST /v1/audio/transcriptions` | Parakeet STT | Multipart audio → transcript |
 | `POST /v1/images/generations` | ComfyUI | Text-to-image (default `flux2-klein-4b`) |

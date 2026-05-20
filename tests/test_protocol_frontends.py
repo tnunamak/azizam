@@ -619,6 +619,58 @@ class OllamaGenerateTranslationTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Ollama — /api/embed and /api/embeddings
+# ---------------------------------------------------------------------------
+
+
+class OllamaEmbeddingTranslationTests(unittest.TestCase):
+    def test_embed_request_translates_string_input(self) -> None:
+        out = oll.embed_request_to_canonical(
+            {"model": "nomic-embed-text-v1.5", "input": "search_query: hello"}
+        )
+        self.assertEqual(out["model"], "nomic-embed-text-v1.5")
+        self.assertEqual(out["input"], "search_query: hello")
+
+    def test_embed_request_translates_batch_input(self) -> None:
+        out = oll.embed_request_to_canonical(
+            {"model": "nomic-embed-text-v1.5", "input": ["a", "b"]}
+        )
+        self.assertEqual(out["input"], ["a", "b"])
+
+    def test_embed_request_rejects_non_text_input(self) -> None:
+        with self.assertRaises(oll.OllamaTranslationError):
+            oll.embed_request_to_canonical(
+                {"model": "nomic-embed-text-v1.5", "input": [1, 2]}
+            )
+
+    def test_legacy_embeddings_request_translates_prompt(self) -> None:
+        out = oll.embeddings_request_to_canonical(
+            {"model": "nomic-embed-text-v1.5", "prompt": "hello"}
+        )
+        self.assertEqual(out, {"model": "nomic-embed-text-v1.5", "input": "hello"})
+
+    def test_canonical_response_to_embed(self) -> None:
+        canonical = {
+            "model": "nomic-embed-text-v1.5",
+            "data": [
+                {"object": "embedding", "index": 1, "embedding": [0.3, 0.4]},
+                {"object": "embedding", "index": 0, "embedding": [0.1, 0.2]},
+            ],
+            "usage": {"prompt_tokens": 7},
+        }
+        out = oll.canonical_response_to_embed(canonical)
+        self.assertEqual(out["model"], "nomic-embed-text-v1.5")
+        self.assertEqual(out["embeddings"], [[0.1, 0.2], [0.3, 0.4]])
+        self.assertEqual(out["prompt_eval_count"], 7)
+
+    def test_canonical_response_to_legacy_embeddings(self) -> None:
+        out = oll.canonical_response_to_embeddings(
+            {"data": [{"index": 0, "embedding": [0.1, 0.2]}]}
+        )
+        self.assertEqual(out, {"embedding": [0.1, 0.2]})
+
+
+# ---------------------------------------------------------------------------
 # Ollama — model-management and error helpers
 # ---------------------------------------------------------------------------
 

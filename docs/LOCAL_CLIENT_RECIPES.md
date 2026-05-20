@@ -40,7 +40,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `GET /health` | — | Public, no auth. |
 | `POST /openai/v1/chat/completions` | OpenAI Chat | Streaming + non-streaming; `/v1/chat/completions` remains a convenience route. |
 | `POST /openai/v1/completions` | OpenAI Completions | Legacy, supported. |
-| `POST /openai/v1/embeddings` | OpenAI Embeddings | |
+| `POST /openai/v1/embeddings` | OpenAI Embeddings | CPU `nomic-embed-text-v1.5` backend; no GPU budget claim. |
 | `GET /openai/v1/models` | OpenAI Models | Aliases + backend models. |
 | `POST /openai/v1/responses` | OpenAI Responses | Translator over chat completions; durable store. |
 | `GET /openai/v1/responses/{id}` | OpenAI Responses | Read back. |
@@ -59,6 +59,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /anthropic/v1/messages` | Anthropic Messages | Translator over chat completions with SSE streaming; `/v1/messages` remains a legacy convenience route. |
 | `GET /ollama/api/tags` | Ollama-compatible | Model list from configured catalog; `/api/tags` remains a convenience route. |
 | `POST /ollama/api/chat`, `POST /ollama/api/generate` | Ollama-compatible | Translators over chat completions with NDJSON streaming; `/api/*` remains a convenience route. |
+| `POST /ollama/api/embed`, `POST /ollama/api/embeddings` | Ollama-compatible | Current and legacy embedding routes over `/v1/embeddings`; `/api/*` remains a convenience route. |
 | `POST /ollama/api/show`, `GET /ollama/api/ps`, `GET /ollama/api/version` | Ollama-compatible | Read-only model metadata/status projected from the gateway catalog/runtime. |
 
 Gateway-native discovery, receipts, and media-job state (`gateway/api.py`) are
@@ -544,18 +545,19 @@ Important caveats:
 ## Recipe: Ollama-compatible clients
 
 The proxy exposes a narrow Ollama-compatible surface backed by the canonical
-chat-completions pipeline:
+chat-completions and embeddings pipelines:
 
 | Path | Status |
 |---|---|
 | `GET /ollama/api/tags` | Live; returns the proxy's configured model catalog. |
 | `POST /ollama/api/chat` | Live; supports `stream: true` NDJSON. |
 | `POST /ollama/api/generate` | Live; supports `stream: true` NDJSON. |
+| `POST /ollama/api/embed` | Live; current Ollama embeddings shape. |
+| `POST /ollama/api/embeddings` | Live; legacy Ollama embeddings shape. |
 | `POST /ollama/api/show` | Live; returns visible gateway catalog metadata. |
 | `GET /ollama/api/ps` | Live; returns the visible currently loaded LLM ids. |
 | `GET /ollama/api/version` | Live; returns the gateway compatibility version. |
 | `/ollama/api/pull`, `/ollama/api/push`, `/ollama/api/copy`, `/ollama/api/delete`, `/ollama/api/create` | Registered, but returns unsupported-operation. |
-| `/ollama/api/embeddings` | Not implemented; use `/openai/v1/embeddings`. |
 
 Point the Ollama base URL at `http://127.0.0.1:5000/ollama` when the client
 supports a pathful base URL. For clients hard-coded to `/api`, use

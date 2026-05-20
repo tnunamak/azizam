@@ -6,12 +6,13 @@ Covers the pure translation subset of the Ollama API surface:
 
 * ``POST /api/chat``  → canonical chat-completions request, and back
 * ``POST /api/generate`` → canonical chat-completions request, and back
+* ``POST /api/embed`` / ``POST /api/embeddings`` → canonical embeddings
+  request, and back
 * ``GET /api/tags``    → response helper from a list of gateway model
   summaries
 * ``POST /api/show`` / ``GET /api/ps`` / ``GET /api/version`` helper shapes
 
-Backend model management and `/api/embeddings` translation belong in
-follow-up modules;
+Backend model management belongs in follow-up modules;
 ``unsupported_operation_error`` is the SDK-shaped error used everywhere we
 need to refuse cleanly.
 """
@@ -255,6 +256,92 @@ def canonical_stream_chunk_to_generate(
         response["done_reason"] = _finish_reason_to_done_reason(finish_reason)
         _apply_usage_counts(response, canonical.get("usage") or {})
     return response
+
+
+# ---------------------------------------------------------------------------
+# /api/embed and /api/embeddings
+# ---------------------------------------------------------------------------
+
+
+def embed_request_to_canonical(body: dict[str, Any]) -> dict[str, Any]:
+    """Translate current Ollama ``/api/embed`` to OpenAI embeddings shape."""
+    if not isinstance(body, dict):
+        raise OllamaTranslationError("request body must be a JSON object")
+
+    model = body.get("model")
+    if not isinstance(model, str) or not model:
+        raise OllamaTranslationError("'model' is required")
+
+    input_value = body.get("input")
+    if isinstance(input_value, str):
+        canonical_input: str | list[str] = input_value
+    elif (
+        isinstance(input_value, list)
+        and all(isinstance(item, str) for item in input_value)
+    ):
+        canonical_input = input_value
+    else:
+        raise OllamaTranslationError("'input' must be a string or list of strings")
+
+    canonical: dict[str, Any] = {
+        "model": model,
+        "input": canonical_input,
+    }
+    if isinstance(body.get("truncate"), bool):
+        canonical["__ollama_truncate__"] = body["truncate"]
+    if isinstance(body.get("keep_alive"), (str, int, float)):
+        canonical["__ollama_keep_alive__"] = body["keep_alive"]
+    if isinstance(body.get("options"), dict) and body["options"]:
+        canonical["__ollama_options__"] = dict(body["options"])
+    return canonical
+
+
+def embeddings_request_to_canonical(body: dict[str, Any]) -> dict[str, Any]:
+    """Translate legacy Ollama ``/api/embeddings`` to OpenAI embeddings shape."""
+    if not isinstance(body, dict):
+        raise OllamaTranslationError("request body must be a JSON object")
+
+    model = body.get("model")
+    if not isinstance(model, str) or not model:
+        raise OllamaTranslationError("'model' is required")
+
+    prompt = body.get("prompt")
+    if not isinstance(prompt, str):
+        raise OllamaTranslationError("'prompt' must be a string")
+
+    canonical: dict[str, Any] = {
+        "model": model,
+        "input": prompt,
+    }
+    if isinstance(body.get("options"), dict) and body["options"]:
+        canonical["__ollama_options__"] = dict(body["options"])
+    return canonical
+
+
+def canonical_response_to_embed(
+    canonical: dict[str, Any], *, request_model: str | None = None
+) -> dict[str, Any]:
+    """Translate OpenAI embeddings response to current Ollama ``/api/embed``."""
+    rows = _embedding_rows(canonical)
+    usage = canonical.get("usage") or {}
+    return {
+        "model": canonical.get("model") or request_model or "",
+        "embeddings": [row.get("embedding") or [] for row in rows],
+        "total_duration": 0,
+        "load_duration": 0,
+        "prompt_eval_count": int(usage.get("prompt_tokens") or 0),
+    }
+
+
+def canonical_response_to_embeddings(
+    canonical: dict[str, Any], *, request_model: str | None = None
+) -> dict[str, Any]:
+    """Translate OpenAI embeddings response to legacy Ollama shape."""
+    rows = _embedding_rows(canonical)
+    first = rows[0] if rows else {}
+    return {
+        "embedding": first.get("embedding") or [],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +593,14 @@ def _visible_text_from_message(message: Mapping[str, Any]) -> str:
 def _apply_usage_counts(response: dict[str, Any], usage: Mapping[str, Any]) -> None:
     response["prompt_eval_count"] = int(usage.get("prompt_tokens") or 0)
     response["eval_count"] = int(usage.get("completion_tokens") or 0)
+
+
+def _embedding_rows(canonical: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    rows = canonical.get("data") or []
+    if not isinstance(rows, list):
+        return []
+    valid = [row for row in rows if isinstance(row, Mapping)]
+    return sorted(valid, key=lambda row: int(row.get("index") or 0))
 
 
 def _model_name(entry: Mapping[str, Any]) -> str:

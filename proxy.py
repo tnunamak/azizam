@@ -244,6 +244,8 @@ def backend_for_host(host: str) -> Optional[str]:
     for backend, backend_host in LLM_BACKEND_HOSTS.items():
         if host == backend_host:
             return backend
+    if EMBEDDINGS_ENABLED and host == EMBEDDINGS_HOST:
+        return "embeddings"
     return None
 
 
@@ -350,6 +352,20 @@ STT_ENABLED = os.environ.get("STT_ENABLED", "true").lower() in ("true", "1", "ye
 STT_HOST = os.environ.get("STT_HOST", f"http://{stt_cfg.get('host', '127.0.0.1')}:{stt_cfg.get('port', 5092)}")
 STT_TIMEOUT = int(os.environ.get("STT_TIMEOUT", stt_cfg.get("timeout", 120)))
 
+# Embeddings backend
+embeddings_cfg = config.get("backends", {}).get("embeddings", {})
+EMBEDDINGS_ENABLED = bool_from_config(
+    os.environ.get("EMBEDDINGS_ENABLED", embeddings_cfg.get("enabled")),
+    bool(embeddings_cfg),
+)
+EMBEDDINGS_HOST = os.environ.get(
+    "EMBEDDINGS_HOST",
+    f"http://{embeddings_cfg.get('host', '127.0.0.1')}:{embeddings_cfg.get('port', 5061)}",
+)
+EMBEDDINGS_HEALTH_ENDPOINT = embeddings_cfg.get("health_endpoint", "/health")
+EMBEDDINGS_TIMEOUT = int(os.environ.get("EMBEDDINGS_TIMEOUT", embeddings_cfg.get("timeout", 120)))
+EMBEDDINGS_BACKEND_MODEL = embeddings_cfg.get("model_id", "nomic-embed-text-v1.5")
+
 # ComfyUI backend
 comfy_cfg = config.get("backends", {}).get("comfyui", {})
 COMFY_ENABLED = os.environ.get("COMFY_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -445,7 +461,6 @@ LOAD_FAILURE_BACKOFF = 30
 MODEL_REQUIRED_PATHS = [
     "/v1/completions",
     "/v1/chat/completions",
-    "/v1/embeddings",
 ]
 
 # Vision model detection patterns (case-insensitive)
@@ -1738,6 +1753,7 @@ MODEL_COMPAT_DEFAULTS = compat_cfg.get("defaults", {})
 MODEL_COMPAT_ALIASES = compat_cfg.get("aliases", {})
 TTS_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("speech") or tts_cfg.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
 STT_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("transcriptions") or stt_cfg.get("default_model", "parakeet-tdt-0.6b-v3")
+EMBEDDINGS_MODEL = MODEL_COMPAT_DEFAULTS.get("embeddings") or EMBEDDINGS_BACKEND_MODEL
 IMAGE_EDIT_DEFAULT_MODEL = MODEL_COMPAT_DEFAULTS.get("image_edits", "flux2-klein-4b-edit")
 
 # Voice mapping: any voice name -> a Voxtral voice the backend accepts.
@@ -2020,7 +2036,7 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
     if operation == "videos":
         return VIDEO_DEFAULT_WORKFLOW
     if operation == "embeddings":
-        return ""
+        return EMBEDDINGS_MODEL if EMBEDDINGS_ENABLED else ""
     return requested_model
 
 
@@ -2336,6 +2352,21 @@ async def check_tabby_health() -> bool:
             resp = await client.get(f"{TABBY_HOST}/health", timeout=HEALTH_CHECK_TIMEOUT)
             return resp.status_code == 200
     except:
+        return False
+
+
+async def check_embeddings_health() -> bool:
+    """Check if the dedicated embeddings backend is healthy."""
+    if not EMBEDDINGS_ENABLED:
+        return False
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{EMBEDDINGS_HOST}{EMBEDDINGS_HEALTH_ENDPOINT}",
+                timeout=HEALTH_CHECK_TIMEOUT,
+            )
+            return resp.status_code == 200
+    except Exception:
         return False
 
 
@@ -7197,6 +7228,8 @@ CANONICAL_PROTOCOL_ROUTE_ALIASES: tuple[dict[str, object], ...] = (
     {"methods": ("POST",), "canonical": "/v1/messages", "alias": "/anthropic/v1/messages"},
     {"methods": ("POST",), "canonical": "/api/chat", "alias": "/ollama/api/chat"},
     {"methods": ("POST",), "canonical": "/api/generate", "alias": "/ollama/api/generate"},
+    {"methods": ("POST",), "canonical": "/api/embed", "alias": "/ollama/api/embed"},
+    {"methods": ("POST",), "canonical": "/api/embeddings", "alias": "/ollama/api/embeddings"},
     {"methods": ("GET",), "canonical": "/api/tags", "alias": "/ollama/api/tags"},
     {"methods": ("POST",), "canonical": "/api/show", "alias": "/ollama/api/show"},
     {"methods": ("GET",), "canonical": "/api/ps", "alias": "/ollama/api/ps"},
@@ -7445,7 +7478,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         config,
         enabled_flags={
             "llm": bool(kobold_cfg) or bool(tabby_cfg),
-            "embeddings": True,
+            "embeddings": EMBEDDINGS_ENABLED and bool(embeddings_cfg),
             "tts": TTS_ENABLED,
             "stt": STT_ENABLED,
             "images": COMFY_ENABLED,
@@ -11728,6 +11761,19 @@ def _build_role_catalog_entries() -> list[dict]:
             "vivid_fish_model_path": cat.get("path"),
         })
 
+    if EMBEDDINGS_ENABLED and EMBEDDINGS_MODEL:
+        entries.append({
+            "id": EMBEDDINGS_MODEL,
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": "vivid-fish",
+            "description": "CPU embedding model",
+            "vivid_fish_alias": True,
+            "vivid_fish_backend": "embeddings",
+            "vivid_fish_intent": "text.embeddings",
+            "capabilities": ["embedding"],
+        })
+
     return entries
 
 
@@ -12139,6 +12185,43 @@ async def _forward_chat_completions(
     finally:
         if not stream:
             await client.aclose()
+
+
+async def _forward_embeddings(
+    request: Request,
+    auth_context,
+    embeddings_body: dict,
+) -> httpx.Response:
+    """Loop an embeddings request through the OpenAI-compatible route.
+
+    Ollama and future protocol frontends should not know which concrete
+    embedding provider is hot; the `/v1/embeddings` route owns model alias
+    resolution, profile policy, and backend health.
+    """
+    url = f"http://127.0.0.1:{PROXY_PORT}/v1/embeddings"
+    headers = {"content-type": "application/json"}
+    headers[_INTERNAL_PROTOCOL_FORWARD_HEADER] = _INTERNAL_PROTOCOL_FORWARD_SECRET
+    auth_hdr = request.headers.get("authorization")
+    if auth_hdr:
+        headers["authorization"] = auth_hdr
+    api_key_hdr = request.headers.get("x-api-key")
+    if api_key_hdr:
+        headers["x-api-key"] = api_key_hdr
+
+    client = httpx.AsyncClient(timeout=httpx.Timeout(
+        connect=10.0,
+        read=EMBEDDINGS_TIMEOUT,
+        write=60.0,
+        pool=None,
+    ))
+    try:
+        return await client.post(
+            url,
+            headers=headers,
+            content=json.dumps(embeddings_body).encode("utf-8"),
+        )
+    finally:
+        await client.aclose()
 
 
 async def _drain_streaming_upstream_error(
@@ -12564,6 +12647,32 @@ async def _ollama_forward_streaming(
     )
 
 
+async def _ollama_forward_embeddings(
+    request: Request,
+    auth_context: AuthContext,
+    canonical: dict[str, Any],
+    *,
+    protocol: str,
+) -> Response | dict[str, Any]:
+    policy_error = _ollama_policy_error_response(
+        auth_context,
+        canonical,
+        protocol=protocol,
+        intent="text.embeddings",
+    )
+    if policy_error is not None:
+        return policy_error
+
+    state.update_activity()
+    upstream = await _forward_embeddings(request, auth_context, canonical)
+    if getattr(upstream, "status_code", 500) >= 400:
+        return _ollama_error_response(
+            _response_error_message(upstream, "upstream embeddings error"),
+            status_code=int(getattr(upstream, "status_code", 502) or 502),
+        )
+    return _response_json_payload(upstream)
+
+
 async def _ollama_model_catalog_summaries(
     auth_context: AuthContext,
 ) -> list[dict[str, Any]]:
@@ -12742,6 +12851,74 @@ async def ollama_generate(request: Request):
         return upstream
     return _json_error_response(
         ollama_protocol.canonical_response_to_generate(
+            upstream,
+            request_model=body.get("model"),
+        ),
+        status_code=200,
+    )
+
+
+@app.post("/ollama/api/embed")
+@app.post("/api/embed")
+async def ollama_embed(request: Request):
+    """Ollama current `/api/embed` frontend over OpenAI embeddings."""
+    auth_context = authenticate_request(request, "/api/embed")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    body = await _read_json_object(request)
+    if isinstance(body, Response):
+        return _ollama_error_response("invalid JSON body", status_code=400)
+
+    try:
+        canonical = ollama_protocol.embed_request_to_canonical(body)
+    except ollama_protocol.OllamaTranslationError as e:
+        return _ollama_error_response(str(e), status_code=e.http_status)
+
+    upstream = await _ollama_forward_embeddings(
+        request,
+        auth_context,
+        canonical,
+        protocol="ollama.embeddings",
+    )
+    if isinstance(upstream, Response):
+        return upstream
+    return _json_error_response(
+        ollama_protocol.canonical_response_to_embed(
+            upstream,
+            request_model=body.get("model"),
+        ),
+        status_code=200,
+    )
+
+
+@app.post("/ollama/api/embeddings")
+@app.post("/api/embeddings")
+async def ollama_embeddings(request: Request):
+    """Ollama legacy `/api/embeddings` frontend over OpenAI embeddings."""
+    auth_context = authenticate_request(request, "/api/embeddings")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    body = await _read_json_object(request)
+    if isinstance(body, Response):
+        return _ollama_error_response("invalid JSON body", status_code=400)
+
+    try:
+        canonical = ollama_protocol.embeddings_request_to_canonical(body)
+    except ollama_protocol.OllamaTranslationError as e:
+        return _ollama_error_response(str(e), status_code=e.http_status)
+
+    upstream = await _ollama_forward_embeddings(
+        request,
+        auth_context,
+        canonical,
+        protocol="ollama.embeddings",
+    )
+    if isinstance(upstream, Response):
+        return upstream
+    return _json_error_response(
+        ollama_protocol.canonical_response_to_embeddings(
             upstream,
             request_model=body.get("model"),
         ),
@@ -13728,11 +13905,17 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 
     # Determine target backend based on request shape, configured capabilities,
     # and the authenticated profile. Chat/completions start with no backend so
-    # generic chat never has a hidden Tabby dependency. Backend-native catch-all
-    # and embeddings keep the historic Tabby default because those surfaces are
-    # not interchangeable with Kobold.
+    # generic chat never has a hidden Tabby dependency. Embeddings are a
+    # dedicated provider, not a Tabby/Kobold fallback. Backend-native catch-all
+    # keeps the historic Tabby default because those surfaces are not
+    # interchangeable with Kobold.
     llm_chat_path = request_path in ("/v1/chat/completions", "/v1/completions")
-    target_host: Optional[str] = None if llm_chat_path else TABBY_HOST
+    if llm_chat_path:
+        target_host: Optional[str] = None
+    elif request_path == "/v1/embeddings":
+        target_host = EMBEDDINGS_HOST if EMBEDDINGS_ENABLED else None
+    else:
+        target_host = TABBY_HOST
     body_peek = await request.body()
     parsed_openai_body: dict[str, Any] | None = None
     if request_path in _OPENAI_PROXY_POLICY:
@@ -14083,6 +14266,24 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                         headers={"Retry-After": "10"},
                     )
 
+    if target_host == EMBEDDINGS_HOST:
+        if not await check_embeddings_health():
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": (
+                            "Configured backend 'embeddings' is unavailable for "
+                            f"{request_path}. Retry after Retry-After."
+                        ),
+                        "type": "service_unavailable",
+                        "code": "backend_unavailable",
+                    }
+                }),
+                status_code=503,
+                media_type="application/json",
+                headers={"Retry-After": "10"},
+            )
+
     # Auto-load model if needed (TabbyAPI only)
     if target_host == TABBY_HOST and any(request_path.startswith(p) for p in MODEL_REQUIRED_PATHS):
         if not await is_model_loaded():
@@ -14100,7 +14301,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 
     body = body_peek  # Already read above for model detection
     effective_request_model = None
-    target_service = "tabby" if target_host == TABBY_HOST else "kobold"
+    target_service = backend_for_host(target_host) or "kobold"
     headers = prepare_downstream_headers(
         request.headers,
         auth_context,
@@ -14235,14 +14436,14 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             media_type="application/json"
         )
     except httpx.ConnectError:
-        if await restart_tabby_if_needed():
+        if target_service == "tabby" and await restart_tabby_if_needed():
             return Response(
                 content=json.dumps({"detail": "TabbyAPI restarted, please retry"}),
                 status_code=503,
                 media_type="application/json"
             )
         return Response(
-            content=json.dumps({"detail": "TabbyAPI connection failed"}),
+            content=json.dumps({"detail": f"{target_service} connection failed"}),
             status_code=502,
             media_type="application/json"
         )

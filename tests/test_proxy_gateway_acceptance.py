@@ -348,6 +348,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
         ), patch.object(
             proxy, "check_tabby_health", fake_false
         ), patch.object(
+            proxy, "check_embeddings_health", fake_false
+        ), patch.object(
             proxy, "restart_tabby_if_needed", fake_false
         ):
             cases = [
@@ -867,6 +869,73 @@ class TestAnthropicAndOllamaRoutes(unittest.TestCase):
         body = response.json()
         self.assertIn("response", body)
         self.assertEqual(body.get("done"), True)
+
+    def test_ollama_embed_route_is_mounted(self) -> None:
+        if not self._has_route("/api/embed", "POST"):
+            self.skipTest("/api/embed not mounted yet")
+
+        async def fake_forward(*_args, **_kwargs):
+            return Response(
+                content=json.dumps({
+                    "object": "list",
+                    "model": "nomic-embed-text-v1.5",
+                    "data": [
+                        {
+                            "object": "embedding",
+                            "index": 0,
+                            "embedding": [0.1, 0.2],
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 2, "total_tokens": 2},
+                }),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        with self._patch_auth_open(), patch.object(
+            proxy,
+            "_forward_embeddings",
+            fake_forward,
+        ):
+            response = self.client.post(
+                "/api/embed",
+                json={"model": "nomic-embed-text-v1.5", "input": "hello"},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["embeddings"], [[0.1, 0.2]])
+
+    def test_ollama_legacy_embeddings_route_is_mounted(self) -> None:
+        if not self._has_route("/api/embeddings", "POST"):
+            self.skipTest("/api/embeddings not mounted yet")
+
+        async def fake_forward(*_args, **_kwargs):
+            return Response(
+                content=json.dumps({
+                    "object": "list",
+                    "model": "nomic-embed-text-v1.5",
+                    "data": [
+                        {
+                            "object": "embedding",
+                            "index": 0,
+                            "embedding": [0.3, 0.4],
+                        }
+                    ],
+                }),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        with self._patch_auth_open(), patch.object(
+            proxy,
+            "_forward_embeddings",
+            fake_forward,
+        ):
+            response = self.client.post(
+                "/api/embeddings",
+                json={"model": "nomic-embed-text-v1.5", "prompt": "hello"},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"embedding": [0.3, 0.4]})
 
     def test_ollama_tags_route_is_mounted(self) -> None:
         if not self._has_route("/api/tags", "GET"):

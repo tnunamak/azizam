@@ -58,6 +58,23 @@ backends:
       - audio
       - transcriptions
     managed: false
+  embeddings:
+    name: nomic-embed-text-v1.5 CPU
+    host: 127.0.0.1
+    port: 5061
+    model_id: nomic-embed-text-v1.5
+    health_endpoint: /health
+    timeout: 120
+    role: required
+    note: "CPU-only llama-server embedding backend; no GPU budget claim."
+    capabilities:
+      - embeddings
+    resources:
+      gpu_required: false
+      vram_gb_estimate: 0
+      duration_class: interactive
+      max_parallel: 4
+    managed: false
   comfyui:
     name: ComfyUI (Image + Video Generation)
     host: 127.0.0.1
@@ -248,8 +265,14 @@ model_compatibility:
     completions: ""
     speech: mistralai/Voxtral-4B-TTS-2603
     transcriptions: parakeet-tdt-0.6b-v3
+    embeddings: nomic-embed-text-v1.5
     images: flux2-klein-4b
     image_edits: flux2-klein-4b-edit
+  aliases:
+    nomic-embed-text-v1.5:
+      category: embeddings
+    nomic-embed-text-v1.5.f16.gguf:
+      category: embeddings
 auth:
   enabled: true
   keys_file: proxy_api_keys.yml

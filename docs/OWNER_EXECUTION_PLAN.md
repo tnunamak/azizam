@@ -31,6 +31,7 @@ The status of each build-order item below reflects what currently lives on
 - [x] Live `/gateway/v1/*` mount in `proxy.py` for workflows, capabilities, receipts, and media jobs
 - [x] Durable `image.generate` media-job execution through `POST /gateway/v1/media/jobs` with retry, idempotency, persisted job state, and completed image content retrieval
 - [x] Live Anthropic Messages and Ollama chat/generate/tags/show/ps/version frontends over the existing chat route, including Anthropic SSE and Ollama NDJSON streaming
+- [x] Live OpenAI and Ollama embeddings routed to a dedicated CPU `nomic-embed-text-v1.5` backend with no GPU budget claim
 - [x] Live image workflow extension binding for supported manifest controls
 - [x] `generate-key` preserves existing `profile:` blocks on rotation
 - [x] SDK compatibility harness with executable registered probes (`scripts/compat/`, `tests/compat/`, `docs/SDK_COMPATIBILITY_HARNESS.md`)
@@ -39,7 +40,7 @@ In-progress / next integration targets:
 
 - Expand the live capability inventory beyond the initial hand-built catalog.
 - Extend durable media-job execution to video, audio/music, and generic gateway assets.
-- Expand SDK compatibility probes for Anthropic/Ollama streaming and Ollama read-only model routes.
+- Expand SDK compatibility probes for Anthropic/Ollama streaming, Ollama read-only model routes, and embeddings.
 - Backend adapter contract extracted from `proxy.py`.
 
 ## North Star
@@ -262,7 +263,7 @@ Initial targets:
 - OpenAI Python against `/v1/chat/completions`
 - OpenAI Python against `/v1/images/edits`
 - Anthropic Python against `/v1/messages`
-- Ollama clients against `/api/chat`, `/api/generate`, and `/api/tags`
+- Ollama clients against `/api/chat`, `/api/generate`, `/api/embed`, and `/api/tags`
 
 ## Guardrails
 

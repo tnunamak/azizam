@@ -233,8 +233,10 @@ Not implemented:
 - A clean protocol frontend / canonical intent / router / scheduler split is
   not fully extracted yet; request handling still largely lives in `proxy.py`.
 - No backend adapter contract has been extracted.
-- Ollama embeddings are not implemented yet; use the OpenAI-compatible
-  `/v1/embeddings` surface until a canonical Ollama embedding translator exists.
+- Ollama embeddings are implemented as a protocol frontend over the
+  OpenAI-compatible `/v1/embeddings` surface. The current local provider is a
+  CPU-only `nomic-embed-text-v1.5` llama.cpp server so embeddings do not claim
+  GPU budget.
 - Provider-native passthrough is implemented only under
   `/gateway/v1/providers/{provider}/{path...}` and remains policy-gated by App
   profile. Provider-native discovery is implemented at `/gateway/v1/providers`
