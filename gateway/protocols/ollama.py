@@ -2,14 +2,16 @@
 
 Pure module. No FastAPI, no httpx, no ``proxy.py`` imports.
 
-Covers the non-streaming subset of the Ollama API surface:
+Covers the pure translation subset of the Ollama API surface:
 
 * ``POST /api/chat``  → canonical chat-completions request, and back
 * ``POST /api/generate`` → canonical chat-completions request, and back
 * ``GET /api/tags``    → response helper from a list of gateway model
   summaries
+* ``POST /api/show`` / ``GET /api/ps`` / ``GET /api/version`` helper shapes
 
-Streaming and `/api/embeddings` translation belong in follow-up modules;
+Backend model management and `/api/embeddings` translation belong in
+follow-up modules;
 ``unsupported_operation_error`` is the SDK-shaped error used everywhere we
 need to refuse cleanly.
 """
@@ -109,7 +111,7 @@ def canonical_response_to_chat(
 
     out_message: dict[str, Any] = {
         "role": message.get("role") or "assistant",
-        "content": message.get("content") or "",
+        "content": _visible_text_from_message(message),
     }
 
     tool_calls = message.get("tool_calls")
@@ -131,6 +133,37 @@ def canonical_response_to_chat(
         "prompt_eval_count": int(usage.get("prompt_tokens") or 0),
         "eval_count": int(usage.get("completion_tokens") or 0),
     }
+    return response
+
+
+def canonical_stream_chunk_to_chat(
+    canonical: dict[str, Any], *, request_model: str | None = None
+) -> dict[str, Any]:
+    """Translate a canonical chat-completions stream chunk to ``/api/chat``."""
+    choice = _first_choice(canonical)
+    delta = choice.get("delta") or {}
+    out_message: dict[str, Any] = {
+        "role": delta.get("role") or "assistant",
+        "content": _visible_text_from_message(delta),
+    }
+
+    tool_calls = delta.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        out_message["tool_calls"] = [
+            _openai_tool_call_to_ollama(tc) for tc in tool_calls
+        ]
+
+    finish_reason = choice.get("finish_reason")
+    done = finish_reason is not None
+    response: dict[str, Any] = {
+        "model": canonical.get("model") or request_model or "",
+        "created_at": _iso_utc_now(),
+        "message": out_message,
+        "done": done,
+    }
+    if done:
+        response["done_reason"] = _finish_reason_to_done_reason(finish_reason)
+        _apply_usage_counts(response, canonical.get("usage") or {})
     return response
 
 
@@ -187,7 +220,7 @@ def canonical_response_to_generate(
     choices = canonical.get("choices") or []
     first = choices[0] if choices else {}
     message = first.get("message") or {}
-    text = message.get("content") or ""
+    text = _visible_text_from_message(message)
 
     finish_reason = first.get("finish_reason")
     done_reason = _finish_reason_to_done_reason(finish_reason)
@@ -204,8 +237,28 @@ def canonical_response_to_generate(
     }
 
 
+def canonical_stream_chunk_to_generate(
+    canonical: dict[str, Any], *, request_model: str | None = None
+) -> dict[str, Any]:
+    """Translate a canonical chat-completions stream chunk to ``/api/generate``."""
+    choice = _first_choice(canonical)
+    delta = choice.get("delta") or {}
+    finish_reason = choice.get("finish_reason")
+    done = finish_reason is not None
+    response: dict[str, Any] = {
+        "model": canonical.get("model") or request_model or "",
+        "created_at": _iso_utc_now(),
+        "response": _visible_text_from_message(delta),
+        "done": done,
+    }
+    if done:
+        response["done_reason"] = _finish_reason_to_done_reason(finish_reason)
+        _apply_usage_counts(response, canonical.get("usage") or {})
+    return response
+
+
 # ---------------------------------------------------------------------------
-# /api/tags
+# Model-management response helpers
 # ---------------------------------------------------------------------------
 
 
@@ -248,6 +301,65 @@ def tags_response_from_model_summaries(
             }
         )
     return {"models": models}
+
+
+def show_response_from_model_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
+    """Build an ``/api/show`` response from a configured model summary."""
+    if not isinstance(summary, Mapping):
+        raise OllamaTranslationError("model summary must be an object")
+    name = _model_name(summary)
+    if not name:
+        raise OllamaTranslationError("model summary requires an id or name")
+
+    details = _ollama_model_details(summary)
+    model_info = summary.get("model_info")
+    if not isinstance(model_info, Mapping):
+        model_info = {
+            "general.architecture": details["family"],
+            "general.file_type": details["format"],
+            "general.parameter_count": summary.get("parameter_count", 0),
+            "general.quantization_version": details["quantization_level"],
+        }
+
+    return {
+        "license": summary.get("license", ""),
+        "modelfile": summary.get("modelfile") or f"FROM {name}",
+        "parameters": summary.get("parameters", ""),
+        "template": summary.get("template", ""),
+        "details": details,
+        "model_info": dict(model_info),
+        "capabilities": summary.get("capabilities") or ["completion"],
+    }
+
+
+def ps_response_from_model_summaries(
+    summaries: Iterable[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Build an ``/api/ps`` response from loaded gateway model summaries."""
+    models: list[dict[str, Any]] = []
+    for entry in summaries:
+        if not isinstance(entry, Mapping):
+            continue
+        name = _model_name(entry)
+        if not name:
+            continue
+        models.append(
+            {
+                "name": name,
+                "model": name,
+                "size": int(entry.get("size") or 0),
+                "digest": entry.get("digest") or "",
+                "details": _ollama_model_details(entry),
+                "expires_at": entry.get("expires_at") or _iso_utc_now(),
+                "size_vram": int(entry.get("size_vram") or entry.get("size") or 0),
+            }
+        )
+    return {"models": models}
+
+
+def version_response(version: str | None = None) -> dict[str, Any]:
+    """Build an Ollama-compatible ``/api/version`` response."""
+    return {"version": version or "openai-proxy"}
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +478,49 @@ def _openai_tool_call_to_ollama(call: Any) -> dict[str, Any]:
             "name": fn.get("name", ""),
             "arguments": args,
         }
+    }
+
+
+def _first_choice(canonical: Mapping[str, Any]) -> Mapping[str, Any]:
+    choices = canonical.get("choices") or []
+    first = choices[0] if choices else {}
+    return first if isinstance(first, Mapping) else {}
+
+
+def _visible_text_from_message(message: Mapping[str, Any]) -> str:
+    text = message.get("content")
+    if isinstance(text, str) and text:
+        return text
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning:
+        lower = reasoning.lower()
+        close = lower.rfind("</think>")
+        if close >= 0:
+            visible = reasoning[close + len("</think>") :].strip()
+            if visible:
+                return visible
+        return reasoning
+    return ""
+
+
+def _apply_usage_counts(response: dict[str, Any], usage: Mapping[str, Any]) -> None:
+    response["prompt_eval_count"] = int(usage.get("prompt_tokens") or 0)
+    response["eval_count"] = int(usage.get("completion_tokens") or 0)
+
+
+def _model_name(entry: Mapping[str, Any]) -> str:
+    name = entry.get("id") or entry.get("name") or entry.get("model")
+    return name if isinstance(name, str) and name else ""
+
+
+def _ollama_model_details(entry: Mapping[str, Any]) -> dict[str, Any]:
+    family = entry.get("family", "")
+    return {
+        "format": entry.get("format", "gguf"),
+        "family": family,
+        "families": entry.get("families") or ([family] if family else []),
+        "parameter_size": entry.get("parameter_size", ""),
+        "quantization_level": entry.get("quantization_level", ""),
     }
 
 

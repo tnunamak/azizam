@@ -34,7 +34,7 @@ import unittest
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import yaml
 from fastapi import Response
@@ -74,6 +74,25 @@ def _catch_all_index(app) -> int:
 @dataclass
 class _StubResponse:
     status_code: int = 200
+
+
+class _FakeStreamResponse:
+    status_code = 200
+
+    def __init__(self, chunks: list[bytes]):
+        self._chunks = chunks
+
+    async def aiter_bytes(self):
+        for chunk in self._chunks:
+            yield chunk
+
+    async def aclose(self):
+        return None
+
+
+class _FakeStreamClient:
+    async def aclose(self):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -677,7 +696,7 @@ def _find_chat_forwarder() -> Optional[str]:
 
 
 class TestAnthropicAndOllamaRoutes(unittest.TestCase):
-    """Pin the non-streaming protocol-frontend routes the owner is mounting."""
+    """Pin the protocol-frontend routes the owner is mounting."""
 
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
@@ -739,6 +758,39 @@ class TestAnthropicAndOllamaRoutes(unittest.TestCase):
         self.assertIn("content", body)
         self.assertIsInstance(body["content"], list)
 
+    def test_anthropic_messages_streaming_route_translates_sse(self) -> None:
+        if not self._has_route("/v1/messages", "POST"):
+            self.skipTest("/v1/messages not mounted yet")
+
+        async def fake_forward(*_args, **kwargs):
+            self.assertTrue(kwargs["stream"])
+            chunks = [
+                b'data: {"id":"chatcmpl-1","model":"local","choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n',
+                b'data: {"id":"chatcmpl-1","model":"local","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+                b"data: [DONE]\n\n",
+            ]
+            return _FakeStreamClient(), _FakeStreamResponse(chunks)
+
+        with self._patch_auth_open(), patch.object(
+            proxy,
+            "_forward_chat_completions",
+            fake_forward,
+        ):
+            response = self.client.post(
+                "/v1/messages",
+                json={
+                    "model": "claude-3-5-sonnet",
+                    "max_tokens": 8,
+                    "stream": True,
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("event: message_start", response.text)
+        self.assertIn("event: content_block_delta", response.text)
+        self.assertIn('"text":"hi"', response.text)
+        self.assertIn("event: message_stop", response.text)
+
     def test_ollama_chat_route_is_mounted(self) -> None:
         if not self._has_route("/api/chat", "POST"):
             self.skipTest(
@@ -762,6 +814,39 @@ class TestAnthropicAndOllamaRoutes(unittest.TestCase):
         body = response.json()
         self.assertIn("message", body)
         self.assertEqual(body.get("done"), True)
+
+    def test_ollama_chat_streaming_route_translates_ndjson(self) -> None:
+        if not self._has_route("/api/chat", "POST"):
+            self.skipTest("/api/chat not mounted yet")
+
+        async def fake_forward(*_args, **kwargs):
+            self.assertTrue(kwargs["stream"])
+            chunks = [
+                b'data: {"id":"chatcmpl-1","model":"llama3","choices":[{"index":0,"delta":{"content":"hel"}}]}\n\n',
+                b'data: {"id":"chatcmpl-1","model":"llama3","choices":[{"index":0,"delta":{"content":"lo"}}]}\n\n',
+                b'data: {"id":"chatcmpl-1","model":"llama3","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+                b"data: [DONE]\n\n",
+            ]
+            return _FakeStreamClient(), _FakeStreamResponse(chunks)
+
+        with self._patch_auth_open(), patch.object(
+            proxy,
+            "_forward_chat_completions",
+            fake_forward,
+        ):
+            response = self.client.post(
+                "/api/chat",
+                json={
+                    "model": "llama3",
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "stream": True,
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        lines = [json.loads(line) for line in response.text.splitlines() if line]
+        self.assertEqual([line["message"]["content"] for line in lines[:2]], ["hel", "lo"])
+        self.assertTrue(lines[-1]["done"])
+        self.assertEqual(lines[-1]["done_reason"], "stop")
 
     def test_ollama_generate_route_is_mounted(self) -> None:
         if not self._has_route("/api/generate", "POST"):
@@ -795,6 +880,46 @@ class TestAnthropicAndOllamaRoutes(unittest.TestCase):
         body = response.json()
         self.assertIn("models", body)
         self.assertIsInstance(body["models"], list)
+
+    def test_ollama_model_management_routes_are_mounted(self) -> None:
+        for path, method in (
+            ("/api/show", "POST"),
+            ("/api/ps", "GET"),
+            ("/api/version", "GET"),
+            ("/api/pull", "POST"),
+            ("/api/delete", "DELETE"),
+        ):
+            self.assertTrue(self._has_route(path, method), f"{method} {path}")
+
+        summaries = [
+            {
+                "id": "llama3:8b",
+                "family": "llama",
+                "parameter_size": "8B",
+                "quantization_level": "Q4_K_M",
+            }
+        ]
+        with self._patch_auth_open(), patch.object(
+            proxy,
+            "_ollama_model_catalog_summaries",
+            AsyncMock(return_value=summaries),
+        ), patch.object(
+            proxy,
+            "_ollama_loaded_model_summaries",
+            AsyncMock(return_value=summaries),
+        ):
+            show = self.client.post("/api/show", json={"model": "llama3:8b"})
+            ps = self.client.get("/api/ps")
+            version = self.client.get("/api/version")
+            pull = self.client.post("/api/pull", json={"name": "llama3:8b"})
+
+        self.assertEqual(show.status_code, 200, show.text)
+        self.assertEqual(show.json()["details"]["family"], "llama")
+        self.assertEqual(ps.status_code, 200, ps.text)
+        self.assertEqual(ps.json()["models"][0]["model"], "llama3:8b")
+        self.assertEqual(version.status_code, 200, version.text)
+        self.assertIn("version", version.json())
+        self.assertEqual(pull.status_code, 501, pull.text)
 
     def test_anthropic_route_registered_before_catch_all(self) -> None:
         if not self._has_route("/v1/messages", "POST"):

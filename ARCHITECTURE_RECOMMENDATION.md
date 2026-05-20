@@ -167,7 +167,7 @@ Implemented (lives on `main`):
 - `gateway/policy.py`: pure app-profile policy module with `AppProfile`,
   `PolicyRequest`, `PolicyDecision`, fallback/native-passthrough/visibility
   policies, and an `evaluate` entry point. It is used by the live gateway
-  discovery view, image route receipts, and non-streaming protocol frontends.
+  discovery view, image route receipts, and protocol frontends.
 - `gateway/profiles.py`: pure loader from existing proxy key-entry dicts into
   `AppProfile`, keeping credential lookup and file I/O outside the policy
   layer.
@@ -202,8 +202,8 @@ Implemented (lives on `main`):
   exposes completed image assets through
   `/gateway/v1/media/jobs/{job_id}/content`.
 - `gateway/protocols/anthropic.py` and `gateway/protocols/ollama.py`:
-  pure translators for non-streaming Anthropic Messages and Ollama
-  chat/generate/tags frontends.
+  pure translators for Anthropic Messages and Ollama chat/generate/tags/show/ps
+  frontends, including stream-envelope translation.
 - `manifests/workflows/flux2-klein-4b*.yml` and
   `manifests/workflows/tangoflux.yml`: initial portable workflow manifests for
   image generation/editing and TangoFlux audio generation.
@@ -214,9 +214,12 @@ Implemented (lives on `main`):
   identity when a binding participates, persist to SQLite, and emit a body-free
   `image_route_receipt` event through the firehose metrics path. The receipt is
   not returned inline to clients; it is discoverable through `/gateway/v1`.
-- Live non-streaming protocol frontends: `POST /v1/messages`, `POST /api/chat`,
-  `POST /api/generate`, and `GET /api/tags`. Streaming and backend-native
-  Ollama management remain out of scope for this slice.
+- Live protocol frontends: `POST /v1/messages`, `POST /api/chat`,
+  `POST /api/generate`, `GET /api/tags`, `POST /api/show`, `GET /api/ps`, and
+  `GET /api/version`. Anthropic Messages streams as Anthropic SSE; Ollama
+  chat/generate stream as NDJSON. Mutating Ollama model-management routes are
+  registered but return unsupported-operation instead of pretending to mutate
+  local model files.
 - `scripts/compat/` and `tests/compat/` SDK compatibility harness (see
   `docs/SDK_COMPATIBILITY_HARNESS.md`). The matrix runner executes registered
   unittest probes when SDK and environment preconditions are present; published
@@ -230,8 +233,8 @@ Not implemented:
 - A clean protocol frontend / canonical intent / router / scheduler split is
   not fully extracted yet; request handling still largely lives in `proxy.py`.
 - No backend adapter contract has been extracted.
-- Streaming Anthropic/Ollama frontends and Ollama model-management routes are
-  not implemented.
+- Ollama embeddings are not implemented yet; use the OpenAI-compatible
+  `/v1/embeddings` surface until a canonical Ollama embedding translator exists.
 - Provider-native passthrough is implemented only under
   `/gateway/v1/providers/{provider}/{path...}` and remains policy-gated by App
   profile. Provider-native discovery is implemented at `/gateway/v1/providers`
@@ -1298,8 +1301,9 @@ adapters.
 ### Phase 4: Add Public Protocol Frontends
 
 - Solidify OpenAI frontend from current behavior.
-- Solidify the live non-streaming Anthropic Messages frontend.
-- Solidify the live non-streaming Ollama chat/generate/tags frontend.
+- Solidify the live Anthropic Messages frontend, including SSE streaming.
+- Solidify the live Ollama chat/generate/tags/show/ps/version frontend,
+  including NDJSON chat/generate streaming and read-only model metadata.
 - Extend gateway media jobs beyond the live image-generation executor to
   generic assets, video, audio/music, and provider-native adapters.
 

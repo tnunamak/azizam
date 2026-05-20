@@ -46,7 +46,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
         for path in (
             "/openai/v1/fine_tuning/jobs",
             "/anthropic/v1/models",
-            "/ollama/api/version",
+            "/ollama/api/unknown",
         ):
             response = client.get(path)
             self.assertEqual(response.status_code, 404, msg=path)

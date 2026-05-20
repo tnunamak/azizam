@@ -40,6 +40,7 @@ Conservative posture for unsupported features:
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from typing import Any, Iterable
@@ -237,6 +238,189 @@ def canonical_response_to_messages(
         "stop_sequence": None,
         "usage": anthropic_usage,
     }
+
+
+def canonical_stream_to_messages_sse(
+    canonical_stream: Iterable[Any], *, request_model: str | None = None
+) -> list[str]:
+    """Translate OpenAI chat-completions stream chunks to Anthropic SSE frames.
+
+    Accepts either decoded ``chat.completion.chunk`` dictionaries or raw
+    OpenAI SSE ``data: ...`` lines. Transport code can pass each upstream
+    event through this pure helper without depending on FastAPI/httpx.
+    """
+
+    translator = MessagesStreamTranslator(request_model=request_model)
+    frames: list[str] = []
+
+    for raw_event in canonical_stream:
+        frames.extend(translator.feed(raw_event))
+
+    return frames
+
+
+class MessagesStreamTranslator:
+    """Stateful OpenAI chat stream -> Anthropic Messages SSE translator.
+
+    Transport code feeds decoded OpenAI chat-completions chunks (or raw
+    ``data: ...`` lines) as they arrive and yields the returned frames
+    immediately. ``finish()`` is idempotent and closes the Anthropic stream if
+    the upstream ended without an explicit finish chunk.
+    """
+
+    def __init__(self, *, request_model: str | None = None) -> None:
+        self.response_id: str | None = None
+        self.model = request_model or ""
+        self.content_started = False
+        self.finished = False
+
+    def feed(self, raw_event: Any) -> list[str]:
+        if self.finished:
+            return []
+
+        chunk = _coerce_openai_stream_chunk(raw_event)
+        if chunk is None:
+            return []
+
+        frames: list[str] = []
+        if self.response_id is None:
+            self.response_id = _messages_response_id(chunk.get("id"))
+            self.model = chunk.get("model") or self.model
+            frames.append(
+                _anthropic_sse_frame(
+                    "message_start",
+                    {
+                        "type": "message_start",
+                        "message": {
+                            "id": self.response_id,
+                            "type": "message",
+                            "role": "assistant",
+                            "model": self.model,
+                            "content": [],
+                            "stop_reason": None,
+                            "stop_sequence": None,
+                            "usage": {"input_tokens": 0, "output_tokens": 0},
+                        },
+                    },
+                )
+            )
+
+        choices = chunk.get("choices") or []
+        first = choices[0] if choices else {}
+        delta = first.get("delta") or {}
+
+        text = delta.get("content")
+        if (text is None or text == "") and isinstance(
+            delta.get("reasoning_content"), str
+        ):
+            text = _visible_text_from_reasoning_content(delta.get("reasoning_content"))
+        if isinstance(text, str) and text:
+            if not self.content_started:
+                self.content_started = True
+                frames.append(
+                    _anthropic_sse_frame(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": 0,
+                            "content_block": {"type": "text", "text": ""},
+                        },
+                    )
+                )
+            frames.append(
+                _anthropic_sse_frame(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": text},
+                    },
+                )
+            )
+
+        finish_reason = first.get("finish_reason")
+        if finish_reason is not None:
+            frames.extend(self.finish(finish_reason=finish_reason))
+        return frames
+
+    def finish(self, *, finish_reason: Any = "stop") -> list[str]:
+        if self.finished:
+            return []
+        self.finished = True
+        stop_reason = _finish_reason_to_stop_reason(finish_reason, [])
+        frames: list[str] = []
+        if self.response_id is None:
+            self.response_id = _messages_response_id(None)
+            frames.append(
+                _anthropic_sse_frame(
+                    "message_start",
+                    {
+                        "type": "message_start",
+                        "message": {
+                            "id": self.response_id,
+                            "type": "message",
+                            "role": "assistant",
+                            "model": self.model,
+                            "content": [],
+                            "stop_reason": None,
+                            "stop_sequence": None,
+                            "usage": {"input_tokens": 0, "output_tokens": 0},
+                        },
+                    },
+                )
+            )
+        if self.content_started:
+            frames.append(
+                _anthropic_sse_frame(
+                    "content_block_stop",
+                    {"type": "content_block_stop", "index": 0},
+                )
+            )
+        frames.append(
+            _anthropic_sse_frame(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+                    "usage": {"output_tokens": 0},
+                },
+            )
+        )
+        frames.append(_anthropic_sse_frame("message_stop", {"type": "message_stop"}))
+        return frames
+
+
+def _coerce_openai_stream_chunk(raw_event: Any) -> dict[str, Any] | None:
+    if isinstance(raw_event, dict):
+        return raw_event
+    if isinstance(raw_event, bytes):
+        raw_event = raw_event.decode("utf-8")
+    if not isinstance(raw_event, str):
+        return None
+
+    line = raw_event.strip()
+    if not line:
+        return None
+    if line.startswith("data:"):
+        line = line.removeprefix("data:").strip()
+    if line == "[DONE]":
+        return None
+    try:
+        parsed = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _messages_response_id(raw_id: Any) -> str:
+    response_id = raw_id or f"msg_{uuid.uuid4().hex}"
+    if not str(response_id).startswith("msg_"):
+        return f"msg_{response_id}"
+    return str(response_id)
+
+
+def _anthropic_sse_frame(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
 
 
 def _visible_text_from_reasoning_content(text: str) -> str:

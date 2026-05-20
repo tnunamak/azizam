@@ -78,6 +78,10 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `GET  /status` | proxy | Operator status dashboard; requires admin OIDC session or `oak_...` admin key |
 | `GET  /health` | proxy | Liveness; public, no auth |
 | `GET  /v1/models` | active LLM backend | List models; augments with currently loaded GGUF |
+| `POST /anthropic/v1/messages` | chat pipeline | Anthropic Messages-compatible request/response and SSE streaming; `/v1/messages` remains a convenience route |
+| `GET  /ollama/api/tags` | proxy catalog | Ollama-compatible model list; `/api/tags` remains a convenience route |
+| `POST /ollama/api/chat`, `POST /ollama/api/generate` | chat pipeline | Ollama-compatible chat/generate with NDJSON streaming; `/api/chat` and `/api/generate` remain convenience routes |
+| `POST /ollama/api/show`, `GET /ollama/api/ps`, `GET /ollama/api/version` | proxy catalog/status | Ollama-compatible read-only model metadata/status; `/api/show`, `/api/ps`, `/api/version` remain convenience routes |
 | `GET  /v1/voices`, `GET /v1/audio/voices` | proxy (static) | List TTS voices |
 | `POST /v1/chat/completions` | tabby (default) or kobold (auto-routed) | Chat completion (vision-capable on tabby) |
 | `POST /v1/completions` | tabby/kobold | Text completion |

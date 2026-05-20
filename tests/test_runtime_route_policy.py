@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import sys
 import unittest
 from contextlib import contextmanager
@@ -111,6 +113,7 @@ class _ForwardResponse:
 class _CaptureForwardClient:
     urls: list[str] = []
     bodies: list[bytes] = []
+    headers: list[dict] = []
 
     def __init__(self, *args, **kwargs):
         pass
@@ -118,6 +121,7 @@ class _CaptureForwardClient:
     def build_request(self, *, method, url, headers, content):
         self.__class__.urls.append(str(url))
         self.__class__.bodies.append(content)
+        self.__class__.headers.append(dict(headers))
         return object()
 
     async def send(self, *args, **kwargs):
@@ -125,6 +129,27 @@ class _CaptureForwardClient:
 
     async def aclose(self):
         return None
+
+
+class _CaptureLoopbackClient:
+    headers: list[dict] = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def build_request(self, method, url, headers, content):
+        self.__class__.headers.append(dict(headers))
+        return object()
+
+    async def send(self, *args, **kwargs):
+        return _ForwardResponse()
+
+    async def aclose(self):
+        return None
+
+
+class _HeaderOnlyRequest:
+    headers = AUTH_HEADERS
 
 
 class _NativePassthroughResponse:
@@ -164,7 +189,64 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.client = TestClient(proxy.app)
         _CaptureForwardClient.urls = []
         _CaptureForwardClient.bodies = []
+        _CaptureForwardClient.headers = []
+        _CaptureLoopbackClient.headers = []
         _CaptureNativePassthroughClient.calls = []
+
+    def test_protocol_frontend_loopback_marks_internal_forward(self) -> None:
+        _CaptureLoopbackClient.headers = []
+        with patch.object(proxy.httpx, "AsyncClient", _CaptureLoopbackClient):
+            client, response = asyncio.run(
+                proxy._forward_chat_completions(
+                    _HeaderOnlyRequest(),
+                    proxy.NO_AUTH_CONTEXT,
+                    {
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                    stream=True,
+                )
+            )
+            asyncio.run(response.aclose())
+            asyncio.run(client.aclose())
+
+        self.assertEqual(len(_CaptureLoopbackClient.headers), 1)
+        self.assertEqual(
+            _CaptureLoopbackClient.headers[0][proxy._INTERNAL_PROTOCOL_FORWARD_HEADER],
+            proxy._INTERNAL_PROTOCOL_FORWARD_SECRET,
+        )
+
+    def test_protocol_frontend_loopback_avoids_openai_policy_requirement(self) -> None:
+        anthropic_only = AppProfile(
+            id="anthropic-only",
+            protocols=frozenset({"anthropic.messages"}),
+        )
+        identity = proxy.AuthIdentity(
+            name="anthropic-only",
+            key_hash=proxy.hash_api_key(RAW_KEY),
+            downstream={},
+            profile=anthropic_only,
+        )
+        auth_context = proxy.AuthContext(identity=identity)
+        body = json.dumps({"model": "test-model"}).encode("utf-8")
+
+        direct_decision = proxy._openai_proxy_policy_decision(
+            auth_context,
+            "/v1/chat/completions",
+            body,
+        )
+
+        class RequestLike:
+            headers = {
+                proxy._INTERNAL_PROTOCOL_FORWARD_HEADER: (
+                    proxy._INTERNAL_PROTOCOL_FORWARD_SECRET
+                )
+            }
+            client = type("Client", (), {"host": "127.0.0.1"})()
+
+        self.assertIsNotNone(direct_decision)
+        self.assertTrue(direct_decision.denied)
+        self.assertTrue(proxy._is_internal_protocol_forward(RequestLike()))
 
     def test_chat_only_opk_denies_media_and_models_routes(self) -> None:
         chat_only = AppProfile(

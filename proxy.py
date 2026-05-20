@@ -7198,6 +7198,14 @@ CANONICAL_PROTOCOL_ROUTE_ALIASES: tuple[dict[str, object], ...] = (
     {"methods": ("POST",), "canonical": "/api/chat", "alias": "/ollama/api/chat"},
     {"methods": ("POST",), "canonical": "/api/generate", "alias": "/ollama/api/generate"},
     {"methods": ("GET",), "canonical": "/api/tags", "alias": "/ollama/api/tags"},
+    {"methods": ("POST",), "canonical": "/api/show", "alias": "/ollama/api/show"},
+    {"methods": ("GET",), "canonical": "/api/ps", "alias": "/ollama/api/ps"},
+    {"methods": ("GET",), "canonical": "/api/version", "alias": "/ollama/api/version"},
+    {"methods": ("POST",), "canonical": "/api/create", "alias": "/ollama/api/create"},
+    {"methods": ("POST",), "canonical": "/api/copy", "alias": "/ollama/api/copy"},
+    {"methods": ("POST",), "canonical": "/api/pull", "alias": "/ollama/api/pull"},
+    {"methods": ("POST",), "canonical": "/api/push", "alias": "/ollama/api/push"},
+    {"methods": ("DELETE",), "canonical": "/api/delete", "alias": "/ollama/api/delete"},
 )
 
 _MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workflows"
@@ -12101,6 +12109,7 @@ async def _forward_chat_completions(
     # Carry the original Authorization header so authenticate_request on the
     # loopback call resolves to the same identity.
     headers = {"content-type": "application/json"}
+    headers[_INTERNAL_PROTOCOL_FORWARD_HEADER] = _INTERNAL_PROTOCOL_FORWARD_SECRET
     auth_hdr = request.headers.get("authorization")
     if auth_hdr:
         headers["authorization"] = auth_hdr
@@ -12130,6 +12139,76 @@ async def _forward_chat_completions(
     finally:
         if not stream:
             await client.aclose()
+
+
+async def _drain_streaming_upstream_error(
+    client: httpx.AsyncClient,
+    upstream: httpx.Response,
+    *,
+    fallback: str,
+) -> str:
+    body_bytes = b""
+    try:
+        async for chunk in upstream.aiter_bytes():
+            body_bytes += chunk
+            if len(body_bytes) > 8192:
+                break
+    finally:
+        try:
+            await upstream.aclose()
+        finally:
+            await client.aclose()
+    text = body_bytes.decode("utf-8", errors="replace")
+    if not text:
+        return fallback
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return text[:1000]
+    if isinstance(payload, Mapping):
+        error = payload.get("error")
+        if isinstance(error, Mapping):
+            message = error.get("message")
+            if isinstance(message, str) and message:
+                return message
+        if isinstance(error, str) and error:
+            return error
+    return text[:1000] or fallback
+
+
+async def _iter_openai_sse_json(upstream: httpx.Response):
+    """Yield decoded JSON payloads from OpenAI-style ``data:`` SSE lines."""
+    buffer = ""
+
+    async def parse_line(line: str):
+        line = line.strip()
+        if not line or not line.startswith("data:"):
+            return None
+        payload = line.removeprefix("data:").strip()
+        if payload == "[DONE]":
+            return StopAsyncIteration
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    async for chunk in upstream.aiter_bytes():
+        if not chunk:
+            continue
+        buffer += chunk.decode("utf-8", errors="replace")
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            parsed = await parse_line(line)
+            if parsed is StopAsyncIteration:
+                return
+            if parsed is not None:
+                yield parsed
+
+    if buffer.strip():
+        parsed = await parse_line(buffer)
+        if parsed is not None and parsed is not StopAsyncIteration:
+            yield parsed
 
 
 def _response_json_payload(response: Any) -> dict[str, Any]:
@@ -12260,7 +12339,7 @@ async def _read_json_object(request: Request) -> dict[str, Any] | Response:
 @app.post("/anthropic/v1/messages")
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request):
-    """Anthropic Messages-compatible non-streaming frontend over chat completions."""
+    """Anthropic Messages-compatible frontend over chat completions."""
     auth_context = authenticate_request(request, "/v1/messages")
     if isinstance(auth_context, Response):
         return auth_context
@@ -12273,15 +12352,6 @@ async def anthropic_messages(request: Request):
         canonical = anthropic_protocol.messages_request_to_canonical(body)
     except anthropic_protocol.AnthropicTranslationError as e:
         return _json_error_response(e.error_body, status_code=e.http_status)
-
-    if canonical.get("stream"):
-        return _json_error_response(
-            anthropic_protocol.unsupported_feature_error(
-                "streaming",
-                detail="the Anthropic frontend currently supports non-streaming requests only",
-            ),
-            status_code=400,
-        )
 
     decision = _protocol_policy_decision(
         auth_context,
@@ -12298,6 +12368,54 @@ async def anthropic_messages(request: Request):
         )
 
     state.update_activity()
+    if canonical.get("stream"):
+        client, upstream = await _forward_chat_completions(
+            request,
+            auth_context,
+            canonical,
+            stream=True,
+        )
+        if upstream.status_code >= 400:
+            return _anthropic_error_response(
+                await _drain_streaming_upstream_error(
+                    client,
+                    upstream,
+                    fallback="Upstream chat-completions error.",
+                ),
+                status_code=upstream.status_code,
+                error_type="api_error",
+            )
+
+        translator = anthropic_protocol.MessagesStreamTranslator(
+            request_model=canonical.get("model")
+        )
+
+        async def event_stream():
+            try:
+                async for event in _iter_openai_sse_json(upstream):
+                    for frame in translator.feed(event):
+                        yield frame
+                for frame in translator.finish():
+                    yield frame
+            except Exception as e:  # noqa: BLE001
+                payload = {
+                    "type": "error",
+                    "error": {"type": "api_error", "message": str(e)},
+                }
+                yield f"event: error\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
+            finally:
+                try:
+                    await upstream.aclose()
+                finally:
+                    await client.aclose()
+
+        return StreamingResponse(
+            event_stream(),
+            status_code=200,
+            media_type="text/event-stream",
+            headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+        )
+
     upstream = await _forward_chat_completions(
         request,
         auth_context,
@@ -12337,19 +12455,13 @@ def _ollama_native_annotation_error(canonical: Mapping[str, Any]) -> Response | 
     return None
 
 
-async def _ollama_forward_non_streaming(
-    request: Request,
+def _ollama_policy_error_response(
     auth_context: AuthContext,
     canonical: dict[str, Any],
     *,
     protocol: str,
     intent: str,
-) -> Response | dict[str, Any]:
-    if canonical.get("stream"):
-        return _ollama_error_response(
-            "unsupported operation: streaming is not available through this frontend",
-            status_code=400,
-        )
+) -> Response | None:
     annotation_error = _ollama_native_annotation_error(canonical)
     if annotation_error is not None:
         return annotation_error
@@ -12363,6 +12475,25 @@ async def _ollama_forward_non_streaming(
     if decision.denied:
         reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
         return _ollama_error_response(reason, status_code=403)
+    return None
+
+
+async def _ollama_forward_non_streaming(
+    request: Request,
+    auth_context: AuthContext,
+    canonical: dict[str, Any],
+    *,
+    protocol: str,
+    intent: str,
+) -> Response | dict[str, Any]:
+    policy_error = _ollama_policy_error_response(
+        auth_context,
+        canonical,
+        protocol=protocol,
+        intent=intent,
+    )
+    if policy_error is not None:
+        return policy_error
 
     state.update_activity()
     upstream = await _forward_chat_completions(
@@ -12379,10 +12510,153 @@ async def _ollama_forward_non_streaming(
     return _response_json_payload(upstream)
 
 
+async def _ollama_forward_streaming(
+    request: Request,
+    auth_context: AuthContext,
+    canonical: dict[str, Any],
+    *,
+    protocol: str,
+    intent: str,
+    translate_chunk: Callable[[dict[str, Any]], dict[str, Any]],
+) -> Response:
+    policy_error = _ollama_policy_error_response(
+        auth_context,
+        canonical,
+        protocol=protocol,
+        intent=intent,
+    )
+    if policy_error is not None:
+        return policy_error
+
+    state.update_activity()
+    client, upstream = await _forward_chat_completions(
+        request,
+        auth_context,
+        canonical,
+        stream=True,
+    )
+    if upstream.status_code >= 400:
+        return _ollama_error_response(
+            await _drain_streaming_upstream_error(
+                client,
+                upstream,
+                fallback="upstream chat-completions error",
+            ),
+            status_code=upstream.status_code,
+        )
+
+    async def ndjson_stream():
+        try:
+            async for event in _iter_openai_sse_json(upstream):
+                payload = translate_chunk(event)
+                yield json.dumps(payload, separators=(",", ":")) + "\n"
+        finally:
+            try:
+                await upstream.aclose()
+            finally:
+                await client.aclose()
+
+    return StreamingResponse(
+        ndjson_stream(),
+        status_code=200,
+        media_type="application/x-ndjson",
+        headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+    )
+
+
+async def _ollama_model_catalog_summaries(
+    auth_context: AuthContext,
+) -> list[dict[str, Any]]:
+    summaries = _build_role_catalog_entries()
+    filtered, _ = await _filter_model_list_for_profile(summaries, auth_context)
+    return filtered
+
+
+def _ollama_summary_matches_model(summary: Mapping[str, Any], model: str) -> bool:
+    requested = normalize_model_id(model)
+    if requested.endswith(":latest"):
+        requested_without_latest = requested.removesuffix(":latest")
+    else:
+        requested_without_latest = requested
+    for key in ("id", "name", "model"):
+        value = summary.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        normalized = normalize_model_id(value)
+        if normalized in {requested, requested_without_latest}:
+            return True
+        if ":" not in normalized and f"{normalized}:latest" == requested:
+            return True
+    return False
+
+
+async def _ollama_loaded_model_summaries(
+    auth_context: AuthContext,
+) -> list[dict[str, Any]]:
+    try:
+        active = await get_active_backend()
+    except Exception:
+        active = None
+    loaded_ids = await _current_loaded_llm_model_ids(active)
+    loaded_norm = {normalize_model_id(item) for item in loaded_ids}
+
+    summaries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in await _ollama_model_catalog_summaries(auth_context):
+        entry_id = str(entry.get("id") or "")
+        if normalize_model_id(entry_id) not in loaded_norm:
+            continue
+        out = copy.deepcopy(entry)
+        out["vivid_fish_loaded"] = True
+        summaries.append(out)
+        seen.add(normalize_model_id(entry_id))
+
+    for loaded_id in sorted(loaded_ids):
+        name = os.path.basename(loaded_id) if loaded_id.startswith("/") else loaded_id
+        if not name or normalize_model_id(name) in seen:
+            continue
+        entry: dict[str, Any] = {
+            "id": name,
+            "object": "model",
+            "owned_by": active or "vivid-fish",
+            "created": _entry_created_ts(loaded_id if loaded_id.startswith("/") else None),
+            "vivid_fish_loaded": True,
+            "vivid_fish_backend": active or "",
+        }
+        if loaded_id.startswith("/"):
+            try:
+                entry["size"] = os.path.getsize(loaded_id)
+                entry["size_vram"] = entry["size"]
+            except OSError:
+                pass
+        summaries.append(entry)
+        seen.add(normalize_model_id(name))
+
+    return summaries
+
+
+def _ollama_model_policy_response(
+    auth_context: AuthContext,
+    *,
+    intent: str,
+    model: str | None = None,
+) -> Response | None:
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol="ollama.models",
+        intent=intent,
+        model=model,
+    )
+    if decision.denied:
+        reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+        return _ollama_error_response(reason, status_code=403)
+    return None
+
+
 @app.post("/ollama/api/chat")
 @app.post("/api/chat")
 async def ollama_chat(request: Request):
-    """Ollama `/api/chat` non-streaming frontend over chat completions."""
+    """Ollama `/api/chat` frontend over chat completions."""
     auth_context = authenticate_request(request, "/api/chat")
     if isinstance(auth_context, Response):
         return auth_context
@@ -12395,6 +12669,19 @@ async def ollama_chat(request: Request):
         canonical = ollama_protocol.chat_request_to_canonical(body)
     except ollama_protocol.OllamaTranslationError as e:
         return _ollama_error_response(str(e), status_code=e.http_status)
+
+    if canonical.get("stream"):
+        return await _ollama_forward_streaming(
+            request,
+            auth_context,
+            canonical,
+            protocol="ollama.chat",
+            intent="chat.completions",
+            translate_chunk=lambda event: ollama_protocol.canonical_stream_chunk_to_chat(
+                event,
+                request_model=body.get("model"),
+            ),
+        )
 
     upstream = await _ollama_forward_non_streaming(
         request,
@@ -12417,7 +12704,7 @@ async def ollama_chat(request: Request):
 @app.post("/ollama/api/generate")
 @app.post("/api/generate")
 async def ollama_generate(request: Request):
-    """Ollama `/api/generate` non-streaming frontend over chat completions."""
+    """Ollama `/api/generate` frontend over chat completions."""
     auth_context = authenticate_request(request, "/api/generate")
     if isinstance(auth_context, Response):
         return auth_context
@@ -12430,6 +12717,19 @@ async def ollama_generate(request: Request):
         canonical = ollama_protocol.generate_request_to_canonical(body)
     except ollama_protocol.OllamaTranslationError as e:
         return _ollama_error_response(str(e), status_code=e.http_status)
+
+    if canonical.get("stream"):
+        return await _ollama_forward_streaming(
+            request,
+            auth_context,
+            canonical,
+            protocol="ollama.generate",
+            intent="chat.generate",
+            translate_chunk=lambda event: ollama_protocol.canonical_stream_chunk_to_generate(
+                event,
+                request_model=body.get("model"),
+            ),
+        )
 
     upstream = await _ollama_forward_non_streaming(
         request,
@@ -12468,9 +12768,155 @@ async def ollama_tags(request: Request):
 
     return _json_error_response(
         ollama_protocol.tags_response_from_model_summaries(
-            _build_role_catalog_entries()
+            await _ollama_model_catalog_summaries(auth_context)
         ),
         status_code=200,
+    )
+
+
+@app.post("/ollama/api/show")
+@app.post("/api/show")
+async def ollama_show(request: Request):
+    """Ollama `/api/show` projected from the gateway's visible LLM catalog."""
+    auth_context = authenticate_request(request, "/api/show")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    body = await _read_json_object(request)
+    if isinstance(body, Response):
+        return _ollama_error_response("invalid JSON body", status_code=400)
+    model = body.get("model")
+    if not isinstance(model, str) or not model:
+        return _ollama_error_response("'model' is required", status_code=400)
+
+    policy_error = _ollama_model_policy_response(
+        auth_context,
+        intent="models.show",
+        model=model,
+    )
+    if policy_error is not None:
+        return policy_error
+
+    for summary in await _ollama_model_catalog_summaries(auth_context):
+        if _ollama_summary_matches_model(summary, model):
+            return _json_error_response(
+                ollama_protocol.show_response_from_model_summary(summary),
+                status_code=200,
+            )
+    return _ollama_error_response(f"model not found: {model}", status_code=404)
+
+
+@app.get("/ollama/api/ps")
+@app.get("/api/ps")
+async def ollama_ps(request: Request):
+    """Ollama `/api/ps` projected from the gateway's currently loaded LLM."""
+    auth_context = authenticate_request(request, "/api/ps")
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_error = _ollama_model_policy_response(
+        auth_context,
+        intent="models.running",
+    )
+    if policy_error is not None:
+        return policy_error
+    return _json_error_response(
+        ollama_protocol.ps_response_from_model_summaries(
+            await _ollama_loaded_model_summaries(auth_context)
+        ),
+        status_code=200,
+    )
+
+
+@app.get("/ollama/api/version")
+@app.get("/api/version")
+async def ollama_version(request: Request):
+    """Ollama `/api/version` compatibility response."""
+    auth_context = authenticate_request(request, "/api/version")
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_error = _ollama_model_policy_response(
+        auth_context,
+        intent="models.version",
+    )
+    if policy_error is not None:
+        return policy_error
+    return _json_error_response(
+        ollama_protocol.version_response("vivid-fish-ai-gateway"),
+        status_code=200,
+    )
+
+
+async def _ollama_unsupported_model_mutation(
+    request: Request,
+    *,
+    canonical_path: str,
+    intent: str,
+) -> Response:
+    auth_context = authenticate_request(request, canonical_path)
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_error = _ollama_model_policy_response(auth_context, intent=intent)
+    if policy_error is not None:
+        return policy_error
+    return _json_error_response(
+        ollama_protocol.unsupported_operation_error(
+            canonical_path,
+            detail=(
+                "the gateway exposes model catalog and running-model status, "
+                "but does not mutate local model files through the Ollama API"
+            ),
+        ),
+        status_code=501,
+    )
+
+
+@app.post("/ollama/api/create")
+@app.post("/api/create")
+async def ollama_create(request: Request):
+    return await _ollama_unsupported_model_mutation(
+        request,
+        canonical_path="/api/create",
+        intent="models.create",
+    )
+
+
+@app.post("/ollama/api/copy")
+@app.post("/api/copy")
+async def ollama_copy(request: Request):
+    return await _ollama_unsupported_model_mutation(
+        request,
+        canonical_path="/api/copy",
+        intent="models.copy",
+    )
+
+
+@app.post("/ollama/api/pull")
+@app.post("/api/pull")
+async def ollama_pull(request: Request):
+    return await _ollama_unsupported_model_mutation(
+        request,
+        canonical_path="/api/pull",
+        intent="models.pull",
+    )
+
+
+@app.post("/ollama/api/push")
+@app.post("/api/push")
+async def ollama_push(request: Request):
+    return await _ollama_unsupported_model_mutation(
+        request,
+        canonical_path="/api/push",
+        intent="models.push",
+    )
+
+
+@app.delete("/ollama/api/delete")
+@app.delete("/api/delete")
+async def ollama_delete(request: Request):
+    return await _ollama_unsupported_model_mutation(
+        request,
+        canonical_path="/api/delete",
+        intent="models.delete",
     )
 
 
@@ -12776,6 +13222,24 @@ _OPENAI_PROXY_POLICY = {
     "/v1/completions": ("openai.chat", "text.completions"),
     "/v1/embeddings": ("openai.embeddings", "text.embeddings"),
 }
+
+_INTERNAL_PROTOCOL_FORWARD_HEADER = "x-vivid-fish-internal-protocol-forward"
+_INTERNAL_PROTOCOL_FORWARD_SECRET = secrets.token_urlsafe(32)
+_INTERNAL_PROTOCOL_FORWARD_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+
+def _is_internal_protocol_forward(request: Request) -> bool:
+    """Allow first-class protocol frontends to reuse chat routing internally.
+
+    Anthropic and Ollama routes have already passed their own profile policy.
+    Their loopback call to `/v1/chat/completions` should not add a second
+    `openai.chat` permission requirement. The bypass is secret-bearing and
+    loopback-only so public clients cannot opt out of OpenAI route policy.
+    """
+    if request.headers.get(_INTERNAL_PROTOCOL_FORWARD_HEADER) != _INTERNAL_PROTOCOL_FORWARD_SECRET:
+        return False
+    client = getattr(request, "client", None)
+    return getattr(client, "host", None) in _INTERNAL_PROTOCOL_FORWARD_HOSTS
 
 
 def _openai_proxy_policy_decision(
@@ -13275,11 +13739,13 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         parsed_openai_body, parse_error = parse_openai_json_body(body_peek)
         if parse_error is not None:
             return parse_error
-    policy_decision = _openai_proxy_policy_decision(
-        auth_context,
-        request_path,
-        body_peek,
-    )
+    policy_decision = None
+    if not _is_internal_protocol_forward(request):
+        policy_decision = _openai_proxy_policy_decision(
+            auth_context,
+            request_path,
+            body_peek,
+        )
     if policy_decision is not None and policy_decision.denied:
         return _policy_denied_response(policy_decision)
 

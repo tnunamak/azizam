@@ -204,6 +204,21 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
 
 
 class AnthropicResponseTranslationTests(unittest.TestCase):
+    def _parse_sse_frames(self, frames: list[str]) -> list[tuple[str, dict]]:
+        parsed: list[tuple[str, dict]] = []
+        for frame in frames:
+            event = None
+            data = None
+            for line in frame.strip().splitlines():
+                if line.startswith("event: "):
+                    event = line.removeprefix("event: ")
+                elif line.startswith("data: "):
+                    data = json.loads(line.removeprefix("data: "))
+            self.assertIsNotNone(event)
+            self.assertIsNotNone(data)
+            parsed.append((event, data))
+        return parsed
+
     def test_canonical_text_response_to_messages(self) -> None:
         canonical = {
             "id": "chatcmpl-1",
@@ -225,6 +240,66 @@ class AnthropicResponseTranslationTests(unittest.TestCase):
         self.assertEqual(out["stop_reason"], "end_turn")
         self.assertEqual(out["usage"], {"input_tokens": 4, "output_tokens": 2})
         self.assertTrue(out["id"].startswith("msg_"))
+
+    def test_canonical_stream_to_messages_sse_text_events(self) -> None:
+        chunks = [
+            {
+                "id": "chatcmpl-1",
+                "model": "claude-3-haiku",
+                "choices": [{"index": 0, "delta": {"role": "assistant"}}],
+            },
+            {
+                "id": "chatcmpl-1",
+                "model": "claude-3-haiku",
+                "choices": [{"index": 0, "delta": {"content": "hel"}}],
+            },
+            {
+                "id": "chatcmpl-1",
+                "model": "claude-3-haiku",
+                "choices": [{"index": 0, "delta": {"content": "lo"}}],
+            },
+            {
+                "id": "chatcmpl-1",
+                "model": "claude-3-haiku",
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            },
+        ]
+
+        events = self._parse_sse_frames(anthro.canonical_stream_to_messages_sse(chunks))
+
+        self.assertEqual(
+            [event for event, _ in events],
+            [
+                "message_start",
+                "content_block_start",
+                "content_block_delta",
+                "content_block_delta",
+                "content_block_stop",
+                "message_delta",
+                "message_stop",
+            ],
+        )
+        self.assertEqual(events[0][1]["message"]["id"], "msg_chatcmpl-1")
+        self.assertEqual(events[0][1]["message"]["model"], "claude-3-haiku")
+        self.assertEqual(events[2][1]["delta"], {"type": "text_delta", "text": "hel"})
+        self.assertEqual(events[3][1]["delta"], {"type": "text_delta", "text": "lo"})
+        self.assertEqual(events[5][1]["delta"]["stop_reason"], "end_turn")
+
+    def test_canonical_stream_to_messages_sse_accepts_raw_openai_sse(self) -> None:
+        raw_events = [
+            "",
+            'data: {"id":"chatcmpl-2","model":"claude-3-haiku","choices":[{"index":0,"delta":{"content":"hi"}}]}',
+            "data: [DONE]",
+            'data: {"id":"chatcmpl-2","model":"claude-3-haiku","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}',
+        ]
+
+        events = self._parse_sse_frames(
+            anthro.canonical_stream_to_messages_sse(raw_events)
+        )
+
+        self.assertEqual(events[0][0], "message_start")
+        self.assertEqual(events[2][1]["delta"]["text"], "hi")
+        self.assertEqual(events[-2][1]["delta"]["stop_reason"], "max_tokens")
 
     def test_reasoning_content_fallback_produces_text_block(self) -> None:
         canonical = {
@@ -448,6 +523,31 @@ class OllamaChatTranslationTests(unittest.TestCase):
         self.assertEqual(out["prompt_eval_count"], 10)
         self.assertEqual(out["eval_count"], 3)
 
+    def test_canonical_stream_chunk_to_chat_delta(self) -> None:
+        chunk = {
+            "model": "llama3",
+            "choices": [
+                {"delta": {"role": "assistant", "content": "hel"}, "index": 0}
+            ],
+        }
+        out = oll.canonical_stream_chunk_to_chat(chunk)
+        self.assertEqual(out["model"], "llama3")
+        self.assertFalse(out["done"])
+        self.assertEqual(out["message"], {"role": "assistant", "content": "hel"})
+        self.assertNotIn("done_reason", out)
+
+    def test_canonical_stream_chunk_to_chat_done_with_usage(self) -> None:
+        chunk = {
+            "model": "llama3",
+            "choices": [{"delta": {}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 2},
+        }
+        out = oll.canonical_stream_chunk_to_chat(chunk)
+        self.assertTrue(out["done"])
+        self.assertEqual(out["done_reason"], "stop")
+        self.assertEqual(out["prompt_eval_count"], 7)
+        self.assertEqual(out["eval_count"], 2)
+
 
 # ---------------------------------------------------------------------------
 # Ollama — /api/generate
@@ -494,9 +594,32 @@ class OllamaGenerateTranslationTests(unittest.TestCase):
         self.assertEqual(out["prompt_eval_count"], 4)
         self.assertEqual(out["eval_count"], 1)
 
+    def test_canonical_stream_chunk_to_generate_delta(self) -> None:
+        chunk = {
+            "model": "llama3",
+            "choices": [{"delta": {"content": "ha"}, "index": 0}],
+        }
+        out = oll.canonical_stream_chunk_to_generate(chunk)
+        self.assertEqual(out["response"], "ha")
+        self.assertFalse(out["done"])
+        self.assertNotIn("done_reason", out)
+
+    def test_canonical_stream_chunk_to_generate_done_with_usage(self) -> None:
+        chunk = {
+            "model": "llama3",
+            "choices": [{"delta": {}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 8},
+        }
+        out = oll.canonical_stream_chunk_to_generate(chunk)
+        self.assertEqual(out["response"], "")
+        self.assertTrue(out["done"])
+        self.assertEqual(out["done_reason"], "length")
+        self.assertEqual(out["prompt_eval_count"], 4)
+        self.assertEqual(out["eval_count"], 8)
+
 
 # ---------------------------------------------------------------------------
-# Ollama — /api/tags and error helpers
+# Ollama — model-management and error helpers
 # ---------------------------------------------------------------------------
 
 
@@ -523,6 +646,45 @@ class OllamaTagsAndErrorTests(unittest.TestCase):
         self.assertEqual(first["details"]["family"], "llama")
         self.assertEqual(first["details"]["families"], ["llama"])
         self.assertEqual(first["size"], 4_000_000_000)
+
+    def test_show_response_from_summary(self) -> None:
+        out = oll.show_response_from_model_summary(
+            {
+                "id": "llama3:8b",
+                "family": "llama",
+                "parameter_size": "8B",
+                "quantization_level": "Q4_K_M",
+                "template": "{{ .Prompt }}",
+                "capabilities": ["completion", "tools"],
+            }
+        )
+        self.assertEqual(out["modelfile"], "FROM llama3:8b")
+        self.assertEqual(out["template"], "{{ .Prompt }}")
+        self.assertEqual(out["details"]["family"], "llama")
+        self.assertEqual(out["capabilities"], ["completion", "tools"])
+        self.assertEqual(out["model_info"]["general.architecture"], "llama")
+
+    def test_ps_response_from_summaries(self) -> None:
+        out = oll.ps_response_from_model_summaries(
+            [
+                {
+                    "id": "llama3:8b",
+                    "size": 4_000_000_000,
+                    "size_vram": 2_000_000_000,
+                    "digest": "sha256:abc",
+                    "expires_at": "2026-01-01T01:00:00Z",
+                },
+                {"name": ""},
+            ]
+        )
+        self.assertEqual(len(out["models"]), 1)
+        model = out["models"][0]
+        self.assertEqual(model["name"], "llama3:8b")
+        self.assertEqual(model["size_vram"], 2_000_000_000)
+        self.assertEqual(model["expires_at"], "2026-01-01T01:00:00Z")
+
+    def test_version_response(self) -> None:
+        self.assertEqual(oll.version_response("0.9.0"), {"version": "0.9.0"})
 
     def test_unsupported_operation_error_shape(self) -> None:
         err = oll.unsupported_operation_error("/api/pull", detail="no daemon")

@@ -1,6 +1,6 @@
 ---
 name: openai-proxy-gateway
-description: Use Vivid Fish AI Gateway (the local OpenAI-compatible AI gateway, formerly openai-proxy) for chat, embeddings, image generation/editing, TTS, STT, audio generation, video jobs, Anthropic Messages, Ollama-compatible chat/generate, and gateway-native capabilities/receipts. Use when a task mentions Vivid Fish AI Gateway, AI Gateway, openai-proxy, ai.vivid.fish, openai.vivid.fish, /gateway/v1, opk_ keys, local AI backends, or apps that need one local AI endpoint.
+description: Use Vivid Fish AI Gateway (the local OpenAI-compatible AI gateway, formerly openai-proxy) for chat, embeddings, image generation/editing, TTS, STT, audio generation, video jobs, Anthropic Messages, Ollama-compatible chat/generate/model routes, and gateway-native capabilities/receipts. Use when a task mentions Vivid Fish AI Gateway, AI Gateway, openai-proxy, ai.vivid.fish, openai.vivid.fish, /gateway/v1, opk_ keys, local AI backends, or apps that need one local AI endpoint.
 ---
 
 # Vivid Fish AI Gateway
@@ -34,8 +34,8 @@ If a needed capability is absent or unavailable, stop and report that honestly.
 ## Choose The Surface
 
 - Use `/openai/v1` OpenAI-compatible endpoints by default for new setup. `/v1` remains a convenience route for existing clients. This is the best-supported path and supports streaming chat.
-- Use `POST /anthropic/v1/messages` only for Anthropic-shaped clients. The legacy convenience route is `POST /v1/messages`. It is non-streaming unless discovery metadata says otherwise.
-- Use `GET /ollama/api/tags`, `POST /ollama/api/chat`, or `POST /ollama/api/generate` only for Ollama-shaped clients. `/api/*` remains a convenience route for clients hard-coded to an Ollama root. Chat/generate are non-streaming unless discovery metadata says otherwise.
+- Use `POST /anthropic/v1/messages` only for Anthropic-shaped clients. The legacy convenience route is `POST /v1/messages`. Streaming is supported with Anthropic Messages SSE.
+- Use `GET /ollama/api/tags`, `POST /ollama/api/chat`, `POST /ollama/api/generate`, `POST /ollama/api/show`, `GET /ollama/api/ps`, and `GET /ollama/api/version` only for Ollama-shaped clients. `/api/*` remains a convenience route for clients hard-coded to an Ollama root. Chat/generate support Ollama NDJSON streaming.
 - Use `/gateway/v1/media/jobs` for durable long-running media jobs and `/gateway/v1/receipts` for diagnostics. For durable image generation, submit `{"intent":"image.generate","request":{...OpenAI image body...}}`, then poll `/gateway/v1/media/jobs/{job_id}` and fetch `/gateway/v1/media/jobs/{job_id}/content`.
 - Use `GET /gateway/v1/providers` and `GET /gateway/v1/providers/{provider}` to discover provider-native lanes. Use `/gateway/v1/providers/{provider}/{path...}` only when the App profile explicitly allows `provider-native` and `native_passthrough` for that provider and operation. There is no root Tabby shim.
 - Use `data[].asset_id` and signed `/v1/assets/{asset_id}/content` URLs when image outputs need to be reused by later gateway-aware calls.
@@ -113,7 +113,7 @@ Example JSON body shape:
 ## Anti-Patterns
 
 - Assuming a model or modality exists because OpenAI has it.
-- Streaming over `/v1/messages`, `/api/chat`, or `/api/generate` without discovery metadata saying it is supported.
+- Assuming Ollama model mutation routes pull/create/delete local files; they return unsupported-operation by design. Manage model files on the backend that owns them.
 - Sending ComfyUI-specific knobs as random top-level OpenAI fields. Put gateway workflow controls under `extensions.com.vividfish.workflow` when a manifest supports them.
 - Rewriting a working app from `openai.vivid.fish` to `ai.vivid.fish` purely for cosmetic reasons — the alias is supported and changing it churns user config.
 - Reading secret files to "check" credentials.

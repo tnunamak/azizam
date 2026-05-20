@@ -30,7 +30,7 @@ The status of each build-order item below reflects what currently lives on
 - [x] Image-route receipts wired into `/v1/images/generations` and `/v1/images/edits` with profile-aware policy decisions, safe field-name outcomes, manifest identity, durable persistence, and body-free firehose events
 - [x] Live `/gateway/v1/*` mount in `proxy.py` for workflows, capabilities, receipts, and media jobs
 - [x] Durable `image.generate` media-job execution through `POST /gateway/v1/media/jobs` with retry, idempotency, persisted job state, and completed image content retrieval
-- [x] Live non-streaming Anthropic Messages and Ollama chat/generate/tags frontends over the existing chat route
+- [x] Live Anthropic Messages and Ollama chat/generate/tags/show/ps/version frontends over the existing chat route, including Anthropic SSE and Ollama NDJSON streaming
 - [x] Live image workflow extension binding for supported manifest controls
 - [x] `generate-key` preserves existing `profile:` blocks on rotation
 - [x] SDK compatibility harness with executable registered probes (`scripts/compat/`, `tests/compat/`, `docs/SDK_COMPATIBILITY_HARNESS.md`)
@@ -39,7 +39,7 @@ In-progress / next integration targets:
 
 - Expand the live capability inventory beyond the initial hand-built catalog.
 - Extend durable media-job execution to video, audio/music, and generic gateway assets.
-- Add streaming protocol-frontend coverage where real clients need it.
+- Expand SDK compatibility probes for Anthropic/Ollama streaming and Ollama read-only model routes.
 - Backend adapter contract extracted from `proxy.py`.
 
 ## North Star
