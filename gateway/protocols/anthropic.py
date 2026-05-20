@@ -202,6 +202,8 @@ def canonical_response_to_messages(
 
     content_blocks: list[dict[str, Any]] = []
     text = message.get("content")
+    if (text is None or text == "") and isinstance(message.get("reasoning_content"), str):
+        text = _visible_text_from_reasoning_content(message.get("reasoning_content"))
     if isinstance(text, str) and text:
         content_blocks.append({"type": "text", "text": text})
 
@@ -235,6 +237,16 @@ def canonical_response_to_messages(
         "stop_sequence": None,
         "usage": anthropic_usage,
     }
+
+
+def _visible_text_from_reasoning_content(text: str) -> str:
+    lower = text.lower()
+    close = lower.rfind("</think>")
+    if close >= 0:
+        visible = text[close + len("</think>") :].strip()
+        if visible:
+            return visible
+    return text
 
 
 def _translate_message(msg: Any, *, index: int) -> list[dict[str, Any]]:

@@ -74,6 +74,34 @@ class ProbeSpec:
 PROBES: Tuple[ProbeSpec, ...] = (
     ProbeSpec(
         protocol="openai",
+        sdk="raw-http",
+        module="tests.compat.python.probe_gateway_contract",
+        test_class="TestGatewayContractHTTP",
+        sdk_dependency=None,
+        case_map=(
+            ("chat.visible_content", "test_chat_completion_has_visible_content"),
+            (
+                "chat.streaming_content_delta",
+                "test_chat_stream_has_content_delta_and_done_frame",
+            ),
+            ("chat.malformed_json_400", "test_malformed_json_returns_400_error_object"),
+            (
+                "chat.missing_model_rejected",
+                "test_missing_model_is_rejected_before_default_routing",
+            ),
+            ("chat.unknown_model_rejected", "test_unknown_model_is_rejected"),
+            (
+                "anthropic.messages.text_content",
+                "test_anthropic_messages_has_text_content_block",
+            ),
+            (
+                "audio.transcriptions.error_shape",
+                "test_audio_transcription_empty_body_error_is_openai_shaped",
+            ),
+        ),
+    ),
+    ProbeSpec(
+        protocol="openai",
         sdk="openai-python",
         module="tests.compat.python.probe_openai",
         test_class="TestOpenAIPythonSDK",
@@ -327,10 +355,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"env        = unset ({exc})")
         print("registered probes:")
         for spec in PROBES:
-            installed = "yes" if _sdk_version(spec.sdk_dependency) not in {
-                "missing",
-                "n/a",
-            } else "no"
+            installed = (
+                "n/a"
+                if spec.sdk_dependency is None
+                else "yes"
+                if _sdk_version(spec.sdk_dependency) != "missing"
+                else "no"
+            )
             print(
                 f"  - {spec.protocol}/{spec.sdk}  "
                 f"sdk_installed={installed}  cases={len(spec.cases)}"

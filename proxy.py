@@ -204,6 +204,84 @@ KOBOLD_HOST = f"http://{kobold_cfg.get('host', '127.0.0.1')}:{kobold_cfg.get('po
 KOBOLD_HEALTH_ENDPOINT = kobold_cfg.get("health_endpoint", "/api/v1/model")
 KOBOLD_SERVICE = kobold_cfg.get("service_name", "koboldcpp.service")
 
+LLM_BACKEND_HOSTS = {
+    "kobold": KOBOLD_HOST,
+    "tabby": TABBY_HOST,
+}
+
+
+def configured_backend_capabilities(backend: str) -> set[str]:
+    raw = (config.get("backends") or {}).get(backend, {})
+    if not isinstance(raw, Mapping):
+        return set()
+    capabilities = raw.get("capabilities") or ()
+    if isinstance(capabilities, (str, bytes)):
+        return {str(capabilities).strip().lower()}
+    return {
+        str(capability).strip().lower()
+        for capability in capabilities
+        if str(capability).strip()
+    }
+
+
+def backend_supports(backend: str, capability: str) -> bool:
+    return capability.lower() in configured_backend_capabilities(backend)
+
+
+def profile_allows_backend(auth_context: "AuthContext", backend: str) -> bool:
+    profile = getattr(getattr(auth_context, "identity", None), "profile", None)
+    allowed = getattr(profile, "backends", None)
+    return allowed is None or backend in allowed
+
+
+def host_for_backend(backend: str | None) -> Optional[str]:
+    if backend is None:
+        return None
+    return LLM_BACKEND_HOSTS.get(backend)
+
+
+def backend_for_host(host: str) -> Optional[str]:
+    for backend, backend_host in LLM_BACKEND_HOSTS.items():
+        if host == backend_host:
+            return backend
+    return None
+
+
+def configured_default_llm_backend() -> Optional[str]:
+    backend = (config.get("routing") or {}).get("default_backend")
+    return backend if backend in LLM_BACKEND_HOSTS else None
+
+
+def candidate_llm_backends(
+    *,
+    capability: str,
+    preferred: str | None = None,
+    active: str | None = None,
+) -> list[str]:
+    candidates: list[str] = []
+    for backend in (preferred, active, configured_default_llm_backend(), *LLM_BACKEND_HOSTS):
+        if backend in LLM_BACKEND_HOSTS and backend_supports(backend, capability):
+            if backend not in candidates:
+                candidates.append(backend)
+    return candidates
+
+
+def choose_configured_llm_backend(
+    auth_context: "AuthContext",
+    *,
+    capability: str,
+    preferred: str | None = None,
+    active: str | None = None,
+) -> Optional[str]:
+    for backend in candidate_llm_backends(
+        capability=capability,
+        preferred=preferred,
+        active=active,
+    ):
+        if profile_allows_backend(auth_context, backend):
+            return backend
+    return None
+
 # Model routing - auto-detect backend from filesystem
 routing_cfg = config.get("model_routing", {})
 MODEL_DIR = routing_cfg.get("model_dir", "/media/windows/AI Models/LLMs")
@@ -1997,6 +2075,59 @@ def model_compatibility_error(message: str) -> Response:
     )
 
 
+def openai_error_response(
+    message: str,
+    *,
+    status_code: int = 400,
+    error_type: str = "invalid_request_error",
+    param: str | None = None,
+    code: str | None = None,
+) -> Response:
+    error: dict[str, Any] = {
+        "message": message,
+        "type": error_type,
+    }
+    if param is not None:
+        error["param"] = param
+    if code is not None:
+        error["code"] = code
+    return Response(
+        content=json.dumps({"error": error}),
+        status_code=status_code,
+        media_type="application/json",
+    )
+
+
+def parse_openai_json_body(body: bytes) -> tuple[dict[str, Any] | None, Response | None]:
+    try:
+        body_json = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None, openai_error_response(
+            "Malformed JSON body.",
+            status_code=400,
+            error_type="invalid_request_error",
+            code="invalid_json",
+        )
+    if not isinstance(body_json, dict):
+        return None, openai_error_response(
+            "JSON body must be an object.",
+            status_code=400,
+            error_type="invalid_request_error",
+            code="invalid_request",
+        )
+    return body_json, None
+
+
+def unknown_model_error(model_name: str) -> Response:
+    return openai_error_response(
+        f"The model '{model_name}' does not exist or is not available.",
+        status_code=404,
+        error_type="invalid_request_error",
+        param="model",
+        code="model_not_found",
+    )
+
+
 async def get_tabby_loaded_model_id() -> str:
     try:
         async with httpx.AsyncClient() as client:
@@ -2253,10 +2384,10 @@ async def check_tts_health() -> bool:
 async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Response:
     """Forward TTS request to TTS backend."""
     if not TTS_ENABLED:
-        return Response(
-            content=json.dumps({"error": "TTS not enabled"}),
+        return openai_error_response(
+            "TTS not enabled",
             status_code=503,
-            media_type="application/json"
+            error_type="service_unavailable",
         )
 
     # Voice mapping is module-scoped (single source of truth shared with /v1/voices).
@@ -2266,6 +2397,15 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
     # Map voice in request body
     try:
         body_json = json.loads(body)
+        response_format = str(body_json.get("response_format", "") or "").lower()
+        if response_format and response_format != "wav":
+            return openai_error_response(
+                "This gateway currently supports response_format='wav' for speech synthesis.",
+                status_code=400,
+                param="response_format",
+                code="unsupported_response_format",
+            )
+
         requested_model = body_json.get("model", "tts-1")
         try:
             model_resolution = resolve_model_for_operation("speech", requested_model)
@@ -2297,19 +2437,19 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
 
     except httpx.TimeoutException:
         return Response(
-            content=json.dumps({"error": "TTS request timeout"}),
+            content=json.dumps({"error": {"message": "TTS request timeout", "type": "api_error"}}),
             status_code=504,
             media_type="application/json"
         )
     except httpx.ConnectError:
         return Response(
-            content=json.dumps({"error": f"TTS backend unavailable at {TTS_HOST}"}),
+            content=json.dumps({"error": {"message": f"TTS backend unavailable at {TTS_HOST}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
     except Exception as e:
         return Response(
-            content=json.dumps({"error": f"TTS proxy error: {str(e)}"}),
+            content=json.dumps({"error": {"message": f"TTS proxy error: {str(e)}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
@@ -2334,10 +2474,10 @@ async def check_stt_health() -> bool:
 async def proxy_stt_request(request: Request, auth_context: AuthContext) -> Response:
     """Forward STT request to STT backend."""
     if not STT_ENABLED:
-        return Response(
-            content=json.dumps({"error": "STT not enabled"}),
+        return openai_error_response(
+            "STT not enabled",
             status_code=503,
-            media_type="application/json"
+            error_type="service_unavailable",
         )
 
     headers = prepare_downstream_headers(request.headers, auth_context, "stt")
@@ -2348,6 +2488,13 @@ async def proxy_stt_request(request: Request, auth_context: AuthContext) -> Resp
         async with httpx.AsyncClient(timeout=httpx.Timeout(STT_TIMEOUT, connect=10)) as client:
             if "multipart/form-data" in request.headers.get("content-type", ""):
                 form = await request.form()
+                if "file" not in form:
+                    return openai_error_response(
+                        "No file part in the request.",
+                        status_code=400,
+                        param="file",
+                        code="missing_file",
+                    )
                 requested_model = str(form.get("model", "whisper-1"))
                 try:
                     model_resolution = resolve_model_for_operation("transcriptions", requested_model)
@@ -2374,6 +2521,13 @@ async def proxy_stt_request(request: Request, auth_context: AuthContext) -> Resp
 
                 if "model" not in data:
                     data["model"] = STT_BACKEND_MODEL
+                if not files:
+                    return openai_error_response(
+                        "No file part in the request.",
+                        status_code=400,
+                        param="file",
+                        code="missing_file",
+                    )
 
                 pop_header(headers, "content-type")
                 pop_header(headers, "content-length")
@@ -2383,8 +2537,12 @@ async def proxy_stt_request(request: Request, auth_context: AuthContext) -> Resp
 
                 resp = await asyncio.to_thread(send_multipart_stt_request)
             else:
-                body = await request.body()
-                resp = await client.post(url, headers=headers, content=body)
+                return openai_error_response(
+                    "No file part in the request.",
+                    status_code=400,
+                    param="file",
+                    code="missing_file",
+                )
 
             content_type = resp.headers.get("content-type", "application/json")
             return Response(
@@ -2395,19 +2553,19 @@ async def proxy_stt_request(request: Request, auth_context: AuthContext) -> Resp
 
     except httpx.TimeoutException:
         return Response(
-            content=json.dumps({"error": "STT request timeout"}),
+            content=json.dumps({"error": {"message": "STT request timeout", "type": "api_error"}}),
             status_code=504,
             media_type="application/json"
         )
     except httpx.ConnectError:
         return Response(
-            content=json.dumps({"error": f"STT backend unavailable at {STT_HOST}"}),
+            content=json.dumps({"error": {"message": f"STT backend unavailable at {STT_HOST}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
     except Exception as e:
         return Response(
-            content=json.dumps({"error": f"STT proxy error: {str(e)}"}),
+            content=json.dumps({"error": {"message": f"STT proxy error: {str(e)}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
@@ -12649,13 +12807,97 @@ def _should_return_not_found_before_backend(request_path: str) -> bool:
     return False
 
 
+def _split_reasoning_visible_text(text: Any) -> tuple[Optional[str], Optional[str]]:
+    if not isinstance(text, str) or not text:
+        return None, None
+    lower = text.lower()
+    close = lower.rfind("</think>")
+    if close >= 0:
+        reasoning = text[:close].strip()
+        open_tag = reasoning.lower().rfind("<think>")
+        if open_tag >= 0:
+            reasoning = reasoning[open_tag + len("<think>") :].strip()
+        visible = text[close + len("</think>") :].strip()
+        return reasoning or None, visible or None
+    return None, text
+
+
+def _normalize_chat_completion_visible_content(payload: dict[str, Any]) -> bool:
+    """Ensure OpenAI chat responses expose visible assistant text in content."""
+    changed = False
+    choices = payload.get("choices")
+    if not isinstance(choices, list):
+        return False
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            reasoning = message.get("reasoning_content")
+            if (content is None or content == "") and isinstance(reasoning, str) and reasoning:
+                split_reasoning, visible = _split_reasoning_visible_text(reasoning)
+                message["content"] = visible or reasoning
+                if split_reasoning is not None:
+                    message["reasoning_content"] = split_reasoning
+                changed = True
+        delta = choice.get("delta")
+        if isinstance(delta, dict):
+            content = delta.get("content")
+            reasoning = delta.get("reasoning_content")
+            if (content is None or content == "") and isinstance(reasoning, str) and reasoning:
+                _, visible = _split_reasoning_visible_text(reasoning)
+                delta["content"] = visible or reasoning
+                changed = True
+    return changed
+
+
+def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:
+    try:
+        text = chunk.decode("utf-8")
+    except UnicodeDecodeError:
+        return chunk
+    if "data:" not in text or "reasoning_content" not in text:
+        return chunk
+    out_lines: list[str] = []
+    changed = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        if not stripped.startswith("data:"):
+            out_lines.append(line)
+            continue
+        prefix, data = line.split("data:", 1)
+        newline = ""
+        if data.endswith("\r\n"):
+            data = data[:-2]
+            newline = "\r\n"
+        elif data.endswith("\n"):
+            data = data[:-1]
+            newline = "\n"
+        data = data.strip()
+        if not data or data == "[DONE]":
+            out_lines.append(line)
+            continue
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError:
+            out_lines.append(line)
+            continue
+        if isinstance(payload, dict) and _normalize_chat_completion_visible_content(payload):
+            out_lines.append(f"{prefix}data: {json.dumps(payload, separators=(',', ':'))}{newline}")
+            changed = True
+        else:
+            out_lines.append(line)
+    return "".join(out_lines).encode("utf-8") if changed else chunk
+
+
 @app.api_route(
     "/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     include_in_schema=False,
 )
 async def proxy_request(request: Request, path: str, *, mapped_route: bool = False):
-    """Proxy all other requests to TabbyAPI."""
+    """Proxy mapped OpenAI requests to a configured local backend."""
     request_path = f"/{path}"
     if not mapped_route and _should_return_not_found_before_backend(request_path):
         return Response(
@@ -12679,9 +12921,19 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
     if is_activity:
         state.update_activity()
 
-    # Determine target backend based on model in request
-    target_host = TABBY_HOST  # default
+    # Determine target backend based on request shape, configured capabilities,
+    # and the authenticated profile. Chat/completions start with no backend so
+    # generic chat never has a hidden Tabby dependency. Backend-native catch-all
+    # and embeddings keep the historic Tabby default because those surfaces are
+    # not interchangeable with Kobold.
+    llm_chat_path = request_path in ("/v1/chat/completions", "/v1/completions")
+    target_host: Optional[str] = None if llm_chat_path else TABBY_HOST
     body_peek = await request.body()
+    parsed_openai_body: dict[str, Any] | None = None
+    if request_path in _OPENAI_PROXY_POLICY:
+        parsed_openai_body, parse_error = parse_openai_json_body(body_peek)
+        if parse_error is not None:
+            return parse_error
     policy_decision = _openai_proxy_policy_decision(
         auth_context,
         request_path,
@@ -12697,7 +12949,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 
     if request_path in ["/v1/chat/completions", "/v1/completions"]:
         try:
-            body_json = json.loads(body_peek)
+            body_json = parsed_openai_body if parsed_openai_body is not None else json.loads(body_peek)
             if request_path == "/v1/chat/completions":
                 try:
                     extension_result = validate_chat_completions_extensions(body_json)
@@ -12709,6 +12961,13 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                 body_peek = json.dumps(body_json).encode()
             model_name = body_json.get("model", "")
             operation = "chat" if request_path == "/v1/chat/completions" else "completions"
+            if not isinstance(model_name, str) or not model_name:
+                return openai_error_response(
+                    "Missing required parameter: 'model'.",
+                    status_code=400,
+                    param="model",
+                    code="missing_required_parameter",
+                )
             if isinstance(model_name, str) and model_name:
                 current_loaded_decision = await _current_loaded_model_policy_decision(
                     auth_context,
@@ -12742,6 +13001,8 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                 if role_res:
                     model_resolution = role_res
                 else:
+                    if not is_openai_model_alias(model_name) and not detect_model_backend(model_name):
+                        return unknown_model_error(model_name)
                     try:
                         model_resolution = resolve_model_for_operation(operation, model_name)
                     except ModelCompatibilityError as e:
@@ -12753,6 +13014,11 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                     pinned_mmproj = model_resolution.role_mmproj_path
 
                     if preferred and pinned_model:
+                        if not profile_allows_backend(auth_context, preferred):
+                            return _policy_denied_response(PolicyDecision(
+                                decision=DENIED,
+                                reasons=(f"backend {preferred!r} not permitted by profile",),
+                            ))
                         # Hard contract: backend MUST be `preferred` and the loaded
                         # model+mmproj MUST match `pinned_model`/`pinned_mmproj`.
                         # Cold-start + swap as needed. Any failure -> 503 (no silent fallback).
@@ -12789,15 +13055,18 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                             )
                         target_host = TABBY_HOST if preferred == "tabby" else KOBOLD_HOST
                     else:
-                        # Soft path: role with no pinned model (e.g. `vision`) or a
-                        # plain OpenAI alias. Honor preferred backend if hot, else
-                        # fall back to whichever backend is hot. No auto-swap.
+                        # Soft path: role with no pinned model or a plain OpenAI
+                        # alias. Pick a configured, profile-allowed backend with
+                        # the requested capability, preferring the role backend
+                        # and currently active backend before static defaults.
                         active = await get_active_backend()
-                        chosen = preferred if (preferred and active == preferred) else active
-                        if chosen == "kobold":
-                            target_host = KOBOLD_HOST
-                        elif chosen == "tabby":
-                            target_host = TABBY_HOST
+                        chosen = choose_configured_llm_backend(
+                            auth_context,
+                            capability=operation,
+                            preferred=preferred,
+                            active=active,
+                        )
+                        target_host = host_for_backend(chosen)
                 else:
                     backend_host = await ensure_backend_for_model(model_name)
                     if backend_host:
@@ -12808,40 +13077,38 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                             status_code=503,
                             media_type="application/json"
                         )
-            else:
-                default_model = default_model_for_operation(operation)
-                if not default_model:
-                    return model_compatibility_error(f"No local default model is configured for {operation} requests.")
-                model_resolution = ModelResolution(
-                    requested_model="",
-                    effective_model=default_model,
-                    operation=operation,
-                    category="local_default",
-                    is_openai_alias=True,
-                )
-                active = await get_active_backend()
-                if active == "kobold":
-                    target_host = KOBOLD_HOST
-                elif active == "tabby":
-                    target_host = TABBY_HOST
-
             # Fix 3: vision routing decision. If the request carries images,
             # ensure the chosen backend can actually serve them. Order:
-            #   - kobold + mmproj loaded -> vision="true" (no switch)
-            #   - tabby (always vision-capable in this deployment) -> vision="true"
-            #   - else, attempt to switch to roles.vision's backend
+            #   - chosen backend advertises vision and is ready -> vision="true"
+            #   - else, attempt a configured/profile-permitted vision backend
             #   - else, 400 — better than a silent drop.
             if vision_needed:
-                kobold_capable = (target_host == KOBOLD_HOST) and (kobold_has_mmproj() is True)
-                tabby_capable = (target_host == TABBY_HOST)
-                if kobold_capable or tabby_capable:
+                target_backend = backend_for_host(target_host) if target_host else None
+                target_capable = (
+                    (target_backend == "tabby" and backend_supports("tabby", "vision"))
+                    or (target_backend == "kobold" and kobold_has_mmproj() is True)
+                )
+                if target_capable:
                     vision_routed_state = "true"
                 else:
                     vision_role = ROLES.get("vision") if isinstance(ROLES, dict) else None
                     vision_backend = (vision_role or {}).get("backend") if isinstance(vision_role, dict) else None
                     vision_model = (vision_role or {}).get("model") if isinstance(vision_role, dict) else None
                     vision_mmproj = (vision_role or {}).get("mmproj") if isinstance(vision_role, dict) else None
-                    if vision_backend == "tabby":
+                    active = await get_active_backend()
+                    chosen_vision_backend = None
+                    if (
+                        vision_backend in LLM_BACKEND_HOSTS
+                        and profile_allows_backend(auth_context, vision_backend)
+                    ):
+                        chosen_vision_backend = vision_backend
+                    if chosen_vision_backend is None:
+                        chosen_vision_backend = choose_configured_llm_backend(
+                            auth_context,
+                            capability="vision",
+                            active=active,
+                        )
+                    if chosen_vision_backend == "tabby":
                         ok = await ensure_target("tabby", vision_model)
                         if ok:
                             target_host = TABBY_HOST
@@ -12851,8 +13118,8 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                                 content=json.dumps({
                                     "error": {
                                         "message": (
-                                            "Request includes images but the vision-capable backend "
-                                            "(roles.vision) could not be started."
+                                            "Request includes images but the selected vision-capable "
+                                            "backend could not be started."
                                         ),
                                         "type": "service_unavailable",
                                         "code": "vision_backend_unavailable",
@@ -12862,7 +13129,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                                 media_type="application/json",
                                 headers={"Retry-After": "10", "X-Vision-Routed": "false"},
                             )
-                    elif vision_backend == "kobold" and vision_model:
+                    elif chosen_vision_backend == "kobold" and vision_model:
                         ok = await ensure_target("kobold", vision_model, vision_mmproj)
                         if ok and (kobold_has_mmproj() is True):
                             target_host = KOBOLD_HOST
@@ -12889,8 +13156,9 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                                 "error": {
                                     "message": (
                                         "Request includes images but no vision-capable backend is "
-                                        "configured. Set roles.vision in proxy_config.yml or load "
-                                        "an mmproj for the kobold backend."
+                                        "configured or permitted by this profile. Set a vision "
+                                        "capability on an LLM backend and configure roles.vision, "
+                                        "or load an mmproj for the kobold backend."
                                     ),
                                     "type": "invalid_request_error",
                                     "code": "vision_unsupported",
@@ -12904,8 +13172,15 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             pass
     elif request_path == "/v1/embeddings":
         try:
-            body_json = json.loads(body_peek)
+            body_json = parsed_openai_body if parsed_openai_body is not None else json.loads(body_peek)
             model_name = body_json.get("model", "")
+            if not isinstance(model_name, str) or not model_name:
+                return openai_error_response(
+                    "Missing required parameter: 'model'.",
+                    status_code=400,
+                    param="model",
+                    code="missing_required_parameter",
+                )
             if model_name:
                 if isinstance(model_name, str):
                     current_loaded_decision = await _current_loaded_model_policy_decision(
@@ -12917,6 +13192,8 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                         and current_loaded_decision.denied
                     ):
                         return _policy_denied_response(current_loaded_decision)
+                if not is_openai_model_alias(model_name) and not detect_model_backend(model_name):
+                    return unknown_model_error(model_name)
                 try:
                     model_resolution = resolve_model_for_operation("embeddings", model_name)
                 except ModelCompatibilityError as e:
@@ -12930,6 +13207,19 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
     # interchangeable with kobold's surface — silently flipping returns wildly
     # different output. Require explicit opt-in via `allow_backend_fallback: true`
     # in the body.
+    if target_host is None:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"No configured backend is available for {request_path}.",
+                    "type": "service_unavailable",
+                    "code": "backend_unavailable",
+                }
+            }),
+            status_code=503,
+            media_type="application/json",
+        )
+
     if target_host == TABBY_HOST:
         if not await check_tabby_health():
             allow_fallback = False
@@ -13088,6 +13378,8 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             async def stream_response():
                 try:
                     async for chunk in resp.aiter_bytes():
+                        if request_path == "/v1/chat/completions":
+                            chunk = _normalize_chat_completion_sse_chunk(chunk)
                         yield chunk
                 except:
                     pass
@@ -13105,18 +13397,21 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         content = await resp.aread()
         await resp.aclose()
         await client.aclose()
-        if 200 <= resp.status_code < 300 and model_resolution and model_resolution.is_openai_alias and "application/json" in content_type:
+        if 200 <= resp.status_code < 300 and "application/json" in content_type:
             try:
                 response_json = json.loads(content)
                 if isinstance(response_json, dict):
+                    if request_path == "/v1/chat/completions":
+                        _normalize_chat_completion_visible_content(response_json)
                     # Surface the actually-loaded model in the response (matching
                     # OpenAI's own behavior — "gpt-4o-mini" requests get back the
                     # specific dated model that served them). Both role aliases
                     # ("default", "vision") and OpenAI aliases ("gpt-4o-mini") use
                     # this rule. Useful for observability and debugging.
-                    response_model = effective_request_model or model_resolution.requested_model or model_resolution.effective_model
-                    if response_model:
-                        response_json["model"] = response_model
+                    if model_resolution and model_resolution.is_openai_alias:
+                        response_model = effective_request_model or model_resolution.requested_model or model_resolution.effective_model
+                        if response_model:
+                            response_json["model"] = response_model
                     content = json.dumps(response_json).encode()
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass

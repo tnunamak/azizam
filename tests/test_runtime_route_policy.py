@@ -89,9 +89,45 @@ class _FakeAsyncClient:
         return _FakeHTTPResponse()
 
 
+class _ForwardResponse:
+    status_code = 200
+    headers = {"content-type": "application/json"}
+
+    async def aread(self):
+        return (
+            b'{"id":"chatcmpl_runtime_route","object":"chat.completion",'
+            b'"model":"local","choices":[{"index":0,"message":{"role":"assistant",'
+            b'"content":"ok"},"finish_reason":"stop"}]}'
+        )
+
+    async def aclose(self):
+        return None
+
+
+class _CaptureForwardClient:
+    urls: list[str] = []
+    bodies: list[bytes] = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def build_request(self, *, method, url, headers, content):
+        self.__class__.urls.append(str(url))
+        self.__class__.bodies.append(content)
+        return object()
+
+    async def send(self, *args, **kwargs):
+        return _ForwardResponse()
+
+    async def aclose(self):
+        return None
+
+
 class TestRuntimeRoutePolicy(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
+        _CaptureForwardClient.urls = []
+        _CaptureForwardClient.bodies = []
 
     def test_chat_only_opk_denies_media_and_models_routes(self) -> None:
         chat_only = AppProfile(
@@ -348,6 +384,98 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403, response.text)
         self.assertEqual(response.json()["error"]["code"], "policy_denied")
+
+    def test_chat_alias_routes_to_configured_kobold_without_tabby(self) -> None:
+        chat_profile = AppProfile(
+            id="chat-kobold",
+            protocols=frozenset({"openai.chat"}),
+            backends=frozenset({"kobold"}),
+        )
+
+        with authenticated_profile(chat_profile), patch.object(
+            proxy, "get_active_backend", AsyncMock(return_value="kobold")
+        ), patch.object(
+            proxy, "effective_llm_model_for_host", AsyncMock(return_value="kobold-local")
+        ), patch.object(proxy.httpx, "AsyncClient", _CaptureForwardClient):
+            response = self.client.post(
+                "/v1/chat/completions",
+                headers=AUTH_HEADERS,
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(_CaptureForwardClient.urls, [f"{proxy.KOBOLD_HOST}/v1/chat/completions"])
+
+    def test_vision_chat_can_use_loaded_kobold_mmproj_without_static_vision_capability(self) -> None:
+        chat_profile = AppProfile(
+            id="vision-kobold",
+            protocols=frozenset({"openai.chat"}),
+            backends=frozenset({"kobold"}),
+        )
+        roles = {
+            **(proxy.ROLES if isinstance(proxy.ROLES, dict) else {}),
+            "vision": {
+                "backend": "kobold",
+                "model": "/models/vision.gguf",
+                "mmproj": "/models/vision-mmproj.gguf",
+            },
+        }
+
+        def supports(backend: str, capability: str) -> bool:
+            return backend == "kobold" and capability == "chat"
+
+        with authenticated_profile(chat_profile), patch.object(
+            proxy, "ROLES", roles
+        ), patch.object(
+            proxy, "backend_supports", supports
+        ), patch.object(
+            proxy, "get_active_backend", AsyncMock(return_value="kobold")
+        ), patch.object(
+            proxy, "kobold_has_mmproj", return_value=True
+        ), patch.object(
+            proxy, "ensure_target", AsyncMock(return_value=True)
+        ) as ensure_target, patch.object(
+            proxy, "effective_llm_model_for_host", AsyncMock(return_value="kobold-vision")
+        ), patch.object(proxy.httpx, "AsyncClient", _CaptureForwardClient):
+            response = self.client.post(
+                "/v1/chat/completions",
+                headers=AUTH_HEADERS,
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "describe"},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/png;base64,aGVsbG8="
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(_CaptureForwardClient.urls, [f"{proxy.KOBOLD_HOST}/v1/chat/completions"])
+        ensure_target.assert_not_called()
+
+    def test_backend_native_passthrough_keeps_tabby_default(self) -> None:
+        unrestricted = AppProfile(id="runtime", protocols=frozenset({"openai"}))
+
+        with authenticated_profile(unrestricted), patch.object(
+            proxy, "check_tabby_health", AsyncMock(return_value=True)
+        ), patch.object(proxy.httpx, "AsyncClient", _CaptureForwardClient):
+            response = self.client.get("/v1/model", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(_CaptureForwardClient.urls, [f"{proxy.TABBY_HOST}/v1/model"])
 
     def test_non_chat_profile_denies_stored_response_routes(self) -> None:
         media_only = AppProfile(

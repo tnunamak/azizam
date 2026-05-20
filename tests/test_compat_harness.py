@@ -242,6 +242,7 @@ class TestRunMatrixCLI(unittest.TestCase):
             code = run_matrix.main(["--list-probes"])
         self.assertEqual(code, 0)
         output = buf.getvalue()
+        self.assertIn("raw-http", output)
         self.assertIn("openai-python", output)
         self.assertIn("anthropic-python", output)
         self.assertIn("ollama-python", output)

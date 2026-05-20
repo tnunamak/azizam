@@ -334,10 +334,13 @@ class TestGatewayRouterMounting(unittest.TestCase):
             cases = [
                 (
                     "/v1/chat/completions",
-                    {"messages": [{"role": "user", "content": "ping"}]},
+                    {
+                        "model": "gpt-4o-mini",
+                        "messages": [{"role": "user", "content": "ping"}],
+                    },
                 ),
-                ("/v1/completions", {"prompt": "ping"}),
-                ("/v1/embeddings", {"input": "ping"}),
+                ("/v1/completions", {"model": "gpt-4o-mini", "prompt": "ping"}),
+                ("/v1/embeddings", {"model": "text-embedding-3-small", "input": "ping"}),
             ]
             for path, payload in cases:
                 with self.subTest(path=path):

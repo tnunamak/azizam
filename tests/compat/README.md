@@ -13,6 +13,8 @@ slice gives us:
   core repo test suite runs by default
 - optional Python SDK probes under `python/` that import real SDKs only
   when they are installed
+- a raw-HTTP gateway contract probe that gates audit-critical OpenAI and
+  Anthropic response shapes without SDK dependencies
 - optional Node SDK probes under `node/` that are completely isolated
   from the Python install path
 - a runnable CLI at `scripts/compat/run_matrix.py` that aggregates
@@ -31,6 +33,7 @@ tests/compat/
       openai_chat.py     # canonical OpenAI Chat response shapes
       ollama.py          # canonical Ollama native shapes
   python/
+    probe_gateway_contract.py # optional: live raw-HTTP audit gates
     probe_openai.py      # optional: real openai SDK
     probe_anthropic.py   # optional: real anthropic SDK
     probe_ollama.py      # optional: real ollama SDK
@@ -66,6 +69,22 @@ $PROXY_PYTHON -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 ## Running Python SDK probes (optional)
+
+The raw-HTTP audit probe needs no SDK install, only a reachable gateway
+and an app API key:
+
+```bash
+PROXY_PYTHON=${PROXY_PYTHON:-venv/bin/python}
+export OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080
+export OPENAI_PROXY_API_KEY=sk-your-proxy-key
+$PROXY_PYTHON -m unittest tests.compat.python.probe_gateway_contract -v
+```
+
+It covers the critical compatibility failures from `/tmp/api-audit.md`:
+blank OpenAI `message.content`, streamed text arriving only as
+`reasoning_content`, malformed JSON returning the wrong class of error,
+missing/unknown model silently routing to default, empty Anthropic
+`content`, and non-OpenAI-shaped transcription errors.
 
 Install only the SDK you want, into the existing venv. The repo's
 default `requirements.txt` is untouched.

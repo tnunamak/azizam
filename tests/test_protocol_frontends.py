@@ -226,6 +226,44 @@ class AnthropicResponseTranslationTests(unittest.TestCase):
         self.assertEqual(out["usage"], {"input_tokens": 4, "output_tokens": 2})
         self.assertTrue(out["id"].startswith("msg_"))
 
+    def test_reasoning_content_fallback_produces_text_block(self) -> None:
+        canonical = {
+            "id": "chatcmpl-1",
+            "model": "claude-3-haiku",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning_content": "visible reply",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        out = anthro.canonical_response_to_messages(canonical)
+        self.assertEqual(out["content"], [{"type": "text", "text": "visible reply"}])
+
+    def test_reasoning_content_think_tags_use_final_text(self) -> None:
+        canonical = {
+            "id": "chatcmpl-1",
+            "model": "claude-3-haiku",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning_content": "<think>private reasoning</think>\nvisible reply",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        out = anthro.canonical_response_to_messages(canonical)
+        self.assertEqual(out["content"], [{"type": "text", "text": "visible reply"}])
+
     def test_tool_calls_produce_tool_use_blocks(self) -> None:
         canonical = {
             "id": "chatcmpl-2",
