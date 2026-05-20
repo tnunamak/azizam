@@ -287,7 +287,7 @@ Open question:
 
 ### 16. Catch-All Passthrough Is Useful And Dangerous
 
-The current proxy includes explicit route handlers plus a catch-all `/{path:path}` that forwards other methods and paths to the LLM backend. This is useful for backend admin/model-load endpoints, but it blurs the product boundary.
+The proxy originally included explicit route handlers plus a catch-all `/{path:path}` that forwarded other methods and paths to the LLM backend. That was useful for backend admin/model-load endpoints, but it blurred the product boundary. The current contract is stricter: unknown public routes return 404, and backend-native/provider-native access must be exposed through explicit, policy-gated namespaces.
 
 Architecture requirement:
 
@@ -298,7 +298,7 @@ Architecture requirement:
 
 Open question:
 
-- Should backend-native passthrough live under namespaced paths such as `/providers/tabby/*`, rather than the root catch-all?
+- Add backend-native passthrough under namespaced paths such as `/gateway/v1/providers/tabby/*` when we are ready to support it publicly.
 
 ### 17. Responses API Is A Stateful Translation Layer
 
