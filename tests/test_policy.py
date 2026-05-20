@@ -311,6 +311,54 @@ class TestNativePassthrough(unittest.TestCase):
             any("delete_all" in r for r in decision.reasons), decision.reasons
         )
 
+    def test_native_passthrough_allows_method_qualified_operation(self) -> None:
+        profile = AppProfile(
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_operations=frozenset({"GET /v1/models", "POST /prompt"}),
+            ),
+        )
+        decision = evaluate(
+            profile,
+            PolicyRequest(
+                native_passthrough=True,
+                native_operation="POST /prompt",
+            ),
+        )
+        self.assertEqual(decision.decision, ALLOWED)
+
+    def test_native_passthrough_allows_path_legacy_scope_for_method_operation(self) -> None:
+        profile = AppProfile(
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_operations=frozenset({"v1/models"}),
+            ),
+        )
+        decision = evaluate(
+            profile,
+            PolicyRequest(
+                native_passthrough=True,
+                native_operation="GET /v1/models",
+            ),
+        )
+        self.assertEqual(decision.decision, ALLOWED)
+
+    def test_native_passthrough_allows_prefix_scope(self) -> None:
+        profile = AppProfile(
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_operations=frozenset({"GET /history/*"}),
+            ),
+        )
+        decision = evaluate(
+            profile,
+            PolicyRequest(
+                native_passthrough=True,
+                native_operation="GET /history/abc",
+            ),
+        )
+        self.assertEqual(decision.decision, ALLOWED)
+
 
 class TestVisibility(unittest.TestCase):
     def test_visibility_level_carried_in_decision(self) -> None:

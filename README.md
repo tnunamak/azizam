@@ -10,7 +10,13 @@ Self-hosted, OpenAI-compatible HTTP gateway and control plane that fronts a stac
 - **Parakeet TDT 0.6B** — speech-to-text
 - **ComfyUI** — image generation, image edit, and video generation (LTX-2.3, Wan 2.2)
 
-The gateway presents a single `/v1` surface that matches the OpenAI API closely enough that off-the-shelf apps (LibreChat, Open WebUI, OpenClaw, Continue, Cline, the OpenAI SDKs, etc.) point at it without modification.
+The gateway presents canonical protocol aliases for OpenAI, Anthropic, and Ollama-compatible clients:
+
+- `/openai/v1` — OpenAI-compatible surface
+- `/anthropic/v1` — Anthropic Messages subset
+- `/ollama/api` — Ollama-compatible subset
+
+For existing tools, the convenience routes `/v1` and `/api` remain mounted and map to the OpenAI and Ollama-compatible surfaces. Off-the-shelf apps (LibreChat, Open WebUI, OpenClaw, Continue, Cline, the OpenAI SDKs, etc.) can keep using those convenience routes without modification.
 
 The canonical public host is **`https://ai.vivid.fish`**. The original **`https://openai.vivid.fish`** host is preserved as a compatibility alias — every route, discovery document, and signed URL resolves identically on both hosts, so existing apps do not need to be reconfigured.
 
@@ -41,14 +47,25 @@ Agents and apps can start without local repo context by fetching the public disc
 - `GET /.well-known/skills/openai-proxy-gateway/SKILL.md`
 - `GET /gateway/v1/extensions`
 - `GET /gateway/v1/models/{model}/capabilities`
+- `GET /gateway/v1/providers` — provider-native lanes visible to the current
+  App profile
+- `GET /gateway/v1/providers/{provider}` — metadata for one provider-native
+  lane
+- `* /gateway/v1/providers/{provider}/{path...}` — provider-native namespace
+  for policy-gated native passthrough; requires an App profile that allows the
+  `provider-native` protocol and native passthrough for the target provider and
+  operation.
 
 The discovery document advertises:
 
 - `service.product = "Vivid Fish AI Gateway"`
 - `service.canonical_host = "https://ai.vivid.fish"`
 - `service.compatibility_aliases` includes `https://openai.vivid.fish`
+- `protocols[].canonical_base_path` for `/openai/v1`, `/anthropic/v1`, and
+  `/ollama/api`
+- `protocols[].convenience_base_path` where `/v1` or `/api` is also accepted
 
-The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](skills/openai-proxy-gateway/SKILL.md). The skill ID is preserved as `openai-proxy-gateway` so existing skill catalogs and tests keep resolving it. The skill itself tells agents to discover capabilities before assuming a backend, keep bearer tokens out of chat, use `/v1` by default, and inspect `/gateway/v1/receipts` when workflow controls are rejected or ignored.
+The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](skills/openai-proxy-gateway/SKILL.md). The skill ID is preserved as `openai-proxy-gateway` so existing skill catalogs and tests keep resolving it. The skill itself tells agents to discover capabilities before assuming a backend, keep bearer tokens out of chat, use `/openai/v1` for new OpenAI-compatible setup, and inspect `/gateway/v1/receipts` when workflow controls are rejected or ignored.
 
 ## Endpoint surface
 
@@ -77,7 +94,10 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `GET  /v1/videos/{id}/content` | ComfyUI | Fetch rendered MP4 once `status=succeeded` |
 | `GET  /gateway/v1/extensions` | proxy | Live extension namespace and route discovery |
 | `GET  /gateway/v1/models/{model}/capabilities` | proxy | Live model-specific capability and workflow-control discovery |
-| `* /<any other>` | proxy | Unknown routes return 404 instead of falling through to a backend. Tabby-native operations are not public compatibility routes; use the local Tabby port until the explicit provider-native namespace is added. |
+| `GET  /gateway/v1/providers` | proxy | List provider-native lanes projected through the caller's App profile policy. |
+| `GET  /gateway/v1/providers/{provider}` | proxy | Metadata for one provider-native lane. |
+| `* /gateway/v1/providers/{provider}/{path...}` | proxy + selected provider | Policy-gated provider-native passthrough for explicit backend operations. App policy must allow `provider-native`, native passthrough, the provider, and the operation. |
+| `* /<any other>` | proxy | Unknown routes return 404 instead of falling through to a backend. There is no legacy root Tabby shim or root catch-all backend passthrough. |
 
 Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [`MODEL_COMPATIBILITY.md`](MODEL_COMPATIBILITY.md), and [`OPENCLAW_SETUP.md`](OPENCLAW_SETUP.md):
 

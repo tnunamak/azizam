@@ -1011,7 +1011,7 @@ def render_admin_dashboard(
     snapshot: Mapping[str, Any],
     *,
     title: str = "AI Gateway Admin",
-    base_url: str = "https://ai.vivid.fish/v1",
+    base_url: str = "https://ai.vivid.fish/openai/v1",
     create_app_action: str = "/admin/api/apps",
     create_profile_action: str = "/admin/api/profiles",
     create_mapping_action: str = "/admin/api/runtime-profile-mappings",

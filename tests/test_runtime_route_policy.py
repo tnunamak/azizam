@@ -15,7 +15,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway.policy import AppProfile, ModelAccessPolicy  # noqa: E402
+from gateway.policy import (  # noqa: E402
+    AppProfile,
+    ModelAccessPolicy,
+    NativePassthroughPolicy,
+)
 
 
 RAW_KEY = "opk_runtime_policy_test"
@@ -23,12 +27,12 @@ AUTH_HEADERS = {"Authorization": f"Bearer {RAW_KEY}"}
 
 
 @contextmanager
-def authenticated_profile(profile: AppProfile):
+def authenticated_profile(profile: AppProfile, downstream: dict | None = None):
     key_hash = proxy.hash_api_key(RAW_KEY)
     identity = proxy.AuthIdentity(
         name="runtime-policy",
         key_hash=key_hash,
-        downstream={},
+        downstream=downstream or {},
         profile=profile,
     )
     with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
@@ -123,11 +127,44 @@ class _CaptureForwardClient:
         return None
 
 
+class _NativePassthroughResponse:
+    status_code = 200
+    headers = {
+        "content-type": "application/json",
+        "content-length": "17",
+        "x-tabby-native": "1",
+    }
+    content = b'{"native": true}'
+
+
+class _CaptureNativePassthroughClient:
+    calls: list[dict] = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+    async def request(self, method, url, headers, content):
+        self.__class__.calls.append({
+            "method": method,
+            "url": str(url),
+            "headers": dict(headers),
+            "content": content,
+        })
+        return _NativePassthroughResponse()
+
+
 class TestRuntimeRoutePolicy(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
         _CaptureForwardClient.urls = []
         _CaptureForwardClient.bodies = []
+        _CaptureNativePassthroughClient.calls = []
 
     def test_chat_only_opk_denies_media_and_models_routes(self) -> None:
         chat_only = AppProfile(
@@ -476,6 +513,256 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404, response.text)
         self.assertEqual(_CaptureForwardClient.urls, [])
+
+    def test_provider_native_tabby_requires_native_passthrough_policy(self) -> None:
+        profile = AppProfile(
+            id="native-disabled",
+            protocols=frozenset({"provider-native"}),
+        )
+        blocked = AssertionError("native backend should not be called")
+
+        with authenticated_profile(profile), patch.object(
+            proxy.httpx,
+            "AsyncClient",
+            side_effect=blocked,
+        ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
+            response = self.client.get(
+                "/gateway/v1/providers/tabby/v1/models",
+                headers=AUTH_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+        self.assertIn("native passthrough disabled", response.json()["error"]["message"])
+
+    def test_provider_native_tabby_forwards_with_downstream_auth_only(self) -> None:
+        profile = AppProfile(
+            id="tabby-native",
+            protocols=frozenset({"provider-native"}),
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_backends=frozenset({"tabby"}),
+                allowed_operations=frozenset({"v1/models"}),
+            ),
+        )
+        downstream = {
+            "tabby": {
+                "api_key": "tabby-api-key",
+                "admin_key": "tabby-admin-key",
+            }
+        }
+
+        with authenticated_profile(profile, downstream=downstream), patch.object(
+            proxy.httpx,
+            "AsyncClient",
+            _CaptureNativePassthroughClient,
+        ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
+            response = self.client.get(
+                "/gateway/v1/providers/tabby/v1/models?limit=1",
+                headers={
+                    **AUTH_HEADERS,
+                    "X-Api-Key": "caller-secret",
+                    "X-Request-Id": "request-123",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"native": True})
+        self.assertEqual(
+            _CaptureNativePassthroughClient.calls[0]["url"],
+            f"{proxy.TABBY_HOST}/v1/models?limit=1",
+        )
+        forwarded_headers = {
+            key.lower(): value
+            for key, value in _CaptureNativePassthroughClient.calls[0][
+                "headers"
+            ].items()
+        }
+        self.assertNotIn("authorization", forwarded_headers)
+        self.assertNotEqual(forwarded_headers.get("x-api-key"), "caller-secret")
+        self.assertEqual(forwarded_headers["x-admin-key"], "tabby-admin-key")
+        self.assertEqual(forwarded_headers["x-request-id"], "request-123")
+        self.assertEqual(response.headers["x-tabby-native"], "1")
+
+    def test_provider_native_targets_include_configured_local_backends(self) -> None:
+        self.assertIn("tabby", proxy._PROVIDER_NATIVE_TARGETS)
+        self.assertIn("kobold", proxy._PROVIDER_NATIVE_TARGETS)
+        self.assertIn("comfyui", proxy._PROVIDER_NATIVE_TARGETS)
+        self.assertNotIn("openai-proxy", proxy._PROVIDER_NATIVE_TARGETS)
+
+    def test_provider_native_list_projects_profile_policy(self) -> None:
+        profile = AppProfile(
+            id="native-list",
+            protocols=frozenset({"provider-native"}),
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_backends=frozenset({"comfyui"}),
+            ),
+        )
+
+        with authenticated_profile(profile):
+            response = self.client.get(
+                "/gateway/v1/providers",
+                headers=AUTH_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["object"], "list")
+        by_id = {row["id"]: row for row in body["data"]}
+        self.assertIn("comfyui", by_id)
+        self.assertNotIn("tabby", by_id)
+        self.assertNotIn("allowed", by_id["comfyui"])
+        self.assertEqual(
+            by_id["comfyui"]["native_passthrough_path"],
+            "/gateway/v1/providers/comfyui/{path}",
+        )
+
+    def test_provider_native_detail_hides_disallowed_provider(self) -> None:
+        profile = AppProfile(
+            id="native-list",
+            protocols=frozenset({"provider-native"}),
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_backends=frozenset({"comfyui"}),
+            ),
+        )
+
+        with authenticated_profile(profile):
+            response = self.client.get(
+                "/gateway/v1/providers/tabby",
+                headers=AUTH_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["error"]["code"], "provider_not_found")
+
+    def test_provider_native_detail_does_not_forward_to_backend(self) -> None:
+        profile = AppProfile(
+            id="native-detail",
+            protocols=frozenset({"provider-native"}),
+            native_passthrough=NativePassthroughPolicy(enabled=True),
+        )
+        blocked = AssertionError("metadata route should not call native backend")
+
+        with authenticated_profile(profile), patch.object(
+            proxy.httpx,
+            "AsyncClient",
+            side_effect=blocked,
+        ):
+            response = self.client.get(
+                "/gateway/v1/providers/tabby",
+                headers=AUTH_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["id"], "tabby")
+
+    def test_openai_voice_aliases_enforce_audio_profile_policy(self) -> None:
+        chat_only = AppProfile(
+            id="chat-only",
+            protocols=frozenset({"openai.chat"}),
+        )
+
+        with authenticated_profile(chat_only):
+            for path in ("/openai/v1/voices", "/openai/v1/audio/voices"):
+                with self.subTest(path=path):
+                    response = self.client.get(path, headers=AUTH_HEADERS)
+
+                    self.assertEqual(response.status_code, 403, response.text)
+                    self.assertEqual(
+                        response.json()["error"]["code"], "policy_denied"
+                    )
+
+    def test_provider_native_comfyui_forwards_generic_backend_path(self) -> None:
+        profile = AppProfile(
+            id="comfyui-native",
+            protocols=frozenset({"provider-native"}),
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_backends=frozenset({"comfyui"}),
+                allowed_operations=frozenset({"POST /prompt"}),
+            ),
+        )
+        downstream = {
+            "comfyui": {
+                "headers": {
+                    "X-Comfy-Key": "comfy-secret",
+                }
+            }
+        }
+
+        with authenticated_profile(profile, downstream=downstream), patch.object(
+            proxy.httpx,
+            "AsyncClient",
+            _CaptureNativePassthroughClient,
+        ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
+            response = self.client.post(
+                "/gateway/v1/providers/comfyui/prompt",
+                headers={
+                    **AUTH_HEADERS,
+                    "X-Api-Key": "caller-secret",
+                    "X-Request-Id": "request-456",
+                },
+                json={"prompt": {"1": {"inputs": {}}}},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        call = _CaptureNativePassthroughClient.calls[0]
+        self.assertEqual(call["method"], "POST")
+        self.assertEqual(call["url"], f"{proxy.COMFY_HOST}/prompt")
+        self.assertIn(b'"prompt"', call["content"])
+        forwarded_headers = {
+            key.lower(): value
+            for key, value in call["headers"].items()
+        }
+        self.assertNotIn("authorization", forwarded_headers)
+        self.assertNotEqual(forwarded_headers.get("x-api-key"), "caller-secret")
+        self.assertEqual(forwarded_headers["x-comfy-key"], "comfy-secret")
+        self.assertEqual(forwarded_headers["x-request-id"], "request-456")
+
+    def test_provider_native_tabby_operation_allowlist_denies_before_backend(self) -> None:
+        profile = AppProfile(
+            id="tabby-native",
+            protocols=frozenset({"provider-native"}),
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_backends=frozenset({"tabby"}),
+                allowed_operations=frozenset({"v1/models"}),
+            ),
+        )
+        blocked = AssertionError("native backend should not be called")
+
+        with authenticated_profile(profile), patch.object(
+            proxy.httpx,
+            "AsyncClient",
+            side_effect=blocked,
+        ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
+            response = self.client.post(
+                "/gateway/v1/providers/tabby/v1/model/load",
+                headers=AUTH_HEADERS,
+                json={"model": "unsafe"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+        self.assertIn("not in allow-list", response.json()["error"]["message"])
+
+    def test_provider_native_unknown_provider_returns_clear_404(self) -> None:
+        profile = AppProfile(
+            id="native",
+            protocols=frozenset({"provider-native"}),
+            native_passthrough=NativePassthroughPolicy(enabled=True),
+        )
+
+        with authenticated_profile(profile):
+            response = self.client.get(
+                "/gateway/v1/providers/not-a-provider/v1/models",
+                headers=AUTH_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["error"]["code"], "provider_not_found")
 
     def test_non_chat_profile_denies_stored_response_routes(self) -> None:
         media_only = AppProfile(

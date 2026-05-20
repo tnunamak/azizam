@@ -7173,6 +7173,33 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+CANONICAL_PROTOCOL_ROUTE_ALIASES: tuple[dict[str, object], ...] = (
+    {"methods": ("GET",), "canonical": "/v1/models", "alias": "/openai/v1/models"},
+    {"methods": ("GET",), "canonical": "/v1/voices", "alias": "/openai/v1/voices"},
+    {"methods": ("GET",), "canonical": "/v1/audio/voices", "alias": "/openai/v1/audio/voices"},
+    {"methods": ("POST",), "canonical": "/v1/audio/speech", "alias": "/openai/v1/audio/speech"},
+    {"methods": ("POST",), "canonical": "/v1/audio/transcriptions", "alias": "/openai/v1/audio/transcriptions"},
+    {"methods": ("POST",), "canonical": "/v1/audio/generate", "alias": "/openai/v1/audio/generate"},
+    {"methods": ("GET",), "canonical": "/v1/audio/models", "alias": "/openai/v1/audio/models"},
+    {"methods": ("POST",), "canonical": "/v1/images/generations", "alias": "/openai/v1/images/generations"},
+    {"methods": ("POST",), "canonical": "/v1/images/edits", "alias": "/openai/v1/images/edits"},
+    {"methods": ("GET",), "canonical": "/v1/images/{image_id}/content", "alias": "/openai/v1/images/{image_id}/content"},
+    {"methods": ("GET",), "canonical": "/v1/assets/{asset_id}/content", "alias": "/openai/v1/assets/{asset_id}/content"},
+    {"methods": ("POST",), "canonical": "/v1/videos", "alias": "/openai/v1/videos"},
+    {"methods": ("GET",), "canonical": "/v1/videos/{video_id}", "alias": "/openai/v1/videos/{video_id}"},
+    {"methods": ("GET",), "canonical": "/v1/videos/{video_id}/content", "alias": "/openai/v1/videos/{video_id}/content"},
+    {"methods": ("POST",), "canonical": "/v1/responses", "alias": "/openai/v1/responses"},
+    {"methods": ("GET",), "canonical": "/v1/responses/{response_id}", "alias": "/openai/v1/responses/{response_id}"},
+    {"methods": ("DELETE",), "canonical": "/v1/responses/{response_id}", "alias": "/openai/v1/responses/{response_id}"},
+    {"methods": ("POST",), "canonical": "/v1/chat/completions", "alias": "/openai/v1/chat/completions"},
+    {"methods": ("POST",), "canonical": "/v1/completions", "alias": "/openai/v1/completions"},
+    {"methods": ("POST",), "canonical": "/v1/embeddings", "alias": "/openai/v1/embeddings"},
+    {"methods": ("POST",), "canonical": "/v1/messages", "alias": "/anthropic/v1/messages"},
+    {"methods": ("POST",), "canonical": "/api/chat", "alias": "/ollama/api/chat"},
+    {"methods": ("POST",), "canonical": "/api/generate", "alias": "/ollama/api/generate"},
+    {"methods": ("GET",), "canonical": "/api/tags", "alias": "/ollama/api/tags"},
+)
+
 _MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workflows"
 
 
@@ -8584,14 +8611,17 @@ async def llms_txt(request: Request):
     return Response(content=body, media_type="text/plain; charset=utf-8")
 
 
+@app.get("/openai/v1/voices")
+@app.get("/openai/v1/audio/voices")
 @app.get("/v1/voices")
 @app.get("/v1/audio/voices")
 async def list_voices(request: Request):
     """Return available TTS voices (OpenAI-compatible names)."""
-    auth_context = authenticate_request(request, request.url.path)
+    canonical_path = "/v1/audio/voices" if request.url.path.endswith("/audio/voices") else "/v1/voices"
+    auth_context = authenticate_request(request, canonical_path)
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, request.url.path)
+    policy_response = _enforce_runtime_route_policy(auth_context, canonical_path)
     if policy_response is not None:
         return policy_response
 
@@ -8612,6 +8642,7 @@ async def list_voices(request: Request):
     return {"voices": voices}
 
 
+@app.post("/openai/v1/audio/speech")
 @app.post("/v1/audio/speech")
 async def audio_speech(request: Request):
     """OpenAI-compatible TTS endpoint - routes to TTS backend with voice mapping."""
@@ -8624,6 +8655,7 @@ async def audio_speech(request: Request):
     return await proxy_tts_request(request, auth_context)
 
 
+@app.post("/openai/v1/audio/transcriptions")
 @app.post("/v1/audio/transcriptions")
 async def audio_transcriptions(request: Request):
     """OpenAI-compatible STT endpoint - routes to STT backend."""
@@ -11053,6 +11085,7 @@ async def gateway_media_job_content(job_id: str, request: Request):
     )
 
 
+@app.post("/openai/v1/images/generations")
 @app.post("/v1/images/generations")
 async def images_generations(request: Request):
     """OpenAI-compatible image generation endpoint - routes to ComfyUI backend."""
@@ -11070,6 +11103,7 @@ async def images_generations(request: Request):
     return response
 
 
+@app.post("/openai/v1/images/edits")
 @app.post("/v1/images/edits")
 async def images_edits(request: Request):
     """OpenAI-compatible image edit endpoint - routes to ComfyUI backend."""
@@ -11087,6 +11121,7 @@ async def images_edits(request: Request):
     return response
 
 
+@app.get("/openai/v1/images/{image_id}/content")
 @app.get("/v1/images/{image_id}/content")
 async def images_content(image_id: str, request: Request):
     """Serve a cached image referenced by a signed URL.
@@ -11115,6 +11150,7 @@ async def images_content(image_id: str, request: Request):
     )
 
 
+@app.get("/openai/v1/assets/{asset_id}/content")
 @app.get("/v1/assets/{asset_id}/content")
 async def assets_content(asset_id: str, request: Request):
     """Serve a cached generated asset referenced by a signed URL."""
@@ -11208,6 +11244,7 @@ def _signed_asset_content_response(
     )
 
 
+@app.post("/openai/v1/videos")
 @app.post("/v1/videos")
 async def videos_create(request: Request):
     """Sora-shaped video generation submit. Returns {id, status: queued}."""
@@ -11220,6 +11257,7 @@ async def videos_create(request: Request):
     return await proxy_comfy_video_create(request, auth_context)
 
 
+@app.get("/openai/v1/videos/{video_id}")
 @app.get("/v1/videos/{video_id}")
 async def videos_status(video_id: str, request: Request):
     """Poll a previously-submitted video job."""
@@ -11234,6 +11272,7 @@ async def videos_status(video_id: str, request: Request):
     return await proxy_comfy_video_status(video_id, auth_context)
 
 
+@app.get("/openai/v1/videos/{video_id}/content")
 @app.get("/v1/videos/{video_id}/content")
 async def videos_content(video_id: str, request: Request):
     """Download the rendered mp4 once status=succeeded."""
@@ -11586,6 +11625,7 @@ async def proxy_audio_generate(request: Request, auth_context):
         )
 
 
+@app.post("/openai/v1/audio/generate")
 @app.post("/v1/audio/generate")
 async def audio_generate(request: Request):
     """OpenAI-compatible audio generation endpoint."""
@@ -11598,6 +11638,7 @@ async def audio_generate(request: Request):
     return await proxy_audio_generate(request, auth_context)
 
 
+@app.get("/openai/v1/audio/models")
 @app.get("/v1/audio/models")
 async def audio_models(request: Request):
     """List available audio generation models."""
@@ -11745,6 +11786,7 @@ def _build_workflow_model_entries(
     return entries
 
 
+@app.get("/openai/v1/models")
 @app.get("/v1/models")
 async def list_models(request: Request):
     """OpenAI-compatible model list. Returns:
@@ -12215,6 +12257,7 @@ async def _read_json_object(request: Request) -> dict[str, Any] | Response:
     return body
 
 
+@app.post("/anthropic/v1/messages")
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic Messages-compatible non-streaming frontend over chat completions."""
@@ -12336,6 +12379,7 @@ async def _ollama_forward_non_streaming(
     return _response_json_payload(upstream)
 
 
+@app.post("/ollama/api/chat")
 @app.post("/api/chat")
 async def ollama_chat(request: Request):
     """Ollama `/api/chat` non-streaming frontend over chat completions."""
@@ -12370,6 +12414,7 @@ async def ollama_chat(request: Request):
     )
 
 
+@app.post("/ollama/api/generate")
 @app.post("/api/generate")
 async def ollama_generate(request: Request):
     """Ollama `/api/generate` non-streaming frontend over chat completions."""
@@ -12404,6 +12449,7 @@ async def ollama_generate(request: Request):
     )
 
 
+@app.get("/ollama/api/tags")
 @app.get("/api/tags")
 async def ollama_tags(request: Request):
     """Ollama model-list frontend over the proxy's configured model catalog."""
@@ -12428,6 +12474,7 @@ async def ollama_tags(request: Request):
     )
 
 
+@app.post("/openai/v1/responses")
 @app.post("/v1/responses")
 async def create_response(request: Request):
     """Create a Response. Translates to Chat Completions and forwards."""
@@ -12630,6 +12677,7 @@ async def create_response(request: Request):
         return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
 
 
+@app.get("/openai/v1/responses/{response_id}")
 @app.get("/v1/responses/{response_id}")
 async def retrieve_response(response_id: str, request: Request):
     auth_context = authenticate_request(request, "/v1/responses")
@@ -12661,6 +12709,7 @@ async def retrieve_response(response_id: str, request: Request):
     )
 
 
+@app.delete("/openai/v1/responses/{response_id}")
 @app.delete("/v1/responses/{response_id}")
 async def delete_response(response_id: str, request: Request):
     auth_context = authenticate_request(request, "/v1/responses")
@@ -12760,18 +12809,21 @@ def _openai_proxy_policy_decision(
     )
 
 
+@app.post("/openai/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 @app.post("/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def chat_completions(request: Request):
     """OpenAI-compatible chat completions proxied to the active LLM backend."""
     return await proxy_request(request, "v1/chat/completions", mapped_route=True)
 
 
+@app.post("/openai/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 @app.post("/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def completions(request: Request):
     """OpenAI-compatible text completions proxied to the active LLM backend."""
     return await proxy_request(request, "v1/completions", mapped_route=True)
 
 
+@app.post("/openai/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 @app.post("/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def embeddings(request: Request):
     """OpenAI-compatible embeddings proxied to the configured embedding backend."""
@@ -12870,6 +12922,314 @@ def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:
         else:
             out_lines.append(line)
     return "".join(out_lines).encode("utf-8") if changed else chunk
+
+
+_PROVIDER_NATIVE_STATIC_HOSTS = {
+    "tabby": TABBY_HOST,
+    "kobold": KOBOLD_HOST,
+    "tts": TTS_HOST,
+    "stt": STT_HOST,
+    "comfyui": COMFY_HOST,
+}
+
+_PROVIDER_NATIVE_ENABLED = {
+    "tabby": True,
+    "kobold": True,
+    "tts": TTS_ENABLED,
+    "stt": STT_ENABLED,
+    "comfyui": COMFY_ENABLED,
+}
+
+_PROVIDER_NATIVE_EXCLUDED = {"openai-proxy", "self", "gateway", "proxy"}
+
+
+def _provider_native_host_from_config(provider: str, cfg: Mapping[str, Any]) -> str:
+    if provider in _PROVIDER_NATIVE_STATIC_HOSTS:
+        return _PROVIDER_NATIVE_STATIC_HOSTS[provider]
+    raw_url = str(cfg.get("url") or cfg.get("base_url") or "").strip()
+    if raw_url:
+        return raw_url.rstrip("/")
+    host = str(cfg.get("host", "127.0.0.1")).strip()
+    port = cfg.get("port")
+    if not host or port is None:
+        return ""
+    scheme = str(cfg.get("scheme", "http")).strip() or "http"
+    return f"{scheme}://{host}:{port}".rstrip("/")
+
+
+def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
+    targets: dict[str, dict[str, Any]] = {}
+    for raw_name, raw_cfg in (config.get("backends") or {}).items():
+        provider = str(raw_name).strip().lower()
+        if not provider or provider in _PROVIDER_NATIVE_EXCLUDED:
+            continue
+        if not isinstance(raw_cfg, Mapping):
+            continue
+        if raw_cfg.get("native_passthrough") is False:
+            continue
+        if _PROVIDER_NATIVE_ENABLED.get(provider, True) is False:
+            continue
+        host = _provider_native_host_from_config(provider, raw_cfg)
+        if not host:
+            continue
+        targets[provider] = {
+            "backend": provider,
+            "service": str(raw_cfg.get("downstream_service") or provider),
+            "host": host,
+            "timeout": float(raw_cfg.get("timeout") or UPSTREAM_READ_TIMEOUT),
+        }
+    return targets
+
+
+_PROVIDER_NATIVE_TARGETS = _build_provider_native_targets()
+
+_PROVIDER_NATIVE_HOP_BY_HOP_HEADERS = {
+    "connection",
+    "content-length",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
+
+
+def _native_passthrough_receipt(
+    *,
+    auth_context: AuthContext,
+    provider: str,
+    gateway_path: str,
+    native_path: str,
+) -> RouteReceipt:
+    receipt = RouteReceipt(
+        protocol="provider-native",
+        intent="provider.native",
+        path=gateway_path,
+        backend=provider,
+    )
+    if auth_context.identity is not None:
+        receipt.app_profile = auth_context.identity.profile.id
+        receipt.api_key_name = auth_context.identity.name
+    receipt.metadata.update({
+        "provider": provider,
+        "native_path": f"/{native_path.lstrip('/')}",
+    })
+    return receipt
+
+
+def _record_native_passthrough_receipt(receipt: RouteReceipt) -> None:
+    try:
+        receipt_store.record(receipt)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Could not record provider-native receipt: {e}", flush=True)
+
+
+def _provider_native_summary(
+    provider: str,
+    target: Mapping[str, Any],
+    auth_context: AuthContext,
+) -> dict[str, Any]:
+    decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="provider-native",
+            intent="provider.native",
+            backend=str(target["backend"]),
+            native_passthrough=True,
+            native_backend=str(target["backend"]),
+        ),
+    )
+    cfg = (config.get("backends") or {}).get(provider, {})
+    capabilities = []
+    if isinstance(cfg, Mapping):
+        raw_capabilities = cfg.get("capabilities") or ()
+        if isinstance(raw_capabilities, (str, bytes)):
+            capabilities = [str(raw_capabilities)]
+        else:
+            capabilities = [
+                str(capability)
+                for capability in raw_capabilities
+                if str(capability).strip()
+            ]
+    return {
+        "id": provider,
+        "object": "provider",
+        "name": str(cfg.get("name") or provider) if isinstance(cfg, Mapping) else provider,
+        "backend": str(target["backend"]),
+        "capabilities": capabilities,
+        "native_passthrough_path": f"/gateway/v1/providers/{provider}/{{path}}",
+    }
+
+
+def _provider_native_visible(
+    provider: str,
+    target: Mapping[str, Any],
+    auth_context: AuthContext,
+) -> bool:
+    decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="provider-native",
+            intent="provider.native",
+            backend=str(target["backend"]),
+            native_passthrough=True,
+            native_backend=str(target["backend"]),
+        ),
+    )
+    return decision.allowed
+
+
+@app.get("/gateway/v1/providers")
+async def provider_native_list(request: Request):
+    """List provider-native lanes visible to this authenticated caller."""
+    auth_context = _auth_context_from_scope(request)
+    providers = [
+        _provider_native_summary(provider, target, auth_context)
+        for provider, target in sorted(_PROVIDER_NATIVE_TARGETS.items())
+        if _provider_native_visible(provider, target, auth_context)
+    ]
+    return {
+        "object": "list",
+        "data": providers,
+    }
+
+
+@app.get("/gateway/v1/providers/{provider}")
+async def provider_native_detail(request: Request, provider: str):
+    """Describe one provider-native lane without forwarding to the provider."""
+    provider_key = provider.strip().lower()
+    target = _PROVIDER_NATIVE_TARGETS.get(provider_key)
+    if target is None:
+        return openai_error_response(
+            f"Provider {provider!r} is not configured for native passthrough.",
+            status_code=404,
+            code="provider_not_found",
+        )
+    if not _provider_native_visible(provider_key, target, _auth_context_from_scope(request)):
+        return openai_error_response(
+            f"Provider {provider!r} is not visible to this App profile.",
+            status_code=404,
+            code="provider_not_found",
+        )
+    return _provider_native_summary(provider_key, target, _auth_context_from_scope(request))
+
+
+@app.api_route(
+    "/gateway/v1/providers/{provider}/{native_path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    include_in_schema=False,
+)
+async def provider_native_request(
+    request: Request,
+    provider: str,
+    native_path: str = "",
+):
+    """Policy-gated provider-native passthrough for explicitly configured providers."""
+    provider_key = provider.strip().lower()
+    gateway_path = f"/gateway/v1/providers/{provider}/{native_path}"
+    target = _PROVIDER_NATIVE_TARGETS.get(provider_key)
+    auth_context = _auth_context_from_scope(request)
+
+    if target is None:
+        return openai_error_response(
+            f"Provider {provider!r} is not configured for native passthrough.",
+            status_code=404,
+            code="provider_not_found",
+        )
+
+    receipt = _native_passthrough_receipt(
+        auth_context=auth_context,
+        provider=provider_key,
+        gateway_path=gateway_path,
+        native_path=native_path,
+    )
+    native_request_path = f"/{native_path.lstrip('/')}"
+    native_operation = f"{request.method.upper()} {native_request_path}"
+    decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="provider-native",
+            intent="provider.native",
+            backend=str(target["backend"]),
+            native_passthrough=True,
+            native_backend=str(target["backend"]),
+            native_operation=native_operation,
+        ),
+        receipt,
+    )
+    if decision.denied:
+        receipt.finish("denied")
+        _record_native_passthrough_receipt(receipt)
+        return _policy_denied_response(decision)
+
+    body = await request.body()
+    headers = prepare_downstream_headers(
+        request.headers,
+        auth_context,
+        str(target["service"]),
+        native_request_path,
+    )
+    url = f"{target['host']}{native_request_path}"
+    if request.url.query:
+        url += f"?{request.url.query}"
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(
+            connect=10.0,
+            read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
+            write=60.0,
+            pool=None,
+        )) as client:
+            upstream = await client.request(
+                request.method,
+                url,
+                headers=headers,
+                content=body,
+            )
+    except httpx.TimeoutException:
+        receipt.finish("timeout")
+        _record_native_passthrough_receipt(receipt)
+        return openai_error_response(
+            f"Provider {provider_key!r} timed out while handling {native_request_path}.",
+            status_code=504,
+            error_type="service_unavailable",
+            code="provider_timeout",
+        )
+    except httpx.ConnectError:
+        receipt.finish("backend_unavailable")
+        _record_native_passthrough_receipt(receipt)
+        return openai_error_response(
+            f"Provider {provider_key!r} is unavailable for native passthrough.",
+            status_code=503,
+            error_type="service_unavailable",
+            code="provider_unavailable",
+        )
+    except Exception as e:  # noqa: BLE001
+        receipt.finish("error")
+        _record_native_passthrough_receipt(receipt)
+        return openai_error_response(
+            f"Provider-native passthrough failed: {str(e)[:200]}",
+            status_code=502,
+            error_type="api_error",
+            code="provider_passthrough_error",
+        )
+
+    response_headers = {
+        k: v
+        for k, v in upstream.headers.items()
+        if k.lower() not in _PROVIDER_NATIVE_HOP_BY_HOP_HEADERS
+    }
+    receipt.finish("ok" if upstream.status_code < 400 else "error")
+    receipt.metadata["status_code"] = upstream.status_code
+    _record_native_passthrough_receipt(receipt)
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=response_headers,
+        media_type=upstream.headers.get("content-type"),
+    )
 
 
 @app.api_route(

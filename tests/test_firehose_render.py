@@ -82,11 +82,11 @@ def test_empty_status_sections_are_hidden_until_they_have_signal() -> None:
 def test_quick_test_snippets_use_ai_vivid_fish_host() -> None:
     html = firehose_render._render_quick_test()
 
-    assert "https://ai.vivid.fish/v1/chat/completions" in html
-    assert "https://ai.vivid.fish/v1/images/generations" in html
-    assert "https://ai.vivid.fish/v1/audio/speech" in html
-    assert "https://ai.vivid.fish/v1/audio/transcriptions" in html
-    assert "https://ai.vivid.fish/v1/videos" in html
+    assert "https://ai.vivid.fish/openai/v1/chat/completions" in html
+    assert "https://ai.vivid.fish/openai/v1/images/generations" in html
+    assert "https://ai.vivid.fish/openai/v1/audio/speech" in html
+    assert "https://ai.vivid.fish/openai/v1/audio/transcriptions" in html
+    assert "https://ai.vivid.fish/openai/v1/videos" in html
     assert "openai.vivid.fish" not in html
 
 

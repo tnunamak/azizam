@@ -46,6 +46,41 @@ Known surface, not worth first-class support yet.
 | Defer | Bedrock/Vertex full native APIs | Deferred | Hosted enterprise surfaces; too broad for the local-first wedge. |
 | Defer | Fine-tuning/training/admin APIs | Deferred | Not part of the gateway's first job. |
 
+## Mounted Public Namespaces
+
+The canonical protocol aliases are:
+
+```text
+/openai/v1       OpenAI-compatible API
+/anthropic/v1    Anthropic Messages subset
+/ollama/api      Ollama-compatible subset
+```
+
+The legacy-compatible convenience routes remain mounted for clients that cannot
+easily change their base URL shape:
+
+```text
+/v1              OpenAI-compatible convenience route
+/api             Ollama-compatible convenience route
+```
+
+Provider-native passthrough is not a root catch-all. It lives only under the
+gateway-native namespace:
+
+```text
+/gateway/v1/providers
+/gateway/v1/providers/{provider}
+/gateway/v1/providers/{provider}/{path...}
+```
+
+The first two routes are discovery: they list provider lanes projected through
+the caller's App profile policy and return metadata for a single provider. Raw
+passthrough itself is reserved for the deeper
+`/gateway/v1/providers/{provider}/{path...}` route. Passthrough requests must
+use a key whose App profile allows the `provider-native` protocol, enables
+`native_passthrough`, and permits the requested provider and operation. There is
+no legacy root Tabby shim.
+
 ## Backend Adapter Targets
 
 | Priority | Backend API | Adapter Role |
@@ -82,7 +117,10 @@ Use two layers for local LLM backends:
 
 Examples:
 
-- Ollama native: `/api/tags`, `/api/show`, `/api/ps`, `/api/pull`, `/api/chat`, `/api/generate`, `keep_alive`.
+- Ollama native: `/ollama/api/tags`, `/ollama/api/show`, `/ollama/api/ps`,
+  `/ollama/api/pull`, `/ollama/api/chat`, `/ollama/api/generate`,
+  `keep_alive`. Convenience `/api/*` routes cover the currently supported
+  Ollama subset for existing clients.
 - LM Studio native: model list/load/unload/download APIs.
 - llama.cpp native: `/health`, `/props`, `/slots`, `/completion`, `/reranking`.
 - TabbyAPI admin: model load/unload and admin-key-protected operations.
@@ -153,7 +191,11 @@ Media and multimodal work should expose three layers:
    Images, image edits, audio speech, audio transcriptions, audio translations, embeddings, and eventually Responses image/audio behavior.
 
 2. Provider-native passthrough layer.
-   Explicit paths for backend-specific controls such as ComfyUI graph/queue operations, A1111 script args, ElevenLabs voice settings, or backend-specific audio/music parameters.
+   Explicit `/gateway/v1/providers/{provider}/{path...}` paths for
+   backend-specific controls such as ComfyUI graph/queue operations, A1111
+   script args, ElevenLabs voice settings, or backend-specific audio/music
+   parameters. These routes require `provider-native` protocol access and
+   policy-enabled native passthrough.
 
 3. Generic workflow/job layer.
    Durable jobs for video, music, sound effects, long-running image workflows, upscaling batches, and hosted queue-style media APIs.
@@ -181,6 +223,9 @@ GET /gateway/v1/workflows
 GET /gateway/v1/workflows/{workflow}
 GET /gateway/v1/receipts
 GET /gateway/v1/receipts/{request_id}
+GET /gateway/v1/providers
+GET /gateway/v1/providers/{provider}
+*   /gateway/v1/providers/{provider}/{path...}
 ```
 
 Additional discovery can layer onto this surface as more adapters and manifests

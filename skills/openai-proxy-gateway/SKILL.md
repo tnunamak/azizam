@@ -33,10 +33,11 @@ If a needed capability is absent or unavailable, stop and report that honestly.
 
 ## Choose The Surface
 
-- Use `/v1` OpenAI-compatible endpoints by default. This is the best-supported path and supports streaming chat.
-- Use `POST /v1/messages` only for Anthropic-shaped clients. It is non-streaming unless discovery metadata says otherwise.
-- Use `GET /api/tags`, `POST /api/chat`, or `POST /api/generate` only for Ollama-shaped clients. Chat/generate are non-streaming unless discovery metadata says otherwise.
+- Use `/openai/v1` OpenAI-compatible endpoints by default for new setup. `/v1` remains a convenience route for existing clients. This is the best-supported path and supports streaming chat.
+- Use `POST /anthropic/v1/messages` only for Anthropic-shaped clients. The legacy convenience route is `POST /v1/messages`. It is non-streaming unless discovery metadata says otherwise.
+- Use `GET /ollama/api/tags`, `POST /ollama/api/chat`, or `POST /ollama/api/generate` only for Ollama-shaped clients. `/api/*` remains a convenience route for clients hard-coded to an Ollama root. Chat/generate are non-streaming unless discovery metadata says otherwise.
 - Use `/gateway/v1/media/jobs` for durable long-running media jobs and `/gateway/v1/receipts` for diagnostics. For durable image generation, submit `{"intent":"image.generate","request":{...OpenAI image body...}}`, then poll `/gateway/v1/media/jobs/{job_id}` and fetch `/gateway/v1/media/jobs/{job_id}/content`.
+- Use `GET /gateway/v1/providers` and `GET /gateway/v1/providers/{provider}` to discover provider-native lanes. Use `/gateway/v1/providers/{provider}/{path...}` only when the App profile explicitly allows `provider-native` and `native_passthrough` for that provider and operation. There is no root Tabby shim.
 - Use `data[].asset_id` and signed `/v1/assets/{asset_id}/content` URLs when image outputs need to be reused by later gateway-aware calls.
 
 ## Auth Rules
@@ -98,16 +99,16 @@ Example JSON body shape:
 
 ## Common Calls
 
-- Chat: `POST /v1/chat/completions`
-- Embeddings: `POST /v1/embeddings`
-- TTS: `POST /v1/audio/speech`
-- STT: `POST /v1/audio/transcriptions`
-- Image generation: `POST /v1/images/generations`
+- Chat: `POST /openai/v1/chat/completions`
+- Embeddings: `POST /openai/v1/embeddings`
+- TTS: `POST /openai/v1/audio/speech`
+- STT: `POST /openai/v1/audio/transcriptions`
+- Image generation: `POST /openai/v1/images/generations`
 - Durable image generation: `POST /gateway/v1/media/jobs` with `intent: "image.generate"`
-- Image edit: `POST /v1/images/edits`
-- Audio/music/SFX generation: `POST /v1/audio/generate`
-- Video job submit/poll/fetch: `POST /v1/videos`, `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content`
-- Native discovery: `GET /gateway/v1/capabilities`, `GET /gateway/v1/workflows`
+- Image edit: `POST /openai/v1/images/edits`
+- Audio/music/SFX generation: `POST /openai/v1/audio/generate`
+- Video job submit/poll/fetch: `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content`
+- Native discovery: `GET /gateway/v1/capabilities`, `GET /gateway/v1/workflows`, `GET /gateway/v1/providers`
 
 ## Anti-Patterns
 

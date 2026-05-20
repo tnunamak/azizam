@@ -230,8 +230,13 @@ Not implemented:
 - A clean protocol frontend / canonical intent / router / scheduler split is
   not fully extracted yet; request handling still largely lives in `proxy.py`.
 - No backend adapter contract has been extracted.
-- Streaming Anthropic/Ollama frontends, Ollama model-management routes, and
-  native passthrough provider namespaces are not implemented.
+- Streaming Anthropic/Ollama frontends and Ollama model-management routes are
+  not implemented.
+- Provider-native passthrough is implemented only under
+  `/gateway/v1/providers/{provider}/{path...}` and remains policy-gated by App
+  profile. Provider-native discovery is implemented at `/gateway/v1/providers`
+  and `/gateway/v1/providers/{provider}`. There is no root catch-all or legacy
+  root Tabby shim.
 - Gateway media assets are not yet served by a generic durable
   `/gateway/v1/assets/*` surface; image media jobs use the existing signed
   `/v1/assets/{asset_id}/content` cache plus a job content endpoint.
@@ -902,7 +907,7 @@ The self-hoster-friendly flow that this architecture must support end-to-end:
 4. **App API key.** The owner mints an App Credential through `/admin/api`
    (`POST /admin/api/apps/{app_id}/keys`). The returned `opk_...` value is
    shown once and pasted into the App's config with base URL
-   `https://ai.vivid.fish/v1`.
+   `https://ai.vivid.fish/openai/v1` (`/v1` remains a convenience route).
 
 Rotation is per-App; the User and Profile survive key rotation. Dashboard
 key-minting should inherit the App's current Profile by default. Per-key
@@ -1064,6 +1069,10 @@ diagnostics, native passthrough, and extension schemas belong under
 `/gateway/v1/*` so clients never confuse gateway features for vendor-standard
 OpenAI behavior.
 
+The canonical protocol aliases are `/openai/v1`, `/anthropic/v1`, and
+`/ollama/api`. The `/v1` and `/api` routes are convenience mounts for clients
+that expect OpenAI or Ollama-style roots.
+
 Media job records should persist:
 
 - job ID
@@ -1090,19 +1099,23 @@ Local users need escape hatches, but they must be explicit.
 Use namespaced passthrough paths:
 
 ```text
-/gateway/v1/providers/ollama/*
-/gateway/v1/providers/tabby/*
-/gateway/v1/providers/comfyui/*
-/gateway/v1/providers/kobold/*
-/gateway/v1/providers/a1111/*
+/gateway/v1/providers
+/gateway/v1/providers/{provider}
+/gateway/v1/providers/{provider}/{path...}
 ```
+
+The collection and provider routes are discovery-only and should project lanes
+through the current App profile. Raw passthrough is reserved for the deeper
+`{path...}` route.
 
 Passthrough requirements:
 
 - disabled by default for non-admin keys
 - scoped per key
+- allowed only when the App profile includes the `provider-native` protocol
 - logged in route receipts
 - never accidentally exposed by a root catch-all
+- no legacy root Tabby shim
 - redacts credentials
 - clearly labeled as native/non-portable
 

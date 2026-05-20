@@ -2622,31 +2622,31 @@ def _render_quick_test() -> str:
     # these, but for self-hosted-stack users the local names are more honest.
     examples = [
         ("Chat completion",
-         'curl -s https://ai.vivid.fish/v1/chat/completions \\\n'
+         'curl -s https://ai.vivid.fish/openai/v1/chat/completions \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"default","messages":[{"role":"user","content":"hi"}]}\''),
         ("Image generation",
-         'curl -s https://ai.vivid.fish/v1/images/generations \\\n'
+         'curl -s https://ai.vivid.fish/openai/v1/images/generations \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"flux2-klein-4b","prompt":"a calico cat","size":"512x512"}\''),
         ("Text-to-speech",
-         'curl -s https://ai.vivid.fish/v1/audio/speech \\\n'
+         'curl -s https://ai.vivid.fish/openai/v1/audio/speech \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"voxtral-4b-tts","voice":"nova","input":"hello"}\' --output out.mp3'),
         ("Speech-to-text",
-         'curl -s https://ai.vivid.fish/v1/audio/transcriptions \\\n'
+         'curl -s https://ai.vivid.fish/openai/v1/audio/transcriptions \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -F "file=@audio.mp3" -F "model=parakeet-tdt-0.6b-v3"'),
         ("Video — text-to-video",
-         'curl -s https://ai.vivid.fish/v1/videos \\\n'
+         'curl -s https://ai.vivid.fish/openai/v1/videos \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"ltx-2.3-distilled","prompt":"a calico cat playing chess","seconds":5}\''),
         ("Video — image-to-video",
-         'curl -s https://ai.vivid.fish/v1/videos \\\n'
+         'curl -s https://ai.vivid.fish/openai/v1/videos \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"ltx-2.3-distilled","prompt":"camera dolly in","input_image_url":"…"}\''),

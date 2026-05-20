@@ -12,7 +12,7 @@ All examples assume:
 
 ```text
 Local base host:   http://127.0.0.1:5000
-Public base host:  https://openai.vivid.fish     # optional, when exposed
+Public base host:  https://ai.vivid.fish         # optional, when exposed
 Client API key:    opk_...                       # never commit, never log
 ```
 
@@ -38,27 +38,27 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | Path | Protocol | Notes |
 |---|---|---|
 | `GET /health` | — | Public, no auth. |
-| `POST /v1/chat/completions` | OpenAI Chat | Streaming + non-streaming. |
-| `POST /v1/completions` | OpenAI Completions | Legacy, supported. |
-| `POST /v1/embeddings` | OpenAI Embeddings | |
-| `GET /v1/models` | OpenAI Models | Aliases + backend models. |
-| `POST /v1/responses` | OpenAI Responses | Translator over chat completions; durable store. |
-| `GET /v1/responses/{id}` | OpenAI Responses | Read back. |
-| `DELETE /v1/responses/{id}` | OpenAI Responses | |
-| `POST /v1/images/generations` | OpenAI Images | Synchronous image generation; emits observational gateway receipts. |
-| `POST /v1/images/edits` | OpenAI Images | Emits observational gateway receipts. |
-| `GET /v1/images/{id}/content` | OpenAI Images | Asset retrieval. |
+| `POST /openai/v1/chat/completions` | OpenAI Chat | Streaming + non-streaming; `/v1/chat/completions` remains a convenience route. |
+| `POST /openai/v1/completions` | OpenAI Completions | Legacy, supported. |
+| `POST /openai/v1/embeddings` | OpenAI Embeddings | |
+| `GET /openai/v1/models` | OpenAI Models | Aliases + backend models. |
+| `POST /openai/v1/responses` | OpenAI Responses | Translator over chat completions; durable store. |
+| `GET /openai/v1/responses/{id}` | OpenAI Responses | Read back. |
+| `DELETE /openai/v1/responses/{id}` | OpenAI Responses | |
+| `POST /openai/v1/images/generations` | OpenAI Images | Synchronous image generation; emits observational gateway receipts. |
+| `POST /openai/v1/images/edits` | OpenAI Images | Emits observational gateway receipts. |
+| `GET /openai/v1/images/{id}/content` | OpenAI Images | Asset retrieval. |
 | `GET /v1/assets/{asset_id}/content` | Native | Signed generated-asset retrieval. |
 | `POST /gateway/v1/media/jobs` | Gateway media jobs | Durable async image generation when `intent` is `image.generate` and `request` carries the OpenAI image body. |
-| `POST /v1/audio/speech` | OpenAI Audio | TTS. |
-| `POST /v1/audio/transcriptions` | OpenAI Audio | STT. |
-| `GET /v1/voices`, `GET /v1/audio/voices` | OpenAI Audio | Voice list. |
-| `POST /v1/audio/generate`, `GET /v1/audio/models` | Native | Music/SFX/voice models. |
-| `POST /v1/videos`, `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content` | OpenAI-shaped video | |
+| `POST /openai/v1/audio/speech` | OpenAI Audio | TTS. |
+| `POST /openai/v1/audio/transcriptions` | OpenAI Audio | STT. |
+| `GET /openai/v1/voices`, `GET /openai/v1/audio/voices` | OpenAI Audio | Voice list. |
+| `POST /openai/v1/audio/generate`, `GET /openai/v1/audio/models` | Native | Music/SFX/voice models. |
+| `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | |
 | `GET /v1/status` | Admin | Operational status; requires admin auth. |
-| `POST /v1/messages` | Anthropic Messages | Non-streaming translator over chat completions. |
-| `GET /api/tags` | Ollama-compatible | Model list from configured catalog. |
-| `POST /api/chat`, `POST /api/generate` | Ollama-compatible | Non-streaming translators over chat completions. |
+| `POST /anthropic/v1/messages` | Anthropic Messages | Non-streaming translator over chat completions; `/v1/messages` remains a legacy convenience route. |
+| `GET /ollama/api/tags` | Ollama-compatible | Model list from configured catalog; `/api/tags` remains a convenience route. |
+| `POST /ollama/api/chat`, `POST /ollama/api/generate` | Ollama-compatible | Non-streaming translators over chat completions; `/api/*` remains a convenience route. |
 
 Gateway-native discovery, receipts, and media-job state (`gateway/api.py`) are
 mounted into the live app:
@@ -69,6 +69,8 @@ GET /gateway/v1/workflows/{id}
 GET /gateway/v1/capabilities
 GET /gateway/v1/extensions
 GET /gateway/v1/models/{model}/capabilities
+GET /gateway/v1/providers
+GET /gateway/v1/providers/{provider}
 GET /gateway/v1/receipts
 GET /gateway/v1/receipts/{request_id}
 POST /gateway/v1/media/jobs
@@ -374,7 +376,8 @@ Variants use existing route semantics:
 
 The Anthropic and Ollama frontends are live, but intentionally narrow:
 
-- Streaming is rejected on `/v1/messages`, `/api/chat`, and `/api/generate`.
+- Streaming is rejected on `/anthropic/v1/messages`, `/ollama/api/chat`, and
+  `/ollama/api/generate`.
   Use `stream: false` or omit streaming on these protocol surfaces.
 - Anthropic image/document/thinking blocks are rejected by the translator
   instead of silently dropped. Anthropic-native prompt caching markers and beta
@@ -391,27 +394,43 @@ For maximum compatibility, point general clients at the OpenAI-compatible
 surface and use the Anthropic/Ollama frontends only when a client specifically
 requires those protocols.
 
+Canonical protocol aliases:
+
+| Protocol | Canonical base | Convenience base |
+|---|---|---|
+| OpenAI-compatible | `http://127.0.0.1:5000/openai/v1` | `http://127.0.0.1:5000/v1` |
+| Anthropic Messages | `http://127.0.0.1:5000/anthropic/v1` | none |
+| Ollama-compatible | `http://127.0.0.1:5000/ollama/api` | `http://127.0.0.1:5000/api` |
+
+Provider-native discovery lives at `/gateway/v1/providers` and
+`/gateway/v1/providers/{provider}`; results are projected through the caller's
+App profile policy. Raw provider-native passthrough, when enabled for a key, is
+reserved for `/gateway/v1/providers/{provider}/{path...}`. It is not exposed by
+root paths, and there is no legacy root Tabby shim.
+
 ## Recipe: Open WebUI
 
 Open WebUI talks to any OpenAI-compatible server. The OpenAI provider is the
 best-supported path. Open WebUI's Ollama provider can use `/api/tags` and
-non-streaming `/api/chat`, but its model-management panels will fail because
-those routes are deliberately not implemented.
+non-streaming `/api/chat` through the convenience routes, but its
+model-management panels will fail because those routes are deliberately not
+implemented.
 
 **Settings → Connections → OpenAI:**
 
 ```text
-Base URL:  http://127.0.0.1:5000/v1
+Base URL:  http://127.0.0.1:5000/openai/v1
 API Key:   $OPENAI_PROXY_API_KEY
 ```
 
-Then refresh models; Open WebUI will call `GET /v1/models` and populate the
-selector with whatever aliases and backend models the proxy advertises.
+Then refresh models; Open WebUI will call the configured models endpoint and
+populate the selector with whatever aliases and backend models the proxy
+advertises.
 
 Smoke test from the same host:
 
 ```bash
-curl -s http://127.0.0.1:5000/v1/models \
+curl -s http://127.0.0.1:5000/openai/v1/models \
   -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
   | head -c 400
 ```
@@ -436,7 +455,7 @@ endpoints:
   custom:
     - name: "openai-proxy"
       apiKey: "${OPENAI_PROXY_API_KEY}"
-      baseURL: "http://127.0.0.1:5000/v1"
+      baseURL: "http://127.0.0.1:5000/openai/v1"
       models:
         default: ["auto"]
         fetch: true
@@ -449,9 +468,9 @@ Set `OPENAI_PROXY_API_KEY` in the LibreChat `.env`. Do not paste the literal
 
 Expected unsupported features:
 
-- LibreChat's Anthropic provider block can target `POST /v1/messages` if that
-  provider can run non-streaming. If LibreChat forces streaming for the flow,
-  route Claude-shaped traffic through the OpenAI Chat surface instead.
+- LibreChat's Anthropic provider block can target `POST /anthropic/v1/messages`
+  if that provider can run non-streaming. If LibreChat forces streaming for the
+  flow, route Claude-shaped traffic through the OpenAI Chat surface instead.
 - Plugin/Tools that hit OpenAI-only endpoints (e.g. assistant beta) — the
   proxy does not implement Assistants; the Responses surface is the closest
   live equivalent.
@@ -467,7 +486,7 @@ Expected unsupported features:
       "title": "Local Proxy",
       "provider": "openai",
       "model": "auto",
-      "apiBase": "http://127.0.0.1:5000/v1",
+      "apiBase": "http://127.0.0.1:5000/openai/v1",
       "apiKey": "$OPENAI_PROXY_API_KEY"
     }
   ],
@@ -475,13 +494,13 @@ Expected unsupported features:
     "title": "Local Proxy (autocomplete)",
     "provider": "openai",
     "model": "auto",
-    "apiBase": "http://127.0.0.1:5000/v1",
+    "apiBase": "http://127.0.0.1:5000/openai/v1",
     "apiKey": "$OPENAI_PROXY_API_KEY"
   },
   "embeddingsProvider": {
     "provider": "openai",
     "model": "auto",
-    "apiBase": "http://127.0.0.1:5000/v1",
+    "apiBase": "http://127.0.0.1:5000/openai/v1",
     "apiKey": "$OPENAI_PROXY_API_KEY"
   }
 }
@@ -492,11 +511,11 @@ substitutes `$OPENAI_PROXY_API_KEY` from environment at load time.
 
 Expected unsupported features:
 
-- Continue's "Anthropic" provider can target `POST /v1/messages` only for
-  non-streaming calls. Continue commonly streams, so the OpenAI provider remains
-  the safer default.
-- Continue's Ollama provider works only for non-streaming `/api/chat` and
-  `/api/generate`. Model management and native backend options are not
+- Continue's "Anthropic" provider can target `POST /anthropic/v1/messages`
+  only for non-streaming calls. Continue commonly streams, so the OpenAI
+  provider remains the safer default.
+- Continue's Ollama provider works only for non-streaming `/ollama/api/chat`
+  and `/ollama/api/generate`. Model management and native backend options are not
   implemented.
 - Reranking provider — only works if a rerank-capable backend is configured.
 
@@ -506,7 +525,7 @@ These agents accept any OpenAI-compatible endpoint.
 
 ```text
 API Provider:   OpenAI Compatible
-Base URL:       http://127.0.0.1:5000/v1
+Base URL:       http://127.0.0.1:5000/openai/v1
 API Key:        $OPENAI_PROXY_API_KEY
 Model ID:       auto   (or whichever alias proxy_config.yml defines)
 ```
@@ -527,17 +546,19 @@ chat-completions pipeline:
 
 | Path | Status |
 |---|---|
-| `GET /api/tags` | Live; returns the proxy's configured model catalog. |
-| `POST /api/chat` | Live, non-streaming only. |
-| `POST /api/generate` | Live, non-streaming only. |
-| `/api/show`, `/api/ps`, `/api/pull`, `/api/push`, `/api/copy`, `/api/delete`, `/api/create`, `/api/embeddings` | Not implemented. |
+| `GET /ollama/api/tags` | Live; returns the proxy's configured model catalog. |
+| `POST /ollama/api/chat` | Live, non-streaming only. |
+| `POST /ollama/api/generate` | Live, non-streaming only. |
+| `/ollama/api/show`, `/ollama/api/ps`, `/ollama/api/pull`, `/ollama/api/push`, `/ollama/api/copy`, `/ollama/api/delete`, `/ollama/api/create`, `/ollama/api/embeddings` | Not implemented. |
 
-Point the Ollama base URL at `http://127.0.0.1:5000` with no `/v1` suffix.
-Send `Authorization: Bearer $OPENAI_PROXY_API_KEY`; this is not a vanilla
+Point the Ollama base URL at `http://127.0.0.1:5000/ollama` when the client
+supports a pathful base URL. For clients hard-coded to `/api`, use
+`http://127.0.0.1:5000` and the convenience `/api` routes. Send
+`Authorization: Bearer $OPENAI_PROXY_API_KEY`; this is not a vanilla
 unauthenticated Ollama daemon.
 
 ```bash
-curl -fsS http://127.0.0.1:5000/api/tags \
+curl -fsS http://127.0.0.1:5000/ollama/api/tags \
   -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" | head -c 400
 ```
 
@@ -546,15 +567,15 @@ that depend on backend-native Ollama options.
 
 ## Recipe: Anthropic SDK clients
 
-The Anthropic Messages surface (`POST /v1/messages`) is live as a non-streaming
-translator over the canonical chat-completions pipeline:
+The Anthropic Messages surface (`POST /anthropic/v1/messages`) is live as a
+non-streaming translator over the canonical chat-completions pipeline:
 
 ```python
 import os
 from anthropic import Anthropic
 
 client = Anthropic(
-    base_url="http://127.0.0.1:5000",
+    base_url="http://127.0.0.1:5000/anthropic",
     api_key=os.environ["OPENAI_PROXY_API_KEY"],
 )
 
@@ -581,7 +602,7 @@ import os
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://127.0.0.1:5000/v1",
+    base_url="http://127.0.0.1:5000/openai/v1",
     api_key=os.environ["OPENAI_PROXY_API_KEY"],
 )
 
@@ -598,7 +619,7 @@ Node:
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "http://127.0.0.1:5000/v1",
+  baseURL: "http://127.0.0.1:5000/openai/v1",
   apiKey: process.env.OPENAI_PROXY_API_KEY,
 });
 
@@ -612,7 +633,7 @@ console.log(r.choices[0].message.content);
 Smoke test (no SDK):
 
 ```bash
-curl -s http://127.0.0.1:5000/v1/chat/completions \
+curl -s http://127.0.0.1:5000/openai/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"auto","messages":[{"role":"user","content":"ping"}]}' \

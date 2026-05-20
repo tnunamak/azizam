@@ -217,6 +217,45 @@ def _matches_any(value: str, allowed: frozenset[str]) -> bool:
     return value in allowed
 
 
+def _matches_native_operation(value: str, allowed: frozenset[str]) -> bool:
+    """Match native passthrough operations.
+
+    Native operation scopes are intentionally small: exact strings, ``*``,
+    method-wide scopes such as ``GET *``, and prefix scopes ending in ``*``.
+    Path-only legacy scopes (``/v1/models`` or ``v1/models``) also match a
+    method-qualified request such as ``GET /v1/models``.
+    """
+    if not allowed:
+        return True
+    if "*" in allowed or value in allowed:
+        return True
+
+    method: str | None = None
+    path = value
+    if " " in value:
+        method, path = value.split(" ", 1)
+        method = method.upper()
+        if f"{method} *" in allowed:
+            return True
+
+    path_variants = {path, path.lstrip("/"), f"/{path.lstrip('/')}"}
+    if path_variants & allowed:
+        return True
+
+    for scope in allowed:
+        if not scope.endswith("*"):
+            continue
+        prefix = scope[:-1]
+        if value.startswith(prefix):
+            return True
+        for variant in path_variants:
+            if variant.startswith(prefix):
+                return True
+            if variant.startswith(prefix.lstrip("/")):
+                return True
+    return False
+
+
 def _matches_any_tag(tags: frozenset[str], allowed: frozenset[str]) -> bool:
     return bool(tags & allowed)
 
@@ -376,7 +415,9 @@ def _evaluate_native(profile: AppProfile, request: PolicyRequest) -> PolicyDecis
     if (
         request.native_operation is not None
         and np.allowed_operations
-        and request.native_operation not in np.allowed_operations
+        and not _matches_native_operation(
+            request.native_operation, np.allowed_operations
+        )
     ):
         return _denied(
             profile,
