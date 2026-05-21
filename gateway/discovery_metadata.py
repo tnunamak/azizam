@@ -36,7 +36,6 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
             "/openai/v1/audio/speech",
             "/openai/v1/audio/transcriptions",
             "/openai/v1/audio/translations",
-            "/openai/v1/audio/generate",
             "/openai/v1/videos",
             "/v1/models",
             "/v1/chat/completions",
@@ -48,11 +47,11 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
             "/v1/audio/speech",
             "/v1/audio/transcriptions",
             "/v1/audio/translations",
-            "/v1/audio/generate",
             "/v1/videos",
         ],
         "limits": [
             "audio translations are registered but return an OpenAI-shaped unsupported_audio_translation error unless the local STT backend declares translation support",
+            "images variations are not exposed; document the route as unsupported if it is added before implementation",
         ],
     },
     {
@@ -132,8 +131,17 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
             "/gateway/v1/receipts",
             "/gateway/v1/media/jobs",
             "/gateway/v1/assets/{asset_id}",
+            "/gateway/v1/assets/{asset_id}/content",
+            "/openai/v1/audio/generate",
+            "/openai/v1/audio/models",
+            "/v1/audio/generate",
+            "/v1/audio/models",
             "/gateway/v1/providers",
             "/gateway/v1/providers/{provider}",
+        ],
+        "limits": [
+            "/openai/v1/audio/generate and /v1/audio/generate are gateway-native music/SFX generation routes, not OpenAI SDK-compatible audio endpoints",
+            "signed asset content URLs are bearerless capability URLs until expiry; asset metadata and input reuse remain API-key scoped",
         ],
     },
     {
@@ -238,6 +246,12 @@ def build_gateway_discovery_metadata(
                 "/llms.txt",
                 "/openapi.json",
             ],
+            "signed_capability_urls": [
+                "/v1/images/{id}/content",
+                "/v1/assets/{asset_id}/content",
+                "/gateway/v1/assets/{asset_id}/content",
+            ],
+            "signed_capability_url_contract": "Signed content URLs are bearerless capability URLs until expiry; metadata lookup and asset input reuse remain scoped to the minting API key.",
             "secret_handling": [
                 "Do not ask users to paste raw opk tokens into chat.",
                 "Use environment variables or local secret stores.",

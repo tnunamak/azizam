@@ -34,7 +34,10 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertEqual(protocols["openai"]["base_url_recipe"], "{base_url}/openai/v1")
         self.assertIn("/openai/v1/chat/completions", protocols["openai"]["endpoints"])
         self.assertIn("/openai/v1/audio/translations", protocols["openai"]["endpoints"])
+        self.assertNotIn("/openai/v1/audio/generate", protocols["openai"]["endpoints"])
+        self.assertNotIn("/v1/audio/generate", protocols["openai"]["endpoints"])
         self.assertIn("unsupported_audio_translation", " ".join(protocols["openai"]["limits"]))
+        self.assertIn("images variations", " ".join(protocols["openai"]["limits"]))
         self.assertEqual(protocols["anthropic"]["canonical_base_path"], "/anthropic/v1")
         self.assertEqual(protocols["anthropic"]["base_url_recipe"], "{base_url}/anthropic")
         self.assertIn("/anthropic/v1/models", protocols["anthropic"]["endpoints"])
@@ -61,6 +64,10 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         )
         self.assertIn("/gateway/v1/providers", protocols["gateway"]["endpoints"])
         self.assertIn("/gateway/v1/providers/{provider}", protocols["gateway"]["endpoints"])
+        self.assertIn("/openai/v1/audio/generate", protocols["gateway"]["endpoints"])
+        self.assertIn("/openai/v1/audio/models", protocols["gateway"]["endpoints"])
+        self.assertIn("gateway-native music/SFX", " ".join(protocols["gateway"]["limits"]))
+        self.assertIn("bearerless capability URLs", " ".join(protocols["gateway"]["limits"]))
         self.assertIn(
             "/gateway/v1/providers/{provider}/{path...}",
             protocols["provider-native"]["endpoints"],
@@ -72,6 +79,14 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         )
         self.assertIn("/openai/v1/*", metadata["auth"]["applies_to"])
         self.assertIn("/health", metadata["auth"]["public_without_auth"])
+        self.assertIn(
+            "/gateway/v1/assets/{asset_id}/content",
+            metadata["auth"]["signed_capability_urls"],
+        )
+        self.assertIn(
+            "bearerless capability URLs",
+            metadata["auth"]["signed_capability_url_contract"],
+        )
         self.assertEqual(
             metadata["recipes"]["openai"]["canonical_base_url"],
             "http://gw/openai/v1",

@@ -51,12 +51,12 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `GET /v1/assets/{asset_id}/content` | Native | Signed generated-asset retrieval. |
 | `GET /gateway/v1/assets/{asset_id}` | Gateway native | Generated-asset metadata and fresh signed content URL. |
 | `GET /gateway/v1/assets/{asset_id}/content` | Gateway native | Signed generated-asset retrieval through the native surface. |
-| `POST /gateway/v1/media/jobs` | Gateway media jobs | Durable async image generation when `intent` is `image.generate` and `request` carries the OpenAI image body. |
+| `POST /gateway/v1/media/jobs` | Gateway media jobs | Durable async image generation when `intent` is `image.generate` and `request` carries the OpenAI image body. Images variations are unsupported unless a route explicitly documents otherwise. |
 | `POST /openai/v1/audio/speech` | OpenAI Audio | TTS. |
 | `POST /openai/v1/audio/transcriptions` | OpenAI Audio | STT. |
 | `POST /openai/v1/audio/translations` | OpenAI Audio | Registered compatibility route; returns `unsupported_audio_translation` unless the local STT backend declares translation support. |
 | `GET /openai/v1/voices`, `GET /openai/v1/audio/voices` | OpenAI Audio | Voice list. |
-| `POST /openai/v1/audio/generate`, `GET /openai/v1/audio/models` | Native | Music/SFX/voice models. |
+| `POST /openai/v1/audio/generate`, `GET /openai/v1/audio/models` | Gateway native | Music/SFX/voice generation; not an OpenAI SDK-compatible audio endpoint. |
 | `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | |
 | `GET /v1/status` | Admin | Operational status; requires admin auth. |
 | `POST /anthropic/v1/messages` | Anthropic Messages | Translator over chat completions with SSE streaming; `/v1/messages` remains a legacy convenience route. |
