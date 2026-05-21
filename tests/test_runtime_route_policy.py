@@ -743,6 +743,74 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.status_code, 404, response.text)
         self.assertEqual(_CaptureForwardClient.urls, [])
 
+    def test_ollama_model_mutation_routes_require_auth(self) -> None:
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy, "AUTH_REGISTRY", {}
+        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            response = self.client.post("/api/pull", json={"name": "llama3"})
+
+        self.assertEqual(response.status_code, 401, response.text)
+
+    def test_ollama_model_mutation_routes_are_ollama_profile_gated(self) -> None:
+        openai_only = AppProfile(id="openai-only", protocols=frozenset({"openai"}))
+        blocked = AssertionError("runtime backend should not be called")
+
+        with authenticated_profile(openai_only), patch.object(
+            proxy.httpx, "AsyncClient", side_effect=blocked
+        ), patch.object(
+            proxy, "get_active_backend", AsyncMock(side_effect=blocked)
+        ), patch.object(
+            proxy, "ensure_target", AsyncMock(side_effect=blocked)
+        ):
+            response = self.client.post(
+                "/ollama/api/pull",
+                headers=AUTH_HEADERS,
+                json={"name": "llama3"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        body = response.json()
+        self.assertEqual(set(body), {"error"})
+        self.assertIn("protocol", body["error"])
+
+    def test_ollama_model_mutation_routes_return_unsupported_without_backend(self) -> None:
+        ollama_profile = AppProfile(id="ollama", protocols=frozenset({"ollama"}))
+        blocked = AssertionError("runtime backend should not be called")
+        routes = [
+            ("post", "/api/create", "/api/create", {"model": "local"}),
+            (
+                "post",
+                "/ollama/api/copy",
+                "/api/copy",
+                {"source": "llama3", "destination": "llama3-copy"},
+            ),
+            ("post", "/api/pull", "/api/pull", {"name": "llama3"}),
+            ("post", "/ollama/api/push", "/api/push", {"name": "llama3"}),
+            ("delete", "/api/delete", "/api/delete", {"name": "llama3"}),
+        ]
+
+        with authenticated_profile(ollama_profile), patch.object(
+            proxy.httpx, "AsyncClient", side_effect=blocked
+        ), patch.object(
+            proxy, "get_active_backend", AsyncMock(side_effect=blocked)
+        ), patch.object(
+            proxy, "ensure_target", AsyncMock(side_effect=blocked)
+        ):
+            for method, path, canonical_path, payload in routes:
+                response = self.client.request(
+                    method.upper(),
+                    path,
+                    headers=AUTH_HEADERS,
+                    json=payload,
+                )
+
+                self.assertEqual(response.status_code, 501, response.text)
+                body = response.json()
+                self.assertEqual(set(body), {"error"})
+                self.assertIn("unsupported operation", body["error"])
+                self.assertIn(canonical_path, body["error"])
+                self.assertIn("does not mutate local model files", body["error"])
+
     def test_provider_native_tabby_requires_native_passthrough_policy(self) -> None:
         profile = AppProfile(
             id="native-disabled",
