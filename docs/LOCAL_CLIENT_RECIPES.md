@@ -593,6 +593,17 @@ supports a pathful base URL. For clients hard-coded to `/api`, use
 `Authorization: Bearer $OPENAI_PROXY_API_KEY`; this is not a vanilla
 unauthenticated Ollama daemon.
 
+The chat and generate translators map common portable options such as
+`temperature`, `top_p`, `num_predict`, `seed`, `stop`, and OpenAI-compatible
+penalties into the canonical chat request. Backend-native controls such as
+`num_ctx`, `top_k`, and `repeat_penalty` stay explicit and fail rather than
+being silently ignored. Ollama `images` are translated to OpenAI-style
+multimodal content blocks and use the gateway's normal vision routing; if no
+vision backend is configured or permitted, the chat path returns a clear vision
+error. `raw: true` remains unsupported because Ollama raw prompting bypasses
+model templating in a way the canonical chat-completions pipeline cannot
+preserve exactly across backends.
+
 ```bash
 curl -fsS http://127.0.0.1:5000/ollama/api/tags \
   -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" | head -c 400

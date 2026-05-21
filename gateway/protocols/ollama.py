@@ -78,13 +78,17 @@ def chat_request_to_canonical(body: dict[str, Any]) -> dict[str, Any]:
             raise OllamaTranslationError(
                 f"messages[{i}].content must be a string"
             )
-        if msg.get("images"):
-            # Vision passthrough is a separate slice; refuse explicitly
-            # rather than silently dropping the modality.
-            raise OllamaTranslationError(
-                f"messages[{i}].images is not yet supported by the translator"
-            )
-        canonical_messages.append({"role": role, "content": content})
+        images = msg.get("images")
+        canonical_messages.append(
+            {
+                "role": role,
+                "content": _content_with_images(
+                    content,
+                    images,
+                    f"messages[{i}].images",
+                ),
+            }
+        )
 
     canonical: dict[str, Any] = {
         "model": model,
@@ -186,16 +190,16 @@ def generate_request_to_canonical(body: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(prompt, str):
         raise OllamaTranslationError("'prompt' must be a string")
 
-    if body.get("images"):
-        raise OllamaTranslationError(
-            "'images' on /api/generate is not yet supported by the translator"
-        )
-
     messages: list[dict[str, Any]] = []
     system = body.get("system")
     if isinstance(system, str) and system:
         messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+    messages.append(
+        {
+            "role": "user",
+            "content": _content_with_images(prompt, body.get("images"), "'images'"),
+        }
+    )
 
     canonical: dict[str, Any] = {
         "model": model,
@@ -464,6 +468,14 @@ _OLLAMA_TO_OPENAI_OPTIONS = {
     "frequency_penalty": "frequency_penalty",
 }
 
+_IMAGE_SIGNATURES: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"RIFF", "image/webp"),
+)
+
 # Ollama option keys we do not yet translate. The canonical request will
 # carry an annotation so the router can decide whether to refuse.
 _OLLAMA_OPTIONS_NATIVE_ONLY = frozenset(
@@ -520,6 +532,55 @@ def _apply_format(canonical: dict[str, Any], fmt: Any) -> None:
         }
         return
     raise OllamaTranslationError("'format' must be 'json' or a JSON schema object")
+
+
+def _content_with_images(
+    content: str,
+    images: Any,
+    field: str,
+) -> str | list[dict[str, Any]]:
+    if images is None or images == []:
+        return content
+    if not isinstance(images, list):
+        raise OllamaTranslationError(f"{field} must be a list of base64 strings")
+
+    blocks: list[dict[str, Any]] = []
+    if content:
+        blocks.append({"type": "text", "text": content})
+    for i, image in enumerate(images):
+        if not isinstance(image, str) or not image:
+            raise OllamaTranslationError(
+                f"{field}[{i}] must be a non-empty base64 string"
+            )
+        blocks.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": _data_url_from_ollama_image(image)},
+            }
+        )
+    return blocks
+
+
+def _data_url_from_ollama_image(image: str) -> str:
+    if image.startswith("data:image/"):
+        return image
+    return f"data:{_guess_image_media_type(image)};base64,{image}"
+
+
+def _guess_image_media_type(image: str) -> str:
+    import base64
+    import binascii
+
+    try:
+        head = base64.b64decode(image[:64], validate=False)
+    except (binascii.Error, ValueError):
+        return "image/jpeg"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+    for signature, media_type in _IMAGE_SIGNATURES:
+        if head.startswith(signature):
+            return media_type
+    return "image/jpeg"
 
 
 def _translate_tool_decl(tool: Any) -> dict[str, Any]:

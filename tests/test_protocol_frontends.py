@@ -453,15 +453,37 @@ class OllamaChatTranslationTests(unittest.TestCase):
         out = oll.chat_request_to_canonical(body)
         self.assertEqual(out["response_format"], {"type": "json_object"})
 
-    def test_chat_images_are_rejected(self) -> None:
+    def test_chat_images_translate_to_openai_multimodal_content(self) -> None:
         body = {
             "model": "llava",
             "messages": [
-                {"role": "user", "content": "what is this", "images": ["b64..."]}
+                {
+                    "role": "user",
+                    "content": "what is this",
+                    "images": ["iVBORw0KGgo="],
+                }
             ],
         }
-        with self.assertRaises(oll.OllamaTranslationError):
+        out = oll.chat_request_to_canonical(body)
+        self.assertEqual(
+            out["messages"][0]["content"],
+            [
+                {"type": "text", "text": "what is this"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+                },
+            ],
+        )
+
+    def test_chat_image_validation_fails_clearly(self) -> None:
+        body = {
+            "model": "llava",
+            "messages": [{"role": "user", "content": "x", "images": "b64..."}],
+        }
+        with self.assertRaises(oll.OllamaTranslationError) as ctx:
             oll.chat_request_to_canonical(body)
+        self.assertIn("images must be a list of base64 strings", str(ctx.exception))
 
     def test_chat_tools_translate(self) -> None:
         body = {
@@ -575,6 +597,25 @@ class OllamaGenerateTranslationTests(unittest.TestCase):
             {"model": "llama3", "prompt": "x", "raw": True}
         )
         self.assertTrue(out["__ollama_raw__"])
+
+    def test_generate_images_translate_to_openai_multimodal_content(self) -> None:
+        out = oll.generate_request_to_canonical(
+            {
+                "model": "llava",
+                "prompt": "describe",
+                "images": ["data:image/webp;base64,abc123"],
+            }
+        )
+        self.assertEqual(
+            out["messages"][0]["content"],
+            [
+                {"type": "text", "text": "describe"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/webp;base64,abc123"},
+                },
+            ],
+        )
 
     def test_canonical_response_to_generate(self) -> None:
         canonical = {
