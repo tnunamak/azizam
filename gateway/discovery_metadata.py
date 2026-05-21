@@ -18,6 +18,7 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
         "convenience_base_path": "/v1",
         "compatibility": "openai-compatible",
         "default": True,
+        "base_url_recipe": "{base_url}/openai/v1",
         "streaming": {
             "chat_completions": True,
             "responses": True,
@@ -55,6 +56,7 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
         "canonical_base_path": "/anthropic/v1",
         "compatibility": "anthropic-messages-subset",
         "default": False,
+        "base_url_recipe": "{base_url}/anthropic",
         "streaming": {"messages": True},
         "endpoints": ["/anthropic/v1/messages", "/v1/messages"],
         "limits": [
@@ -68,6 +70,7 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
         "convenience_base_path": "/api",
         "compatibility": "ollama-subset",
         "default": False,
+        "base_url_recipe": "{base_url}/ollama",
         "streaming": {"chat": True, "generate": True, "embed": False},
         "endpoints": [
             "/ollama/api/tags",
@@ -99,6 +102,7 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
         ],
         "limits": [
             "model catalog/status endpoints are projected from the gateway; model mutation endpoints return unsupported_operation",
+            "model lifecycle endpoints create/pull/push/copy/delete do not mutate local model files through the gateway",
             "backend-native options without portable meaning are rejected",
         ],
     },
@@ -107,6 +111,7 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
         "base_path": "/gateway/v1",
         "compatibility": "ai-gateway-native",
         "default": False,
+        "base_url_recipe": "{base_url}/gateway/v1",
         "streaming": {},
         "endpoints": [
             "/gateway/v1/capabilities",
@@ -123,12 +128,14 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
         "base_path": "/gateway/v1/providers",
         "compatibility": "provider-native-passthrough",
         "default": False,
+        "base_url_recipe": "{base_url}/gateway/v1/providers/{provider}",
         "streaming": {},
         "policy": [
             "requires provider-native protocol access",
             "requires native_passthrough enabled for the App profile",
             "provider and operation must be allowed by policy",
             "no root catch-all or legacy root Tabby shim",
+            "protocol frontend path collisions stay owned by the frontend; use /gateway/v1/providers/{provider}/{path...} for raw provider-native paths",
         ],
         "endpoints": [
             "/gateway/v1/providers",
@@ -145,12 +152,17 @@ def _join(base_url: str | None, path: str) -> str:
     return f"{base_url.rstrip('/')}{path}"
 
 
+def _base_url(base_url: str | None) -> str:
+    return (base_url or "{base_url}").rstrip("/")
+
+
 def build_gateway_discovery_metadata(
     *,
     base_url: str | None = None,
     service_name: str = "vivid-fish-ai-gateway",
 ) -> dict[str, Any]:
     """Return unauthenticated public metadata for agent/client discovery."""
+    root = _base_url(base_url)
     links = {
         "health": "/health",
         "login": "/login",
@@ -197,6 +209,22 @@ def build_gateway_discovery_metadata(
             "type": "bearer",
             "header": "Authorization",
             "token_prefix": "opk_",
+            "applies_to": [
+                "/openai/v1/*",
+                "/anthropic/v1/*",
+                "/ollama/api/*",
+                "/gateway/v1/*",
+                "/v1/*",
+                "/api/*",
+            ],
+            "public_without_auth": [
+                "/health",
+                "/.well-known/ai-gateway",
+                "/.well-known/openai-proxy",
+                "/.well-known/skills",
+                "/llms.txt",
+                "/openapi.json",
+            ],
             "secret_handling": [
                 "Do not ask users to paste raw opk tokens into chat.",
                 "Use environment variables or local secret stores.",
@@ -204,6 +232,52 @@ def build_gateway_discovery_metadata(
             ],
         },
         "protocols": list(PUBLIC_PROTOCOLS),
+        "recipes": {
+            "openai": {
+                "canonical_base_url": f"{root}/openai/v1",
+                "compatibility_base_url": f"{root}/v1",
+                "auth": "Authorization: Bearer $OPENAI_PROXY_API_KEY",
+                "models_url": f"{root}/openai/v1/models",
+                "chat_url": f"{root}/openai/v1/chat/completions",
+            },
+            "anthropic": {
+                "canonical_base_url": f"{root}/anthropic",
+                "messages_url": f"{root}/anthropic/v1/messages",
+                "auth": "x-api-key or Authorization bearer accepted by SDK/client; store the opk token outside prompts and config checked into git",
+                "notes": [
+                    "OpenAI-style /v1/messages remains a legacy convenience alias; prefer /anthropic/v1/messages.",
+                    "Image, document, thinking, prompt-cache, and beta-header semantics are not represented.",
+                ],
+            },
+            "ollama": {
+                "canonical_base_url": f"{root}/ollama",
+                "compatibility_base_url": root,
+                "tags_url": f"{root}/ollama/api/tags",
+                "chat_url": f"{root}/ollama/api/chat",
+                "auth": "Authorization: Bearer $OPENAI_PROXY_API_KEY; this is not an unauthenticated local Ollama daemon",
+                "unsupported_lifecycle": [
+                    "create",
+                    "pull",
+                    "push",
+                    "copy",
+                    "delete",
+                ],
+                "unsupported_lifecycle_note": "Lifecycle routes return unsupported_operation and never mutate local model files.",
+            },
+            "gateway": {
+                "canonical_base_url": f"{root}/gateway/v1",
+                "capabilities_url": f"{root}/gateway/v1/capabilities",
+                "providers_url": f"{root}/gateway/v1/providers",
+                "auth": "Authorization: Bearer $OPENAI_PROXY_API_KEY",
+            },
+            "provider_native": {
+                "discovery_url": f"{root}/gateway/v1/providers",
+                "provider_url": f"{root}/gateway/v1/providers/{{provider}}",
+                "passthrough_url_template": f"{root}/gateway/v1/providers/{{provider}}/{{path...}}",
+                "auth": "Authorization: Bearer $OPENAI_PROXY_API_KEY plus App profile native_passthrough permission",
+                "collision_strategy": "Canonical protocol frontends own /openai/v1, /anthropic/v1, /ollama/api, /v1, and /api. Provider-native passthrough is only under /gateway/v1/providers/{provider}/{path...}.",
+            },
+        },
         "links": links,
         "absolute_links": {
             key: _join(base_url, path) for key, path in links.items()
@@ -222,7 +296,8 @@ def build_gateway_discovery_metadata(
             ],
             "default_surface": "Use canonical /openai/v1 endpoints for new OpenAI-compatible setup; /v1 remains a convenience route for existing clients.",
             "protocol_aliases": "Use /anthropic/v1 for Anthropic Messages and /ollama/api for Ollama-compatible clients; /api remains an Ollama convenience route.",
-            "native_passthrough": "Use /gateway/v1/providers and /gateway/v1/providers/{provider} for provider discovery. Use /gateway/v1/providers/{provider}/{path...} only when the App profile explicitly allows provider-native native_passthrough.",
+            "native_passthrough": "Use /gateway/v1/providers and /gateway/v1/providers/{provider} for provider discovery. Use /gateway/v1/providers/{provider}/{path...} only when the App profile explicitly allows provider-native native_passthrough. Do not guess root provider prefixes.",
+            "ollama_lifecycle": "Ollama create, pull, push, copy, and delete are intentionally unsupported through the protocol frontend.",
             "debugging": "Use /gateway/v1/receipts to inspect accepted, rejected, and ignored workflow controls.",
         },
     }
@@ -274,9 +349,10 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         "4. Use /openai/v1 by default for new setup; /v1 remains available for existing OpenAI-compatible clients.",
         "5. Use /anthropic/v1 or /ollama/api only for clients that require those protocols; /api remains an Ollama convenience route.",
         "6. Use /gateway/v1/providers to discover provider-native lanes; use /gateway/v1/providers/{provider}/{path...} only for policy-gated native_passthrough; there is no root Tabby shim.",
-        "7. Fetch /gateway/v1/workflows before using extensions.com.vividfish.workflow controls.",
-        "8. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",
-        "9. Reuse generated images via data[].asset_id or signed /v1/assets/{asset_id}/content URLs when present; asset IDs are scoped to the minting App API key.",
+        "7. Ollama lifecycle routes create/pull/push/copy/delete return unsupported_operation and do not mutate model files.",
+        "8. Fetch /gateway/v1/workflows before using extensions.com.vividfish.workflow controls.",
+        "9. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",
+        "10. Reuse generated images via data[].asset_id or signed /v1/assets/{asset_id}/content URLs when present; asset IDs are scoped to the minting App API key.",
         "",
     ]
     return "\n".join(lines)

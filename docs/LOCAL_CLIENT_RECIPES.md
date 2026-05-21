@@ -413,8 +413,8 @@ Canonical protocol aliases:
 | Protocol | Canonical base | Convenience base |
 |---|---|---|
 | OpenAI-compatible | `http://127.0.0.1:5000/openai/v1` | `http://127.0.0.1:5000/v1` |
-| Anthropic Messages | `http://127.0.0.1:5000/anthropic/v1` | none |
-| Ollama-compatible | `http://127.0.0.1:5000/ollama/api` | `http://127.0.0.1:5000/api` |
+| Anthropic Messages | `http://127.0.0.1:5000/anthropic` for SDK base URL; concrete endpoint is `/anthropic/v1/messages` | none |
+| Ollama-compatible | `http://127.0.0.1:5000/ollama` for clients that append `/api`; concrete endpoints are under `/ollama/api/*` | `http://127.0.0.1:5000` for clients hard-coded to `/api/*` |
 
 Provider-native discovery lives at `/gateway/v1/providers` and
 `/gateway/v1/providers/{provider}`; results are projected through the caller's
@@ -423,6 +423,22 @@ reserved for `/gateway/v1/providers/{provider}/{path...}`. It is not exposed by
 root paths, and there is no legacy root Tabby shim. Passthrough preserves
 streamed response bodies such as SSE, NDJSON, and generated media rather than
 buffering the whole upstream response first.
+
+Collision strategy is intentionally simple: canonical protocol frontends own
+`/openai/v1`, `/anthropic/v1`, `/ollama/api`, plus the legacy convenience
+aliases `/v1` and `/api`. Provider-native passthrough never claims those roots.
+If a backend has its own `/v1/models`, `/api/tags`, `/queue`, or similar native
+path, call it through `/gateway/v1/providers/{provider}/{path...}` after
+discovering the provider id and confirming the App profile allows
+`native_passthrough`.
+
+Auth semantics are also uniform. `/health`, `/.well-known/ai-gateway`,
+`/.well-known/openai-proxy`, `/.well-known/skills`, `/llms.txt`, and
+`/openapi.json` are public discovery. Protocol frontends, gateway-native
+runtime APIs, and provider-native passthrough require
+`Authorization: Bearer $OPENAI_PROXY_API_KEY`. Some SDKs name that field
+`api_key`, `apiKey`, or `x-api-key`; the value is still the gateway `opk_...`
+token, not an upstream OpenAI, Anthropic, or Ollama credential.
 
 ## Recipe: Open WebUI
 
@@ -582,8 +598,14 @@ curl -fsS http://127.0.0.1:5000/ollama/api/tags \
   -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" | head -c 400
 ```
 
-Use the OpenAI-compatible surface for embeddings or clients that depend on
-backend-native Ollama options.
+Use the OpenAI-compatible surface for general-purpose clients. The Ollama
+frontend is a protocol adapter over gateway-owned model state, not a model
+lifecycle manager. These calls are explicitly unsupported and return an
+Ollama-shaped unsupported-operation error without touching local files:
+`/ollama/api/create`, `/ollama/api/pull`, `/ollama/api/push`,
+`/ollama/api/copy`, and `/ollama/api/delete` (and the matching `/api/*`
+convenience aliases). Manage downloads, Modelfiles, copies, and deletes in the
+backend service that actually owns the model directory.
 
 ## Recipe: Anthropic SDK clients
 

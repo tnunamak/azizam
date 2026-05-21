@@ -31,15 +31,26 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         protocols = {p["id"]: p for p in metadata["protocols"]}
         self.assertEqual(protocols["openai"]["canonical_base_path"], "/openai/v1")
         self.assertEqual(protocols["openai"]["convenience_base_path"], "/v1")
+        self.assertEqual(protocols["openai"]["base_url_recipe"], "{base_url}/openai/v1")
         self.assertIn("/openai/v1/chat/completions", protocols["openai"]["endpoints"])
         self.assertEqual(protocols["anthropic"]["canonical_base_path"], "/anthropic/v1")
+        self.assertEqual(protocols["anthropic"]["base_url_recipe"], "{base_url}/anthropic")
         self.assertIn("/anthropic/v1/messages", protocols["anthropic"]["endpoints"])
         self.assertEqual(protocols["ollama"]["canonical_base_path"], "/ollama/api")
         self.assertEqual(protocols["ollama"]["convenience_base_path"], "/api")
+        self.assertEqual(protocols["ollama"]["base_url_recipe"], "{base_url}/ollama")
         self.assertIn("/ollama/api/tags", protocols["ollama"]["endpoints"])
+        self.assertIn(
+            "create/pull/push/copy/delete",
+            " ".join(protocols["ollama"]["limits"]),
+        )
         self.assertEqual(
             protocols["provider-native"]["base_path"],
             "/gateway/v1/providers",
+        )
+        self.assertEqual(
+            protocols["provider-native"]["base_url_recipe"],
+            "{base_url}/gateway/v1/providers/{provider}",
         )
         self.assertIn("/gateway/v1/providers", protocols["gateway"]["endpoints"])
         self.assertIn("/gateway/v1/providers/{provider}", protocols["gateway"]["endpoints"])
@@ -48,6 +59,36 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
             protocols["provider-native"]["endpoints"],
         )
         self.assertIn("native_passthrough", " ".join(protocols["provider-native"]["policy"]))
+        self.assertIn(
+            "path collisions",
+            " ".join(protocols["provider-native"]["policy"]),
+        )
+        self.assertIn("/openai/v1/*", metadata["auth"]["applies_to"])
+        self.assertIn("/health", metadata["auth"]["public_without_auth"])
+        self.assertEqual(
+            metadata["recipes"]["openai"]["canonical_base_url"],
+            "http://gw/openai/v1",
+        )
+        self.assertEqual(
+            metadata["recipes"]["anthropic"]["messages_url"],
+            "http://gw/anthropic/v1/messages",
+        )
+        self.assertEqual(
+            metadata["recipes"]["ollama"]["canonical_base_url"],
+            "http://gw/ollama",
+        )
+        self.assertIn(
+            "pull",
+            metadata["recipes"]["ollama"]["unsupported_lifecycle"],
+        )
+        self.assertEqual(
+            metadata["recipes"]["provider_native"]["passthrough_url_template"],
+            "http://gw/gateway/v1/providers/{provider}/{path...}",
+        )
+        self.assertIn(
+            "/gateway/v1/providers/{provider}/{path...}",
+            metadata["recipes"]["provider_native"]["collision_strategy"],
+        )
         self.assertEqual(metadata["links"]["login"], "/login")
         self.assertEqual(metadata["links"]["user_portal"], "/")
         self.assertEqual(metadata["links"]["user_portal_alias"], "/me")
@@ -122,6 +163,8 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("/gateway/v1/providers/{provider}/{path...}", text)
         self.assertIn("native_passthrough", text)
         self.assertIn("no root Tabby shim", text)
+        self.assertIn("unsupported_operation", text)
+        self.assertIn("create/pull/push/copy/delete", text)
         self.assertIn("/v1/assets/{asset_id}/content", text)
         self.assertIn("Vivid Fish AI Gateway", text)
         self.assertIn("https://ai.vivid.fish", text)

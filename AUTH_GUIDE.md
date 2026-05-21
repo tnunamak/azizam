@@ -428,6 +428,16 @@ profile:
     audit: true
 ```
 
+Provider-native HTTP passthrough is deliberately namespaced below
+`/gateway/v1/providers/{provider}/{path...}`. Do not expose backend-native
+routes at `/v1`, `/api`, `/queue`, or other root prefixes. The protocol
+frontends keep those roots: OpenAI-compatible uses `/openai/v1` with `/v1` as a
+legacy convenience alias, Anthropic Messages uses `/anthropic/v1`, and
+Ollama-compatible uses `/ollama/api` with `/api` as a convenience alias. When a
+provider's native path collides with a frontend path, the frontend wins and the
+native call must go through `/gateway/v1/providers/{provider}/{path...}` with a
+profile that explicitly enables `native_passthrough`.
+
 ### Gateway-owned controls live under extensions
 
 Backend-native power (denoise, controlnet strength, model-specific knobs)
