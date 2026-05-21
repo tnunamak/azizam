@@ -60,7 +60,6 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
     def test_unregistered_provider_native_paths_stay_not_found(self) -> None:
         client = TestClient(proxy.app)
         for path in (
-            "/openai/v1/fine_tuning/jobs",
             "/anthropic/v1/unknown",
             "/ollama/api/unknown",
         ):
@@ -94,6 +93,8 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
             ("GET", "/api/ps", "ollama_ps"),
             ("GET", "/ollama/api/version", "ollama_version"),
             ("GET", "/api/version", "ollama_version"),
+            ("GET", "/openai/v1/fine_tuning/jobs", "openai_fine_tuning_unsupported"),
+            ("GET", "/v1/fine_tuning/jobs", "openai_fine_tuning_unsupported"),
             ("POST", "/ollama/api/create", "ollama_create"),
             ("POST", "/api/create", "ollama_create"),
             ("POST", "/ollama/api/copy", "ollama_copy"),
