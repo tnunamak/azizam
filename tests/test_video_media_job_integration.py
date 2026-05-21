@@ -93,6 +93,27 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         assert private_payload is not None
         self.assertEqual(private_payload["body"]["prompt"], "private video prompt")
 
+    async def test_direct_video_submit_uses_resource_admission(self) -> None:
+        body = {
+            "model": "ltx-2.3",
+            "prompt": "private video prompt",
+            "seconds": 2,
+        }
+
+        with patch.object(proxy, "COMFY_ENABLED", False):
+            response = await proxy._submit_video_media_job(
+                request=_StubJsonRequest(body),  # type: ignore[arg-type]
+                body=body,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(
+            payload["error"]["code"],
+            "resource_admission_denied",
+        )
+        self.assertEqual(media_jobs.recent(path=self.db), [])
+
     async def test_executor_polls_video_route_and_stores_rendered_bytes(self) -> None:
         body = {"model": "ltx-2.3", "prompt": "private video prompt", "seconds": 2}
         with patch.object(proxy, "_schedule_video_media_job", lambda _job_id: True):

@@ -328,6 +328,111 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         assert stored is not None
         self.assertEqual(stored["intent"], "image.generate")
 
+    async def test_generic_media_jobs_rejects_when_comfy_resource_is_disabled(self) -> None:
+        body = {
+            "model": "flux2-klein-4b",
+            "prompt": "private prompt",
+        }
+
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "COMFY_ENABLED",
+            False,
+        ):
+            response = await proxy._dispatch_gateway_media_job_submission(
+                request=_StubJsonRequest({}),  # type: ignore[arg-type]
+                payload={"intent": "image.generate", "request": body},
+                audience="client",
+            )
+
+        assert response is not None
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["retry-after"], "30")
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(
+            payload["error"]["code"],
+            "resource_admission_denied",
+        )
+        self.assertEqual(
+            payload["error"]["message"],
+            "ComfyUI media backend disabled",
+        )
+        self.assertEqual(media_jobs.recent(path=self.db), [])
+
+    async def test_generic_media_jobs_rejects_when_configured_queue_is_full(self) -> None:
+        existing = media_jobs.MediaJob(
+            intent="video.generate",
+            request_id="existing_media",
+            status=media_jobs.STATUS_QUEUED,
+            metadata={"mode": "async_video_generation"},
+        )
+        media_jobs.create(existing, path=self.db)
+        body = {
+            "model": "flux2-klein-4b",
+            "prompt": "private prompt",
+        }
+
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "MEDIA_JOB_ADMISSION_CFG",
+            {"max_queue_depth": 1, "queue_retry_after_seconds": 9},
+        ):
+            response = await proxy._dispatch_gateway_media_job_submission(
+                request=_StubJsonRequest({}),  # type: ignore[arg-type]
+                payload={"intent": "image.generate", "request": body},
+                audience="client",
+            )
+
+        assert response is not None
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["retry-after"], "9")
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(
+            payload["error"]["message"],
+            "queue full: comfyui-media",
+        )
+        self.assertEqual(len(media_jobs.recent(path=self.db)), 1)
+
+    async def test_queue_admission_observes_at_least_the_configured_depth(self) -> None:
+        for index in range(3):
+            media_jobs.create(
+                media_jobs.MediaJob(
+                    intent="image.generate",
+                    request_id=f"existing_media_{index}",
+                    status=media_jobs.STATUS_QUEUED,
+                    metadata={"mode": "async_image_generation"},
+                ),
+                path=self.db,
+            )
+        body = {
+            "model": "flux2-klein-4b",
+            "prompt": "private prompt",
+        }
+
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "MEDIA_JOB_ADMISSION_CFG",
+            {
+                "max_queue_depth": 3,
+                "scan_limit": 1,
+                "queue_retry_after_seconds": 9,
+            },
+        ):
+            response = await proxy._dispatch_gateway_media_job_submission(
+                request=_StubJsonRequest({}),  # type: ignore[arg-type]
+                payload={"intent": "image.generate", "request": body},
+                audience="client",
+            )
+
+        assert response is not None
+        self.assertEqual(response.status_code, 503)
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(
+            payload["error"]["message"],
+            "queue full: comfyui-media",
+        )
+        self.assertEqual(len(media_jobs.recent(path=self.db)), 3)
+
     async def test_generic_media_jobs_rejects_unsupported_executable_intent(self) -> None:
         with patch.object(proxy, "AUTH_ENABLED", False):
             response = await proxy._dispatch_gateway_media_job_submission(

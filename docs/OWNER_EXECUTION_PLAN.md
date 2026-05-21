@@ -207,15 +207,21 @@ the narrowest points:
 
 - [x] `images_generations` and `images_edits` for handler-level image receipts
       after auth succeeds (profile-aware, post-auth, safe field-name capture)
-- [ ] `_build_image_response_payload` for final response metadata
-- [ ] `load_comfy_workflow` for preflight validation of workflow shape and
-      manifest drift
+- [x] `_build_image_response_payload` for final response metadata
+      (implemented in `proxy.py`; returns `created`, `data[]`, durable
+      `asset_id`/`asset_url`, `media_type`, and requested `b64_json`/`url`)
+- [x] `load_comfy_workflow` for preflight validation of workflow shape
+      (shared by image/audio/video ComfyUI loaders via
+      `gateway/comfyui_workflow_validation.py`; UI/API manifest drift remains
+      covered by the existing workflow drift script rather than the hot path)
 - [x] `proxy_comfy_request` and `proxy_comfy_edit_request` for applying
       manifest bindings where node mutation already happens
 - [x] `_firehose_request_counter` only for coarse request counters, not receipt
       truth, because middleware should not read request bodies
-- [ ] status capability builders as source material for curated `/gateway/v1`
-      discovery, not as a raw payload to expose
+- [x] status capability builders as source material for curated `/gateway/v1`
+      discovery, not as a raw payload to expose (superseded by pure
+      `gateway/local_capabilities.py` `build_local_capabilities`, wired into
+      the gateway capability provider)
 
 Do not spread policy checks through handlers. Resolve profile/policy once, pass
 the decision into receipt and routing helpers, and keep client/admin/internal
@@ -251,6 +257,8 @@ Initial endpoints:
 - [x] generic `/gateway/v1/assets/*` serving
 - [x] pure audio/video media-job contract helpers for safe metadata, assets, and route-shaped status payloads
 - [x] pure resource-admission decision core for service availability, reserved resources, queue depth, and per-app concurrency facts
+- [x] live durable media-job admission for explicit ComfyUI service disablement
+      and operator-configured media queue/resource constraints
 
 Video durable integration contract: after `proxy.py` stores completed bytes via
 the generic asset cache and receives a `vid_*` handle, call

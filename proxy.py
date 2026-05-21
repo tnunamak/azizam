@@ -57,6 +57,7 @@ from gateway import (
     audio_media_jobs,
     media_jobs,
     receipt_store,
+    resource_admission_http,
     video_media_job_http,
     video_media_jobs,
 )
@@ -118,6 +119,7 @@ from gateway.chat_extensions import (
     validate_chat_completions_extensions,
     validate_responses_extensions,
 )
+from gateway.comfyui_workflow_validation import validate_comfyui_workflow_graph
 from gateway.discovery import WorkflowRegistry
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
@@ -413,6 +415,9 @@ IMAGE_BACKGROUND_REMOVAL_CFG = images_cfg.get("background_removal", {}) or {}
 IMAGE_BACKGROUND_REMOVAL_ENABLED = bool_from_config(IMAGE_BACKGROUND_REMOVAL_CFG.get("enabled"), True)
 IMAGE_BACKGROUND_REMOVAL_TIMEOUT = float(IMAGE_BACKGROUND_REMOVAL_CFG.get("decision_timeout", 45))
 IMAGE_MEDIA_JOBS_CFG = images_cfg.get("media_jobs", {}) or {}
+GATEWAY_CFG = config.get("gateway", {}) or {}
+RESOURCE_ADMISSION_CFG = GATEWAY_CFG.get("resource_admission", {}) or {}
+MEDIA_JOB_ADMISSION_CFG = RESOURCE_ADMISSION_CFG.get("media_jobs", {}) or {}
 IMAGE_MEDIA_JOB_PAYLOAD_DIR = Path(IMAGE_MEDIA_JOBS_CFG.get(
     "payload_dir",
     str(Path(__file__).parent / "data" / "image_media_jobs"),
@@ -2683,6 +2688,13 @@ def load_comfy_workflow(model_name: str) -> Optional[dict]:
         return None
     with open(workflow_path) as f:
         workflow = json.load(f)
+    errors = validate_comfyui_workflow_graph(workflow)
+    if errors:
+        print(
+            f"[proxy] invalid ComfyUI workflow {workflow_path}: {'; '.join(errors)}",
+            flush=True,
+        )
+        return None
     ui = _load_ui_workflow(workflow_path)
     if ui is not None:
         workflow["__ui_workflow__"] = ui
@@ -5690,6 +5702,13 @@ def _load_video_workflow_file(workflow_cfg: dict) -> Optional[dict]:
         return None
     with open(p) as f:
         workflow = json.load(f)
+    errors = validate_comfyui_workflow_graph(workflow)
+    if errors:
+        print(
+            f"[proxy] invalid video ComfyUI workflow {p}: {'; '.join(errors)}",
+            flush=True,
+        )
+        return None
     ui = _load_ui_workflow(p)
     if ui is not None:
         workflow["__ui_workflow__"] = ui
@@ -11017,6 +11036,113 @@ def _image_generation_body_from_media_job_payload(
     }
 
 
+_MEDIA_JOB_QUEUE_KEY = "comfyui-media"
+_MEDIA_JOB_SUPPORTED_INTENTS = frozenset({
+    "image.generate",
+    "audio.generate",
+    "music.generate",
+    "sfx.generate",
+    INTENT_VIDEO_GENERATE,
+})
+_MEDIA_JOB_RESOURCE_CLASS_BY_INTENT = {
+    "image.generate": "image",
+    "audio.generate": "audio",
+    "music.generate": "audio",
+    "sfx.generate": "audio",
+    INTENT_VIDEO_GENERATE: "video",
+}
+
+
+def _optional_int_config(mapping: Mapping[str, Any], key: str) -> int | None:
+    value = mapping.get(key)
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        print(f"[proxy] ignoring non-integer {key} in media job admission config", flush=True)
+        return None
+    return max(0, parsed)
+
+
+def _string_tuple_config(mapping: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    value = mapping.get(key)
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)):
+        items = [str(value)]
+    elif isinstance(value, Mapping):
+        return ()
+    elif isinstance(value, Iterable):
+        items = [str(item) for item in value]
+    else:
+        return ()
+    return tuple(item.strip() for item in items if item.strip())
+
+
+def _media_job_queue_depth(max_queue_depth: int | None = None) -> int:
+    configured_scan_limit = _optional_int_config(MEDIA_JOB_ADMISSION_CFG, "scan_limit") or 1000
+    scan_limit = max(configured_scan_limit, max_queue_depth or 0)
+    depth = 0
+    for status_value in (media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING):
+        try:
+            rows = media_jobs.recent(
+                limit=scan_limit,
+                audience="internal",
+                status=status_value,
+                path=media_jobs.DB_PATH,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[proxy] media job admission load read failed: {exc}", flush=True)
+            continue
+        depth += sum(
+            1
+            for row in rows
+            if str(row.get("intent") or "") in _MEDIA_JOB_SUPPORTED_INTENTS
+        )
+    return depth
+
+
+def _media_job_admission_response(intent: str) -> Response | None:
+    resource_class = _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
+    service_reasons = () if COMFY_ENABLED else ("ComfyUI media backend disabled",)
+    max_queue_depth = _optional_int_config(MEDIA_JOB_ADMISSION_CFG, "max_queue_depth")
+    decision = resource_admission_http.advise_route_admission(
+        intent=intent,
+        service_available=COMFY_ENABLED,
+        service_retry_after=30 if not COMFY_ENABLED else None,
+        service_reasons=service_reasons,
+        resource_class=resource_class,
+        queue_key=_MEDIA_JOB_QUEUE_KEY,
+        requires_gpu=True,
+        disabled_intents=_string_tuple_config(MEDIA_JOB_ADMISSION_CFG, "disabled_intents"),
+        disabled_resource_classes=_string_tuple_config(
+            MEDIA_JOB_ADMISSION_CFG,
+            "disabled_resource_classes",
+        ),
+        reserved_tokens=_string_tuple_config(MEDIA_JOB_ADMISSION_CFG, "reserved_tokens"),
+        max_queue_depth=max_queue_depth,
+        constraint_retry_after=_optional_int_config(
+            MEDIA_JOB_ADMISSION_CFG,
+            "retry_after_seconds",
+        ),
+        queue_depths={_MEDIA_JOB_QUEUE_KEY: _media_job_queue_depth(max_queue_depth)},
+        load_retry_after=_optional_int_config(
+            MEDIA_JOB_ADMISSION_CFG,
+            "queue_retry_after_seconds",
+        ) or 30,
+    )
+    if decision.allowed:
+        return None
+    advised = resource_admission_http.admission_http_response(decision)
+    return Response(
+        content=json.dumps(advised.body),
+        status_code=advised.status_code,
+        media_type="application/json",
+        headers=dict(advised.headers),
+    )
+
+
 _AUDIO_MEDIA_JOB_INTENTS = frozenset({"audio.generate", "music.generate", "sfx.generate"})
 _audio_media_job_tasks: set[asyncio.Task] = set()
 _audio_media_job_scheduled: set[str] = set()
@@ -11298,6 +11424,9 @@ async def _submit_audio_media_job(
             status_code=400,
             media_type="application/json",
         )
+    admission_response = _media_job_admission_response(intent)
+    if admission_response is not None:
+        return admission_response
     job = audio_media_jobs.audio_job_from_request(
         body,
         request_id=request_id,
@@ -11787,6 +11916,9 @@ async def _submit_video_media_job(
     if error_response is not None:
         return error_response
     assert workflow_name is not None
+    admission_response = _media_job_admission_response(INTENT_VIDEO_GENERATE)
+    if admission_response is not None:
+        return admission_response
 
     profile = _profile_for_auth_context(auth_context)
     request_id = f"vidjob_{uuid.uuid4().hex}"
@@ -11991,6 +12123,10 @@ async def gateway_image_generations_media_job(request: Request):
         response = _policy_denied_response(decision)
         finish_image_route_receipt(receipt, response)
         return response
+    admission_response = _media_job_admission_response("image.generate")
+    if admission_response is not None:
+        finish_image_route_receipt(receipt, admission_response)
+        return admission_response
 
     profile = _profile_for_auth_context(auth_context)
     job = media_jobs.MediaJob(
@@ -12465,6 +12601,13 @@ def _load_audio_workflow_file(workflow_cfg: dict):
         return None
     with open(p) as f:
         workflow = json.load(f)
+    errors = validate_comfyui_workflow_graph(workflow)
+    if errors:
+        print(
+            f"[proxy] invalid audio ComfyUI workflow {p}: {'; '.join(errors)}",
+            flush=True,
+        )
+        return None
     return workflow
 
 

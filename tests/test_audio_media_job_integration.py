@@ -108,6 +108,28 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["error"]["type"], "invalid_request_error")
         self.assertIn("Unknown audio model", body["error"]["message"])
 
+    async def test_direct_audio_submit_uses_resource_admission(self) -> None:
+        body = {
+            "model": "tangoflux",
+            "prompt": "private prompt",
+            "duration": 8,
+        }
+
+        with patch.object(proxy, "COMFY_ENABLED", False):
+            response = await proxy._submit_audio_media_job(
+                request=_StubJsonRequest(body),  # type: ignore[arg-type]
+                intent="audio.generate",
+                body=body,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(
+            payload["error"]["code"],
+            "resource_admission_denied",
+        )
+        self.assertEqual(media_jobs.recent(path=self.db), [])
+
     async def test_executor_uses_audio_route_and_stores_returned_bytes_as_audio_asset(self) -> None:
         body = {
             "model": "tangoflux",
