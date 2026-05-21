@@ -96,10 +96,9 @@ def _coerce_content_to_text(content: Any) -> str:
             if isinstance(c, str):
                 parts.append(c)
             elif isinstance(c, dict):
-                # Responses content part types: input_text, output_text, input_image,
-                # input_file, refusal. We extract text from text-bearing types and
-                # drop the rest (vision support is on the downstream backend's roadmap,
-                # not the translator's).
+                # Responses content part types: input_text, output_text,
+                # input_image, input_file, refusal. This text flattener is
+                # used for non-vision contexts, so non-text parts are skipped.
                 t = c.get("type")
                 if t in ("input_text", "output_text", "text"):
                     txt = c.get("text", "")
@@ -114,6 +113,56 @@ def _coerce_content_to_text(content: Any) -> str:
         # Single-part dict.
         return _coerce_content_to_text([content])
     return str(content)
+
+
+def _content_to_chat_content(content: Any) -> Any:
+    """Map Responses message content to Chat Completions content.
+
+    Text-only content stays a plain string to preserve the existing request
+    shape. Multimodal content becomes OpenAI chat content parts so the chat
+    route can detect and forward vision inputs.
+    """
+    if not isinstance(content, list):
+        return _coerce_content_to_text(content)
+
+    parts: list[dict] = []
+    for c in content:
+        if isinstance(c, str):
+            if c:
+                parts.append({"type": "text", "text": c})
+            continue
+        if not isinstance(c, dict):
+            text = str(c)
+            if text:
+                parts.append({"type": "text", "text": text})
+            continue
+        t = c.get("type")
+        if t in ("input_text", "output_text", "text"):
+            text = c.get("text", "")
+            if isinstance(text, str) and text:
+                parts.append({"type": "text", "text": text})
+            continue
+        if t in ("input_image", "image_url", "image"):
+            image_url = c.get("image_url") or c.get("url")
+            detail = c.get("detail")
+            if isinstance(image_url, dict):
+                if not isinstance(detail, str):
+                    detail = image_url.get("detail")
+                image_url = image_url.get("url") or image_url.get("image_url")
+            if isinstance(image_url, str) and image_url:
+                image_part: dict = {"type": "image_url", "image_url": {"url": image_url}}
+                if isinstance(detail, str) and detail:
+                    image_part["image_url"]["detail"] = detail
+                parts.append(image_part)
+            continue
+        if t == "refusal":
+            refusal = c.get("refusal", "")
+            if isinstance(refusal, str) and refusal:
+                parts.append({"type": "text", "text": refusal})
+
+    if not any(part.get("type") == "image_url" for part in parts):
+        return "".join(part.get("text", "") for part in parts if part.get("type") == "text")
+    return parts
 
 
 def _input_item_to_messages(item: dict) -> list[dict]:
@@ -135,8 +184,7 @@ def _input_item_to_messages(item: dict) -> list[dict]:
         # Chat Completions uses "system" not "developer". Map developer->system.
         if role == "developer":
             role = "system"
-        text = _coerce_content_to_text(item.get("content"))
-        return [{"role": role, "content": text}]
+        return [{"role": role, "content": _content_to_chat_content(item.get("content"))}]
     if itype == "function_call":
         # Responses assistant tool call -> Chat assistant message with tool_calls.
         call_id = item.get("call_id") or item.get("id") or f"call_{secrets.token_hex(8)}"
