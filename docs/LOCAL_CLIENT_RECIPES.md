@@ -47,6 +47,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `DELETE /openai/v1/responses/{id}` | OpenAI Responses | |
 | `POST /openai/v1/images/generations` | OpenAI Images | Synchronous image generation; emits observational gateway receipts. |
 | `POST /openai/v1/images/edits` | OpenAI Images | Emits observational gateway receipts. |
+| `POST /openai/v1/images/variations` | OpenAI Images | Registered compatibility route; returns `unsupported_image_variations`. |
 | `GET /openai/v1/images/{id}/content` | OpenAI Images | Asset retrieval. |
 | `GET /v1/assets/{asset_id}/content` | Native | Signed generated-asset retrieval. |
 | `GET /gateway/v1/assets/{asset_id}` | Gateway native | Generated-asset metadata and fresh signed content URL. |
@@ -57,6 +58,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /openai/v1/audio/translations` | OpenAI Audio | Registered compatibility route; returns `unsupported_audio_translation` unless the local STT backend declares translation support. |
 | `GET /openai/v1/voices`, `GET /openai/v1/audio/voices` | OpenAI Audio | Voice list. |
 | `POST /openai/v1/audio/generate`, `GET /openai/v1/audio/models` | Gateway native | Music/SFX/voice generation; not an OpenAI SDK-compatible audio endpoint. |
+| `GET/POST /openai/v1/assistants`, `/files`, `/batches`, `/fine_tuning/*`, `/realtime/*` | OpenAI compatibility stubs | Registered compatibility routes; return `unsupported_operation`. |
 | `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | |
 | `GET /v1/status` | Admin | Operational status; requires admin auth. |
 | `POST /anthropic/v1/messages` | Anthropic Messages | Translator over chat completions with SSE streaming; `/v1/messages` remains a legacy convenience route. |
@@ -721,9 +723,9 @@ completions plus the Responses object shape.
 
 Expected unsupported features:
 
-- Assistants API — not implemented; use Responses.
-- Fine-tuning, files, batches — not implemented.
-- Realtime API — not implemented.
+- Assistants API — registered compatibility routes return `unsupported_operation`; use Responses.
+- Fine-tuning, files, batches — registered compatibility routes return `unsupported_operation`.
+- Realtime API — registered compatibility routes return `unsupported_operation`.
 
 ## Discovery and Debugging: `/gateway/v1/*`
 

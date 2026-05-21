@@ -309,6 +309,45 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(body["error"]["type"], "permission_error")
         self.assertEqual(body["error"]["code"], "policy_denied")
 
+    def test_advertised_unsupported_openai_api_stubs_do_not_404(self) -> None:
+        cases = [
+            ("GET", "/v1/assistants"),
+            ("POST", "/openai/v1/assistants"),
+            ("GET", "/v1/files"),
+            ("POST", "/openai/v1/files"),
+            ("GET", "/v1/files/file_123"),
+            ("DELETE", "/openai/v1/files/file_123"),
+            ("GET", "/v1/batches"),
+            ("POST", "/openai/v1/batches"),
+            ("GET", "/v1/batches/batch_123"),
+            ("POST", "/openai/v1/batches/batch_123/cancel"),
+            ("GET", "/v1/fine_tuning/jobs"),
+            ("POST", "/openai/v1/fine_tuning/jobs"),
+            ("GET", "/v1/realtime"),
+            ("POST", "/openai/v1/realtime/sessions"),
+        ]
+
+        for method, path in cases:
+            with self.subTest(method=method, path=path):
+                resp = self.client.request(method, path, json={} if method == "POST" else None)
+
+            self.assertEqual(resp.status_code, 400)
+            body = resp.json()
+            self.assertEqual(body["error"]["type"], "invalid_request_error")
+            self.assertEqual(body["error"]["code"], "unsupported_operation")
+            self.assertIn("not implemented", body["error"]["message"])
+
+    def test_unsupported_openai_api_stubs_still_require_auth(self) -> None:
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy,
+            "AUTH_REGISTRY",
+            {},
+        ), patch.object(proxy, "refresh_auth_registry", return_value=None):
+            resp = self.client.get("/v1/files")
+
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["error"]["type"], "authentication_error")
+
     def test_translation_route_forwards_to_backend_when_capability_declared(self) -> None:
         captured = {}
 

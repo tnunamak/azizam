@@ -14975,6 +14975,97 @@ async def embeddings(request: Request):
     return await proxy_request(request, "v1/embeddings", mapped_route=True)
 
 
+def _openai_unsupported_api_response(api_name: str) -> Response:
+    return openai_error_response(
+        f"{api_name} is not implemented by this local gateway.",
+        status_code=400,
+        error_type="invalid_request_error",
+        code="unsupported_operation",
+    )
+
+
+async def _openai_unsupported_api(request: Request, canonical_path: str, api_name: str) -> Response:
+    auth_context = authenticate_request(request, canonical_path)
+    if isinstance(auth_context, Response):
+        return auth_context
+    return _openai_unsupported_api_response(api_name)
+
+
+@app.api_route(
+    "/openai/v1/assistants{rest:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    include_in_schema=False,
+)
+@app.api_route(
+    "/v1/assistants{rest:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    include_in_schema=False,
+)
+async def openai_assistants_unsupported(request: Request, rest: str = "") -> Response:
+    """OpenAI Assistants compatibility surface - explicitly unsupported."""
+    return await _openai_unsupported_api(request, "/v1/assistants", "Assistants API")
+
+
+@app.api_route(
+    "/openai/v1/files{rest:path}",
+    methods=["GET", "POST", "DELETE"],
+    include_in_schema=False,
+)
+@app.api_route(
+    "/v1/files{rest:path}",
+    methods=["GET", "POST", "DELETE"],
+    include_in_schema=False,
+)
+async def openai_files_unsupported(request: Request, rest: str = "") -> Response:
+    """OpenAI Files compatibility surface - explicitly unsupported."""
+    return await _openai_unsupported_api(request, "/v1/files", "Files API")
+
+
+@app.api_route(
+    "/openai/v1/batches{rest:path}",
+    methods=["GET", "POST", "DELETE"],
+    include_in_schema=False,
+)
+@app.api_route(
+    "/v1/batches{rest:path}",
+    methods=["GET", "POST", "DELETE"],
+    include_in_schema=False,
+)
+async def openai_batches_unsupported(request: Request, rest: str = "") -> Response:
+    """OpenAI Batches compatibility surface - explicitly unsupported."""
+    return await _openai_unsupported_api(request, "/v1/batches", "Batches API")
+
+
+@app.api_route(
+    "/openai/v1/fine_tuning{rest:path}",
+    methods=["GET", "POST", "DELETE"],
+    include_in_schema=False,
+)
+@app.api_route(
+    "/v1/fine_tuning{rest:path}",
+    methods=["GET", "POST", "DELETE"],
+    include_in_schema=False,
+)
+async def openai_fine_tuning_unsupported(request: Request, rest: str = "") -> Response:
+    """OpenAI Fine-tuning compatibility surface - explicitly unsupported."""
+    return await _openai_unsupported_api(request, "/v1/fine_tuning", "Fine-tuning API")
+
+
+@app.api_route(
+    "/openai/v1/realtime{rest:path}",
+    methods=["GET", "POST", "DELETE"],
+    include_in_schema=False,
+)
+@app.api_route(
+    "/v1/realtime{rest:path}",
+    methods=["GET", "POST", "DELETE"],
+    include_in_schema=False,
+)
+async def openai_realtime_unsupported(request: Request, rest: str = "") -> Response:
+    """OpenAI Realtime compatibility surface - explicitly unsupported."""
+    return await _openai_unsupported_api(request, "/v1/realtime", "Realtime API")
+
+
 def _should_return_not_found_before_backend(request_path: str) -> bool:
     """Return True for unmatched public routes.
 
