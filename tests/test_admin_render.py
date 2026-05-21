@@ -390,6 +390,46 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("opk_</code>&nbsp;runtime App keys", html)
         self.assertIn("oak_</code>&nbsp;admin automation", html)
 
+    def test_services_show_resource_mode_queue_and_limits_when_provided(self) -> None:
+        snapshot = _snapshot()
+        snapshot["services"] = [
+            {
+                "key": "comfyui",
+                "name": "ComfyUI",
+                "role": "optional",
+                "capabilities": ["image", "video"],
+                "status": "degraded",
+                "runtime": "loaded workflow: sdxl",
+                "resource_mode": "GPU reserved",
+                "resource_summary": ["image disabled", "video disabled"],
+                "queue": {"running": 1, "pending": 4},
+                "resource_limits": {"max_concurrency": 1},
+            }
+        ]
+        html = render_admin_dashboard(snapshot)
+        self.assertIn("Mode / resources", html)
+        self.assertIn("GPU reserved", html)
+        self.assertIn("image disabled, video disabled", html)
+        self.assertIn("queue: running: 1; pending: 4", html)
+        self.assertIn("limits: max concurrency: 1", html)
+        self.assertNotIn("data-enable-service", html)
+        self.assertNotIn("data-disable-service", html)
+
+    def test_model_visibility_hides_empty_facts_and_shows_constraints(self) -> None:
+        snapshot = _snapshot()
+        snapshot["model_visibility"] = {
+            "mode": "current-loaded only",
+            "loaded_model": "qwen.gguf",
+            "list_behavior": "",
+            "route_behavior": None,
+            "constraints": ["Profile status: basic", "image/video disabled"],
+        }
+        html = render_admin_dashboard(snapshot)
+        self.assertIn("current-loaded only", html)
+        self.assertIn("Profile status: basic, image/video disabled", html)
+        self.assertNotIn("<dt>Models API</dt><dd></dd>", html)
+        self.assertNotIn("<dt>Routing</dt><dd></dd>", html)
+
     def test_profile_creation_is_template_first(self) -> None:
         html = render_admin_dashboard(_snapshot())
         profile_section = html[html.index('id="profiles"') : html.index('id="identity"')]

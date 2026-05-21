@@ -284,6 +284,22 @@ def _format_optional_list(value: Any) -> str:
     return _esc(value)
 
 
+def _format_key_value_summary(value: Any) -> str:
+    if not value:
+        return ""
+    if isinstance(value, Mapping):
+        parts = []
+        for key, item in value.items():
+            if item in (None, "", [], {}, ()):
+                continue
+            label = str(key).replace("_", " ")
+            parts.append(f"{label}: {item}")
+        return "; ".join(parts)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return ", ".join(str(item) for item in sorted(value) if item)
+    return str(value)
+
+
 def _profile_doc(record: Mapping[str, Any] | None) -> Mapping[str, Any]:
     if not record:
         return {}
@@ -624,6 +640,20 @@ def _service_row(record: Mapping[str, Any]) -> str:
     status_html = f'<span class="badge {status_class}">{_esc(status_value)}</span>'
     if note:
         status_html += f'<div class="cell-sub">{note}</div>'
+    resource_parts = []
+    resource_mode = _format_key_value_summary(record.get("resource_mode"))
+    resource_summary = _format_key_value_summary(record.get("resource_summary"))
+    queue = _format_key_value_summary(record.get("queue"))
+    resource_limits = _format_key_value_summary(record.get("resource_limits"))
+    if resource_mode:
+        resource_parts.append(f'<div class="cell-main">{_esc(resource_mode)}</div>')
+    if resource_summary:
+        resource_parts.append(f'<div class="cell-sub">{_esc(resource_summary)}</div>')
+    if queue:
+        resource_parts.append(f'<div class="cell-sub">queue: {_esc(queue)}</div>')
+    if resource_limits:
+        resource_parts.append(f'<div class="cell-sub">limits: {_esc(resource_limits)}</div>')
+    resources = "".join(resource_parts) or "—"
     return (
         "<tr>"
         f'<td><div class="cell-main">{name}</div><div class="cell-sub"><code>{key}</code></div></td>'
@@ -631,6 +661,7 @@ def _service_row(record: Mapping[str, Any]) -> str:
         f"<td>{capabilities}</td>"
         f"<td>{status_html}</td>"
         f"<td>{runtime}</td>"
+        f"<td>{resources}</td>"
         "</tr>"
     )
 
@@ -664,20 +695,29 @@ def _identity_mapping_row(record: Mapping[str, Any]) -> str:
 def _model_visibility_panel(model_visibility: Mapping[str, Any] | None) -> str:
     if not model_visibility:
         return ""
-    mode = _esc(model_visibility.get("mode") or "catalog")
-    loaded = _esc(model_visibility.get("loaded_model") or "unknown")
-    listed = _esc(model_visibility.get("list_behavior") or "")
-    route = _esc(model_visibility.get("route_behavior") or "")
-    return (
-        '<div class="info-panel">'
-        "<h3>Model visibility</h3>"
-        '<dl class="facts">'
-        f"<div><dt>Mode</dt><dd>{mode}</dd></div>"
-        f"<div><dt>Loaded LLM</dt><dd>{loaded}</dd></div>"
-        f"<div><dt>Models API</dt><dd>{listed}</dd></div>"
-        f"<div><dt>Routing</dt><dd>{route}</dd></div>"
-        "</dl>"
-        "</div>"
+    facts = []
+    for label, keys in (
+        ("Mode", ("mode",)),
+        ("Loaded LLM", ("loaded_model", "current_model")),
+        ("Models API", ("list_behavior",)),
+        ("Routing", ("route_behavior",)),
+        ("Constraints", ("constraints", "resource_mode")),
+    ):
+        value = next((model_visibility.get(key) for key in keys if model_visibility.get(key)), "")
+        formatted = _format_key_value_summary(value)
+        if formatted:
+            facts.append(f"<div><dt>{label}</dt><dd>{_esc(formatted)}</dd></div>")
+    if not facts:
+        return ""
+    return "".join(
+        [
+            '<div class="info-panel">',
+            "<h3>Model visibility</h3>",
+            '<dl class="facts">',
+            *facts,
+            "</dl>",
+            "</div>",
+        ]
     )
 
 
@@ -1089,7 +1129,7 @@ def render_admin_dashboard(
         (_api_surface_row(surface) for surface in api_surfaces),
     )
     services_table = _table(
-        ["Service", "Role", "Capabilities", "Status", "Runtime"],
+        ["Service", "Role", "Capabilities", "Status", "Runtime", "Mode / resources"],
         (_service_row(service) for service in services),
     )
     identity_mappings_table = _table(
