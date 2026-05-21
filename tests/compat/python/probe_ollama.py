@@ -29,11 +29,15 @@ except ImportError:  # pragma: no cover
 class TestOllamaPythonSDK(unittest.TestCase):
     def setUp(self) -> None:
         try:
-            self.cfg = load_config(allow_anonymous=True)
+            self.cfg = load_config()
         except ConfigError as exc:  # pragma: no cover - env-dependent
             self.skipTest(str(exc))
         assert _ollama is not None
-        self.client = _ollama.Client(host=self.cfg.ollama_host())
+        self.client = _ollama.Client(
+            host=self.cfg.ollama_host(),
+            headers={"Authorization": f"Bearer {self.cfg.api_key}"},
+            timeout=self.cfg.request_timeout_s,
+        )
 
     def test_client_construct(self) -> None:
         self.assertIsNotNone(self.client)

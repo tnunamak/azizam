@@ -110,6 +110,35 @@ PROBES: Tuple[ProbeSpec, ...] = (
             ("client.construct", "test_client_construct"),
             ("models.list", "test_models_list"),
             ("embeddings.create", "test_embeddings_create"),
+            ("chat.completions.create", "test_chat_completions_create"),
+            ("chat.completions.streaming", "test_chat_completions_streaming"),
+        ),
+    ),
+    ProbeSpec(
+        protocol="openai",
+        sdk="openai-python-responses-media",
+        module="tests.compat.python.probe_openai_responses_media",
+        test_class="TestOpenAIResponsesMediaSurfaces",
+        sdk_dependency="openai",
+        case_map=(
+            ("responses.resource", "test_responses_resource_exists"),
+            ("images.resource", "test_image_resource_exists"),
+            ("audio.resource", "test_audio_resources_exist"),
+            ("videos.resource", "test_video_resource_exists_when_sdk_supports_it"),
+        ),
+        allow_anonymous=True,
+    ),
+    ProbeSpec(
+        protocol="openai",
+        sdk="openai-python-responses-media-live",
+        module="tests.compat.python.probe_openai_responses_media",
+        test_class="TestOpenAIResponsesMediaLive",
+        sdk_dependency="openai",
+        case_map=(
+            ("responses.create", "test_responses_create"),
+            ("images.generate", "test_images_generate"),
+            ("audio.speech.create", "test_audio_speech_create"),
+            ("videos.create", "test_video_create"),
         ),
     ),
     ProbeSpec(
@@ -142,7 +171,6 @@ PROBES: Tuple[ProbeSpec, ...] = (
             ("generate.non_streaming", "test_generate_nonstream"),
             ("generate.streaming", "test_generate_stream"),
         ),
-        allow_anonymous=True,
     ),
 )
 

@@ -76,6 +76,52 @@ class TestOpenAIPythonSDK(unittest.TestCase):
         self.assertGreater(len(embedding), 0)
         self.assertIsInstance(embedding[0], float)
 
+    def _require_live_llm(self) -> None:
+        if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_LLM") != "1":
+            self.skipTest("OPENAI_PROXY_SMOKE_LIVE_LLM=1 not set; live LLM probe disabled")
+
+    def _chat_model(self) -> str:
+        return os.environ.get("OPENAI_PROXY_SMOKE_OPENAI_MODEL", "default")
+
+    def test_chat_completions_create(self) -> None:
+        self._require_live_llm()
+        result = self.client.chat.completions.create(
+            model=self._chat_model(),
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Reply with exactly: compatibility probe",
+                }
+            ],
+            temperature=0,
+        )
+        self.assertGreater(len(result.choices), 0)
+        content = result.choices[0].message.content
+        self.assertIsInstance(content, str)
+        self.assertTrue(content.strip())
+
+    def test_chat_completions_streaming(self) -> None:
+        self._require_live_llm()
+        chunks = self.client.chat.completions.create(
+            model=self._chat_model(),
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Reply with exactly: compatibility probe",
+                }
+            ],
+            stream=True,
+            temperature=0,
+        )
+        content_parts = []
+        for chunk in chunks:
+            self.assertGreater(len(chunk.choices), 0)
+            delta = chunk.choices[0].delta
+            content = getattr(delta, "content", None)
+            if content:
+                content_parts.append(content)
+        self.assertTrue("".join(content_parts).strip())
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
