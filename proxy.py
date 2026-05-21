@@ -64,6 +64,7 @@ from gateway import (
 )
 from gateway.admin_api import AdminAuthError, create_admin_router
 from gateway.admin_catalog import admin_api_surfaces, profile_policy_catalog
+from gateway.config_sources import KNOWN_ENV_SOURCE_NAMES, inventory_config_sources
 from gateway.admin_oidc import (
     IDTokenClaimsError,
     OIDCConfigError,
@@ -2475,6 +2476,9 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
             status_code=503,
             error_type="service_unavailable",
         )
+    service_response = _service_availability_response("tts", service_label="TTS")
+    if service_response is not None:
+        return service_response
 
     # Voice mapping is module-scoped (single source of truth shared with /v1/voices).
     body = await request.body()
@@ -2606,6 +2610,9 @@ async def proxy_stt_request(
             status_code=503,
             error_type="service_unavailable",
         )
+    service_response = _service_availability_response("stt", service_label="STT")
+    if service_response is not None:
+        return service_response
     if operation == "translations" and not stt_backend_supports_translation():
         return audio_translation_unsupported_response()
     if operation not in {"transcriptions", "translations"}:
@@ -4628,6 +4635,14 @@ async def proxy_comfy_request(
             status_code=503,
             media_type="application/json"
         )
+    service_response = _service_availability_response(
+        "comfyui",
+        service_label="ComfyUI",
+    )
+    if service_response is not None:
+        if receipt is not None:
+            receipt.add_fallback_reason("comfy_operator_mode")
+        return service_response
 
     try:
         body = await request.json()
@@ -4917,6 +4932,14 @@ async def proxy_comfy_edit_request(
             status_code=503,
             media_type="application/json"
         )
+    service_response = _service_availability_response(
+        "comfyui",
+        service_label="ComfyUI",
+    )
+    if service_response is not None:
+        if receipt is not None:
+            receipt.add_fallback_reason("comfy_operator_mode")
+        return service_response
 
     form_dict: dict[str, Any] = {}
     try:
@@ -8251,6 +8274,7 @@ def _admin_service_runtime_summary(
 def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     payload: Mapping[str, Any] = status_payload or {}
     status_by_name = _status_by_service_name(payload)
+    service_overrides = _operator_service_availability_overrides()
     rows: list[dict[str, Any]] = []
     for key, raw in (config.get("backends") or {}).items():
         if not isinstance(raw, Mapping):
@@ -8261,6 +8285,13 @@ def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dic
         role = str(raw.get("role") or "required")
         if role == "standby" and live_status == "down":
             live_status = "standby"
+        override = service_overrides.get(str(key), {})
+        override_state = str(override.get("state") or "").strip()
+        note = raw.get("note") or live.get("last_error") or ""
+        if override_state and override_state != "available":
+            live_status = override_state
+            override_reason = str(override.get("reason") or "").strip()
+            note = override_reason or f"Operator mode: {override_state}"
         rows.append(
             {
                 "key": key,
@@ -8269,7 +8300,7 @@ def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dic
                 "capabilities": raw.get("capabilities") or [],
                 "status": live_status,
                 "last_error": live.get("last_error") or "",
-                "note": raw.get("note") or live.get("last_error") or "",
+                "note": note,
                 "runtime": _admin_service_runtime_summary(
                     str(key),
                     status_payload=payload,
@@ -8277,6 +8308,198 @@ def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dic
             }
         )
     return rows
+
+
+def _admin_config_sources(
+    snapshot: Mapping[str, Any],
+    *,
+    workflow_inventory: list[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    admin_summary = {
+        "users": len(snapshot.get("users") or []),
+        "apps": len(snapshot.get("apps") or []),
+        "profiles": len(snapshot.get("profiles") or []),
+        "credentials": len(snapshot.get("credentials") or []),
+        "runtime_profile_mappings": len(_admin_identity_mappings()),
+        "operator_settings": len(admin_store.list_operator_settings(path=ADMIN_STORE.path)),
+    }
+    env_names = [name for name in KNOWN_ENV_SOURCE_NAMES if name in os.environ]
+    manifest_sources: list[Mapping[str, Any]] = []
+    if workflow_inventory:
+        manifest_sources.append(
+            {
+                "id": "workflow-manifests",
+                "label": "Workflow manifests",
+                "kind": "workflow",
+                "source_ref": f"{len(workflow_inventory)} discovered workflows",
+            }
+        )
+    return inventory_config_sources(
+        config,
+        env=os.environ,
+        env_names=env_names,
+        manifest_rows=manifest_sources,
+        admin_db_summary=admin_summary,
+    )
+
+
+def _operator_override_docs() -> dict[str, Any]:
+    try:
+        overrides = ADMIN_STORE.operator_overrides()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] admin operator override read failed: {exc}", flush=True)
+        return {"service_availability": {}, "media_job_admission": {}}
+    if not isinstance(overrides, Mapping):
+        return {"service_availability": {}, "media_job_admission": {}}
+    return {
+        "service_availability": (
+            overrides.get("service_availability")
+            if isinstance(overrides.get("service_availability"), Mapping)
+            else {}
+        ),
+        "media_job_admission": (
+            overrides.get("media_job_admission")
+            if isinstance(overrides.get("media_job_admission"), Mapping)
+            else {}
+        ),
+    }
+
+
+def _operator_service_availability_overrides() -> dict[str, dict[str, Any]]:
+    raw = _operator_override_docs().get("service_availability")
+    if not isinstance(raw, Mapping):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in raw.items():
+        if isinstance(value, Mapping):
+            out[str(key)] = dict(value)
+    return out
+
+
+def _service_availability_response(
+    service_id: str,
+    *,
+    service_label: str | None = None,
+) -> Response | None:
+    override = _operator_service_availability_overrides().get(service_id, {})
+    if not isinstance(override, Mapping):
+        return None
+    state = str(override.get("state") or "available").strip().lower()
+    if state not in {"disabled", "maintenance", "draining"}:
+        return None
+
+    label = service_label or service_id
+    message = str(override.get("reason") or "").strip() or f"{label} is {state}."
+    retry_after = _optional_int_config(override, "retry_after_seconds") or 10
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": message,
+                "type": "service_unavailable",
+                "code": "backend_unavailable",
+                "service": service_id,
+                "state": state,
+            }
+        }),
+        status_code=503,
+        media_type="application/json",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _operator_media_job_admission_overrides() -> dict[str, Any]:
+    raw = _operator_override_docs().get("media_job_admission")
+    return dict(raw) if isinstance(raw, Mapping) else {}
+
+
+def _effective_media_job_admission_cfg() -> dict[str, Any]:
+    cfg = dict(MEDIA_JOB_ADMISSION_CFG) if isinstance(MEDIA_JOB_ADMISSION_CFG, Mapping) else {}
+    overrides = _operator_media_job_admission_overrides()
+    for key in (
+        "disabled_intents",
+        "disabled_resource_classes",
+        "reserved_tokens",
+        "max_queue_depth",
+        "retry_after_seconds",
+        "queue_retry_after_seconds",
+        "scan_limit",
+    ):
+        if key in overrides:
+            cfg[key] = overrides[key]
+    return cfg
+
+
+def _admin_service_override_controls(
+    status_payload: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    overrides = _operator_service_availability_overrides()
+    rows: list[dict[str, Any]] = []
+    backend_keys = [
+        str(key)
+        for key, raw in (config.get("backends") or {}).items()
+        if isinstance(raw, Mapping)
+    ]
+    for key in sorted(set(backend_keys) | set(overrides.keys())):
+        raw = (config.get("backends") or {}).get(key, {})
+        name = str(raw.get("name") or key) if isinstance(raw, Mapping) else key
+        override = overrides.get(key, {})
+        state = str(override.get("state") or "available")
+        reason = override.get("reason")
+        rows.append(
+            {
+                "key": key,
+                "service_id": key,
+                "label": f"{name} operator mode",
+                "form": "service_availability",
+                "action_url": "/admin/api/operator/service-availability",
+                "method": "PUT",
+                "current": state,
+                "scope": "service availability",
+                "source": "admin.db override" if key in overrides else "runtime default",
+                "reason": reason,
+                "retry_after_seconds": override.get("retry_after_seconds"),
+                "summary": (
+                    f"{state}; {reason}"
+                    if reason
+                    else f"{state}; applies to routes that use this service"
+                ),
+            }
+        )
+    return rows
+
+
+def _admin_media_job_admission_controls() -> list[dict[str, Any]]:
+    effective = _effective_media_job_admission_cfg()
+    override_present = bool(_operator_media_job_admission_overrides())
+    summary_parts = []
+    for label, key in (
+        ("Disabled intents", "disabled_intents"),
+        ("Disabled resources", "disabled_resource_classes"),
+        ("Reserved tokens", "reserved_tokens"),
+        ("Max queue", "max_queue_depth"),
+    ):
+        value = effective.get(key)
+        if value not in (None, "", [], {}, ()):
+            summary_parts.append(f"{label}: {_format_admin_value(value)}")
+    return [
+        {
+            "key": "media-job-admission",
+            "label": "Media job admission",
+            "form": "media_job_admission",
+            "action_url": "/admin/api/operator/media-job-admission",
+            "method": "PUT",
+            "current": effective,
+            "scope": "image, audio, and video jobs",
+            "source": "admin.db override" if override_present else "proxy_config.yml default",
+            "summary": "; ".join(summary_parts) or "No runtime media admission limits",
+        }
+    ]
+
+
+def _format_admin_value(value: Any) -> str:
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return ", ".join(str(item) for item in value)
+    return str(value)
 
 
 def _inventory_item(
@@ -8512,6 +8735,12 @@ async def admin_dashboard(request: Request):
     snapshot["services"] = _admin_services(status_payload)
     workflow_inventory = _admin_workflow_inventory()
     snapshot["workflow_inventory"] = workflow_inventory
+    snapshot["config_sources"] = _admin_config_sources(
+        snapshot,
+        workflow_inventory=workflow_inventory,
+    )
+    snapshot["service_overrides"] = _admin_service_override_controls(status_payload)
+    snapshot["resource_overrides"] = _admin_media_job_admission_controls()
     snapshot["profile_inventory"] = _admin_profile_inventory(
         status_payload,
         workflows=workflow_inventory,
@@ -11274,8 +11503,13 @@ def _string_tuple_config(mapping: Mapping[str, Any], key: str) -> tuple[str, ...
     return tuple(item.strip() for item in items if item.strip())
 
 
-def _media_job_queue_depth(max_queue_depth: int | None = None) -> int:
-    configured_scan_limit = _optional_int_config(MEDIA_JOB_ADMISSION_CFG, "scan_limit") or 1000
+def _media_job_queue_depth(
+    max_queue_depth: int | None = None,
+    *,
+    admission_cfg: Mapping[str, Any] | None = None,
+) -> int:
+    cfg = admission_cfg if isinstance(admission_cfg, Mapping) else MEDIA_JOB_ADMISSION_CFG
+    configured_scan_limit = _optional_int_config(cfg, "scan_limit") or 1000
     scan_limit = max(configured_scan_limit, max_queue_depth or 0)
     depth = 0
     for status_value in (media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING):
@@ -11298,31 +11532,53 @@ def _media_job_queue_depth(max_queue_depth: int | None = None) -> int:
 
 
 def _media_job_admission_response(intent: str) -> Response | None:
+    admission_cfg = _effective_media_job_admission_cfg()
+    service_override = _operator_service_availability_overrides().get("comfyui", {})
+    override_state = str(service_override.get("state") or "available")
+    service_blocked = override_state in {"disabled", "maintenance", "draining"}
+    service_degraded = override_state == "degraded"
     resource_class = _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
-    service_reasons = () if COMFY_ENABLED else ("ComfyUI media backend disabled",)
-    max_queue_depth = _optional_int_config(MEDIA_JOB_ADMISSION_CFG, "max_queue_depth")
+    service_reasons_list: list[str] = []
+    if not COMFY_ENABLED:
+        service_reasons_list.append("ComfyUI media backend disabled")
+    if service_blocked or service_degraded:
+        reason = str(service_override.get("reason") or "").strip()
+        service_reasons_list.append(reason or f"ComfyUI operator mode: {override_state}")
+    max_queue_depth = _optional_int_config(admission_cfg, "max_queue_depth")
+    service_retry_after = (
+        _optional_int_config(service_override, "retry_after_seconds")
+        if isinstance(service_override, Mapping)
+        else None
+    )
     decision = resource_admission_http.advise_route_admission(
         intent=intent,
-        service_available=COMFY_ENABLED,
-        service_retry_after=30 if not COMFY_ENABLED else None,
-        service_reasons=service_reasons,
+        service_available=COMFY_ENABLED and not service_blocked,
+        service_degraded=service_degraded,
+        service_retry_after=service_retry_after
+        or (30 if (not COMFY_ENABLED or service_blocked) else None),
+        service_reasons=tuple(service_reasons_list),
         resource_class=resource_class,
         queue_key=_MEDIA_JOB_QUEUE_KEY,
         requires_gpu=True,
-        disabled_intents=_string_tuple_config(MEDIA_JOB_ADMISSION_CFG, "disabled_intents"),
+        disabled_intents=_string_tuple_config(admission_cfg, "disabled_intents"),
         disabled_resource_classes=_string_tuple_config(
-            MEDIA_JOB_ADMISSION_CFG,
+            admission_cfg,
             "disabled_resource_classes",
         ),
-        reserved_tokens=_string_tuple_config(MEDIA_JOB_ADMISSION_CFG, "reserved_tokens"),
+        reserved_tokens=_string_tuple_config(admission_cfg, "reserved_tokens"),
         max_queue_depth=max_queue_depth,
         constraint_retry_after=_optional_int_config(
-            MEDIA_JOB_ADMISSION_CFG,
+            admission_cfg,
             "retry_after_seconds",
         ),
-        queue_depths={_MEDIA_JOB_QUEUE_KEY: _media_job_queue_depth(max_queue_depth)},
+        queue_depths={
+            _MEDIA_JOB_QUEUE_KEY: _media_job_queue_depth(
+                max_queue_depth,
+                admission_cfg=admission_cfg,
+            )
+        },
         load_retry_after=_optional_int_config(
-            MEDIA_JOB_ADMISSION_CFG,
+            admission_cfg,
             "queue_retry_after_seconds",
         ) or 30,
     )
@@ -15943,6 +16199,15 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             status_code=503,
             media_type="application/json",
         )
+
+    target_service_for_admission = backend_for_host(target_host)
+    if target_service_for_admission:
+        service_response = _service_availability_response(
+            target_service_for_admission,
+            service_label=target_service_for_admission,
+        )
+        if service_response is not None:
+            return service_response
 
     if target_host == TABBY_HOST:
         if not await check_tabby_health():

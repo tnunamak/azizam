@@ -130,6 +130,74 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(media_jobs.recent(path=self.db), [])
 
+    async def test_direct_audio_submit_uses_media_job_admission_overrides(self) -> None:
+        body = {
+            "model": "tangoflux",
+            "prompt": "private prompt",
+            "duration": 8,
+        }
+        overrides = {
+            "service_availability": {},
+            "media_job_admission": {
+                "disabled_intents": ["audio.generate"],
+                "retry_after_seconds": 17,
+            },
+        }
+
+        with patch.object(proxy, "MEDIA_JOB_ADMISSION_CFG", {}), patch.object(
+            proxy.ADMIN_STORE,
+            "operator_overrides",
+            return_value=overrides,
+        ):
+            response = await proxy._submit_audio_media_job(
+                request=_StubJsonRequest(body),  # type: ignore[arg-type]
+                intent="audio.generate",
+                body=body,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["retry-after"], "17")
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(
+            payload["error"]["code"],
+            "resource_admission_denied",
+        )
+        self.assertEqual(media_jobs.recent(path=self.db), [])
+
+    async def test_direct_audio_submit_uses_service_availability_overrides(self) -> None:
+        body = {
+            "model": "tangoflux",
+            "prompt": "private prompt",
+            "duration": 8,
+        }
+        overrides = {
+            "service_availability": {
+                "comfyui": {
+                    "state": "maintenance",
+                    "reason": "reserved for audio maintenance",
+                    "retry_after_seconds": 45,
+                }
+            },
+            "media_job_admission": {},
+        }
+
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.ADMIN_STORE,
+            "operator_overrides",
+            return_value=overrides,
+        ):
+            response = await proxy._submit_audio_media_job(
+                request=_StubJsonRequest(body),  # type: ignore[arg-type]
+                intent="audio.generate",
+                body=body,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["retry-after"], "45")
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(payload["error"]["message"], "reserved for audio maintenance")
+        self.assertEqual(media_jobs.recent(path=self.db), [])
+
     async def test_executor_uses_audio_route_and_stores_returned_bytes_as_audio_asset(self) -> None:
         body = {
             "model": "tangoflux",

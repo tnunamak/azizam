@@ -114,6 +114,72 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(media_jobs.recent(path=self.db), [])
 
+    async def test_direct_video_submit_uses_media_job_admission_overrides(self) -> None:
+        body = {
+            "model": "ltx-2.3",
+            "prompt": "private video prompt",
+            "seconds": 2,
+        }
+        overrides = {
+            "service_availability": {},
+            "media_job_admission": {
+                "disabled_intents": ["video.generate"],
+                "retry_after_seconds": 17,
+            },
+        }
+
+        with patch.object(proxy, "MEDIA_JOB_ADMISSION_CFG", {}), patch.object(
+            proxy.ADMIN_STORE,
+            "operator_overrides",
+            return_value=overrides,
+        ):
+            response = await proxy._submit_video_media_job(
+                request=_StubJsonRequest(body),  # type: ignore[arg-type]
+                body=body,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["retry-after"], "17")
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(
+            payload["error"]["code"],
+            "resource_admission_denied",
+        )
+        self.assertEqual(media_jobs.recent(path=self.db), [])
+
+    async def test_direct_video_submit_uses_service_availability_overrides(self) -> None:
+        body = {
+            "model": "ltx-2.3",
+            "prompt": "private video prompt",
+            "seconds": 2,
+        }
+        overrides = {
+            "service_availability": {
+                "comfyui": {
+                    "state": "maintenance",
+                    "reason": "reserved for video maintenance",
+                    "retry_after_seconds": 45,
+                }
+            },
+            "media_job_admission": {},
+        }
+
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.ADMIN_STORE,
+            "operator_overrides",
+            return_value=overrides,
+        ):
+            response = await proxy._submit_video_media_job(
+                request=_StubJsonRequest(body),  # type: ignore[arg-type]
+                body=body,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["retry-after"], "45")
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(payload["error"]["message"], "reserved for video maintenance")
+        self.assertEqual(media_jobs.recent(path=self.db), [])
+
     async def test_executor_polls_video_route_and_stores_rendered_bytes(self) -> None:
         body = {"model": "ltx-2.3", "prompt": "private video prompt", "seconds": 2}
         with patch.object(proxy, "_schedule_video_media_job", lambda _job_id: True):

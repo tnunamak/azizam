@@ -39,6 +39,8 @@ class FakeAdminStore:
         ]
         self.credentials: dict[str, dict[str, Any]] = {}
         self.runtime_mappings: dict[str, dict[str, Any]] = {}
+        self.service_availability: dict[str, Any] = {}
+        self.media_job_admission: dict[str, Any] = {}
         self.audit: list[dict[str, Any]] = []
         self._next_id = 1
 
@@ -285,6 +287,40 @@ class FakeAdminStore:
             }
         )
         return dict(record)
+
+    def operator_overrides(self) -> dict[str, Any]:
+        return {
+            "service_availability": dict(self.service_availability),
+            "media_job_admission": dict(self.media_job_admission),
+        }
+
+    def update_service_availability_overrides(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        self.service_availability = dict(data)
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "operator.service_availability.update",
+                "target": "service_availability_overrides",
+            }
+        )
+        return dict(self.service_availability)
+
+    def update_media_job_admission_overrides(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        self.media_job_admission = dict(data)
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "operator.media_job_admission.update",
+                "target": "media_job_admission_overrides",
+            }
+        )
+        return dict(self.media_job_admission)
 
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
         return list(self.audit[-limit:])
@@ -887,6 +923,129 @@ class AdminAuditTests(unittest.TestCase):
         body = resp.json()
         self.assertEqual(body["limit"], 3)
         self.assertEqual(len(body["audit"]), 3)
+
+
+class AdminOperatorOverrideTests(unittest.TestCase):
+    def test_admin_can_write_and_read_operator_overrides(self) -> None:
+        client, store = _make_client()
+        service_resp = client.put(
+            "/admin/api/operator/service-availability",
+            json={
+                "overrides": {
+                    "openai": {
+                        "state": "degraded",
+                        "reason": "provider incident",
+                        "retry_after_seconds": 120,
+                    }
+                }
+            },
+            headers=_auth(),
+        )
+        media_resp = client.put(
+            "/admin/api/operator/media-job-admission",
+            json={
+                "disabled_intents": ["video.generate"],
+                "disabled_resource_classes": ["gpu"],
+                "reserved_tokens": ["gpu"],
+                "max_queue_depth": 5,
+                "retry_after_seconds": 30,
+            },
+            headers=_auth(),
+        )
+        list_resp = client.get("/admin/api/operator/overrides", headers=_auth())
+
+        self.assertEqual(service_resp.status_code, 200, service_resp.text)
+        self.assertEqual(media_resp.status_code, 200, media_resp.text)
+        self.assertEqual(list_resp.status_code, 200, list_resp.text)
+        overrides = list_resp.json()["overrides"]
+        self.assertEqual(
+            overrides["service_availability"]["openai"]["state"],
+            "degraded",
+        )
+        self.assertEqual(
+            overrides["media_job_admission"]["disabled_intents"],
+            ["video.generate"],
+        )
+        self.assertEqual(
+            [event["action"] for event in store.audit[-2:]],
+            [
+                "operator.service_availability.update",
+                "operator.media_job_admission.update",
+            ],
+        )
+
+    def test_service_availability_updates_merge_and_clear_defaults(self) -> None:
+        client, store = _make_client()
+        store.service_availability = {
+            "openai": {
+                "state": "maintenance",
+                "reason": "planned",
+                "retry_after_seconds": 60,
+            },
+            "comfyui": {
+                "state": "disabled",
+                "reason": None,
+                "retry_after_seconds": None,
+            },
+        }
+
+        update_resp = client.put(
+            "/admin/api/operator/service-availability",
+            json={
+                "overrides": {
+                    "openai": {
+                        "state": "degraded",
+                        "reason": "slow",
+                    }
+                }
+            },
+            headers=_auth(),
+        )
+        clear_resp = client.put(
+            "/admin/api/operator/service-availability",
+            json={"overrides": {"openai": {"state": "available"}}},
+            headers=_auth(),
+        )
+
+        self.assertEqual(update_resp.status_code, 200, update_resp.text)
+        self.assertEqual(clear_resp.status_code, 200, clear_resp.text)
+        self.assertNotIn("openai", store.service_availability)
+        self.assertEqual(
+            store.service_availability["comfyui"]["state"],
+            "disabled",
+        )
+
+    def test_operator_override_write_requires_admin(self) -> None:
+        client, _ = _make_client()
+        resp = client.put(
+            "/admin/api/operator/media-job-admission",
+            json={"disabled_intents": []},
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_operator_override_validation_rejects_bad_values(self) -> None:
+        client, _ = _make_client()
+        service_resp = client.put(
+            "/admin/api/operator/service-availability",
+            json={"openai": {"state": "paused"}},
+            headers=_auth(),
+        )
+        media_resp = client.put(
+            "/admin/api/operator/media-job-admission",
+            json={"reserved_tokens": "gpu"},
+            headers=_auth(),
+        )
+
+        self.assertEqual(service_resp.status_code, 400)
+        self.assertEqual(
+            service_resp.json()["error"]["code"],
+            "invalid_operator_override",
+        )
+        self.assertEqual(media_resp.status_code, 400)
+        self.assertEqual(
+            media_resp.json()["error"]["code"],
+            "invalid_operator_override",
+        )
 
 
 if __name__ == "__main__":

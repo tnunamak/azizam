@@ -168,6 +168,15 @@ CREATE TABLE IF NOT EXISTS runtime_profile_mappings (
 CREATE INDEX IF NOT EXISTS runtime_profile_mappings_lookup
   ON runtime_profile_mappings(source_kind, source_value, disabled_at);
 
+CREATE TABLE IF NOT EXISTS operator_settings (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);
+CREATE INDEX IF NOT EXISTS operator_settings_updated_at
+  ON operator_settings(updated_at);
+
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,
   created_at INTEGER NOT NULL,
@@ -1270,6 +1279,82 @@ def _audit_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return data
 
 
+# ---------------------------------------------------------------------------
+# operator settings / runtime overrides
+# ---------------------------------------------------------------------------
+
+
+def put_operator_setting(
+    key: str,
+    value: Mapping[str, Any],
+    *,
+    updated_by: str | None = None,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Persist one non-secret operator override document by key."""
+    setting_key = str(key or "").strip()
+    if not setting_key:
+        raise ValueError("operator setting key is required")
+    if not isinstance(value, Mapping):
+        raise ValueError("operator setting value must be a mapping")
+    ts = _now() if now is None else int(now)
+    payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
+    with _conn(path) as conn:
+        conn.execute(
+            "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET "
+            "value_json = excluded.value_json, "
+            "updated_at = excluded.updated_at, "
+            "updated_by = excluded.updated_by",
+            (setting_key, payload, ts, updated_by),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM operator_settings WHERE key = ?", (setting_key,)
+        ).fetchone()
+    return _operator_setting_row_to_dict(row)
+
+
+def get_operator_setting(
+    key: str,
+    *,
+    path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    setting_key = str(key or "").strip()
+    if not setting_key:
+        return None
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM operator_settings WHERE key = ?", (setting_key,)
+        ).fetchone()
+    return _operator_setting_row_to_dict(row) if row is not None else None
+
+
+def list_operator_settings(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM operator_settings ORDER BY key ASC"
+        ).fetchall()
+    return [_operator_setting_row_to_dict(row) for row in rows]
+
+
+def _operator_setting_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        value = json.loads(row["value_json"])
+    except json.JSONDecodeError:
+        value = {}
+    if not isinstance(value, dict):
+        value = {}
+    return {
+        "key": row["key"],
+        "value": value,
+        "updated_at": row["updated_at"],
+        "updated_by": row["updated_by"],
+    }
+
+
 __all__ = [
     "DB_PATH",
     "SCHEMA_VERSION",
@@ -1309,6 +1394,9 @@ __all__ = [
     "disable_runtime_profile_mapping",
     "list_runtime_profile_mappings",
     "resolve_runtime_profile_mapping",
+    "put_operator_setting",
+    "get_operator_setting",
+    "list_operator_settings",
     "record_audit",
     "list_audit",
 ]

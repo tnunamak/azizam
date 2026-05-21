@@ -512,6 +512,57 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                         response = request(path, headers=AUTH_HEADERS, json=payload)
                     self.assertEqual(response.status_code, 200, response.text)
 
+    def test_service_availability_override_blocks_tts_and_stt_routes(self) -> None:
+        media_profile = AppProfile(
+            id="media",
+            protocols=frozenset({"openai.audio"}),
+        )
+        overrides = {
+            "service_availability": {
+                "tts": {
+                    "state": "maintenance",
+                    "reason": "tts reserved for operator",
+                    "retry_after_seconds": 31,
+                },
+                "stt": {
+                    "state": "disabled",
+                    "reason": "stt paused",
+                    "retry_after_seconds": 32,
+                },
+            },
+            "media_job_admission": {},
+        }
+
+        with authenticated_profile(media_profile), patch.object(
+            proxy,
+            "TTS_ENABLED",
+            True,
+        ), patch.object(
+            proxy,
+            "STT_ENABLED",
+            True,
+        ), patch.object(
+            proxy.ADMIN_STORE,
+            "operator_overrides",
+            return_value=overrides,
+        ):
+            speech = self.client.post(
+                "/v1/audio/speech",
+                headers=AUTH_HEADERS,
+                json={"input": "hello", "voice": "alloy"},
+            )
+            transcription = self.client.post(
+                "/v1/audio/transcriptions",
+                headers=AUTH_HEADERS,
+            )
+
+        self.assertEqual(speech.status_code, 503, speech.text)
+        self.assertEqual(speech.headers["retry-after"], "31")
+        self.assertEqual(speech.json()["error"]["message"], "tts reserved for operator")
+        self.assertEqual(transcription.status_code, 503, transcription.text)
+        self.assertEqual(transcription.headers["retry-after"], "32")
+        self.assertEqual(transcription.json()["error"]["message"], "stt paused")
+
     def test_full_openai_profile_allows_models_route(self) -> None:
         full_profile = AppProfile(
             id="full-openai",

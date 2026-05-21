@@ -456,6 +456,82 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("Wan video", services_section)
         self.assertIn("expensive", services_section)
 
+    def test_admin_dashboard_renders_config_sources(self) -> None:
+        snapshot = _snapshot()
+        snapshot["config_sources"] = [
+            {
+                "label": "Runtime policy ownership",
+                "domain": "runtime policy",
+                "source": "admin",
+                "editability": "UI-owned",
+                "recommendation": "Manage here; restart not required.",
+            },
+            {
+                "label": "Service bootstrap",
+                "domain": "services",
+                "source": "yaml",
+                "editability": "restart required",
+                "recommendation": "/very/long/bootstrap/path/that/should/not/be/rendered/in/full/config/services.yaml",
+            },
+            {
+                "label": "OPENAI_API_KEY",
+                "domain": "provider secrets",
+                "source": "env",
+                "editability": "read-only",
+                "recommendation": "sk-secret-should-never-render",
+                "secret": True,
+            },
+        ]
+        html = render_admin_dashboard(snapshot)
+        services_section = html[html.index('id="services"') : html.index('id="apis"')]
+        self.assertIn(">Config Sources</h3>", services_section)
+        self.assertIn("Runtime policy ownership", services_section)
+        self.assertIn("OPENAI_API_KEY", services_section)
+        self.assertIn("UI-owned", services_section)
+        self.assertIn("restart required", services_section)
+        self.assertIn("redacted", services_section)
+        self.assertNotIn("sk-secret-should-never-render", services_section)
+        self.assertNotIn("/very/long/bootstrap/path/that/should/not", services_section)
+
+    def test_empty_runtime_sections_are_hidden_cleanly(self) -> None:
+        html = render_admin_dashboard({"services": [{"key": "kobold", "status": "healthy"}]})
+        services_section = html[html.index('id="services"') : html.index("</main>")]
+        self.assertNotIn(">Config Sources</h3>", services_section)
+        self.assertNotIn(">Runtime Control</h3>", services_section)
+        self.assertNotIn(">Workflows</h3>", services_section)
+
+    def test_admin_dashboard_renders_operator_controls(self) -> None:
+        snapshot = _snapshot()
+        snapshot["operator_overrides"] = [
+            {
+                "key": "maintenance_mode",
+                "label": "Maintenance mode",
+                "current": "off",
+                "scope": "gateway",
+                "source": "live",
+                "action_url": "/admin/api/operator/maintenance",
+                "supported_values": ["off", "drain", "read_only"],
+            }
+        ]
+        snapshot["resource_overrides"] = {
+            "image.generate": {
+                "label": "Image generation tier",
+                "current": "interactive",
+                "default": "batch",
+            }
+        }
+        html = render_admin_dashboard(snapshot)
+        services_section = html[html.index('id="services"') : html.index('id="apis"')]
+        self.assertIn(">Runtime Control</h3>", services_section)
+        self.assertIn("Maintenance mode", services_section)
+        self.assertIn("Current: off", services_section)
+        self.assertIn('data-operator-control data-method="PATCH"', services_section)
+        self.assertIn('action="/admin/api/operator/maintenance"', services_section)
+        self.assertIn('<option value="drain">drain</option>', services_section)
+        self.assertIn("Image generation tier", services_section)
+        self.assertIn("Resource override", services_section)
+        self.assertIn("operatorForm", html)
+
     def test_apps_show_effective_profile_and_patch_affordance(self) -> None:
         html = render_admin_dashboard(_snapshot())
         self.assertIn("Effective Profile: protocols openai", html)

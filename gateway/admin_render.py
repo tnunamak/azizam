@@ -102,7 +102,8 @@ _PAGE_CSS = """
   .access-node strong { color: var(--text); }
   .access-node span { color: var(--muted); line-height: 1.45; }
   .inline-form { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: 0.45rem; }
-  .inline-form select {
+  .inline-form select,
+  .inline-form input {
     flex: 1 1 12rem;
     min-width: 0;
     min-height: 2.25rem;
@@ -112,6 +113,7 @@ _PAGE_CSS = """
     padding: 0.35rem 0.5rem;
     border-radius: 6px;
   }
+  .inline-form input[type="number"] { flex-basis: 8rem; }
   .inline-form button {
     min-height: 2.25rem;
     background: var(--panel-2);
@@ -225,6 +227,16 @@ _PAGE_CSS = """
   }
   .facts dt { color: var(--soft); }
   .facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--text); }
+  .operator-control-list { display: grid; gap: var(--space-2); }
+  .operator-control {
+    display: grid;
+    gap: 0.45rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.75rem;
+  }
+  .operator-control form { margin-top: 0.15rem; }
   .form-section {
     display: grid;
     gap: var(--space-2);
@@ -322,6 +334,39 @@ def _format_key_value_summary(value: Any) -> str:
     if isinstance(value, (list, tuple, set, frozenset)):
         return ", ".join(str(item) for item in sorted(value) if item)
     return str(value)
+
+
+_SECRET_MARKERS = ("secret", "token", "key", "password", "credential")
+
+
+def _is_secret_config_source(record: Mapping[str, Any]) -> bool:
+    for key in ("label", "domain", "name", "key", "path", "value"):
+        value = record.get(key)
+        if value and any(marker in str(value).lower() for marker in _SECRET_MARKERS):
+            return True
+    return bool(record.get("secret") or record.get("sensitive"))
+
+
+def _safe_config_text(value: Any, *, record: Mapping[str, Any] | None = None) -> str:
+    if value in (None, "", [], {}, ()):
+        return "—"
+    if record is not None and _is_secret_config_source(record):
+        return "redacted"
+    text = _format_key_value_summary(value)
+    if len(text) > 96:
+        text = text[:93].rstrip() + "..."
+    if "/" in text and len(text) > 48:
+        text = "..." + text[-45:]
+    return text
+
+
+def _source_badge_class(source: str) -> str:
+    normalized = source.lower()
+    if normalized in {"admin", "live", "ui", "ui-owned"}:
+        return "ready"
+    if normalized in {"env", "yaml", "file", "manifest"}:
+        return "attention"
+    return ""
 
 
 def _profile_doc(record: Mapping[str, Any] | None) -> Mapping[str, Any]:
@@ -850,6 +895,179 @@ def _service_row(record: Mapping[str, Any]) -> str:
     )
 
 
+def _config_source_row(record: Mapping[str, Any]) -> str:
+    label = _esc(_safe_config_text(record.get("label") or record.get("name") or record.get("key")))
+    domain = _esc(_safe_config_text(record.get("domain") or record.get("scope")))
+    source_value = str(record.get("source") or record.get("kind") or "unknown")
+    source = _esc(_safe_config_text(source_value))
+    badge_class = _source_badge_class(source_value)
+    editability_value = (
+        record.get("editability")
+        or record.get("ownership")
+        or record.get("mode")
+        or ("read-only" if record.get("readonly") else "")
+    )
+    editability = _esc(_safe_config_text(editability_value))
+    recommendation = _esc(
+        _safe_config_text(
+            record.get("recommendation") or record.get("note") or record.get("description"),
+            record=record,
+        )
+    )
+    return (
+        "<tr>"
+        f'<td><div class="cell-main">{label}</div></td>'
+        f"<td>{domain}</td>"
+        f'<td><span class="badge {badge_class}">{source}</span></td>'
+        f"<td>{editability}</td>"
+        f"<td>{recommendation}</td>"
+        "</tr>"
+    )
+
+
+def _operator_control_title(record: Mapping[str, Any], fallback: str) -> str:
+    return str(record.get("label") or record.get("name") or record.get("key") or fallback)
+
+
+def _operator_control_summary(record: Mapping[str, Any]) -> str:
+    parts = []
+    for label, keys in (
+        ("Current", ("current", "value", "mode", "enabled")),
+        ("Default", ("default", "default_value")),
+        ("Scope", ("scope", "domain", "service")),
+        ("Owner", ("owner", "source")),
+        ("Status", ("status",)),
+    ):
+        value = next((record.get(key) for key in keys if record.get(key) not in (None, "", [], {}, ())), "")
+        formatted = _format_key_value_summary(value)
+        if formatted:
+            parts.append(f"{label}: {_esc(formatted)}")
+    return "; ".join(parts) or _esc(record.get("summary") or record.get("note") or "Configured")
+
+
+def _operator_control_form(record: Mapping[str, Any]) -> str:
+    action = record.get("action_url") or record.get("action")
+    form_kind = str(record.get("form") or "")
+    if action and form_kind == "service_availability":
+        service_id = str(record.get("service_id") or record.get("key") or "").strip()
+        if not service_id:
+            return ""
+        current = str(record.get("current") or record.get("state") or "available")
+        reason = _esc(record.get("reason") or "")
+        retry_after = record.get("retry_after_seconds")
+        retry_value = "" if retry_after in (None, "") else _esc(retry_after)
+        state_options = []
+        for value, label in (
+            ("available", "Available"),
+            ("degraded", "Degraded"),
+            ("draining", "Draining"),
+            ("maintenance", "Maintenance"),
+            ("disabled", "Disabled"),
+        ):
+            selected = " selected" if value == current else ""
+            state_options.append(
+                f'<option value="{value}"{selected}>{label}</option>'
+            )
+        method = _esc(record.get("method") or "PUT")
+        prefix = f"overrides.{service_id}."
+        return (
+            '<form class="inline-form" method="post" action="'
+            + _esc(action)
+            + '" data-operator-control data-method="'
+            + method
+            + '">'
+            f'<select name="{_esc(prefix)}state" aria-label="Service mode">'
+            + "".join(state_options)
+            + "</select>"
+            f'<input name="{_esc(prefix)}reason" value="{reason}" placeholder="Reason" aria-label="Reason">'
+            f'<input name="{_esc(prefix)}retry_after_seconds" value="{retry_value}" type="number" min="0" placeholder="Retry seconds" aria-label="Retry after seconds">'
+            '<button type="submit">Update</button>'
+            "</form>"
+        )
+    if action and form_kind == "media_job_admission":
+        current = record.get("current") if isinstance(record.get("current"), Mapping) else record
+        disabled_intents = _esc(", ".join(str(v) for v in current.get("disabled_intents", []) or []))
+        disabled_resources = _esc(", ".join(str(v) for v in current.get("disabled_resource_classes", []) or []))
+        reserved_tokens = _esc(", ".join(str(v) for v in current.get("reserved_tokens", []) or []))
+        max_queue_depth = current.get("max_queue_depth")
+        retry_after = current.get("retry_after_seconds")
+        max_queue_value = "" if max_queue_depth in (None, "") else _esc(max_queue_depth)
+        retry_value = "" if retry_after in (None, "") else _esc(retry_after)
+        method = _esc(record.get("method") or "PUT")
+        return (
+            '<form class="inline-form" method="post" action="'
+            + _esc(action)
+            + '" data-operator-control data-method="'
+            + method
+            + '" data-list-fields="disabled_intents disabled_resource_classes reserved_tokens">'
+            f'<input name="disabled_intents" value="{disabled_intents}" placeholder="Disabled intents" aria-label="Disabled intents">'
+            f'<input name="disabled_resource_classes" value="{disabled_resources}" placeholder="Disabled resources" aria-label="Disabled resource classes">'
+            f'<input name="reserved_tokens" value="{reserved_tokens}" placeholder="Reserved tokens" aria-label="Reserved tokens">'
+            f'<input name="max_queue_depth" value="{max_queue_value}" type="number" min="0" placeholder="Max queue" aria-label="Max queue depth">'
+            f'<input name="retry_after_seconds" value="{retry_value}" type="number" min="0" placeholder="Retry seconds" aria-label="Retry after seconds">'
+            '<button type="submit">Update</button>'
+            "</form>"
+        )
+    supported_values = (
+        record.get("supported_values")
+        or record.get("allowed_values")
+        or record.get("options")
+    )
+    if not action or not isinstance(supported_values, (list, tuple)) or not supported_values:
+        return ""
+    name = str(record.get("field") or "value")
+    current = str(record.get("current") or record.get("value") or record.get("mode") or "")
+    options = []
+    for option in supported_values:
+        option_value = str(option.get("value") if isinstance(option, Mapping) else option)
+        option_label = str(option.get("label") if isinstance(option, Mapping) else option)
+        selected = " selected" if option_value == current else ""
+        options.append(
+            f'<option value="{_esc(option_value)}"{selected}>{_esc(option_label)}</option>'
+        )
+    method = _esc(record.get("method") or "PATCH")
+    return (
+        '<form class="inline-form" method="post" action="'
+        + _esc(action)
+        + '" data-operator-control data-method="'
+        + method
+        + '">'
+        f'<select name="{_esc(name)}" aria-label="Operator control value">'
+        + "".join(options)
+        + "</select>"
+        '<button type="submit">Update</button>'
+        "</form>"
+    )
+
+
+def _operator_controls_panel(groups: Mapping[str, Any]) -> str:
+    controls: list[str] = []
+    for group_label, records in groups.items():
+        if isinstance(records, Mapping):
+            iterable = [
+                {"key": key, **value} if isinstance(value, Mapping) else {"key": key, "value": value}
+                for key, value in records.items()
+            ]
+        elif isinstance(records, (list, tuple)):
+            iterable = [record for record in records if isinstance(record, Mapping)]
+        else:
+            iterable = []
+        for index, record in enumerate(iterable, start=1):
+            title = _esc(_operator_control_title(record, f"{group_label} {index}"))
+            summary = _operator_control_summary(record)
+            controls.append(
+                '<div class="operator-control">'
+                f'<div><div class="cell-main">{title}</div>'
+                f'<div class="cell-sub">{_esc(group_label)} override</div></div>'
+                f"<p>{summary}</p>"
+                + _operator_control_form(record)
+                + "</div>"
+            )
+    if not controls:
+        return ""
+    return '<div class="operator-control-list">' + "".join(controls) + "</div>"
+
+
 def _workflow_inventory_row(record: Mapping[str, Any]) -> str:
     workflow_id = _esc(record.get("id") or "—")
     label = _esc(record.get("label") or record.get("display_name") or workflow_id)
@@ -1361,6 +1579,16 @@ def render_admin_dashboard(
     services = list(snapshot.get("services") or [])
     workflow_inventory = list(snapshot.get("workflow_inventory") or [])
     identity_mappings = list(snapshot.get("identity_mappings") or [])
+    config_sources = [
+        source
+        for source in list(snapshot.get("config_sources") or [])
+        if isinstance(source, Mapping)
+    ]
+    operator_override_groups = {
+        "Operator": snapshot.get("operator_overrides"),
+        "Resource": snapshot.get("resource_overrides"),
+        "Service": snapshot.get("service_overrides"),
+    }
     model_visibility = snapshot.get("model_visibility")
     policy_catalog = coerce_policy_catalog(snapshot.get("policy_catalog"))
     profile_inventory = snapshot.get("profile_inventory")
@@ -1421,6 +1649,10 @@ def render_admin_dashboard(
         ["Service", "Role", "Capabilities", "Status", "Runtime", "Mode / resources"],
         (_service_row(service) for service in services),
     )
+    config_sources_table = _table(
+        ["Label", "Domain", "Source", "Editability", "Recommendation"],
+        (_config_source_row(source) for source in config_sources),
+    )
     workflow_inventory_table = _table(
         ["Workflow", "Intent", "Backend", "Tier", "Trust"],
         (_workflow_inventory_row(workflow) for workflow in workflow_inventory),
@@ -1477,7 +1709,17 @@ def render_admin_dashboard(
         _model_visibility_panel(
             model_visibility if isinstance(model_visibility, Mapping) else None
         )
+        + _subsection(
+            "Runtime Control",
+            _operator_controls_panel(operator_override_groups),
+            intro="Pause services, describe maintenance, and cap expensive media queues without editing files or restarting the gateway.",
+        )
         + services_table
+        + _subsection(
+            "Config Sources",
+            config_sources_table,
+            intro="Where runtime policy, service bootstrap, and admin-owned settings currently come from.",
+        )
         + _subsection(
             "Workflows",
             workflow_inventory_table,
@@ -1558,6 +1800,7 @@ def render_admin_dashboard(
         "const copy=document.createElement('button');copy.type='button';copy.textContent='Copy key';copy.addEventListener('click',()=>copyText(key,copy));"
         "actions.append(copy);if(setup){const setupText=String(setup).replaceAll('{key}',key);const setupP=document.createElement('p');setupP.textContent=setupText;const copySetup=document.createElement('button');copySetup.type='button';copySetup.textContent='Copy setup';copySetup.addEventListener('click',()=>copyText(setupText,copySetup));actions.append(copySetup);wrap.append(p,code,setupP,w,actions)}else{wrap.append(p,code,w,actions)}el.append(wrap)};"
         "const list=v=>String(v||'').split(/[\\s,]+/).map(x=>x.trim()).filter(Boolean);"
+        "const assign=(obj,path,value)=>{const parts=String(path).split('.').filter(Boolean);if(!parts.length)return;let cur=obj;parts.slice(0,-1).forEach(p=>{cur[p]=cur[p]||{};cur=cur[p]});cur[parts[parts.length-1]]=value};"
         "const values=(fd,k)=>fd.getAll(k).flatMap(list);"
         "const slug=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'profile';"
         "const labelsFor=section=>Object.fromEntries((policyCatalog[section]||[]).map(o=>[o.id,o.summary_label||o.label||o.id]));"
@@ -1581,8 +1824,8 @@ def render_admin_dashboard(
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
         "document.addEventListener('submit',async e=>{"
-        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]');"
-        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm)return;e.preventDefault();"
+        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]'),operatorForm=e.target.closest('[data-operator-control]');"
+        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm&&!operatorForm)return;e.preventDefault();"
         "if(adminKeyForm){const f=adminKeyForm,fd=new FormData(f);const body={name:fd.get('name'),role:fd.get('role')||'admin'};try{const data=await json(f.action,body);f.reset();await refreshMain();showSecret(data,'Admin automation key created. Copy it now; it will not be shown again.','Use this oak_ key only for /admin/api and /status. Never paste it into chat apps, SDK tools, browser code, prompts, logs, or issue trackers.')}catch(err){showError(err)}return}"
         "if(profileForm){const f=profileForm,fd=new FormData(f);const label=String(fd.get('label')||'').trim();const profile=buildProfileFromForm(fd,f,String(fd.get('id')||'').trim()||slug(label));"
         "const extra=String(fd.get('advanced_json')||'').trim();"
@@ -1600,6 +1843,9 @@ def render_admin_dashboard(
         "try{const data=await json(f.action,body);f.reset();await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(appProfileForm){const f=appProfileForm,fd=new FormData(f);const body={profile_id:fd.get('profile_id')||'default-local'};"
         "try{const data=await json(f.action,body,'PATCH');await refreshMain();show(data)}catch(err){showError(err)}return}"
+        "if(operatorForm){const f=operatorForm,fd=new FormData(f),body={},listFields=new Set(String(f.dataset.listFields||'').split(/\\s+/).filter(Boolean));"
+        "fd.forEach((v,k)=>{if(listFields.has(k)){assign(body,k,list(v));return}if(v==='')return;assign(body,k,v)});"
+        "try{const data=await json(f.action,body,f.dataset.method||'PATCH');await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(appForm){const f=appForm,fd=new FormData(f);const body={name:fd.get('name'),kind:fd.get('kind')||'service'};"
         "if(fd.get('owner_user_id')) body.owner_user_id=fd.get('owner_user_id');"
         "if(fd.get('profile_id')) body.profile_id=fd.get('profile_id');"

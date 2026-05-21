@@ -149,6 +149,16 @@ class AdminStore(Protocol):
         self, *, mapping_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
+    def operator_overrides(self) -> dict[str, Any]: ...
+
+    def update_service_availability_overrides(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
+    def update_media_job_admission_overrides(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]: ...
 
 
@@ -158,6 +168,21 @@ ProfileResolver = Callable[[str], AppProfile | None]
 
 _AUDIT_DEFAULT_LIMIT = 50
 _AUDIT_MAX_LIMIT = 200
+_SERVICE_AVAILABILITY_STATES = frozenset(
+    {"available", "degraded", "draining", "maintenance", "disabled"}
+)
+_SERVICE_OVERRIDE_FIELDS = frozenset(
+    {"state", "status", "reason", "retry_after_seconds"}
+)
+_MEDIA_ADMISSION_FIELDS = frozenset(
+    {
+        "disabled_intents",
+        "disabled_resource_classes",
+        "reserved_tokens",
+        "max_queue_depth",
+        "retry_after_seconds",
+    }
+)
 
 
 def access_model_summary() -> dict[str, Any]:
@@ -315,6 +340,150 @@ def _coerce_limit(value: Any, *, default: int, maximum: int) -> int:
     if n <= 0:
         return default
     return min(n, maximum)
+
+
+def _validate_retry_after(value: Any, *, field: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_operator_override",
+            f"{field} must be a non-negative integer",
+        )
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError) as exc:
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_operator_override",
+            f"{field} must be a non-negative integer",
+        ) from exc
+    if seconds < 0:
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_operator_override",
+            f"{field} must be a non-negative integer",
+        )
+    return seconds
+
+
+def _validate_string_list(value: Any, *, field: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_operator_override",
+            f"{field} must be a list of strings",
+        )
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_operator_override",
+                f"{field} must be a list of non-empty strings",
+            )
+        token = item.strip()
+        if token not in out:
+            out.append(token)
+    return out
+
+
+def _validate_service_availability_overrides(
+    payload: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    overrides = payload.get("overrides", payload)
+    if not isinstance(overrides, Mapping):
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_operator_override",
+            "service availability overrides must be a mapping",
+        )
+    normalized: dict[str, dict[str, Any]] = {}
+    for service_id, raw in overrides.items():
+        service_key = str(service_id or "").strip()
+        if not service_key:
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_operator_override",
+                "service id is required",
+            )
+        if not isinstance(raw, Mapping):
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_operator_override",
+                f"override for {service_key!r} must be a mapping",
+            )
+        unknown = set(raw.keys()) - _SERVICE_OVERRIDE_FIELDS
+        if unknown:
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_operator_override",
+                f"unknown service override fields: {sorted(unknown)}",
+            )
+        state = raw.get("state", raw.get("status"))
+        if state not in _SERVICE_AVAILABILITY_STATES:
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_operator_override",
+                "service state must be one of: "
+                + ", ".join(sorted(_SERVICE_AVAILABILITY_STATES)),
+            )
+        reason = raw.get("reason")
+        if reason is not None and not isinstance(reason, str):
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_operator_override",
+                "service reason must be a string",
+            )
+        normalized[service_key] = {
+            "state": state,
+            "reason": (reason or "").strip() or None,
+            "retry_after_seconds": _validate_retry_after(
+                raw.get("retry_after_seconds"),
+                field="retry_after_seconds",
+            ),
+        }
+    return normalized
+
+
+def _validate_media_job_admission_overrides(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    unknown = set(payload.keys()) - _MEDIA_ADMISSION_FIELDS
+    if unknown:
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_operator_override",
+            f"unknown media admission override fields: {sorted(unknown)}",
+        )
+    max_queue_depth = payload.get("max_queue_depth")
+    if max_queue_depth is not None:
+        max_queue_depth = _validate_retry_after(
+            max_queue_depth,
+            field="max_queue_depth",
+        )
+    return {
+        "disabled_intents": _validate_string_list(
+            payload.get("disabled_intents"),
+            field="disabled_intents",
+        ),
+        "disabled_resource_classes": _validate_string_list(
+            payload.get("disabled_resource_classes"),
+            field="disabled_resource_classes",
+        ),
+        "reserved_tokens": _validate_string_list(
+            payload.get("reserved_tokens"),
+            field="reserved_tokens",
+        ),
+        "max_queue_depth": max_queue_depth,
+        "retry_after_seconds": _validate_retry_after(
+            payload.get("retry_after_seconds"),
+            field="retry_after_seconds",
+        ),
+    }
 
 
 def _resolve_profile(
@@ -808,6 +977,82 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"credential": _scrub_credential(record)},
+        )
+
+    @router.get("/operator/overrides")
+    def list_operator_overrides(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"overrides": store.operator_overrides()},
+        )
+
+    @router.put("/operator/service-availability")
+    async def update_service_availability_overrides(
+        request: Request,
+    ) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            overrides = _validate_service_availability_overrides(body)
+            current = store.operator_overrides().get("service_availability", {})
+            merged = dict(current) if isinstance(current, Mapping) else {}
+            for service_id, override in overrides.items():
+                clears_default = (
+                    override.get("state") == "available"
+                    and override.get("reason") is None
+                    and override.get("retry_after_seconds") is None
+                )
+                if clears_default:
+                    merged.pop(service_id, None)
+                else:
+                    merged[service_id] = override
+            record = store.update_service_availability_overrides(
+                data=merged,
+                actor=ctx,
+            )
+        except _RouteError as exc:
+            return exc.as_response()
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_operator_override",
+                str(exc),
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"service_availability": record},
+        )
+
+    @router.put("/operator/media-job-admission")
+    async def update_media_job_admission_overrides(
+        request: Request,
+    ) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            overrides = _validate_media_job_admission_overrides(body)
+            record = store.update_media_job_admission_overrides(
+                data=overrides,
+                actor=ctx,
+            )
+        except _RouteError as exc:
+            return exc.as_response()
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_operator_override",
+                str(exc),
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"media_job_admission": record},
         )
 
     @router.get("/audit")

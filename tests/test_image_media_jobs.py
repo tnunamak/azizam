@@ -393,6 +393,83 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(media_jobs.recent(path=self.db)), 1)
 
+    async def test_media_job_admission_uses_admin_runtime_overrides(self) -> None:
+        body = {
+            "model": "flux2-klein-4b",
+            "prompt": "private prompt",
+        }
+        overrides = {
+            "service_availability": {},
+            "media_job_admission": {
+                "disabled_intents": ["image.generate"],
+                "retry_after_seconds": 17,
+                "reserved_tokens": ["gpu"],
+            },
+        }
+
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "MEDIA_JOB_ADMISSION_CFG",
+            {},
+        ), patch.object(
+            proxy.ADMIN_STORE,
+            "operator_overrides",
+            return_value=overrides,
+        ):
+            response = await proxy._dispatch_gateway_media_job_submission(
+                request=_StubJsonRequest({}),  # type: ignore[arg-type]
+                payload={"intent": "image.generate", "request": body},
+                audience="client",
+            )
+
+        assert response is not None
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["retry-after"], "17")
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(
+            payload["error"]["code"],
+            "resource_admission_denied",
+        )
+        self.assertEqual(media_jobs.recent(path=self.db), [])
+
+    async def test_media_job_admission_uses_admin_service_mode(self) -> None:
+        body = {
+            "model": "flux2-klein-4b",
+            "prompt": "private prompt",
+        }
+        overrides = {
+            "service_availability": {
+                "comfyui": {
+                    "state": "maintenance",
+                    "reason": "reserved for LLM work",
+                    "retry_after_seconds": 45,
+                }
+            },
+            "media_job_admission": {},
+        }
+
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "COMFY_ENABLED",
+            True,
+        ), patch.object(
+            proxy.ADMIN_STORE,
+            "operator_overrides",
+            return_value=overrides,
+        ):
+            response = await proxy._dispatch_gateway_media_job_submission(
+                request=_StubJsonRequest({}),  # type: ignore[arg-type]
+                payload={"intent": "image.generate", "request": body},
+                audience="client",
+            )
+
+        assert response is not None
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["retry-after"], "45")
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(payload["error"]["message"], "reserved for LLM work")
+        self.assertEqual(media_jobs.recent(path=self.db), [])
+
     async def test_queue_admission_observes_at_least_the_configured_depth(self) -> None:
         for index in range(3):
             media_jobs.create(

@@ -78,6 +78,51 @@ class TestSchema(AdminStoreTestBase):
         self.assertEqual(first["id"], second["id"])
 
 
+class TestOperatorSettings(AdminStoreTestBase):
+    def test_operator_setting_persists_json_document(self) -> None:
+        saved = admin_store.put_operator_setting(
+            "media_job_admission_overrides",
+            {
+                "disabled_intents": ["video.generate"],
+                "max_queue_depth": 3,
+                "retry_after_seconds": 60,
+            },
+            updated_by="svc_admin",
+            now=1234,
+            path=self.db,
+        )
+
+        self.assertEqual(saved["key"], "media_job_admission_overrides")
+        self.assertEqual(saved["updated_at"], 1234)
+        self.assertEqual(saved["updated_by"], "svc_admin")
+        self.assertEqual(saved["value"]["max_queue_depth"], 3)
+
+        reopened = admin_store.get_operator_setting(
+            "media_job_admission_overrides",
+            path=self.db,
+        )
+        self.assertEqual(reopened, saved)
+
+    def test_operator_setting_updates_same_key(self) -> None:
+        admin_store.put_operator_setting(
+            "service_availability_overrides",
+            {"openai": {"state": "degraded"}},
+            now=1,
+            path=self.db,
+        )
+        admin_store.put_operator_setting(
+            "service_availability_overrides",
+            {"openai": {"state": "maintenance"}},
+            now=2,
+            path=self.db,
+        )
+
+        rows = admin_store.list_operator_settings(path=self.db)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["updated_at"], 2)
+        self.assertEqual(rows[0]["value"]["openai"]["state"], "maintenance")
+
+
 class TestOidcUpsert(AdminStoreTestBase):
     def test_first_login_creates_user(self) -> None:
         user = admin_store.upsert_oidc_user(

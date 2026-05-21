@@ -38,6 +38,8 @@ ADMIN_KEY_PREFIX = "oak_"
 DEFAULT_SERVICE_ACCOUNT = "gateway-admin"
 ADMIN_CONTROL_ROLES = frozenset({"owner", "admin", "superadmin"})
 ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
+SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
+MEDIA_JOB_ADMISSION_OVERRIDES_KEY = "media_job_admission_overrides"
 
 
 def generate_app_api_key() -> str:
@@ -55,6 +57,22 @@ def _key_prefix(api_key: str) -> str:
 def _sanitize_credential(record: Mapping[str, Any]) -> dict[str, Any]:
     blocked = {"hash", "api_key", "key", "secret"}
     return {k: v for k, v in record.items() if k not in blocked}
+
+
+def _copy_override_value(value: Mapping[str, Any]) -> dict[str, Any]:
+    copied: dict[str, Any] = {}
+    for key, item in value.items():
+        key_text = str(key)
+        if isinstance(item, Mapping):
+            copied[key_text] = _copy_override_value(item)
+        elif isinstance(item, (list, tuple)):
+            copied[key_text] = [
+                _copy_override_value(v) if isinstance(v, Mapping) else v
+                for v in item
+            ]
+        else:
+            copied[key_text] = item
+    return copied
 
 
 def _stored_profile_id(value: Any) -> str | None:
@@ -378,6 +396,66 @@ class AdminSQLiteStore:
 
     def list_runtime_profile_mappings(self) -> list[dict[str, Any]]:
         return admin_store.list_runtime_profile_mappings(path=self.path)
+
+    def operator_overrides(self) -> dict[str, Any]:
+        service_setting = admin_store.get_operator_setting(
+            SERVICE_AVAILABILITY_OVERRIDES_KEY,
+            path=self.path,
+        )
+        media_setting = admin_store.get_operator_setting(
+            MEDIA_JOB_ADMISSION_OVERRIDES_KEY,
+            path=self.path,
+        )
+        return {
+            "service_availability": (
+                service_setting["value"] if service_setting is not None else {}
+            ),
+            "media_job_admission": (
+                media_setting["value"] if media_setting is not None else {}
+            ),
+        }
+
+    def update_service_availability_overrides(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        value = _copy_override_value(data)
+        record = admin_store.put_operator_setting(
+            SERVICE_AVAILABILITY_OVERRIDES_KEY,
+            value,
+            updated_by=actor.subject,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            "operator.service_availability.update",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="operator_setting",
+            target_id=SERVICE_AVAILABILITY_OVERRIDES_KEY,
+            metadata={"override_count": len(value)},
+            path=self.path,
+        )
+        return record["value"]
+
+    def update_media_job_admission_overrides(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        value = _copy_override_value(data)
+        record = admin_store.put_operator_setting(
+            MEDIA_JOB_ADMISSION_OVERRIDES_KEY,
+            value,
+            updated_by=actor.subject,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            "operator.media_job_admission.update",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="operator_setting",
+            target_id=MEDIA_JOB_ADMISSION_OVERRIDES_KEY,
+            metadata={"fields": sorted(value.keys())},
+            path=self.path,
+        )
+        return record["value"]
 
     def create_runtime_profile_mapping(
         self, *, data: Mapping[str, Any], actor: AdminContext

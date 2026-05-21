@@ -445,6 +445,47 @@ class AdminRuntimeTests(unittest.TestCase):
             )
         )
 
+    def test_operator_overrides_persist_and_are_audited(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+
+        resp = client.put(
+            "/admin/api/operator/service-availability",
+            json={
+                "openai": {
+                    "state": "maintenance",
+                    "reason": "planned work",
+                    "retry_after_seconds": 300,
+                }
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+
+        reopened = AdminSQLiteStore(self.db)
+        overrides = reopened.operator_overrides()
+        self.assertEqual(
+            overrides["service_availability"]["openai"]["state"],
+            "maintenance",
+        )
+        media_resp = client.put(
+            "/admin/api/operator/media-job-admission",
+            json={
+                "reserved_tokens": ["gpu"],
+                "disabled_intents": ["video.generate"],
+            },
+        )
+        self.assertEqual(media_resp.status_code, 200, media_resp.text)
+        overrides = reopened.operator_overrides()
+        self.assertEqual(
+            overrides["media_job_admission"]["reserved_tokens"],
+            ["gpu"],
+        )
+        actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
+        self.assertIn("operator.service_availability.update", actions)
+        self.assertIn("operator.media_job_admission.update", actions)
+
 
 if __name__ == "__main__":
     unittest.main()
