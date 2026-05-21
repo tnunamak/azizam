@@ -390,9 +390,10 @@ The Anthropic and Ollama frontends are live, but intentionally narrow:
 
 - Streaming is supported on `/anthropic/v1/messages`, `/ollama/api/chat`, and
   `/ollama/api/generate`.
-- Anthropic image/document/thinking blocks are rejected by the translator
-  instead of silently dropped. Anthropic-native prompt caching markers and beta
-  headers are not represented.
+- Anthropic image blocks are translated into OpenAI-compatible multimodal chat
+  content and use the gateway's normal vision routing. Document/thinking blocks
+  are rejected instead of silently dropped. Anthropic-native prompt caching
+  markers and beta headers are not represented.
 - Ollama read-only model routes are implemented: `/api/tags`, `/api/show`,
   `/api/ps`, and `/api/version`. Mutating routes (`/api/pull`, `/api/push`,
   `/api/copy`, `/api/delete`, `/api/create`) return an Ollama-shaped

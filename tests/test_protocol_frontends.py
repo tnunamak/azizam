@@ -152,7 +152,7 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
         self.assertEqual(out["messages"][2]["tool_call_id"], "toolu_abc")
         self.assertEqual(out["messages"][2]["content"], "72F")
 
-    def test_image_block_is_rejected(self) -> None:
+    def test_base64_image_block_becomes_openai_image_url(self) -> None:
         body = {
             "model": "claude-3-haiku",
             "max_tokens": 32,
@@ -160,6 +160,7 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
                 {
                     "role": "user",
                     "content": [
+                        {"type": "text", "text": "describe this"},
                         {
                             "type": "image",
                             "source": {
@@ -172,12 +173,65 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
                 }
             ],
         }
-        with self.assertRaises(anthro.AnthropicTranslationError) as ctx:
-            anthro.messages_request_to_canonical(body)
-        self.assertIn("image", str(ctx.exception))
+        out = anthro.messages_request_to_canonical(body)
         self.assertEqual(
-            ctx.exception.error_body["error"]["type"], "invalid_request_error"
+            out["messages"][0]["content"],
+            [
+                {"type": "text", "text": "describe this"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,iVBORw0KG"},
+                },
+            ],
         )
+
+    def test_url_image_block_becomes_openai_image_url(self) -> None:
+        body = {
+            "model": "claude-3-haiku",
+            "max_tokens": 32,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "url": "https://example.test/cat.png",
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        out = anthro.messages_request_to_canonical(body)
+        self.assertEqual(
+            out["messages"][0]["content"],
+            [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.test/cat.png"},
+                }
+            ],
+        )
+
+    def test_document_thinking_blocks_are_rejected(self) -> None:
+        for btype in ("document", "thinking", "redacted_thinking"):
+            with self.subTest(btype=btype):
+                body = {
+                    "model": "claude-3-haiku",
+                    "max_tokens": 32,
+                    "messages": [
+                        {"role": "user", "content": [{"type": btype}]}
+                    ],
+                }
+                with self.assertRaises(anthro.AnthropicTranslationError) as ctx:
+                    anthro.messages_request_to_canonical(body)
+                self.assertIn(btype, str(ctx.exception))
+                self.assertEqual(
+                    ctx.exception.error_body["error"]["type"],
+                    "invalid_request_error",
+                )
 
     def test_missing_max_tokens_is_rejected(self) -> None:
         body = {

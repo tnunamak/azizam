@@ -28,8 +28,8 @@ the gateway already speaks internally::
 
 Conservative posture for unsupported features:
 
-* Anthropic image content blocks are surfaced as an unsupported error
-  rather than silently dropped.
+* Anthropic image content blocks are translated into OpenAI-compatible
+  multimodal chat content blocks and routed by the normal chat path.
 * Tool use is translated structurally; we do not invent shapes the
   underlying chat-completions backend does not accept.
 * Anthropic-only knobs (``top_k``, ``thinking`` blocks, ``cache_control``)
@@ -52,7 +52,7 @@ _MAX_TOKENS_STOP_REASON = "max_tokens"
 _STOP_SEQUENCE_STOP_REASON = "stop_sequence"
 
 _UNSUPPORTED_BLOCK_TYPES = frozenset(
-    {"image", "document", "thinking", "redacted_thinking"}
+    {"document", "thinking", "redacted_thinking"}
 )
 
 
@@ -482,6 +482,7 @@ def _translate_message(msg: Any, *, index: int) -> list[dict[str, Any]]:
         )
 
     text_parts: list[str] = []
+    content_parts: list[dict[str, Any]] = []
     tool_use_messages: list[dict[str, Any]] = []
     tool_result_messages: list[dict[str, Any]] = []
 
@@ -503,6 +504,15 @@ def _translate_message(msg: Any, *, index: int) -> list[dict[str, Any]]:
                     f"messages[{index}].content[{block_index}].text must be a string"
                 )
             text_parts.append(text)
+            content_parts.append({"type": "text", "text": text})
+        elif btype == "image":
+            if role != "user":
+                raise AnthropicTranslationError(
+                    "image content blocks are only supported on user messages"
+                )
+            content_parts.append(
+                _anthropic_image_to_openai(block, index, block_index)
+            )
         elif btype == "tool_use":
             tool_use_messages.append(_anthropic_tool_use_to_openai(block, index, block_index))
         elif btype == "tool_result":
@@ -528,6 +538,10 @@ def _translate_message(msg: Any, *, index: int) -> list[dict[str, Any]]:
         # A user turn made entirely of tool_result blocks becomes the
         # OpenAI tool messages below; no empty user message in between.
         pass
+    elif role == "user" and any(
+        part.get("type") == "image_url" for part in content_parts
+    ):
+        out.append({"role": role, "content": content_parts})
     elif joined_text or role == "user":
         out.append({"role": role, "content": joined_text})
 
@@ -535,6 +549,35 @@ def _translate_message(msg: Any, *, index: int) -> list[dict[str, Any]]:
     # role messages, which must follow the assistant tool_calls.
     out.extend(tool_result_messages)
     return out
+
+
+def _anthropic_image_to_openai(
+    block: dict[str, Any], index: int, block_index: int
+) -> dict[str, Any]:
+    source = block.get("source")
+    where = f"messages[{index}].content[{block_index}].source"
+    if not isinstance(source, dict):
+        raise AnthropicTranslationError(f"{where} must be an object")
+
+    source_type = source.get("type")
+    if source_type == "base64":
+        media_type = source.get("media_type")
+        data = source.get("data")
+        if not isinstance(media_type, str) or not media_type:
+            raise AnthropicTranslationError(f"{where}.media_type is required")
+        if not isinstance(data, str) or not data:
+            raise AnthropicTranslationError(f"{where}.data is required")
+        url = f"data:{media_type};base64,{data}"
+    elif source_type == "url":
+        url = source.get("url")
+        if not isinstance(url, str) or not url:
+            raise AnthropicTranslationError(f"{where}.url is required")
+    else:
+        raise AnthropicTranslationError(
+            f"{where}.type must be 'base64' or 'url'"
+        )
+
+    return {"type": "image_url", "image_url": {"url": url}}
 
 
 def _anthropic_tool_use_to_openai(
