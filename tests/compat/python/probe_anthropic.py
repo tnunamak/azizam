@@ -40,9 +40,47 @@ class TestAnthropicPythonSDK(unittest.TestCase):
         )
 
     def test_client_construct(self) -> None:
-        # Construction alone is a useful smoke probe; live calls live in
-        # later slices once the gateway exposes a known Anthropic model.
         self.assertTrue(hasattr(self.client, "messages"))
+
+    def test_messages_create(self) -> None:
+        self._skip_without_live_llm()
+        message = self.client.messages.create(
+            model=self._model(),
+            max_tokens=8,
+            messages=[{"role": "user", "content": "compatibility probe"}],
+        )
+        self.assertEqual(getattr(message, "type", None), "message")
+        content = getattr(message, "content", None)
+        self.assertIsInstance(content, list)
+        self.assertGreater(len(content), 0)
+        first = content[0]
+        text = getattr(first, "text", None)
+        if text is None and isinstance(first, dict):
+            text = first.get("text")
+        self.assertIsInstance(text, str)
+        self.assertGreater(len(text), 0)
+
+    def test_messages_streaming(self) -> None:
+        self._skip_without_live_llm()
+        text_chunks: list[str] = []
+        with self.client.messages.stream(
+            model=self._model(),
+            max_tokens=8,
+            messages=[{"role": "user", "content": "compatibility probe"}],
+        ) as stream:
+            for text in stream.text_stream:
+                if text:
+                    text_chunks.append(str(text))
+                if len("".join(text_chunks)) >= 1:
+                    break
+        self.assertGreater(len("".join(text_chunks)), 0)
+
+    def _model(self) -> str:
+        return os.environ.get("OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL", "default")
+
+    def _skip_without_live_llm(self) -> None:
+        if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_LLM") != "1":
+            self.skipTest("OPENAI_PROXY_SMOKE_LIVE_LLM not set; live LLM probe disabled")
 
 
 if __name__ == "__main__":  # pragma: no cover

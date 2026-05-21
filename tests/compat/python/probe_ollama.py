@@ -70,6 +70,91 @@ class TestOllamaPythonSDK(unittest.TestCase):
         self.assertGreater(len(embedding), 0)
         self.assertIsInstance(embedding[0], float)
 
+    def test_show_model(self) -> None:
+        result = self.client.show(self._model())
+        details = _field(result, "details")
+        self.assertIsNotNone(details)
+
+    def test_ps_list(self) -> None:
+        result = self.client.ps()
+        models = _field(result, "models")
+        self.assertIsInstance(models, list)
+
+    def test_chat_nonstream(self) -> None:
+        self._skip_without_live_llm()
+        result = self.client.chat(
+            model=self._model(),
+            messages=[{"role": "user", "content": "compatibility probe"}],
+            stream=False,
+            options={"num_predict": 8},
+        )
+        message = _field(result, "message")
+        self.assertIsNotNone(message)
+        content = _field(message, "content")
+        self.assertIsInstance(content, str)
+
+    def test_chat_stream(self) -> None:
+        self._skip_without_live_llm()
+        chunks = self.client.chat(
+            model=self._model(),
+            messages=[{"role": "user", "content": "compatibility probe"}],
+            stream=True,
+            options={"num_predict": 8},
+        )
+        text = ""
+        done_seen = False
+        for chunk in chunks:
+            message = _field(chunk, "message")
+            if message is not None:
+                text += str(_field(message, "content") or "")
+            done_seen = bool(_field(chunk, "done") or done_seen)
+            if text and done_seen:
+                break
+        self.assertGreater(len(text), 0)
+        self.assertTrue(done_seen)
+
+    def test_generate_nonstream(self) -> None:
+        self._skip_without_live_llm()
+        result = self.client.generate(
+            model=self._model(),
+            prompt="compatibility probe",
+            stream=False,
+            options={"num_predict": 8},
+        )
+        response = _field(result, "response")
+        self.assertIsInstance(response, str)
+
+    def test_generate_stream(self) -> None:
+        self._skip_without_live_llm()
+        chunks = self.client.generate(
+            model=self._model(),
+            prompt="compatibility probe",
+            stream=True,
+            options={"num_predict": 8},
+        )
+        text = ""
+        done_seen = False
+        for chunk in chunks:
+            text += str(_field(chunk, "response") or "")
+            done_seen = bool(_field(chunk, "done") or done_seen)
+            if text and done_seen:
+                break
+        self.assertGreater(len(text), 0)
+        self.assertTrue(done_seen)
+
+    def _model(self) -> str:
+        return os.environ.get("OPENAI_PROXY_SMOKE_OLLAMA_MODEL", "default")
+
+    def _skip_without_live_llm(self) -> None:
+        if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_LLM") != "1":
+            self.skipTest("OPENAI_PROXY_SMOKE_LIVE_LLM not set; live LLM probe disabled")
+
+
+def _field(value, name: str):
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

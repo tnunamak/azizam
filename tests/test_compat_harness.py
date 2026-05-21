@@ -34,8 +34,13 @@ from tests.compat.harness.fake_backends import (
     fake_chat_completion,
     fake_chat_completion_stream,
     fake_ollama_chat,
+    fake_ollama_chat_stream_chunk,
     fake_ollama_embed,
     fake_ollama_embeddings,
+    fake_ollama_generate,
+    fake_ollama_generate_stream_chunk,
+    fake_ollama_ps,
+    fake_ollama_show,
     fake_ollama_tags,
 )
 from tests.compat.harness.matrix import validate_matrix_dict
@@ -228,6 +233,21 @@ class TestFakeBackends(unittest.TestCase):
         self.assertEqual(payload["message"]["content"], "hi")
         self.assertTrue(payload["done"])
 
+    def test_ollama_chat_stream_chunk_envelope(self) -> None:
+        payload = fake_ollama_chat_stream_chunk(model="llama3", content="hi")
+        self.assertEqual(payload["message"]["content"], "hi")
+        self.assertFalse(payload["done"])
+
+    def test_ollama_generate_envelope(self) -> None:
+        payload = fake_ollama_generate(model="llama3", response="hi")
+        self.assertEqual(payload["response"], "hi")
+        self.assertTrue(payload["done"])
+
+    def test_ollama_generate_stream_chunk_envelope(self) -> None:
+        payload = fake_ollama_generate_stream_chunk(model="llama3", response="hi")
+        self.assertEqual(payload["response"], "hi")
+        self.assertFalse(payload["done"])
+
     def test_ollama_tags_envelope(self) -> None:
         payload = fake_ollama_tags(models=["a", "b"])
         names = [m["name"] for m in payload["models"]]
@@ -235,6 +255,15 @@ class TestFakeBackends(unittest.TestCase):
         for m in payload["models"]:
             self.assertIn("digest", m)
             self.assertTrue(m["digest"].startswith("sha256:"))
+
+    def test_ollama_show_envelope(self) -> None:
+        payload = fake_ollama_show(model="llama3")
+        self.assertEqual(payload["details"]["family"], "llama")
+        self.assertIn("model_info", payload)
+
+    def test_ollama_ps_envelope(self) -> None:
+        payload = fake_ollama_ps(models=["llama3"])
+        self.assertEqual(payload["models"][0]["model"], "llama3")
 
     def test_ollama_embed_envelope(self) -> None:
         payload = fake_ollama_embed(vector=[0.1, 0.2])

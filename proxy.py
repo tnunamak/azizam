@@ -15043,20 +15043,22 @@ async def provider_native_request(
     if request.url.query:
         url += f"?{request.url.query}"
 
+    client = httpx.AsyncClient(timeout=httpx.Timeout(
+        connect=10.0,
+        read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
+        write=60.0,
+        pool=None,
+    ))
+    stream_context = client.stream(
+        request.method,
+        url,
+        headers=headers,
+        content=body,
+    )
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(
-            connect=10.0,
-            read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
-            write=60.0,
-            pool=None,
-        )) as client:
-            upstream = await client.request(
-                request.method,
-                url,
-                headers=headers,
-                content=body,
-            )
+        upstream = await stream_context.__aenter__()
     except httpx.TimeoutException:
+        await client.aclose()
         receipt.finish("timeout")
         _record_native_passthrough_receipt(receipt)
         return openai_error_response(
@@ -15066,6 +15068,7 @@ async def provider_native_request(
             code="provider_timeout",
         )
     except httpx.ConnectError:
+        await client.aclose()
         receipt.finish("backend_unavailable")
         _record_native_passthrough_receipt(receipt)
         return openai_error_response(
@@ -15075,6 +15078,7 @@ async def provider_native_request(
             code="provider_unavailable",
         )
     except Exception as e:  # noqa: BLE001
+        await client.aclose()
         receipt.finish("error")
         _record_native_passthrough_receipt(receipt)
         return openai_error_response(
@@ -15092,8 +15096,17 @@ async def provider_native_request(
     receipt.finish("ok" if upstream.status_code < 400 else "error")
     receipt.metadata["status_code"] = upstream.status_code
     _record_native_passthrough_receipt(receipt)
-    return Response(
-        content=upstream.content,
+
+    async def _provider_native_body_stream():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await stream_context.__aexit__(None, None, None)
+            await client.aclose()
+
+    return StreamingResponse(
+        _provider_native_body_stream(),
         status_code=upstream.status_code,
         headers=response_headers,
         media_type=upstream.headers.get("content-type"),

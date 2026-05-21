@@ -27,6 +27,58 @@ def fake_ollama_chat(
     }
 
 
+def fake_ollama_chat_stream_chunk(
+    *,
+    model: str,
+    content: str = "",
+    done: bool = False,
+    created_at: str = "2026-05-15T00:00:00Z",
+) -> Dict[str, Any]:
+    """Build one streaming ``/api/chat`` NDJSON object."""
+
+    return fake_ollama_chat(
+        model=model,
+        content=content,
+        done=done,
+        created_at=created_at,
+    )
+
+
+def fake_ollama_generate(
+    *,
+    model: str,
+    response: str,
+    done: bool = True,
+    created_at: str = "2026-05-15T00:00:00Z",
+) -> Dict[str, Any]:
+    """Build a non-streaming ``/api/generate`` response."""
+
+    return {
+        "model": model,
+        "created_at": created_at,
+        "response": response,
+        "done": done,
+        "done_reason": "stop" if done else None,
+    }
+
+
+def fake_ollama_generate_stream_chunk(
+    *,
+    model: str,
+    response: str = "",
+    done: bool = False,
+    created_at: str = "2026-05-15T00:00:00Z",
+) -> Dict[str, Any]:
+    """Build one streaming ``/api/generate`` NDJSON object."""
+
+    return fake_ollama_generate(
+        model=model,
+        response=response,
+        done=done,
+        created_at=created_at,
+    )
+
+
 def fake_ollama_tags(
     *,
     models: Iterable[str],
@@ -52,6 +104,46 @@ def fake_ollama_tags(
             }
         )
     return {"models": items}
+
+
+def fake_ollama_show(*, model: str) -> Dict[str, Any]:
+    """Build an ``/api/show`` model metadata response."""
+
+    return {
+        "modelfile": f"FROM {model}",
+        "parameters": "",
+        "template": "{{ .Prompt }}",
+        "details": {
+            "format": "gguf",
+            "family": "llama",
+            "parameter_size": "8B",
+            "quantization_level": "Q4_K_M",
+        },
+        "model_info": {"general.architecture": "llama"},
+    }
+
+
+def fake_ollama_ps(*, models: Iterable[str]) -> Dict[str, Any]:
+    """Build an ``/api/ps`` running-model response."""
+
+    return {
+        "models": [
+            {
+                "name": model,
+                "model": model,
+                "size": 4_000_000_000,
+                "digest": "sha256:" + "0" * 64,
+                "expires_at": "2026-05-15T00:05:00Z",
+                "details": {
+                    "format": "gguf",
+                    "family": "llama",
+                    "parameter_size": "8B",
+                    "quantization_level": "Q4_K_M",
+                },
+            }
+            for model in models
+        ]
+    }
 
 
 def fake_ollama_embed(*, vector: Iterable[float] = (0.1, 0.2, 0.3)) -> Dict[str, Any]:

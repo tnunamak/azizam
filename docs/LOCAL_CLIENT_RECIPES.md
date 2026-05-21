@@ -420,7 +420,9 @@ Provider-native discovery lives at `/gateway/v1/providers` and
 `/gateway/v1/providers/{provider}`; results are projected through the caller's
 App profile policy. Raw provider-native passthrough, when enabled for a key, is
 reserved for `/gateway/v1/providers/{provider}/{path...}`. It is not exposed by
-root paths, and there is no legacy root Tabby shim.
+root paths, and there is no legacy root Tabby shim. Passthrough preserves
+streamed response bodies such as SSE, NDJSON, and generated media rather than
+buffering the whole upstream response first.
 
 ## Recipe: Open WebUI
 

@@ -32,6 +32,9 @@ The status of each build-order item below reflects what currently lives on
 - [x] Durable `image.generate` media-job execution through `POST /gateway/v1/media/jobs` with retry, idempotency, persisted job state, and completed image content retrieval
 - [x] Live Anthropic Messages and Ollama chat/generate/tags/show/ps/version frontends over the existing chat route, including Anthropic SSE and Ollama NDJSON streaming
 - [x] Live OpenAI and Ollama embeddings routed to a dedicated CPU `nomic-embed-text-v1.5` backend with no GPU budget claim
+- [x] Provider-native discovery and policy-gated passthrough under
+      `/gateway/v1/providers/*`, including streamed response bodies rather
+      than full buffering
 - [x] Live image workflow extension binding for supported manifest controls
 - [x] `generate-key` preserves existing `profile:` blocks on rotation
 - [x] SDK compatibility harness with executable registered probes (`scripts/compat/`, `tests/compat/`, `docs/SDK_COMPATIBILITY_HARNESS.md`)
@@ -39,8 +42,8 @@ The status of each build-order item below reflects what currently lives on
 In-progress / next integration targets:
 
 - Expand the live capability inventory beyond the initial hand-built catalog.
-- Extend durable media-job execution to video and audio/music.
-- Expand SDK compatibility probes for Anthropic/Ollama streaming, Ollama read-only model routes, and embeddings.
+- Expand SDK compatibility probes for OpenAI SDK chat/streaming, OpenAI media
+  routes, and Node Anthropic/Ollama clients.
 - Backend adapter contract extracted from `proxy.py`.
 
 ## North Star

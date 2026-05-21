@@ -157,6 +157,11 @@ A first pass of this harness lives under `tests/compat/` and
   by the repo's default unittest discovery.
 - `tests/compat/python/probe_*.py` are optional live probes that
   auto-skip when their SDK or the env is missing.
+- Current Python probe coverage includes OpenAI models/embeddings, Anthropic
+  Messages create/streaming, and Ollama tags/show/ps/chat/generate/embed/
+  embeddings. Chat/generate probes require
+  `OPENAI_PROXY_SMOKE_LIVE_LLM=1`; embedding probes require the normal
+  harness env plus a reachable embeddings backend.
 - `tests/compat/node/` is an isolated Node project for JS SDK probes —
   it does not touch the Python install.
 - `scripts/compat/run_matrix.py` aggregates whatever probes are

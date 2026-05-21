@@ -161,9 +161,14 @@ class _NativePassthroughResponse:
     }
     content = b'{"native": true}'
 
+    async def aiter_bytes(self):
+        yield self.content
+
 
 class _CaptureNativePassthroughClient:
     calls: list[dict] = []
+    response = _NativePassthroughResponse()
+    closed = False
 
     def __init__(self, *args, **kwargs):
         pass
@@ -174,20 +179,55 @@ class _CaptureNativePassthroughClient:
     async def __aexit__(self, *exc_info):
         return False
 
-    async def request(self, method, url, headers, content):
+    async def aclose(self):
+        self.__class__.closed = True
+
+    def stream(self, method, url, headers, content):
         self.__class__.calls.append({
             "method": method,
             "url": str(url),
             "headers": dict(headers),
             "content": content,
         })
-        return _NativePassthroughResponse()
+        return _FakeAsyncStreamContext(self.__class__.response)
+
+
+class _NativeStreamingResponse:
+    status_code = 200
+    headers = {
+        "content-type": "application/x-ndjson",
+        "transfer-encoding": "chunked",
+    }
+
+    def __init__(self, chunks: list[bytes]):
+        self._chunks = chunks
+
+    async def aiter_bytes(self):
+        for chunk in self._chunks:
+            assert not _CaptureNativePassthroughClient.closed
+            yield chunk
+
+
+class _FakeAsyncStreamContext:
+    def __init__(self, response):
+        self.response = response
+        self.exited = False
+
+    async def __aenter__(self):
+        return self.response
+
+    async def __aexit__(self, *exc_info):
+        self.exited = True
+        return False
 
 
 class TestRuntimeRoutePolicy(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
         _CaptureForwardClient.urls = []
+        _CaptureNativePassthroughClient.calls = []
+        _CaptureNativePassthroughClient.response = _NativePassthroughResponse()
+        _CaptureNativePassthroughClient.closed = False
         _CaptureForwardClient.bodies = []
         _CaptureForwardClient.headers = []
         _CaptureLoopbackClient.headers = []
@@ -724,6 +764,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
     def test_provider_native_targets_include_configured_local_backends(self) -> None:
         self.assertIn("tabby", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertIn("kobold", proxy._PROVIDER_NATIVE_TARGETS)
+        self.assertIn("tts", proxy._PROVIDER_NATIVE_TARGETS)
+        self.assertIn("stt", proxy._PROVIDER_NATIVE_TARGETS)
+        self.assertIn("embeddings", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertIn("comfyui", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertNotIn("openai-proxy", proxy._PROVIDER_NATIVE_TARGETS)
 
@@ -857,6 +900,40 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertNotEqual(forwarded_headers.get("x-api-key"), "caller-secret")
         self.assertEqual(forwarded_headers["x-comfy-key"], "comfy-secret")
         self.assertEqual(forwarded_headers["x-request-id"], "request-456")
+
+    def test_provider_native_preserves_streaming_response_shape(self) -> None:
+        profile = AppProfile(
+            id="tabby-native-stream",
+            protocols=frozenset({"provider-native"}),
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_backends=frozenset({"tabby"}),
+                allowed_operations=frozenset({"POST /v1/chat/completions"}),
+            ),
+        )
+        _CaptureNativePassthroughClient.response = _NativeStreamingResponse([
+            b'{"message":"hel"}\n',
+            b'{"message":"lo","done":true}\n',
+        ])
+
+        with authenticated_profile(profile), patch.object(
+            proxy.httpx,
+            "AsyncClient",
+            _CaptureNativePassthroughClient,
+        ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
+            response = self.client.post(
+                "/gateway/v1/providers/tabby/v1/chat/completions",
+                headers=AUTH_HEADERS,
+                json={"stream": True, "messages": []},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.text, '{"message":"hel"}\n{"message":"lo","done":true}\n')
+        self.assertEqual(
+            response.headers["content-type"],
+            "application/x-ndjson",
+        )
+        self.assertNotIn("transfer-encoding", response.headers)
 
     def test_provider_native_tabby_operation_allowlist_denies_before_backend(self) -> None:
         profile = AppProfile(

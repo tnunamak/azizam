@@ -13,8 +13,13 @@ from .openai_chat import (
 )
 from .ollama import (
     fake_ollama_chat,
+    fake_ollama_chat_stream_chunk,
     fake_ollama_embed,
     fake_ollama_embeddings,
+    fake_ollama_generate,
+    fake_ollama_generate_stream_chunk,
+    fake_ollama_ps,
+    fake_ollama_show,
     fake_ollama_tags,
 )
 
@@ -23,7 +28,12 @@ __all__ = [
     "fake_chat_completion_chunk",
     "fake_chat_completion_stream",
     "fake_ollama_chat",
+    "fake_ollama_chat_stream_chunk",
     "fake_ollama_embed",
     "fake_ollama_embeddings",
+    "fake_ollama_generate",
+    "fake_ollama_generate_stream_chunk",
+    "fake_ollama_ps",
+    "fake_ollama_show",
     "fake_ollama_tags",
 ]
