@@ -15048,6 +15048,7 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
             "backend": provider,
             "service": str(raw_cfg.get("downstream_service") or provider),
             "host": host,
+            "enabled": bool(_PROVIDER_NATIVE_ENABLED.get(provider, True)),
             "timeout": float(raw_cfg.get("timeout") or UPSTREAM_READ_TIMEOUT),
         }
     return targets
@@ -15113,6 +15114,8 @@ def _provider_native_summary(
             native_backend=str(target["backend"]),
         ),
     )
+    profile = auth_context.identity.profile if auth_context.identity else DEFAULT_PROFILE
+    native_policy = profile.native_passthrough
     cfg = (config.get("backends") or {}).get(provider, {})
     capabilities = []
     if isinstance(cfg, Mapping):
@@ -15125,14 +15128,55 @@ def _provider_native_summary(
                 for capability in raw_capabilities
                 if str(capability).strip()
             ]
+    service = str(target.get("service") or target["backend"])
+    downstream_cfg = service_auth_config(auth_context, service)
+    downstream_auth_classes = _provider_native_downstream_auth_classes(
+        service,
+        downstream_cfg,
+    )
     return {
         "id": provider,
         "object": "provider",
         "name": str(cfg.get("name") or provider) if isinstance(cfg, Mapping) else provider,
         "backend": str(target["backend"]),
         "capabilities": capabilities,
+        "policy": {
+            "native_passthrough": {
+                "enabled": decision.allowed,
+                "denied": decision.denied,
+                "allowed_backends": [str(target["backend"])],
+                "allowed_operations": sorted(native_policy.allowed_operations) or ["*"],
+                "audit": native_policy.audit,
+            },
+        },
+        "auth": {
+            "required": "gateway_api_key",
+            "downstream_service": service,
+            "downstream_auth_classes": downstream_auth_classes,
+            "downstream_auth_configured": bool(downstream_auth_classes),
+        },
+        "live": {
+            "enabled": bool(target.get("enabled", True)),
+        },
         "native_passthrough_path": f"/gateway/v1/providers/{provider}/{{path}}",
     }
+
+
+def _provider_native_downstream_auth_classes(
+    service: str,
+    service_cfg: Mapping[str, Any],
+) -> list[str]:
+    auth_classes: set[str] = set()
+    if "api_key" in service_cfg or "api_key_env" in service_cfg:
+        auth_classes.add("api_key")
+    if "admin_key" in service_cfg or "admin_key_env" in service_cfg:
+        auth_classes.add("admin_key")
+    if isinstance(service_cfg.get("headers"), Mapping) and service_cfg.get("headers"):
+        auth_classes.add("configured_headers")
+    if service == "tabby" and (API_KEY or ADMIN_KEY):
+        auth_classes.add("api_key")
+        auth_classes.add("admin_key")
+    return sorted(auth_classes)
 
 
 def _provider_native_visible(

@@ -427,6 +427,13 @@ root paths, and there is no legacy root Tabby shim. Passthrough preserves
 streamed response bodies such as SSE, NDJSON, and generated media rather than
 buffering the whole upstream response first.
 
+Each provider discovery row includes policy facts scoped to the authenticated
+caller: whether `native_passthrough` is enabled or denied, the caller-visible
+allowed backend and operation set, the gateway auth requirement, non-secret
+downstream auth classes such as `api_key`, `admin_key`, or configured headers
+when known, and the provider's live enabled state. Discovery never returns
+credential values or environment variable contents.
+
 Collision strategy is intentionally simple: canonical protocol frontends own
 `/openai/v1`, `/anthropic/v1`, `/ollama/api`, plus the legacy convenience
 aliases `/v1` and `/api`. Provider-native passthrough never claims those roots.

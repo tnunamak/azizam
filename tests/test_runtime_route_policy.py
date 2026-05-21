@@ -829,6 +829,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             native_passthrough=NativePassthroughPolicy(
                 enabled=True,
                 allowed_backends=frozenset({"comfyui"}),
+                allowed_operations=frozenset({"POST /prompt"}),
             ),
         )
 
@@ -845,6 +846,24 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertIn("comfyui", by_id)
         self.assertNotIn("tabby", by_id)
         self.assertNotIn("allowed", by_id["comfyui"])
+        self.assertEqual(
+            by_id["comfyui"]["policy"]["native_passthrough"],
+            {
+                "enabled": True,
+                "denied": False,
+                "allowed_backends": ["comfyui"],
+                "allowed_operations": ["POST /prompt"],
+                "audit": True,
+            },
+        )
+        self.assertEqual(by_id["comfyui"]["auth"]["required"], "gateway_api_key")
+        self.assertEqual(
+            by_id["comfyui"]["auth"]["downstream_service"],
+            "comfyui",
+        )
+        self.assertEqual(by_id["comfyui"]["auth"]["downstream_auth_classes"], [])
+        self.assertFalse(by_id["comfyui"]["auth"]["downstream_auth_configured"])
+        self.assertTrue(by_id["comfyui"]["live"]["enabled"])
         self.assertEqual(
             by_id["comfyui"]["native_passthrough_path"],
             "/gateway/v1/providers/comfyui/{path}",
@@ -877,7 +896,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         )
         blocked = AssertionError("metadata route should not call native backend")
 
-        with authenticated_profile(profile), patch.object(
+        downstream = {"tabby": {"api_key_env": "TABBY_API_KEY", "admin_key": "secret"}}
+
+        with authenticated_profile(profile, downstream=downstream), patch.object(
             proxy.httpx,
             "AsyncClient",
             side_effect=blocked,
@@ -888,7 +909,26 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["id"], "tabby")
+        body = response.json()
+        self.assertEqual(body["id"], "tabby")
+        self.assertEqual(
+            body["policy"]["native_passthrough"],
+            {
+                "enabled": True,
+                "denied": False,
+                "allowed_backends": ["tabby"],
+                "allowed_operations": ["*"],
+                "audit": True,
+            },
+        )
+        self.assertEqual(body["auth"]["required"], "gateway_api_key")
+        self.assertEqual(body["auth"]["downstream_service"], "tabby")
+        self.assertEqual(
+            body["auth"]["downstream_auth_classes"],
+            ["admin_key", "api_key"],
+        )
+        self.assertTrue(body["auth"]["downstream_auth_configured"])
+        self.assertTrue(body["live"]["enabled"])
 
     def test_openai_voice_aliases_enforce_audio_profile_policy(self) -> None:
         chat_only = AppProfile(
