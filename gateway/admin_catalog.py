@@ -209,10 +209,10 @@ _PROFILE_POLICY_CATALOG: dict[str, list[dict[str, Any]]] = {
     "model_access": [
         {
             "id": MODEL_ACCESS_MODES[0],
-            "label": "Configured catalog",
-            "summary_label": "configured catalog",
+            "label": "Configured LLM catalog",
+            "summary_label": "configured LLM catalog",
             "description": (
-                "Apps can request models and roles this Profile allows. "
+                "Apps can request LLM model ids and roles this Profile allows. "
                 "Good for normal clients."
             ),
             "default": True,
