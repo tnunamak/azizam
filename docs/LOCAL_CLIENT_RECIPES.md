@@ -191,11 +191,12 @@ OpenAI-compatible field the client asked for:
 }
 ```
 
-`asset_url` is signed and auth-gated like `/v1/images/{id}/content`; fetch it
-with the same bearer token. `asset_id` can be passed back to gateway-aware
-routes that explicitly accept an image input reference. Asset handles are scoped
-to the API key that minted them, so they are convenient local references rather
-than global public content hashes.
+`asset_url` and `/v1/images/{id}/content` URLs are signed capability URLs. Fetch
+the bytes directly; SDKs and browsers do not need to attach the original bearer
+token. `asset_id` can be passed back to gateway-aware routes that explicitly
+accept an image input reference. Asset IDs are scoped to the API key that minted
+them for reuse as inputs, while signed content URLs are shareable until they
+expire.
 
 Gateway-aware clients can refresh metadata and a new signed URL with:
 
@@ -236,7 +237,7 @@ curl -s "http://127.0.0.1:5000/gateway/v1/media/jobs/$JOB_ID/content" \
 ```
 
 The job executor forces `response_format: "url"` so durable records point at
-signed, auth-gated cached assets instead of storing base64 response bodies.
+signed, bearerless cached assets instead of storing base64 response bodies.
 Seeded image requests are idempotent by request hash; `Idempotency-Key` is the
 stronger option for unseeded prompts and client retries. The media-job record
 stores only redacted metadata; the private request payload lives in

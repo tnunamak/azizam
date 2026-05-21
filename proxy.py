@@ -2731,8 +2731,9 @@ def parse_size(size_str: str) -> tuple[int, int]:
 # survive restarts: VRAM-per-(workflow,size) measurements and on-disk PNG bytes.
 # Implementation rules:
 #   - No silent downgrades: clients that ask for `response_format=url` get URLs
-#     they can dereference (signed + auth-checked); clients that ask for `n=4`
-#     get 4 images (or a 503 with Retry-After if VRAM can't fit even one).
+#     they can dereference (signed, bearerless, and time-limited); clients that
+#     ask for `n=4` get 4 images (or a 503 with Retry-After if VRAM can't fit
+#     even one).
 #   - VRAM probe is a *measurement*, not a guess: we read free VRAM from
 #     ComfyUI's /system_stats before/after a single-image run and persist
 #     the per-image cost to disk so subsequent restarts inherit the cache.
@@ -12324,27 +12325,17 @@ async def images_edits(request: Request):
 async def images_content(image_id: str, request: Request):
     """Serve a cached image referenced by a signed URL.
 
-    Auth model: same as the rest of `/v1/*` (a valid proxy key) AND a valid
-    HMAC signature with a non-expired `expires` query param. Both checks are
-    required: the bearer token gates the proxy itself, the signature binds
-    the URL to a specific image_id and TTL.
+    Auth model: the HMAC signature and non-expired `expires` query param are
+    the bearer capability for this byte fetch. This matches OpenAI-style image
+    URL responses, where SDKs and browsers fetch the returned URL without
+    adding the original API key.
     """
-    auth_context = authenticate_request(request, "/v1/images/{image_id}/content")
-    if isinstance(auth_context, Response):
-        return auth_context
-    policy_response = _enforce_runtime_route_policy(
-        auth_context,
-        "/v1/images/{image_id}/content",
-    )
-    if policy_response is not None:
-        return policy_response
     return _signed_asset_content_response(
         image_id,
         request,
         invalid_message="Invalid image id",
         missing_message="Image not found (may have been evicted)",
         image_only=True,
-        auth_context=auth_context,
     )
 
 
@@ -12352,24 +12343,11 @@ async def images_content(image_id: str, request: Request):
 @app.get("/v1/assets/{asset_id}/content")
 async def assets_content(asset_id: str, request: Request):
     """Serve a cached generated asset referenced by a signed URL."""
-    auth_context = authenticate_request(request, "/v1/assets/{asset_id}/content")
-    if isinstance(auth_context, Response):
-        return auth_context
-    route_policy = _asset_content_route_policy(asset_id)
-    if route_policy is not None:
-        policy_response = _enforce_runtime_route_policy(
-            auth_context,
-            "/v1/assets/{asset_id}/content",
-            policy=route_policy,
-        )
-        if policy_response is not None:
-            return policy_response
     return _signed_asset_content_response(
         asset_id,
         request,
         invalid_message="Invalid asset id",
         missing_message="Asset not found (may have been evicted)",
-        auth_context=auth_context,
     )
 
 
@@ -12402,7 +12380,7 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
             status_code=404,
             media_type="application/json",
         )
-    if not _asset_access_allowed(asset_id, auth_context):
+    if auth_context is not None and not _asset_access_allowed(asset_id, auth_context):
         return Response(
             content=json.dumps({
                 "error": {
@@ -12423,24 +12401,11 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
 @app.get("/gateway/v1/assets/{asset_id}/content")
 async def gateway_asset_content(asset_id: str, request: Request):
     """Serve a cached generated asset through the gateway-native asset surface."""
-    auth_context = _gateway_auth_context(request, "/gateway/v1/assets/{asset_id}/content")
-    if isinstance(auth_context, Response):
-        return auth_context
-    route_policy = _asset_content_route_policy(asset_id)
-    if route_policy is not None:
-        policy_response = _enforce_runtime_route_policy(
-            auth_context,
-            "/gateway/v1/assets/{asset_id}/content",
-            policy=route_policy,
-        )
-        if policy_response is not None:
-            return policy_response
     return _signed_asset_content_response(
         asset_id,
         request,
         invalid_message="Invalid asset id",
         missing_message="Asset not found (may have been evicted)",
-        auth_context=auth_context,
     )
 
 
@@ -12489,7 +12454,7 @@ def _signed_asset_content_response(
             status_code=404,
             media_type="application/json",
         )
-    if not _asset_access_allowed(asset_id, auth_context):
+    if auth_context is not None and not _asset_access_allowed(asset_id, auth_context):
         return Response(
             content=json.dumps({
                 "error": {

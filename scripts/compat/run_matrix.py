@@ -151,7 +151,12 @@ PROBES: Tuple[ProbeSpec, ...] = (
             ("client.construct", "test_client_construct"),
             ("models.list", "test_models_list"),
             ("messages.count_tokens", "test_messages_count_tokens"),
+            (
+                "messages.count_tokens.image_block",
+                "test_messages_count_tokens_image_block",
+            ),
             ("messages.create", "test_messages_create"),
+            ("messages.create.image_block", "test_messages_create_image_block"),
             ("messages.streaming", "test_messages_streaming"),
         ),
     ),

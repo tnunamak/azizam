@@ -21,6 +21,12 @@ except ImportError:  # pragma: no cover
     _anthropic = None
 
 
+TINY_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAF"
+    "gwJ/l6p7YQAAAABJRU5ErkJggg=="
+)
+
+
 @unittest.skipUnless(_anthropic is not None, "anthropic SDK not installed")
 @unittest.skipUnless(
     os.environ.get("OPENAI_PROXY_BASE_URL"),
@@ -57,6 +63,23 @@ class TestAnthropicPythonSDK(unittest.TestCase):
         self.assertIsInstance(input_tokens, int)
         self.assertGreater(input_tokens, 0)
 
+    def test_messages_count_tokens_image_block(self) -> None:
+        result = self.client.messages.count_tokens(
+            model=self._model(),
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        self._tiny_png_image_block(),
+                        {"type": "text", "text": "compatibility probe"},
+                    ],
+                }
+            ],
+        )
+        input_tokens = getattr(result, "input_tokens", None)
+        self.assertIsInstance(input_tokens, int)
+        self.assertGreater(input_tokens, 0)
+
     def test_messages_create(self) -> None:
         self._skip_without_live_llm()
         message = self.client.messages.create(
@@ -74,6 +97,26 @@ class TestAnthropicPythonSDK(unittest.TestCase):
             text = first.get("text")
         self.assertIsInstance(text, str)
         self.assertGreater(len(text), 0)
+
+    def test_messages_create_image_block(self) -> None:
+        self._skip_without_live_vision()
+        message = self.client.messages.create(
+            model=self._model(),
+            max_tokens=8,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        self._tiny_png_image_block(),
+                        {"type": "text", "text": "Describe this image in one word."},
+                    ],
+                }
+            ],
+        )
+        self.assertEqual(getattr(message, "type", None), "message")
+        content = getattr(message, "content", None)
+        self.assertIsInstance(content, list)
+        self.assertGreater(len(content), 0)
 
     def test_messages_streaming(self) -> None:
         self._skip_without_live_llm()
@@ -96,6 +139,22 @@ class TestAnthropicPythonSDK(unittest.TestCase):
     def _skip_without_live_llm(self) -> None:
         if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_LLM") != "1":
             self.skipTest("OPENAI_PROXY_SMOKE_LIVE_LLM not set; live LLM probe disabled")
+
+    def _skip_without_live_vision(self) -> None:
+        if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_VISION") != "1":
+            self.skipTest(
+                "OPENAI_PROXY_SMOKE_LIVE_VISION not set; live vision probe disabled"
+            )
+
+    def _tiny_png_image_block(self) -> dict[str, object]:
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": TINY_PNG_BASE64,
+            },
+        }
 
 
 if __name__ == "__main__":  # pragma: no cover
