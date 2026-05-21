@@ -524,6 +524,45 @@ def get_profile(
     return _profile_row_to_dict(row) if row else None
 
 
+def update_profile(
+    profile_id: str,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    profile_doc: Mapping[str, Any] | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    assignments: list[str] = []
+    params: list[Any] = []
+    if name is not None:
+        if not name:
+            raise ValueError("profile name is required")
+        assignments.append("name = ?")
+        params.append(name)
+    if description is not None:
+        assignments.append("description = ?")
+        params.append(description)
+    if profile_doc is not None:
+        assignments.append("profile_json = ?")
+        params.append(json.dumps(dict(profile_doc), ensure_ascii=False, sort_keys=True))
+    if not assignments:
+        return get_profile(profile_id, path=path)
+
+    params.append(profile_id)
+    with _conn(path) as conn:
+        cur = conn.execute(
+            f"UPDATE profiles SET {', '.join(assignments)} WHERE id = ?",
+            params,
+        )
+        if cur.rowcount == 0:
+            return None
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM profiles WHERE id = ?", (profile_id,)
+        ).fetchone()
+    return _profile_row_to_dict(row) if row else None
+
+
 def list_profiles(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
     with _conn(path) as conn:
         rows = conn.execute(
@@ -638,6 +677,42 @@ def ensure_personal_app_for_user(
 
 def get_app(app_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
     with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM apps WHERE id = ?", (app_id,)
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def update_app(
+    app_id: str,
+    *,
+    name: str | None = None,
+    default_profile_id: str | None = None,
+    clear_default_profile: bool = False,
+    path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    assignments: list[str] = []
+    params: list[Any] = []
+    if name is not None:
+        if not name:
+            raise ValueError("app name is required")
+        assignments.append("name = ?")
+        params.append(name)
+    if clear_default_profile or default_profile_id is not None:
+        assignments.append("default_profile_id = ?")
+        params.append(None if clear_default_profile else default_profile_id)
+    if not assignments:
+        return get_app(app_id, path=path)
+
+    params.append(app_id)
+    with _conn(path) as conn:
+        cur = conn.execute(
+            f"UPDATE apps SET {', '.join(assignments)} WHERE id = ?",
+            params,
+        )
+        if cur.rowcount == 0:
+            return None
+        conn.commit()
         row = conn.execute(
             "SELECT * FROM apps WHERE id = ?", (app_id,)
         ).fetchone()

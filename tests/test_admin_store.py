@@ -242,6 +242,30 @@ class TestPersonalApp(AdminStoreTestBase):
             [personal["id"], service["id"]],
         )
 
+    def test_update_and_disable_app(self) -> None:
+        svc = admin_store.ensure_service_account("svc", path=self.db)
+        profile = admin_store.create_profile("p", {"id": "p"}, path=self.db)
+        app = admin_store.create_app(
+            "old",
+            kind="service",
+            owner_service_account_id=svc["id"],
+            path=self.db,
+        )
+
+        updated = admin_store.update_app(
+            app["id"],
+            name="new",
+            default_profile_id=profile["id"],
+            path=self.db,
+        )
+        self.assertEqual(updated["name"], "new")  # type: ignore[index]
+        self.assertEqual(
+            updated["default_profile_id"], profile["id"]  # type: ignore[index]
+        )
+
+        disabled = admin_store.disable_app(app["id"], now=1234, path=self.db)
+        self.assertEqual(disabled["disabled_at"], 1234)  # type: ignore[index]
+
 
 class TestCredentialInvariants(AdminStoreTestBase):
     def setUp(self) -> None:
@@ -452,6 +476,25 @@ class TestProfilesAndAudit(AdminStoreTestBase):
         )
         loaded = admin_store.get_profile(prof["id"], path=self.db)
         self.assertEqual(loaded["profile"], doc)  # type: ignore[index]
+
+    def test_update_profile_roundtrips_fields(self) -> None:
+        prof = admin_store.create_profile("old", {"id": "old"}, path=self.db)
+        updated_doc = {
+            "id": "new",
+            "protocols": ["openai.chat"],
+            "status_visibility": {"level": "basic"},
+        }
+        updated = admin_store.update_profile(
+            prof["id"],
+            name="new",
+            description="updated",
+            profile_doc=updated_doc,
+            path=self.db,
+        )
+
+        self.assertEqual(updated["name"], "new")  # type: ignore[index]
+        self.assertEqual(updated["description"], "updated")  # type: ignore[index]
+        self.assertEqual(updated["profile"], updated_doc)  # type: ignore[index]
 
     def test_audit_event_records_actor_action_target_metadata(self) -> None:
         event = admin_store.record_audit(

@@ -144,6 +144,62 @@ class AdminSQLiteStore:
         )
         return record
 
+    def update_app(
+        self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None:
+        if admin_store.get_app(app_id, path=self.path) is None:
+            return None
+
+        name = None
+        if "name" in data:
+            name = str(data.get("name") or "").strip()
+            if not name:
+                raise ValueError("app name is required")
+
+        profile_value = data.get("default_profile_id", data.get("profile_id"))
+        clear_profile = (
+            "default_profile_id" in data or "profile_id" in data
+        ) and not profile_value
+        profile_id = str(profile_value).strip() if profile_value else None
+        if profile_id and admin_store.get_profile(profile_id, path=self.path) is None:
+            raise ValueError(f"profile {profile_id!r} not found")
+
+        record = admin_store.update_app(
+            app_id,
+            name=name,
+            default_profile_id=profile_id,
+            clear_default_profile=clear_profile,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            "app.update",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="app",
+            target_id=app_id,
+            metadata={"name": name, "default_profile_id": profile_id},
+            path=self.path,
+        )
+        return record
+
+    def disable_app(
+        self, *, app_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None:
+        before = admin_store.get_app(app_id, path=self.path)
+        if before is None:
+            return None
+        record = admin_store.disable_app(app_id, path=self.path)
+        admin_store.record_audit(
+            "app.disable",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="app",
+            target_id=app_id,
+            metadata={"name": before.get("name")},
+            path=self.path,
+        )
+        return record
+
     def list_profiles(self) -> list[dict[str, Any]]:
         return [
             _profile_summary(record)
@@ -179,6 +235,51 @@ class AdminSQLiteStore:
             path=self.path,
         )
         return _profile_summary(record)
+
+    def update_profile(
+        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None:
+        if admin_store.get_profile(profile_id, path=self.path) is None:
+            return None
+
+        profile_doc = None
+        if "profile" in data:
+            raw_profile = data.get("profile")
+            if not isinstance(raw_profile, Mapping):
+                raise ValueError("profile must be a mapping")
+            try:
+                load_profile(raw_profile)
+            except ProfileLoadError as exc:
+                raise ValueError(str(exc)) from exc
+            profile_doc = raw_profile
+
+        name = None
+        if "name" in data or "label" in data:
+            name = str(data.get("name") or data.get("label") or "").strip()
+            if not name:
+                raise ValueError("profile name is required")
+
+        record = admin_store.update_profile(
+            profile_id,
+            name=name,
+            description=(
+                str(data.get("description"))
+                if data.get("description") is not None
+                else None
+            ),
+            profile_doc=profile_doc,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            "profile.update",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="profile",
+            target_id=profile_id,
+            metadata={"name": name},
+            path=self.path,
+        )
+        return _profile_summary(record) if record is not None else None
 
     def list_credentials(self) -> list[dict[str, Any]]:
         return [

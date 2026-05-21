@@ -105,6 +105,14 @@ class AdminStore(Protocol):
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
+    def update_app(
+        self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None: ...
+
+    def disable_app(
+        self, *, app_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None: ...
+
     def list_profiles(self) -> list[dict[str, Any]]: ...
 
     def get_profile(self, profile_id: str) -> dict[str, Any] | None: ...
@@ -112,6 +120,10 @@ class AdminStore(Protocol):
     def create_profile(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
+
+    def update_profile(
+        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None: ...
 
     def list_credentials(self) -> list[dict[str, Any]]: ...
 
@@ -502,6 +514,69 @@ def create_admin_router(
             status_code=status.HTTP_201_CREATED, content={"app": record}
         )
 
+    @router.patch("/apps/{app_id}")
+    async def update_app(app_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+        except _RouteError as exc:
+            return exc.as_response()
+        if "name" in body:
+            name = body.get("name")
+            if not isinstance(name, str) or not name.strip():
+                return _RouteError(
+                    status.HTTP_400_BAD_REQUEST,
+                    "invalid_app",
+                    "app name is required",
+                ).as_response()
+        profile_id = body.get("default_profile_id", body.get("profile_id"))
+        if profile_id:
+            profile_key = str(profile_id).strip()
+            if (
+                profile_key != "default-local"
+                and store.get_profile(profile_key) is None
+            ):
+                return _RouteError(
+                    status.HTTP_400_BAD_REQUEST,
+                    "invalid_app",
+                    f"profile {profile_key!r} not found",
+                ).as_response()
+        try:
+            record = store.update_app(app_id=app_id, data=body, actor=ctx)
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_app",
+                str(exc),
+            ).as_response()
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "app_not_found",
+                f"app {app_id!r} not found",
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK, content={"app": record}
+        )
+
+    @router.delete("/apps/{app_id}")
+    def disable_app(app_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = store.disable_app(app_id=app_id, actor=ctx)
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "app_not_found",
+                f"app {app_id!r} not found",
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK, content={"app": record}
+        )
+
     @router.get("/profiles")
     def list_profiles(request: Request) -> JSONResponse:
         ctx = _guard(request)
@@ -540,6 +615,44 @@ def create_admin_router(
             ).as_response()
         return JSONResponse(
             status_code=status.HTTP_201_CREATED, content={"profile": record}
+        )
+
+    @router.patch("/profiles/{profile_id}")
+    async def update_profile(profile_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+        except _RouteError as exc:
+            return exc.as_response()
+        if "profile" in body:
+            try:
+                load_profile(body.get("profile"))
+            except ProfileLoadError as exc:
+                return _RouteError(
+                    status.HTTP_400_BAD_REQUEST,
+                    "invalid_profile",
+                    str(exc),
+                ).as_response()
+        try:
+            record = store.update_profile(
+                profile_id=profile_id, data=body, actor=ctx
+            )
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_profile",
+                str(exc),
+            ).as_response()
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "profile_not_found",
+                f"profile {profile_id!r} not found",
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK, content={"profile": record}
         )
 
     @router.get("/runtime-profile-mappings")

@@ -103,6 +103,54 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(stored)
         self.assertEqual(stored["subject_kind"], "app")  # type: ignore[index]
 
+    def test_admin_key_can_update_profile_update_app_and_disable_app(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        profile = client.post(
+            "/admin/api/profiles",
+            json={
+                "name": "Local",
+                "profile": {
+                    "id": "local",
+                    "protocols": ["openai.chat"],
+                    "status_visibility": {"level": "basic"},
+                },
+            },
+        ).json()["profile"]
+        app_id = client.post(
+            "/admin/api/apps",
+            json={"name": "runtime-app", "default_profile_id": profile["id"]},
+        ).json()["app"]["id"]
+
+        profile_resp = client.patch(
+            f"/admin/api/profiles/{profile['id']}",
+            json={
+                "name": "Local updated",
+                "profile": {
+                    "id": "local",
+                    "protocols": ["openai.chat", "openai.images"],
+                    "status_visibility": {"level": "standard"},
+                },
+            },
+        )
+        app_resp = client.patch(
+            f"/admin/api/apps/{app_id}",
+            json={"name": "runtime-app-updated", "default_profile_id": profile["id"]},
+        )
+        disabled_resp = client.delete(f"/admin/api/apps/{app_id}")
+
+        self.assertEqual(profile_resp.status_code, 200, profile_resp.text)
+        self.assertEqual(app_resp.status_code, 200, app_resp.text)
+        self.assertEqual(disabled_resp.status_code, 200, disabled_resp.text)
+        self.assertEqual(app_resp.json()["app"]["name"], "runtime-app-updated")
+        self.assertIsNotNone(disabled_resp.json()["app"]["disabled_at"])
+        actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
+        self.assertIn("profile.update", actions)
+        self.assertIn("app.update", actions)
+        self.assertIn("app.disable", actions)
+
     def test_app_key_cannot_administer_gateway(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db

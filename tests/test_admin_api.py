@@ -78,6 +78,45 @@ class FakeAdminStore:
         )
         return dict(record)
 
+    def update_app(
+        self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None:
+        record = self.apps.get(app_id)
+        if record is None:
+            return None
+        if "name" in data:
+            record["name"] = data["name"]
+        if "default_profile_id" in data or "profile_id" in data:
+            record["profile_id"] = data.get(
+                "default_profile_id", data.get("profile_id")
+            )
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "app.update",
+                "target": app_id,
+            }
+        )
+        return dict(record)
+
+    def disable_app(
+        self, *, app_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None:
+        record = self.apps.get(app_id)
+        if record is None:
+            return None
+        record["disabled_at"] = "2026-05-17T01:00:00Z"
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "app.disable",
+                "target": app_id,
+            }
+        )
+        return dict(record)
+
     def list_profiles(self) -> list[dict[str, Any]]:
         return list(self.profiles)
 
@@ -95,6 +134,30 @@ class FakeAdminStore:
             "label": data.get("label") or data.get("id") or "unnamed",
         }
         self.profiles.append(record)
+        return dict(record)
+
+    def update_profile(
+        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None:
+        record = self.get_profile(profile_id)
+        if record is None:
+            return None
+        if "name" in data:
+            record["name"] = data["name"]
+        if "label" in data:
+            record["label"] = data["label"]
+        if "description" in data:
+            record["description"] = data["description"]
+        if "profile" in data:
+            record["profile"] = data["profile"]
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "profile.update",
+                "target": profile_id,
+            }
+        )
         return dict(record)
 
     def list_runtime_profile_mappings(self) -> list[dict[str, Any]]:
@@ -447,6 +510,49 @@ class AdminAppKeyFlowTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"]["code"], "invalid_app")
 
+    def test_update_app_name_and_profile(self) -> None:
+        client, store = _make_client()
+        app_id = client.post(
+            "/admin/api/apps", json={"name": "old"}, headers=_auth()
+        ).json()["app"]["id"]
+
+        resp = client.patch(
+            f"/admin/api/apps/{app_id}",
+            json={"name": "new", "default_profile_id": "default-local"},
+            headers=_auth(),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["app"]["name"], "new")
+        self.assertIn("app.update", [event["action"] for event in store.audit])
+
+    def test_update_app_rejects_unknown_profile(self) -> None:
+        client, _ = _make_client()
+        app_id = client.post(
+            "/admin/api/apps", json={"name": "old"}, headers=_auth()
+        ).json()["app"]["id"]
+
+        resp = client.patch(
+            f"/admin/api/apps/{app_id}",
+            json={"default_profile_id": "missing"},
+            headers=_auth(),
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["code"], "invalid_app")
+
+    def test_delete_app_disables_it(self) -> None:
+        client, store = _make_client()
+        app_id = client.post(
+            "/admin/api/apps", json={"name": "old"}, headers=_auth()
+        ).json()["app"]["id"]
+
+        resp = client.delete(f"/admin/api/apps/{app_id}", headers=_auth())
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIsNotNone(resp.json()["app"]["disabled_at"])
+        self.assertIn("app.disable", [event["action"] for event in store.audit])
+
 
 class AdminAutomationKeyFlowTests(unittest.TestCase):
     def test_admin_can_create_admin_automation_key(self) -> None:
@@ -563,6 +669,39 @@ class AdminProfileTests(unittest.TestCase):
             },
             headers=_auth(),
         )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["code"], "invalid_profile")
+
+    def test_update_profile_validates_and_mutates(self) -> None:
+        client, store = _make_client()
+        profile_id = "default-local"
+
+        resp = client.patch(
+            f"/admin/api/profiles/{profile_id}",
+            json={
+                "name": "Default local updated",
+                "description": "local-only",
+                "profile": {
+                    "id": "default-local",
+                    "protocols": ["openai"],
+                    "status_visibility": {"level": "basic"},
+                },
+            },
+            headers=_auth(),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["profile"]["name"], "Default local updated")
+        self.assertIn("profile.update", [event["action"] for event in store.audit])
+
+    def test_update_profile_rejects_invalid_profile(self) -> None:
+        client, _ = _make_client()
+        resp = client.patch(
+            "/admin/api/profiles/default-local",
+            json={"profile": {"id": "bad", "status_visibility": {"level": "bad"}}},
+            headers=_auth(),
+        )
+
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"]["code"], "invalid_profile")
 
