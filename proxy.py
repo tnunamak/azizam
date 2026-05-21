@@ -99,6 +99,7 @@ from gateway.audio_extensions import (
     detect_unknown_audio_fields,
 )
 from gateway.backends.chat import build_chat_loopback_request
+from gateway.backends.embeddings import build_embeddings_loopback_request
 from gateway.capabilities import (
     Capability,
     ResourceEstimate,
@@ -10910,6 +10911,24 @@ def _image_generation_body_from_media_job_payload(
     }
 
 
+def _unsupported_gateway_media_job_response(intent: str) -> Response:
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": (
+                    f"Media job intent {intent!r} is not executable yet. "
+                    "Currently supported: image.generate."
+                ),
+                "type": "invalid_request_error",
+                "code": "unsupported_media_job_intent",
+                "supported_intents": ["image.generate"],
+            }
+        }),
+        status_code=400,
+        media_type="application/json",
+    )
+
+
 async def _dispatch_gateway_media_job_submission(
     *,
     request: Request,
@@ -10917,9 +10936,13 @@ async def _dispatch_gateway_media_job_submission(
     audience: str,
 ) -> Response | None:
     del audience
+    intent = payload.get("intent")
+    if not isinstance(intent, str) or not intent.strip():
+        return None
+    intent = intent.strip()
     body = _image_generation_body_from_media_job_payload(payload)
     if body is None:
-        return None
+        return _unsupported_gateway_media_job_response(intent)
     headers = _safe_image_job_headers(request)
     idempotency_key = request.headers.get("idempotency-key")
     if idempotency_key:
@@ -12306,27 +12329,20 @@ async def _forward_embeddings(
     embedding provider is hot; the `/v1/embeddings` route owns model alias
     resolution, profile policy, and backend health.
     """
-    url = f"http://127.0.0.1:{PROXY_PORT}/v1/embeddings"
-    headers = {"content-type": "application/json"}
-    headers[_INTERNAL_PROTOCOL_FORWARD_HEADER] = _INTERNAL_PROTOCOL_FORWARD_SECRET
-    auth_hdr = request.headers.get("authorization")
-    if auth_hdr:
-        headers["authorization"] = auth_hdr
-    api_key_hdr = request.headers.get("x-api-key")
-    if api_key_hdr:
-        headers["x-api-key"] = api_key_hdr
-
-    client = httpx.AsyncClient(timeout=httpx.Timeout(
-        connect=10.0,
-        read=EMBEDDINGS_TIMEOUT,
-        write=60.0,
-        pool=None,
-    ))
+    loopback_request = build_embeddings_loopback_request(
+        proxy_port=PROXY_PORT,
+        body=embeddings_body,
+        internal_forward_header=_INTERNAL_PROTOCOL_FORWARD_HEADER,
+        internal_forward_secret=_INTERNAL_PROTOCOL_FORWARD_SECRET,
+        source_headers=request.headers,
+        read_timeout=EMBEDDINGS_TIMEOUT,
+    )
+    client = httpx.AsyncClient(timeout=loopback_request.timeout)
     try:
         return await client.post(
-            url,
-            headers=headers,
-            content=json.dumps(embeddings_body).encode("utf-8"),
+            loopback_request.url,
+            headers=loopback_request.headers,
+            content=loopback_request.body,
         )
     finally:
         await client.aclose()

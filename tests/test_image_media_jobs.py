@@ -328,6 +328,23 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         assert stored is not None
         self.assertEqual(stored["intent"], "image.generate")
 
+    async def test_generic_media_jobs_rejects_unsupported_executable_intent(self) -> None:
+        with patch.object(proxy, "AUTH_ENABLED", False):
+            response = await proxy._dispatch_gateway_media_job_submission(
+                request=_StubJsonRequest({}),  # type: ignore[arg-type]
+                payload={
+                    "intent": "video.generate",
+                    "request": {"model": "ltx-2.3", "prompt": "private"},
+                },
+                audience="client",
+            )
+
+        assert response is not None
+        self.assertEqual(response.status_code, 400)
+        body = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "unsupported_media_job_intent")
+        self.assertEqual(body["error"]["supported_intents"], ["image.generate"])
+
     async def test_content_route_returns_openai_image_payload_for_succeeded_job(self) -> None:
         job = media_jobs.MediaJob(
             intent="image.generate",
