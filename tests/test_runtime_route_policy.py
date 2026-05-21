@@ -359,6 +359,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             cases = [
                 ("post", "/v1/audio/speech", {"input": "hello", "voice": "alloy"}),
                 ("post", "/v1/audio/transcriptions", None),
+                ("post", "/v1/audio/translations", None),
                 ("post", "/v1/videos", {"prompt": "waves"}),
                 ("post", "/v1/audio/generate", {"prompt": "piano"}),
                 ("get", "/v1/models", None),
@@ -498,6 +499,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             cases = [
                 ("post", "/v1/audio/speech", {"input": "hello", "voice": "alloy"}),
                 ("post", "/v1/audio/transcriptions", None),
+                ("post", "/v1/audio/translations", None),
                 ("post", "/v1/videos", {"prompt": "waves"}),
                 ("post", "/v1/audio/generate", {"prompt": "piano"}),
             ]

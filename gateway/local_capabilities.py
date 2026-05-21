@@ -47,6 +47,7 @@ INTENT_COMPLETIONS = "text.completions"
 INTENT_EMBEDDINGS = "text.embeddings"
 INTENT_SPEECH = "speech.synthesis"
 INTENT_TRANSCRIPTIONS = "speech.transcription"
+INTENT_TRANSLATIONS = "speech.translation"
 INTENT_IMAGE_GENERATE = "image.generate"
 INTENT_IMAGE_EDIT = "image.edit"
 INTENT_VIDEO_GENERATE = "video.generate"
@@ -270,6 +271,21 @@ def _build_stt_capabilities(
                     execution="sync",
                     streaming=False,
                     resources=ResourceEstimate(gpu_required=True),
+                )
+            )
+        if "translations" in backend_caps or "translation" in backend_caps:
+            out.append(
+                Capability(
+                    intent=INTENT_TRANSLATIONS,
+                    backend=backend_name,
+                    input_modalities=("audio",),
+                    output_modalities=("text",),
+                    execution="sync",
+                    streaming=False,
+                    resources=ResourceEstimate(gpu_required=True),
+                    caveats=(
+                        "Only advertised when the local STT backend declares translation support.",
+                    ),
                 )
             )
     return out

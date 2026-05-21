@@ -35,6 +35,7 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
             "/openai/v1/images/edits",
             "/openai/v1/audio/speech",
             "/openai/v1/audio/transcriptions",
+            "/openai/v1/audio/translations",
             "/openai/v1/audio/generate",
             "/openai/v1/videos",
             "/v1/models",
@@ -46,8 +47,12 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
             "/v1/images/edits",
             "/v1/audio/speech",
             "/v1/audio/transcriptions",
+            "/v1/audio/translations",
             "/v1/audio/generate",
             "/v1/videos",
+        ],
+        "limits": [
+            "audio translations are registered but return an OpenAI-shaped unsupported_audio_translation error unless the local STT backend declares translation support",
         ],
     },
     {

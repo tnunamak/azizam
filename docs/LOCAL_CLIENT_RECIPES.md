@@ -54,6 +54,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /gateway/v1/media/jobs` | Gateway media jobs | Durable async image generation when `intent` is `image.generate` and `request` carries the OpenAI image body. |
 | `POST /openai/v1/audio/speech` | OpenAI Audio | TTS. |
 | `POST /openai/v1/audio/transcriptions` | OpenAI Audio | STT. |
+| `POST /openai/v1/audio/translations` | OpenAI Audio | Registered compatibility route; returns `unsupported_audio_translation` unless the local STT backend declares translation support. |
 | `GET /openai/v1/voices`, `GET /openai/v1/audio/voices` | OpenAI Audio | Voice list. |
 | `POST /openai/v1/audio/generate`, `GET /openai/v1/audio/models` | Native | Music/SFX/voice models. |
 | `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | |

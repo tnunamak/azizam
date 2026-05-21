@@ -130,6 +130,7 @@ from gateway.local_capabilities import (
     INTENT_AUDIO_GENERATE,
     INTENT_SPEECH,
     INTENT_TRANSCRIPTIONS,
+    INTENT_TRANSLATIONS,
     INTENT_VIDEO_GENERATE,
     build_local_capabilities,
 )
@@ -1870,6 +1871,7 @@ OPERATION_COMPATIBLE_CATEGORIES = {
     "embeddings": {"embeddings", "unknown"},
     "speech": {"speech", "unknown"},
     "transcriptions": {"transcriptions", "unknown"},
+    "translations": {"transcriptions", "translations", "unknown"},
     "images": {"images", "unknown"},
     "image_edits": {"images", "unknown"},
     # `video` is the OpenAI category for sora-* models (see infer_openai_model_category).
@@ -2042,6 +2044,8 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
     if operation == "speech":
         return TTS_BACKEND_MODEL
     if operation == "transcriptions":
+        return STT_BACKEND_MODEL
+    if operation == "translations":
         return STT_BACKEND_MODEL
     if operation == "images":
         return COMFY_DEFAULT_MODEL
@@ -2516,7 +2520,32 @@ async def check_stt_health() -> bool:
         return False
 
 
-async def proxy_stt_request(request: Request, auth_context: AuthContext) -> Response:
+def stt_backend_supports_translation() -> bool:
+    stt_backend = config.get("backends", {}).get("stt", {})
+    capabilities = stt_backend.get("capabilities", []) if isinstance(stt_backend, dict) else []
+    backend_caps = {str(cap).lower() for cap in capabilities if isinstance(cap, str)}
+    return bool({"translation", "translations"} & backend_caps)
+
+
+def audio_translation_unsupported_response() -> Response:
+    return openai_error_response(
+        (
+            "Audio translation is not supported by the configured local STT backend. "
+            "This gateway will not return transcription output from the translations route."
+        ),
+        status_code=400,
+        error_type="invalid_request_error",
+        param="file",
+        code="unsupported_audio_translation",
+    )
+
+
+async def proxy_stt_request(
+    request: Request,
+    auth_context: AuthContext,
+    *,
+    operation: str = "transcriptions",
+) -> Response:
     """Forward STT request to STT backend."""
     if not STT_ENABLED:
         return openai_error_response(
@@ -2524,10 +2553,18 @@ async def proxy_stt_request(request: Request, auth_context: AuthContext) -> Resp
             status_code=503,
             error_type="service_unavailable",
         )
+    if operation == "translations" and not stt_backend_supports_translation():
+        return audio_translation_unsupported_response()
+    if operation not in {"transcriptions", "translations"}:
+        return openai_error_response(
+            f"Unsupported STT operation: {operation}",
+            status_code=400,
+            code="unsupported_stt_operation",
+        )
 
     headers = prepare_downstream_headers(request.headers, auth_context, "stt")
 
-    url = f"{STT_HOST}/v1/audio/transcriptions"
+    url = f"{STT_HOST}/v1/audio/{operation}"
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(STT_TIMEOUT, connect=10)) as client:
@@ -2542,7 +2579,7 @@ async def proxy_stt_request(request: Request, auth_context: AuthContext) -> Resp
                     )
                 requested_model = str(form.get("model", "whisper-1"))
                 try:
-                    model_resolution = resolve_model_for_operation("transcriptions", requested_model)
+                    model_resolution = resolve_model_for_operation(operation, requested_model)
                 except ModelCompatibilityError as e:
                     return model_compatibility_error(str(e))
 
@@ -7288,6 +7325,7 @@ CANONICAL_PROTOCOL_ROUTE_ALIASES: tuple[dict[str, object], ...] = (
     {"methods": ("GET",), "canonical": "/v1/audio/voices", "alias": "/openai/v1/audio/voices"},
     {"methods": ("POST",), "canonical": "/v1/audio/speech", "alias": "/openai/v1/audio/speech"},
     {"methods": ("POST",), "canonical": "/v1/audio/transcriptions", "alias": "/openai/v1/audio/transcriptions"},
+    {"methods": ("POST",), "canonical": "/v1/audio/translations", "alias": "/openai/v1/audio/translations"},
     {"methods": ("POST",), "canonical": "/v1/audio/generate", "alias": "/openai/v1/audio/generate"},
     {"methods": ("GET",), "canonical": "/v1/audio/models", "alias": "/openai/v1/audio/models"},
     {"methods": ("POST",), "canonical": "/v1/images/generations", "alias": "/openai/v1/images/generations"},
@@ -8578,6 +8616,7 @@ _FIREHOSE_EVENT_TYPES = {
     "/v1/images/edits": "image_submit",
     "/v1/audio/speech": "tts_synthesize",
     "/v1/audio/transcriptions": "stt_transcribe",
+    "/v1/audio/translations": "stt_translate",
 }
 
 
@@ -8789,6 +8828,21 @@ async def audio_transcriptions(request: Request):
     return await proxy_stt_request(request, auth_context)
 
 
+@app.post("/openai/v1/audio/translations")
+@app.post("/v1/audio/translations")
+async def audio_translations(request: Request):
+    """OpenAI-compatible audio translation endpoint, if the STT backend supports it."""
+    auth_context = authenticate_request(request, "/v1/audio/translations")
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_response = _enforce_runtime_route_policy(
+        auth_context, "/v1/audio/translations"
+    )
+    if policy_response is not None:
+        return policy_response
+    return await proxy_stt_request(request, auth_context, operation="translations")
+
+
 # Map image route paths to canonical intents for receipt construction.
 _IMAGE_ROUTE_INTENTS = {
     "/v1/images/generations": "image.generate",
@@ -8919,6 +8973,14 @@ _RUNTIME_ROUTE_POLICY: dict[str, dict[str, Any]] = {
     "/v1/audio/transcriptions": {
         "protocol": "openai.audio",
         "intent": INTENT_TRANSCRIPTIONS,
+        "backend": "stt",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "interactive",
+    },
+    "/v1/audio/translations": {
+        "protocol": "openai.audio",
+        "intent": INTENT_TRANSLATIONS,
         "backend": "stt",
         "capability_exposure": "default",
         "capability_trust_tier": "stable",

@@ -190,6 +190,18 @@ class TestGatewayContractHTTP(unittest.TestCase):
         self.assertIsInstance(error.get("message"), str)
         self.assertTrue(error.get("type") or error.get("code"))
 
+    def test_audio_translation_empty_body_error_is_openai_shaped_unsupported(self) -> None:
+        res = self._request(
+            "/v1/audio/translations",
+            raw_body=b"",
+            content_type="multipart/form-data; boundary=empty",
+        )
+        self.assertEqual(res.status, 400, res.body[:500])
+        error = res.json().get("error")
+        self.assertIsInstance(error, dict)
+        self.assertEqual(error.get("type"), "invalid_request_error")
+        self.assertEqual(error.get("code"), "unsupported_audio_translation")
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

@@ -33,6 +33,8 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertEqual(protocols["openai"]["convenience_base_path"], "/v1")
         self.assertEqual(protocols["openai"]["base_url_recipe"], "{base_url}/openai/v1")
         self.assertIn("/openai/v1/chat/completions", protocols["openai"]["endpoints"])
+        self.assertIn("/openai/v1/audio/translations", protocols["openai"]["endpoints"])
+        self.assertIn("unsupported_audio_translation", " ".join(protocols["openai"]["limits"]))
         self.assertEqual(protocols["anthropic"]["canonical_base_path"], "/anthropic/v1")
         self.assertEqual(protocols["anthropic"]["base_url_recipe"], "{base_url}/anthropic")
         self.assertIn("/anthropic/v1/models", protocols["anthropic"]["endpoints"])

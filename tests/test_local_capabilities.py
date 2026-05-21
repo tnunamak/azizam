@@ -20,6 +20,7 @@ from gateway.local_capabilities import (  # noqa: E402
     INTENT_IMAGE_GENERATE,
     INTENT_SPEECH,
     INTENT_TRANSCRIPTIONS,
+    INTENT_TRANSLATIONS,
     INTENT_VIDEO_GENERATE,
     build_local_capabilities,
 )
@@ -194,6 +195,18 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         self.assertEqual(len(transcription), 1)
         self.assertEqual(transcription[0].backend, "stt")
         self.assertEqual(transcription[0].input_modalities, ("audio",))
+        self.assertEqual(_by_intent(caps, INTENT_TRANSLATIONS), [])
+
+    def test_stt_translation_capability_requires_backend_declaration(self):
+        config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
+        config["backends"]["stt"]["capabilities"].append("translations")
+
+        caps = build_local_capabilities(config)
+        translations = _by_intent(caps, INTENT_TRANSLATIONS)
+
+        self.assertEqual(len(translations), 1)
+        self.assertEqual(translations[0].backend, "stt")
+        self.assertEqual(translations[0].input_modalities, ("audio",))
 
     def test_image_generate_and_edit(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)

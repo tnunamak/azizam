@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +14,16 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+
+
+@contextmanager
+def stt_translation_capability_enabled():
+    original = proxy.config["backends"]["stt"]["capabilities"]
+    proxy.config["backends"]["stt"]["capabilities"] = [*original, "translations"]
+    try:
+        yield
+    finally:
+        proxy.config["backends"]["stt"]["capabilities"] = original
 
 
 class OpenAICompatValidationTests(unittest.TestCase):
@@ -78,6 +89,60 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(body["error"]["type"], "invalid_request_error")
         self.assertEqual(body["error"]["param"], "file")
         self.assertEqual(body["error"]["code"], "missing_file")
+
+    def test_translation_route_returns_precise_unsupported_error(self) -> None:
+        resp = self.client.post("/v1/audio/translations", data={"model": "whisper-1"})
+
+        self.assertEqual(resp.status_code, 400)
+        body = resp.json()
+        self.assertEqual(body["error"]["type"], "invalid_request_error")
+        self.assertEqual(body["error"]["param"], "file")
+        self.assertEqual(body["error"]["code"], "unsupported_audio_translation")
+        self.assertIn("not supported", body["error"]["message"])
+
+    def test_openai_translation_alias_returns_precise_unsupported_error(self) -> None:
+        resp = self.client.post("/openai/v1/audio/translations", data={"model": "whisper-1"})
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["code"], "unsupported_audio_translation")
+
+    def test_translation_route_forwards_to_backend_when_capability_declared(self) -> None:
+        captured = {}
+
+        class FakeSyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+            def post(self, url, *, headers, data, files):
+                captured["url"] = url
+                captured["data"] = data
+                captured["files"] = files
+
+                class FakeResponse:
+                    status_code = 200
+                    headers = {"content-type": "application/json"}
+                    content = b'{"text":"translated"}'
+
+                return FakeResponse()
+
+        with stt_translation_capability_enabled(), patch.object(proxy.httpx, "Client", FakeSyncClient):
+            resp = self.client.post(
+                "/v1/audio/translations",
+                data={"model": "whisper-1"},
+                files={"file": ("sample.wav", b"RIFF....WAVE", "audio/wav")},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["text"], "translated")
+        self.assertTrue(captured["url"].endswith("/v1/audio/translations"))
+        self.assertEqual(captured["data"]["model"], proxy.STT_BACKEND_MODEL)
+        self.assertEqual(captured["files"][0][0], "file")
 
     def test_tts_rejects_explicit_non_wav_response_format(self) -> None:
         resp = self.client.post(
