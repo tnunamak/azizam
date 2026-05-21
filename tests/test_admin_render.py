@@ -200,9 +200,33 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn('name="profile_preset"', html)
         self.assertIn('value="openai" checked> OpenAI-compatible', html)
         self.assertIn('value="gateway"> Gateway jobs/discovery', html)
+        self.assertIn('value="provider-native"> Provider-native passthrough', html)
         self.assertIn("policyTemplates={chat_only:", html)
         self.assertIn("chat_images:{label:'Chat + images'", html)
         self.assertIn("full_runtime:{label:'Full runtime access'", html)
+        self.assertIn(
+            "need every runtime API, including provider-native passthrough",
+            html,
+        )
+        self.assertIn(
+            "full_runtime:{label:'Full runtime access',protocols:['openai','anthropic','ollama','gateway','provider-native']",
+            html,
+        )
+        self.assertIn(
+            "full_runtime:{allowed:'chat, embeddings, images, audio, video, model list, provider-native passthrough'",
+            html,
+        )
+        self.assertIn("native_passthrough:{enabled:!!t.native_passthrough}", html)
+        self.assertIn(
+            "profile.native_passthrough={enabled:profile.native_passthrough.enabled||fd.get('native_passthrough')==='on'}",
+            html,
+        )
+        self.assertIn("chat_only:{label:'Chat only',", html)
+        self.assertIn("status:'basic',native_passthrough:false},chat_embeddings", html)
+        self.assertIn("full_runtime:{label:'Full runtime access'", html)
+        self.assertIn("status:'standard',native_passthrough:true},custom", html)
+        self.assertIn("custom:{label:'Custom policy'", html)
+        self.assertIn("status:'basic',native_passthrough:false}};", html)
         self.assertNotIn("media_workflows", html)
         self.assertNotIn('<select name="profile_preset"', html)
         self.assertNotIn("chat · completions · stable", html)
