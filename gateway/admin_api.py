@@ -42,6 +42,7 @@ __all__ = [
     "AdminAuthError",
     "AdminContext",
     "AdminStore",
+    "access_model_summary",
     "create_admin_router",
 ]
 
@@ -147,7 +148,7 @@ _AUDIT_DEFAULT_LIMIT = 50
 _AUDIT_MAX_LIMIT = 200
 
 
-def _access_model_summary() -> dict[str, Any]:
+def access_model_summary() -> dict[str, Any]:
     return {
         "nouns": ["user", "app", "profile", "key", "runtime_mapping", "admin_role"],
         "users": {
@@ -164,8 +165,18 @@ def _access_model_summary() -> dict[str, Any]:
             "relationship": "keys authenticate apps or admin automation without exposing raw secrets",
         },
         "runtime_mappings": {
-            "source_kinds": ["oidc_role", "oidc_group", "email", "domain"],
-            "relationship": "OIDC roles, groups, emails, and domains can map identities to runtime profiles",
+            "source_kinds": [
+                "oidc_group",
+                "oidc_role",
+                "email",
+                "domain",
+                "gateway_role",
+                "all_users",
+            ],
+            "relationship": (
+                "OIDC groups, OIDC roles, emails, domains, gateway roles, "
+                "and all signed-in users can map identities to runtime profiles"
+            ),
         },
         "admin_roles": {
             "relationship": "admin roles control the admin plane separately from runtime access",
@@ -430,7 +441,7 @@ def create_admin_router(
                 "email": ctx.email,
                 "roles": sorted(ctx.roles),
             },
-            "access_model": _access_model_summary(),
+            "access_model": access_model_summary(),
             "counts": {
                 "users": len(users),
                 "apps": len(apps),

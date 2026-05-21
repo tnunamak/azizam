@@ -22,7 +22,7 @@ from typing import Any, Mapping
 from fastapi import Request, status
 
 from gateway import admin_store
-from gateway.admin_api import AdminAuthError, AdminContext
+from gateway.admin_api import AdminAuthError, AdminContext, access_model_summary
 from gateway.admin_oidc import (
     CookieConfig,
     SessionError,
@@ -69,32 +69,6 @@ def _profile_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         else:
             out["status_visibility"] = "basic"
     return out
-
-
-def _access_model_summary() -> dict[str, Any]:
-    return {
-        "nouns": ["user", "app", "profile", "key", "runtime_mapping", "admin_role"],
-        "users": {
-            "identity": "OIDC identity",
-            "relationship": "users are not apps",
-        },
-        "apps": {
-            "relationship": "apps inherit/default to profiles",
-        },
-        "profiles": {
-            "relationship": "profiles are reusable runtime access policies",
-        },
-        "keys": {
-            "relationship": "keys authenticate apps or admin automation without exposing raw secrets",
-        },
-        "runtime_mappings": {
-            "source_kinds": ["oidc_role", "oidc_group", "email", "domain"],
-            "relationship": "OIDC roles, groups, emails, and domains can map identities to runtime profiles",
-        },
-        "admin_roles": {
-            "relationship": "admin roles are separate from runtime access",
-        },
-    }
 
 
 class AdminSQLiteStore:
@@ -422,7 +396,7 @@ class AdminSQLiteStore:
                 "credentials": len(credentials),
                 "active_credentials": sum(1 for c in credentials if not c.get("revoked_at")),
             },
-            "access_model": _access_model_summary(),
+            "access_model": access_model_summary(),
             "users": users,
             "apps": apps,
             "profiles": profiles,

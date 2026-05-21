@@ -310,7 +310,14 @@ class AdminAuthTests(unittest.TestCase):
         )
         self.assertEqual(
             body["access_model"]["runtime_mappings"]["source_kinds"],
-            ["oidc_role", "oidc_group", "email", "domain"],
+            [
+                "oidc_group",
+                "oidc_role",
+                "email",
+                "domain",
+                "gateway_role",
+                "all_users",
+            ],
         )
         self.assertIn(
             "separately",
