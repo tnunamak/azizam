@@ -19,6 +19,11 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Mapping
 
+from gateway.admin_catalog import (
+    coerce_policy_catalog,
+    profile_policy_catalog,
+    profile_policy_label_map,
+)
 from gateway.gateway_shell import (
     SHELL_CSS,
     esc as _esc,
@@ -344,6 +349,121 @@ def _nested_list(value: Any) -> list[str]:
     return []
 
 
+def _catalog_options(
+    catalog: Mapping[str, list[Mapping[str, Any]]], section: str
+) -> list[Mapping[str, Any]]:
+    options = catalog.get(section)
+    return list(options) if isinstance(options, list) else []
+
+
+def _option_grid(
+    *,
+    name: str,
+    options: Iterable[Mapping[str, Any]],
+    aria_label: str,
+) -> str:
+    items = []
+    for option in options:
+        value = str(option.get("id") or "")
+        if not value:
+            continue
+        checked = " checked" if option.get("default") else ""
+        label = _esc(option.get("label") or value)
+        description = _esc(option.get("description") or "")
+        description_html = f"<em>{description}</em>" if description else ""
+        items.append(
+            '<label class="check"><input type="checkbox" name="'
+            + _esc(name)
+            + '" value="'
+            + _esc(value)
+            + '"'
+            + checked
+            + f"> <span><strong>{label}</strong>{description_html}</span></label>"
+        )
+    if not items:
+        return ""
+    return f'<div class="permission-grid" aria-label="{_esc(aria_label)}">{"".join(items)}</div>'
+
+
+def _radio_grid(
+    *,
+    name: str,
+    options: Iterable[Mapping[str, Any]],
+    aria_label: str,
+) -> str:
+    items = []
+    for option in options:
+        value = str(option.get("id") or "")
+        if not value:
+            continue
+        checked = " checked" if option.get("default") else ""
+        label = _esc(option.get("label") or value)
+        description = _esc(option.get("description") or "")
+        items.append(
+            '<label class="choice-card"><span><input type="radio" name="'
+            + _esc(name)
+            + '" value="'
+            + _esc(value)
+            + '"'
+            + checked
+            + f"><strong>{label}</strong></span><span>{description}</span></label>"
+        )
+    if not items:
+        return ""
+    return f'<div class="choice-grid" aria-label="{_esc(aria_label)}">{"".join(items)}</div>'
+
+
+def _inventory_items(inventory: Mapping[str, Any], name: str) -> list[Mapping[str, Any]]:
+    raw = inventory.get(name)
+    if not isinstance(raw, list):
+        return []
+    items: list[Mapping[str, Any]] = []
+    for item in raw:
+        if isinstance(item, Mapping) and item.get("id"):
+            items.append(item)
+        elif item:
+            items.append({"id": str(item)})
+    return items
+
+
+def _datalist(datalist_id: str, items: Iterable[Mapping[str, Any]]) -> str:
+    options = []
+    for item in items:
+        value = str(item.get("id") or "")
+        if not value:
+            continue
+        label = item.get("label") or item.get("description") or ""
+        label_attr = f' label="{_esc(label)}"' if label else ""
+        options.append(f'<option value="{_esc(value)}"{label_attr}></option>')
+    if not options:
+        return ""
+    return f'<datalist id="{_esc(datalist_id)}">{"".join(options)}</datalist>'
+
+
+def _text_input_with_datalist(
+    *,
+    name: str,
+    placeholder: str,
+    aria_label: str,
+    datalist_id: str,
+    items: Iterable[Mapping[str, Any]],
+) -> str:
+    items_list = list(items)
+    list_attr = f' list="{_esc(datalist_id)}"' if items_list else ""
+    return (
+        '<input type="text" name="'
+        + _esc(name)
+        + '" placeholder="'
+        + _esc(placeholder)
+        + '" aria-label="'
+        + _esc(aria_label)
+        + '"'
+        + list_attr
+        + ">"
+        + _datalist(datalist_id, items_list)
+    )
+
+
 def _profile_access_summary(record: Mapping[str, Any] | None) -> str:
     doc = _profile_doc(record)
     allow = _nested_mapping(doc.get("allow"))
@@ -355,23 +475,14 @@ def _profile_access_summary(record: Mapping[str, Any] | None) -> str:
 
     if intents or trust or resources or exposure or tags:
         labels: list[str] = []
-        intent_labels = {
-            "chat": "chat",
+        intent_labels = profile_policy_label_map("intents")
+        intent_labels.update({
             "chat.completions": "chat",
-            "text.completions": "text completions",
-            "text.embeddings": "embeddings",
             "embedding": "embeddings",
             "embeddings": "embeddings",
-            "image.generate": "image generation",
-            "image.edit": "image editing",
-            "speech.synthesis": "text to speech",
-            "speech.transcription": "speech transcription",
             "audio.transcribe": "audio transcription",
             "audio.speech": "text to speech",
-            "audio.generate": "music/audio generation",
-            "video.generate": "video generation",
-            "models.list": "model list",
-        }
+        })
         for intent in intents:
             labels.append(intent_labels.get(intent, intent))
         if not labels and tags:
@@ -739,6 +850,26 @@ def _service_row(record: Mapping[str, Any]) -> str:
     )
 
 
+def _workflow_inventory_row(record: Mapping[str, Any]) -> str:
+    workflow_id = _esc(record.get("id") or "—")
+    label = _esc(record.get("label") or record.get("display_name") or workflow_id)
+    description = _esc(record.get("description") or "")
+    intent = _esc(record.get("intent") or "—")
+    backends = _format_optional_list(record.get("backends") or record.get("supported_backends"))
+    tier = _esc(record.get("resource_tier") or "—")
+    trust = _esc(record.get("trust_tier") or "—")
+    return (
+        "<tr>"
+        f'<td><div class="cell-main">{label}</div><div class="cell-sub"><code>{workflow_id}</code></div>'
+        f'<div class="cell-sub">{description}</div></td>'
+        f"<td>{intent}</td>"
+        f"<td>{backends}</td>"
+        f"<td>{tier}</td>"
+        f"<td>{trust}</td>"
+        "</tr>"
+    )
+
+
 def _identity_mapping_row(record: Mapping[str, Any]) -> str:
     mapping_id = str(record.get("id") or "")
     source = _esc(record.get("source") or "—")
@@ -988,97 +1119,132 @@ def _profile_form(
     *,
     create_profile_action: str,
     model_visibility: Mapping[str, Any] | None = None,
+    policy_catalog: Mapping[str, list[Mapping[str, Any]]] | None = None,
+    profile_inventory: Mapping[str, Any] | None = None,
 ) -> str:
     loaded_model = _esc(
         (model_visibility or {}).get("loaded_model") or "unknown"
     )
+    catalog = policy_catalog or profile_policy_catalog()
+    inventory = profile_inventory or {}
+    protocol_grid = _option_grid(
+        name="protocols",
+        options=_catalog_options(catalog, "protocols"),
+        aria_label="Allowed APIs",
+    )
+    intent_grid = _option_grid(
+        name="intents",
+        options=_catalog_options(catalog, "intents"),
+        aria_label="Allowed work",
+    )
+    cost_grid = _option_grid(
+        name="resource_tiers",
+        options=_catalog_options(catalog, "resource_tiers"),
+        aria_label="Allowed resource tiers",
+    ) + _option_grid(
+        name="exposure",
+        options=_catalog_options(catalog, "exposure"),
+        aria_label="Allowed exposure classes",
+    ) + _option_grid(
+        name="trust_tiers",
+        options=_catalog_options(catalog, "trust_tiers"),
+        aria_label="Allowed trust tiers",
+    )
+    model_access_grid = _radio_grid(
+        name="model_access",
+        options=_catalog_options(catalog, "model_access"),
+        aria_label="Model access",
+    )
+    status_options = "".join(
+        '<option value="' + _esc(option.get("id") or "") + '"'
+        + (" selected" if option.get("default") else "")
+        + ">"
+        + _esc(option.get("label") or option.get("id") or "")
+        + "</option>"
+        for option in _catalog_options(catalog, "status_visibility")
+        if option.get("id")
+    )
+    if not status_options:
+        status_options = '<option value="basic">Basic status</option>'
+    model_items = _inventory_items(inventory, "models")
+    workflow_items = _inventory_items(inventory, "workflows")
+    backend_items = _inventory_items(inventory, "backends")
     return (
         '<form class="flow" method="post" action="'
         + _esc(create_profile_action)
         + '" data-create-profile>'
-        "<label>Create Profile</label>"
-        '<p class="form-note">Profiles are reusable runtime policies. Name the policy, choose what it can use, then assign it to Apps.</p>'
-        '<div class="stack">'
-        '<input type="text" name="label" placeholder="Profile name, e.g. Daisy full runtime" aria-label="Profile name" required>'
-        "</div>"
-        '<div class="form-section"><strong>APIs</strong>'
-        '<p class="form-note">Choose the client-facing APIs this Profile can call.</p>'
-        '<div class="permission-grid" aria-label="Allowed APIs">'
-        '<label class="check"><input type="checkbox" name="protocols" value="openai" checked> <span><strong>OpenAI-compatible</strong><em>/openai/v1 and /v1 SDKs</em></span></label>'
-        '<label class="check"><input type="checkbox" name="protocols" value="anthropic"> <span><strong>Anthropic Messages</strong><em>/anthropic/v1/messages clients</em></span></label>'
-        '<label class="check"><input type="checkbox" name="protocols" value="ollama"> <span><strong>Ollama-compatible</strong><em>/ollama/api and /api clients</em></span></label>'
-        '<label class="check"><input type="checkbox" name="protocols" value="gateway"> <span><strong>Gateway jobs</strong><em>capabilities, assets, receipts, media jobs</em></span></label>'
-        "</div></div>"
-        '<div class="form-section"><strong>Allowed work</strong>'
-        '<p class="form-note">Select the capabilities this Profile can use. Admin access is never granted here.</p>'
-        '<div class="permission-grid" aria-label="Allowed work">'
-        '<label class="check"><input type="checkbox" name="intents" value="chat" checked> <span><strong>Chat</strong><em>chat completions and messages</em></span></label>'
-        '<label class="check"><input type="checkbox" name="intents" value="text.completions"> <span><strong>Text completions</strong><em>legacy completion clients</em></span></label>'
-        '<label class="check"><input type="checkbox" name="intents" value="text.embeddings"> <span><strong>Embeddings</strong><em>RAG, search, memory, indexes</em></span></label>'
-        '<label class="check"><input type="checkbox" name="intents" value="image.generate"> <span><strong>Image generation</strong><em>text to image workflows</em></span></label>'
-        '<label class="check"><input type="checkbox" name="intents" value="image.edit"> <span><strong>Image editing</strong><em>inpaint, mask, ControlNet-like workflows</em></span></label>'
-        '<label class="check"><input type="checkbox" name="intents" value="speech.synthesis"> <span><strong>Text to speech</strong><em>voice output</em></span></label>'
-        '<label class="check"><input type="checkbox" name="intents" value="speech.transcription"> <span><strong>Speech to text</strong><em>transcription input</em></span></label>'
-        '<label class="check"><input type="checkbox" name="intents" value="audio.generate"> <span><strong>Music / sound</strong><em>audio generation workflows</em></span></label>'
-        '<label class="check"><input type="checkbox" name="intents" value="video.generate"> <span><strong>Video</strong><em>expensive queued video jobs</em></span></label>'
-        '<label class="check"><input type="checkbox" name="intents" value="models.list"> <span><strong>Model list</strong><em>show compatible models to clients</em></span></label>'
-        "</div></div>"
-        '<div class="form-section"><strong>Cost and release gates</strong>'
-        '<div class="permission-grid" aria-label="Cost and release gates">'
-        '<label class="check"><input type="checkbox" name="resource_tiers" value="interactive" checked> <span><strong>Interactive</strong><em>fast requests, normal chat</em></span></label>'
-        '<label class="check"><input type="checkbox" name="resource_tiers" value="batch"> <span><strong>Batch</strong><em>queued media and longer jobs</em></span></label>'
-        '<label class="check"><input type="checkbox" name="resource_tiers" value="expensive"> <span><strong>Expensive</strong><em>video and heavy GPU workflows</em></span></label>'
-        '<label class="check"><input type="checkbox" name="exposure" value="default" checked> <span><strong>Default capabilities</strong><em>normal model and workflow catalog</em></span></label>'
-        '<label class="check"><input type="checkbox" name="exposure" value="opt_in"> <span><strong>Opt-in capabilities</strong><em>operator-curated extras</em></span></label>'
-        '<label class="check"><input type="checkbox" name="trust_tiers" value="stable" checked> <span><strong>Stable</strong><em>expected to work for users</em></span></label>'
-        '<label class="check"><input type="checkbox" name="trust_tiers" value="experimental"> <span><strong>Experimental</strong><em>new, flaky, or changing</em></span></label>'
-        '<label class="check"><input type="checkbox" name="trust_tiers" value="private"> <span><strong>Private</strong><em>personal/local-only workflows</em></span></label>'
-        "</div></div>"
-        '<div class="form-section"><strong>Model access</strong>'
-        '<div class="choice-grid" aria-label="Model access">'
-        '<label class="choice-card"><span><input type="radio" name="model_access" value="catalog" checked>'
-        '<strong>Configured catalog</strong></span><span>Apps can request models and roles this Profile allows. Good for normal clients.</span></label>'
-        '<label class="choice-card"><span><input type="radio" name="model_access" value="current_loaded">'
-        '<strong>Current loaded LLM only</strong></span><span>Only the loaded LLM appears in model lists. Requests for other models are denied instead of swapping models.</span></label>'
-        "</div></div>"
-        '<p class="form-note">Current loaded LLM: <code>'
+        + "<label>Create Profile</label>"
+        + '<p class="form-note">Profiles are reusable runtime policies. Name the policy, choose what it can use, then assign it to Apps.</p>'
+        + '<div class="stack">'
+        + '<input type="text" name="label" placeholder="Profile name, e.g. Daisy full runtime" aria-label="Profile name" required>'
+        + "</div>"
+        + '<div class="form-section"><strong>APIs</strong>'
+        + '<p class="form-note">Choose the client-facing APIs this Profile can call.</p>'
+        + protocol_grid
+        + "</div>"
+        + '<div class="form-section"><strong>Allowed work</strong>'
+        + '<p class="form-note">Select the capabilities this Profile can use. Admin access is never granted here.</p>'
+        + intent_grid
+        + "</div>"
+        + '<div class="form-section"><strong>Cost and release gates</strong>'
+        + cost_grid
+        + "</div>"
+        + '<div class="form-section"><strong>Model access</strong>'
+        + model_access_grid
+        + "</div>"
+        + '<p class="form-note">Current loaded LLM: <code>'
         + loaded_model
         + "</code></p>"
-        '<div class="policy-preview" id="profile-policy-preview" aria-live="polite">'
-        "<strong>Profile preview</strong>"
-        '<span data-profile-preview-apis>APIs: OpenAI-compatible</span>'
-        '<span data-profile-preview-work>Work: chat</span>'
-        '<span data-profile-preview-cost>Cost gates: interactive; default capabilities; stable</span>'
-        '<span data-profile-preview-models>Models: configured catalog</span>'
-        '<span data-profile-preview-guardrails>Guardrails: local only; provider-native passthrough off; admin blocked</span>'
-        "</div>"
-        '<div class="form-section"><strong>Guardrails</strong>'
-        '<div class="stack">'
-        '<label class="check"><input type="checkbox" name="cloud_allowed"> Allow cloud fallback</label>'
-        '<label class="check"><input type="checkbox" name="native_passthrough"> Allow provider-native passthrough</label>'
-        "</div></div>"
-        '<details class="panel"><summary>Advanced constraints</summary>'
-        '<p class="form-note">Optional limits for specific model ids, workflow ids, backend ids, tags, and raw policy fields.</p>'
-        '<div class="stack">'
-        '<input type="text" name="id" placeholder="Generated from Profile name" aria-label="Profile id override">'
-        '<input type="text" name="models" placeholder="optional model ids, comma separated" aria-label="Allowed model ids">'
-        '<input type="text" name="workflows" placeholder="optional workflow ids, comma separated" aria-label="Allowed workflow ids">'
-        '<input type="text" name="backends" placeholder="optional backend ids, comma separated" aria-label="Allowed backend ids">'
-        '<input type="text" name="tags" placeholder="optional tags: family, agents" aria-label="Policy tags">'
-        '<select name="status_visibility" aria-label="Status detail">'
-        '<option value="basic">Basic status</option>'
-        '<option value="standard">Standard status</option>'
-        '<option value="full">Full status</option>'
-        '<option value="none">No status</option>'
-        "</select>"
-        "</div>"
-        '<textarea name="advanced_json" spellcheck="false" aria-label="Raw policy JSON" placeholder="{&quot;models&quot;:[&quot;local-chat&quot;]}"></textarea>'
-        "</details>"
-        '<div class="row">'
-        "<span></span>"
-        '<button type="submit">Create Profile</button>'
-        "</div>"
-        "</form>"
+        + '<div class="policy-preview" id="profile-policy-preview" aria-live="polite">'
+        + "<strong>Profile preview</strong>"
+        + '<span data-profile-preview-apis>APIs: OpenAI-compatible</span>'
+        + '<span data-profile-preview-work>Work: chat</span>'
+        + '<span data-profile-preview-cost>Cost gates: interactive; default capabilities; stable</span>'
+        + '<span data-profile-preview-models>Models: configured catalog</span>'
+        + '<span data-profile-preview-guardrails>Guardrails: local only; provider-native passthrough off; admin blocked</span>'
+        + "</div>"
+        + '<div class="form-section"><strong>Guardrails</strong>'
+        + '<div class="stack">'
+        + '<label class="check"><input type="checkbox" name="cloud_allowed"> Allow cloud fallback</label>'
+        + '<label class="check"><input type="checkbox" name="native_passthrough"> Allow provider-native passthrough</label>'
+        + "</div></div>"
+        + '<details class="panel"><summary>Advanced constraints</summary>'
+        + '<p class="form-note">Optional limits for specific model ids, workflow ids, backend ids, tags, and raw policy fields. Suggestions come from current gateway inventory; typed ids are still allowed.</p>'
+        + '<div class="stack">'
+        + '<input type="text" name="id" placeholder="Generated from Profile name" aria-label="Profile id override">'
+        + _text_input_with_datalist(
+            name="models",
+            placeholder="optional model ids, comma separated",
+            aria_label="Allowed model ids",
+            datalist_id="profile-model-options",
+            items=model_items,
+        )
+        + _text_input_with_datalist(
+            name="workflows",
+            placeholder="optional workflow ids, comma separated",
+            aria_label="Allowed workflow ids",
+            datalist_id="profile-workflow-options",
+            items=workflow_items,
+        )
+        + _text_input_with_datalist(
+            name="backends",
+            placeholder="optional backend ids, comma separated",
+            aria_label="Allowed backend ids",
+            datalist_id="profile-backend-options",
+            items=backend_items,
+        )
+        + '<input type="text" name="tags" placeholder="optional tags: family, agents" aria-label="Policy tags">'
+        + '<select name="status_visibility" aria-label="Status detail">'
+        + status_options
+        + "</select>"
+        + "</div>"
+        + '<textarea name="advanced_json" spellcheck="false" aria-label="Raw policy JSON" placeholder="{&quot;models&quot;:[&quot;local-chat&quot;]}"></textarea>'
+        + "</details>"
+        + '<div class="row">'
+        + "<span></span>"
+        + '<button type="submit">Create Profile</button>'
+        + "</div>"
+        + "</form>"
     )
 
 
@@ -1193,8 +1359,13 @@ def render_admin_dashboard(
     audit = list(snapshot.get("audit") or [])
     api_surfaces = list(snapshot.get("api_surfaces") or [])
     services = list(snapshot.get("services") or [])
+    workflow_inventory = list(snapshot.get("workflow_inventory") or [])
     identity_mappings = list(snapshot.get("identity_mappings") or [])
     model_visibility = snapshot.get("model_visibility")
+    policy_catalog = coerce_policy_catalog(snapshot.get("policy_catalog"))
+    profile_inventory = snapshot.get("profile_inventory")
+    if not isinstance(profile_inventory, Mapping):
+        profile_inventory = {}
     actor = snapshot.get("actor") or {}
     actor_label = actor.get("email") or actor.get("subject") or "anonymous"
     raw_actor_roles = actor.get("roles")
@@ -1250,6 +1421,10 @@ def render_admin_dashboard(
         ["Service", "Role", "Capabilities", "Status", "Runtime", "Mode / resources"],
         (_service_row(service) for service in services),
     )
+    workflow_inventory_table = _table(
+        ["Workflow", "Intent", "Backend", "Tier", "Trust"],
+        (_workflow_inventory_row(workflow) for workflow in workflow_inventory),
+    )
     identity_mappings_table = _table(
         ["Identity source", "Scope", "Default Profile", "Note", "Action"],
         (_identity_mapping_row(mapping) for mapping in identity_mappings),
@@ -1270,6 +1445,8 @@ def render_admin_dashboard(
         profiles,
         create_profile_action=create_profile_action,
         model_visibility=model_visibility if isinstance(model_visibility, Mapping) else None,
+        policy_catalog=policy_catalog,
+        profile_inventory=profile_inventory,
     )
     policy_simulator_html = _policy_simulator_form(
         profiles,
@@ -1296,9 +1473,17 @@ def render_admin_dashboard(
         "</div>"
     )
     api_surfaces_html = api_surfaces_table
-    services_html = _model_visibility_panel(
-        model_visibility if isinstance(model_visibility, Mapping) else None
-    ) + services_table
+    services_html = (
+        _model_visibility_panel(
+            model_visibility if isinstance(model_visibility, Mapping) else None
+        )
+        + services_table
+        + _subsection(
+            "Workflows",
+            workflow_inventory_table,
+            intro="Gateway workflow manifests currently available to Profiles and media routes.",
+        )
+    )
     apps_keys_html = (
         _start_card(apps)
         + result_html
@@ -1358,6 +1543,7 @@ def render_admin_dashboard(
         "document.addEventListener('DOMContentLoaded',()=>{"
         f"const csrfToken={csrf_json};"
         f"const runtimeBaseUrl={_json_for_script(base_url)};"
+        f"const policyCatalog={_json_for_script(policy_catalog)};"
         "const raw=v=>{const out=document.getElementById('admin-flow-result'),wrap=document.getElementById('admin-flow-debug');"
         "if(out)out.textContent=typeof v==='string'?v:JSON.stringify(v,null,2);if(wrap)wrap.hidden=false};"
         "const message=(text,kind='')=>{const el=document.getElementById('admin-flow-message');if(!el)return;"
@@ -1374,11 +1560,12 @@ def render_admin_dashboard(
         "const list=v=>String(v||'').split(/[\\s,]+/).map(x=>x.trim()).filter(Boolean);"
         "const values=(fd,k)=>fd.getAll(k).flatMap(list);"
         "const slug=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'profile';"
-        "const protocolLabels={openai:'OpenAI-compatible',anthropic:'Anthropic Messages',ollama:'Ollama-compatible',gateway:'Gateway jobs','provider-native':'Provider-native'};"
-        "const intentLabels={chat:'chat','text.completions':'text completions','text.embeddings':'embeddings','image.generate':'image generation','image.edit':'image editing','speech.synthesis':'text to speech','speech.transcription':'speech to text','audio.generate':'music / sound','video.generate':'video','models.list':'model list'};"
-        "const resourceLabels={interactive:'interactive',batch:'batch',expensive:'expensive'};"
-        "const exposureLabels={default:'default capabilities',opt_in:'opt-in capabilities'};"
-        "const trustLabels={stable:'stable',experimental:'experimental',private:'private'};"
+        "const labelsFor=section=>Object.fromEntries((policyCatalog[section]||[]).map(o=>[o.id,o.summary_label||o.label||o.id]));"
+        "const protocolLabels={...labelsFor('protocols'),'provider-native':'Provider-native'};"
+        "const intentLabels=labelsFor('intents');"
+        "const resourceLabels=labelsFor('resource_tiers');"
+        "const exposureLabels=labelsFor('exposure');"
+        "const trustLabels=labelsFor('trust_tiers');"
         "const labelList=(items,labels,empty)=>items.length?items.map(x=>labels[x]||x).join(', '):empty;"
         "const checkedValues=(form,name)=>Array.from(form.querySelectorAll(`[name=\"${name}\"]:checked`)).map(el=>el.value);"
         "const profileProtocols=(fd,form)=>{const protocols=checkedValues(form,'protocols');if(fd.get('native_passthrough')==='on'&&!protocols.includes('provider-native'))protocols.push('provider-native');return protocols};"

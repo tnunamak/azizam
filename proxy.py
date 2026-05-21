@@ -63,6 +63,7 @@ from gateway import (
     video_media_jobs,
 )
 from gateway.admin_api import AdminAuthError, create_admin_router
+from gateway.admin_catalog import admin_api_surfaces, profile_policy_catalog
 from gateway.admin_oidc import (
     IDTokenClaimsError,
     OIDCConfigError,
@@ -8192,48 +8193,7 @@ async def user_portal_revoke_key(credential_id: str, request: Request):
 
 
 def _admin_api_surfaces() -> list[dict[str, Any]]:
-    return [
-        {
-            "name": "OpenAI-compatible",
-            "route_base": "/v1",
-            "status": "live",
-            "profile_gates": ["openai"],
-            "clients": ["OpenAI SDKs", "Open WebUI", "LibreChat", "Continue"],
-            "description": "Chat, completions, responses, embeddings, models, images, audio, and video routes.",
-        },
-        {
-            "name": "Anthropic Messages",
-            "route_base": "/v1/messages",
-            "status": "partial",
-            "profile_gates": ["anthropic"],
-            "clients": ["Claude-shaped coding agents"],
-            "description": "Messages-compatible chat surface backed by local LLM routing.",
-        },
-        {
-            "name": "Ollama-compatible",
-            "route_base": "/api",
-            "status": "partial",
-            "profile_gates": ["ollama"],
-            "clients": ["Ollama SDKs", "local model tools"],
-            "description": "Ollama-shaped chat/generate/tags compatibility where it maps cleanly.",
-        },
-        {
-            "name": "Gateway-native",
-            "route_base": "/gateway/v1",
-            "status": "live",
-            "profile_gates": ["gateway"],
-            "clients": ["agents", "media tooling"],
-            "description": "Capabilities, workflows, receipts, and durable media jobs.",
-        },
-        {
-            "name": "Admin API",
-            "route_base": "/admin/api",
-            "status": "live",
-            "profile_gates": ["admin session", "oak_"],
-            "clients": ["operators", "automation"],
-            "description": "Control-plane API for Apps, Profiles, keys, audit, and policy simulation.",
-        },
-    ]
+    return admin_api_surfaces()
 
 
 def _status_by_service_name(status_payload: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
@@ -8317,6 +8277,117 @@ def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dic
             }
         )
     return rows
+
+
+def _inventory_item(
+    item_id: Any,
+    *,
+    label: Any = "",
+    description: Any = "",
+) -> dict[str, str]:
+    out = {"id": str(item_id)}
+    if label:
+        out["label"] = str(label)
+    if description:
+        out["description"] = str(description)
+    return out
+
+
+def _dedupe_inventory_items(items: Iterable[Mapping[str, Any]]) -> list[dict[str, str]]:
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    for item in items:
+        item_id = str(item.get("id") or "").strip()
+        if not item_id or item_id in seen:
+            continue
+        seen.add(item_id)
+        out.append({
+            key: str(value)
+            for key, value in item.items()
+            if key in {"id", "label", "description"} and value not in (None, "")
+        })
+    return out
+
+
+def _admin_model_inventory(status_payload: Mapping[str, Any]) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for entry in _build_role_catalog_entries() + _build_workflow_model_entries():
+        model_id = entry.get("id")
+        if not model_id:
+            continue
+        label = entry.get("description") or entry.get("owned_by") or ""
+        items.append(_inventory_item(model_id, label=label))
+
+    loaded = ""
+    models = status_payload.get("models") if isinstance(status_payload, Mapping) else {}
+    if isinstance(models, Mapping):
+        loaded = str(models.get("loaded_llm_name") or "")
+    if loaded:
+        items.append(_inventory_item(loaded, label="currently loaded LLM"))
+
+    for name in AUDIO_WORKFLOWS_CFG:
+        items.append(_inventory_item(name, label="audio workflow model"))
+    for alias, target in (AUDIO_ALIASES or {}).items():
+        items.append(_inventory_item(alias, label=f"audio alias for {target}"))
+
+    for name in VIDEO_WORKFLOWS:
+        items.append(_inventory_item(name, label="video workflow model"))
+    for alias, target in (videos_cfg.get("aliases", {}) or {}).items():
+        items.append(_inventory_item(alias, label=f"video alias for {target}"))
+
+    return _dedupe_inventory_items(items)
+
+
+def _admin_workflow_inventory() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for record in GATEWAY_WORKFLOW_REGISTRY.records():
+        manifest = record.manifest
+        rows.append({
+            "id": record.id,
+            "label": manifest.get("display_name") or record.id,
+            "description": manifest.get("description") or "",
+            "intent": record.intent,
+            "backends": record.supported_backends,
+            "resource_tier": manifest.get("resource_tier") or "batch",
+            "trust_tier": manifest.get("trust_tier")
+            or ("stable" if record.identity.trusted else "experimental"),
+        })
+    return rows
+
+
+def _admin_backend_inventory(status_payload: Mapping[str, Any]) -> list[dict[str, str]]:
+    status_by_name = _status_by_service_name(status_payload)
+    items: list[dict[str, str]] = []
+    for key, raw in (config.get("backends") or {}).items():
+        if not isinstance(raw, Mapping):
+            continue
+        name = str(raw.get("name") or key)
+        live = status_by_name.get(name) or {}
+        status = live.get("live_status") or live.get("status") or "unknown"
+        capabilities = raw.get("capabilities") or []
+        description = ", ".join(str(item) for item in capabilities) if capabilities else ""
+        if status:
+            description = (description + "; " if description else "") + f"status {status}"
+        items.append(_inventory_item(key, label=name, description=description))
+    return _dedupe_inventory_items(items)
+
+
+def _admin_profile_inventory(
+    status_payload: Mapping[str, Any] | None = None,
+    *,
+    workflows: list[Mapping[str, Any]] | None = None,
+) -> dict[str, list[dict[str, str]]]:
+    payload: Mapping[str, Any] = status_payload or {}
+    workflow_rows = workflows if workflows is not None else _admin_workflow_inventory()
+    workflow_items = [
+        _inventory_item(row.get("id"), label=row.get("label"), description=row.get("intent"))
+        for row in workflow_rows
+    ]
+    return {
+        "models": _admin_model_inventory(payload),
+        "workflows": _dedupe_inventory_items(workflow_items),
+        "backends": _admin_backend_inventory(payload),
+    }
 
 
 def _admin_model_visibility(status_payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -8439,6 +8510,13 @@ async def admin_dashboard(request: Request):
         status_payload = {}
     snapshot["api_surfaces"] = _admin_api_surfaces()
     snapshot["services"] = _admin_services(status_payload)
+    workflow_inventory = _admin_workflow_inventory()
+    snapshot["workflow_inventory"] = workflow_inventory
+    snapshot["profile_inventory"] = _admin_profile_inventory(
+        status_payload,
+        workflows=workflow_inventory,
+    )
+    snapshot["policy_catalog"] = profile_policy_catalog()
     snapshot["model_visibility"] = _admin_model_visibility(status_payload)
     snapshot["identity_mappings"] = _admin_identity_mappings()
     body = render_admin_dashboard(

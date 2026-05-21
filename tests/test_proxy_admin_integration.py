@@ -145,6 +145,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertIn("AI Gateway Admin", response.text)
         self.assertIn("Create App", response.text)
         self.assertIn("No App keys yet", response.text)
+        self.assertIn("const policyCatalog=", response.text)
+        self.assertIn("profile-workflow-options", response.text)
+        self.assertIn("image.generate.flux2-klein-4b", response.text)
+        self.assertIn(">Workflows</h3>", response.text)
         self.assertNotIn("Mint runtime key", response.text)
 
     def test_admin_dashboard_requires_admin_auth(self) -> None:

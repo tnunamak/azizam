@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from gateway.admin_catalog import profile_policy_catalog  # noqa: E402
 from gateway.admin_render import render_admin_dashboard  # noqa: E402
 
 
@@ -177,6 +178,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_create_profile_is_a_direct_policy_builder(self) -> None:
         html = render_admin_dashboard(_snapshot())
+        self.assertIn("const policyCatalog=", html)
         self.assertIn('name="protocols" value="openai" checked', html)
         self.assertIn('name="protocols" value="anthropic"', html)
         self.assertIn('name="protocols" value="ollama"', html)
@@ -214,6 +216,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn(".choice-grid, .permission-grid { grid-template-columns: 1fr; }", html)
         self.assertIn("buildProfileFromForm", html)
         self.assertIn("profileProtocols", html)
+        self.assertIn("labelsFor('protocols')", html)
         self.assertIn("checkedValues(form,'protocols')", html)
         self.assertIn("checkedValues(form,'intents')", html)
         self.assertIn("checkedValues(form,'resource_tiers')", html)
@@ -221,6 +224,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("const backends=values(fd,'backends')", html)
         self.assertIn("data-profile-preview-work", html)
         self.assertIn("data-profile-preview-cost", html)
+        self.assertIn('<option value="basic" selected>Basic</option>', html)
         self.assertNotIn("policyTemplates", html)
         self.assertNotIn("policyPreview", html)
         self.assertNotIn("syncProfileTemplate", html)
@@ -234,6 +238,42 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertNotIn("Existing Profiles:", html)
         self.assertNotIn("All local and stable", html)
         self.assertNotIn('placeholder="protocols: openai, anthropic"', html)
+
+    def test_profile_creation_uses_supplied_policy_catalog_and_inventory(self) -> None:
+        snapshot = _snapshot()
+        catalog = profile_policy_catalog()
+        catalog["protocols"] = [
+            {
+                "id": "openai",
+                "label": "OpenAI-compatible",
+                "summary_label": "OpenAI-compatible",
+                "description": "/v1 SDKs",
+                "default": True,
+            },
+            {
+                "id": "acme",
+                "label": "Acme API",
+                "summary_label": "Acme API",
+                "description": "/acme/v1 clients",
+            },
+        ]
+        snapshot["policy_catalog"] = catalog
+        snapshot["profile_inventory"] = {
+            "models": [{"id": "default", "label": "Default role"}],
+            "workflows": [
+                {"id": "image.generate.test", "label": "Test image workflow"}
+            ],
+            "backends": [{"id": "comfyui", "label": "ComfyUI"}],
+        }
+        html = render_admin_dashboard(snapshot)
+        self.assertIn('name="protocols" value="acme"', html)
+        self.assertIn("Acme API", html)
+        self.assertIn("profile-model-options", html)
+        self.assertIn('<option value="default" label="Default role"></option>', html)
+        self.assertIn("profile-workflow-options", html)
+        self.assertIn('value="image.generate.test"', html)
+        self.assertIn("profile-backend-options", html)
+        self.assertIn('<option value="comfyui" label="ComfyUI"></option>', html)
 
     def test_create_profile_keeps_advanced_json_in_optional_disclosure(self) -> None:
         html = render_admin_dashboard(_snapshot())
@@ -395,6 +435,26 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("users do not hand-edit policy", html)
         self.assertIn("opk_</code>&nbsp;runtime App keys", html)
         self.assertIn("oak_</code>&nbsp;admin automation", html)
+
+    def test_admin_dashboard_renders_dynamic_workflow_inventory(self) -> None:
+        snapshot = _snapshot()
+        snapshot["workflow_inventory"] = [
+            {
+                "id": "video.generate.wan",
+                "label": "Wan video",
+                "description": "Image to video",
+                "intent": "video.generate",
+                "backends": ["comfyui"],
+                "resource_tier": "expensive",
+                "trust_tier": "experimental",
+            }
+        ]
+        html = render_admin_dashboard(snapshot)
+        services_section = html[html.index('id="services"') : html.index('id="apis"')]
+        self.assertIn(">Workflows</h3>", services_section)
+        self.assertIn("video.generate.wan", services_section)
+        self.assertIn("Wan video", services_section)
+        self.assertIn("expensive", services_section)
 
     def test_apps_show_effective_profile_and_patch_affordance(self) -> None:
         html = render_admin_dashboard(_snapshot())
