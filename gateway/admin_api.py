@@ -147,6 +147,32 @@ _AUDIT_DEFAULT_LIMIT = 50
 _AUDIT_MAX_LIMIT = 200
 
 
+def _access_model_summary() -> dict[str, Any]:
+    return {
+        "nouns": ["user", "app", "profile", "key", "runtime_mapping", "admin_role"],
+        "users": {
+            "identity": "OIDC identity",
+            "relationship": "users are not apps",
+        },
+        "apps": {
+            "relationship": "apps inherit/default to profiles",
+        },
+        "profiles": {
+            "relationship": "profiles are reusable runtime access policies",
+        },
+        "keys": {
+            "relationship": "keys authenticate apps or admin automation without exposing raw secrets",
+        },
+        "runtime_mappings": {
+            "source_kinds": ["oidc_role", "oidc_group", "email", "domain"],
+            "relationship": "OIDC roles, groups, emails, and domains can map identities to runtime profiles",
+        },
+        "admin_roles": {
+            "relationship": "admin roles control the admin plane separately from runtime access",
+        },
+    }
+
+
 class _RouteError(Exception):
     """Internal flow-control exception for endpoint validation errors."""
 
@@ -393,19 +419,27 @@ def create_admin_router(
         users = store.list_users()
         apps = store.list_apps()
         profiles = store.list_profiles()
+        runtime_mappings = store.list_runtime_profile_mappings()
         credentials = _scrub_credentials(store.list_credentials())
         active_credentials = [
             c for c in credentials if not c.get("revoked_at")
         ]
         payload = {
-            "actor": {"subject": ctx.subject, "email": ctx.email},
+            "actor": {
+                "subject": ctx.subject,
+                "email": ctx.email,
+                "roles": sorted(ctx.roles),
+            },
+            "access_model": _access_model_summary(),
             "counts": {
                 "users": len(users),
                 "apps": len(apps),
                 "profiles": len(profiles),
+                "runtime_profile_mappings": len(runtime_mappings),
                 "credentials": len(credentials),
                 "active_credentials": len(active_credentials),
             },
+            "runtime_profile_mappings": runtime_mappings,
         }
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
 

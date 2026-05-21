@@ -71,6 +71,32 @@ def _profile_summary(record: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _access_model_summary() -> dict[str, Any]:
+    return {
+        "nouns": ["user", "app", "profile", "key", "runtime_mapping", "admin_role"],
+        "users": {
+            "identity": "OIDC identity",
+            "relationship": "users are not apps",
+        },
+        "apps": {
+            "relationship": "apps inherit/default to profiles",
+        },
+        "profiles": {
+            "relationship": "profiles are reusable runtime access policies",
+        },
+        "keys": {
+            "relationship": "keys authenticate apps or admin automation without exposing raw secrets",
+        },
+        "runtime_mappings": {
+            "source_kinds": ["oidc_role", "oidc_group", "email", "domain"],
+            "relationship": "OIDC roles, groups, emails, and domains can map identities to runtime profiles",
+        },
+        "admin_roles": {
+            "relationship": "admin roles are separate from runtime access",
+        },
+    }
+
+
 class AdminSQLiteStore:
     """Adapter from ``admin_store`` functions to ``gateway.admin_api``."""
 
@@ -378,6 +404,7 @@ class AdminSQLiteStore:
         users = self.list_users()
         apps = self.list_apps()
         profiles = self.list_profiles()
+        runtime_mappings = self.list_runtime_profile_mappings()
         credentials = self.list_credentials()
         audit = self.recent_audit(limit=50)
         return {
@@ -391,12 +418,15 @@ class AdminSQLiteStore:
                 "users": len(users),
                 "apps": len(apps),
                 "profiles": len(profiles),
+                "runtime_profile_mappings": len(runtime_mappings),
                 "credentials": len(credentials),
                 "active_credentials": sum(1 for c in credentials if not c.get("revoked_at")),
             },
+            "access_model": _access_model_summary(),
             "users": users,
             "apps": apps,
             "profiles": profiles,
+            "runtime_profile_mappings": runtime_mappings,
             "credentials": credentials,
             "audit": audit,
             "discovery_links": [

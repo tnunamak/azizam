@@ -285,11 +285,37 @@ class AdminAuthTests(unittest.TestCase):
 
     def test_authenticated_admin_can_read_overview(self) -> None:
         client, _ = _make_client()
+        client.post(
+            "/admin/api/runtime-profile-mappings",
+            json={
+                "source_kind": "oidc_group",
+                "source_value": "trusted-users",
+                "profile_id": "default-local",
+            },
+            headers=_auth(),
+        )
         resp = client.get("/admin/api/overview", headers=_auth())
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["actor"]["subject"], "u_owner")
+        self.assertEqual(body["actor"]["roles"], ["admin"])
         self.assertIn("apps", body["counts"])
+        self.assertEqual(body["counts"]["runtime_profile_mappings"], 1)
+        self.assertEqual(
+            body["runtime_profile_mappings"][0]["source_kind"], "oidc_group"
+        )
+        self.assertEqual(
+            body["access_model"]["nouns"],
+            ["user", "app", "profile", "key", "runtime_mapping", "admin_role"],
+        )
+        self.assertEqual(
+            body["access_model"]["runtime_mappings"]["source_kinds"],
+            ["oidc_role", "oidc_group", "email", "domain"],
+        )
+        self.assertIn(
+            "separately",
+            body["access_model"]["admin_roles"]["relationship"],
+        )
 
     def test_owner_role_is_admin_capable(self) -> None:
         def owner_auth(_request: Request) -> AdminContext:

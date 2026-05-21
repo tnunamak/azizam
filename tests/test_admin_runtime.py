@@ -276,6 +276,14 @@ class AdminRuntimeTests(unittest.TestCase):
             "/admin/api/apps", json={"name": "runtime-app"}
         ).json()["app"]["id"]
         client.post(f"/admin/api/apps/{app_id}/keys", json={})
+        client.post(
+            "/admin/api/runtime-profile-mappings",
+            json={
+                "source_kind": "domain",
+                "source_value": "example.com",
+                "profile_id": "default-local",
+            },
+        )
 
         snapshot = self.store.dashboard_snapshot(
             AdminContext(
@@ -286,6 +294,22 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         self.assertNotIn("hash", repr(snapshot))
         self.assertEqual(snapshot["actor"]["csrf_token"], "csrf-token")
+        self.assertEqual(snapshot["counts"]["runtime_profile_mappings"], 1)
+        self.assertEqual(
+            snapshot["runtime_profile_mappings"][0]["source_kind"], "domain"
+        )
+        self.assertEqual(
+            snapshot["access_model"]["nouns"],
+            ["user", "app", "profile", "key", "runtime_mapping", "admin_role"],
+        )
+        self.assertEqual(
+            snapshot["access_model"]["runtime_mappings"]["source_kinds"],
+            ["oidc_role", "oidc_group", "email", "domain"],
+        )
+        self.assertIn(
+            "separate",
+            snapshot["access_model"]["admin_roles"]["relationship"],
+        )
 
     def test_dashboard_links_are_admin_or_public_routes(self) -> None:
         snapshot = self.store.dashboard_snapshot(
