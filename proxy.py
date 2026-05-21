@@ -10942,6 +10942,8 @@ async def _dispatch_gateway_media_job_submission(
     intent = intent.strip()
     body = _image_generation_body_from_media_job_payload(payload)
     if body is None:
+        if intent == "image.generate":
+            return None
         return _unsupported_gateway_media_job_response(intent)
     headers = _safe_image_job_headers(request)
     idempotency_key = request.headers.get("idempotency-key")
