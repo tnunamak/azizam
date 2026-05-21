@@ -36,6 +36,7 @@ class ResourceAdmissionHTTPTests(unittest.TestCase):
         )
         self.assertEqual(response.body["admission"]["outcome"], "denied")
         self.assertFalse(response.body["admission"]["allowed"])
+        self.assertEqual(response.body["admission"]["reason_codes"], ("service_unavailable",))
 
     def test_degraded_decision_remains_successful_and_exposes_advice(self) -> None:
         decision = advise_route_admission(
@@ -52,6 +53,7 @@ class ResourceAdmissionHTTPTests(unittest.TestCase):
         self.assertNotIn("error", response.body)
         self.assertEqual(response.body["admission"]["outcome"], "degraded")
         self.assertTrue(response.body["admission"]["allowed"])
+        self.assertEqual(response.body["admission"]["reason_codes"], ("service_degraded",))
 
     def test_route_facts_feed_profile_and_queue_limits(self) -> None:
         decision = advise_route_admission(
@@ -78,6 +80,13 @@ class ResourceAdmissionHTTPTests(unittest.TestCase):
                 "app concurrency full: image-agent",
             ),
         )
+        self.assertEqual(
+            decision.reason_codes,
+            (
+                "queue_full",
+                "app_concurrency_full",
+            ),
+        )
 
     def test_allowed_decision_uses_success_body_only(self) -> None:
         decision = advise_route_admission(
@@ -92,6 +101,7 @@ class ResourceAdmissionHTTPTests(unittest.TestCase):
         self.assertEqual(response.headers, {})
         self.assertEqual(response.body["admission"]["outcome"], "allowed")
         self.assertEqual(response.body["admission"]["reasons"], ("using primary llm",))
+        self.assertEqual(response.body["admission"]["reason_codes"], ("estimate_reason",))
 
 
 if __name__ == "__main__":

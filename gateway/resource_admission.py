@@ -119,6 +119,11 @@ class ResourceAdmissionDecision:
     outcome: AdmissionOutcome
     retry_after: int | None = None
     reasons: tuple[str, ...] = ()
+    reason_codes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reasons", _clean_reasons(self.reasons))
+        object.__setattr__(self, "reason_codes", _clean_tokens(self.reason_codes))
 
     @property
     def allowed(self) -> bool:
@@ -138,6 +143,7 @@ class ResourceAdmissionDecision:
             "allowed": self.allowed,
             "retry_after": self.retry_after,
             "reasons": self.reasons,
+            "reason_codes": self.reason_codes,
         }
 
 
@@ -153,53 +159,71 @@ def advise_resource_admission(
     load = load or CurrentLoad()
 
     denied: list[str] = []
+    denied_codes: list[str] = []
     degraded: list[str] = []
+    degraded_codes: list[str] = []
     retry_after_values: list[int] = []
 
     if not service.available:
         denied.extend(service.reasons or ("service unavailable",))
+        denied_codes.append("service_unavailable")
         _append_retry_after(retry_after_values, service.retry_after)
     elif service.degraded:
         degraded.extend(service.reasons or ("service degraded",))
+        degraded_codes.append("service_degraded")
         _append_retry_after(retry_after_values, service.retry_after)
 
     if estimate.intent in constraints.disabled_intents:
         denied.append(f"intent disabled: {estimate.intent}")
+        denied_codes.append("intent_disabled")
     if estimate.resource_class and estimate.resource_class in constraints.disabled_resource_classes:
         denied.append(f"resource class disabled: {estimate.resource_class}")
+        denied_codes.append("resource_class_disabled")
 
     reserved_required = _intersection(estimate.required_tokens, constraints.reserved_tokens)
     if reserved_required:
         denied.append("required resource reserved: " + ", ".join(reserved_required))
+        denied_codes.append("required_resource_reserved")
 
     reserved_optional = _intersection(estimate.optional_tokens, constraints.reserved_tokens)
     if reserved_optional:
         degraded.append("optional resource reserved: " + ", ".join(reserved_optional))
+        degraded_codes.append("optional_resource_reserved")
 
     if estimate.requires_gpu and "gpu" in constraints.reserved_tokens:
         denied.append("gpu reserved")
+        denied_codes.append("gpu_reserved")
 
-    _check_queue_depth(estimate, constraints, load, denied, retry_after_values)
-    _check_app_concurrency(estimate, constraints, load, denied, retry_after_values)
+    _check_queue_depth(estimate, constraints, load, denied, denied_codes, retry_after_values)
+    _check_app_concurrency(estimate, constraints, load, denied, denied_codes, retry_after_values)
 
     _append_retry_after(retry_after_values, constraints.retry_after)
 
     if denied:
+        if constraints.reasons:
+            denied_codes.append("constraint_reason")
         return ResourceAdmissionDecision(
             AdmissionOutcome.DENIED,
             _smallest_retry_after(retry_after_values),
             _unique((*denied, *constraints.reasons)),
+            _unique(tuple(denied_codes)),
         )
     if degraded:
+        if estimate.reasons:
+            degraded_codes.append("estimate_reason")
+        if constraints.reasons:
+            degraded_codes.append("constraint_reason")
         return ResourceAdmissionDecision(
             AdmissionOutcome.DEGRADED,
             _smallest_retry_after(retry_after_values),
             _unique((*degraded, *estimate.reasons, *constraints.reasons)),
+            _unique(tuple(degraded_codes)),
         )
     return ResourceAdmissionDecision(
         AdmissionOutcome.ALLOWED,
         None,
         estimate.reasons or ("resources available",),
+        ("estimate_reason",) if estimate.reasons else ("resources_available",),
     )
 
 
@@ -208,6 +232,7 @@ def _check_queue_depth(
     constraints: AdmissionConstraints,
     load: CurrentLoad,
     denied: list[str],
+    denied_codes: list[str],
     retry_after_values: list[int],
 ) -> None:
     if constraints.max_queue_depth is None or estimate.queue_key is None:
@@ -215,6 +240,7 @@ def _check_queue_depth(
     queue_depth = load.queue_depths.get(estimate.queue_key, 0)
     if queue_depth >= constraints.max_queue_depth:
         denied.append(f"queue full: {estimate.queue_key}")
+        denied_codes.append("queue_full")
         _append_retry_after(retry_after_values, load.retry_after)
 
 
@@ -223,6 +249,7 @@ def _check_app_concurrency(
     constraints: AdmissionConstraints,
     load: CurrentLoad,
     denied: list[str],
+    denied_codes: list[str],
     retry_after_values: list[int],
 ) -> None:
     if estimate.app_id is None:
@@ -233,6 +260,7 @@ def _check_app_concurrency(
     active = load.active_by_app.get(estimate.app_id, 0)
     if active >= limit:
         denied.append(f"app concurrency full: {estimate.app_id}")
+        denied_codes.append("app_concurrency_full")
         _append_retry_after(retry_after_values, load.retry_after)
 
 
