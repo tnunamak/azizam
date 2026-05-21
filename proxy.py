@@ -13726,6 +13726,57 @@ def _response_json_payload(response: Any) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _embedding_dimensions_error(message: str) -> Response:
+    return openai_error_response(
+        message,
+        status_code=400,
+        error_type="invalid_request_error",
+        param="dimensions",
+        code="invalid_value",
+    )
+
+
+def _requested_embedding_dimensions(body: Mapping[str, Any] | None) -> tuple[int | None, Response | None]:
+    if not isinstance(body, Mapping) or "dimensions" not in body:
+        return None, None
+    dimensions = body.get("dimensions")
+    if not isinstance(dimensions, int) or isinstance(dimensions, bool) or dimensions <= 0:
+        return None, _embedding_dimensions_error("dimensions must be a positive integer")
+    return dimensions, None
+
+
+def _truncate_and_normalize_embedding_values(values: list[Any], dimensions: int) -> list[float] | None:
+    if dimensions > len(values):
+        return None
+    try:
+        truncated = [float(value) for value in values[:dimensions]]
+    except (TypeError, ValueError):
+        return None
+    norm = math.sqrt(sum(value * value for value in truncated))
+    if norm <= 0:
+        return truncated
+    return [value / norm for value in truncated]
+
+
+def _apply_embedding_dimensions(response_json: dict[str, Any], dimensions: int) -> Response | None:
+    data = response_json.get("data")
+    if not isinstance(data, list):
+        return None
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        embedding = item.get("embedding")
+        if not isinstance(embedding, list):
+            continue
+        normalized = _truncate_and_normalize_embedding_values(embedding, dimensions)
+        if normalized is None:
+            return _embedding_dimensions_error(
+                "dimensions must be less than or equal to the native embedding length"
+            )
+        item["embedding"] = normalized
+    return None
+
+
 def _response_error_message(response: Any, fallback: str) -> str:
     payload = _response_json_payload(response)
     error = payload.get("error")
@@ -15432,6 +15483,11 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         parsed_openai_body, parse_error = parse_openai_json_body(body_peek)
         if parse_error is not None:
             return parse_error
+    requested_embedding_dimensions: int | None = None
+    if request_path == "/v1/embeddings":
+        requested_embedding_dimensions, dimensions_error = _requested_embedding_dimensions(parsed_openai_body)
+        if dimensions_error is not None:
+            return dimensions_error
     policy_decision = None
     if not _is_internal_protocol_forward(request):
         policy_decision = _openai_proxy_policy_decision(
@@ -15920,6 +15976,13 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                 if isinstance(response_json, dict):
                     if request_path == "/v1/chat/completions":
                         _normalize_chat_completion_visible_content(response_json)
+                    if request_path == "/v1/embeddings" and requested_embedding_dimensions is not None:
+                        dimensions_error = _apply_embedding_dimensions(
+                            response_json,
+                            requested_embedding_dimensions,
+                        )
+                        if dimensions_error is not None:
+                            return dimensions_error
                     # Surface the actually-loaded model in the response (matching
                     # OpenAI's own behavior — "gpt-4o-mini" requests get back the
                     # specific dated model that served them). Both role aliases
