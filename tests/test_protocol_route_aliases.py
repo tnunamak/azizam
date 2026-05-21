@@ -9,11 +9,26 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from starlette.routing import Match
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+
+
+def _first_full_route_name(method: str, path: str) -> str | None:
+    scope = {
+        "type": "http",
+        "method": method,
+        "path": path,
+        "root_path": "",
+    }
+    for route in proxy.app.routes:
+        match, _ = route.matches(scope)
+        if match == Match.FULL:
+            return route.name
+    return None
 
 
 class TestCanonicalProtocolRouteAliases(unittest.TestCase):
@@ -52,6 +67,104 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
             response = client.get(path)
             self.assertEqual(response.status_code, 404, msg=path)
             self.assertEqual(response.json()["error"]["code"], "not_found")
+
+    def test_protocol_namespace_route_ownership_matrix(self) -> None:
+        cases = (
+            ("GET", "/v1/models", "list_models"),
+            ("GET", "/openai/v1/models", "list_models"),
+            ("GET", "/anthropic/v1/models", "anthropic_models"),
+            (
+                "POST",
+                "/anthropic/v1/messages/count_tokens",
+                "anthropic_count_tokens",
+            ),
+            ("POST", "/ollama/api/chat", "ollama_chat"),
+            ("POST", "/api/chat", "ollama_chat"),
+            ("POST", "/ollama/api/generate", "ollama_generate"),
+            ("POST", "/api/generate", "ollama_generate"),
+            ("POST", "/ollama/api/embed", "ollama_embed"),
+            ("POST", "/api/embed", "ollama_embed"),
+            ("POST", "/ollama/api/embeddings", "ollama_embeddings"),
+            ("POST", "/api/embeddings", "ollama_embeddings"),
+            ("GET", "/ollama/api/tags", "ollama_tags"),
+            ("GET", "/api/tags", "ollama_tags"),
+            ("POST", "/ollama/api/show", "ollama_show"),
+            ("POST", "/api/show", "ollama_show"),
+            ("GET", "/ollama/api/ps", "ollama_ps"),
+            ("GET", "/api/ps", "ollama_ps"),
+            ("GET", "/ollama/api/version", "ollama_version"),
+            ("GET", "/api/version", "ollama_version"),
+            ("POST", "/ollama/api/create", "ollama_create"),
+            ("POST", "/api/create", "ollama_create"),
+            ("POST", "/ollama/api/copy", "ollama_copy"),
+            ("POST", "/api/copy", "ollama_copy"),
+            ("POST", "/ollama/api/pull", "ollama_pull"),
+            ("POST", "/api/pull", "ollama_pull"),
+            ("POST", "/ollama/api/push", "ollama_push"),
+            ("POST", "/api/push", "ollama_push"),
+            ("DELETE", "/ollama/api/delete", "ollama_delete"),
+            ("DELETE", "/api/delete", "ollama_delete"),
+            ("GET", "/gateway/v1/providers/tabby/v1/models", "provider_native_request"),
+            ("POST", "/gateway/v1/providers/tabby/v1/chat/completions", "provider_native_request"),
+            ("PATCH", "/gateway/v1/providers/tabby/custom", "provider_native_request"),
+        )
+
+        for method, path, expected_name in cases:
+            with self.subTest(method=method, path=path):
+                self.assertEqual(_first_full_route_name(method, path), expected_name)
+
+    def test_provider_native_passthrough_is_confined_to_gateway_provider_namespace(self) -> None:
+        provider_native_routes = {
+            (method, route.path)
+            for route in proxy.app.routes
+            if route.name == "provider_native_request"
+            for method in getattr(route, "methods", set())
+        }
+
+        self.assertEqual(
+            provider_native_routes,
+            {
+                (method, "/gateway/v1/providers/{provider}/{native_path:path}")
+                for method in {"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
+            },
+        )
+        self.assertNotEqual(
+            _first_full_route_name("GET", "/v1/models"),
+            "provider_native_request",
+        )
+        self.assertNotEqual(
+            _first_full_route_name("GET", "/anthropic/v1/models"),
+            "provider_native_request",
+        )
+        self.assertNotEqual(
+            _first_full_route_name("GET", "/ollama/api/tags"),
+            "provider_native_request",
+        )
+
+    def test_unknown_protocol_namespace_routes_return_not_found_without_backend_passthrough(self) -> None:
+        client = TestClient(proxy.app)
+        cases = (
+            ("GET", "/v1/models/extra"),
+            ("GET", "/v1/unknown"),
+            ("POST", "/v1/unknown"),
+            ("GET", "/openai/v1/unknown"),
+            ("POST", "/openai/v1/unknown"),
+            ("GET", "/anthropic/v1/models/extra"),
+            ("POST", "/anthropic/v1/unknown"),
+            ("GET", "/ollama/api"),
+            ("POST", "/ollama/api/unknown"),
+            ("GET", "/api"),
+            ("POST", "/api/unknown"),
+            ("GET", "/gateway/v1/unknown"),
+            ("POST", "/gateway/v1/providers"),
+        )
+
+        with patch.object(proxy, "AUTH_ENABLED", False):
+            for method, path in cases:
+                with self.subTest(method=method, path=path):
+                    response = client.request(method, path)
+                    self.assertEqual(response.status_code, 404)
+                    self.assertEqual(response.json()["error"]["code"], "not_found")
 
     def test_anthropic_models_has_anthropic_shape_without_v1_models_collision(self) -> None:
         client = TestClient(proxy.app)
