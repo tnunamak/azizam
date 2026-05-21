@@ -41,6 +41,21 @@ class TestAnthropicPythonSDK(unittest.TestCase):
 
     def test_client_construct(self) -> None:
         self.assertTrue(hasattr(self.client, "messages"))
+        self.assertTrue(hasattr(self.client, "models"))
+
+    def test_models_list(self) -> None:
+        models = self.client.models.list(limit=20)
+        data = getattr(models, "data", None)
+        self.assertIsInstance(data, list)
+
+    def test_messages_count_tokens(self) -> None:
+        result = self.client.messages.count_tokens(
+            model=self._model(),
+            messages=[{"role": "user", "content": "compatibility probe"}],
+        )
+        input_tokens = getattr(result, "input_tokens", None)
+        self.assertIsInstance(input_tokens, int)
+        self.assertGreater(input_tokens, 0)
 
     def test_messages_create(self) -> None:
         self._skip_without_live_llm()

@@ -149,6 +149,8 @@ PROBES: Tuple[ProbeSpec, ...] = (
         sdk_dependency="anthropic",
         case_map=(
             ("client.construct", "test_client_construct"),
+            ("models.list", "test_models_list"),
+            ("messages.count_tokens", "test_messages_count_tokens"),
             ("messages.create", "test_messages_create"),
             ("messages.streaming", "test_messages_streaming"),
         ),
