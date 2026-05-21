@@ -87,7 +87,7 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `POST /v1/chat/completions` | tabby (default) or kobold (auto-routed) | Chat completion (vision-capable on tabby) |
 | `POST /v1/completions` | tabby/kobold | Text completion |
 | `POST /v1/embeddings` | nomic CPU embeddings | OpenAI-compatible embeddings; no GPU budget claim |
-| `POST /v1/audio/speech` | Voxtral TTS | OpenAI-compatible TTS, voice-mapped |
+| `POST /v1/audio/speech` | Voxtral TTS | OpenAI-compatible TTS, voice-mapped; `response_format` supports `wav` and `mp3` |
 | `POST /v1/audio/transcriptions` | Parakeet STT | Multipart audio → transcript |
 | `POST /v1/audio/translations` | STT backend | OpenAI-compatible route; returns `unsupported_audio_translation` unless the local STT backend declares translation support |
 | `POST /v1/images/generations` | ComfyUI | Text-to-image (default `flux2-klein-4b`) |

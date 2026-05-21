@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import struct
 import sys
+import tempfile
 import unittest
+import wave
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -26,9 +30,37 @@ def stt_translation_capability_enabled():
         proxy.config["backends"]["stt"]["capabilities"] = original
 
 
+class _FakeTTSAsyncClient:
+    requests: list[dict[str, object]] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def post(self, url, headers=None, content=None):
+        self.__class__.requests.append(
+            {
+                "url": url,
+                "headers": dict(headers or {}),
+                "content": content,
+            }
+        )
+        return proxy.httpx.Response(
+            200,
+            content=b"backend-wav",
+            headers={"content-type": "audio/wav"},
+        )
+
+
 class OpenAICompatValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
+        _FakeTTSAsyncClient.requests = []
         self.patches = [
             patch.object(proxy, "AUTH_ENABLED", False),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
@@ -144,14 +176,38 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(captured["data"]["model"], proxy.STT_BACKEND_MODEL)
         self.assertEqual(captured["files"][0][0], "file")
 
-    def test_tts_rejects_explicit_non_wav_response_format(self) -> None:
+    def test_tts_accepts_mp3_response_format(self) -> None:
+        with patch.object(proxy.httpx, "AsyncClient", _FakeTTSAsyncClient), patch.object(
+            proxy,
+            "convert_wav_to_mp3",
+            return_value=b"converted-mp3",
+        ):
+            resp = self.client.post(
+                "/v1/audio/speech",
+                json={
+                    "model": "tts-1",
+                    "voice": "alloy",
+                    "input": "hello",
+                    "response_format": "mp3",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers["content-type"], "audio/mpeg")
+        self.assertEqual(resp.content, b"converted-mp3")
+        self.assertEqual(len(_FakeTTSAsyncClient.requests), 1)
+        downstream = json.loads(_FakeTTSAsyncClient.requests[0]["content"])
+        self.assertEqual(downstream["response_format"], "wav")
+        self.assertEqual(downstream["model"], proxy.TTS_BACKEND_MODEL)
+
+    def test_tts_rejects_unsupported_response_format(self) -> None:
         resp = self.client.post(
             "/v1/audio/speech",
             json={
                 "model": "tts-1",
                 "voice": "alloy",
                 "input": "hello",
-                "response_format": "mp3",
+                "response_format": "flac",
             },
         )
 
@@ -160,6 +216,20 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(body["error"]["type"], "invalid_request_error")
         self.assertEqual(body["error"]["param"], "response_format")
         self.assertEqual(body["error"]["code"], "unsupported_response_format")
+
+    def test_wav_to_mp3_conversion_uses_local_ffmpeg(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".wav") as wav_path:
+            with wave.open(wav_path.name, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(8000)
+                wav_file.writeframes(struct.pack("<" + "h" * 800, *([0] * 800)))
+
+            wav_path.flush()
+            wav_path.seek(0)
+            mp3 = proxy.convert_wav_to_mp3(wav_path.read())
+
+        self.assertTrue(mp3.startswith(b"ID3") or mp3.startswith(b"\xff"))
 
 
 if __name__ == "__main__":

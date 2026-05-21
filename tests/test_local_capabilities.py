@@ -188,6 +188,8 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         self.assertEqual(len(speech), 1)
         self.assertEqual(speech[0].backend, "tts")
         self.assertEqual(speech[0].output_modalities, ("audio",))
+        self.assertIn("response_format:wav", speech[0].tags)
+        self.assertIn("response_format:mp3", speech[0].tags)
 
     def test_stt_capability(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)

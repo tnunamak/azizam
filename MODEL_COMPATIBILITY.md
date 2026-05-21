@@ -21,6 +21,11 @@ POST /v1/images/generations    model=dall-e-3     -> local image model
 POST /v1/images/edits          model=gpt-image-1  -> local image-edit model
 ```
 
+Speech synthesis accepts `response_format: "wav"` and `response_format: "mp3"`.
+The local TTS backend is requested as WAV; MP3 responses are transcoded at the
+gateway boundary with ffmpeg. Other OpenAI speech formats are rejected with
+`unsupported_response_format`.
+
 Known OpenAI model families used on the wrong endpoint fail with a clear `400`
 instead of routing silently:
 

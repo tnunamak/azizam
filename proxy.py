@@ -25,6 +25,7 @@ import random
 import signal
 import sys
 import subprocess
+import tempfile
 import threading
 import time
 import atexit
@@ -1767,6 +1768,11 @@ OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE = bool_from_config(
 MODEL_COMPAT_DEFAULTS = compat_cfg.get("defaults", {})
 MODEL_COMPAT_ALIASES = compat_cfg.get("aliases", {})
 TTS_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("speech") or tts_cfg.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
+SUPPORTED_TTS_RESPONSE_FORMATS = {"wav", "mp3"}
+TTS_RESPONSE_MEDIA_TYPES = {
+    "wav": "audio/wav",
+    "mp3": "audio/mpeg",
+}
 STT_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("transcriptions") or stt_cfg.get("default_model", "parakeet-tdt-0.6b-v3")
 EMBEDDINGS_MODEL = MODEL_COMPAT_DEFAULTS.get("embeddings") or EMBEDDINGS_BACKEND_MODEL
 IMAGE_EDIT_DEFAULT_MODEL = MODEL_COMPAT_DEFAULTS.get("image_edits", "flux2-klein-4b-edit")
@@ -2430,6 +2436,36 @@ async def check_tts_health() -> bool:
         return False
 
 
+def convert_wav_to_mp3(wav_content: bytes) -> bytes:
+    """Convert WAV bytes to MP3 bytes using the local ffmpeg binary."""
+    with tempfile.NamedTemporaryFile(suffix=".wav") as wav_file, tempfile.NamedTemporaryFile(suffix=".mp3") as mp3_file:
+        wav_file.write(wav_content)
+        wav_file.flush()
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                wav_file.name,
+                "-codec:a",
+                "libmp3lame",
+                "-f",
+                "mp3",
+                mp3_file.name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or "ffmpeg failed"
+            raise RuntimeError(detail)
+        return Path(mp3_file.name).read_bytes()
+
+
 async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Response:
     """Forward TTS request to TTS backend."""
     if not TTS_ENABLED:
@@ -2444,16 +2480,18 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
     headers = prepare_downstream_headers(request.headers, auth_context, "tts")
 
     # Map voice in request body
+    requested_response_format = "wav"
     try:
         body_json = json.loads(body)
-        response_format = str(body_json.get("response_format", "") or "").lower()
-        if response_format and response_format != "wav":
+        response_format = str(body_json.get("response_format", "") or "wav").lower()
+        if response_format not in SUPPORTED_TTS_RESPONSE_FORMATS:
             return openai_error_response(
-                "This gateway currently supports response_format='wav' for speech synthesis.",
+                "This gateway currently supports response_format='wav' or 'mp3' for speech synthesis.",
                 status_code=400,
                 param="response_format",
                 code="unsupported_response_format",
             )
+        requested_response_format = response_format
 
         requested_model = body_json.get("model", "tts-1")
         try:
@@ -2464,6 +2502,7 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
         requested_voice = body_json.get("voice", "").lower()
         body_json["voice"] = VOICE_MAP.get(requested_voice, DEFAULT_VOICE)
         body_json["model"] = model_resolution.effective_model or TTS_BACKEND_MODEL
+        body_json["response_format"] = "wav"
         body = json.dumps(body_json).encode()
         pop_header(headers, "content-type")
         headers["content-type"] = "application/json"
@@ -2477,9 +2516,22 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
             resp = await client.post(url, headers=headers, content=body)
 
             # TTS returns audio data, stream it back
-            content_type = resp.headers.get("content-type", "audio/mpeg")
+            content = resp.content
+            content_type = resp.headers.get("content-type", TTS_RESPONSE_MEDIA_TYPES["wav"])
+            if 200 <= resp.status_code < 300 and requested_response_format == "mp3":
+                try:
+                    content = await asyncio.to_thread(convert_wav_to_mp3, resp.content)
+                    content_type = TTS_RESPONSE_MEDIA_TYPES["mp3"]
+                except Exception as e:
+                    return Response(
+                        content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
+                        status_code=502,
+                        media_type="application/json",
+                    )
+            elif 200 <= resp.status_code < 300:
+                content_type = TTS_RESPONSE_MEDIA_TYPES.get(requested_response_format, content_type)
             return Response(
-                content=resp.content,
+                content=content,
                 status_code=resp.status_code,
                 media_type=content_type
             )
