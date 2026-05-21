@@ -298,6 +298,10 @@ bindings:
 ```
 
 The portable contract does not mention ComfyUI nodes. The binding does.
+Committed ComfyUI audio and video workflows are expected to have matching
+manifests under `manifests/workflows/` so `/gateway/v1/workflows` and
+`/gateway/v1/capabilities` expose ACE-Step, TangoFlux, LTX, and WAN capability
+truth consistently with `proxy_config.yml`.
 
 If a future backend works nothing like ComfyUI, it gets a different binding
 under the same portable inputs when the semantics match. If the semantics do not

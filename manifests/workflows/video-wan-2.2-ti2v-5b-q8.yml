@@ -1,0 +1,85 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: video.generate.wan-2.2-ti2v-5b-q8
+intent: video.generate
+display_name: WAN 2.2 TI2V 5B Q8
+description: Minimal video.generate contract bound to the WAN 2.2 TI2V 5B Q8 ComfyUI workflow.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+  negative_prompt:
+    type: string
+  width:
+    type: integer
+    minimum: 64
+    maximum: 1280
+  height:
+    type: integer
+    minimum: 64
+    maximum: 704
+  length:
+    type: integer
+    minimum: 1
+  frame_rate:
+    type: number
+    minimum: 1
+    maximum: 60
+  seed:
+    type: integer
+    minimum: 0
+  image_strength:
+    type: number
+    minimum: 0
+    maximum: 1
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 20
+  cfg:
+    type: number
+    minimum: 0
+    maximum: 20
+    default: 5
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/video-wan-2.2-ti2v-5b-q8.json
+    map:
+      prompt:
+        - node: "5"
+          input: text
+      negative_prompt:
+        - node: "6"
+          input: text
+      width:
+        - node: "9005"
+          input: value
+      height:
+        - node: "9006"
+          input: value
+      length:
+        - node: "10"
+          input: value
+      frame_rate:
+        - node: "11"
+          input: value
+        - node: "12"
+          input: value
+      seed:
+        - node: "16"
+          input: noise_seed
+      image_strength:
+        - node: "9003"
+          input: value
+      steps:
+        - node: "22"
+          input: steps
+      cfg:
+        - node: "18"
+          input: cfg

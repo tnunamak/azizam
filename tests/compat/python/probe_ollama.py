@@ -38,6 +38,8 @@ class TestOllamaPythonSDK(unittest.TestCase):
     def test_client_construct(self) -> None:
         self.assertIsNotNone(self.client)
         self.assertTrue(hasattr(self.client, "list"))
+        self.assertTrue(hasattr(self.client, "embed"))
+        self.assertTrue(hasattr(self.client, "embeddings"))
 
     def test_tags_list(self) -> None:
         listing = self.client.list()
@@ -45,6 +47,28 @@ class TestOllamaPythonSDK(unittest.TestCase):
         # across versions, so we tolerate both.
         models = listing.get("models") if isinstance(listing, dict) else getattr(listing, "models", None)
         self.assertIsNotNone(models)
+
+    def test_embed_current_route(self) -> None:
+        result = self.client.embed(
+            model=os.environ.get("OPENAI_PROXY_SMOKE_OLLAMA_EMBED_MODEL", "nomic-embed-text-v1.5"),
+            input="compatibility probe",
+        )
+        embeddings = result.get("embeddings") if isinstance(result, dict) else getattr(result, "embeddings", None)
+        self.assertIsInstance(embeddings, list)
+        self.assertGreater(len(embeddings), 0)
+        self.assertIsInstance(embeddings[0], list)
+        self.assertGreater(len(embeddings[0]), 0)
+        self.assertIsInstance(embeddings[0][0], float)
+
+    def test_embeddings_legacy_route(self) -> None:
+        result = self.client.embeddings(
+            model=os.environ.get("OPENAI_PROXY_SMOKE_OLLAMA_EMBED_MODEL", "nomic-embed-text-v1.5"),
+            prompt="compatibility probe",
+        )
+        embedding = result.get("embedding") if isinstance(result, dict) else getattr(result, "embedding", None)
+        self.assertIsInstance(embedding, list)
+        self.assertGreater(len(embedding), 0)
+        self.assertIsInstance(embedding[0], float)
 
 
 if __name__ == "__main__":  # pragma: no cover

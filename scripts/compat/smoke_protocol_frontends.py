@@ -12,9 +12,11 @@ Environment::
     OPENAI_PROXY_BASE_URL       e.g. http://127.0.0.1:5000   (required for non-skip)
     OPENAI_PROXY_API_KEY        e.g. opk_...                 (required for auth checks)
     OPENAI_PROXY_SMOKE_LIVE_LLM 1 to enable LLM round-trips  (default: off)
+    OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS 1 to enable embedding round-trips
     OPENAI_PROXY_SMOKE_TIMEOUT  request timeout seconds      (default: 10)
     OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL   override Anthropic probe model
     OPENAI_PROXY_SMOKE_OLLAMA_MODEL      override Ollama probe model
+    OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL  override embedding probe model
 
 Each check prints a single compact row:
 
@@ -38,6 +40,7 @@ from typing import Callable, List, Mapping, Optional, Tuple
 DEFAULT_TIMEOUT_S = 10
 DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_OLLAMA_MODEL = "llama3.2:1b"
+DEFAULT_EMBEDDINGS_MODEL = "nomic-embed-text-v1.5"
 TINY_PROMPT = "ping"  # fixed non-secret string
 
 
@@ -57,9 +60,11 @@ class SmokeConfig:
     base_url: Optional[str]
     api_key: Optional[str]
     live_llm: bool
+    live_embeddings: bool
     timeout_s: int
     anthropic_model: str
     ollama_model: str
+    embeddings_model: str
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "SmokeConfig":
@@ -69,6 +74,9 @@ class SmokeConfig:
         base = raw_base.rstrip("/") if raw_base else None
         api_key = env.get("OPENAI_PROXY_API_KEY", "").strip() or None
         live = env.get("OPENAI_PROXY_SMOKE_LIVE_LLM", "").strip() == "1"
+        live_embeddings = (
+            env.get("OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS", "").strip() == "1"
+        )
         try:
             timeout = int(env.get("OPENAI_PROXY_SMOKE_TIMEOUT", "").strip() or DEFAULT_TIMEOUT_S)
         except ValueError:
@@ -77,11 +85,14 @@ class SmokeConfig:
             base_url=base,
             api_key=api_key,
             live_llm=live,
+            live_embeddings=live_embeddings,
             timeout_s=max(1, timeout),
             anthropic_model=env.get("OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL", "").strip()
             or DEFAULT_ANTHROPIC_MODEL,
             ollama_model=env.get("OPENAI_PROXY_SMOKE_OLLAMA_MODEL", "").strip()
             or DEFAULT_OLLAMA_MODEL,
+            embeddings_model=env.get("OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL", "").strip()
+            or DEFAULT_EMBEDDINGS_MODEL,
         )
 
 
@@ -235,12 +246,75 @@ def check_ollama_chat(cfg: SmokeConfig) -> CheckResult:
     return CheckResult(name, "fail", f"status={status} {err}".strip())
 
 
+def _check_embedding_post(
+    cfg: SmokeConfig,
+    *,
+    name: str,
+    path: str,
+    payload: dict,
+) -> CheckResult:
+    if not cfg.base_url:
+        return CheckResult(name, "skip", "reason=OPENAI_PROXY_BASE_URL not set")
+    if not cfg.api_key:
+        return CheckResult(name, "skip", "reason=OPENAI_PROXY_API_KEY not set")
+    if not cfg.live_embeddings:
+        return CheckResult(
+            name,
+            "skip",
+            "reason=OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS not set",
+        )
+    status, err = _request(
+        base_url=cfg.base_url,
+        path=path,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {cfg.api_key}",
+        },
+        body=json.dumps(payload).encode("utf-8"),
+        timeout=cfg.timeout_s,
+    )
+    if status == 200:
+        return CheckResult(name, "pass", f"status={status}")
+    return CheckResult(name, "fail", f"status={status} {err}".strip())
+
+
+def check_openai_embeddings(cfg: SmokeConfig) -> CheckResult:
+    return _check_embedding_post(
+        cfg,
+        name="openai.embeddings",
+        path="/v1/embeddings",
+        payload={"model": cfg.embeddings_model, "input": TINY_PROMPT},
+    )
+
+
+def check_ollama_embed(cfg: SmokeConfig) -> CheckResult:
+    return _check_embedding_post(
+        cfg,
+        name="ollama.embed",
+        path="/api/embed",
+        payload={"model": cfg.embeddings_model, "input": TINY_PROMPT},
+    )
+
+
+def check_ollama_embeddings(cfg: SmokeConfig) -> CheckResult:
+    return _check_embedding_post(
+        cfg,
+        name="ollama.embeddings",
+        path="/api/embeddings",
+        payload={"model": cfg.embeddings_model, "prompt": TINY_PROMPT},
+    )
+
+
 CHECKS: Tuple[Callable[[SmokeConfig], CheckResult], ...] = (
     check_health,
     check_capabilities,
     check_anthropic_messages,
+    check_openai_embeddings,
     check_ollama_tags,
     check_ollama_chat,
+    check_ollama_embed,
+    check_ollama_embeddings,
 )
 
 
@@ -280,9 +354,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"base_url        = {cfg.base_url or '(unset)'}")
         print(f"api_key         = {'set' if cfg.api_key else '(unset)'}")
         print(f"live_llm        = {cfg.live_llm}")
+        print(f"live_embeddings = {cfg.live_embeddings}")
         print(f"timeout_s       = {cfg.timeout_s}")
         print(f"anthropic_model = {cfg.anthropic_model}")
         print(f"ollama_model    = {cfg.ollama_model}")
+        print(f"embeddings_model = {cfg.embeddings_model}")
         return 0
 
     results = run(cfg)

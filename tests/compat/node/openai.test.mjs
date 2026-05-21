@@ -27,4 +27,17 @@ if (!baseURL) {
     const result = await client.models.list();
     assert.ok(Array.isArray(result.data));
   });
+
+  test("POST /v1/embeddings returns vectors", async () => {
+    const result = await client.embeddings.create({
+      model: process.env.OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL || "nomic-embed-text-v1.5",
+      input: "compatibility probe",
+    });
+    assert.equal(result.object, "list");
+    assert.ok(Array.isArray(result.data));
+    assert.ok(result.data.length > 0);
+    assert.ok(Array.isArray(result.data[0].embedding));
+    assert.ok(result.data[0].embedding.length > 0);
+    assert.equal(typeof result.data[0].embedding[0], "number");
+  });
 }

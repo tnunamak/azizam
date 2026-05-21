@@ -42,8 +42,9 @@ Status on `main`:
 - The OpenAI-compatible image handlers accept a namespaced `extensions`
   container for supported workflow-manifest controls and reject unknown
   top-level gateway-native controls instead of silently dropping them.
-- `/gateway/v1/media/jobs` provides the first generic durable media-job API;
-  asset serving and backend scheduling are still follow-up work.
+- `/gateway/v1/media/jobs` provides the first generic durable media-job API,
+  and `/gateway/v1/assets/{asset_id}` exposes generated asset handles. Backend
+  scheduling plus audio/video job adapters are still follow-up work.
 
 ## Scope Decision
 

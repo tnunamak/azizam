@@ -55,7 +55,7 @@ The gateway should prove compatibility with real SDKs and apps as it evolves. Cu
 - Responses non-streaming
 - Responses streaming where supported
 - stored Responses get/delete
-- embeddings
+- embeddings via `POST /v1/embeddings`
 - image generation
 - image edit multipart upload
 - image responses with gateway-native extra fields (`asset_id`, `asset_url`,
@@ -88,7 +88,8 @@ The gateway should prove compatibility with real SDKs and apps as it evolves. Cu
 - chat streaming
 - generate non-streaming
 - generate streaming
-- embeddings
+- embeddings via current `POST /api/embed`
+- embeddings via legacy `POST /api/embeddings`
 - running model/process list where supported
 - pull/load/unload semantics if mapped
 - unsupported operation error
@@ -205,9 +206,13 @@ Env vars:
 - `OPENAI_PROXY_API_KEY` (e.g. `opk_...`)
 - `OPENAI_PROXY_SMOKE_LIVE_LLM=1` to enable the Anthropic `/v1/messages`
   and Ollama `/api/chat` round-trips. Default off — those checks skip.
+- `OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS=1` to enable `/v1/embeddings`,
+  `/api/embed`, and `/api/embeddings` round-trips. Default off.
 - `OPENAI_PROXY_SMOKE_TIMEOUT` (seconds, default `10`)
 - `OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL`, `OPENAI_PROXY_SMOKE_OLLAMA_MODEL`
   to override the default probe models.
+- `OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL` to override the default embedding
+  probe model.
 
 The script never prints the API key, prompts beyond the fixed string
 `ping`, or raw response bodies. Output is one compact `[PASS|SKIP|FAIL]`

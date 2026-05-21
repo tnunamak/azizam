@@ -80,6 +80,11 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
             metadata["absolute_links"]["capabilities"],
             "http://gw/gateway/v1/capabilities",
         )
+        self.assertEqual(metadata["links"]["asset"], "/gateway/v1/assets/{asset_id}")
+        self.assertEqual(
+            metadata["links"]["gateway_asset_content"],
+            "/gateway/v1/assets/{asset_id}/content",
+        )
         self.assertEqual(metadata["links"]["asset_content"], "/v1/assets/{asset_id}/content")
 
     def test_service_block_advertises_canonical_host_and_alias(self) -> None:

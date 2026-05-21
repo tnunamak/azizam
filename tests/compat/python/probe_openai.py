@@ -54,11 +54,27 @@ class TestOpenAIPythonSDK(unittest.TestCase):
     def test_client_construct(self) -> None:
         self.assertTrue(hasattr(self.client, "models"))
         self.assertTrue(hasattr(self.client, "chat"))
+        self.assertTrue(hasattr(self.client, "embeddings"))
 
     def test_models_list(self) -> None:
         models = self.client.models.list()
         self.assertTrue(hasattr(models, "data"))
         self.assertIsInstance(list(models.data), list)
+
+    def test_embeddings_create(self) -> None:
+        result = self.client.embeddings.create(
+            model=os.environ.get(
+                "OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL",
+                "nomic-embed-text-v1.5",
+            ),
+            input="compatibility probe",
+        )
+        self.assertEqual(result.object, "list")
+        self.assertGreater(len(result.data), 0)
+        embedding = result.data[0].embedding
+        self.assertIsInstance(embedding, list)
+        self.assertGreater(len(embedding), 0)
+        self.assertIsInstance(embedding[0], float)
 
 
 if __name__ == "__main__":  # pragma: no cover

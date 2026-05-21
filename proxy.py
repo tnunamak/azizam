@@ -98,6 +98,7 @@ from gateway.audio_extensions import (
     bind_audio_workflow_extensions,
     detect_unknown_audio_fields,
 )
+from gateway.backends.chat import build_chat_loopback_request
 from gateway.capabilities import (
     Capability,
     ResourceEstimate,
@@ -3767,6 +3768,12 @@ _ASSET_MEDIA_TYPES = {
     ".mkv": "video/x-matroska",
 }
 
+_ASSET_KIND_NAMES = {
+    "img": "image",
+    "aud": "audio",
+    "vid": "video",
+}
+
 
 def _parse_asset_id(asset_id: str) -> tuple[str, str] | None:
     if not isinstance(asset_id, str) or "_" not in asset_id:
@@ -3795,6 +3802,37 @@ def asset_media_type(asset_id: str, path: Path | None = None) -> str:
     path = path or asset_cache_path(asset_id)
     suffix = path.suffix.lower() if path is not None else ""
     return _ASSET_MEDIA_TYPES.get(suffix, "application/octet-stream")
+
+
+def _gateway_asset_metadata_payload(
+    asset_id: str,
+    request: Request,
+    *,
+    cache_path: Path,
+) -> dict[str, Any]:
+    parsed = _parse_asset_id(asset_id)
+    kind = parsed[0] if parsed else ""
+    stat = cache_path.stat()
+    metadata = _read_asset_metadata(asset_id)
+    updated_at = metadata.get("updated_at")
+    try:
+        updated_at_value = int(updated_at)
+    except (TypeError, ValueError):
+        updated_at_value = int(stat.st_mtime)
+    return {
+        "object": "gateway.asset",
+        "id": asset_id,
+        "asset_id": asset_id,
+        "kind": _ASSET_KIND_NAMES.get(kind, kind or "asset"),
+        "media_type": asset_media_type(asset_id, cache_path),
+        "size_bytes": int(stat.st_size),
+        "created_at": int(stat.st_ctime),
+        "updated_at": updated_at_value,
+        "content_url": build_signed_asset_url(request, asset_id),
+        "content_route": f"/v1/assets/{asset_id}/content",
+        "expires_in": IMAGE_SIGNED_URL_TTL,
+        "owner_scoped": bool(metadata.get("owner_key_hashes")),
+    }
 
 
 def image_cache_path(image_id: str) -> Optional[Path]:
@@ -11216,6 +11254,77 @@ async def assets_content(asset_id: str, request: Request):
     )
 
 
+@app.get("/gateway/v1/assets/{asset_id}")
+async def gateway_asset_metadata(asset_id: str, request: Request):
+    """Return gateway-native metadata for a generated asset handle."""
+    auth_context = _gateway_auth_context(request, "/gateway/v1/assets/{asset_id}")
+    if isinstance(auth_context, Response):
+        return auth_context
+    parsed = _parse_asset_id(asset_id)
+    if parsed is None:
+        return Response(
+            content=json.dumps({"error": {"message": "Invalid asset id", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json",
+        )
+    route_policy = _asset_content_route_policy(asset_id)
+    if route_policy is not None:
+        policy_response = _enforce_runtime_route_policy(
+            auth_context,
+            "/gateway/v1/assets/{asset_id}",
+            policy=route_policy,
+        )
+        if policy_response is not None:
+            return policy_response
+    cache_path = asset_cache_path(asset_id)
+    if cache_path is None or not cache_path.exists():
+        return Response(
+            content=json.dumps({"error": {"message": "Asset not found (may have been evicted)", "type": "invalid_request_error"}}),
+            status_code=404,
+            media_type="application/json",
+        )
+    if not _asset_access_allowed(asset_id, auth_context):
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "Asset is not accessible for this API key",
+                    "type": "invalid_request_error",
+                }
+            }),
+            status_code=403,
+            media_type="application/json",
+        )
+    return Response(
+        content=json.dumps(_gateway_asset_metadata_payload(asset_id, request, cache_path=cache_path)),
+        status_code=200,
+        media_type="application/json",
+    )
+
+
+@app.get("/gateway/v1/assets/{asset_id}/content")
+async def gateway_asset_content(asset_id: str, request: Request):
+    """Serve a cached generated asset through the gateway-native asset surface."""
+    auth_context = _gateway_auth_context(request, "/gateway/v1/assets/{asset_id}/content")
+    if isinstance(auth_context, Response):
+        return auth_context
+    route_policy = _asset_content_route_policy(asset_id)
+    if route_policy is not None:
+        policy_response = _enforce_runtime_route_policy(
+            auth_context,
+            "/gateway/v1/assets/{asset_id}/content",
+            policy=route_policy,
+        )
+        if policy_response is not None:
+            return policy_response
+    return _signed_asset_content_response(
+        asset_id,
+        request,
+        invalid_message="Invalid asset id",
+        missing_message="Asset not found (may have been evicted)",
+        auth_context=auth_context,
+    )
+
+
 def _signed_asset_content_response(
     asset_id: str,
     request: Request,
@@ -12151,36 +12260,35 @@ async def _forward_chat_completions(
     For streaming, returns (client, resp) so the caller can iterate. For
     non-streaming, returns the httpx.Response with the body already read.
     """
-    url = f"http://127.0.0.1:{PROXY_PORT}/v1/chat/completions"
-    # Carry the original Authorization header so authenticate_request on the
-    # loopback call resolves to the same identity.
-    headers = {"content-type": "application/json"}
-    headers[_INTERNAL_PROTOCOL_FORWARD_HEADER] = _INTERNAL_PROTOCOL_FORWARD_SECRET
-    auth_hdr = request.headers.get("authorization")
-    if auth_hdr:
-        headers["authorization"] = auth_hdr
-    api_key_hdr = request.headers.get("x-api-key")
-    if api_key_hdr:
-        headers["x-api-key"] = api_key_hdr
-
-    body = json.dumps(cc_body).encode("utf-8")
     # Loopback to /v1/chat/completions — inner forwarder already enforces
     # UPSTREAM_READ_TIMEOUT against the LLM backend, so the outer read here
     # only needs to bound the in-process round-trip (loopback is localhost
     # and proxy code is non-blocking). Match UPSTREAM_READ_TIMEOUT so this
     # never trips before the inner timeout does.
-    client = httpx.AsyncClient(timeout=httpx.Timeout(
-        connect=10.0,
-        read=UPSTREAM_READ_TIMEOUT,
-        write=60.0,
-        pool=None,
-    ))
+    loopback_request = build_chat_loopback_request(
+        proxy_port=PROXY_PORT,
+        body=cc_body,
+        internal_forward_header=_INTERNAL_PROTOCOL_FORWARD_HEADER,
+        internal_forward_secret=_INTERNAL_PROTOCOL_FORWARD_SECRET,
+        source_headers=request.headers,
+        read_timeout=UPSTREAM_READ_TIMEOUT,
+    )
+    client = httpx.AsyncClient(timeout=loopback_request.timeout)
     if stream:
-        req = client.build_request("POST", url, headers=headers, content=body)
+        req = client.build_request(
+            "POST",
+            loopback_request.url,
+            headers=loopback_request.headers,
+            content=loopback_request.body,
+        )
         resp = await client.send(req, stream=True)
         return client, resp
     try:
-        resp = await client.post(url, headers=headers, content=body)
+        resp = await client.post(
+            loopback_request.url,
+            headers=loopback_request.headers,
+            content=loopback_request.body,
+        )
         return resp
     finally:
         if not stream:

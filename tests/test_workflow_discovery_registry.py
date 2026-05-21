@@ -7,6 +7,8 @@ import textwrap
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -316,6 +318,25 @@ class WorkflowRegistryTests(unittest.TestCase):
         )
         self.assertTrue(admin["trusted"])
         self.assertEqual(len(admin["manifest_hash"]), 64)
+
+    def test_audio_video_configured_workflows_have_manifests(self) -> None:
+        config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        registry = WorkflowRegistry.from_directory(ROOT / "manifests" / "workflows")
+        workflow_artifacts = {
+            binding["workflow"]
+            for record in registry.records()
+            for binding in (record.manifest.get("bindings") or {}).values()
+            if "workflow" in binding
+        }
+
+        for section in ("audio", "videos"):
+            with self.subTest(section=section):
+                configured = {
+                    workflow["file"]
+                    for workflow in config[section]["workflows"].values()
+                }
+                self.assertTrue(configured)
+                self.assertLessEqual(configured, workflow_artifacts)
 
     def test_unknown_audience_rejected(self) -> None:
         import tempfile

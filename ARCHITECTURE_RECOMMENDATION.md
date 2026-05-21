@@ -242,10 +242,12 @@ Not implemented:
   profile. Provider-native discovery is implemented at `/gateway/v1/providers`
   and `/gateway/v1/providers/{provider}`. There is no root catch-all or legacy
   root Tabby shim.
-- Gateway media assets are not yet served by a generic durable
-  `/gateway/v1/assets/*` surface; image media jobs use the existing signed
-  `/v1/assets/{asset_id}/content` cache plus a job content endpoint.
-- ACE-Step music and video workflow manifests are not yet backfilled.
+- Gateway media assets are exposed through `/gateway/v1/assets/{asset_id}` for
+  metadata and `/gateway/v1/assets/{asset_id}/content` for signed,
+  bearer-auth-gated content. The content-addressed cache still has a TTL; it is
+  a reusable local handle, not a permanent object store.
+- ACE-Step music and configured video workflows have committed manifests and a
+  registry guard against config/manifests drift.
 - Capability matching, manifest validation, and workflow bindings are not yet
   the source of truth for every live request route.
 
@@ -1057,8 +1059,8 @@ Use three layers:
 2. Explicit provider-native passthrough for power users.
 3. Generic media job/assets API for long-running work.
 
-Recommended job surface (image.generate first slice is wired in `proxy.py`;
-generic assets remain a target):
+Recommended job surface (image.generate first slice and generic generated
+asset serving are wired in `proxy.py`; audio/video job adapters remain next):
 
 ```text
 POST /gateway/v1/media/jobs
@@ -1067,6 +1069,7 @@ GET  /gateway/v1/media/jobs/{id}/content
 GET  /gateway/v1/media/jobs/{id}/events
 POST /gateway/v1/media/jobs/{id}/cancel
 GET  /gateway/v1/assets/{id}
+GET  /gateway/v1/assets/{id}/content
 ```
 
 Keep OpenAI-compatible `/v1/*` clean. Gateway-owned discovery, jobs,

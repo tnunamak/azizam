@@ -102,13 +102,16 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `GET  /gateway/v1/providers` | proxy | List provider-native lanes projected through the caller's App profile policy. |
 | `GET  /gateway/v1/providers/{provider}` | proxy | Metadata for one provider-native lane. |
 | `* /gateway/v1/providers/{provider}/{path...}` | proxy + selected provider | Policy-gated provider-native passthrough for explicit backend operations. App policy must allow `provider-native`, native passthrough, the provider, and the operation. |
+| `GET  /gateway/v1/assets/{asset_id}` | proxy | Gateway-native metadata for generated image/audio/video asset handles. |
+| `GET  /gateway/v1/assets/{asset_id}/content` | proxy | Signed, bearer-auth-gated generated-asset content. |
 | `* /<any other>` | proxy | Unknown routes return 404 instead of falling through to a backend. There is no legacy root Tabby shim or root catch-all backend passthrough. |
 
 Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [`MODEL_COMPATIBILITY.md`](MODEL_COMPATIBILITY.md), and [`OPENCLAW_SETUP.md`](OPENCLAW_SETUP.md):
 
 - **Vision routing** — chat-completions requests carrying `image_url` / `input_image` content blocks auto-switch to the configured `roles.vision` backend; text-only backends with no vision role return HTTP 400 (`code: vision_unsupported`) rather than silently dropping image content. Every chat-completions response carries an `X-Vision-Routed` header for observability.
 - **Honest `n` for images** — adaptive ComfyUI batching backs the request, returning all `n` images. If even one image won't fit in free VRAM, the proxy returns HTTP 503 with `Retry-After: 30` rather than silently truncating.
-- **Durable image jobs** — long/batch image work can use `POST /gateway/v1/media/jobs` with `intent: "image.generate"` and an OpenAI image request under `request`. The proxy queues the work server-side, retries transient VRAM/ComfyUI/tile-composition failures, persists redacted job state, and returns signed reusable asset URLs via polling/content endpoints. The private request payload is kept on disk only while the job is pending/running so the proxy can recover from client disconnects and restarts.
+- **Durable image jobs** — long/batch image work can use `POST /gateway/v1/media/jobs` with `intent: "image.generate"` and an OpenAI image request under `request`. The proxy queues the work server-side, retries transient VRAM/ComfyUI/tile-composition failures, persists redacted job state, and returns reusable asset handles via polling/content endpoints. The private request payload is kept on disk only while the job is pending/running so the proxy can recover from client disconnects and restarts.
+- **Generated asset handles** — generated image/audio/video outputs can be inspected at `GET /gateway/v1/assets/{asset_id}` and fetched through signed bearer-auth-gated content URLs. Asset handles are scoped to the API key that minted them.
 - **Signed image URLs** — `response_format: "url"` returns hostname-aware, HMAC-signed URLs into a content-addressed cache. URLs are bearer-auth-gated and expire (default 1 h), and the cache evicts older entries (default 24 h).
 - **Async video generation** — Sora-2-shaped submit/poll/fetch flow with multiple model aliases (`ltx-2.3`, `ltx-2.3-detail`, `ltx-2.3-long`, `wan-2.2`, etc.). Generated MP4s and PNGs embed the full UI-format ComfyUI workflow in metadata, so dropping an output back into ComfyUI's frontend rebuilds the editable graph.
 

@@ -62,9 +62,11 @@ class TestSmokeConfigFromEnv(unittest.TestCase):
         self.assertIsNone(cfg.base_url)
         self.assertIsNone(cfg.api_key)
         self.assertFalse(cfg.live_llm)
+        self.assertFalse(cfg.live_embeddings)
         self.assertEqual(cfg.timeout_s, smoke.DEFAULT_TIMEOUT_S)
         self.assertEqual(cfg.anthropic_model, smoke.DEFAULT_ANTHROPIC_MODEL)
         self.assertEqual(cfg.ollama_model, smoke.DEFAULT_OLLAMA_MODEL)
+        self.assertEqual(cfg.embeddings_model, smoke.DEFAULT_EMBEDDINGS_MODEL)
 
     def test_strips_trailing_slash_from_base_url(self) -> None:
         cfg = smoke.SmokeConfig.from_env(
@@ -84,6 +86,20 @@ class TestSmokeConfigFromEnv(unittest.TestCase):
         cfg = smoke.SmokeConfig.from_env(env={"OPENAI_PROXY_SMOKE_LIVE_LLM": "1"})
         self.assertTrue(cfg.live_llm)
 
+    def test_live_embeddings_requires_literal_one(self) -> None:
+        for value in ("", "0", "true", "yes", "on"):
+            cfg = smoke.SmokeConfig.from_env(
+                env={"OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS": value}
+            )
+            self.assertFalse(
+                cfg.live_embeddings,
+                msg=f"unexpected truthy for {value!r}",
+            )
+        cfg = smoke.SmokeConfig.from_env(
+            env={"OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS": "1"}
+        )
+        self.assertTrue(cfg.live_embeddings)
+
     def test_timeout_falls_back_on_bad_value(self) -> None:
         cfg = smoke.SmokeConfig.from_env(
             env={"OPENAI_PROXY_SMOKE_TIMEOUT": "not-a-number"}
@@ -101,10 +117,12 @@ class TestSmokeConfigFromEnv(unittest.TestCase):
             env={
                 "OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL": "claude-x",
                 "OPENAI_PROXY_SMOKE_OLLAMA_MODEL": "tinyllama",
+                "OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL": "nomic-x",
             }
         )
         self.assertEqual(cfg.anthropic_model, "claude-x")
         self.assertEqual(cfg.ollama_model, "tinyllama")
+        self.assertEqual(cfg.embeddings_model, "nomic-x")
 
 
 class TestSkipSemantics(unittest.TestCase):
@@ -115,9 +133,11 @@ class TestSkipSemantics(unittest.TestCase):
             base_url=None,
             api_key="opk_test",
             live_llm=True,
+            live_embeddings=True,
             timeout_s=5,
             anthropic_model="m",
             ollama_model="m",
+            embeddings_model="e",
         )
         with mock.patch.object(smoke, "_request") as patched:
             results = smoke.run(cfg)
@@ -131,9 +151,11 @@ class TestSkipSemantics(unittest.TestCase):
             base_url="http://gw",
             api_key=None,
             live_llm=True,
+            live_embeddings=True,
             timeout_s=5,
             anthropic_model="m",
             ollama_model="m",
+            embeddings_model="e",
         )
         fake, calls = _fake_request({("GET", "/health"): (200, "")})
         with mock.patch.object(smoke, "_request", fake):
@@ -144,8 +166,11 @@ class TestSkipSemantics(unittest.TestCase):
         for name in (
             "gateway.capabilities",
             "anthropic.messages.nonstream",
+            "openai.embeddings",
             "ollama.tags",
             "ollama.chat.nonstream",
+            "ollama.embed",
+            "ollama.embeddings",
         ):
             self.assertEqual(results[name].status, "skip", msg=name)
             self.assertIn("OPENAI_PROXY_API_KEY", results[name].detail)
@@ -157,9 +182,11 @@ class TestSkipSemantics(unittest.TestCase):
             base_url="http://gw",
             api_key="opk_test",
             live_llm=False,
+            live_embeddings=False,
             timeout_s=5,
             anthropic_model="m",
             ollama_model="m",
+            embeddings_model="e",
         )
         fake, calls = _fake_request(
             {
@@ -172,9 +199,16 @@ class TestSkipSemantics(unittest.TestCase):
             results = {r.name: r for r in smoke.run(cfg)}
         self.assertEqual(results["anthropic.messages.nonstream"].status, "skip")
         self.assertEqual(results["ollama.chat.nonstream"].status, "skip")
+        self.assertEqual(results["openai.embeddings"].status, "skip")
+        self.assertEqual(results["ollama.embed"].status, "skip")
+        self.assertEqual(results["ollama.embeddings"].status, "skip")
         self.assertIn(
             "OPENAI_PROXY_SMOKE_LIVE_LLM",
             results["anthropic.messages.nonstream"].detail,
+        )
+        self.assertIn(
+            "OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS",
+            results["openai.embeddings"].detail,
         )
         # Non-LLM probes still ran:
         self.assertEqual(results["gateway.health"].status, "pass")
@@ -188,14 +222,21 @@ class TestSkipSemantics(unittest.TestCase):
 class TestRouteWiring(unittest.TestCase):
     """When preconditions hold, each probe must hit the right route + headers."""
 
-    def _cfg(self, *, live_llm: bool = True) -> smoke.SmokeConfig:
+    def _cfg(
+        self,
+        *,
+        live_llm: bool = True,
+        live_embeddings: bool = True,
+    ) -> smoke.SmokeConfig:
         return smoke.SmokeConfig(
             base_url="http://gw",
             api_key="opk_test",
             live_llm=live_llm,
+            live_embeddings=live_embeddings,
             timeout_s=5,
             anthropic_model="claude-x",
             ollama_model="ollama-x",
+            embeddings_model="nomic-x",
         )
 
     def test_capabilities_uses_bearer(self) -> None:
@@ -244,6 +285,40 @@ class TestRouteWiring(unittest.TestCase):
         self.assertIn(b'"stream": false', call["body"])
         self.assertIn(b'"model": "ollama-x"', call["body"])
 
+    def test_openai_embeddings_route_and_body(self) -> None:
+        fake, calls = _fake_request({("POST", "/v1/embeddings"): (200, "")})
+        with mock.patch.object(smoke, "_request", fake):
+            result = smoke.check_openai_embeddings(self._cfg())
+        self.assertEqual(result.status, "pass")
+        call = calls[0]
+        self.assertEqual(call["path"], "/v1/embeddings")
+        self.assertEqual(call["method"], "POST")
+        self.assertEqual(call["headers"]["Authorization"], "Bearer opk_test")
+        self.assertIn(b'"model": "nomic-x"', call["body"])
+        self.assertIn(b'"input": "ping"', call["body"])
+
+    def test_ollama_embed_route_and_body(self) -> None:
+        fake, calls = _fake_request({("POST", "/api/embed"): (200, "")})
+        with mock.patch.object(smoke, "_request", fake):
+            result = smoke.check_ollama_embed(self._cfg())
+        self.assertEqual(result.status, "pass")
+        call = calls[0]
+        self.assertEqual(call["path"], "/api/embed")
+        self.assertEqual(call["method"], "POST")
+        self.assertIn(b'"model": "nomic-x"', call["body"])
+        self.assertIn(b'"input": "ping"', call["body"])
+
+    def test_ollama_embeddings_route_and_body(self) -> None:
+        fake, calls = _fake_request({("POST", "/api/embeddings"): (200, "")})
+        with mock.patch.object(smoke, "_request", fake):
+            result = smoke.check_ollama_embeddings(self._cfg())
+        self.assertEqual(result.status, "pass")
+        call = calls[0]
+        self.assertEqual(call["path"], "/api/embeddings")
+        self.assertEqual(call["method"], "POST")
+        self.assertIn(b'"model": "nomic-x"', call["body"])
+        self.assertIn(b'"prompt": "ping"', call["body"])
+
 
 class TestFailureReporting(unittest.TestCase):
     def test_non_200_reports_fail_with_status(self) -> None:
@@ -251,9 +326,11 @@ class TestFailureReporting(unittest.TestCase):
             base_url="http://gw",
             api_key=None,
             live_llm=False,
+            live_embeddings=False,
             timeout_s=5,
             anthropic_model="m",
             ollama_model="m",
+            embeddings_model="e",
         )
         fake, _ = _fake_request({("GET", "/health"): (503, "Service Unavailable")})
         with mock.patch.object(smoke, "_request", fake):
@@ -266,9 +343,11 @@ class TestFailureReporting(unittest.TestCase):
             base_url="http://gw",
             api_key=None,
             live_llm=False,
+            live_embeddings=False,
             timeout_s=5,
             anthropic_model="m",
             ollama_model="m",
+            embeddings_model="e",
         )
         fake, _ = _fake_request({("GET", "/health"): (0, "url_error: 'refused'")})
         with mock.patch.object(smoke, "_request", fake):
@@ -338,9 +417,11 @@ class TestCheckCoverage(unittest.TestCase):
             base_url=None,
             api_key=None,
             live_llm=False,
+            live_embeddings=False,
             timeout_s=5,
             anthropic_model="m",
             ollama_model="m",
+            embeddings_model="e",
         )
         names = {check(cfg).name for check in smoke.CHECKS}
         self.assertEqual(
@@ -349,8 +430,11 @@ class TestCheckCoverage(unittest.TestCase):
                 "gateway.health",
                 "gateway.capabilities",
                 "anthropic.messages.nonstream",
+                "openai.embeddings",
                 "ollama.tags",
                 "ollama.chat.nonstream",
+                "ollama.embed",
+                "ollama.embeddings",
             },
         )
 

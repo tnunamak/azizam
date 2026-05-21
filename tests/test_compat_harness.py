@@ -34,6 +34,8 @@ from tests.compat.harness.fake_backends import (
     fake_chat_completion,
     fake_chat_completion_stream,
     fake_ollama_chat,
+    fake_ollama_embed,
+    fake_ollama_embeddings,
     fake_ollama_tags,
 )
 from tests.compat.harness.matrix import validate_matrix_dict
@@ -233,6 +235,14 @@ class TestFakeBackends(unittest.TestCase):
         for m in payload["models"]:
             self.assertIn("digest", m)
             self.assertTrue(m["digest"].startswith("sha256:"))
+
+    def test_ollama_embed_envelope(self) -> None:
+        payload = fake_ollama_embed(vector=[0.1, 0.2])
+        self.assertEqual(payload["embeddings"], [[0.1, 0.2]])
+
+    def test_ollama_embeddings_envelope(self) -> None:
+        payload = fake_ollama_embeddings(vector=[0.1, 0.2])
+        self.assertEqual(payload["embedding"], [0.1, 0.2])
 
 
 class TestRunMatrixCLI(unittest.TestCase):

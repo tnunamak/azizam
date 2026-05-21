@@ -377,6 +377,97 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ok.headers["content-type"], "audio/wav")
             self.assertEqual(ok.content, raw)
 
+    def test_gateway_asset_metadata_uses_asset_kind_profile_and_owner(self) -> None:
+        raw_key = "opk_gateway_asset_test"
+        raw = _png_bytes((19, 20, 21, 255))
+        owner_hash = proxy.hash_api_key(raw_key)
+        asset_id = proxy.store_image_bytes(raw, owner_key_hash=owner_hash)
+        client = TestClient(proxy.app)
+        chat_only = AppProfile(
+            id="chat-only",
+            protocols=frozenset({"openai.chat"}),
+        )
+        image_profile = AppProfile(
+            id="image",
+            protocols=frozenset({"openai.images"}),
+        )
+
+        def identity(profile: AppProfile) -> proxy.AuthIdentity:
+            return proxy.AuthIdentity(
+                name="gateway-asset-policy",
+                key_hash=owner_hash,
+                profile=profile,
+            )
+
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy,
+            "AUTH_REGISTRY",
+            {owner_hash: identity(chat_only)},
+        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            denied = client.get(
+                f"/gateway/v1/assets/{asset_id}",
+                headers={"Authorization": f"Bearer {raw_key}"},
+            )
+            self.assertEqual(denied.status_code, 403, denied.text)
+            self.assertEqual(denied.json()["error"]["code"], "policy_denied")
+
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy,
+            "AUTH_REGISTRY",
+            {owner_hash: identity(image_profile)},
+        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            ok = client.get(
+                f"/gateway/v1/assets/{asset_id}",
+                headers={"Authorization": f"Bearer {raw_key}"},
+            )
+
+        self.assertEqual(ok.status_code, 200, ok.text)
+        payload = ok.json()
+        self.assertEqual(payload["object"], "gateway.asset")
+        self.assertEqual(payload["id"], asset_id)
+        self.assertEqual(payload["kind"], "image")
+        self.assertEqual(payload["media_type"], "image/png")
+        self.assertEqual(payload["size_bytes"], len(raw))
+        self.assertIn(f"/v1/assets/{asset_id}/content", payload["content_url"])
+        self.assertTrue(payload["owner_scoped"])
+
+    def test_gateway_asset_content_accepts_same_signed_url_contract(self) -> None:
+        raw_key = "opk_gateway_asset_content_test"
+        raw = b"RIFF....WAVEfmt "
+        owner_hash = proxy.hash_api_key(raw_key)
+        asset_id = proxy.store_asset_bytes(
+            raw,
+            kind="aud",
+            suffix=".wav",
+            owner_key_hash=owner_hash,
+        )
+        expires = int(proxy.time.time()) + 60
+        sig = proxy._sign_asset_token(asset_id, expires)
+        audio_profile = AppProfile(
+            id="audio",
+            protocols=frozenset({"openai.audio"}),
+        )
+        identity = proxy.AuthIdentity(
+            name="gateway-asset-content",
+            key_hash=owner_hash,
+            profile=audio_profile,
+        )
+
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy,
+            "AUTH_REGISTRY",
+            {owner_hash: identity},
+        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            ok = TestClient(proxy.app).get(
+                f"/gateway/v1/assets/{asset_id}/content",
+                params={"expires": str(expires), "sig": sig},
+                headers={"Authorization": f"Bearer {raw_key}"},
+            )
+
+        self.assertEqual(ok.status_code, 200, ok.text)
+        self.assertEqual(ok.headers["content-type"], "audio/wav")
+        self.assertEqual(ok.content, raw)
+
     def test_invalid_generic_asset_id_uses_signed_asset_validation(self) -> None:
         raw_key = "opk_invalid_asset_policy_test"
         owner_hash = proxy.hash_api_key(raw_key)

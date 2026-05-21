@@ -57,6 +57,9 @@ re-map them onto each SDK's own knobs.
 | `OPENAI_PROXY_BASE_URL` | yes | Gateway root, e.g. `http://127.0.0.1:8080`. Must **not** include `/v1` or `/api`. |
 | `OPENAI_PROXY_API_KEY` | yes (default) | Bearer token. Optional when the probe declares `allow_anonymous=True`. |
 | `OPENAI_PROXY_TIMEOUT_S` | no | Per-request timeout in seconds. Default `30`. |
+| `OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS` | no | Raw HTTP smoke opt-in for embedding backend round-trips. Default off. |
+| `OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL` | no | OpenAI embeddings probe model. Default `nomic-embed-text-v1.5`. |
+| `OPENAI_PROXY_SMOKE_OLLAMA_EMBED_MODEL` | no | Ollama embed/embeddings probe model. Default `nomic-embed-text-v1.5`. |
 
 ## Running the core unit tests
 
@@ -101,7 +104,9 @@ $PROXY_PYTHON -m unittest tests.compat.python.probe_openai -v
 
 Replace `requirements-openai.txt` with `requirements-anthropic.txt` or
 `requirements-ollama.txt` as needed. Probes auto-skip when their SDK
-is missing or when `OPENAI_PROXY_BASE_URL` is unset.
+is missing or when `OPENAI_PROXY_BASE_URL` is unset. The OpenAI probe
+covers `/v1/embeddings`; the Ollama probe covers both current
+`/api/embed` and legacy `/api/embeddings`.
 
 ## Running Node SDK probes (optional)
 

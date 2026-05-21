@@ -52,3 +52,15 @@ def fake_ollama_tags(
             }
         )
     return {"models": items}
+
+
+def fake_ollama_embed(*, vector: Iterable[float] = (0.1, 0.2, 0.3)) -> Dict[str, Any]:
+    """Build a current ``/api/embed`` response."""
+
+    return {"embeddings": [list(vector)]}
+
+
+def fake_ollama_embeddings(*, vector: Iterable[float] = (0.1, 0.2, 0.3)) -> Dict[str, Any]:
+    """Build a legacy ``/api/embeddings`` response."""
+
+    return {"embedding": list(vector)}

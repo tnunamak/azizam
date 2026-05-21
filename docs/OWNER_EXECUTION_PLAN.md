@@ -39,7 +39,7 @@ The status of each build-order item below reflects what currently lives on
 In-progress / next integration targets:
 
 - Expand the live capability inventory beyond the initial hand-built catalog.
-- Extend durable media-job execution to video, audio/music, and generic gateway assets.
+- Extend durable media-job execution to video and audio/music.
 - Expand SDK compatibility probes for Anthropic/Ollama streaming, Ollama read-only model routes, and embeddings.
 - Backend adapter contract extracted from `proxy.py`.
 
@@ -245,7 +245,7 @@ Initial endpoints:
 - [x] audience-filtered API surface
 - [x] image job content retrieval through `/gateway/v1/media/jobs/{job_id}/content`
 - [x] ComfyUI image-generation adapter integration for long-running jobs
-- [ ] generic `/gateway/v1/assets/*` serving
+- [x] generic `/gateway/v1/assets/*` serving
 - [ ] ComfyUI video/audio adapter integration for long-running jobs
 
 ### 6. SDK/App Harness — executable harness landed

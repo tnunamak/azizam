@@ -11,12 +11,19 @@ from .openai_chat import (
     fake_chat_completion_chunk,
     fake_chat_completion_stream,
 )
-from .ollama import fake_ollama_chat, fake_ollama_tags
+from .ollama import (
+    fake_ollama_chat,
+    fake_ollama_embed,
+    fake_ollama_embeddings,
+    fake_ollama_tags,
+)
 
 __all__ = [
     "fake_chat_completion",
     "fake_chat_completion_chunk",
     "fake_chat_completion_stream",
     "fake_ollama_chat",
+    "fake_ollama_embed",
+    "fake_ollama_embeddings",
     "fake_ollama_tags",
 ]

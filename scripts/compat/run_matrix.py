@@ -109,6 +109,7 @@ PROBES: Tuple[ProbeSpec, ...] = (
         case_map=(
             ("client.construct", "test_client_construct"),
             ("models.list", "test_models_list"),
+            ("embeddings.create", "test_embeddings_create"),
         ),
     ),
     ProbeSpec(
@@ -128,6 +129,8 @@ PROBES: Tuple[ProbeSpec, ...] = (
         case_map=(
             ("client.construct", "test_client_construct"),
             ("tags.list", "test_tags_list"),
+            ("embed.current", "test_embed_current_route"),
+            ("embeddings.legacy", "test_embeddings_legacy_route"),
         ),
         allow_anonymous=True,
     ),

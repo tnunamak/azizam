@@ -49,6 +49,8 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /openai/v1/images/edits` | OpenAI Images | Emits observational gateway receipts. |
 | `GET /openai/v1/images/{id}/content` | OpenAI Images | Asset retrieval. |
 | `GET /v1/assets/{asset_id}/content` | Native | Signed generated-asset retrieval. |
+| `GET /gateway/v1/assets/{asset_id}` | Gateway native | Generated-asset metadata and fresh signed content URL. |
+| `GET /gateway/v1/assets/{asset_id}/content` | Gateway native | Signed generated-asset retrieval through the native surface. |
 | `POST /gateway/v1/media/jobs` | Gateway media jobs | Durable async image generation when `intent` is `image.generate` and `request` carries the OpenAI image body. |
 | `POST /openai/v1/audio/speech` | OpenAI Audio | TTS. |
 | `POST /openai/v1/audio/transcriptions` | OpenAI Audio | STT. |
@@ -193,6 +195,13 @@ with the same bearer token. `asset_id` can be passed back to gateway-aware
 routes that explicitly accept an image input reference. Asset handles are scoped
 to the API key that minted them, so they are convenient local references rather
 than global public content hashes.
+
+Gateway-aware clients can refresh metadata and a new signed URL with:
+
+```bash
+curl "http://127.0.0.1:5000/gateway/v1/assets/$ASSET_ID" \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+```
 
 Durable image generation job, preferred for unattended batches or clients that
 cannot safely keep a long HTTP request open:
