@@ -76,6 +76,7 @@ The gateway should prove compatibility with real SDKs and apps as it evolves. Cu
 - tools and tool results
 - image content blocks
 - max token validation
+- `/anthropic/v1/models` and `/anthropic/v1/messages/count_tokens`
 - unsupported feature error
 - backend unavailable error
 
@@ -117,7 +118,7 @@ These are not unit tests for the gateway protocol contract. They are high-signal
 | Continue | Configure `provider: openai`, `apiBase`; test chat, autocomplete via `/completions`, streaming, and behavior when `/responses` is disabled. |
 | Cline | Configure OpenAI-compatible provider; run a minimal task, a tool-using task, streaming response, and image input if the model declares vision. |
 | OpenCode | Configure custom provider with `@ai-sdk/openai-compatible`; run text and tool-use prompts, verify headers and model metadata. |
-| Claude Code | Set `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`; test `/v1/messages`, streaming event sequence, tool use, and `/v1/models` discovery if enabled. |
+| Claude Code | Set `ANTHROPIC_BASE_URL` to the gateway root plus `/anthropic` and `ANTHROPIC_API_KEY`; test `/v1/messages`, streaming event sequence, tool use, `/v1/messages/count_tokens`, and `/v1/models` discovery if enabled. |
 | n8n | Validate OpenAI credential, run AI Agent with an OpenAI Chat Model and a simple tool, test streaming trigger where supported, and raw HTTP Request fallback. |
 | Home Assistant custom integration | Test one conversation turn, one entity-control tool call, image generation action if supported, and timeout/error handling. |
 

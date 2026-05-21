@@ -58,7 +58,7 @@ class TestLoadConfig(unittest.TestCase):
         self.assertEqual(cfg.base_url, "http://127.0.0.1:8080")
         self.assertEqual(cfg.api_key, "sk-test")
         self.assertEqual(cfg.openai_base_url(), "http://127.0.0.1:8080/v1")
-        self.assertEqual(cfg.anthropic_base_url(), "http://127.0.0.1:8080")
+        self.assertEqual(cfg.anthropic_base_url(), "http://127.0.0.1:8080/anthropic")
         self.assertEqual(cfg.ollama_host(), "http://127.0.0.1:8080")
         self.assertEqual(cfg.request_timeout_s, 30.0)
 

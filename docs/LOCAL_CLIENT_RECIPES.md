@@ -630,8 +630,10 @@ msg = client.messages.create(
 print(msg.content[0].text)
 ```
 
-Streaming calls such as `client.messages.stream(...)` are supported. Do not put
-real Anthropic keys into `proxy_api_keys.yml`.
+Streaming calls such as `client.messages.stream(...)` are supported. The
+Anthropic model list lives at `GET /anthropic/v1/models`, and token counting
+uses `POST /anthropic/v1/messages/count_tokens`. Do not put real Anthropic keys
+into `proxy_api_keys.yml`.
 
 ## Recipe: OpenAI SDK clients
 

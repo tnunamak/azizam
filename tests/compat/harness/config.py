@@ -50,9 +50,9 @@ class HarnessConfig:
     def anthropic_base_url(self) -> str:
         """URL suitable for the Anthropic SDK ``base_url`` argument."""
 
-        # Anthropic SDKs append ``/v1/messages`` themselves, so we hand
-        # them the gateway root.
-        return self.base_url.rstrip("/")
+        # Anthropic SDKs append ``/v1/...`` themselves; the gateway keeps
+        # Anthropic protocol routes under the collision-safe /anthropic prefix.
+        return self.base_url.rstrip("/") + "/anthropic"
 
     def ollama_host(self) -> str:
         """Host URL suitable for the Ollama SDK ``host`` argument."""

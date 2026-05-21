@@ -288,6 +288,56 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertTrue(direct_decision.denied)
         self.assertTrue(proxy._is_internal_protocol_forward(RequestLike()))
 
+    def test_anthropic_only_opk_allows_models_and_count_tokens(self) -> None:
+        anthropic_only = AppProfile(
+            id="anthropic-only",
+            protocols=frozenset({"anthropic.messages"}),
+        )
+        payload = {
+            "model": "claude-local",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+
+        with authenticated_profile(anthropic_only), patch.object(
+            proxy,
+            "ROLES",
+            {"claude-local": {"backend": "kobold", "model": "/tmp/claude.gguf"}},
+        ), patch.object(proxy, "MODELS_CATALOG", {}), patch.object(
+            proxy, "currently_loaded_kobold_model", lambda: None
+        ):
+            models_response = self.client.get(
+                "/anthropic/v1/models",
+                headers=AUTH_HEADERS,
+            )
+            count_response = self.client.post(
+                "/anthropic/v1/messages/count_tokens",
+                headers=AUTH_HEADERS,
+                json=payload,
+            )
+
+        self.assertEqual(models_response.status_code, 200, models_response.text)
+        self.assertEqual(count_response.status_code, 200, count_response.text)
+        self.assertGreater(count_response.json()["input_tokens"], 0)
+
+    def test_openai_only_opk_denies_anthropic_count_tokens(self) -> None:
+        openai_only = AppProfile(
+            id="openai-only",
+            protocols=frozenset({"openai.chat"}),
+        )
+
+        with authenticated_profile(openai_only):
+            response = self.client.post(
+                "/anthropic/v1/messages/count_tokens",
+                headers=AUTH_HEADERS,
+                json={
+                    "model": "claude-local",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["error"]["type"], "permission_error")
+
     def test_chat_only_opk_denies_media_and_models_routes(self) -> None:
         chat_only = AppProfile(
             id="chat-only",

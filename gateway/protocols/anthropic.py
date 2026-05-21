@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from math import ceil
 from typing import Any, Iterable
 
 ANTHROPIC_DEFAULT_STOP_REASON = "end_turn"
@@ -105,6 +106,33 @@ def invalid_request_error(message: str) -> dict[str, Any]:
         "type": "error",
         "error": {"type": "invalid_request_error", "message": message},
     }
+
+
+def estimate_count_tokens(body: dict[str, Any]) -> dict[str, Any]:
+    """Return an Anthropic-shaped best-effort token count for a Messages body."""
+    canonical = messages_request_to_canonical(
+        {**body, "max_tokens": body.get("max_tokens") or 1}
+    )
+    total_chars = 0
+    for message in canonical.get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        total_chars += len(str(message.get("role") or ""))
+        content = message.get("content")
+        if isinstance(content, str):
+            total_chars += len(content)
+        else:
+            total_chars += len(
+                json.dumps(content, separators=(",", ":"), sort_keys=True)
+            )
+
+    tools = canonical.get("tools")
+    if tools:
+        total_chars += len(json.dumps(tools, separators=(",", ":"), sort_keys=True))
+
+    # Four chars/token is a conservative, tokenizer-free approximation commonly
+    # used for English text. Keep a non-empty request at one token.
+    return {"input_tokens": max(1, ceil(total_chars / 4))}
 
 
 def messages_request_to_canonical(body: dict[str, Any]) -> dict[str, Any]:

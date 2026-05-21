@@ -13075,6 +13075,94 @@ def _build_workflow_model_entries(
     return entries
 
 
+def _anthropic_created_at(created: Any) -> str:
+    try:
+        ts = int(created)
+    except (TypeError, ValueError):
+        ts = int(time.time())
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def _anthropic_display_name(model_id: str) -> str:
+    display = model_id.replace("_", " ").replace("-", " ").strip().title()
+    return display or model_id
+
+
+def _anthropic_model_info(entry: Mapping[str, Any]) -> dict[str, Any] | None:
+    model_id = entry.get("id")
+    if not isinstance(model_id, str) or not model_id:
+        return None
+    return {
+        "id": model_id,
+        "type": "model",
+        "display_name": str(entry.get("description") or _anthropic_display_name(model_id)),
+        "created_at": _anthropic_created_at(entry.get("created")),
+    }
+
+
+async def _anthropic_model_info_list(
+    auth_context: AuthContext,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    entries = _build_role_catalog_entries() + _build_workflow_model_entries()
+    loaded_gguf = currently_loaded_kobold_model()
+    if loaded_gguf:
+        loaded_name = os.path.basename(loaded_gguf)
+        if loaded_name:
+            entries.append({
+                "id": loaded_name,
+                "object": "model",
+                "owned_by": "kobold",
+                "created": _entry_created_ts(loaded_gguf),
+                "vivid_fish_loaded": True,
+                "vivid_fish_model_path": loaded_gguf,
+            })
+
+    filtered, metadata = await _filter_model_list_for_profile(entries, auth_context)
+    seen: set[str] = set()
+    models: list[dict[str, Any]] = []
+    for entry in filtered:
+        if not isinstance(entry, Mapping):
+            continue
+        item = _anthropic_model_info(entry)
+        if item is None or item["id"] in seen:
+            continue
+        seen.add(item["id"])
+        models.append(item)
+    models.sort(key=lambda item: item["id"])
+    return models, metadata
+
+
+@app.get("/anthropic/v1/models")
+async def anthropic_models(request: Request):
+    """Anthropic-compatible model list projected from the gateway catalog."""
+    auth_context = authenticate_request(request, "/anthropic/v1/models")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    policy_response = _enforce_runtime_route_policy(
+        auth_context,
+        "/anthropic/v1/models",
+        policy={"protocol": "anthropic.messages", "intent": "models.list"},
+    )
+    if policy_response is not None:
+        return _anthropic_error_response(
+            _response_error_message(policy_response, "request denied by app profile"),
+            status_code=policy_response.status_code,
+            error_type="permission_error",
+        )
+
+    data, metadata = await _anthropic_model_info_list(auth_context)
+    payload = {
+        "object": "list",
+        "data": data,
+        "has_more": False,
+        "first_id": data[0]["id"] if data else None,
+        "last_id": data[-1]["id"] if data else None,
+    }
+    payload.update(metadata)
+    return _json_error_response(payload, status_code=200)
+
+
 @app.get("/openai/v1/models")
 @app.get("/v1/models")
 async def list_models(request: Request):
@@ -13644,6 +13732,43 @@ async def _read_json_object(request: Request) -> dict[str, Any] | Response:
             media_type="application/json",
         )
     return body
+
+
+@app.post("/anthropic/v1/messages/count_tokens")
+@app.post("/v1/messages/count_tokens")
+async def anthropic_count_tokens(request: Request):
+    """Anthropic Messages count_tokens-compatible estimator."""
+    auth_context = authenticate_request(request, "/anthropic/v1/messages/count_tokens")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    body = await _read_json_object(request)
+    if isinstance(body, Response):
+        return _anthropic_error_response("Invalid JSON body", status_code=400)
+
+    try:
+        payload = anthropic_protocol.estimate_count_tokens(body)
+        canonical = anthropic_protocol.messages_request_to_canonical(
+            {**body, "max_tokens": body.get("max_tokens") or 1}
+        )
+    except anthropic_protocol.AnthropicTranslationError as e:
+        return _json_error_response(e.error_body, status_code=e.http_status)
+
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol="anthropic.messages",
+        intent="chat.messages.count_tokens",
+        model=canonical.get("model"),
+    )
+    if decision.denied:
+        reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+        return _anthropic_error_response(
+            reason,
+            status_code=403,
+            error_type="permission_error",
+        )
+
+    return _json_error_response(payload, status_code=200)
 
 
 @app.post("/anthropic/v1/messages")

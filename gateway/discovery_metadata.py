@@ -58,9 +58,17 @@ PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
         "default": False,
         "base_url_recipe": "{base_url}/anthropic",
         "streaming": {"messages": True},
-        "endpoints": ["/anthropic/v1/messages", "/v1/messages"],
+        "endpoints": [
+            "/anthropic/v1/models",
+            "/anthropic/v1/messages",
+            "/anthropic/v1/messages/count_tokens",
+            "/v1/messages",
+            "/v1/messages/count_tokens",
+        ],
         "limits": [
             "image/document/thinking blocks are rejected",
+            "/v1/models remains OpenAI-shaped; use /anthropic/v1/models for Anthropic ModelInfoList",
+            "count_tokens is a best-effort gateway estimator",
         ],
     },
     {

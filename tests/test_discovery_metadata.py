@@ -35,7 +35,12 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("/openai/v1/chat/completions", protocols["openai"]["endpoints"])
         self.assertEqual(protocols["anthropic"]["canonical_base_path"], "/anthropic/v1")
         self.assertEqual(protocols["anthropic"]["base_url_recipe"], "{base_url}/anthropic")
+        self.assertIn("/anthropic/v1/models", protocols["anthropic"]["endpoints"])
         self.assertIn("/anthropic/v1/messages", protocols["anthropic"]["endpoints"])
+        self.assertIn(
+            "/anthropic/v1/messages/count_tokens",
+            protocols["anthropic"]["endpoints"],
+        )
         self.assertEqual(protocols["ollama"]["canonical_base_path"], "/ollama/api")
         self.assertEqual(protocols["ollama"]["convenience_base_path"], "/api")
         self.assertEqual(protocols["ollama"]["base_url_recipe"], "{base_url}/ollama")

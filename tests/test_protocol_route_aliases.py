@@ -6,6 +6,7 @@ import sys
 import unittest
 from collections import defaultdict
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -45,12 +46,62 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
         client = TestClient(proxy.app)
         for path in (
             "/openai/v1/fine_tuning/jobs",
-            "/anthropic/v1/models",
+            "/anthropic/v1/unknown",
             "/ollama/api/unknown",
         ):
             response = client.get(path)
             self.assertEqual(response.status_code, 404, msg=path)
             self.assertEqual(response.json()["error"]["code"], "not_found")
+
+    def test_anthropic_models_has_anthropic_shape_without_v1_models_collision(self) -> None:
+        client = TestClient(proxy.app)
+        with patch.object(
+            proxy,
+            "ROLES",
+            {
+                "claude-local": {
+                    "backend": "kobold",
+                    "model": "/tmp/claude-local.gguf",
+                    "description": "Claude Local",
+                }
+            },
+        ), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy, "MODELS_CATALOG", {}
+        ), patch.object(
+            proxy, "currently_loaded_kobold_model", lambda: None
+        ):
+            response = client.get("/anthropic/v1/models")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["object"], "list")
+        self.assertEqual(body["data"][0]["id"], "claude-local")
+        self.assertEqual(body["data"][0]["type"], "model")
+        self.assertIn("created_at", body["data"][0])
+        self.assertNotIn(
+            ("GET", "/v1/models"),
+            {
+                (method, entry["canonical"])
+                for entry in proxy.CANONICAL_PROTOCOL_ROUTE_ALIASES
+                for method in entry["methods"]
+                if entry.get("alias") == "/anthropic/v1/models"
+            },
+        )
+
+    def test_anthropic_count_tokens_has_anthropic_shape(self) -> None:
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False):
+            response = client.post(
+                "/anthropic/v1/messages/count_tokens",
+                json={
+                    "model": "claude-local",
+                    "messages": [{"role": "user", "content": "hello world"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.json()), {"input_tokens"})
+        self.assertGreater(response.json()["input_tokens"], 0)
 
 
 if __name__ == "__main__":
