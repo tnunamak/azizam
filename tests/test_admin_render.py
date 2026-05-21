@@ -169,71 +169,67 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         )
         self.assertIn('action="/admin/api/profiles"', html)
         self.assertIn("data-create-profile", html)
-        self.assertIn("name=\"profile_preset\"", html)
+        self.assertNotIn("name=\"profile_preset\"", html)
         self.assertIn("name=\"model_access\"", html)
         self.assertIn("name=\"advanced_json\"", html)
         self.assertIn("Allow cloud fallback", html)
-        self.assertIn("Allow native passthrough", html)
+        self.assertIn("Allow provider-native passthrough", html)
 
-    def test_create_profile_offers_policy_templates_and_simple_options(self) -> None:
+    def test_create_profile_is_a_direct_policy_builder(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn(
-            'name="profile_preset" value="chat_only" checked',
-            html,
-        )
-        self.assertIn('name="profile_preset" value="chat_embeddings"', html)
-        self.assertIn('name="profile_preset" value="chat_images"', html)
-        self.assertIn('name="profile_preset" value="image_audio"', html)
-        self.assertIn('name="profile_preset" value="video_media"', html)
-        self.assertIn('name="profile_preset" value="full_runtime"', html)
-        self.assertIn("stable local language models", html)
-        self.assertIn("Every runtime API", html)
+        self.assertIn('name="protocols" value="openai" checked', html)
+        self.assertIn('name="protocols" value="anthropic"', html)
+        self.assertIn('name="protocols" value="ollama"', html)
+        self.assertIn('name="protocols" value="gateway"', html)
+        self.assertIn('name="native_passthrough"', html)
+        self.assertIn('name="intents" value="chat" checked', html)
+        self.assertIn('name="intents" value="text.embeddings"', html)
+        self.assertIn('name="intents" value="image.generate"', html)
+        self.assertIn('name="intents" value="image.edit"', html)
+        self.assertIn('name="intents" value="speech.synthesis"', html)
+        self.assertIn('name="intents" value="speech.transcription"', html)
+        self.assertIn('name="intents" value="audio.generate"', html)
+        self.assertIn('name="intents" value="video.generate"', html)
+        self.assertIn('name="intents" value="models.list"', html)
+        self.assertIn('name="resource_tiers" value="interactive" checked', html)
+        self.assertIn('name="resource_tiers" value="batch"', html)
+        self.assertIn('name="resource_tiers" value="expensive"', html)
+        self.assertIn('name="exposure" value="default" checked', html)
+        self.assertIn('name="exposure" value="opt_in"', html)
+        self.assertIn('name="trust_tiers" value="stable" checked', html)
+        self.assertIn('name="trust_tiers" value="experimental"', html)
+        self.assertIn('name="trust_tiers" value="private"', html)
+        self.assertIn('name="backends"', html)
         self.assertIn("Current loaded LLM only", html)
         self.assertIn("Current loaded LLM: <code>qwen.gguf</code>", html)
         self.assertIn("Profile preview", html)
-        self.assertIn("policyPreview={chat_only:", html)
+        self.assertIn("APIs: OpenAI-compatible", html)
+        self.assertIn("Work: chat", html)
+        self.assertIn("Cost gates: interactive; default capabilities; stable", html)
         self.assertIn("Models: configured catalog", html)
+        self.assertIn("Guardrails: local only; provider-native passthrough off; admin blocked", html)
         self.assertIn("min-width: 0;", html)
         self.assertIn(".shell-main section", html)
-        self.assertIn("minmax(min(15rem, 100%), 1fr)", html)
-        self.assertIn(".choice-grid, .template-strip { grid-template-columns: 1fr; }", html)
-        self.assertIn('name="profile_preset"', html)
-        self.assertIn('value="openai" checked> OpenAI-compatible', html)
-        self.assertIn('value="gateway"> Gateway jobs/discovery', html)
-        self.assertIn('value="provider-native"> Provider-native passthrough', html)
-        self.assertIn("policyTemplates={chat_only:", html)
-        self.assertIn("chat_images:{label:'Chat + images'", html)
-        self.assertIn("full_runtime:{label:'Full runtime access'", html)
-        self.assertIn(
-            "Every runtime API",
-            html,
-        )
-        self.assertIn(
-            "full_runtime:{label:'Full runtime access',protocols:['openai','anthropic','ollama','gateway','provider-native']",
-            html,
-        )
-        self.assertIn(
-            "full_runtime:{allowed:'chat, embeddings, images, audio, video, model list, provider-native passthrough'",
-            html,
-        )
-        self.assertIn("native_passthrough:{enabled:!!t.native_passthrough}", html)
-        self.assertIn(
-            "profile.native_passthrough={enabled:profile.native_passthrough.enabled||fd.get('native_passthrough')==='on'}",
-            html,
-        )
-        self.assertIn("chat_only:{label:'Chat only',", html)
-        self.assertIn("Family chat", html)
-        self.assertIn("RAG / documents", html)
-        self.assertIn("Trusted power user", html)
-        self.assertIn("syncProfileTemplate", html)
-        self.assertIn("setChecks(form,'protocols',t.protocols)", html)
-        self.assertIn("status:'basic',native_passthrough:false},chat_embeddings", html)
-        self.assertIn("full_runtime:{label:'Full runtime access'", html)
-        self.assertIn("status:'standard',native_passthrough:true},custom", html)
-        self.assertIn("custom:{label:'Custom policy'", html)
-        self.assertIn("status:'basic',native_passthrough:false}};", html)
+        self.assertIn("minmax(min(14rem, 100%), 1fr)", html)
+        self.assertIn(".choice-grid, .permission-grid { grid-template-columns: 1fr; }", html)
+        self.assertIn("buildProfileFromForm", html)
+        self.assertIn("profileProtocols", html)
+        self.assertIn("checkedValues(form,'protocols')", html)
+        self.assertIn("checkedValues(form,'intents')", html)
+        self.assertIn("checkedValues(form,'resource_tiers')", html)
+        self.assertIn("protocols.push('provider-native')", html)
+        self.assertIn("const backends=values(fd,'backends')", html)
+        self.assertIn("data-profile-preview-work", html)
+        self.assertIn("data-profile-preview-cost", html)
+        self.assertNotIn("policyTemplates", html)
+        self.assertNotIn("policyPreview", html)
+        self.assertNotIn("syncProfileTemplate", html)
+        self.assertNotIn("profile_preset", html)
+        self.assertNotIn('name="protocols" value="provider-native"', html)
+        self.assertNotIn("Start from a template", html)
+        self.assertNotIn("template-strip", html)
+        self.assertNotIn("template-card", html)
         self.assertNotIn("media_workflows", html)
-        self.assertNotIn('<select name="profile_preset"', html)
         self.assertNotIn("chat · completions · stable", html)
         self.assertNotIn("Existing Profiles:", html)
         self.assertNotIn("All local and stable", html)
@@ -241,7 +237,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_create_profile_keeps_advanced_json_in_optional_disclosure(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn("<summary>Advanced policy details</summary>", html)
+        self.assertIn("<summary>Advanced constraints</summary>", html)
         self.assertIn('name="advanced_json"', html)
         self.assertIn("</details>", html)
 
@@ -478,14 +474,16 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertNotIn("<dt>Models API</dt><dd></dd>", html)
         self.assertNotIn("<dt>Routing</dt><dd></dd>", html)
 
-    def test_profile_creation_is_template_first(self) -> None:
+    def test_profile_creation_keeps_common_controls_before_advanced_escape_hatch(self) -> None:
         html = render_admin_dashboard(_snapshot())
         profile_section = html[html.index('id="profiles"') : html.index('id="identity"')]
-        self.assertIn("Start from a template", profile_section)
-        self.assertIn('class="template-strip"', profile_section)
+        self.assertIn("Allowed work", profile_section)
+        self.assertIn("Cost and release gates", profile_section)
+        self.assertNotIn("Start from a template", profile_section)
+        self.assertNotIn('class="template-strip"', profile_section)
         self.assertLess(
-            profile_section.index('class="template-strip"'),
-            profile_section.index("<summary>Advanced policy details</summary>"),
+            profile_section.index("Allowed work"),
+            profile_section.index("<summary>Advanced constraints</summary>"),
         )
 
     def test_admin_chrome_marks_admin_as_active_and_offers_sign_out(self) -> None:

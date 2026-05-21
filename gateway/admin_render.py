@@ -8,7 +8,7 @@ never imports persistence or auth modules.
 
 The page is intentionally simple but real: it shows the apps, users, app
 profiles, credentials (without raw key material), and audit entries. It also
-includes the operator flows for Apps, App API keys, Profile templates, runtime
+includes the operator flows for Apps, App API keys, Profile creation, runtime
 Profile mappings, admin automation keys, and policy simulation.
 
 Data-plane copy uses **App**, not "Client", per the project convention.
@@ -268,36 +268,28 @@ _PAGE_CSS = """
                           min-height: 2rem; display: inline-flex; align-items: center; }
   details.panel form.flow { margin-top: 0.75rem; background: transparent; border: 0; padding: 0; }
   .choice-grid { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); }
+  .permission-grid { display: grid; gap: 0.55rem; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); }
   .choice-card { display: grid; gap: 0.3rem; padding: 0.75rem; border: 1px solid var(--line);
                  border-radius: 6px; background: oklch(14.5% 0.015 250); color: var(--muted); }
   .choice-card input { margin-right: 0.4rem; }
   .choice-card strong { color: var(--text); }
-  .inline-options { display: flex; flex-wrap: wrap; gap: 0.55rem 1rem; }
-  .template-strip { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr)); }
-  .template-card {
-    display: grid;
-    grid-template-columns: 1.2rem minmax(0, 1fr);
-    gap: 0.65rem;
-    align-items: start;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 0.8rem;
+  .permission-grid .check {
+    align-items: flex-start;
     background: oklch(14.5% 0.015 250);
-    cursor: pointer;
-    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    min-height: 3rem;
+    padding: 0.65rem 0.7rem;
   }
-  .template-card:has(input:checked) {
-    background: color-mix(in oklch, var(--focus), transparent 90%);
-    border-color: color-mix(in oklch, var(--focus), var(--line) 35%);
-  }
-  .template-card input { width: 1rem; min-height: 1rem; margin: 0.15rem 0 0; accent-color: var(--focus); }
-  .template-card strong { display: block; color: var(--text); }
-  .template-card span { display: block; margin-top: 0.25rem; color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
+  .permission-grid .check span { display: grid; gap: 0.15rem; }
+  .permission-grid .check strong { color: var(--text); font-size: 0.88rem; }
+  .permission-grid .check em { color: var(--muted); font-size: 0.78rem; font-style: normal; line-height: 1.35; }
+  .inline-options { display: flex; flex-wrap: wrap; gap: 0.55rem 1rem; }
   @media (max-width: 760px) {
     .operator-hero h1 { font-size: 2.05rem; }
     table { display: block; overflow-x: auto; }
     form.flow .row { grid-template-columns: 1fr; }
-    .choice-grid, .template-strip { grid-template-columns: 1fr; }
+    .choice-grid, .permission-grid { grid-template-columns: 1fr; }
     .facts div { grid-template-columns: 1fr; gap: 0.1rem; }
   }
 """
@@ -1005,27 +997,43 @@ def _profile_form(
         + _esc(create_profile_action)
         + '" data-create-profile>'
         "<label>Create Profile</label>"
-        '<p class="form-note">Profiles are reusable runtime policies. They decide which APIs, model behavior, and workflow costs an App can use.</p>'
-        '<div class="cell-sub">Start from a template</div>'
-        '<div class="template-strip" aria-label="Profile templates">'
-        '<label class="template-card"><input type="radio" name="profile_preset" value="chat_only" checked>'
-        '<span><strong>Family chat</strong><span>For a person, chatbot, or simple agent that only needs stable local language models.</span></span></label>'
-        '<label class="template-card"><input type="radio" name="profile_preset" value="chat_embeddings">'
-        '<span><strong>RAG / documents</strong><span>Chat plus embeddings for document search, code indexes, and memory features.</span></span></label>'
-        '<label class="template-card"><input type="radio" name="profile_preset" value="chat_images">'
-        '<span><strong>Creative chat</strong><span>Chat and approved image generation/edit workflows. No video, music, admin, or cloud fallback.</span></span></label>'
-        '<label class="template-card"><input type="radio" name="profile_preset" value="image_audio">'
-        '<span><strong>Media creator</strong><span>Approved image, edit, speech, STT, music, and sound workflows. No video.</span></span></label>'
-        '<label class="template-card"><input type="radio" name="profile_preset" value="video_media">'
-        '<span><strong>Video producer</strong><span>For expensive video jobs and media workflows where queueing is expected.</span></span></label>'
-        '<label class="template-card"><input type="radio" name="profile_preset" value="full_runtime">'
-        '<span><strong>Trusted power user</strong><span>Every runtime API, including provider-native passthrough. Still no admin control-plane access.</span></span></label>'
-        '<label class="template-card"><input type="radio" name="profile_preset" value="custom">'
-        '<span><strong>Custom</strong><span>Start from a minimal Profile, then adjust the advanced fields below.</span></span></label>'
-        "</div>"
+        '<p class="form-note">Profiles are reusable runtime policies. Name the policy, choose what it can use, then assign it to Apps.</p>'
         '<div class="stack">'
-        '<input type="text" name="label" placeholder="Profile name, e.g. Family chat" aria-label="Profile name" required>'
+        '<input type="text" name="label" placeholder="Profile name, e.g. Daisy full runtime" aria-label="Profile name" required>'
         "</div>"
+        '<div class="form-section"><strong>APIs</strong>'
+        '<p class="form-note">Choose the client-facing APIs this Profile can call.</p>'
+        '<div class="permission-grid" aria-label="Allowed APIs">'
+        '<label class="check"><input type="checkbox" name="protocols" value="openai" checked> <span><strong>OpenAI-compatible</strong><em>/openai/v1 and /v1 SDKs</em></span></label>'
+        '<label class="check"><input type="checkbox" name="protocols" value="anthropic"> <span><strong>Anthropic Messages</strong><em>/anthropic/v1/messages clients</em></span></label>'
+        '<label class="check"><input type="checkbox" name="protocols" value="ollama"> <span><strong>Ollama-compatible</strong><em>/ollama/api and /api clients</em></span></label>'
+        '<label class="check"><input type="checkbox" name="protocols" value="gateway"> <span><strong>Gateway jobs</strong><em>capabilities, assets, receipts, media jobs</em></span></label>'
+        "</div></div>"
+        '<div class="form-section"><strong>Allowed work</strong>'
+        '<p class="form-note">Select the capabilities this Profile can use. Admin access is never granted here.</p>'
+        '<div class="permission-grid" aria-label="Allowed work">'
+        '<label class="check"><input type="checkbox" name="intents" value="chat" checked> <span><strong>Chat</strong><em>chat completions and messages</em></span></label>'
+        '<label class="check"><input type="checkbox" name="intents" value="text.completions"> <span><strong>Text completions</strong><em>legacy completion clients</em></span></label>'
+        '<label class="check"><input type="checkbox" name="intents" value="text.embeddings"> <span><strong>Embeddings</strong><em>RAG, search, memory, indexes</em></span></label>'
+        '<label class="check"><input type="checkbox" name="intents" value="image.generate"> <span><strong>Image generation</strong><em>text to image workflows</em></span></label>'
+        '<label class="check"><input type="checkbox" name="intents" value="image.edit"> <span><strong>Image editing</strong><em>inpaint, mask, ControlNet-like workflows</em></span></label>'
+        '<label class="check"><input type="checkbox" name="intents" value="speech.synthesis"> <span><strong>Text to speech</strong><em>voice output</em></span></label>'
+        '<label class="check"><input type="checkbox" name="intents" value="speech.transcription"> <span><strong>Speech to text</strong><em>transcription input</em></span></label>'
+        '<label class="check"><input type="checkbox" name="intents" value="audio.generate"> <span><strong>Music / sound</strong><em>audio generation workflows</em></span></label>'
+        '<label class="check"><input type="checkbox" name="intents" value="video.generate"> <span><strong>Video</strong><em>expensive queued video jobs</em></span></label>'
+        '<label class="check"><input type="checkbox" name="intents" value="models.list"> <span><strong>Model list</strong><em>show compatible models to clients</em></span></label>'
+        "</div></div>"
+        '<div class="form-section"><strong>Cost and release gates</strong>'
+        '<div class="permission-grid" aria-label="Cost and release gates">'
+        '<label class="check"><input type="checkbox" name="resource_tiers" value="interactive" checked> <span><strong>Interactive</strong><em>fast requests, normal chat</em></span></label>'
+        '<label class="check"><input type="checkbox" name="resource_tiers" value="batch"> <span><strong>Batch</strong><em>queued media and longer jobs</em></span></label>'
+        '<label class="check"><input type="checkbox" name="resource_tiers" value="expensive"> <span><strong>Expensive</strong><em>video and heavy GPU workflows</em></span></label>'
+        '<label class="check"><input type="checkbox" name="exposure" value="default" checked> <span><strong>Default capabilities</strong><em>normal model and workflow catalog</em></span></label>'
+        '<label class="check"><input type="checkbox" name="exposure" value="opt_in"> <span><strong>Opt-in capabilities</strong><em>operator-curated extras</em></span></label>'
+        '<label class="check"><input type="checkbox" name="trust_tiers" value="stable" checked> <span><strong>Stable</strong><em>expected to work for users</em></span></label>'
+        '<label class="check"><input type="checkbox" name="trust_tiers" value="experimental"> <span><strong>Experimental</strong><em>new, flaky, or changing</em></span></label>'
+        '<label class="check"><input type="checkbox" name="trust_tiers" value="private"> <span><strong>Private</strong><em>personal/local-only workflows</em></span></label>'
+        "</div></div>"
         '<div class="form-section"><strong>Model access</strong>'
         '<div class="choice-grid" aria-label="Model access">'
         '<label class="choice-card"><span><input type="radio" name="model_access" value="catalog" checked>'
@@ -1038,34 +1046,31 @@ def _profile_form(
         + "</code></p>"
         '<div class="policy-preview" id="profile-policy-preview" aria-live="polite">'
         "<strong>Profile preview</strong>"
-        '<span data-profile-preview-allowed>Allowed: chat</span>'
-        '<span data-profile-preview-blocked>Blocked: embeddings, images, audio, video, admin, cloud fallback</span>'
+        '<span data-profile-preview-apis>APIs: OpenAI-compatible</span>'
+        '<span data-profile-preview-work>Work: chat</span>'
+        '<span data-profile-preview-cost>Cost gates: interactive; default capabilities; stable</span>'
         '<span data-profile-preview-models>Models: configured catalog</span>'
+        '<span data-profile-preview-guardrails>Guardrails: local only; provider-native passthrough off; admin blocked</span>'
         "</div>"
-        '<details class="panel"><summary>Advanced policy details</summary>'
-        '<div class="form-section"><strong>Allowed APIs</strong>'
-        '<div class="inline-options" aria-label="Allowed protocols">'
-        '<label class="check"><input type="checkbox" name="protocols" value="openai" checked> OpenAI-compatible</label>'
-        '<label class="check"><input type="checkbox" name="protocols" value="anthropic"> Anthropic Messages</label>'
-        '<label class="check"><input type="checkbox" name="protocols" value="ollama"> Ollama-compatible</label>'
-        '<label class="check"><input type="checkbox" name="protocols" value="gateway"> Gateway jobs/discovery</label>'
-        '<label class="check"><input type="checkbox" name="protocols" value="provider-native"> Provider-native passthrough</label>'
-        "</div></div>"
+        '<div class="form-section"><strong>Guardrails</strong>'
         '<div class="stack">'
-        '<input type="text" name="id" placeholder="Generated from policy name" aria-label="Policy id override">'
+        '<label class="check"><input type="checkbox" name="cloud_allowed"> Allow cloud fallback</label>'
+        '<label class="check"><input type="checkbox" name="native_passthrough"> Allow provider-native passthrough</label>'
+        "</div></div>"
+        '<details class="panel"><summary>Advanced constraints</summary>'
+        '<p class="form-note">Optional limits for specific model ids, workflow ids, backend ids, tags, and raw policy fields.</p>'
+        '<div class="stack">'
+        '<input type="text" name="id" placeholder="Generated from Profile name" aria-label="Profile id override">'
+        '<input type="text" name="models" placeholder="optional model ids, comma separated" aria-label="Allowed model ids">'
+        '<input type="text" name="workflows" placeholder="optional workflow ids, comma separated" aria-label="Allowed workflow ids">'
+        '<input type="text" name="backends" placeholder="optional backend ids, comma separated" aria-label="Allowed backend ids">'
+        '<input type="text" name="tags" placeholder="optional tags: family, agents" aria-label="Policy tags">'
         '<select name="status_visibility" aria-label="Status detail">'
         '<option value="basic">Basic status</option>'
         '<option value="standard">Standard status</option>'
         '<option value="full">Full status</option>'
         '<option value="none">No status</option>'
         "</select>"
-        '<input type="text" name="models" placeholder="optional model ids, comma separated" aria-label="Allowed model ids">'
-        '<input type="text" name="workflows" placeholder="optional workflow ids, comma separated" aria-label="Allowed workflow ids">'
-        '<input type="text" name="tags" placeholder="optional tags: family, agents" aria-label="Policy tags">'
-        "</div>"
-        '<div class="stack">'
-        '<label class="check"><input type="checkbox" name="cloud_allowed"> Allow cloud fallback</label>'
-        '<label class="check"><input type="checkbox" name="native_passthrough"> Allow native passthrough</label>'
         "</div>"
         '<textarea name="advanced_json" spellcheck="false" aria-label="Raw policy JSON" placeholder="{&quot;models&quot;:[&quot;local-chat&quot;]}"></textarea>'
         "</details>"
@@ -1369,14 +1374,18 @@ def render_admin_dashboard(
         "const list=v=>String(v||'').split(/[\\s,]+/).map(x=>x.trim()).filter(Boolean);"
         "const values=(fd,k)=>fd.getAll(k).flatMap(list);"
         "const slug=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'profile';"
-        "const policyTemplates={chat_only:{label:'Chat only',protocols:['openai','anthropic','ollama'],intents:['chat','text.completions'],exposure:['default'],trust:['stable'],resources:['interactive'],status:'basic',native_passthrough:false},chat_embeddings:{label:'Chat + embeddings',protocols:['openai','anthropic','ollama'],intents:['chat','text.completions','text.embeddings'],exposure:['default'],trust:['stable'],resources:['interactive'],status:'basic',native_passthrough:false},chat_images:{label:'Chat + images',protocols:['openai','anthropic','ollama','gateway'],intents:['chat','text.completions','image.generate','image.edit'],exposure:['default','opt_in'],trust:['stable'],resources:['interactive','batch'],status:'standard',native_passthrough:false},image_audio:{label:'Images + audio',protocols:['openai','gateway'],intents:['image.generate','image.edit','speech.synthesis','speech.transcription','audio.generate'],exposure:['default','opt_in'],trust:['stable'],resources:['interactive','batch'],status:'standard',native_passthrough:false},video_media:{label:'Video producer',protocols:['openai','gateway'],intents:['image.generate','image.edit','speech.synthesis','speech.transcription','audio.generate','video.generate'],exposure:['default','opt_in'],trust:['stable'],resources:['interactive','batch','expensive'],status:'standard',native_passthrough:false},full_runtime:{label:'Full runtime access',protocols:['openai','anthropic','ollama','gateway','provider-native'],intents:['chat','text.completions','text.embeddings','image.generate','image.edit','speech.synthesis','speech.transcription','audio.generate','video.generate','models.list'],exposure:['default','opt_in'],trust:['stable','experimental','private'],resources:['interactive','batch','expensive'],status:'standard',native_passthrough:true},custom:{label:'Custom policy',protocols:['openai'],intents:['chat'],exposure:['default'],trust:['stable'],resources:['interactive'],status:'basic',native_passthrough:false}};"
-        "const policyPreview={chat_only:{allowed:'chat',blocked:'embeddings, images, audio, video, admin, cloud fallback'},chat_embeddings:{allowed:'chat, embeddings',blocked:'images, audio, video, admin, cloud fallback'},chat_images:{allowed:'chat, image generation, image editing',blocked:'video, music/audio generation, admin, cloud fallback'},image_audio:{allowed:'image generation, image editing, speech, transcription, music/audio generation',blocked:'video, admin, cloud fallback'},video_media:{allowed:'image, audio, and video generation workflows',blocked:'admin, cloud fallback'},full_runtime:{allowed:'chat, embeddings, images, audio, video, model list, provider-native passthrough',blocked:'admin control plane'},custom:{allowed:'custom Profile details',blocked:'anything not explicitly allowed'}};"
-        "const buildProfile=(templateId,profileId)=>{const t=policyTemplates[templateId]||policyTemplates.chat_only;const allow={intents:t.intents,exposure:t.exposure,trust_tiers:t.trust,resource_tiers:t.resources};if(t.tags)allow.tags=t.tags;return{id:profileId,protocols:t.protocols,allow,status_visibility:{level:t.status||'basic'},fallback:{cloud_allowed:false},native_passthrough:{enabled:!!t.native_passthrough},model_access:{mode:'catalog'}}};"
-        "const setChecks=(form,name,items)=>{const allowed=new Set(items||[]);form.querySelectorAll(`[name=\"${name}\"]`).forEach(el=>{el.checked=allowed.has(el.value)})};"
-        "const syncProfileTemplate=form=>{if(!form)return;const fd=new FormData(form);const preset=fd.get('profile_preset')||'chat_only';const t=policyTemplates[preset]||policyTemplates.chat_only;setChecks(form,'protocols',t.protocols);const native=form.querySelector('[name=\"native_passthrough\"]');if(native)native.checked=!!t.native_passthrough;const status=form.querySelector('[name=\"status_visibility\"]');if(status)status.value=t.status||'basic'};"
-        "const updateProfilePreview=form=>{form=form||document.querySelector('[data-create-profile]');if(!form)return;const fd=new FormData(form);const preset=fd.get('profile_preset')||'chat_only';const copy=policyPreview[preset]||policyPreview.chat_only;const modelMode=fd.get('model_access')==='current_loaded'?'current loaded LLM only':'configured catalog';const a=form.querySelector('[data-profile-preview-allowed]'),b=form.querySelector('[data-profile-preview-blocked]'),m=form.querySelector('[data-profile-preview-models]');if(a)a.textContent='Allowed: '+copy.allowed;if(b)b.textContent='Blocked: '+copy.blocked;if(m)m.textContent='Models: '+modelMode};"
-        "const initProfileForm=()=>{const form=document.querySelector('[data-create-profile]');syncProfileTemplate(form);updateProfilePreview(form)};"
-        "document.addEventListener('change',e=>{const form=e.target.closest&&e.target.closest('[data-create-profile]');if(!form)return;if(e.target.name==='profile_preset')syncProfileTemplate(form);updateProfilePreview(form)});initProfileForm();"
+        "const protocolLabels={openai:'OpenAI-compatible',anthropic:'Anthropic Messages',ollama:'Ollama-compatible',gateway:'Gateway jobs','provider-native':'Provider-native'};"
+        "const intentLabels={chat:'chat','text.completions':'text completions','text.embeddings':'embeddings','image.generate':'image generation','image.edit':'image editing','speech.synthesis':'text to speech','speech.transcription':'speech to text','audio.generate':'music / sound','video.generate':'video','models.list':'model list'};"
+        "const resourceLabels={interactive:'interactive',batch:'batch',expensive:'expensive'};"
+        "const exposureLabels={default:'default capabilities',opt_in:'opt-in capabilities'};"
+        "const trustLabels={stable:'stable',experimental:'experimental',private:'private'};"
+        "const labelList=(items,labels,empty)=>items.length?items.map(x=>labels[x]||x).join(', '):empty;"
+        "const checkedValues=(form,name)=>Array.from(form.querySelectorAll(`[name=\"${name}\"]:checked`)).map(el=>el.value);"
+        "const profileProtocols=(fd,form)=>{const protocols=checkedValues(form,'protocols');if(fd.get('native_passthrough')==='on'&&!protocols.includes('provider-native'))protocols.push('provider-native');return protocols};"
+        "const buildProfileFromForm=(fd,form,profileId)=>{const allow={intents:checkedValues(form,'intents'),exposure:checkedValues(form,'exposure'),trust_tiers:checkedValues(form,'trust_tiers'),resource_tiers:checkedValues(form,'resource_tiers')};const tags=values(fd,'tags');if(tags.length)allow.tags=tags;const profile={id:profileId,protocols:profileProtocols(fd,form),allow,status_visibility:{level:fd.get('status_visibility')||'basic'},fallback:{cloud_allowed:fd.get('cloud_allowed')==='on'},native_passthrough:{enabled:fd.get('native_passthrough')==='on'},model_access:{mode:fd.get('model_access')||'catalog'}};const models=values(fd,'models');if(models.length)profile.models=models;const workflows=values(fd,'workflows');if(workflows.length)profile.workflows=workflows;const backends=values(fd,'backends');if(backends.length)profile.backends=backends;return profile};"
+        "const updateProfilePreview=form=>{form=form||document.querySelector('[data-create-profile]');if(!form)return;const fd=new FormData(form);const apis=profileProtocols(fd,form),work=checkedValues(form,'intents'),resources=checkedValues(form,'resource_tiers'),exposure=checkedValues(form,'exposure'),trust=checkedValues(form,'trust_tiers');const modelMode=fd.get('model_access')==='current_loaded'?'current loaded LLM only':'configured catalog';const guard=(fd.get('cloud_allowed')==='on'?'cloud fallback allowed':'local only')+'; '+(fd.get('native_passthrough')==='on'?'provider-native passthrough on':'provider-native passthrough off')+'; admin blocked';const a=form.querySelector('[data-profile-preview-apis]'),w=form.querySelector('[data-profile-preview-work]'),c=form.querySelector('[data-profile-preview-cost]'),m=form.querySelector('[data-profile-preview-models]'),g=form.querySelector('[data-profile-preview-guardrails]');if(a)a.textContent='APIs: '+labelList(apis,protocolLabels,'none selected');if(w)w.textContent='Work: '+labelList(work,intentLabels,'none selected');if(c)c.textContent='Cost gates: '+labelList(resources,resourceLabels,'none selected')+'; '+labelList(exposure,exposureLabels,'none selected')+'; '+labelList(trust,trustLabels,'none selected');if(m)m.textContent='Models: '+modelMode;if(g)g.textContent='Guardrails: '+guard};"
+        "const initProfileForm=()=>updateProfilePreview(document.querySelector('[data-create-profile]'));"
+        "document.addEventListener('change',e=>{const form=e.target.closest&&e.target.closest('[data-create-profile]');if(form)updateProfilePreview(form)});initProfileForm();"
         "const refreshMain=async()=>{const r=await fetch('/admin',{credentials:'same-origin',cache:'no-store'});"
         "if(!r.ok)return;const html=await r.text();const doc=new DOMParser().parseFromString(html,'text/html');"
         "const next=doc.querySelector('main.shell-main'),main=document.querySelector('main.shell-main');"
@@ -1388,11 +1397,7 @@ def render_admin_dashboard(
         "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]');"
         "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm)return;e.preventDefault();"
         "if(adminKeyForm){const f=adminKeyForm,fd=new FormData(f);const body={name:fd.get('name'),role:fd.get('role')||'admin'};try{const data=await json(f.action,body);f.reset();await refreshMain();showSecret(data,'Admin automation key created. Copy it now; it will not be shown again.','Use this oak_ key only for /admin/api and /status. Never paste it into chat apps, SDK tools, browser code, prompts, logs, or issue trackers.')}catch(err){showError(err)}return}"
-        "if(profileForm){const f=profileForm,fd=new FormData(f);const label=String(fd.get('label')||'').trim();const templateId=fd.get('profile_preset')||'chat_only';const profile=buildProfile(templateId,String(fd.get('id')||'').trim()||slug(label));profile.status_visibility={level:fd.get('status_visibility')||profile.status_visibility.level};profile.fallback={cloud_allowed:fd.get('cloud_allowed')==='on'};profile.native_passthrough={enabled:profile.native_passthrough.enabled||fd.get('native_passthrough')==='on'};profile.model_access={mode:fd.get('model_access')||'catalog'};"
-        "const protocols=values(fd,'protocols');if(protocols.length) profile.protocols=protocols;"
-        "const models=values(fd,'models');if(models.length) profile.models=models;"
-        "const workflows=values(fd,'workflows');if(workflows.length) profile.workflows=workflows;"
-        "const tags=values(fd,'tags');if(tags.length) profile.allow.tags=[...new Set([...(profile.allow.tags||[]),...tags])];"
+        "if(profileForm){const f=profileForm,fd=new FormData(f);const label=String(fd.get('label')||'').trim();const profile=buildProfileFromForm(fd,f,String(fd.get('id')||'').trim()||slug(label));"
         "const extra=String(fd.get('advanced_json')||'').trim();"
         "try{if(extra){Object.assign(profile,JSON.parse(extra))}"
         "const body={name:label||profile.id,label:label||profile.id,profile};"
