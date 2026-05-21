@@ -97,6 +97,29 @@ def event_from_execution_result(result: VideoExecutionResult) -> dict[str, Any]:
     )
 
 
+def completed_asset_from_stored_video(
+    *,
+    filename: str,
+    asset_id: str,
+    content_url: str,
+    media_type: str | None = None,
+) -> dict[str, Any]:
+    """Build the persisted asset shape for a completed stored ``vid_*`` asset."""
+
+    handle = _string(asset_id)
+    if not handle.startswith("vid_"):
+        raise ValueError("video asset_id must start with 'vid_'")
+    signed_url = _string(content_url)
+    if not signed_url:
+        raise ValueError("content_url is required")
+    return video_media_jobs.normalize_video_asset(
+        filename=filename,
+        asset_id=handle,
+        content_url=signed_url,
+        media_type=media_type,
+    )
+
+
 def content_response_from_job(job: Mapping[str, Any]) -> dict[str, Any]:
     """Project a completed durable job to the ``GET /v1/videos/{id}/content`` shape."""
 
@@ -106,12 +129,15 @@ def content_response_from_job(job: Mapping[str, Any]) -> dict[str, Any]:
     first = next((asset for asset in assets if isinstance(asset, Mapping)), None)
     if first is None:
         raise ValueError("succeeded video job has no content asset")
+    content_url = first.get("content_url") or first.get("url")
+    if not content_url:
+        raise ValueError("succeeded video job has no signed content URL")
     return {
         "id": job.get("job_id"),
         "object": "video.content",
         "media_type": first.get("media_type") or "application/octet-stream",
         "asset_id": first.get("asset_id"),
-        "url": first.get("content_url") or first.get("url"),
+        "url": content_url,
         "filename": first.get("filename"),
     }
 

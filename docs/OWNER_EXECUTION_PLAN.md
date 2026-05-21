@@ -247,10 +247,19 @@ Initial endpoints:
 - [x] image job content retrieval through `/gateway/v1/media/jobs/{job_id}/content`
 - [x] ComfyUI image-generation adapter integration for long-running jobs
 - [x] ComfyUI audio/music/SFX adapter integration for long-running jobs
+- [x] ComfyUI video adapter integration for long-running jobs
 - [x] generic `/gateway/v1/assets/*` serving
 - [x] pure audio/video media-job contract helpers for safe metadata, assets, and route-shaped status payloads
 - [x] pure resource-admission decision core for service availability, reserved resources, queue depth, and per-app concurrency facts
-- [ ] ComfyUI video adapter integration for long-running jobs
+
+Video durable integration contract: after `proxy.py` stores completed bytes via
+the generic asset cache and receives a `vid_*` handle, call
+`video_media_job_http.completed_asset_from_stored_video(filename=...,
+asset_id=..., content_url=build_signed_asset_url(...))`, then pass the result
+as `VideoExecutionResult.assets` into `update_from_execution_result`. Completed
+video jobs must persist an asset with `asset_id`, `filename`, `media_type`, and
+a fresh signed `content_url`; `content_response_from_job` intentionally rejects
+succeeded jobs that have no dereferenceable content URL.
 
 ### 6. SDK/App Harness — executable harness landed
 

@@ -52,7 +52,14 @@ import metrics_store
 import metrics_sampler
 import responses_store
 import responses_translator
-from gateway import admin_store, audio_media_jobs, media_jobs, receipt_store
+from gateway import (
+    admin_store,
+    audio_media_jobs,
+    media_jobs,
+    receipt_store,
+    video_media_job_http,
+    video_media_jobs,
+)
 from gateway.admin_api import AdminAuthError, create_admin_router
 from gateway.admin_oidc import (
     IDTokenClaimsError,
@@ -7161,6 +7168,12 @@ async def lifespan(app: FastAPI):
                     f"[proxy] Resumed {resumed_audio} pending audio media job(s)",
                     flush=True,
                 )
+            resumed_video = _resume_pending_video_media_jobs()
+            if resumed_video:
+                print(
+                    f"[proxy] Resumed {resumed_video} pending video media job(s)",
+                    flush=True,
+                )
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Media job store failed to start: {e}", flush=True)
 
@@ -10630,6 +10643,18 @@ def _openai_audio_payload_from_media_job(
     }
 
 
+def _openai_video_payload_from_media_job(
+    job: Mapping[str, Any],
+    request: Request,
+) -> dict[str, Any]:
+    return {
+        "object": "video.generation",
+        "created": int(job.get("updated_at") or time.time()),
+        "job_id": job.get("job_id"),
+        "data": _media_job_asset_items(job, request, kind="vid"),
+    }
+
+
 def _media_job_content_route_policy(job: Mapping[str, Any]) -> dict[str, Any] | None:
     intent = str(job.get("intent") or "")
     if intent == "image.generate":
@@ -11325,8 +11350,505 @@ async def _submit_audio_media_job(
     return _image_media_job_response(created.to_dict("internal"), request, status_code=202)
 
 
+_VIDEO_MEDIA_JOB_INTENTS = frozenset({INTENT_VIDEO_GENERATE})
+_video_media_job_tasks: set[asyncio.Task] = set()
+_video_media_job_scheduled: set[str] = set()
+_video_media_job_semaphore = asyncio.Semaphore(1)
+_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS = 5.0
+
+
+def _video_media_job_policy() -> dict[str, Any]:
+    return _RUNTIME_ROUTE_POLICY["/v1/videos"]
+
+
+def _video_generation_body_from_media_job_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if payload.get("intent") != INTENT_VIDEO_GENERATE:
+        return None
+    request_body = payload.get("request")
+    if not isinstance(request_body, Mapping):
+        request_body = payload.get("parameters")
+    return dict(request_body) if isinstance(request_body, Mapping) else None
+
+
+def _validate_video_media_job_body(body: Mapping[str, Any]) -> tuple[str | None, Response | None]:
+    unknown_video_fields = detect_unknown_top_level_fields(
+        body,
+        STANDARD_VIDEO_CREATE_FIELDS,
+    )
+    if unknown_video_fields:
+        first_name, first_reason = next(iter(unknown_video_fields.items()))
+        return None, Response(
+            content=json.dumps({"error": {
+                "message": first_reason,
+                "type": "invalid_request_error",
+                "param": first_name,
+                "code": "unknown_parameter",
+            }}),
+            status_code=400,
+            media_type="application/json",
+        )
+    prompt = body.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return None, Response(
+            content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    try:
+        model_resolution = resolve_model_for_operation("videos", requested_model)
+    except ModelCompatibilityError as exc:
+        return None, model_compatibility_error(str(exc))
+    workflow_candidate = (
+        model_resolution.effective_model
+        if model_resolution.is_openai_alias
+        else requested_model
+    )
+    workflow_name, workflow_cfg = _resolve_video_workflow(workflow_candidate)
+    if not workflow_cfg:
+        return None, Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"Unknown video model/workflow: {workflow_candidate}",
+                    "type": "invalid_request_error",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+    return str(workflow_name), None
+
+
+def _persist_video_media_job_payload(
+    job_id: str,
+    *,
+    body: Mapping[str, Any],
+    request: Request,
+    auth_context: AuthContext,
+) -> None:
+    _persist_image_media_job_payload(
+        job_id,
+        body=body,
+        request=request,
+        auth_context=auth_context,
+    )
+
+
+def _load_video_media_job_payload(job_id: str) -> dict[str, Any] | None:
+    return _load_image_media_job_payload(job_id)
+
+
+def _delete_video_media_job_payload(job_id: str) -> None:
+    _delete_image_media_job_payload(job_id)
+
+
+def _request_shim_from_video_job_payload(payload: Mapping[str, Any]) -> _JsonBodyRequestShim | None:
+    body = payload.get("body")
+    if not isinstance(body, Mapping):
+        return None
+    url = payload.get("url")
+    headers = payload.get("headers")
+    if not isinstance(url, Mapping):
+        url = {}
+    if not isinstance(headers, Mapping):
+        headers = {}
+    return _JsonBodyRequestShim(
+        body=copy.deepcopy(dict(body)),
+        headers={str(k): str(v) for k, v in headers.items()},
+        scheme=str(url.get("scheme") or "http"),
+        netloc=str(url.get("netloc") or headers.get("host") or "127.0.0.1"),
+    )
+
+
+def _mark_video_media_job_failed(
+    job_id: str,
+    message: str,
+    *,
+    http_status: int | None = None,
+) -> None:
+    metadata_patch: dict[str, Any] = {}
+    if http_status is not None:
+        metadata_patch["last_http_status"] = int(http_status)
+    try:
+        media_jobs.update_status(
+            job_id,
+            media_jobs.STATUS_FAILED,
+            error=message[:500],
+            metadata_patch=metadata_patch or None,
+            path=media_jobs.DB_PATH,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] video media job fail update failed for {job_id}: {exc}", flush=True)
+    try:
+        media_jobs.append_event(
+            job_id,
+            "failed",
+            {
+                "phase": "failed",
+                "status": media_jobs.STATUS_FAILED,
+                "progress": 100,
+                "http_status": http_status or 0,
+            },
+            path=media_jobs.DB_PATH,
+        )
+    except Exception:
+        pass
+
+
+def _video_response_status(response: Response) -> tuple[str | None, int]:
+    parsed = _image_response_json(response)
+    status_value = parsed.get("status")
+    progress = parsed.get("progress", 0)
+    try:
+        progress_value = max(0, min(int(progress), 100))
+    except (TypeError, ValueError):
+        progress_value = 0
+    return str(status_value) if status_value else None, progress_value
+
+
+def _video_suffix_for_response(response: Response, *, filename: str | None = None) -> str:
+    if filename:
+        suffix = Path(filename).suffix.lower()
+        if suffix in {".mp4", ".webm", ".mov", ".mkv"}:
+            return suffix
+    media_type = str(getattr(response, "media_type", None) or response.headers.get("content-type", ""))
+    media_type = media_type.split(";", 1)[0].strip().lower()
+    return {
+        "video/mp4": ".mp4",
+        "video/webm": ".webm",
+        "video/quicktime": ".mov",
+        "video/x-matroska": ".mkv",
+    }.get(media_type, ".mp4")
+
+
+def _video_filename_from_response(response: Response, *, default: str) -> str:
+    disposition = response.headers.get("content-disposition", "")
+    marker = "filename="
+    if marker in disposition:
+        raw = disposition.split(marker, 1)[1].strip().strip('"')
+        if raw:
+            return Path(raw).name
+    suffix = _video_suffix_for_response(response)
+    return f"{default}{suffix}"
+
+
+async def _run_video_media_job(job_id: str) -> None:
+    async with _video_media_job_semaphore:
+        job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+        if not job or job.get("status") in media_jobs.TERMINAL_STATUSES:
+            return
+
+        payload = _load_video_media_job_payload(job_id)
+        request_shim = _request_shim_from_video_job_payload(payload or {})
+        if payload is None or request_shim is None:
+            _mark_video_media_job_failed(job_id, "Video media job payload is missing or invalid")
+            return
+
+        auth_context = _auth_context_from_image_job_payload(payload)
+        try:
+            media_jobs.update_status(
+                job_id,
+                media_jobs.STATUS_RUNNING,
+                progress=2,
+                metadata_patch={"started_at": int(time.time())},
+                path=media_jobs.DB_PATH,
+            )
+            media_jobs.append_event(
+                job_id,
+                "started",
+                video_media_jobs.video_status_event(
+                    status=media_jobs.STATUS_RUNNING,
+                    progress=2,
+                    phase="submitting",
+                ),
+                path=media_jobs.DB_PATH,
+            )
+            submit_response = await proxy_comfy_video_create(request_shim, auth_context)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            _mark_video_media_job_failed(
+                job_id,
+                f"Video media job executor error: {type(exc).__name__}",
+                http_status=502,
+            )
+            return
+
+        submit_status = int(getattr(submit_response, "status_code", 0) or 0)
+        if not 200 <= submit_status < 300:
+            message, _code = _image_response_error(submit_response)
+            _mark_video_media_job_failed(job_id, message, http_status=submit_status)
+            return
+
+        submit_payload = _image_response_json(submit_response)
+        video_id = submit_payload.get("id")
+        if not isinstance(video_id, str) or not video_id:
+            _mark_video_media_job_failed(
+                job_id,
+                "Video generation succeeded at submit but returned no video id",
+                http_status=submit_status,
+            )
+            return
+
+        media_jobs.update_status(
+            job_id,
+            media_jobs.STATUS_RUNNING,
+            progress=5,
+            metadata_patch={
+                "upstream_video_id": video_id,
+                "last_http_status": submit_status,
+            },
+            path=media_jobs.DB_PATH,
+        )
+        media_jobs.append_event(
+            job_id,
+            "submitted",
+            video_media_jobs.video_status_event(
+                status=media_jobs.STATUS_RUNNING,
+                progress=5,
+                phase="queued",
+            ),
+            path=media_jobs.DB_PATH,
+        )
+
+        deadline = time.monotonic() + max(1, COMFY_VIDEO_TIMEOUT)
+        last_progress = 5
+        while time.monotonic() < deadline:
+            await asyncio.sleep(_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS)
+            status_response = await proxy_comfy_video_status(video_id, auth_context)
+            status_code = int(getattr(status_response, "status_code", 0) or 0)
+            if status_code >= 500:
+                message, _code = _image_response_error(status_response)
+                _mark_video_media_job_failed(job_id, message, http_status=status_code)
+                return
+            status_value, progress = _video_response_status(status_response)
+            if status_value in {"queued", "running"}:
+                progress = max(last_progress, min(progress or last_progress, 95))
+                if progress != last_progress:
+                    last_progress = progress
+                    media_jobs.update_status(
+                        job_id,
+                        media_jobs.STATUS_RUNNING,
+                        progress=progress,
+                        path=media_jobs.DB_PATH,
+                    )
+                    media_jobs.append_event(
+                        job_id,
+                        "progress",
+                        video_media_jobs.video_status_event(
+                            status=media_jobs.STATUS_RUNNING,
+                            progress=progress,
+                            phase=status_value,
+                        ),
+                        path=media_jobs.DB_PATH,
+                    )
+                continue
+            if status_value == "failed":
+                message, _code = _image_response_error(status_response)
+                if message.startswith("image generation failed"):
+                    parsed = _image_response_json(status_response)
+                    message = str(parsed.get("error") or "Video generation failed")
+                _mark_video_media_job_failed(job_id, message, http_status=status_code)
+                return
+            if status_value != "succeeded":
+                continue
+
+            content_response = await proxy_comfy_video_content(video_id, auth_context)
+            content_status = int(getattr(content_response, "status_code", 0) or 0)
+            if not 200 <= content_status < 300:
+                message, _code = _image_response_error(content_response)
+                _mark_video_media_job_failed(job_id, message, http_status=content_status)
+                return
+
+            content = bytes(getattr(content_response, "body", b"") or b"")
+            filename = _video_filename_from_response(
+                content_response,
+                default=video_id,
+            )
+            suffix = _video_suffix_for_response(content_response, filename=filename)
+            asset_id = store_asset_bytes(
+                content,
+                kind="vid",
+                suffix=suffix,
+                owner_key_hash=_asset_owner_key(auth_context),
+            )
+            asset = video_media_job_http.completed_asset_from_stored_video(
+                filename=filename,
+                asset_id=asset_id,
+                content_url=build_signed_asset_url(request_shim, asset_id),
+                media_type=asset_media_type(asset_id),
+            )
+            media_jobs.update_status(
+                job_id,
+                media_jobs.STATUS_SUCCEEDED,
+                progress=100,
+                add_assets=[asset],
+                metadata_patch={
+                    "completed_at": int(time.time()),
+                    "upstream_video_id": video_id,
+                },
+                path=media_jobs.DB_PATH,
+            )
+            media_jobs.append_event(
+                job_id,
+                "completed",
+                video_media_jobs.video_status_event(
+                    status=media_jobs.STATUS_SUCCEEDED,
+                    progress=100,
+                    phase="complete",
+                    asset_count=1,
+                ),
+                path=media_jobs.DB_PATH,
+            )
+            _delete_video_media_job_payload(job_id)
+            return
+
+        _mark_video_media_job_failed(
+            job_id,
+            "Video media job timed out",
+            http_status=504,
+        )
+
+
+def _schedule_video_media_job(job_id: str) -> bool:
+    if job_id in _video_media_job_scheduled:
+        return False
+    _video_media_job_scheduled.add(job_id)
+    task = asyncio.create_task(_run_video_media_job(job_id))
+    _video_media_job_tasks.add(task)
+
+    def _done(done_task: asyncio.Task) -> None:
+        _video_media_job_tasks.discard(done_task)
+        _video_media_job_scheduled.discard(job_id)
+        try:
+            exc = done_task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            print(f"[proxy] video media job task crashed for {job_id}: {exc}", flush=True)
+
+    task.add_done_callback(_done)
+    return True
+
+
+def _resume_pending_video_media_jobs() -> int:
+    resumed = 0
+    for status_value in (media_jobs.STATUS_RUNNING, media_jobs.STATUS_QUEUED):
+        try:
+            rows = media_jobs.recent(
+                limit=200,
+                audience="internal",
+                status=status_value,
+                path=media_jobs.DB_PATH,
+            )
+        except Exception:
+            continue
+        for job in rows:
+            if job.get("intent") != INTENT_VIDEO_GENERATE:
+                continue
+            metadata = job.get("metadata") or {}
+            if not isinstance(metadata, Mapping) or metadata.get("mode") != "async_video_generation":
+                continue
+            job_id = str(job.get("job_id") or "")
+            if not job_id:
+                continue
+            if not _image_media_job_payload_path(job_id).exists():
+                _mark_video_media_job_failed(
+                    job_id,
+                    "Video media job payload missing after proxy restart",
+                )
+                continue
+            if _schedule_video_media_job(job_id):
+                resumed += 1
+    return resumed
+
+
+async def _submit_video_media_job(
+    *,
+    request: Request,
+    body: Mapping[str, Any],
+) -> Response:
+    auth_context = _gateway_auth_context(request, "/gateway/v1/media/jobs")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    policy_response = _enforce_runtime_route_policy(
+        auth_context,
+        "/gateway/v1/media/jobs",
+        policy=_video_media_job_policy(),
+    )
+    if policy_response is not None:
+        return policy_response
+
+    workflow_name, error_response = _validate_video_media_job_body(body)
+    if error_response is not None:
+        return error_response
+    assert workflow_name is not None
+
+    profile = _profile_for_auth_context(auth_context)
+    request_id = f"vidjob_{uuid.uuid4().hex}"
+    job = video_media_job_http.job_from_openai_video_request(
+        body,
+        video_media_job_http.VideoRequestContext(
+            workflow=workflow_name,
+            backend="comfyui",
+            request_id=request_id,
+            idempotency_key=request.headers.get("idempotency-key"),
+            app_profile=profile.id,
+            api_key_name=auth_context.identity.name if auth_context.identity else None,
+            parent_request_id=request_id,
+        ),
+    )
+
+    try:
+        _persist_video_media_job_payload(
+            job.job_id,
+            body=body,
+            request=request,
+            auth_context=auth_context,
+        )
+        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+    except Exception as exc:  # noqa: BLE001
+        _delete_video_media_job_payload(job.job_id)
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"Could not create video media job: {type(exc).__name__}",
+                    "type": "api_error",
+                }
+            }),
+            status_code=500,
+            media_type="application/json",
+        )
+
+    try:
+        media_jobs.append_event(
+            job.job_id,
+            "queued",
+            video_media_jobs.video_status_event(
+                status=media_jobs.STATUS_QUEUED,
+                progress=0,
+                phase="queued",
+            ),
+            path=media_jobs.DB_PATH,
+        )
+    except Exception:
+        pass
+    _schedule_video_media_job(job.job_id)
+    return _image_media_job_response(created.to_dict("internal"), request, status_code=202)
+
+
 def _unsupported_gateway_media_job_response(intent: str) -> Response:
-    supported_intents = ["image.generate", "audio.generate", "music.generate", "sfx.generate"]
+    supported_intents = [
+        "image.generate",
+        "audio.generate",
+        "music.generate",
+        "sfx.generate",
+        "video.generate",
+    ]
     return Response(
         content=json.dumps({
             "error": {
@@ -11358,6 +11880,9 @@ async def _dispatch_gateway_media_job_submission(
     audio_body = _audio_generation_body_from_media_job_payload({**payload, "intent": intent})
     if audio_body is not None:
         return await _submit_audio_media_job(request=request, intent=intent, body=audio_body)
+    video_body = _video_generation_body_from_media_job_payload({**payload, "intent": intent})
+    if video_body is not None:
+        return await _submit_video_media_job(request=request, body=video_body)
     body = _image_generation_body_from_media_job_payload(payload)
     if body is None:
         if intent == "image.generate":
@@ -11588,6 +12113,9 @@ async def gateway_media_job_content(job_id: str, request: Request):
     elif intent in _AUDIO_MEDIA_JOB_INTENTS:
         payload = _openai_audio_payload_from_media_job(job, request)
         missing_message = "media job has no audio assets"
+    elif intent == INTENT_VIDEO_GENERATE:
+        payload = _openai_video_payload_from_media_job(job, request)
+        missing_message = "media job has no video assets"
     else:
         return Response(
             content=json.dumps({

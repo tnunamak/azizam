@@ -46,10 +46,10 @@ class VideoMediaJobHttpAdapterTests(unittest.TestCase):
         self.assertNotIn("raw_body", job.metadata)
 
     def test_execution_result_builds_update_kwargs_and_event(self) -> None:
-        asset = video_media_jobs.normalize_video_asset(
+        asset = video_media_job_http.completed_asset_from_stored_video(
             filename="clip.mp4",
             asset_id="vid_abc",
-            content_url="/v1/videos/video_abc/content",
+            content_url="http://testserver/v1/assets/vid_abc/content?expires=1&sig=abc",
         )
         result = video_media_job_http.VideoExecutionResult(
             status=media_jobs.STATUS_SUCCEEDED,
@@ -83,10 +83,10 @@ class VideoMediaJobHttpAdapterTests(unittest.TestCase):
             status=media_jobs.STATUS_SUCCEEDED,
             progress=100,
             assets=[
-                video_media_jobs.normalize_video_asset(
+                video_media_job_http.completed_asset_from_stored_video(
                     filename="clip.mp4",
                     asset_id="vid_abc",
-                    content_url="/v1/videos/video_abc/content",
+                    content_url="http://testserver/v1/assets/vid_abc/content?expires=1&sig=abc",
                 )
             ],
             metadata={
@@ -104,7 +104,10 @@ class VideoMediaJobHttpAdapterTests(unittest.TestCase):
 
         self.assertEqual(generation["id"], "video_abc")
         self.assertEqual(generation["object"], "video.generation")
-        self.assertEqual(generation["content_url"], "/v1/videos/video_abc/content")
+        self.assertEqual(
+            generation["content_url"],
+            "http://testserver/v1/assets/vid_abc/content?expires=1&sig=abc",
+        )
         self.assertNotIn("metadata", generation)
         self.assertEqual(
             content,
@@ -113,10 +116,40 @@ class VideoMediaJobHttpAdapterTests(unittest.TestCase):
                 "object": "video.content",
                 "media_type": "video/mp4",
                 "asset_id": "vid_abc",
-                "url": "/v1/videos/video_abc/content",
+                "url": "http://testserver/v1/assets/vid_abc/content?expires=1&sig=abc",
                 "filename": "clip.mp4",
             },
         )
+
+    def test_completed_asset_from_stored_video_requires_vid_handle_and_url(self) -> None:
+        asset = video_media_job_http.completed_asset_from_stored_video(
+            filename="outputs/run/clip.webm",
+            asset_id="vid_def",
+            content_url="https://gateway.example/v1/assets/vid_def/content?expires=2&sig=def",
+        )
+
+        self.assertEqual(
+            asset,
+            {
+                "kind": "video",
+                "filename": "clip.webm",
+                "media_type": "video/webm",
+                "asset_id": "vid_def",
+                "content_url": "https://gateway.example/v1/assets/vid_def/content?expires=2&sig=def",
+            },
+        )
+        with self.assertRaises(ValueError):
+            video_media_job_http.completed_asset_from_stored_video(
+                filename="clip.mp4",
+                asset_id="img_not_video",
+                content_url="https://gateway.example/v1/assets/img_not_video/content?expires=2&sig=def",
+            )
+        with self.assertRaises(ValueError):
+            video_media_job_http.completed_asset_from_stored_video(
+                filename="clip.mp4",
+                asset_id="vid_missing_url",
+                content_url="",
+            )
 
     def test_content_response_requires_succeeded_job_with_asset(self) -> None:
         queued = media_jobs.MediaJob(
@@ -125,6 +158,20 @@ class VideoMediaJobHttpAdapterTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             video_media_job_http.content_response_from_job(queued)
+
+        missing_url = media_jobs.MediaJob(
+            intent=video_media_jobs.INTENT_VIDEO_GENERATE,
+            status=media_jobs.STATUS_SUCCEEDED,
+            assets=[
+                video_media_jobs.normalize_video_asset(
+                    filename="clip.mp4",
+                    asset_id="vid_missing_url",
+                )
+            ],
+        ).to_dict("internal")
+
+        with self.assertRaises(ValueError):
+            video_media_job_http.content_response_from_job(missing_url)
 
 
 if __name__ == "__main__":

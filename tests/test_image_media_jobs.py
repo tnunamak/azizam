@@ -333,8 +333,8 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             response = await proxy._dispatch_gateway_media_job_submission(
                 request=_StubJsonRequest({}),  # type: ignore[arg-type]
                 payload={
-                    "intent": "video.generate",
-                    "request": {"model": "ltx-2.3", "prompt": "private"},
+                    "intent": "avatar.generate",
+                    "request": {"model": "avatar-local", "prompt": "private"},
                 },
                 audience="client",
             )
@@ -345,7 +345,13 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["error"]["code"], "unsupported_media_job_intent")
         self.assertEqual(
             body["error"]["supported_intents"],
-            ["image.generate", "audio.generate", "music.generate", "sfx.generate"],
+            [
+                "image.generate",
+                "audio.generate",
+                "music.generate",
+                "sfx.generate",
+                "video.generate",
+            ],
         )
 
     async def test_content_route_returns_openai_image_payload_for_succeeded_job(self) -> None:
