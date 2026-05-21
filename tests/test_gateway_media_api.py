@@ -107,6 +107,14 @@ class GatewayMediaJobsNoStoreTests(unittest.TestCase):
             response.json()["error"]["code"], "media_job_not_found"
         )
 
+    def test_list_events_returns_404_without_store(self) -> None:
+        client = _make_client()
+        response = client.get("/gateway/v1/media/jobs/mj_unknown/events")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json()["error"]["code"], "media_job_not_found"
+        )
+
     def test_event_returns_503_without_store(self) -> None:
         client = _make_client()
         response = client.post(
@@ -325,6 +333,71 @@ class GatewayMediaJobsStoreTests(unittest.TestCase):
             "/gateway/v1/media/jobs/mj_missing/events",
             json={"event_type": "progress"},
         )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json()["error"]["code"], "media_job_not_found"
+        )
+
+    def test_list_events_returns_filtered_events(self) -> None:
+        seeded = self._seed()
+        media_jobs.append_event(
+            seeded["job_id"],
+            "queued",
+            {"queue_position": 4, "status": "queued"},
+            path=self.db,
+        )
+        media_jobs.append_event(
+            seeded["job_id"],
+            "progress",
+            {"progress": 42, "queue_position": 3, "phase": "sampling"},
+            path=self.db,
+        )
+
+        client = self._client()
+        response = client.get(
+            f"/gateway/v1/media/jobs/{seeded['job_id']}/events"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["schema_version"], 1)
+        self.assertEqual(body["audience"], "client")
+        self.assertEqual(body["job_id"], seeded["job_id"])
+        self.assertEqual(
+            [row["event_type"] for row in body["events"]],
+            ["queued", "progress"],
+        )
+        self.assertEqual(body["events"][0]["payload"], {"status": "queued"})
+        self.assertEqual(
+            body["events"][1]["payload"],
+            {"progress": 42, "phase": "sampling"},
+        )
+
+    def test_list_events_filters_after_id(self) -> None:
+        seeded = self._seed()
+        first_id = media_jobs.append_event(
+            seeded["job_id"], "queued", {"status": "queued"}, path=self.db
+        )
+        media_jobs.append_event(
+            seeded["job_id"], "progress", {"progress": 10}, path=self.db
+        )
+        client = self._client(audience="internal")
+
+        response = client.get(
+            f"/gateway/v1/media/jobs/{seeded['job_id']}/events",
+            params={"after_id": first_id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        events = response.json()["events"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "progress")
+        self.assertEqual(events[0]["payload"], {"progress": 10})
+
+    def test_list_events_unknown_job_returns_404(self) -> None:
+        client = self._client()
+        response = client.get("/gateway/v1/media/jobs/mj_missing/events")
+
         self.assertEqual(response.status_code, 404)
         self.assertEqual(
             response.json()["error"]["code"], "media_job_not_found"

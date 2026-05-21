@@ -81,6 +81,7 @@ POST /gateway/v1/media/jobs
 GET /gateway/v1/media/jobs
 GET /gateway/v1/media/jobs/{job_id}
 GET /gateway/v1/media/jobs/{job_id}/content
+GET /gateway/v1/media/jobs/{job_id}/events
 POST /gateway/v1/media/jobs/{job_id}/events
 POST /gateway/v1/media/jobs/{job_id}/cancel
 ```

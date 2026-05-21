@@ -114,8 +114,9 @@ Anthropic/Ollama protocol frontends:
   filtering and payload/secret shape guards.
 - `gateway/media_jobs.py` — gateway media-job model and durable store backing
   the `/gateway/v1/media/jobs` surface. The live proxy now executes
-  `image.generate` jobs from this surface and returns completed image payloads
-  at `/gateway/v1/media/jobs/{job_id}/content`.
+  `image.generate`, `audio.generate`, `music.generate`, and `sfx.generate`
+  jobs from this surface and returns completed image/audio asset payloads at
+  `/gateway/v1/media/jobs/{job_id}/content`.
 - `gateway/admin_store.py` — durable SQLite control-plane store for Users,
   ServiceAccounts, Apps, Profiles, Credentials, AdminRoles, and AuditEvents.
 - `gateway/admin_api.py` / `gateway/admin_runtime.py` — `/admin/api/*`

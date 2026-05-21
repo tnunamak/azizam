@@ -52,7 +52,7 @@ import metrics_store
 import metrics_sampler
 import responses_store
 import responses_translator
-from gateway import admin_store, media_jobs, receipt_store
+from gateway import admin_store, audio_media_jobs, media_jobs, receipt_store
 from gateway.admin_api import AdminAuthError, create_admin_router
 from gateway.admin_oidc import (
     IDTokenClaimsError,
@@ -7155,6 +7155,12 @@ async def lifespan(app: FastAPI):
                     f"[proxy] Resumed {resumed} pending image media job(s)",
                     flush=True,
                 )
+            resumed_audio = _resume_pending_audio_media_jobs()
+            if resumed_audio:
+                print(
+                    f"[proxy] Resumed {resumed_audio} pending audio media job(s)",
+                    flush=True,
+                )
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Media job store failed to start: {e}", flush=True)
 
@@ -10583,6 +10589,81 @@ def _openai_image_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, An
     }
 
 
+def _media_job_asset_items(
+    job: Mapping[str, Any],
+    request: Request,
+    *,
+    kind: str,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for asset in job.get("assets") or []:
+        if not isinstance(asset, Mapping):
+            continue
+        asset_id = asset.get("asset_id")
+        if not isinstance(asset_id, str):
+            continue
+        parsed = _parse_asset_id(asset_id)
+        if parsed is None or parsed[0] != kind:
+            continue
+        signed_url = build_signed_asset_url(request, asset_id)
+        item = {
+            key: asset[key]
+            for key in ("asset_id", "media_type", "size_bytes", "index")
+            if asset.get(key) is not None
+        }
+        item["url"] = signed_url
+        item["asset_url"] = signed_url
+        item["content_url"] = signed_url
+        items.append(item)
+    return items
+
+
+def _openai_audio_payload_from_media_job(
+    job: Mapping[str, Any],
+    request: Request,
+) -> dict[str, Any]:
+    return {
+        "object": "audio.generation",
+        "created": int(job.get("updated_at") or time.time()),
+        "job_id": job.get("job_id"),
+        "data": _media_job_asset_items(job, request, kind="aud"),
+    }
+
+
+def _media_job_content_route_policy(job: Mapping[str, Any]) -> dict[str, Any] | None:
+    intent = str(job.get("intent") or "")
+    if intent == "image.generate":
+        return _RUNTIME_ROUTE_POLICY["/gateway/v1/media/jobs/{job_id}/content"]
+    if intent in _AUDIO_MEDIA_JOB_INTENTS:
+        return _audio_media_job_policy()
+    if intent == INTENT_VIDEO_GENERATE:
+        return _RUNTIME_ROUTE_POLICY["/v1/videos/{video_id}/content"]
+    return None
+
+
+def _media_job_content_preflight_response(auth_context: AuthContext) -> Response | None:
+    media_protocols = ("openai.images", "openai.audio", "openai.video")
+    decisions = [
+        evaluate_and_apply(
+            auth_context.identity,
+            make_policy_request(protocol=protocol),
+        )
+        for protocol in media_protocols
+    ]
+    if any(decision.allowed for decision in decisions):
+        return None
+
+    profile = _profile_for_auth_context(auth_context)
+    return _policy_denied_response(
+        PolicyDecision(
+            decision=DENIED,
+            sources=(f"profile:{profile.id}", "policy:media-job-content"),
+            reasons=("profile does not permit media job content",),
+            visibility_level=profile.status_visibility.level,
+        )
+    )
+
+
 def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthContext:
     auth = payload.get("auth")
     if not isinstance(auth, Mapping):
@@ -10911,17 +10992,351 @@ def _image_generation_body_from_media_job_payload(
     }
 
 
+_AUDIO_MEDIA_JOB_INTENTS = frozenset({"audio.generate", "music.generate", "sfx.generate"})
+_audio_media_job_tasks: set[asyncio.Task] = set()
+_audio_media_job_scheduled: set[str] = set()
+_audio_media_job_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
+
+
+def _audio_media_job_policy() -> dict[str, Any]:
+    return {
+        "protocol": "openai.audio",
+        "intent": INTENT_AUDIO_GENERATE,
+        "backend": "comfyui",
+        "capability_exposure": "default",
+        "capability_trust_tier": "stable",
+        "capability_resource_tier": "batch",
+    }
+
+
+def _audio_generation_body_from_media_job_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    intent = payload.get("intent")
+    if intent not in _AUDIO_MEDIA_JOB_INTENTS:
+        return None
+    request_body = payload.get("request")
+    if not isinstance(request_body, Mapping):
+        request_body = payload.get("parameters")
+    return dict(request_body) if isinstance(request_body, Mapping) else None
+
+
+def _persist_audio_media_job_payload(
+    job_id: str,
+    *,
+    body: Mapping[str, Any],
+    request: Request,
+    auth_context: AuthContext,
+) -> None:
+    _persist_image_media_job_payload(
+        job_id,
+        body=body,
+        request=request,
+        auth_context=auth_context,
+    )
+
+
+def _load_audio_media_job_payload(job_id: str) -> dict[str, Any] | None:
+    return _load_image_media_job_payload(job_id)
+
+
+def _delete_audio_media_job_payload(job_id: str) -> None:
+    _delete_image_media_job_payload(job_id)
+
+
+def _request_shim_from_audio_job_payload(payload: Mapping[str, Any]) -> _JsonBodyRequestShim | None:
+    body = payload.get("body")
+    if not isinstance(body, Mapping):
+        return None
+    url = payload.get("url")
+    headers = payload.get("headers")
+    if not isinstance(url, Mapping):
+        url = {}
+    if not isinstance(headers, Mapping):
+        headers = {}
+    return _JsonBodyRequestShim(
+        body=copy.deepcopy(dict(body)),
+        headers={str(k): str(v) for k, v in headers.items()},
+        scheme=str(url.get("scheme") or "http"),
+        netloc=str(url.get("netloc") or headers.get("host") or "127.0.0.1"),
+    )
+
+
+def _mark_audio_media_job_failed(
+    job_id: str,
+    message: str,
+    *,
+    http_status: int | None = None,
+) -> None:
+    metadata_patch: dict[str, Any] = {}
+    if http_status is not None:
+        metadata_patch["last_http_status"] = int(http_status)
+    try:
+        media_jobs.update_status(
+            job_id,
+            media_jobs.STATUS_FAILED,
+            error=message[:500],
+            metadata_patch=metadata_patch or None,
+            path=media_jobs.DB_PATH,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] audio media job fail update failed for {job_id}: {exc}", flush=True)
+    try:
+        media_jobs.append_event(
+            job_id,
+            "failed",
+            {
+                "phase": "failed",
+                "status": media_jobs.STATUS_FAILED,
+                "progress": 100,
+                "http_status": http_status or 0,
+            },
+            path=media_jobs.DB_PATH,
+        )
+    except Exception:
+        pass
+
+
+async def _run_audio_media_job(job_id: str) -> None:
+    async with _audio_media_job_semaphore:
+        job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+        if not job or job.get("status") in media_jobs.TERMINAL_STATUSES:
+            return
+
+        payload = _load_audio_media_job_payload(job_id)
+        request_shim = _request_shim_from_audio_job_payload(payload or {})
+        if payload is None or request_shim is None:
+            _mark_audio_media_job_failed(job_id, "Audio media job payload is missing or invalid")
+            return
+
+        auth_context = _auth_context_from_image_job_payload(payload)
+        try:
+            media_jobs.update_status(
+                job_id,
+                media_jobs.STATUS_RUNNING,
+                progress=5,
+                metadata_patch={"started_at": int(time.time())},
+                path=media_jobs.DB_PATH,
+            )
+            media_jobs.append_event(
+                job_id,
+                "started",
+                {
+                    "phase": "running",
+                    "status": media_jobs.STATUS_RUNNING,
+                    "progress": 5,
+                },
+                path=media_jobs.DB_PATH,
+            )
+            response = await proxy_audio_generate(request_shim, auth_context)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            _mark_audio_media_job_failed(
+                job_id,
+                f"Audio media job executor error: {type(exc).__name__}",
+                http_status=502,
+            )
+            return
+
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        if not 200 <= status_code < 300:
+            message, _code = _image_response_error(response)
+            _mark_audio_media_job_failed(job_id, message, http_status=status_code)
+            return
+
+        content = bytes(getattr(response, "body", b"") or b"")
+        media_type = str(getattr(response, "media_type", None) or "audio/wav")
+        body = payload.get("body") if isinstance(payload, Mapping) else {}
+        response_format = body.get("response_format") if isinstance(body, Mapping) else None
+        artifacts = audio_media_jobs.audio_artifacts_from_result(
+            content,
+            response_format=str(response_format) if response_format else None,
+            media_type=media_type,
+        )
+        assets = audio_media_jobs.store_audio_artifacts(
+            artifacts,
+            store_asset=store_asset_bytes,
+            owner_key_hash=_asset_owner_key(auth_context),
+        )
+        if not assets:
+            _mark_audio_media_job_failed(
+                job_id,
+                "Audio generation succeeded but returned no reusable assets",
+                http_status=status_code,
+            )
+            return
+
+        media_jobs.update_status(
+            job_id,
+            media_jobs.STATUS_SUCCEEDED,
+            progress=100,
+            add_assets=assets,
+            metadata_patch={"completed_at": int(time.time())},
+            path=media_jobs.DB_PATH,
+        )
+        media_jobs.append_event(
+            job_id,
+            "completed",
+            {
+                **audio_media_jobs.complete_audio_job_payload(assets),
+                "status": media_jobs.STATUS_SUCCEEDED,
+                "progress": 100,
+            },
+            path=media_jobs.DB_PATH,
+        )
+        _delete_audio_media_job_payload(job_id)
+
+
+def _schedule_audio_media_job(job_id: str) -> bool:
+    if job_id in _audio_media_job_scheduled:
+        return False
+    _audio_media_job_scheduled.add(job_id)
+    task = asyncio.create_task(_run_audio_media_job(job_id))
+    _audio_media_job_tasks.add(task)
+
+    def _done(done_task: asyncio.Task) -> None:
+        _audio_media_job_tasks.discard(done_task)
+        _audio_media_job_scheduled.discard(job_id)
+        try:
+            exc = done_task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            print(f"[proxy] audio media job task crashed for {job_id}: {exc}", flush=True)
+
+    task.add_done_callback(_done)
+    return True
+
+
+def _resume_pending_audio_media_jobs() -> int:
+    resumed = 0
+    for status_value in (media_jobs.STATUS_RUNNING, media_jobs.STATUS_QUEUED):
+        try:
+            rows = media_jobs.recent(
+                limit=200,
+                audience="internal",
+                status=status_value,
+                path=media_jobs.DB_PATH,
+            )
+        except Exception:
+            continue
+        for job in rows:
+            if job.get("intent") not in _AUDIO_MEDIA_JOB_INTENTS:
+                continue
+            metadata = job.get("metadata") or {}
+            if not isinstance(metadata, Mapping) or metadata.get("mode") != "async_audio_generation":
+                continue
+            job_id = str(job.get("job_id") or "")
+            if not job_id:
+                continue
+            if not _image_media_job_payload_path(job_id).exists():
+                _mark_audio_media_job_failed(
+                    job_id,
+                    "Audio media job payload missing after proxy restart",
+                )
+                continue
+            if _schedule_audio_media_job(job_id):
+                resumed += 1
+    return resumed
+
+
+async def _submit_audio_media_job(
+    *,
+    request: Request,
+    intent: str,
+    body: Mapping[str, Any],
+) -> Response:
+    auth_context = _gateway_auth_context(request, "/gateway/v1/media/jobs")
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    policy_response = _enforce_runtime_route_policy(
+        auth_context,
+        "/gateway/v1/media/jobs",
+        policy=_audio_media_job_policy(),
+    )
+    if policy_response is not None:
+        return policy_response
+
+    profile = _profile_for_auth_context(auth_context)
+    request_id = f"audjob_{uuid.uuid4().hex}"
+    workflow_name, _workflow_cfg = _resolve_audio_workflow(str(body.get("model", AUDIO_DEFAULT_WORKFLOW)))
+    if not workflow_name:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"Unknown audio model: {body.get('model', AUDIO_DEFAULT_WORKFLOW)}",
+                    "type": "invalid_request_error",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+    job = audio_media_jobs.audio_job_from_request(
+        body,
+        request_id=request_id,
+        workflow=f"audio.generate.{workflow_name}",
+        backend="comfyui",
+        app_profile=profile.id,
+        api_key_name=auth_context.identity.name if auth_context.identity else None,
+        parent_request_id=request_id,
+    )
+    job.intent = intent
+    metadata = dict(job.metadata or {})
+    metadata["mode"] = "async_audio_generation"
+    job.metadata = metadata
+
+    try:
+        _persist_audio_media_job_payload(
+            job.job_id,
+            body=body,
+            request=request,
+            auth_context=auth_context,
+        )
+        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+    except Exception as exc:  # noqa: BLE001
+        _delete_audio_media_job_payload(job.job_id)
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"Could not create audio media job: {type(exc).__name__}",
+                    "type": "api_error",
+                }
+            }),
+            status_code=500,
+            media_type="application/json",
+        )
+
+    try:
+        media_jobs.append_event(
+            job.job_id,
+            "queued",
+            {
+                "phase": "queued",
+                "status": media_jobs.STATUS_QUEUED,
+                "progress": 0,
+            },
+            path=media_jobs.DB_PATH,
+        )
+    except Exception:
+        pass
+    _schedule_audio_media_job(job.job_id)
+    return _image_media_job_response(created.to_dict("internal"), request, status_code=202)
+
+
 def _unsupported_gateway_media_job_response(intent: str) -> Response:
+    supported_intents = ["image.generate", "audio.generate", "music.generate", "sfx.generate"]
     return Response(
         content=json.dumps({
             "error": {
                 "message": (
                     f"Media job intent {intent!r} is not executable yet. "
-                    "Currently supported: image.generate."
+                    f"Currently supported: {', '.join(supported_intents)}."
                 ),
                 "type": "invalid_request_error",
                 "code": "unsupported_media_job_intent",
-                "supported_intents": ["image.generate"],
+                "supported_intents": supported_intents,
             }
         }),
         status_code=400,
@@ -10940,6 +11355,9 @@ async def _dispatch_gateway_media_job_submission(
     if not isinstance(intent, str) or not intent.strip():
         return None
     intent = intent.strip()
+    audio_body = _audio_generation_body_from_media_job_payload({**payload, "intent": intent})
+    if audio_body is not None:
+        return await _submit_audio_media_job(request=request, intent=intent, body=audio_body)
     body = _image_generation_body_from_media_job_payload(payload)
     if body is None:
         if intent == "image.generate":
@@ -11117,19 +11535,16 @@ async def gateway_image_generations_media_job(request: Request):
 
 @app.get("/gateway/v1/media/jobs/{job_id}/content")
 async def gateway_media_job_content(job_id: str, request: Request):
-    """Return an OpenAI image payload for a completed gateway image media job."""
+    """Return signed output asset handles for a completed gateway media job."""
     auth_context = _gateway_auth_context(
         request,
         "/gateway/v1/media/jobs/{job_id}/content",
     )
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(
-        auth_context,
-        "/gateway/v1/media/jobs/{job_id}/content",
-    )
-    if policy_response is not None:
-        return policy_response
+    preflight_response = _media_job_content_preflight_response(auth_context)
+    if preflight_response is not None:
+        return preflight_response
     job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
     if job is None:
         return Response(
@@ -11143,18 +11558,15 @@ async def gateway_media_job_content(job_id: str, request: Request):
             status_code=404,
             media_type="application/json",
         )
-    if job.get("intent") != "image.generate":
-        return Response(
-            content=json.dumps({
-                "error": {
-                    "message": "media job content is only implemented for image.generate jobs",
-                    "type": "invalid_request_error",
-                    "code": "unsupported_media_job_content",
-                }
-            }),
-            status_code=400,
-            media_type="application/json",
+    route_policy = _media_job_content_route_policy(job)
+    if route_policy is not None:
+        policy_response = _enforce_runtime_route_policy(
+            auth_context,
+            "/gateway/v1/media/jobs/{job_id}/content",
+            policy=route_policy,
         )
+        if policy_response is not None:
+            return policy_response
     status_value = str(job.get("status") or "")
     if status_value != media_jobs.STATUS_SUCCEEDED:
         return Response(
@@ -11169,12 +11581,30 @@ async def gateway_media_job_content(job_id: str, request: Request):
             status_code=409,
             media_type="application/json",
         )
-    payload = _openai_image_payload_from_media_job(job)
+    intent = str(job.get("intent") or "")
+    if intent == "image.generate":
+        payload = _openai_image_payload_from_media_job(job)
+        missing_message = "media job has no image assets"
+    elif intent in _AUDIO_MEDIA_JOB_INTENTS:
+        payload = _openai_audio_payload_from_media_job(job, request)
+        missing_message = "media job has no audio assets"
+    else:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"media job content is not implemented for {intent or 'unknown'} jobs",
+                    "type": "invalid_request_error",
+                    "code": "unsupported_media_job_content",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
     if not payload["data"]:
         return Response(
             content=json.dumps({
                 "error": {
-                    "message": "media job has no image assets",
+                    "message": missing_message,
                     "type": "api_error",
                     "code": "media_job_assets_missing",
                 }

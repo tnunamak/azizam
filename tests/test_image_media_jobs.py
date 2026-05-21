@@ -343,7 +343,10 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         body = json.loads(response.body.decode("utf-8"))
         self.assertEqual(body["error"]["code"], "unsupported_media_job_intent")
-        self.assertEqual(body["error"]["supported_intents"], ["image.generate"])
+        self.assertEqual(
+            body["error"]["supported_intents"],
+            ["image.generate", "audio.generate", "music.generate", "sfx.generate"],
+        )
 
     async def test_content_route_returns_openai_image_payload_for_succeeded_job(self) -> None:
         job = media_jobs.MediaJob(

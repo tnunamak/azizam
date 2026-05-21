@@ -23,6 +23,7 @@ Endpoints
 * ``POST /gateway/v1/media/jobs``             — create/attach or delegate executable media job submit
 * ``GET /gateway/v1/media/jobs``              — recent media jobs
 * ``GET /gateway/v1/media/jobs/{job_id}``     — single media job
+* ``GET /gateway/v1/media/jobs/{job_id}/events`` — list job events
 * ``POST /gateway/v1/media/jobs/{job_id}/events`` — append a job event
 * ``POST /gateway/v1/media/jobs/{job_id}/cancel`` — cancel a non-terminal job
 
@@ -55,6 +56,7 @@ ReceiptLister = Callable[..., list[dict[str, Any]]]
 MediaJobCreator = Callable[..., dict[str, Any]]
 MediaJobGetter = Callable[..., dict[str, Any] | None]
 MediaJobLister = Callable[..., list[dict[str, Any]]]
+MediaJobEventLister = Callable[..., list[dict[str, Any]]]
 MediaJobEventAppender = Callable[..., int]
 MediaJobCanceler = Callable[..., dict[str, Any] | None]
 MediaJobSubmitter = Callable[..., Any]
@@ -164,6 +166,7 @@ def _build_media_job_providers(
     media_job_creator: MediaJobCreator | None,
     media_job_getter: MediaJobGetter | None,
     media_job_lister: MediaJobLister | None,
+    media_job_event_lister: MediaJobEventLister | None,
     media_job_event_appender: MediaJobEventAppender | None,
     media_job_canceler: MediaJobCanceler | None,
     media_job_store_path: str | Path | None,
@@ -171,6 +174,7 @@ def _build_media_job_providers(
     MediaJobCreator | None,
     MediaJobGetter | None,
     MediaJobLister | None,
+    MediaJobEventLister | None,
     MediaJobEventAppender | None,
     MediaJobCanceler | None,
 ]:
@@ -182,6 +186,7 @@ def _build_media_job_providers(
             media_job_creator,
             media_job_getter,
             media_job_lister,
+            media_job_event_lister,
             media_job_event_appender,
             media_job_canceler,
         )
@@ -227,6 +232,17 @@ def _build_media_job_providers(
             job_id, event_type, payload, path=store_path
         )
 
+    def store_event_lister(
+        job_id: str, *, audience: str, limit: int, after_id: int | None = None
+    ) -> list[dict[str, Any]]:
+        return _media_jobs.events(
+            job_id,
+            audience=audience,
+            limit=limit,
+            after_id=after_id,
+            path=store_path,
+        )
+
     def store_canceler(
         job_id: str, *, audience: str, reason: str | None = None
     ) -> dict[str, Any] | None:
@@ -244,6 +260,7 @@ def _build_media_job_providers(
         media_job_creator or store_creator,
         media_job_getter or store_getter,
         media_job_lister or store_lister,
+        media_job_event_lister or store_event_lister,
         media_job_event_appender or store_event_appender,
         media_job_canceler or store_canceler,
     )
@@ -260,6 +277,7 @@ def create_gateway_router(
     media_job_creator: MediaJobCreator | None = None,
     media_job_getter: MediaJobGetter | None = None,
     media_job_lister: MediaJobLister | None = None,
+    media_job_event_lister: MediaJobEventLister | None = None,
     media_job_event_appender: MediaJobEventAppender | None = None,
     media_job_canceler: MediaJobCanceler | None = None,
     media_job_submitter: MediaJobSubmitter | None = None,
@@ -296,12 +314,14 @@ def create_gateway_router(
         media_job_creator,
         media_job_getter,
         media_job_lister,
+        media_job_event_lister,
         media_job_event_appender,
         media_job_canceler,
     ) = _build_media_job_providers(
         media_job_creator=media_job_creator,
         media_job_getter=media_job_getter,
         media_job_lister=media_job_lister,
+        media_job_event_lister=media_job_event_lister,
         media_job_event_appender=media_job_event_appender,
         media_job_canceler=media_job_canceler,
         media_job_store_path=media_job_store_path,
@@ -538,6 +558,62 @@ def create_gateway_router(
                 ),
             )
         return JSONResponse(status_code=status.HTTP_200_OK, content=row)
+
+    @router.get("/media/jobs/{job_id}/events")
+    def list_media_job_events(
+        job_id: str,
+        request: Request,
+        limit: int = Query(
+            MEDIA_JOBS_DEFAULT_LIMIT, ge=1, le=MEDIA_JOBS_MAX_LIMIT
+        ),
+        after_id: int | None = Query(None, ge=0),
+    ) -> JSONResponse:
+        audience = _resolve_request_audience(resolve_audience, request)
+        try:
+            row = (
+                None
+                if media_job_getter is None
+                else media_job_getter(job_id, audience=audience)
+            )
+            if row is None:
+                return JSONResponse(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    content=_error_payload(
+                        "media_job_not_found",
+                        f"media job {job_id!r} not found",
+                    ),
+                )
+            events = (
+                []
+                if media_job_event_lister is None
+                else list(
+                    media_job_event_lister(
+                        job_id,
+                        audience=audience,
+                        limit=limit,
+                        after_id=after_id,
+                    )
+                )
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=_error_payload(
+                    "invalid_media_job_event_query",
+                    _client_safe_message(str(exc), audience),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "schema_version": 1,
+                "audience": audience,
+                "job_id": job_id,
+                "events": events,
+            },
+        )
 
     @router.post("/media/jobs/{job_id}/events")
     def append_media_job_event(

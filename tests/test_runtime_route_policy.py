@@ -335,6 +335,61 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), payload)
 
+    def test_audio_profile_allows_audio_media_job_content(self) -> None:
+        audio_profile = AppProfile(
+            id="audio",
+            protocols=frozenset({"openai.audio"}),
+        )
+        job = {
+            "job_id": "job_audio_policy",
+            "intent": "music.generate",
+            "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "assets": [{
+                "asset_id": "aud_" + "a" * 64,
+                "media_type": "audio/mpeg",
+            }],
+        }
+
+        with authenticated_profile(audio_profile), patch.object(
+            proxy.media_jobs,
+            "get",
+            return_value=job,
+        ):
+            response = self.client.get(
+                "/gateway/v1/media/jobs/job_audio_policy/content",
+                headers=AUTH_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["object"], "audio.generation")
+        self.assertEqual(body["data"][0]["asset_id"], "aud_" + "a" * 64)
+
+    def test_image_profile_denies_audio_media_job_content_after_lookup(self) -> None:
+        image_profile = AppProfile(
+            id="image",
+            protocols=frozenset({"openai.images"}),
+        )
+        job = {
+            "job_id": "job_audio_policy",
+            "intent": "music.generate",
+            "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "assets": [{"asset_id": "aud_" + "a" * 64}],
+        }
+
+        with authenticated_profile(image_profile), patch.object(
+            proxy.media_jobs,
+            "get",
+            return_value=job,
+        ):
+            response = self.client.get(
+                "/gateway/v1/media/jobs/job_audio_policy/content",
+                headers=AUTH_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+
     def test_media_profile_allows_audio_and_video_routes(self) -> None:
         media_profile = AppProfile(
             id="media",

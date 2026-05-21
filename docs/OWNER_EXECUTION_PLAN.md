@@ -236,6 +236,7 @@ Initial endpoints:
 - [x] `POST /gateway/v1/media/jobs`
 - [x] `GET /gateway/v1/media/jobs`
 - [x] `GET /gateway/v1/media/jobs/{job_id}`
+- [x] `GET /gateway/v1/media/jobs/{job_id}/events`
 - [x] `POST /gateway/v1/media/jobs/{job_id}/events`
 - [x] `POST /gateway/v1/media/jobs/{job_id}/cancel`
 
@@ -245,10 +246,11 @@ Initial endpoints:
 - [x] audience-filtered API surface
 - [x] image job content retrieval through `/gateway/v1/media/jobs/{job_id}/content`
 - [x] ComfyUI image-generation adapter integration for long-running jobs
+- [x] ComfyUI audio/music/SFX adapter integration for long-running jobs
 - [x] generic `/gateway/v1/assets/*` serving
 - [x] pure audio/video media-job contract helpers for safe metadata, assets, and route-shaped status payloads
 - [x] pure resource-admission decision core for service availability, reserved resources, queue depth, and per-app concurrency facts
-- [ ] ComfyUI video/audio adapter integration for long-running jobs
+- [ ] ComfyUI video adapter integration for long-running jobs
 
 ### 6. SDK/App Harness — executable harness landed
 
