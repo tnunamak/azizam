@@ -138,6 +138,69 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"]["code"], "unsupported_audio_translation")
 
+    def test_image_variations_returns_precise_unsupported_error_without_backend_call(self) -> None:
+        for path in ("/v1/images/variations", "/openai/v1/images/variations"):
+            with self.subTest(path=path), patch.object(
+                proxy,
+                "proxy_comfy_request",
+                side_effect=AssertionError("image variation must not forward to generation backend"),
+            ), patch.object(
+                proxy,
+                "proxy_comfy_edit_request",
+                side_effect=AssertionError("image variation must not forward to edit backend"),
+            ):
+                resp = self.client.post(
+                    path,
+                    files={"image": ("source.png", b"not-used", "image/png")},
+                    data={"model": "dall-e-2"},
+                )
+
+            self.assertEqual(resp.status_code, 400)
+            body = resp.json()
+            self.assertEqual(body["error"]["type"], "invalid_request_error")
+            self.assertEqual(body["error"]["code"], "unsupported_image_variations")
+            self.assertIn("not configured or supported", body["error"]["message"])
+
+    def test_image_variations_missing_auth_returns_auth_error(self) -> None:
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy,
+            "AUTH_REGISTRY",
+            {},
+        ), patch.object(proxy, "refresh_auth_registry", return_value=None):
+            resp = self.client.post(
+                "/v1/images/variations",
+                files={"image": ("source.png", b"not-used", "image/png")},
+                data={"model": "dall-e-2"},
+            )
+
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["error"]["type"], "authentication_error")
+
+    def test_image_variations_policy_denied_stays_403(self) -> None:
+        denied = proxy.PolicyDecision(
+            proxy.DENIED,
+            reasons=("image variations denied by test policy",),
+        )
+        with patch.object(proxy, "_apply_image_route_policy", return_value=denied), patch.object(
+            proxy,
+            "proxy_comfy_request",
+            side_effect=AssertionError("image variation must not forward to generation backend"),
+        ), patch.object(
+            proxy,
+            "proxy_comfy_edit_request",
+            side_effect=AssertionError("image variation must not forward to edit backend"),
+        ):
+            resp = self.client.post(
+                "/v1/images/variations",
+                files={"image": ("source.png", b"not-used", "image/png")},
+                data={"model": "dall-e-2"},
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        body = resp.json()
+        self.assertEqual(body["error"]["type"], "permission_error")
+        self.assertEqual(body["error"]["code"], "policy_denied")
+
     def test_translation_route_forwards_to_backend_when_capability_declared(self) -> None:
         captured = {}
 

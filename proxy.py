@@ -8899,6 +8899,7 @@ async def audio_translations(request: Request):
 _IMAGE_ROUTE_INTENTS = {
     "/v1/images/generations": "image.generate",
     "/v1/images/edits": "image.edit",
+    "/v1/images/variations": "image.variation",
 }
 
 
@@ -12412,6 +12413,27 @@ async def images_generations(request: Request):
         finish_image_route_receipt(receipt, response)
         return response
     response = await proxy_comfy_request(request, auth_context, receipt=receipt)
+    finish_image_route_receipt(receipt, response)
+    return response
+
+
+@app.post("/openai/v1/images/variations")
+@app.post("/v1/images/variations")
+async def images_variations(request: Request):
+    """OpenAI-compatible image variations endpoint - explicitly unsupported."""
+    auth_context = authenticate_request(request, "/v1/images/variations")
+    if isinstance(auth_context, Response):
+        return auth_context
+    receipt = start_image_route_receipt("/v1/images/variations", auth_context)
+    decision = _apply_image_route_policy(receipt, auth_context)
+    if decision.denied:
+        response = _policy_denied_response(decision)
+        finish_image_route_receipt(receipt, response)
+        return response
+    response = openai_error_response(
+        "Local image variation is not configured or supported.",
+        code="unsupported_image_variations",
+    )
     finish_image_route_receipt(receipt, response)
     return response
 
