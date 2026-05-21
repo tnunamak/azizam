@@ -35,6 +35,7 @@ _PAGE_CSS = """
   .operator-hero,
   .operator-strip,
   .runtime-settings,
+  .access-map,
   details.panel,
   form.flow {
     min-width: 0;
@@ -49,7 +50,7 @@ _PAGE_CSS = """
     border: 1px solid color-mix(in oklch, var(--line), oklch(72% 0.11 190) 35%);
     border-radius: var(--radius);
   }
-  .operator-hero h1 { margin: 0; font-size: 3rem; line-height: 1; }
+  .operator-hero h1 { margin: 0; font-size: 2.6rem; line-height: 1; }
   .operator-hero p { margin: 0; max-width: 62rem; color: var(--muted); line-height: 1.55; }
   .operator-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .operator-strip a, .operator-strip span {
@@ -90,6 +91,23 @@ _PAGE_CSS = """
   tr:last-child td { border-bottom: none; }
   .cell-main { font-weight: 650; color: var(--text); }
   .cell-sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.2rem; }
+  .access-map { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); }
+  .access-node { display: grid; gap: 0.35rem; background: var(--panel); border: 1px solid var(--line);
+                 border-radius: var(--radius); padding: var(--space-3); }
+  .access-node strong { color: var(--text); }
+  .access-node span { color: var(--muted); line-height: 1.45; }
+  .inline-form { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: 0.45rem; }
+  .inline-form select {
+    flex: 1 1 12rem;
+    min-width: 0;
+    min-height: 2.25rem;
+    background: oklch(15.5% 0.016 250);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 0.35rem 0.5rem;
+    border-radius: 6px;
+  }
+  .inline-form button { min-height: 2.25rem; }
   form.flow { display: grid; gap: 0.75rem; background: var(--panel);
               border: 1px solid var(--line); border-radius: var(--radius); padding: 0.9rem; min-width: 0; }
   form.flow .row { display: grid; gap: var(--space-2);
@@ -267,7 +285,7 @@ _PAGE_CSS = """
   .template-card strong { display: block; color: var(--text); }
   .template-card span { display: block; margin-top: 0.25rem; color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
   @media (max-width: 760px) {
-    .operator-hero h1 { font-size: 2.2rem; }
+    .operator-hero h1 { font-size: 2.05rem; }
     table { display: block; overflow-x: auto; }
     form.flow .row { grid-template-columns: 1fr; }
     .choice-grid, .template-strip { grid-template-columns: 1fr; }
@@ -466,11 +484,39 @@ def _app_profile_id(record: Mapping[str, Any]) -> str:
     return "default-local"
 
 
+def _profile_options(
+    profiles: list[Mapping[str, Any]],
+    *,
+    selected: str = "",
+    include_default: bool = True,
+    default_label: str = "Default local",
+) -> str:
+    options = (
+        f'<option value="default-local"{(" selected" if selected in ("", "default-local") else "")}>'
+        f"{_esc(default_label)} (default-local)</option>"
+        if include_default
+        else ""
+    )
+    for profile in profiles:
+        profile_id = _profile_id(profile)
+        if include_default and profile_id == "default-local":
+            continue
+        label = profile.get("label") or profile.get("name") or profile_id
+        selected_attr = " selected" if profile_id == selected else ""
+        options += (
+            f'<option value="{_esc(profile_id)}"{selected_attr}>'
+            f"{_esc(label)} ({_esc(profile_id)})</option>"
+        )
+    return options
+
+
 def _app_row(
     record: Mapping[str, Any],
     *,
+    profiles: list[Mapping[str, Any]],
     profiles_by_id: Mapping[str, Mapping[str, Any]],
     active_keys_by_app: Mapping[str, int],
+    update_app_action_template: str,
 ) -> str:
     raw_app_id = str(record.get("id") or "")
     app_id = _esc(raw_app_id)
@@ -502,12 +548,22 @@ def _app_row(
         else "inherited built-in default"
     )
     profile_label = profile_id or "default-local"
+    profile_controls = (
+        '<form class="inline-form" method="post" action="'
+        + _esc(update_app_action_template.replace("{app_id}", raw_app_id))
+        + '" data-update-app-profile>'
+        + f'<select name="profile_id" aria-label="Change Profile for {_esc(raw_app_id)}">'
+        + _profile_options(profiles, selected=profile_label, include_default=True)
+        + "</select>"
+        + '<button class="inline" type="submit">Change Profile</button>'
+        + "</form>"
+    )
     created = _esc(record.get("created_at") or "—")
     return (
         "<tr>"
         f'<td><div class="cell-main">{name}</div><div class="cell-sub"><code>{app_id}</code></div></td>'
         f"<td>{owner}</td>"
-        f'<td><div><code>{_esc(profile_label)}</code></div><div class="cell-sub">{_esc(access)}</div></td>'
+        f'<td><div><code>{_esc(profile_label)}</code></div><div class="cell-sub">Effective Profile: {_esc(access)}</div>{profile_controls}</td>'
         f"<td>{_esc(active_keys)} active</td>"
         f'<td><span class="badge {status_class}">{status_text}</span></td>'
         f"<td>{created}</td>"
@@ -725,17 +781,17 @@ def _operator_intro() -> str:
     return (
         '<section class="operator-hero" aria-labelledby="operator-title">'
         '<div class="cell-sub">admin · ai.vivid.fish</div>'
-        '<h1 id="operator-title">Gateway admin</h1>'
-        "<p>See the APIs this gateway exposes, the services behind them, and "
-        "the Profiles that decide what each App can use. Apps own runtime "
-        "keys; Profiles own policy; Services stay behind the gateway.</p>"
+        '<h1 id="operator-title">Gateway access workspace</h1>'
+        "<p>Start with the thing making requests. Apps hold opk_ keys, Profiles "
+        "describe what those keys can do, Identity mappings choose defaults, and "
+        "Services show what capabilities exist right now.</p>"
         '<nav class="operator-strip" aria-label="Admin sections">'
-        '<a href="#apis">APIs</a>'
-        '<a href="#services">Services</a>'
-        '<a href="#apps-keys">Apps &amp; Keys</a>'
         '<a href="#profiles">Profiles</a>'
+        '<a href="#apps-keys">Apps &amp; Keys</a>'
         '<a href="#identity">Identity</a>'
         '<a href="#policy-test">Policy Test</a>'
+        '<a href="#services">Services</a>'
+        '<a href="#apis">APIs</a>'
         '<a href="#admin-keys">Admin Keys</a>'
         '<span><code>opk_</code>&nbsp;runtime App keys</span>'
         '<span><code>oak_</code>&nbsp;admin automation</span>'
@@ -802,13 +858,7 @@ def _flow_form(
         "</option>"
         for user in users
     )
-    profile_options = '<option value="">Default profile</option>' + "".join(
-        f'<option value="{_esc(profile.get("id"))}">'
-        f'{_esc(profile.get("label") or profile.get("name") or profile.get("id"))}'
-        f' ({_esc(profile.get("id"))})'
-        "</option>"
-        for profile in profiles
-    )
+    profile_options = _profile_options(profiles, include_default=True)
     create_form = (
         '<form class="flow" id="create-app" method="post" action="'
         + _esc(create_app_action)
@@ -887,12 +937,7 @@ def _runtime_mapping_form(
     *,
     create_mapping_action: str,
 ) -> str:
-    profile_options = '<option value="default-local">Built-in default</option>' + "".join(
-        f'<option value="{_esc(profile.get("id"))}">'
-        f'{_esc(profile.get("label") or profile.get("name") or profile.get("id"))}'
-        "</option>"
-        for profile in profiles
-    )
+    profile_options = _profile_options(profiles, include_default=True, default_label="Built-in default")
     return (
         '<form class="flow" method="post" action="'
         + _esc(create_mapping_action)
@@ -1010,12 +1055,7 @@ def _policy_simulator_form(
     *,
     policy_simulate_action: str,
 ) -> str:
-    profile_options = '<option value="">Local default</option>' + "".join(
-        f'<option value="{_esc(_profile_id(profile))}">'
-        f'{_esc(profile.get("label") or profile.get("name") or _profile_id(profile))}'
-        "</option>"
-        for profile in profiles
-    )
+    profile_options = _profile_options(profiles, include_default=True, default_label="Local default")
     return (
         '<details class="panel"><summary>Simulate access</summary>'
         '<form class="flow" method="post" action="'
@@ -1025,20 +1065,52 @@ def _policy_simulator_form(
         '<p class="form-note">Ask whether a request would be allowed without sending it to a model. Live model-list and current-loaded LLM checks still happen on the runtime route.</p>'
         '<div class="stack">'
         f'<select name="profile" aria-label="Profile to simulate">{profile_options}</select>'
-        '<input type="text" name="protocol" placeholder="protocol: openai.images" aria-label="Request protocol">'
-        '<input type="text" name="intent" placeholder="intent: image.edit" aria-label="Request intent">'
+        '<select name="protocol" aria-label="Request protocol">'
+        '<option value="openai">OpenAI-compatible</option>'
+        '<option value="anthropic">Anthropic Messages</option>'
+        '<option value="ollama">Ollama-compatible</option>'
+        '<option value="gateway">Gateway jobs/discovery</option>'
+        '<option value="provider-native">Provider-native passthrough</option>'
+        "</select>"
+        '<select name="intent" aria-label="Request intent">'
+        '<option value="chat">Chat</option>'
+        '<option value="text.embeddings">Embeddings</option>'
+        '<option value="image.generate">Image generation</option>'
+        '<option value="image.edit">Image editing</option>'
+        '<option value="speech.synthesis">Text to speech</option>'
+        '<option value="speech.transcription">Speech transcription</option>'
+        '<option value="audio.generate">Music/audio generation</option>'
+        '<option value="video.generate">Video generation</option>'
+        '<option value="models.list">List models</option>'
+        "</select>"
+        '<select name="capability_exposure" aria-label="Capability exposure">'
+        '<option value="default">Default capability</option>'
+        '<option value="opt_in">Opt-in capability</option>'
+        '<option value="private">Private capability</option>'
+        "</select>"
+        '<select name="capability_trust_tier" aria-label="Capability trust tier">'
+        '<option value="stable">Stable</option>'
+        '<option value="experimental">Experimental</option>'
+        '<option value="private">Private</option>'
+        "</select>"
+        '<select name="capability_resource_tier" aria-label="Capability resource tier">'
+        '<option value="interactive">Interactive</option>'
+        '<option value="batch">Batch</option>'
+        '<option value="expensive">Expensive</option>'
+        "</select>"
+        "</div>"
+        '<details class="panel"><summary>Advanced request fields</summary>'
+        '<div class="stack">'
         '<input type="text" name="workflow" placeholder="workflow id" aria-label="Workflow id">'
         '<input type="text" name="model" placeholder="model id" aria-label="Model id">'
         '<input type="text" name="backend" placeholder="backend: comfyui" aria-label="Backend id">'
-        '<input type="text" name="capability_exposure" placeholder="exposure: default" aria-label="Capability exposure">'
-        '<input type="text" name="capability_trust_tier" placeholder="trust: stable" aria-label="Capability trust tier">'
-        '<input type="text" name="capability_resource_tier" placeholder="resource: batch" aria-label="Capability resource tier">'
         '<input type="text" name="capability_tags" placeholder="tags: image, controlnet" aria-label="Capability tags">'
         "</div>"
         '<div class="stack">'
         '<label class="check"><input type="checkbox" name="requires_cloud_fallback"> Requires cloud fallback</label>'
         '<label class="check"><input type="checkbox" name="native_passthrough"> Native passthrough request</label>'
         "</div>"
+        "</details>"
         '<div class="row">'
         "<span></span>"
         '<button type="submit">Simulate</button>'
@@ -1057,6 +1129,7 @@ def render_admin_dashboard(
     create_profile_action: str = "/admin/api/profiles",
     create_mapping_action: str = "/admin/api/runtime-profile-mappings",
     create_key_action_template: str = "/admin/api/apps/{app_id}/keys",
+    update_app_action_template: str = "/admin/api/apps/{app_id}",
     create_admin_key_action: str = "/admin/api/admin-keys",
     policy_simulate_action: str = "/admin/api/policy/simulate",
     logout_url: str = "/me/logout",
@@ -1102,8 +1175,10 @@ def render_admin_dashboard(
         (
             _app_row(
                 a,
+                profiles=profiles,
                 profiles_by_id=profiles_by_id,
                 active_keys_by_app=active_keys_by_app,
+                update_app_action_template=update_app_action_template,
             )
             for a in apps
         ),
@@ -1168,6 +1243,14 @@ def render_admin_dashboard(
         '<summary>Show raw response</summary>'
         '<pre class="result" id="admin-flow-result"></pre>'
         "</details>"
+    )
+    access_map_html = (
+        '<div class="access-map">'
+        '<div class="access-node"><strong>Profile</strong><span>Plain-language policy: allowed APIs, blocked costs, model behavior, and guardrails.</span></div>'
+        '<div class="access-node"><strong>App</strong><span>The thing making requests. Each App has an effective Profile and active opk_ keys.</span></div>'
+        '<div class="access-node"><strong>Identity</strong><span>OIDC groups, roles, email, domain, gateway role, or all users can choose a default Profile for new runtime access.</span></div>'
+        '<div class="access-node"><strong>Services</strong><span>Current capabilities available behind the gateway. They are visible here, not enabled here.</span></div>'
+        "</div>"
     )
     api_surfaces_html = api_surfaces_table
     services_html = _model_visibility_panel(
@@ -1257,12 +1340,12 @@ def render_admin_dashboard(
         "if(!r.ok)return;const html=await r.text();const doc=new DOMParser().parseFromString(html,'text/html');"
         "const next=doc.querySelector('main.shell-main'),main=document.querySelector('main.shell-main');"
         "if(next&&main)main.replaceWith(next)};"
-        "const json=async(url,body)=>{const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken},body:JSON.stringify(body)});"
+        "const json=async(url,body,method='POST')=>{const r=await fetch(url,{method,credentials:'same-origin',headers:{'content-type':'application/json','x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken},body:JSON.stringify(body)});"
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
         "document.addEventListener('submit',async e=>{"
-        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]');"
-        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm)return;e.preventDefault();"
+        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]');"
+        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm)return;e.preventDefault();"
         "if(adminKeyForm){const f=adminKeyForm,fd=new FormData(f);const body={name:fd.get('name'),role:fd.get('role')||'admin'};try{const data=await json(f.action,body);f.reset();await refreshMain();showSecret(data,'Admin automation key created. Copy it now; it will not be shown again.','Use this oak_ key only for /admin/api and /status. Never paste it into chat apps, SDK tools, browser code, prompts, logs, or issue trackers.')}catch(err){showError(err)}return}"
         "if(profileForm){const f=profileForm,fd=new FormData(f);const label=String(fd.get('label')||'').trim();const templateId=fd.get('profile_preset')||'chat_only';const profile=buildProfile(templateId,String(fd.get('id')||'').trim()||slug(label));profile.status_visibility={level:fd.get('status_visibility')||profile.status_visibility.level};profile.fallback={cloud_allowed:fd.get('cloud_allowed')==='on'};profile.native_passthrough={enabled:profile.native_passthrough.enabled||fd.get('native_passthrough')==='on'};profile.model_access={mode:fd.get('model_access')||'catalog'};"
         "const protocols=values(fd,'protocols');if(protocols.length) profile.protocols=protocols;"
@@ -1282,6 +1365,8 @@ def render_admin_dashboard(
         "try{show(await json(f.action,{profile,request}))}catch(err){showError(err)}return}"
         "if(mappingForm){const f=mappingForm,fd=new FormData(f);const body={source_kind:fd.get('source_kind'),source_value:fd.get('source_value'),profile_id:fd.get('profile_id')||'default-local'};"
         "try{const data=await json(f.action,body);f.reset();await refreshMain();show(data)}catch(err){showError(err)}return}"
+        "if(appProfileForm){const f=appProfileForm,fd=new FormData(f);const body={profile_id:fd.get('profile_id')||'default-local'};"
+        "try{const data=await json(f.action,body,'PATCH');await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(appForm){const f=appForm,fd=new FormData(f);const body={name:fd.get('name'),kind:fd.get('kind')||'service'};"
         "if(fd.get('owner_user_id')) body.owner_user_id=fd.get('owner_user_id');"
         "if(fd.get('profile_id')) body.profile_id=fd.get('profile_id');"
@@ -1301,22 +1386,10 @@ def render_admin_dashboard(
         + '<main class="shell-main">'
         + _operator_intro()
         + _section(
-            "APIs",
-            api_surfaces_html,
-            section_id="apis",
-            intro="Compatible client-facing surfaces on the front of the gateway. Profiles decide which Apps can use each surface.",
-        )
-        + _section(
-            "Services",
-            services_html,
-            section_id="services",
-            intro="Configured backend services behind the gateway. This is visibility first; runtime access still flows through Profiles.",
-        )
-        + _section(
-            "Apps & Keys",
-            apps_keys_html,
-            section_id="apps-keys",
-            intro="Create the App identity first, then mint one or more opk_ runtime keys under it.",
+            "Access",
+            access_map_html,
+            section_id="access",
+            intro="The workspace follows the runtime decision path: Profile, App, key, Identity default, then service capability.",
         )
         + _section(
             "Profiles",
@@ -1325,21 +1398,39 @@ def render_admin_dashboard(
             intro="Profiles are reusable runtime policies. Assign them to Apps; users do not hand-edit policy.",
         )
         + _section(
+            "Apps & Keys",
+            apps_keys_html,
+            section_id="apps-keys",
+            intro="Create the App identity first, then mint one or more opk_ runtime keys under it.",
+        )
+        + _section(
             "Identity",
             identity_html,
             section_id="identity",
-        )
-        + _section(
-            "Admin Keys",
-            admin_key_html,
-            section_id="admin-keys",
-            intro="oak_ keys are for scripts that call admin endpoints. Keep them separate from opk_ runtime App keys.",
         )
         + _section(
             "Policy Test",
             policy_simulator_html,
             section_id="policy-test",
             intro="Check a Profile decision before changing runtime policy or while investigating a denial.",
+        )
+        + _section(
+            "Services",
+            services_html,
+            section_id="services",
+            intro="Configured backend services and capabilities behind the gateway. This is visibility first; runtime access still flows through Profiles.",
+        )
+        + _section(
+            "APIs",
+            api_surfaces_html,
+            section_id="apis",
+            intro="Compatible client-facing surfaces on the front of the gateway. Profiles decide which Apps can use each surface.",
+        )
+        + _section(
+            "Admin Keys",
+            admin_key_html,
+            section_id="admin-keys",
+            intro="oak_ keys are for scripts that call admin endpoints. Keep them separate from opk_ runtime App keys.",
         )
         + _section("Activity", activity_html, section_id="activity")
         + "</main></body></html>"

@@ -245,7 +245,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         app_index = html.index('id="create-app"')
         profile_index = html.index('data-create-profile><label>Create Profile')
         key_index = html.index('data-mint-key><label>Create key')
-        self.assertLess(app_index, profile_index)
+        self.assertLess(profile_index, app_index)
         self.assertLess(app_index, key_index)
         self.assertIn("Create key for existing App", html)
         self.assertNotIn('name="app_name"', html)
@@ -366,7 +366,10 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_admin_dashboard_uses_operator_design_contract(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn(">Gateway admin</h1>", html)
+        self.assertIn(">Gateway access workspace</h1>", html)
+        self.assertIn('id="access"', html)
+        self.assertLess(html.index('id="profiles"'), html.index('id="apps-keys"'))
+        self.assertLess(html.index('id="apps-keys"'), html.index('id="identity"'))
         self.assertIn('id="apis"', html)
         self.assertIn(">APIs</h2>", html)
         self.assertIn("OpenAI-compatible", html)
@@ -385,10 +388,39 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("data-create-runtime-mapping", html)
         self.assertIn("/admin/api/runtime-profile-mappings", html)
         self.assertIn("This does not grant admin access", html)
-        self.assertIn("Apps own runtime keys", html)
+        self.assertIn("Apps hold opk_ keys", html)
         self.assertIn("users do not hand-edit policy", html)
         self.assertIn("opk_</code>&nbsp;runtime App keys", html)
         self.assertIn("oak_</code>&nbsp;admin automation", html)
+
+    def test_apps_show_effective_profile_and_patch_affordance(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn("Effective Profile: protocols openai", html)
+        self.assertIn('data-update-app-profile', html)
+        self.assertIn('action="/admin/api/apps/app_1"', html)
+        self.assertIn('aria-label="Change Profile for app_1"', html)
+        self.assertIn("json(f.action,body,'PATCH')", html)
+        self.assertIn("Change Profile", html)
+        self.assertEqual(html.count("Default local (default-local)"), 3)
+
+    def test_policy_test_uses_selects_and_discloses_advanced_fields(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        policy_section = html[html.index('id="policy-test"') : html.index('id="services"')]
+        self.assertIn('<select name="profile"', policy_section)
+        self.assertIn('<select name="protocol"', policy_section)
+        self.assertIn('<select name="intent"', policy_section)
+        self.assertIn('<summary>Advanced request fields</summary>', policy_section)
+        self.assertIn('name="workflow"', policy_section)
+        self.assertNotIn('placeholder="protocol: openai.images"', policy_section)
+
+    def test_empty_runtime_inventory_sections_are_hidden(self) -> None:
+        html = render_admin_dashboard({})
+        self.assertNotIn('id="apis"', html)
+        self.assertNotIn('id="services"', html)
+        self.assertNotIn('id="activity"', html)
+        self.assertIn('id="access"', html)
+        self.assertIn('id="profiles"', html)
+        self.assertIn('id="apps-keys"', html)
 
     def test_services_show_resource_mode_queue_and_limits_when_provided(self) -> None:
         snapshot = _snapshot()
