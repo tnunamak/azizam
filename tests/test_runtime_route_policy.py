@@ -21,6 +21,7 @@ from gateway.policy import (  # noqa: E402
     AppProfile,
     ModelAccessPolicy,
     NativePassthroughPolicy,
+    TargetPolicy,
 )
 
 
@@ -621,6 +622,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ids = {item["id"] for item in response.json()["data"]}
         self.assertIn("default", ids)
         self.assertNotIn("rp", ids)
+        self.assertEqual(response.json()["vivid_fish_target_visibility"], "available")
+        self.assertEqual(response.json()["vivid_fish_target_activation"], "existing_only")
         self.assertEqual(response.json()["vivid_fish_model_access"], "current_loaded")
 
         with authenticated_profile(current_loaded), patch.object(
@@ -645,7 +648,10 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         current_loaded = AppProfile(
             id="current-loaded",
             protocols=frozenset({"openai"}),
-            model_access=ModelAccessPolicy(mode="current_loaded"),
+            target_policy=TargetPolicy(
+                visibility="available",
+                activation="existing_only",
+            ),
         )
 
         with authenticated_profile(current_loaded), patch.object(
@@ -660,6 +666,51 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.status_code, 403, response.text)
         self.assertEqual(response.json()["error"]["code"], "policy_denied")
         self.assertIn("no loaded LLM", response.json()["error"]["message"])
+
+    def test_existing_only_target_policy_uses_workflow_availability(self) -> None:
+        existing_only = AppProfile(
+            id="workflow-existing-only",
+            protocols=frozenset({"openai.images"}),
+            target_policy=TargetPolicy(
+                visibility="available",
+                activation="existing_only",
+            ),
+        )
+
+        with authenticated_profile(existing_only), patch.object(
+            proxy, "COMFY_ENABLED", True
+        ), patch.object(
+            proxy.ADMIN_STORE,
+            "operator_overrides",
+            return_value={},
+        ):
+            auth_context = proxy.AuthContext(
+                proxy.AUTH_REGISTRY[proxy.hash_api_key(RAW_KEY)]
+            )
+            allowed = proxy._workflow_target_policy_decision(
+                auth_context,
+                requested="sdxl-seamless-tile",
+                resolved="sdxl-seamless-tile",
+            )
+
+        self.assertIsNone(allowed)
+
+        with authenticated_profile(existing_only), patch.object(
+            proxy, "COMFY_ENABLED", False
+        ):
+            auth_context = proxy.AuthContext(
+                proxy.AUTH_REGISTRY[proxy.hash_api_key(RAW_KEY)]
+            )
+            denied = proxy._workflow_target_policy_decision(
+                auth_context,
+                requested="sdxl-seamless-tile",
+                resolved="sdxl-seamless-tile",
+            )
+
+        self.assertIsNotNone(denied)
+        assert denied is not None
+        self.assertTrue(denied.denied)
+        self.assertIn("no available workflow", denied.reasons[0])
 
     def test_chat_only_profile_allows_post_responses(self) -> None:
         chat_only = AppProfile(

@@ -243,9 +243,9 @@ Visible fields:
 
 - Policy name
 - Start from Profile template
-- Model access:
-  - configured catalog
-  - current loaded LLM only
+- Target policy:
+  - allowed catalog vs available now
+  - may activate vs existing only
 
 Advanced fields:
 

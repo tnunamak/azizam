@@ -20,6 +20,8 @@ DENIED = "denied"
 NOT_EVALUATED = "not_evaluated"
 
 VISIBILITY_LEVELS = ("none", "basic", "standard", "full")
+TARGET_VISIBILITY_MODES = ("catalog", "available")
+TARGET_ACTIVATION_MODES = ("may_activate", "existing_only")
 MODEL_ACCESS_MODES = ("catalog", "current_loaded")
 
 DEFAULT_PROFILE_ID = "default-local"
@@ -65,14 +67,33 @@ class StatusVisibilityPolicy:
 
 
 @dataclass(frozen=True)
-class ModelAccessPolicy:
-    """Runtime model-catalog behavior for LLM routes.
+class TargetPolicy:
+    """Runtime target discovery and activation behavior.
 
-    ``catalog`` uses the configured role/catalog entries plus backend models.
-    ``current_loaded`` only advertises and accepts the model ids that resolve
-    to the active loaded LLM. The runtime supplies that loaded-model fact; this
-    pure policy module only carries the operator's intent.
+    ``visibility`` controls whether clients see configured targets or only
+    targets currently available under the live runtime. ``activation`` controls
+    whether a request may load/switch/queue a target, or must use an existing
+    running/resident/selected target. The runtime interprets these axes for
+    each target family; policy.py only carries the operator's intent.
     """
+
+    visibility: str = "catalog"
+    activation: str = "may_activate"
+
+    def __post_init__(self) -> None:
+        if self.visibility not in TARGET_VISIBILITY_MODES:
+            raise ValueError(
+                f"target visibility must be one of {TARGET_VISIBILITY_MODES}"
+            )
+        if self.activation not in TARGET_ACTIVATION_MODES:
+            raise ValueError(
+                f"target activation must be one of {TARGET_ACTIVATION_MODES}"
+            )
+
+
+@dataclass(frozen=True)
+class ModelAccessPolicy:
+    """Backward-compatible alias for older LLM-only profile configs."""
 
     mode: str = "catalog"
 
@@ -81,6 +102,12 @@ class ModelAccessPolicy:
             raise ValueError(
                 f"model access mode must be one of {MODEL_ACCESS_MODES}"
             )
+
+
+def target_policy_from_model_access(model_access: ModelAccessPolicy) -> TargetPolicy:
+    if model_access.mode == "current_loaded":
+        return TargetPolicy(visibility="available", activation="existing_only")
+    return TargetPolicy()
 
 
 @dataclass(frozen=True)
@@ -105,7 +132,19 @@ class AppProfile:
     status_visibility: StatusVisibilityPolicy = field(
         default_factory=StatusVisibilityPolicy
     )
+    target_policy: TargetPolicy = field(default_factory=TargetPolicy)
     model_access: ModelAccessPolicy = field(default_factory=ModelAccessPolicy)
+
+    def __post_init__(self) -> None:
+        if (
+            self.target_policy == TargetPolicy()
+            and self.model_access.mode == "current_loaded"
+        ):
+            object.__setattr__(
+                self,
+                "target_policy",
+                target_policy_from_model_access(self.model_access),
+            )
 
     def with_overrides(self, **changes: object) -> "AppProfile":
         return replace(self, **changes)

@@ -4806,6 +4806,19 @@ async def proxy_comfy_request(
         )
         if decision.denied:
             return _policy_denied_response(decision)
+    target_decision = _workflow_target_policy_decision(
+        auth_context,
+        requested=str(model) if model is not None else None,
+        resolved=workflow_name,
+        manifest=manifest,
+        extra_ids=(
+            [_policy_workflow_for_receipt(receipt)]
+            if _policy_workflow_for_receipt(receipt)
+            else ()
+        ),
+    )
+    if target_decision is not None and target_decision.denied:
+        return _policy_denied_response(target_decision)
     background_decision = await resolve_image_background_decision(
         background or "auto",
         prompt,
@@ -5175,6 +5188,19 @@ async def proxy_comfy_edit_request(
                 )
                 if decision.denied:
                     return _policy_denied_response(decision)
+            target_decision = _workflow_target_policy_decision(
+                auth_context,
+                requested=str(model) if model is not None else None,
+                resolved=workflow_name,
+                manifest=manifest,
+                extra_ids=(
+                    [_policy_workflow_for_receipt(receipt)]
+                    if _policy_workflow_for_receipt(receipt)
+                    else ()
+                ),
+            )
+            if target_decision is not None and target_decision.denied:
+                return _policy_denied_response(target_decision)
             extension_asset_fields, asset_error_response = _allowed_image_extension_asset_fields(
                 request_body=form_dict,
                 manifest=manifest,
@@ -6135,6 +6161,12 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             status_code=503,
             media_type="application/json"
         )
+    service_response = _service_availability_response(
+        "comfyui",
+        service_label="ComfyUI",
+    )
+    if service_response is not None:
+        return service_response
 
     try:
         body = await request.json()
@@ -6196,6 +6228,29 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             status_code=400,
             media_type="application/json"
         )
+    policy_decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="openai.video",
+            intent=INTENT_VIDEO_GENERATE,
+            model=str(requested_model) if requested_model is not None else None,
+            workflow=f"video.generate.{workflow_name}",
+            backend="comfyui",
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="expensive",
+        ),
+    )
+    if policy_decision.denied:
+        return _policy_denied_response(policy_decision)
+    target_decision = _workflow_target_policy_decision(
+        auth_context,
+        requested=str(requested_model) if requested_model is not None else None,
+        resolved=str(workflow_name),
+        extra_ids=(f"video.generate.{workflow_name}",),
+    )
+    if target_decision is not None and target_decision.denied:
+        return _policy_denied_response(target_decision)
 
     workflow_template = _load_video_workflow_file(workflow_cfg)
     if workflow_template is None:
@@ -7470,14 +7525,132 @@ def _profile_source_id(auth_context: AuthContext) -> str:
     return getattr(_profile_for_auth_context(auth_context), "id", "default-local")
 
 
-def _profile_model_access_mode(auth_context: AuthContext) -> str:
+def _profile_target_visibility(auth_context: AuthContext) -> str:
     profile = _profile_for_auth_context(auth_context)
+    target_policy = getattr(profile, "target_policy", None)
+    if target_policy is not None:
+        return str(getattr(target_policy, "visibility", "catalog") or "catalog")
     model_access = getattr(profile, "model_access", None)
-    return str(getattr(model_access, "mode", "catalog") or "catalog")
+    legacy_mode = str(getattr(model_access, "mode", "catalog") or "catalog")
+    return "available" if legacy_mode == "current_loaded" else "catalog"
+
+
+def _profile_target_activation(auth_context: AuthContext) -> str:
+    profile = _profile_for_auth_context(auth_context)
+    target_policy = getattr(profile, "target_policy", None)
+    if target_policy is not None:
+        return str(getattr(target_policy, "activation", "may_activate") or "may_activate")
+    model_access = getattr(profile, "model_access", None)
+    legacy_mode = str(getattr(model_access, "mode", "catalog") or "catalog")
+    return "existing_only" if legacy_mode == "current_loaded" else "may_activate"
+
+
+def _profile_model_access_mode(auth_context: AuthContext) -> str:
+    if (
+        _profile_target_visibility(auth_context) == "available"
+        and _profile_target_activation(auth_context) == "existing_only"
+    ):
+        return "current_loaded"
+    return "catalog"
 
 
 def _profile_model_allowlist(auth_context: AuthContext):
     return getattr(_profile_for_auth_context(auth_context), "models", None)
+
+
+def _comfy_target_available() -> bool:
+    if not COMFY_ENABLED:
+        return False
+    override = _operator_service_availability_overrides().get("comfyui", {})
+    state = str((override or {}).get("state") or "available").strip().lower()
+    return state not in {"disabled", "maintenance", "draining"}
+
+
+def _target_activation_policy_decision(
+    auth_context: AuthContext,
+    *,
+    requested_target: str,
+    available_ids: Iterable[str],
+    available_label: str,
+    empty_label: str,
+) -> PolicyDecision | None:
+    if _profile_target_activation(auth_context) != "existing_only":
+        return None
+    requested = str(requested_target or "").strip()
+    if not requested:
+        return None
+
+    available = {str(item).strip() for item in available_ids if str(item).strip()}
+    normalized_available = {normalize_model_id(item) for item in available}
+    if normalize_model_id(requested) in normalized_available:
+        return None
+
+    profile = _profile_for_auth_context(auth_context)
+    visible_ids = sorted(item for item in available if not item.startswith("/"))
+    if visible_ids:
+        reason = (
+            f"target {requested!r} is not one of the {available_label}: "
+            + ", ".join(visible_ids[:20])
+        )
+    else:
+        reason = (
+            "existing-only target policy is enabled, but "
+            f"{empty_label}"
+        )
+    return PolicyDecision(
+        decision=DENIED,
+        sources=(f"profile:{profile.id}", "policy:target-activation"),
+        reasons=(reason,),
+        visibility_level=profile.status_visibility.level,
+    )
+
+
+def _workflow_target_ids(
+    *,
+    requested: str | None = None,
+    resolved: str | None = None,
+    manifest: Mapping[str, Any] | None = None,
+    extra_ids: Iterable[str] = (),
+) -> set[str]:
+    ids = {str(item).strip() for item in extra_ids if str(item).strip()}
+    for item in (requested, resolved):
+        if item:
+            ids.add(str(item).strip())
+    if isinstance(manifest, Mapping):
+        manifest_id = manifest.get("id")
+        if isinstance(manifest_id, str) and manifest_id:
+            ids.add(manifest_id)
+        model_id = _gateway_image_model_id(manifest)
+        if model_id:
+            ids.add(model_id)
+    return ids
+
+
+def _workflow_target_policy_decision(
+    auth_context: AuthContext,
+    *,
+    requested: str | None,
+    resolved: str | None = None,
+    manifest: Mapping[str, Any] | None = None,
+    extra_ids: Iterable[str] = (),
+) -> PolicyDecision | None:
+    available_ids = (
+        _workflow_target_ids(
+            requested=requested,
+            resolved=resolved,
+            manifest=manifest,
+            extra_ids=extra_ids,
+        )
+        if _comfy_target_available()
+        else set()
+    )
+    return _target_activation_policy_decision(
+        auth_context,
+        requested_target=str(requested or resolved or ""),
+        available_ids=available_ids,
+        available_label="available workflow ids",
+        empty_label="no available workflow was reported",
+    )
 
 
 def _same_model_path(left: str | None, right: str | None) -> bool:
@@ -7571,28 +7744,13 @@ async def _current_loaded_model_policy_decision(
     *,
     requested_model: str,
 ) -> PolicyDecision | None:
-    if _profile_model_access_mode(auth_context) != "current_loaded":
-        return None
-    requested = requested_model.strip()
-    if not requested:
-        return None
     loaded_ids = await _current_loaded_llm_model_ids()
-    normalized_loaded = {normalize_model_id(item) for item in loaded_ids}
-    if normalize_model_id(requested) in normalized_loaded:
-        return None
-    profile_id = _profile_source_id(auth_context)
-    if normalized_loaded:
-        reason = (
-            f"model {requested!r} is not one of the currently loaded LLM ids: "
-            + ", ".join(sorted(item for item in loaded_ids if not item.startswith("/")))
-        )
-    else:
-        reason = "current-loaded model policy is enabled, but no loaded LLM was reported"
-    return PolicyDecision(
-        decision=DENIED,
-        sources=(f"profile:{profile_id}", "policy:model-access"),
-        reasons=(reason,),
-        visibility_level=_profile_for_auth_context(auth_context).status_visibility.level,
+    return _target_activation_policy_decision(
+        auth_context,
+        requested_target=requested_model,
+        available_ids=loaded_ids,
+        available_label="currently loaded LLM ids",
+        empty_label="no loaded LLM was reported",
     )
 
 
@@ -7613,14 +7771,28 @@ async def _filter_model_list_for_profile(
         ]
         metadata["vivid_fish_profile_model_allowlist"] = sorted(allowlist)
 
-    if _profile_model_access_mode(auth_context) == "current_loaded":
+    if _profile_target_visibility(auth_context) == "available":
         loaded_ids = await _current_loaded_llm_model_ids()
         loaded_norm = {normalize_model_id(item) for item in loaded_ids}
+        comfy_available = _comfy_target_available()
         filtered = [
             item
             for item in filtered
-            if normalize_model_id(str(item.get("id") or "")) in loaded_norm
+            if (
+                normalize_model_id(str(item.get("id") or "")) in loaded_norm
+                or (
+                    bool(item.get("vivid_fish_workflow"))
+                    and str(item.get("vivid_fish_backend") or "") in {"comfyui", "gateway"}
+                    and comfy_available
+                )
+                or (
+                    str(item.get("vivid_fish_backend") or "") == "embeddings"
+                    and EMBEDDINGS_ENABLED
+                )
+            )
         ]
+        metadata["vivid_fish_target_visibility"] = "available"
+        metadata["vivid_fish_target_activation"] = _profile_target_activation(auth_context)
         metadata["vivid_fish_model_access"] = "current_loaded"
         metadata["vivid_fish_current_model_ids"] = sorted(
             item for item in loaded_ids if item and not item.startswith("/")
@@ -11874,9 +12046,35 @@ async def _submit_audio_media_job(
             status_code=400,
             media_type="application/json",
         )
+    requested_model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
+    manifest = _load_audio_workflow_manifest(workflow_name)
+    policy_decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="openai.audio",
+            intent=intent,
+            model=str(requested_model) if requested_model is not None else None,
+            workflow=f"audio.generate.{workflow_name}",
+            backend="comfyui",
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="batch",
+        ),
+    )
+    if policy_decision.denied:
+        return _policy_denied_response(policy_decision)
     admission_response = _media_job_admission_response(intent)
     if admission_response is not None:
         return admission_response
+    target_decision = _workflow_target_policy_decision(
+        auth_context,
+        requested=str(requested_model) if requested_model is not None else None,
+        resolved=workflow_name,
+        manifest=manifest,
+        extra_ids=(f"audio.generate.{workflow_name}",),
+    )
+    if target_decision is not None and target_decision.denied:
+        return _policy_denied_response(target_decision)
     job = audio_media_jobs.audio_job_from_request(
         body,
         request_id=request_id,
@@ -12366,9 +12564,33 @@ async def _submit_video_media_job(
     if error_response is not None:
         return error_response
     assert workflow_name is not None
+    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    policy_decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="openai.video",
+            intent=INTENT_VIDEO_GENERATE,
+            model=str(requested_model) if requested_model is not None else None,
+            workflow=f"video.generate.{workflow_name}",
+            backend="comfyui",
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="expensive",
+        ),
+    )
+    if policy_decision.denied:
+        return _policy_denied_response(policy_decision)
     admission_response = _media_job_admission_response(INTENT_VIDEO_GENERATE)
     if admission_response is not None:
         return admission_response
+    target_decision = _workflow_target_policy_decision(
+        auth_context,
+        requested=str(requested_model) if requested_model is not None else None,
+        resolved=workflow_name,
+        extra_ids=(f"video.generate.{workflow_name}",),
+    )
+    if target_decision is not None and target_decision.denied:
+        return _policy_denied_response(target_decision)
 
     profile = _profile_for_auth_context(auth_context)
     request_id = f"vidjob_{uuid.uuid4().hex}"
@@ -12577,6 +12799,21 @@ async def gateway_image_generations_media_job(request: Request):
     if admission_response is not None:
         finish_image_route_receipt(receipt, admission_response)
         return admission_response
+    target_decision = _workflow_target_policy_decision(
+        auth_context,
+        requested=model,
+        resolved=receipt.resolved_workflow if receipt is not None else None,
+        manifest=manifest,
+        extra_ids=(
+            [_policy_workflow_for_receipt(receipt)]
+            if _policy_workflow_for_receipt(receipt)
+            else ()
+        ),
+    )
+    if target_decision is not None and target_decision.denied:
+        response = _policy_denied_response(target_decision)
+        finish_image_route_receipt(receipt, response)
+        return response
 
     profile = _profile_for_auth_context(auth_context)
     job = media_jobs.MediaJob(
@@ -13093,6 +13330,12 @@ async def proxy_audio_generate(request: Request, auth_context):
             status_code=503,
             media_type="application/json"
         )
+    service_response = _service_availability_response(
+        "comfyui",
+        service_label="ComfyUI",
+    )
+    if service_response is not None:
+        return service_response
     try:
         body = await request.json()
     except Exception:
@@ -13167,6 +13410,31 @@ async def proxy_audio_generate(request: Request, auth_context):
             status_code=500,
             media_type="application/json"
         )
+    manifest = _load_audio_workflow_manifest(workflow_name)
+    policy_decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="openai.audio",
+            intent=INTENT_AUDIO_GENERATE,
+            model=str(model) if model is not None else None,
+            workflow=f"audio.generate.{workflow_name}",
+            backend="comfyui",
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="batch",
+        ),
+    )
+    if policy_decision.denied:
+        return _policy_denied_response(policy_decision)
+    target_decision = _workflow_target_policy_decision(
+        auth_context,
+        requested=str(model) if model is not None else None,
+        resolved=str(workflow_name),
+        manifest=manifest,
+        extra_ids=(f"audio.generate.{workflow_name}",),
+    )
+    if target_decision is not None and target_decision.denied:
+        return _policy_denied_response(target_decision)
 
     workflow = copy.deepcopy(workflow)
     meta = workflow.pop("_meta", {})
@@ -13219,7 +13487,6 @@ async def proxy_audio_generate(request: Request, auth_context):
             if node_id in workflow:
                 workflow[node_id]["inputs"][key] = seed_val
 
-    manifest = _load_audio_workflow_manifest(workflow_name)
     if manifest is not None:
         try:
             extension_result = bind_audio_workflow_extensions(
@@ -13360,7 +13627,16 @@ async def audio_models(request: Request):
     if policy_response is not None:
         return policy_response
     models = []
+    allowlist = _profile_model_allowlist(auth_context)
+    include_available = (
+        _profile_target_visibility(auth_context) != "available"
+        or _comfy_target_available()
+    )
     for name, cfg in AUDIO_WORKFLOWS_CFG.items():
+        if not include_available:
+            continue
+        if allowlist is not None and name not in allowlist:
+            continue
         models.append({
             "id": name,
             "owned_by": "local",
@@ -13368,8 +13644,12 @@ async def audio_models(request: Request):
             "max_seconds": cfg.get("max_seconds", 300),
             "min_seconds": cfg.get("min_seconds", 1),
         })
+    payload = {"data": models}
+    if _profile_target_visibility(auth_context) == "available":
+        payload["vivid_fish_target_visibility"] = "available"
+        payload["vivid_fish_target_activation"] = _profile_target_activation(auth_context)
     return Response(
-        content=json.dumps({"data": models}),
+        content=json.dumps(payload),
         status_code=200,
         media_type="application/json"
     )

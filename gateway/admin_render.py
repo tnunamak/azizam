@@ -570,16 +570,21 @@ def _profile_guardrail_summary(record: Mapping[str, Any] | None) -> str:
     native = _nested_mapping(doc.get("native_passthrough"))
     cloud = "cloud allowed" if fallback.get("cloud_allowed") else "local only"
     native_text = "native allowed" if native.get("enabled") else "native off"
-    model_access = _profile_model_access_summary(record)
-    return f"{cloud}; {native_text}; {model_access}"
+    target_policy = _profile_target_policy_summary(record)
+    return f"{cloud}; {native_text}; {target_policy}"
 
 
-def _profile_model_access_summary(record: Mapping[str, Any] | None) -> str:
+def _profile_target_policy_summary(record: Mapping[str, Any] | None) -> str:
     doc = _profile_doc(record)
-    raw = doc.get("model_access")
-    if isinstance(raw, Mapping) and raw.get("mode") == "current_loaded":
-        return "current loaded LLM only"
-    return "configured model catalog"
+    raw = doc.get("target_policy")
+    if isinstance(raw, Mapping):
+        visibility = str(raw.get("visibility") or "catalog")
+        activation = str(raw.get("activation") or "may_activate")
+        return f"targets {visibility}; activation {activation.replace('_', ' ')}"
+    legacy = doc.get("model_access")
+    if isinstance(legacy, Mapping) and legacy.get("mode") == "current_loaded":
+        return "targets available; activation existing only"
+    return "targets catalog; activation may activate"
 
 
 def _visibility_summary(record: Mapping[str, Any] | None) -> str:
@@ -1368,10 +1373,15 @@ def _profile_form(
         options=_catalog_options(catalog, "trust_tiers"),
         aria_label="Allowed trust tiers",
     )
-    model_access_grid = _radio_grid(
-        name="model_access",
-        options=_catalog_options(catalog, "model_access"),
-        aria_label="LLM model routing",
+    target_visibility_grid = _radio_grid(
+        name="target_visibility",
+        options=_catalog_options(catalog, "target_visibility"),
+        aria_label="Target visibility",
+    )
+    target_activation_grid = _radio_grid(
+        name="target_activation",
+        options=_catalog_options(catalog, "target_activation"),
+        aria_label="Target activation",
     )
     status_options = "".join(
         '<option value="' + _esc(option.get("id") or "") + '"'
@@ -1407,9 +1417,10 @@ def _profile_form(
         + '<div class="form-section"><strong>Cost and release gates</strong>'
         + cost_grid
         + "</div>"
-        + '<div class="form-section"><strong>LLM model routing</strong>'
-        + '<p class="form-note">Choose how chat/completions clients see and request the loaded LLM. Media workflows and provider-native APIs are controlled by allowed work, workflows, backends, and resource gates.</p>'
-        + model_access_grid
+        + '<div class="form-section"><strong>Target policy</strong>'
+        + '<p class="form-note">Choose whether clients see the allowed catalog or only currently available targets, and whether requests may activate cold targets. LLMs use loaded-model state; media workflows use installed workflow and service availability state.</p>'
+        + target_visibility_grid
+        + target_activation_grid
         + "</div>"
         + '<p class="form-note">Current loaded LLM: <code>'
         + loaded_model
@@ -1419,7 +1430,7 @@ def _profile_form(
         + '<span data-profile-preview-apis>APIs: OpenAI-compatible</span>'
         + '<span data-profile-preview-work>Work: chat</span>'
         + '<span data-profile-preview-cost>Cost gates: interactive; default capabilities; stable</span>'
-        + '<span data-profile-preview-models>LLM models: configured catalog</span>'
+        + '<span data-profile-preview-models>Targets: allowed catalog; may activate</span>'
         + '<span data-profile-preview-guardrails>Guardrails: local only; provider-native passthrough off; admin blocked</span>'
         + "</div>"
         + '<div class="form-section"><strong>Guardrails</strong>'
@@ -1428,7 +1439,7 @@ def _profile_form(
         + '<label class="check"><input type="checkbox" name="native_passthrough"> Allow provider-native passthrough</label>'
         + "</div></div>"
         + '<details class="panel"><summary>Advanced constraints</summary>'
-        + '<p class="form-note">Optional limits for specific LLM model ids, workflow ids, backend ids, tags, and raw policy fields. Suggestions come from current gateway inventory; typed ids are still allowed.</p>'
+        + '<p class="form-note">Optional limits for specific model ids, workflow ids, backend ids, tags, and raw policy fields. Suggestions come from current gateway inventory; typed ids are still allowed.</p>'
         + '<div class="stack">'
         + '<input type="text" name="id" placeholder="Generated from Profile name" aria-label="Profile id override">'
         + _text_input_with_datalist(
@@ -1813,8 +1824,8 @@ def render_admin_dashboard(
         "const labelList=(items,labels,empty)=>items.length?items.map(x=>labels[x]||x).join(', '):empty;"
         "const checkedValues=(form,name)=>Array.from(form.querySelectorAll(`[name=\"${name}\"]:checked`)).map(el=>el.value);"
         "const profileProtocols=(fd,form)=>{const protocols=checkedValues(form,'protocols');if(fd.get('native_passthrough')==='on'&&!protocols.includes('provider-native'))protocols.push('provider-native');return protocols};"
-        "const buildProfileFromForm=(fd,form,profileId)=>{const allow={intents:checkedValues(form,'intents'),exposure:checkedValues(form,'exposure'),trust_tiers:checkedValues(form,'trust_tiers'),resource_tiers:checkedValues(form,'resource_tiers')};const tags=values(fd,'tags');if(tags.length)allow.tags=tags;const profile={id:profileId,protocols:profileProtocols(fd,form),allow,status_visibility:{level:fd.get('status_visibility')||'basic'},fallback:{cloud_allowed:fd.get('cloud_allowed')==='on'},native_passthrough:{enabled:fd.get('native_passthrough')==='on'},model_access:{mode:fd.get('model_access')||'catalog'}};const models=values(fd,'models');if(models.length)profile.models=models;const workflows=values(fd,'workflows');if(workflows.length)profile.workflows=workflows;const backends=values(fd,'backends');if(backends.length)profile.backends=backends;return profile};"
-        "const updateProfilePreview=form=>{form=form||document.querySelector('[data-create-profile]');if(!form)return;const fd=new FormData(form);const apis=profileProtocols(fd,form),work=checkedValues(form,'intents'),resources=checkedValues(form,'resource_tiers'),exposure=checkedValues(form,'exposure'),trust=checkedValues(form,'trust_tiers');const modelMode=fd.get('model_access')==='current_loaded'?'current loaded LLM only':'configured LLM catalog';const guard=(fd.get('cloud_allowed')==='on'?'cloud fallback allowed':'local only')+'; '+(fd.get('native_passthrough')==='on'?'provider-native passthrough on':'provider-native passthrough off')+'; admin blocked';const a=form.querySelector('[data-profile-preview-apis]'),w=form.querySelector('[data-profile-preview-work]'),c=form.querySelector('[data-profile-preview-cost]'),m=form.querySelector('[data-profile-preview-models]'),g=form.querySelector('[data-profile-preview-guardrails]');if(a)a.textContent='APIs: '+labelList(apis,protocolLabels,'none selected');if(w)w.textContent='Work: '+labelList(work,intentLabels,'none selected');if(c)c.textContent='Cost gates: '+labelList(resources,resourceLabels,'none selected')+'; '+labelList(exposure,exposureLabels,'none selected')+'; '+labelList(trust,trustLabels,'none selected');if(m)m.textContent='LLM models: '+modelMode;if(g)g.textContent='Guardrails: '+guard};"
+        "const buildProfileFromForm=(fd,form,profileId)=>{const allow={intents:checkedValues(form,'intents'),exposure:checkedValues(form,'exposure'),trust_tiers:checkedValues(form,'trust_tiers'),resource_tiers:checkedValues(form,'resource_tiers')};const tags=values(fd,'tags');if(tags.length)allow.tags=tags;const profile={id:profileId,protocols:profileProtocols(fd,form),allow,status_visibility:{level:fd.get('status_visibility')||'basic'},fallback:{cloud_allowed:fd.get('cloud_allowed')==='on'},native_passthrough:{enabled:fd.get('native_passthrough')==='on'},target_policy:{visibility:fd.get('target_visibility')||'catalog',activation:fd.get('target_activation')||'may_activate'}};const models=values(fd,'models');if(models.length)profile.models=models;const workflows=values(fd,'workflows');if(workflows.length)profile.workflows=workflows;const backends=values(fd,'backends');if(backends.length)profile.backends=backends;return profile};"
+        "const updateProfilePreview=form=>{form=form||document.querySelector('[data-create-profile]');if(!form)return;const fd=new FormData(form);const apis=profileProtocols(fd,form),work=checkedValues(form,'intents'),resources=checkedValues(form,'resource_tiers'),exposure=checkedValues(form,'exposure'),trust=checkedValues(form,'trust_tiers');const targetVisibility=fd.get('target_visibility')==='available'?'available now':'allowed catalog';const targetActivation=fd.get('target_activation')==='existing_only'?'existing only':'may activate';const guard=(fd.get('cloud_allowed')==='on'?'cloud fallback allowed':'local only')+'; '+(fd.get('native_passthrough')==='on'?'provider-native passthrough on':'provider-native passthrough off')+'; admin blocked';const a=form.querySelector('[data-profile-preview-apis]'),w=form.querySelector('[data-profile-preview-work]'),c=form.querySelector('[data-profile-preview-cost]'),m=form.querySelector('[data-profile-preview-models]'),g=form.querySelector('[data-profile-preview-guardrails]');if(a)a.textContent='APIs: '+labelList(apis,protocolLabels,'none selected');if(w)w.textContent='Work: '+labelList(work,intentLabels,'none selected');if(c)c.textContent='Cost gates: '+labelList(resources,resourceLabels,'none selected')+'; '+labelList(exposure,exposureLabels,'none selected')+'; '+labelList(trust,trustLabels,'none selected');if(m)m.textContent='Targets: '+targetVisibility+'; '+targetActivation;if(g)g.textContent='Guardrails: '+guard};"
         "const initProfileForm=()=>updateProfilePreview(document.querySelector('[data-create-profile]'));"
         "document.addEventListener('change',e=>{const form=e.target.closest&&e.target.closest('[data-create-profile]');if(form)updateProfilePreview(form)});initProfileForm();"
         "const refreshMain=async()=>{const r=await fetch('/admin',{credentials:'same-origin',cache:'no-store'});"

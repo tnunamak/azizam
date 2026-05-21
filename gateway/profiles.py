@@ -24,6 +24,8 @@ from typing import Iterable, Mapping
 from gateway.policy import (
     DEFAULT_PROFILE,
     DEFAULT_PROFILE_ID,
+    TARGET_ACTIVATION_MODES,
+    TARGET_VISIBILITY_MODES,
     VISIBILITY_LEVELS,
     AppProfile,
     CapabilitySelector,
@@ -31,6 +33,8 @@ from gateway.policy import (
     NativePassthroughPolicy,
     ModelAccessPolicy,
     StatusVisibilityPolicy,
+    TargetPolicy,
+    target_policy_from_model_access,
 )
 
 __all__ = [
@@ -51,6 +55,7 @@ _PROFILE_KEYS = {
     "fallback",
     "native_passthrough",
     "status_visibility",
+    "target_policy",
     "model_access",
 }
 
@@ -198,6 +203,31 @@ def _load_model_access(value: object) -> ModelAccessPolicy:
         raise ProfileLoadError(str(exc)) from exc
 
 
+def _load_target_policy(value: object) -> TargetPolicy:
+    data = _require_mapping(value, where="target_policy")
+    if not data:
+        return TargetPolicy()
+    visibility = data.get("visibility", "catalog")
+    if not isinstance(visibility, str):
+        raise ProfileLoadError("target_policy.visibility must be a string")
+    activation = data.get("activation", "may_activate")
+    if not isinstance(activation, str):
+        raise ProfileLoadError("target_policy.activation must be a string")
+    try:
+        return TargetPolicy(visibility=visibility, activation=activation)
+    except ValueError as exc:
+        message = str(exc)
+        if "visibility" in message:
+            raise ProfileLoadError(
+                f"target_policy.visibility must be one of {TARGET_VISIBILITY_MODES}"
+            ) from exc
+        if "activation" in message:
+            raise ProfileLoadError(
+                f"target_policy.activation must be one of {TARGET_ACTIVATION_MODES}"
+            ) from exc
+        raise ProfileLoadError(message) from exc
+
+
 def load_profile(
     profile_data: object,
     *,
@@ -228,6 +258,14 @@ def load_profile(
     if not isinstance(profile_id_raw, str) or not profile_id_raw:
         raise ProfileLoadError("profile id must be a non-empty string")
 
+    model_access = _load_model_access(profile_data.get("model_access"))
+    target_policy_raw = profile_data.get("target_policy")
+    target_policy = (
+        _load_target_policy(target_policy_raw)
+        if target_policy_raw is not None
+        else target_policy_from_model_access(model_access)
+    )
+
     return AppProfile(
         id=profile_id_raw,
         protocols=_coerce_str_set(
@@ -248,7 +286,8 @@ def load_profile(
         status_visibility=_load_status_visibility(
             profile_data.get("status_visibility")
         ),
-        model_access=_load_model_access(profile_data.get("model_access")),
+        target_policy=target_policy,
+        model_access=model_access,
     )
 
 

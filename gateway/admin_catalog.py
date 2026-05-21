@@ -10,7 +10,11 @@ from __future__ import annotations
 import copy
 from typing import Any, Mapping
 
-from gateway.policy import MODEL_ACCESS_MODES, VISIBILITY_LEVELS
+from gateway.policy import (
+    TARGET_ACTIVATION_MODES,
+    TARGET_VISIBILITY_MODES,
+    VISIBILITY_LEVELS,
+)
 
 _API_SURFACES: tuple[dict[str, Any], ...] = (
     {
@@ -206,24 +210,45 @@ _PROFILE_POLICY_CATALOG: dict[str, list[dict[str, Any]]] = {
             "description": "personal/local-only workflows",
         },
     ],
-    "model_access": [
+    "target_visibility": [
         {
-            "id": MODEL_ACCESS_MODES[0],
-            "label": "Configured LLM catalog",
-            "summary_label": "configured LLM catalog",
+            "id": TARGET_VISIBILITY_MODES[0],
+            "label": "Allowed catalog",
+            "summary_label": "allowed catalog",
             "description": (
-                "Apps can request LLM model ids and roles this Profile allows. "
-                "Good for normal clients."
+                "Clients can see targets this Profile is allowed to use, even "
+                "when a target may be cold."
             ),
             "default": True,
         },
         {
-            "id": MODEL_ACCESS_MODES[1],
-            "label": "Current loaded LLM only",
-            "summary_label": "current loaded LLM only",
+            "id": TARGET_VISIBILITY_MODES[1],
+            "label": "Available now",
+            "summary_label": "available now",
             "description": (
-                "Only the loaded LLM appears in model lists. Requests for other "
-                "models are denied instead of swapping models."
+                "Clients only see targets the gateway believes are currently "
+                "usable under this Profile and runtime state."
+            ),
+        },
+    ],
+    "target_activation": [
+        {
+            "id": TARGET_ACTIVATION_MODES[0],
+            "label": "May activate",
+            "summary_label": "may activate",
+            "description": (
+                "Requests may load, switch, start, or queue a target when the "
+                "Profile and runtime policy allow it."
+            ),
+            "default": True,
+        },
+        {
+            "id": TARGET_ACTIVATION_MODES[1],
+            "label": "Existing only",
+            "summary_label": "existing only",
+            "description": (
+                "Requests must use already loaded/running/selected targets; "
+                "cold or disruptive switches are denied."
             ),
         },
     ],

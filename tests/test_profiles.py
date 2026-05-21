@@ -15,6 +15,7 @@ from gateway.policy import (  # noqa: E402
     AppProfile,
     CapabilitySelector,
     ModelAccessPolicy,
+    TargetPolicy,
 )
 from gateway.profiles import (  # noqa: E402
     ProfileLoadError,
@@ -76,7 +77,10 @@ class TestLoadProfileFields(unittest.TestCase):
                     "audit": False,
                 },
                 "status_visibility": {"level": "full"},
-                "model_access": {"mode": "current_loaded"},
+                "target_policy": {
+                    "visibility": "available",
+                    "activation": "existing_only",
+                },
             }
         )
 
@@ -111,13 +115,26 @@ class TestLoadProfileFields(unittest.TestCase):
         self.assertFalse(profile.native_passthrough.audit)
         self.assertEqual(profile.status_visibility.level, "full")
         self.assertEqual(
-            profile.model_access,
-            ModelAccessPolicy(mode="current_loaded"),
+            profile.target_policy,
+            TargetPolicy(visibility="available", activation="existing_only"),
         )
 
     def test_empty_list_means_deny_all_for_dimension(self) -> None:
         profile = load_profile({"id": "locked", "protocols": []})
         self.assertEqual(profile.protocols, frozenset())
+
+    def test_legacy_model_access_maps_to_target_policy(self) -> None:
+        profile = load_profile(
+            {"id": "legacy", "model_access": {"mode": "current_loaded"}}
+        )
+        self.assertEqual(
+            profile.model_access,
+            ModelAccessPolicy(mode="current_loaded"),
+        )
+        self.assertEqual(
+            profile.target_policy,
+            TargetPolicy(visibility="available", activation="existing_only"),
+        )
 
     def test_missing_dimension_means_no_opinion(self) -> None:
         profile = load_profile({"id": "loose"})
@@ -190,6 +207,18 @@ class TestLoadProfileValidation(unittest.TestCase):
     def test_model_access_mode_must_be_known(self) -> None:
         with self.assertRaises(ProfileLoadError):
             load_profile({"id": "x", "model_access": {"mode": "surprise"}})
+
+    def test_target_policy_visibility_must_be_known(self) -> None:
+        with self.assertRaises(ProfileLoadError):
+            load_profile(
+                {"id": "x", "target_policy": {"visibility": "surprise"}}
+            )
+
+    def test_target_policy_activation_must_be_known(self) -> None:
+        with self.assertRaises(ProfileLoadError):
+            load_profile(
+                {"id": "x", "target_policy": {"activation": "surprise"}}
+            )
 
     def test_fallback_must_be_mapping(self) -> None:
         with self.assertRaises(ProfileLoadError):
