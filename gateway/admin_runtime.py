@@ -57,6 +57,14 @@ def _sanitize_credential(record: Mapping[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in record.items() if k not in blocked}
 
 
+def _stored_profile_id(value: Any) -> str | None:
+    """Return a stored Profile id, treating the built-in default as inherited."""
+    profile_id = str(value or "").strip()
+    if not profile_id or profile_id == "default-local":
+        return None
+    return profile_id
+
+
 def _profile_summary(record: Mapping[str, Any]) -> dict[str, Any]:
     out = dict(record)
     profile = out.get("profile")
@@ -105,9 +113,9 @@ class AdminSQLiteStore:
         if not name:
             raise ValueError("app name is required")
         kind = str(data.get("kind") or "service")
-        profile_id = data.get("profile_id")
+        profile_id = _stored_profile_id(data.get("profile_id"))
         owner_user_id = data.get("owner_user_id")
-        if profile_id and admin_store.get_profile(str(profile_id), path=self.path) is None:
+        if profile_id and admin_store.get_profile(profile_id, path=self.path) is None:
             raise ValueError(f"profile {profile_id!r} not found")
         if kind == "personal" or owner_user_id:
             if not owner_user_id:
@@ -117,7 +125,7 @@ class AdminSQLiteStore:
             record = admin_store.ensure_personal_app_for_user(
                 str(owner_user_id),
                 name=name,
-                default_profile_id=str(profile_id) if profile_id else None,
+                default_profile_id=profile_id,
                 path=self.path,
             )
         else:
@@ -130,7 +138,7 @@ class AdminSQLiteStore:
                 name,
                 kind="service",
                 owner_service_account_id=svc["id"],
-                default_profile_id=str(profile_id) if profile_id else None,
+                default_profile_id=profile_id,
                 path=self.path,
             )
         admin_store.record_audit(
@@ -156,11 +164,10 @@ class AdminSQLiteStore:
             if not name:
                 raise ValueError("app name is required")
 
+        profile_key_present = "default_profile_id" in data or "profile_id" in data
         profile_value = data.get("default_profile_id", data.get("profile_id"))
-        clear_profile = (
-            "default_profile_id" in data or "profile_id" in data
-        ) and not profile_value
-        profile_id = str(profile_value).strip() if profile_value else None
+        profile_id = _stored_profile_id(profile_value)
+        clear_profile = profile_key_present and profile_id is None
         if profile_id and admin_store.get_profile(profile_id, path=self.path) is None:
             raise ValueError(f"profile {profile_id!r} not found")
 
@@ -294,15 +301,15 @@ class AdminSQLiteStore:
         if app is None:
             raise ValueError(f"app {app_id!r} not found")
         api_key = generate_app_api_key()
-        profile_id = data.get("profile_id")
-        if profile_id and admin_store.get_profile(str(profile_id), path=self.path) is None:
+        profile_id = _stored_profile_id(data.get("profile_id"))
+        if profile_id and admin_store.get_profile(profile_id, path=self.path) is None:
             raise ValueError(f"profile {profile_id!r} not found")
         record = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app_id,
             hash=hash_api_key(api_key),
             prefix=_key_prefix(api_key),
-            profile_id=str(profile_id) if profile_id else None,
+            profile_id=profile_id,
             display_name=str(data.get("label") or data.get("name") or "API key"),
             scopes=data.get("scopes") if isinstance(data.get("scopes"), list) else None,
             path=self.path,

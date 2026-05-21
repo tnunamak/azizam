@@ -151,6 +151,67 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertIn("app.update", actions)
         self.assertIn("app.disable", actions)
 
+    def test_default_local_profile_selection_inherits_builtin_default(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+
+        app_resp = client.post(
+            "/admin/api/apps",
+            json={"name": "runtime-app", "profile_id": "default-local"},
+        )
+        self.assertEqual(app_resp.status_code, 201, app_resp.text)
+        app_id = app_resp.json()["app"]["id"]
+        self.assertIsNone(app_resp.json()["app"]["default_profile_id"])
+
+        profile = client.post(
+            "/admin/api/profiles",
+            json={
+                "name": "Local",
+                "profile": {
+                    "id": "local",
+                    "protocols": ["openai.chat"],
+                },
+            },
+        ).json()["profile"]
+        set_profile = client.patch(
+            f"/admin/api/apps/{app_id}",
+            json={"profile_id": profile["id"]},
+        )
+        self.assertEqual(set_profile.status_code, 200, set_profile.text)
+        self.assertEqual(set_profile.json()["app"]["default_profile_id"], profile["id"])
+
+        clear_profile = client.patch(
+            f"/admin/api/apps/{app_id}",
+            json={"profile_id": "default-local"},
+        )
+        self.assertEqual(clear_profile.status_code, 200, clear_profile.text)
+        self.assertIsNone(clear_profile.json()["app"]["default_profile_id"])
+
+    def test_disabling_app_immediately_blocks_existing_runtime_keys(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        app_id = client.post(
+            "/admin/api/apps", json={"name": "runtime-app"}
+        ).json()["app"]["id"]
+        app_key = client.post(f"/admin/api/apps/{app_id}/keys", json={}).json()[
+            "credential"
+        ]["api_key"]
+        key_hash = hash_api_key(app_key)
+
+        self.assertIsNotNone(
+            runtime_identity_for_app_credential_hash(key_hash, path=self.db)
+        )
+
+        disabled = client.delete(f"/admin/api/apps/{app_id}")
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        self.assertIsNone(
+            runtime_identity_for_app_credential_hash(key_hash, path=self.db)
+        )
+
     def test_app_key_cannot_administer_gateway(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db

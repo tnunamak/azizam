@@ -182,6 +182,38 @@ class TestRuntimeProfileMappings(AdminStoreTestBase):
         )
         self.assertEqual(resolved, friend["id"])
 
+    def test_oidc_group_mapping_beats_broad_domain_mapping(self) -> None:
+        family = admin_store.create_profile(
+            "Family",
+            {"id": "family"},
+            path=self.db,
+        )
+        trusted = admin_store.create_profile(
+            "Trusted",
+            {"id": "trusted"},
+            path=self.db,
+        )
+        admin_store.create_runtime_profile_mapping(
+            source_kind="domain",
+            source_value="example.com",
+            profile_id=family["id"],
+            path=self.db,
+        )
+        admin_store.create_runtime_profile_mapping(
+            source_kind="oidc_group",
+            source_value="trusted-users",
+            profile_id=trusted["id"],
+            path=self.db,
+        )
+
+        resolved = admin_store.resolve_runtime_profile_mapping(
+            email="simon@example.com",
+            gateway_role="none",
+            oidc_groups=["trusted-users"],
+            path=self.db,
+        )
+        self.assertEqual(resolved, trusted["id"])
+
     def test_runtime_mapping_can_be_disabled(self) -> None:
         profile = admin_store.create_profile("Family", {"id": "family"}, path=self.db)
         mapping = admin_store.create_runtime_profile_mapping(

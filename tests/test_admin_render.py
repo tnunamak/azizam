@@ -187,7 +187,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn('name="profile_preset" value="video_media"', html)
         self.assertIn('name="profile_preset" value="full_runtime"', html)
         self.assertIn("stable local language models", html)
-        self.assertIn("trusted power users and internal agents", html)
+        self.assertIn("Every runtime API", html)
         self.assertIn("Current loaded LLM only", html)
         self.assertIn("Current loaded LLM: <code>qwen.gguf</code>", html)
         self.assertIn("Profile preview", html)
@@ -205,7 +205,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("chat_images:{label:'Chat + images'", html)
         self.assertIn("full_runtime:{label:'Full runtime access'", html)
         self.assertIn(
-            "need every runtime API, including provider-native passthrough",
+            "Every runtime API",
             html,
         )
         self.assertIn(
@@ -222,6 +222,11 @@ class AdminRenderHappyPathTests(unittest.TestCase):
             html,
         )
         self.assertIn("chat_only:{label:'Chat only',", html)
+        self.assertIn("Family chat", html)
+        self.assertIn("RAG / documents", html)
+        self.assertIn("Trusted power user", html)
+        self.assertIn("syncProfileTemplate", html)
+        self.assertIn("setChecks(form,'protocols',t.protocols)", html)
         self.assertIn("status:'basic',native_passthrough:false},chat_embeddings", html)
         self.assertIn("full_runtime:{label:'Full runtime access'", html)
         self.assertIn("status:'standard',native_passthrough:true},custom", html)
@@ -367,7 +372,8 @@ class AdminRenderHappyPathTests(unittest.TestCase):
     def test_admin_dashboard_uses_operator_design_contract(self) -> None:
         html = render_admin_dashboard(_snapshot())
         self.assertIn(">Gateway access workspace</h1>", html)
-        self.assertIn('id="access"', html)
+        self.assertIn('id="decision-path"', html)
+        self.assertIn(">Decision Path</h2>", html)
         self.assertLess(html.index('id="profiles"'), html.index('id="apps-keys"'))
         self.assertLess(html.index('id="apps-keys"'), html.index('id="identity"'))
         self.assertIn('id="apis"', html)
@@ -388,6 +394,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("data-create-runtime-mapping", html)
         self.assertIn("/admin/api/runtime-profile-mappings", html)
         self.assertIn("This does not grant admin access", html)
+        self.assertIn("exact email, OIDC group, OIDC role, email domain", html)
         self.assertIn("Apps hold opk_ keys", html)
         self.assertIn("users do not hand-edit policy", html)
         self.assertIn("opk_</code>&nbsp;runtime App keys", html)
@@ -397,11 +404,20 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         self.assertIn("Effective Profile: protocols openai", html)
         self.assertIn('data-update-app-profile', html)
+        self.assertIn('data-disable-app="app_1"', html)
         self.assertIn('action="/admin/api/apps/app_1"', html)
         self.assertIn('aria-label="Change Profile for app_1"', html)
         self.assertIn("json(f.action,body,'PATCH')", html)
         self.assertIn("Change Profile", html)
         self.assertEqual(html.count("Default local (default-local)"), 3)
+
+    def test_disabled_apps_are_hidden_from_workspace(self) -> None:
+        snapshot = _snapshot()
+        snapshot["apps"][0]["disabled_at"] = "2026-05-21T00:00:00Z"
+        html = render_admin_dashboard(snapshot)
+        self.assertNotIn("brother-laptop", html)
+        self.assertNotIn("cred_1", html)
+        self.assertIn("kitchen-tablet", html)
 
     def test_policy_test_uses_selects_and_discloses_advanced_fields(self) -> None:
         html = render_admin_dashboard(_snapshot())
@@ -418,7 +434,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertNotIn('id="apis"', html)
         self.assertNotIn('id="services"', html)
         self.assertNotIn('id="activity"', html)
-        self.assertIn('id="access"', html)
+        self.assertIn('id="decision-path"', html)
         self.assertIn('id="profiles"', html)
         self.assertIn('id="apps-keys"', html)
 
@@ -500,12 +516,15 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         key_form_branch = html[
             html.index("if(keyForm)") : html.index("document.addEventListener('click'")
         ]
+        click_branch = html[html.index("document.addEventListener('click'") :]
         self.assertIn("await refreshMain();showSecret(data", key_form_branch)
         profile_form_branch = html[html.index("if(profileForm)") : html.index("if(simForm)")]
         app_form_branch = html[html.index("if(appForm)") : html.index("if(keyForm)")]
         self.assertIn("await refreshMain();show(data)", profile_form_branch)
         self.assertIn("await refreshMain();show(data)", app_form_branch)
         self.assertIn("await refreshMain();showSecret(data", key_form_branch)
+        self.assertIn("data-disable-app", click_branch)
+        self.assertIn("'/admin/api/apps/'+encodeURIComponent(id)", click_branch)
 
     def test_admin_logout_url_is_configurable(self) -> None:
         html = render_admin_dashboard(

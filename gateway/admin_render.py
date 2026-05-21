@@ -107,7 +107,16 @@ _PAGE_CSS = """
     padding: 0.35rem 0.5rem;
     border-radius: 6px;
   }
-  .inline-form button { min-height: 2.25rem; }
+  .inline-form button {
+    min-height: 2.25rem;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.35rem 0.65rem;
+    cursor: pointer;
+  }
+  .inline-form button:hover { filter: brightness(1.08); }
   form.flow { display: grid; gap: 0.75rem; background: var(--panel);
               border: 1px solid var(--line); border-radius: var(--radius); padding: 0.9rem; min-width: 0; }
   form.flow .row { display: grid; gap: var(--space-2);
@@ -533,7 +542,11 @@ def _app_row(
     active_keys = active_keys_by_app.get(raw_app_id, 0)
     status_class = "ready"
     status_text = "ready"
-    if not profile_id:
+    disabled = bool(record.get("disabled_at"))
+    if disabled:
+        status_class = "problem"
+        status_text = "disabled"
+    elif not profile_id:
         status_class = "problem"
         status_text = "needs profile"
     elif profile_id != "default-local" and profile is None:
@@ -555,8 +568,19 @@ def _app_row(
         + f'<select name="profile_id" aria-label="Change Profile for {_esc(raw_app_id)}">'
         + _profile_options(profiles, selected=profile_label, include_default=True)
         + "</select>"
-        + '<button class="inline" type="submit">Change Profile</button>'
+        + '<button type="submit">Change Profile</button>'
         + "</form>"
+    )
+    action = (
+        "—"
+        if disabled or not raw_app_id
+        else (
+            '<button class="inline" type="button" data-disable-app="'
+            + _esc(raw_app_id)
+            + '" aria-label="Disable App '
+            + _esc(raw_app_id)
+            + '">Disable</button>'
+        )
     )
     created = _esc(record.get("created_at") or "—")
     return (
@@ -567,6 +591,7 @@ def _app_row(
         f"<td>{_esc(active_keys)} active</td>"
         f'<td><span class="badge {status_class}">{status_text}</span></td>'
         f"<td>{created}</td>"
+        f"<td>{action}</td>"
         "</tr>"
     )
 
@@ -786,6 +811,7 @@ def _operator_intro() -> str:
         "describe what those keys can do, Identity mappings choose defaults, and "
         "Services show what capabilities exist right now.</p>"
         '<nav class="operator-strip" aria-label="Admin sections">'
+        '<a href="#decision-path">Decision Path</a>'
         '<a href="#profiles">Profiles</a>'
         '<a href="#apps-keys">Apps &amp; Keys</a>'
         '<a href="#identity">Identity</a>'
@@ -943,7 +969,8 @@ def _runtime_mapping_form(
         + _esc(create_mapping_action)
         + '" data-create-runtime-mapping>'
         "<label>Add runtime Profile mapping</label>"
-        '<p class="form-note">Map signed-in users, domains, OIDC groups, or OIDC roles to a default runtime Profile. This does not grant admin access.</p>'
+        '<p class="form-note">Map signed-in users, OIDC groups, OIDC roles, email domains, or exact emails to a default runtime Profile. This does not grant admin access.</p>'
+        '<p class="form-note">When more than one mapping matches, the first match wins: exact email, OIDC group, OIDC role, email domain, gateway role, all signed-in users.</p>'
         '<div class="stack">'
         '<select name="source_kind" aria-label="Identity source type">'
         '<option value="oidc_group">OIDC group</option>'
@@ -982,17 +1009,17 @@ def _profile_form(
         '<div class="cell-sub">Start from a template</div>'
         '<div class="template-strip" aria-label="Profile templates">'
         '<label class="template-card"><input type="radio" name="profile_preset" value="chat_only" checked>'
-        '<span><strong>Chat only</strong><span>For a person, chatbot, or simple agent that only needs stable local language models.</span></span></label>'
+        '<span><strong>Family chat</strong><span>For a person, chatbot, or simple agent that only needs stable local language models.</span></span></label>'
         '<label class="template-card"><input type="radio" name="profile_preset" value="chat_embeddings">'
-        '<span><strong>Chat + embeddings</strong><span>For RAG tools, document search, code indexes, and memory features.</span></span></label>'
+        '<span><strong>RAG / documents</strong><span>Chat plus embeddings for document search, code indexes, and memory features.</span></span></label>'
         '<label class="template-card"><input type="radio" name="profile_preset" value="chat_images">'
-        '<span><strong>Chat + images</strong><span>Chat and approved image generation/edit workflows. No video, music, admin, or cloud fallback.</span></span></label>'
+        '<span><strong>Creative chat</strong><span>Chat and approved image generation/edit workflows. No video, music, admin, or cloud fallback.</span></span></label>'
         '<label class="template-card"><input type="radio" name="profile_preset" value="image_audio">'
-        '<span><strong>Images + audio</strong><span>For approved image, edit, speech, STT, music, and sound workflows. No video.</span></span></label>'
+        '<span><strong>Media creator</strong><span>Approved image, edit, speech, STT, music, and sound workflows. No video.</span></span></label>'
         '<label class="template-card"><input type="radio" name="profile_preset" value="video_media">'
         '<span><strong>Video producer</strong><span>For expensive video jobs and media workflows where queueing is expected.</span></span></label>'
         '<label class="template-card"><input type="radio" name="profile_preset" value="full_runtime">'
-        '<span><strong>Full runtime</strong><span>For trusted power users and internal agents that need every runtime API, including provider-native passthrough.</span></span></label>'
+        '<span><strong>Trusted power user</strong><span>Every runtime API, including provider-native passthrough. Still no admin control-plane access.</span></span></label>'
         '<label class="template-card"><input type="radio" name="profile_preset" value="custom">'
         '<span><strong>Custom</strong><span>Start from a minimal Profile, then adjust the advanced fields below.</span></span></label>'
         "</div>"
@@ -1143,10 +1170,21 @@ def render_admin_dashboard(
       of mapping records
     """
 
-    apps = list(snapshot.get("apps") or [])
+    apps = [
+        app
+        for app in list(snapshot.get("apps") or [])
+        if not (isinstance(app, Mapping) and app.get("disabled_at"))
+    ]
     users = list(snapshot.get("users") or [])
     profiles = list(snapshot.get("profiles") or [])
-    credentials = list(snapshot.get("credentials") or [])
+    credentials = [
+        credential
+        for credential in list(snapshot.get("credentials") or [])
+        if not credential.get("app_id") or any(
+            str(app.get("id") or "") == str(credential.get("app_id") or "")
+            for app in apps
+        )
+    ]
     audit = list(snapshot.get("audit") or [])
     api_surfaces = list(snapshot.get("api_surfaces") or [])
     services = list(snapshot.get("services") or [])
@@ -1171,7 +1209,7 @@ def render_admin_dashboard(
             active_keys_by_app[app_id] = active_keys_by_app.get(app_id, 0) + 1
 
     apps_table = _table(
-        ["App", "Owner", "Effective access", "Keys", "Status", "Created"],
+        ["App", "Owner", "Effective access", "Keys", "Status", "Created", "Action"],
         (
             _app_row(
                 a,
@@ -1334,12 +1372,15 @@ def render_admin_dashboard(
         "const policyTemplates={chat_only:{label:'Chat only',protocols:['openai','anthropic','ollama'],intents:['chat','text.completions'],exposure:['default'],trust:['stable'],resources:['interactive'],status:'basic',native_passthrough:false},chat_embeddings:{label:'Chat + embeddings',protocols:['openai','anthropic','ollama'],intents:['chat','text.completions','text.embeddings'],exposure:['default'],trust:['stable'],resources:['interactive'],status:'basic',native_passthrough:false},chat_images:{label:'Chat + images',protocols:['openai','anthropic','ollama','gateway'],intents:['chat','text.completions','image.generate','image.edit'],exposure:['default','opt_in'],trust:['stable'],resources:['interactive','batch'],status:'standard',native_passthrough:false},image_audio:{label:'Images + audio',protocols:['openai','gateway'],intents:['image.generate','image.edit','speech.synthesis','speech.transcription','audio.generate'],exposure:['default','opt_in'],trust:['stable'],resources:['interactive','batch'],status:'standard',native_passthrough:false},video_media:{label:'Video producer',protocols:['openai','gateway'],intents:['image.generate','image.edit','speech.synthesis','speech.transcription','audio.generate','video.generate'],exposure:['default','opt_in'],trust:['stable'],resources:['interactive','batch','expensive'],status:'standard',native_passthrough:false},full_runtime:{label:'Full runtime access',protocols:['openai','anthropic','ollama','gateway','provider-native'],intents:['chat','text.completions','text.embeddings','image.generate','image.edit','speech.synthesis','speech.transcription','audio.generate','video.generate','models.list'],exposure:['default','opt_in'],trust:['stable','experimental','private'],resources:['interactive','batch','expensive'],status:'standard',native_passthrough:true},custom:{label:'Custom policy',protocols:['openai'],intents:['chat'],exposure:['default'],trust:['stable'],resources:['interactive'],status:'basic',native_passthrough:false}};"
         "const policyPreview={chat_only:{allowed:'chat',blocked:'embeddings, images, audio, video, admin, cloud fallback'},chat_embeddings:{allowed:'chat, embeddings',blocked:'images, audio, video, admin, cloud fallback'},chat_images:{allowed:'chat, image generation, image editing',blocked:'video, music/audio generation, admin, cloud fallback'},image_audio:{allowed:'image generation, image editing, speech, transcription, music/audio generation',blocked:'video, admin, cloud fallback'},video_media:{allowed:'image, audio, and video generation workflows',blocked:'admin, cloud fallback'},full_runtime:{allowed:'chat, embeddings, images, audio, video, model list, provider-native passthrough',blocked:'admin control plane'},custom:{allowed:'custom Profile details',blocked:'anything not explicitly allowed'}};"
         "const buildProfile=(templateId,profileId)=>{const t=policyTemplates[templateId]||policyTemplates.chat_only;const allow={intents:t.intents,exposure:t.exposure,trust_tiers:t.trust,resource_tiers:t.resources};if(t.tags)allow.tags=t.tags;return{id:profileId,protocols:t.protocols,allow,status_visibility:{level:t.status||'basic'},fallback:{cloud_allowed:false},native_passthrough:{enabled:!!t.native_passthrough},model_access:{mode:'catalog'}}};"
-        "const updateProfilePreview=()=>{const form=document.querySelector('[data-create-profile]');if(!form)return;const fd=new FormData(form);const preset=fd.get('profile_preset')||'chat_only';const copy=policyPreview[preset]||policyPreview.chat_only;const modelMode=fd.get('model_access')==='current_loaded'?'current loaded LLM only':'configured catalog';const a=document.querySelector('[data-profile-preview-allowed]'),b=document.querySelector('[data-profile-preview-blocked]'),m=document.querySelector('[data-profile-preview-models]');if(a)a.textContent='Allowed: '+copy.allowed;if(b)b.textContent='Blocked: '+copy.blocked;if(m)m.textContent='Models: '+modelMode};"
-        "document.querySelectorAll('[name=\"profile_preset\"],[name=\"model_access\"]').forEach(el=>el.addEventListener('change',updateProfilePreview));updateProfilePreview();"
+        "const setChecks=(form,name,items)=>{const allowed=new Set(items||[]);form.querySelectorAll(`[name=\"${name}\"]`).forEach(el=>{el.checked=allowed.has(el.value)})};"
+        "const syncProfileTemplate=form=>{if(!form)return;const fd=new FormData(form);const preset=fd.get('profile_preset')||'chat_only';const t=policyTemplates[preset]||policyTemplates.chat_only;setChecks(form,'protocols',t.protocols);const native=form.querySelector('[name=\"native_passthrough\"]');if(native)native.checked=!!t.native_passthrough;const status=form.querySelector('[name=\"status_visibility\"]');if(status)status.value=t.status||'basic'};"
+        "const updateProfilePreview=form=>{form=form||document.querySelector('[data-create-profile]');if(!form)return;const fd=new FormData(form);const preset=fd.get('profile_preset')||'chat_only';const copy=policyPreview[preset]||policyPreview.chat_only;const modelMode=fd.get('model_access')==='current_loaded'?'current loaded LLM only':'configured catalog';const a=form.querySelector('[data-profile-preview-allowed]'),b=form.querySelector('[data-profile-preview-blocked]'),m=form.querySelector('[data-profile-preview-models]');if(a)a.textContent='Allowed: '+copy.allowed;if(b)b.textContent='Blocked: '+copy.blocked;if(m)m.textContent='Models: '+modelMode};"
+        "const initProfileForm=()=>{const form=document.querySelector('[data-create-profile]');syncProfileTemplate(form);updateProfilePreview(form)};"
+        "document.addEventListener('change',e=>{const form=e.target.closest&&e.target.closest('[data-create-profile]');if(!form)return;if(e.target.name==='profile_preset')syncProfileTemplate(form);updateProfilePreview(form)});initProfileForm();"
         "const refreshMain=async()=>{const r=await fetch('/admin',{credentials:'same-origin',cache:'no-store'});"
         "if(!r.ok)return;const html=await r.text();const doc=new DOMParser().parseFromString(html,'text/html');"
         "const next=doc.querySelector('main.shell-main'),main=document.querySelector('main.shell-main');"
-        "if(next&&main)main.replaceWith(next)};"
+        "if(next&&main){main.replaceWith(next);initProfileForm()}};"
         "const json=async(url,body,method='POST')=>{const r=await fetch(url,{method,credentials:'same-origin',headers:{'content-type':'application/json','x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken},body:JSON.stringify(body)});"
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
@@ -1375,9 +1416,10 @@ def render_admin_dashboard(
         "const body={};const label=String(fd.get('label')||'').trim();if(label)body.label=label;"
         "const url=f.dataset.actionTemplate.replace('{app_id}',encodeURIComponent(appId));"
         "try{const data=await json(url,body);f.reset();await refreshMain();showSecret(data,'App API key created. Copy it now; it will not be shown again.','Use this opk_ key only in runtime Apps and SDK tools.','OpenAI-compatible setup: Base URL '+runtimeBaseUrl+' · API key {key}')}catch(err){showError(err)}}});"
-        "document.addEventListener('click',async e=>{const revoke=e.target.closest('[data-revoke-credential]'),disable=e.target.closest('[data-disable-runtime-mapping]');"
-        "if(!revoke&&!disable)return;"
+        "document.addEventListener('click',async e=>{const revoke=e.target.closest('[data-revoke-credential]'),disable=e.target.closest('[data-disable-runtime-mapping]'),appDisable=e.target.closest('[data-disable-app]');"
+        "if(!revoke&&!disable&&!appDisable)return;"
         "if(revoke){const id=revoke.dataset.revokeCredential;try{const data=await json('/admin/api/credentials/'+encodeURIComponent(id)+'/revoke',{});await refreshMain();show(data)}catch(err){showError(err)}return}"
+        "if(appDisable){const id=appDisable.dataset.disableApp;try{const data=await json('/admin/api/apps/'+encodeURIComponent(id),{},'DELETE');await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(disable){const id=disable.dataset.disableRuntimeMapping;try{const r=await fetch('/admin/api/runtime-profile-mappings/'+encodeURIComponent(id),{method:'DELETE',credentials:'same-origin',headers:{'x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken}});const text=await r.text();const data=text?JSON.parse(text):{};if(!r.ok)throw data;await refreshMain();show(data)}catch(err){showError(err)}}});"
         "});"
         "</script>"
@@ -1386,9 +1428,9 @@ def render_admin_dashboard(
         + '<main class="shell-main">'
         + _operator_intro()
         + _section(
-            "Access",
+            "Decision Path",
             access_map_html,
-            section_id="access",
+            section_id="decision-path",
             intro="The workspace follows the runtime decision path: Profile, App, key, Identity default, then service capability.",
         )
         + _section(

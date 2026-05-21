@@ -1061,9 +1061,9 @@ def _normalize_runtime_mapping(
 def _default_runtime_mapping_priority(source_kind: str) -> int:
     return {
         "email": 10,
-        "domain": 20,
-        "oidc_group": 30,
-        "oidc_role": 40,
+        "oidc_group": 20,
+        "oidc_role": 30,
+        "domain": 40,
         "gateway_role": 50,
         "all_users": 100,
     }[source_kind]
