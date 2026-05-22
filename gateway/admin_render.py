@@ -101,6 +101,10 @@ _PAGE_CSS = """
                  border-radius: var(--radius); padding: var(--space-3); }
   .access-node strong { color: var(--text); }
   .access-node span { color: var(--muted); line-height: 1.45; }
+  .source-plane-list { display: grid; gap: var(--space-3); }
+  .source-plane { display: grid; gap: var(--space-2); }
+  .source-plane h4 { margin: 0; color: var(--text); font-size: 0.9rem; }
+  .source-plane p { margin: 0; color: var(--muted); line-height: 1.45; max-width: 70ch; }
   .inline-form { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: 0.45rem; }
   .inline-form select,
   .inline-form input {
@@ -362,10 +366,12 @@ def _safe_config_text(value: Any, *, record: Mapping[str, Any] | None = None) ->
 
 def _source_badge_class(source: str) -> str:
     normalized = source.lower()
-    if normalized in {"admin", "live", "ui", "ui-owned"}:
+    if normalized in {"admin", "live", "ui", "ui-owned", "dashboard"}:
         return "ready"
-    if normalized in {"env", "yaml", "file", "manifest"}:
+    if normalized in {"env", "yaml", "file", "manifest", "bootstrap", "provisioned"}:
         return "attention"
+    if normalized in {"mixed", "split"}:
+        return "warn"
     return ""
 
 
@@ -903,16 +909,23 @@ def _service_row(record: Mapping[str, Any]) -> str:
 def _config_source_row(record: Mapping[str, Any]) -> str:
     label = _esc(_safe_config_text(record.get("label") or record.get("name") or record.get("key")))
     domain = _esc(_safe_config_text(record.get("domain") or record.get("scope")))
-    source_value = str(record.get("source") or record.get("kind") or "unknown")
-    source = _esc(_safe_config_text(source_value))
-    badge_class = _source_badge_class(source_value)
-    editability_value = (
-        record.get("editability")
-        or record.get("ownership")
-        or record.get("mode")
-        or ("read-only" if record.get("readonly") else "")
+    plane = _config_source_plane(record)
+    plane_label = _esc(_config_plane_label(record, plane))
+    badge_class = _source_badge_class(plane)
+    source_value = _safe_config_text(record.get("source") or record.get("kind") or "unknown")
+    source_ref = _safe_config_text(record.get("source_ref") or record.get("path") or record.get("key") or "")
+    provisioned = _esc(source_value if not source_ref or source_ref == "—" else f"{source_value}: {source_ref}")
+    live_state = _esc(
+        _safe_config_text(
+            record.get("current_value_summary")
+            or record.get("current")
+            or record.get("value")
+            or record.get("status")
+            or "loaded"
+        )
     )
-    editability = _esc(_safe_config_text(editability_value))
+    change_path = _esc(_config_change_path(record))
+    restart = "Restart required" if bool(record.get("restart_required")) else _editability_label(record)
     recommendation = _esc(
         _safe_config_text(
             record.get("recommendation") or record.get("note") or record.get("description"),
@@ -921,13 +934,134 @@ def _config_source_row(record: Mapping[str, Any]) -> str:
     )
     return (
         "<tr>"
-        f'<td><div class="cell-main">{label}</div></td>'
-        f"<td>{domain}</td>"
-        f'<td><span class="badge {badge_class}">{source}</span></td>'
-        f"<td>{editability}</td>"
-        f"<td>{recommendation}</td>"
+        f'<td><div class="cell-main">{label}</div><div class="cell-sub">{domain}</div></td>'
+        f'<td><span class="badge {badge_class}">{plane_label}</span><div class="cell-sub">{provisioned}</div></td>'
+        f'<td><div class="cell-main">{live_state}</div><div class="cell-sub">{_esc(restart)}</div></td>'
+        f'<td><div class="cell-main">{change_path}</div><div class="cell-sub">{recommendation}</div></td>'
         "</tr>"
     )
+
+
+def _config_source_plane(record: Mapping[str, Any]) -> str:
+    plane = str(record.get("plane") or "").strip().lower()
+    if plane:
+        return plane
+    owner = str(record.get("ui_owner") or record.get("ownership") or "").strip().lower()
+    source = str(record.get("source") or record.get("kind") or "").strip().lower()
+    if owner in {"ui", "admin", "dashboard"} or source in {"ui", "admin", "admin.db"}:
+        return "dashboard"
+    if owner in {"file", "env"} or source in {"file", "env", "yaml", "proxy_config.yml"}:
+        return "bootstrap"
+    if owner == "manifest" or source == "manifest":
+        return "provisioned"
+    return "split"
+
+
+def _config_plane_label(record: Mapping[str, Any], plane: str) -> str:
+    raw = record.get("plane_label")
+    if raw:
+        return str(raw)
+    return {
+        "dashboard": "Managed here",
+        "bootstrap": "Bootstrap config",
+        "provisioned": "Provisioned artifacts",
+        "manifest": "Provisioned artifacts",
+        "split": "Split ownership",
+        "mixed": "Split ownership",
+    }.get(plane, "Other")
+
+
+def _editability_label(record: Mapping[str, Any]) -> str:
+    value = str(
+        record.get("editability")
+        or record.get("ownership")
+        or record.get("mode")
+        or ("read-only" if record.get("readonly") else "")
+    ).strip().lower()
+    return {
+        "runtime": "Editable live",
+        "restart": "Restart required",
+        "restart required": "Restart required",
+        "read_only": "Read-only here",
+        "read-only": "Read-only here",
+        "advanced": "Advanced external config",
+        "ui-owned": "Editable live",
+    }.get(value, _safe_config_text(value))
+
+
+def _config_change_path(record: Mapping[str, Any]) -> str:
+    explicit = record.get("change_path")
+    if explicit:
+        return _safe_config_text(explicit)
+    plane = _config_source_plane(record)
+    source = _safe_config_text(record.get("source") or record.get("kind") or "source")
+    source_ref = _safe_config_text(
+        record.get("source_ref")
+        or record.get("key")
+        or (record.get("label") if source == "env" else "")
+    )
+    editability = str(record.get("editability") or "").strip().lower()
+    if plane == "dashboard":
+        return "Manage in this dashboard."
+    if plane == "bootstrap":
+        if source == "env" and source_ref != "—":
+            return f"Set {source_ref} in the service environment and restart."
+        if source_ref != "—":
+            return f"Edit {source} field {source_ref} and restart."
+        return "Edit the provisioned file/env value and restart."
+    if plane in {"provisioned", "manifest"}:
+        return "Edit the manifest/catalog source; reload or restart if needed."
+    if editability == "runtime":
+        return "Use dashboard controls for runtime overrides."
+    return "Use dashboard controls for runtime overrides; edit bootstrap fields outside the dashboard."
+
+
+def _config_sources_panel(records: Iterable[Mapping[str, Any]]) -> str:
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        grouped.setdefault(_config_source_plane(record), []).append(record)
+    if not grouped:
+        return ""
+    order = ("dashboard", "bootstrap", "provisioned", "manifest", "split", "mixed")
+    intros = {
+        "dashboard": "Runtime policy and operator choices stored by the gateway and editable here.",
+        "bootstrap": "Values needed before the gateway starts. Change them in files/env, then restart or reload.",
+        "provisioned": "Versioned workflow, model, and capability definitions. The dashboard shows what loaded.",
+        "manifest": "Versioned workflow, model, and capability definitions. The dashboard shows what loaded.",
+        "split": "Controls with both runtime knobs and provisioned bootstrap fields.",
+        "mixed": "Controls with both runtime knobs and provisioned bootstrap fields.",
+    }
+    sections: list[str] = []
+    for plane in order:
+        rows = grouped.pop(plane, [])
+        if not rows:
+            continue
+        title = _config_plane_label(rows[0], plane)
+        table = _table(
+            ["Setting", "Source of truth", "Loaded value", "Change path"],
+            (_config_source_row(row) for row in rows),
+        )
+        sections.append(
+            '<div class="source-plane">'
+            f"<h4>{_esc(title)}</h4>"
+            f"<p>{_esc(intros.get(plane, 'Configuration sources for this gateway.'))}</p>"
+            + table
+            + "</div>"
+        )
+    for plane, rows in sorted(grouped.items()):
+        table = _table(
+            ["Setting", "Source of truth", "Loaded value", "Change path"],
+            (_config_source_row(row) for row in rows),
+        )
+        sections.append(
+            '<div class="source-plane">'
+            f"<h4>{_esc(_config_plane_label(rows[0], plane))}</h4>"
+            + table
+            + "</div>"
+        )
+    return '<div class="source-plane-list">' + "".join(sections) + "</div>"
 
 
 def _operator_control_title(record: Mapping[str, Any], fallback: str) -> str:
@@ -1661,10 +1795,7 @@ def render_admin_dashboard(
         ["Service", "Role", "Capabilities", "Status", "Runtime", "Mode / resources"],
         (_service_row(service) for service in services),
     )
-    config_sources_table = _table(
-        ["Label", "Domain", "Source", "Editability", "Recommendation"],
-        (_config_source_row(source) for source in config_sources),
-    )
+    config_sources_panel = _config_sources_panel(config_sources)
     workflow_inventory_table = _table(
         ["Workflow", "Intent", "Backend", "Tier", "Trust"],
         (_workflow_inventory_row(workflow) for workflow in workflow_inventory),
@@ -1728,9 +1859,9 @@ def render_admin_dashboard(
         )
         + services_table
         + _subsection(
-            "Config Sources",
-            config_sources_table,
-            intro="Where runtime policy, service bootstrap, and admin-owned settings currently come from.",
+            "Sources of Truth",
+            config_sources_panel,
+            intro="Shows which settings are dashboard-managed, which are provisioned from files/env/manifests, and what requires restart or reload.",
         )
         + _subsection(
             "Workflows",

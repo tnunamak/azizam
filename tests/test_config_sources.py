@@ -43,6 +43,10 @@ def test_env_overrides_are_represented_without_reading_process_env():
         "source_ref": "DATABASE_URL",
         "ui_owner": "env",
         "editability": "restart",
+        "plane": "bootstrap",
+        "plane_label": "Bootstrap config",
+        "change_path": "Set DATABASE_URL in the service environment and restart.",
+        "restart_required": True,
         "secret": True,
         "current_value_summary": "<redacted>",
         "recommendation": "Keep bootstrap storage wiring in env.",
@@ -81,18 +85,27 @@ def test_ui_file_env_and_manifest_categories_are_sane():
 
     assert by_id["config:proxy"]["ui_owner"] == "file"
     assert by_id["config:proxy"]["editability"] == "restart"
+    assert by_id["config:proxy"]["plane"] == "bootstrap"
+    assert by_id["config:proxy"]["restart_required"] is True
     assert by_id["config:model_routing"]["ui_owner"] == "mixed"
     assert by_id["config:model_routing"]["editability"] == "advanced"
+    assert by_id["config:model_routing"]["plane"] == "split"
     assert by_id["config:images.signed_url_secret"]["secret"] is True
     assert by_id["config:images.signed_url_secret"]["current_value_summary"] == "<redacted>"
     assert by_id["config:roles"]["ui_owner"] == "ui"
+    assert by_id["config:roles"]["plane"] == "dashboard"
+    assert by_id["config:roles"]["restart_required"] is False
     assert by_id["config:resource_admission"]["ui_owner"] == "ui"
     assert by_id["config:backends"]["ui_owner"] == "mixed"
     assert by_id["config:image_cache"]["ui_owner"] == "mixed"
     assert by_id["config:model_compatibility"]["ui_owner"] == "file"
     assert by_id["config:workflows"]["ui_owner"] == "manifest"
     assert by_id["env:OIDC_CLIENT_SECRET"]["ui_owner"] == "env"
+    assert by_id["env:OIDC_CLIENT_SECRET"]["change_path"] == (
+        "Set OIDC_CLIENT_SECRET in the service environment and restart."
+    )
     assert by_id["manifest:video-default"]["ui_owner"] == "manifest"
+    assert by_id["manifest:video-default"]["plane"] == "provisioned"
     assert by_id["manifest:video-default"]["domain"] == "video workflows"
     assert by_id["manifest:tts-default"]["domain"] == "audio workflows"
     assert by_id["admin-db"]["ui_owner"] == "ui"
@@ -124,6 +137,10 @@ def test_rows_are_jsonable_stable_and_sorted():
             "source_ref",
             "ui_owner",
             "editability",
+            "plane",
+            "plane_label",
+            "change_path",
+            "restart_required",
             "secret",
             "current_value_summary",
             "recommendation",

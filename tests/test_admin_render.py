@@ -487,11 +487,15 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         ]
         html = render_admin_dashboard(snapshot)
         services_section = html[html.index('id="services"') : html.index('id="apis"')]
-        self.assertIn(">Config Sources</h3>", services_section)
+        self.assertIn(">Sources of Truth</h3>", services_section)
+        self.assertIn("Source of truth", services_section)
+        self.assertIn("Loaded value", services_section)
+        self.assertIn("Change path", services_section)
         self.assertIn("Runtime policy ownership", services_section)
         self.assertIn("OPENAI_API_KEY", services_section)
-        self.assertIn("UI-owned", services_section)
-        self.assertIn("restart required", services_section)
+        self.assertIn("Managed here", services_section)
+        self.assertIn("Bootstrap config", services_section)
+        self.assertIn("Restart required", services_section)
         self.assertIn("redacted", services_section)
         self.assertNotIn("sk-secret-should-never-render", services_section)
         self.assertNotIn("/very/long/bootstrap/path/that/should/not", services_section)
@@ -499,7 +503,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
     def test_empty_runtime_sections_are_hidden_cleanly(self) -> None:
         html = render_admin_dashboard({"services": [{"key": "kobold", "status": "healthy"}]})
         services_section = html[html.index('id="services"') : html.index("</main>")]
-        self.assertNotIn(">Config Sources</h3>", services_section)
+        self.assertNotIn(">Sources of Truth</h3>", services_section)
         self.assertNotIn(">Runtime Control</h3>", services_section)
         self.assertNotIn(">Workflows</h3>", services_section)
 

@@ -20,6 +20,11 @@ ENV = "env"
 MANIFEST = "manifest"
 MIXED = "mixed"
 
+DASHBOARD_PLANE = "dashboard"
+BOOTSTRAP_PLANE = "bootstrap"
+PROVISIONED_PLANE = "provisioned"
+SPLIT_PLANE = "split"
+
 RUNTIME = "runtime"
 RESTART = "restart"
 READ_ONLY = "read_only"
@@ -150,7 +155,7 @@ def inventory_config_sources(
                 editability=RUNTIME,
                 secret=False,
                 current_value_summary=_summarize(admin_db_summary),
-                recommendation="Use admin.db for UI-owned runtime policy and audit-backed overrides.",
+                recommendation="Dashboard-managed runtime policy stored in admin.db with audit history.",
             )
         )
 
@@ -213,7 +218,7 @@ def _manifest_rows(manifest_rows: Sequence[Mapping[str, Any]]) -> list[dict[str,
                 editability=READ_ONLY,
                 secret=False,
                 current_value_summary=_summarize(manifest),
-                recommendation="Keep workflow manifests file-owned; expose inventory and health read-only.",
+                recommendation="Manifest/catalog-owned workflow definition; dashboard shows live inventory and health only.",
             )
         )
     return rows
@@ -232,6 +237,7 @@ def _row(
     current_value_summary: str,
     recommendation: str,
 ) -> dict[str, Any]:
+    plane = _plane_for(ui_owner)
     return {
         "id": row_id,
         "label": label,
@@ -240,10 +246,58 @@ def _row(
         "source_ref": source_ref,
         "ui_owner": ui_owner,
         "editability": editability,
+        "plane": plane,
+        "plane_label": _plane_label(plane),
+        "change_path": _change_path_for(
+            ui_owner=ui_owner,
+            editability=editability,
+            source=source,
+            source_ref=source_ref,
+        ),
+        "restart_required": editability == RESTART,
         "secret": secret,
         "current_value_summary": current_value_summary,
         "recommendation": recommendation,
     }
+
+
+def _plane_for(ui_owner: str) -> str:
+    if ui_owner == UI:
+        return DASHBOARD_PLANE
+    if ui_owner in {FILE, ENV}:
+        return BOOTSTRAP_PLANE
+    if ui_owner == MANIFEST:
+        return PROVISIONED_PLANE
+    return SPLIT_PLANE
+
+
+def _plane_label(plane: str) -> str:
+    return {
+        DASHBOARD_PLANE: "Managed here",
+        BOOTSTRAP_PLANE: "Bootstrap config",
+        PROVISIONED_PLANE: "Provisioned artifacts",
+        SPLIT_PLANE: "Split ownership",
+    }.get(plane, "Other")
+
+
+def _change_path_for(
+    *,
+    ui_owner: str,
+    editability: str,
+    source: str,
+    source_ref: str,
+) -> str:
+    if ui_owner == UI:
+        return "Manage in this dashboard."
+    if ui_owner == ENV:
+        return f"Set {source_ref} in the service environment and restart."
+    if ui_owner == FILE:
+        if editability == RESTART:
+            return f"Edit {source} field {source_ref} and restart."
+        return f"Edit {source} field {source_ref}; reload or restart as documented."
+    if ui_owner == MANIFEST:
+        return f"Edit the manifest source {source_ref}; reload or restart if the gateway does not pick it up automatically."
+    return "Use dashboard controls for runtime overrides; edit file/env-owned bootstrap fields outside the dashboard."
 
 
 def _get_path(data: Mapping[str, Any], path: tuple[str, ...]) -> Any:
