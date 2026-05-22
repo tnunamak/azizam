@@ -160,12 +160,20 @@ All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health`,
 
 The normal first-run path is web-first:
 
-1. Configure the bootstrap settings (listener, session signing key, optional OIDC issuer/client, trust roots) in `proxy_config.yml` and start the service.
+1. Start the service with a minimal bootstrap (`AI_GATEWAY_ADMIN_SESSION_KEY`
+   set, optional `admin.oidc` and provider URLs in `proxy_config.yml`).
 2. Open `/setup`.
-3. If OIDC is configured, sign in through the IdP. If no owner exists yet, the first allowed OIDC login is promoted to `owner`.
-4. If OIDC is not configured, run the one host-side `generate-admin-key owner-cli` command shown on `/setup`, paste the printed `oak_...` key into the setup page, and the browser receives an admin session.
-5. From `/setup`, create or reuse the signed-in account's first App and mint a one-time `opk_...` runtime key. New OpenAI-compatible clients should use `https://ai.vivid.fish/openai/v1`.
-6. Manage Profiles, users, role/model bindings, shared Apps, and access policy from the `/admin` dashboard.
+3. Claim or create the first local owner — sign in with OIDC if configured, or
+   paste an `oak_...` admin key on a fresh machine.
+4. The app seeds default Profiles, identity/Profile mappings, and the
+   signed-in user's first App, then mints a one-time `opk_...` runtime key.
+5. Configure your OpenAI-compatible client against
+   `https://ai.vivid.fish/openai/v1` (or `http://127.0.0.1:5000/openai/v1`
+   locally).
+6. Manage providers, OIDC, users, Apps, Profiles, keys, admission limits, and
+   service availability from `/admin`. Restart is only required for changes to
+   bootstrap fields (listener, TLS, OIDC issuer/client, signing keys, provider
+   base URLs and secrets).
 
 App keys (`opk_...`) are for runtime clients and SDKs. Admin keys (`oak_...`) are for the control plane and can also bootstrap a browser admin session through `/setup/claim`. See [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md) for the full first-run contract.
 
@@ -246,15 +254,32 @@ python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 ```
 
-### 2. Bootstrap config
+### 2. Bootstrap config (minimal)
 
-Edit `proxy_config.yml` to set:
+The only thing strictly required to boot a fresh deployment is an admin
+session signing key. Set one of:
 
-- Listener host/port, TLS terminator.
-- Backend URLs and any non-secret routing the gateway needs at boot.
-- `admin.session_signing_key` or `AI_GATEWAY_ADMIN_SESSION_KEY`; browser setup claims need a durable signing key.
-- Optional `admin.oidc` (issuer, client_id, client_secret env, redirect URI, signing key env, allowed email domains/admin emails). This turns `/setup` and `/login` into an IdP-backed sign-in flow.
-- Downstream provider credentials (as env-backed values, not literals).
+```bash
+export AI_GATEWAY_ADMIN_SESSION_KEY="$(openssl rand -hex 32)"
+```
+
+…or `admin.session_signing_key:` in `proxy_config.yml` (32+ bytes). Without
+it, the browser cannot claim an admin session at `/setup`. Auto-generation on
+first boot is not implemented yet — set the value explicitly.
+
+If no `admin.db_path` is configured, the gateway creates and uses
+`data/admin.db` next to `proxy.py`. That file is durable host-local state and
+holds every runtime decision the dashboard manages (owner, Apps, Profiles,
+keys, identity mappings, admission caps). Back it up; mount its directory on a
+volume in container deployments.
+
+Anything else in `proxy_config.yml` is optional bootstrap detail:
+
+- Listener host/port and TLS terminator.
+- Backend base URLs and downstream provider credentials (env-backed).
+- Optional `admin.oidc` (issuer, client_id, client_secret env, redirect URI,
+  signing key env, allowed email domains/admin emails) to turn `/setup` and
+  `/login` into an IdP-backed flow.
 
 The shipped backend defaults assume:
 
@@ -264,7 +289,14 @@ The shipped backend defaults assume:
 - Parakeet STT on `127.0.0.1:5092`
 - ComfyUI on `127.0.0.1:7890`
 
-Adjust hosts, ports, model paths, and role mappings as needed. Runtime access policy (Profiles, Apps, role/model bindings, admission caps) is **not** configured here — it lives in `admin.db` and is edited from the dashboard. See [`docs/CONFIG_SOURCE_OF_TRUTH.md`](docs/CONFIG_SOURCE_OF_TRUTH.md) for the full split.
+Adjust hosts, ports, model paths, and role mappings as needed. Runtime access
+policy (Profiles, Apps, role/model bindings, admission caps, identity
+mappings, service availability) is **not** configured here — it lives in
+`admin.db` and is edited from the dashboard. Provisioning / as-code config
+export is deferred; default Profiles are seeded into `admin.db` on first
+startup, not YAML-managed. See
+[`docs/CONFIG_SOURCE_OF_TRUTH.md`](docs/CONFIG_SOURCE_OF_TRUTH.md) for the
+full split.
 
 ### 3. Start the proxy
 
@@ -283,9 +315,24 @@ systemctl --user daemon-reload
 systemctl --user enable --now openai-proxy.service
 ```
 
-### 4. Sign in and become owner
+### 4. Claim the first owner in the browser
 
-Open `/setup` in a browser. If OIDC is configured, sign in with the IdP account that should own the deployment; the first allowed OIDC login is promoted to `owner` when no owner exists yet. If OIDC is not configured, `/setup` shows the one `generate-admin-key owner-cli` command to run on the host and accepts the printed `oak_...` key to create a browser admin session. After that, `/setup` can mint the first one-time `opk_...` runtime key for a client, and `/admin` is where Profiles, users, shared Apps, role/model bindings, and admission policy are managed.
+Open `/setup`. There are two ways to claim or create the first owner, no host
+shell required after the service is running:
+
+- **OIDC configured** — sign in with the IdP account that should own the
+  deployment. The first allowed login is promoted to `owner` when no owner
+  exists yet.
+- **No OIDC, fresh machine** — if you do not yet have an `oak_...` key,
+  `/setup` shows the one host-side recovery command
+  (`./venv/bin/python proxy.py generate-admin-key owner-cli`) and accepts the
+  printed key to issue a signed browser admin session.
+
+Once the browser holds an admin session, `/setup` mints the first one-time
+`opk_...` runtime key for your client. Everything else — Profiles, identity
+mappings, shared Apps, role/model bindings, admission policy, provider and
+service availability — is dashboard work at `/admin` and does not need a
+restart.
 
 ### 5. Smoke test
 
@@ -298,19 +345,22 @@ curl -s http://127.0.0.1:5000/v1/models -H "Authorization: Bearer opk_..."
 The operator status page is served by the proxy at `/status`. The product root
 `/` serves the account portal; `/me` is a legacy browser redirect to `/`.
 
-### Recovery: admin key generation
+### Recovery: admin key generation (not the normal path)
 
-The runtime `opk_...` key path is dashboard/database backed. Use `/setup`, `/`,
-or `/admin` to create and rotate App keys. The remaining CLI recovery command
-is for regaining control-plane access when browser/OIDC admin access is broken:
+The normal way to administer the gateway is `/setup` and `/admin` in a
+browser. The CLI below is **only** for recovery — bootstrapping an `oak_...`
+key on a fresh machine without OIDC, or regaining control-plane access when
+browser/OIDC admin access is broken.
 
 ```bash
 # Recovery / headless admin key. Initializes the admin store if needed.
 ./venv/bin/python proxy.py generate-admin-key owner-cli
 ```
 
-The command prints one `oak_...` secret value once and stores only a hash. It is
-not recoverable from disk. Treat it as the back door, not the front door.
+The command prints one `oak_...` secret value once and stores only a hash. It
+is not recoverable from disk. Treat it as the back door, not the front door.
+Paste it into `/setup` to claim a browser admin session, then do everything
+else from the dashboard.
 
 ## Status page
 

@@ -37,23 +37,20 @@ decision before it runs, and produces exactly one body-free **Receipt**.
 
 ## First-Run Setup
 
-For a fresh deployment, the normal entry point is the web UI, not the CLI:
+For a fresh deployment, the normal entry point is the web UI, not the CLI.
+The short version:
 
-1. Configure the bootstrap settings — listener, TLS, session signing key,
-   optional `admin.oidc`, trust roots — in `proxy_config.yml`. See
-   [Admin Control Plane](#admin-control-plane) for the OIDC block.
-2. Start the gateway.
-3. Open `/setup` in a browser.
-4. If OIDC is configured, sign in with the IdP account that should own the
-   deployment. The first allowed OIDC login is promoted to `owner` when no
-   owner exists yet.
-5. If OIDC is not configured, `/setup` shows the one host-side
-   `generate-admin-key owner-cli` command to run and accepts the printed
-   `oak_...` key through `/setup/claim` to create a signed browser admin
-   session.
-6. From there, `/setup` can create or reuse the signed-in account's first App
-   and mint one `opk_...` runtime key shown once. Profiles, users, shared Apps,
-   role mappings, and access policy are managed from `/admin`.
+1. Start the gateway with a minimal bootstrap (`AI_GATEWAY_ADMIN_SESSION_KEY`
+   set, optional `admin.oidc` and provider URLs in `proxy_config.yml`).
+2. Open `/setup`.
+3. Claim or create the first owner — OIDC sign-in when configured, or paste an
+   `oak_...` admin key minted via the one-time recovery command shown on the
+   page.
+4. The app seeds default Profiles and identity/Profile mappings, creates the
+   signed-in user's first App, and mints one `opk_...` runtime key shown once.
+5. Manage providers, users, Apps, Profiles, keys, admission limits, and
+   service availability from `/admin`. Provisioning / as-code config export is
+   deferred; default Profiles live in `admin.db`, not YAML.
 
 The full operator-facing walkthrough is in
 [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md). What follows in this

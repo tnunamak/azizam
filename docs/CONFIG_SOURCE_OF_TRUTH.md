@@ -15,8 +15,16 @@ The principle is Rich-Hickey-shaped: each setting has exactly one durable
 home, and the dashboard only writes settings whose home is `admin.db`.
 
 For the operator-facing first-run story this split implies, see
-[`FIRST_RUN_SETUP.md`](FIRST_RUN_SETUP.md). In short: bootstrap once via
-`proxy_config.yml` + env, then drive everything else from `/admin`.
+[`FIRST_RUN_SETUP.md`](FIRST_RUN_SETUP.md). In short:
+
+- **`.env` / Docker secrets / `proxy_config.yml`** own bootstrap and deployment
+  only — the things the gateway needs to start safely.
+- **`admin.db` and the dashboard** own runtime product state — owner/admin
+  roles, Apps, Profiles, App API keys, identity/Profile mappings, role/model
+  bindings, admission caps, runtime routing toggles, and service availability.
+- **Provisioning / as-code config export is deferred.** Default Profiles and
+  user-access defaults are seeded into `admin.db` on startup; once seeded, the
+  dashboard is authoritative. No YAML "policy file" exists for those settings.
 
 > **Implementation honesty.** The first-run access path is now DB-backed:
 > `/setup` and `/admin` create Apps, App keys, Profiles, identity/Profile
@@ -94,24 +102,30 @@ Implications:
   `authored_via` and `stored_in` strings spell this out so neither half hides
   behind the other.
 
-## Provisioning bundles
+## Provisioning bundles (deferred)
 
-The smallest useful "export this gateway" artifact is the subset of
-`admin.db` rows whose inventory entry has
-`provisioning == "bundle_candidate"`. That gives an operator a way to:
+Provisioning / as-code config export is deliberately out of scope for the
+current MVP. The inventory still classifies rows with
+`provisioning == "bundle_candidate"` so a future serializer has an obvious
+target, but no shipped command consumes that classification today, and the
+normal first-run path does not assume a bundle exists.
+
+When this lands, the smallest useful "export this gateway" artifact will be
+the subset of `admin.db` rows whose inventory entry has
+`provisioning == "bundle_candidate"`. That will give an operator a way to:
 
 - copy a gateway to a new machine without copying secrets,
 - diff "what changed via the dashboard" against the committed YAML, and
 - treat `admin.db` as authoritative for everything the dashboard can edit.
 
 Rows tagged `bootstrap_only`, `secret_bootstrap`, `source_manifest`, or
-`split` are *not* part of the bundle. The split rows' YAML half is already
-under version control where the operator wants it; the runtime half is
+`split` will *not* be part of the bundle. The split rows' YAML half is already
+under version control where the operator wants it; the runtime half will be
 recreated from the bundle.
 
-This is the contract a future export/import feature should target. No new
-configuration plane is needed — just a serializer that walks `admin.db` and
-filters by inventory provisioning class.
+Until that exists, treat `admin.db` itself as the artifact — back it up,
+mount its directory on a durable volume in container deployments, and rely on
+the dashboard as the only edit surface for runtime policy.
 
 ## Things to deliberately *not* build yet
 
