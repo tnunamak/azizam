@@ -111,7 +111,7 @@ def load_or_create_signing_key(path: Path) -> bytes:
     path = Path(path)
     if path.exists():
         try:
-            raw = path.read_bytes().strip()
+            raw = path.read_bytes()
         except OSError as exc:
             raise RuntimeError(
                 f"could not read browser session signing key at {path}: {exc}"

@@ -1697,13 +1697,19 @@ def _oidc_config_form(
         if secret_set
         else '<p class="form-note">Paste the client secret once. It is stored redacted and is not shown again.</p>'
     )
+    source_note = (
+        '<p class="form-note">Loaded from bootstrap config. Saving here makes admin.db the live source for OIDC provider settings.</p>'
+        if record.get("source") == "bootstrap"
+        else ""
+    )
     return (
         '<form class="flow" method="post" action="'
         + _esc(oidc_config_action)
         + '" data-oidc-config>'
         "<label>OIDC browser login</label>"
         '<p class="form-note">Controls who can sign in to this dashboard. Runtime access still comes from Profiles and identity mappings.</p>'
-        '<label class="check"><input type="checkbox" name="enabled"'
+        + source_note
+        + '<label class="check"><input type="checkbox" name="enabled"'
         + checked
         + "> Enable OIDC login</label>"
         '<div class="stack">'

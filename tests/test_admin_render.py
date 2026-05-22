@@ -216,6 +216,19 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertNotIn("topsecret", identity_section)
         self.assertNotIn('value="&lt;redacted&gt;"', identity_section)
 
+    def test_oidc_provider_settings_can_show_bootstrap_source(self) -> None:
+        snapshot = _snapshot()
+        snapshot["oidc_config"] = {
+            "source": "bootstrap",
+            "enabled": True,
+            "issuer": "https://idp.example.com",
+            "client_id": "ai-gateway",
+            "client_secret_set": True,
+        }
+        html = render_admin_dashboard(snapshot)
+        self.assertIn("Loaded from bootstrap config", html)
+        self.assertIn("Saving here makes admin.db the live source", html)
+
     def test_create_profile_is_a_direct_policy_builder(self) -> None:
         html = render_admin_dashboard(_snapshot())
         self.assertIn("const policyCatalog=", html)

@@ -8760,6 +8760,40 @@ def _admin_config_sources(
     )
 
 
+def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
+    db_setting = ADMIN_STORE.get_oidc_config_setting()
+    if db_setting is not None:
+        return db_setting
+    cfg = _effective_admin_oidc_config()
+    if not (
+        cfg.enabled
+        or cfg.issuer
+        or cfg.client_id
+        or cfg.redirect_uri
+        or cfg.authorization_endpoint
+        or cfg.token_endpoint
+        or cfg.jwks_uri
+    ):
+        return None
+    return {
+        "source": "bootstrap",
+        "enabled": cfg.enabled,
+        "issuer": cfg.issuer,
+        "client_id": cfg.client_id,
+        "client_secret": "<redacted>" if cfg.client_secret else "",
+        "client_secret_set": bool(cfg.client_secret),
+        "redirect_uri": cfg.redirect_uri,
+        "scopes": list(cfg.scopes),
+        "allowed_email_domains": sorted(cfg.allowed_email_domains),
+        "admin_groups": sorted(cfg.admin_groups),
+        "admin_roles": sorted(cfg.admin_roles),
+        "authorization_endpoint": cfg.authorization_endpoint,
+        "token_endpoint": cfg.token_endpoint,
+        "jwks_uri": cfg.jwks_uri,
+        "clock_skew_seconds": cfg.clock_skew_seconds,
+    }
+
+
 def _operator_override_docs() -> dict[str, Any]:
     try:
         overrides = ADMIN_STORE.operator_overrides()
@@ -9223,7 +9257,7 @@ async def admin_dashboard(request: Request):
     snapshot["model_visibility"] = _admin_model_visibility(status_payload)
     snapshot["identity_mappings"] = _admin_identity_mappings()
     try:
-        snapshot["oidc_config"] = ADMIN_STORE.get_oidc_config_setting()
+        snapshot["oidc_config"] = _admin_oidc_config_snapshot()
     except Exception as exc:  # noqa: BLE001
         print(f"[proxy] admin OIDC setting read failed: {exc}", flush=True)
         snapshot["oidc_config"] = None

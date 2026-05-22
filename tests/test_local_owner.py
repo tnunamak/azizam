@@ -35,6 +35,14 @@ class LocalOwnerTests(unittest.TestCase):
             self.assertGreaterEqual(len(first), 32)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
+    def test_existing_signing_key_is_read_as_binary_without_stripping(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "admin_session_key"
+            raw = (b"x" * 47) + b"\n"
+            path.write_bytes(raw)
+
+            self.assertEqual(load_or_create_signing_key(path), raw)
+
 
 if __name__ == "__main__":
     unittest.main()
