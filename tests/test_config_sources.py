@@ -1,4 +1,7 @@
-from gateway.config_sources import inventory_config_sources
+import re
+from pathlib import Path
+
+from gateway.config_sources import CONFIG_SPECS, inventory_config_sources
 
 
 def test_secrets_are_redacted_for_config_and_env():
@@ -256,3 +259,19 @@ def test_legacy_compat_fields_are_preserved():
     assert by_id["config:roles"]["plane"] == "dashboard"
     assert by_id["config:roles"]["restart_required"] is False
     assert by_id["config:roles"]["change_path"] == "Manage in this dashboard."
+
+
+def test_doc_and_inventory_agree_on_domains():
+    """Pin docs/CONFIG_SOURCE_OF_TRUTH.md to CONFIG_SPECS so neither drifts.
+
+    The doc is the operator-facing source of truth for ownership policy; the
+    inventory is the machine-facing source. They must list the same domains.
+    """
+
+    doc_path = Path(__file__).resolve().parent.parent / "docs" / "CONFIG_SOURCE_OF_TRUTH.md"
+    doc_text = doc_path.read_text(encoding="utf-8")
+
+    inventory_domains = {spec.domain for spec in CONFIG_SPECS}
+    doc_domains = set(re.findall(r"^\|\s*`([^`]+)`\s*\|", doc_text, flags=re.MULTILINE))
+
+    assert doc_domains == inventory_domains
