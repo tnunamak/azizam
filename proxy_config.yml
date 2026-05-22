@@ -281,23 +281,3 @@ auth:
   admin_key_env: TABBY_ADMIN_KEY
 admin:
   db_path: data/admin.db
-  user_defaults:
-    self_service_apps: true
-    auto_create_personal_app: true
-    # Omit default_profile_id to use the built-in default-local profile.
-    # Add role_profile_ids/domain_profile_ids/email_profile_ids when you want
-    # OIDC identities to inherit narrower or broader Profiles by default.
-    role_profile_ids: {}
-    domain_profile_ids: {}
-    email_profile_ids: {}
-  oidc:
-    enabled: true
-    issuer: https://id.vivid.fish/realms/vivid-fish
-    client_id: vivid-fish-ai-gateway
-    client_secret_env: AI_GATEWAY_OIDC_CLIENT_SECRET
-    redirect_uri: https://ai.vivid.fish/admin/oidc/callback
-    signing_key_env: AI_GATEWAY_ADMIN_SESSION_KEY
-    admin_emails:
-      - tim.nunamaker@gmail.com
-    admin_groups_env: AI_GATEWAY_ADMIN_OIDC_ADMIN_GROUPS
-    admin_roles_env: AI_GATEWAY_ADMIN_OIDC_ADMIN_ROLES
