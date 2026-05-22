@@ -105,12 +105,35 @@ class SetupRenderTests(unittest.TestCase):
             is_admin_signed_in=True,
             actor_label="owner@example.com",
             logout_url="/logout",
+            csrf_token="csrf-token",
+            doctor_items=[
+                {"label": "Owner/Admin", "state": "ok", "detail": "ready"},
+                {"label": "Runtime App key", "state": "warn", "detail": "create one"},
+            ],
         )
         self.assertIn("owner@example.com", html)
         self.assertIn("Sign out", html)
         self.assertIn('href="/logout"', html)
         # Admin nav surfaces /admin link in shared chrome.
         self.assertIn('href="/admin"', html)
+        self.assertIn("Connect a client", html)
+        self.assertIn('action="/setup/first-app"', html)
+        self.assertIn('value="csrf-token"', html)
+        self.assertIn("Gateway checks", html)
+        self.assertIn("Runtime App key", html)
+
+    def test_one_time_app_key_renders_only_when_supplied(self) -> None:
+        html = render_setup_page(
+            owner_or_admin_exists=True,
+            oidc_enabled=True,
+            is_admin_signed_in=True,
+            actor_label="owner@example.com",
+            one_time_key={"api_key": "opk_test_secret", "app_name": "first-app"},
+            public_base_url="https://ai.example",
+        )
+        self.assertIn("opk_test_secret", html)
+        self.assertIn('export OPENAI_BASE_URL="https://ai.example/openai/v1"', html)
+        self.assertIn("This value is shown once", html)
 
     def test_unauthenticated_view_omits_sign_out(self) -> None:
         html = render_setup_page(

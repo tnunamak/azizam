@@ -28,6 +28,8 @@ Agents and apps can start without local repo context by fetching the public disc
 - `GET /setup` — web-first owner claim and setup handoff
 - `POST /setup/claim` — accept an existing `oak_...` admin key and issue a
   signed browser admin session
+- `POST /setup/first-app` — signed-admin setup action that creates or reuses
+  the operator's first App and shows a one-time `opk_...` runtime key
 - `GET /health`
 - `GET /login` — browser OIDC login entry point when configured
 - `GET /me` — legacy browser alias; redirects to `/`
@@ -77,6 +79,7 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `GET  /` | proxy | Browser account portal |
 | `GET  /setup` | proxy | First-run setup and owner/admin browser-session handoff |
 | `POST /setup/claim` | proxy | Claim a browser admin session with an existing `oak_...` admin key |
+| `POST /setup/first-app` | proxy | Signed-admin first App/key creation from setup; raw key is shown once |
 | `GET  /login` | proxy + OIDC | Browser sign-in entry point; redirects back to `/` or `/admin` |
 | `GET  /me` | proxy | Legacy browser alias; redirects to `/` |
 | `GET  /admin` | proxy | Admin dashboard; browser sessions redirect through `/login` |
@@ -161,7 +164,8 @@ The normal first-run path is web-first:
 2. Open `/setup`.
 3. If OIDC is configured, sign in through the IdP. If no owner exists yet, the first allowed OIDC login is promoted to `owner`.
 4. If OIDC is not configured, run the one host-side `generate-admin-key owner-cli` command shown on `/setup`, paste the printed `oak_...` key into the setup page, and the browser receives an admin session.
-5. Manage Apps, Profiles, API keys, role/model bindings, and access policy from the `/admin` dashboard.
+5. From `/setup`, create or reuse the signed-in account's first App and mint a one-time `opk_...` runtime key. New OpenAI-compatible clients should use `https://ai.vivid.fish/openai/v1`.
+6. Manage Profiles, users, role/model bindings, shared Apps, and access policy from the `/admin` dashboard.
 
 App keys (`opk_...`) are for runtime clients and SDKs. Admin keys (`oak_...`) are for the control plane and can also bootstrap a browser admin session through `/setup/claim`. See [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md) for the full first-run contract.
 
@@ -274,7 +278,7 @@ systemctl --user enable --now openai-proxy.service
 
 ### 4. Sign in and become owner
 
-Open `/setup` in a browser. If OIDC is configured, sign in with the IdP account that should own the deployment; the first allowed OIDC login is promoted to `owner` when no owner exists yet. If OIDC is not configured, `/setup` shows the one `generate-admin-key owner-cli` command to run on the host and accepts the printed `oak_...` key to create a browser admin session. After that, `/admin` is where Apps, Profiles, API keys, role/model bindings, and admission policy are managed.
+Open `/setup` in a browser. If OIDC is configured, sign in with the IdP account that should own the deployment; the first allowed OIDC login is promoted to `owner` when no owner exists yet. If OIDC is not configured, `/setup` shows the one `generate-admin-key owner-cli` command to run on the host and accepts the printed `oak_...` key to create a browser admin session. After that, `/setup` can mint the first one-time `opk_...` runtime key for a client, and `/admin` is where Profiles, users, shared Apps, role/model bindings, and admission policy are managed.
 
 ### 5. Smoke test
 

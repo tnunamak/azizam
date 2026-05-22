@@ -5,9 +5,10 @@ The first-run contract is web-first:
 1. Start the gateway with minimal bootstrap config.
 2. Open `/setup`.
 3. Claim a browser admin session.
-4. Use `/admin` for Apps, Profiles, keys, users, role mappings, and runtime access policy.
+4. Mint the first runtime App key from the same page.
+5. Use `/admin` for Profiles, users, role mappings, shared Apps, and runtime access policy.
 
-`/setup` is intentionally small. It does not configure backends, edit OIDC, or create policy abstractions. It only answers: "Can this browser administer the gateway yet? If not, what is the next host-side action?"
+`/setup` is intentionally small. It does not configure backends, edit OIDC, or create policy abstractions. It only answers: "Can this browser administer the gateway, and does this operator have one working `opk_...` key to test a client?"
 
 ## Bootstrap Config
 
@@ -26,7 +27,7 @@ Everything that can change after boot belongs in `admin.db` and the dashboard. S
 
 `/setup` shows one primary action: sign in with OIDC.
 
-The first allowed OIDC login becomes `owner` when no owner/admin exists yet. After the callback, the browser lands back on `/setup`, which then points to `/admin`.
+The first allowed OIDC login becomes `owner` when no owner/admin exists yet. After the callback, the browser lands back on `/setup`, shows the signed-in account, and can mint the first key for the user's Personal App.
 
 ### No OIDC, No Owner
 
@@ -40,13 +41,24 @@ The command prints one `oak_...` admin key. Paste that key into `/setup`; `POST 
 
 An `opk_...` key is a runtime App key and is rejected with a clear error. It should be used in OpenAI/Ollama/Anthropic clients, not to administer the gateway.
 
-### Owner Exists
+### Signed-In Owner/Admin
 
-`/setup` becomes a thin handoff page:
+`/setup` shows:
 
-- signed-in admins see links to `/admin`, `/status`, and `/`;
+- links to the account portal, admin dashboard, and operator status;
+- a compact "Connect a client" card that creates or reuses the signed-in user's Personal App and mints an `opk_...` key shown once;
+- the OpenAI-compatible base URL for new clients: `/openai/v1`;
+- a small setup doctor for owner/admin state, browser session, runtime key presence, gateway health, and backend reachability.
+
+If self-service Apps are deliberately disabled, the setup key action falls back to creating an admin-owned service App/key instead of bypassing that policy.
+
+### Owner Exists, Viewer Not Signed In
+
+`/setup` remains a thin handoff page:
+
 - unsigned operators with OIDC configured can sign in;
-- unsigned operators without OIDC can paste an existing `oak_...` admin key to open a browser admin session.
+- unsigned operators without OIDC can paste an existing `oak_...` admin key to open a browser admin session;
+- no runtime secrets, backend details, or admin-only setup doctor are shown.
 
 ## Recovery And Automation
 
@@ -65,8 +77,8 @@ Do not turn `/setup` into a second dashboard or YAML editor:
 
 - no backend-specific wizards,
 - no in-browser OIDC secret editor,
-- no Profile picker before the first App,
+- no Profile picker before the first App key,
 - no duplicate policy editor,
 - no separate "setup mode" flag.
 
-The state is derived from durable facts: owner/admin roles, OIDC availability, browser session validity, and whether a session signing key exists.
+The state is derived from durable facts: owner/admin roles, OIDC availability, browser session validity, active App keys, and cached gateway/backend health.

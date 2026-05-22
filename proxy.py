@@ -62,7 +62,7 @@ from gateway import (
     video_media_job_http,
     video_media_jobs,
 )
-from gateway.admin_api import AdminAuthError, create_admin_router
+from gateway.admin_api import AdminAuthError, AdminContext, create_admin_router
 from gateway.admin_catalog import admin_api_surfaces, profile_policy_catalog
 from gateway.config_sources import KNOWN_ENV_SOURCE_NAMES, inventory_config_sources
 from gateway.admin_oidc import (
@@ -9079,10 +9079,125 @@ def _admin_credential_active(record: Mapping[str, Any]) -> bool:
     return expires_at is None or int(expires_at) > int(time.time())
 
 
-def _setup_page_response(
+def _setup_admin_counts() -> tuple[int, int]:
+    apps = admin_store.list_apps(path=ADMIN_STORE.path)
+    credentials = admin_store.list_credentials(path=ADMIN_STORE.path)
+    active_runtime_keys = sum(
+        1
+        for credential in credentials
+        if credential.get("subject_kind") == "app"
+        and _admin_credential_active(credential)
+    )
+    return len([app for app in apps if not app.get("disabled_at")]), active_runtime_keys
+
+
+def _setup_personal_app_for_session(session) -> Mapping[str, Any] | None:
+    if session is None:
+        return None
+    for app in admin_store.list_apps_for_user(
+        str(getattr(session, "subject", "") or ""),
+        path=ADMIN_STORE.path,
+    ):
+        if app.get("kind") == "personal" and not app.get("disabled_at"):
+            return app
+    return None
+
+
+def _setup_active_key_count_for_app(app_id: str | None) -> int:
+    if not app_id:
+        return 0
+    return len(
+        admin_store.list_active_credentials(
+            subject_kind="app",
+            app_id=str(app_id),
+            path=ADMIN_STORE.path,
+        )
+    )
+
+
+def _setup_doctor_items(
+    *,
+    signed_in_admin: bool,
+    app_count: int,
+    active_key_count: int,
+    status_payload: Mapping[str, Any] | None,
+) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = [
+        {
+            "label": "Owner/Admin",
+            "state": "ok" if _owner_or_admin_exists() else "bad",
+            "detail": "Control-plane owner or admin exists.",
+        },
+        {
+            "label": "Browser session",
+            "state": "ok" if signed_in_admin else "warn",
+            "detail": (
+                "This browser can administer the gateway."
+                if signed_in_admin
+                else "Sign in or claim with an oak_ admin key."
+            ),
+        },
+        {
+            "label": "Runtime App key",
+            "state": "ok" if active_key_count else "warn",
+            "detail": (
+                f"{active_key_count} active runtime key(s) across {app_count} App(s)."
+                if active_key_count
+                else "Create a first App key before connecting SDKs or clients."
+            ),
+        },
+    ]
+    if not status_payload:
+        items.append(
+            {
+                "label": "Gateway health",
+                "state": "warn",
+                "detail": "Status cache was unavailable; use /status for operator detail.",
+            }
+        )
+        return items
+    health_state = "ok" if not status_payload.get("error") else "warn"
+    items.append(
+        {
+            "label": "Gateway health",
+            "state": health_state,
+            "detail": "Health/status cache loaded." if health_state == "ok" else "Status cache reported an error.",
+        }
+    )
+    backends = status_payload.get("backends") if isinstance(status_payload, Mapping) else []
+    if isinstance(backends, list) and backends:
+        up = sum(1 for row in backends if isinstance(row, Mapping) and row.get("status") == "up")
+        degraded = sum(
+            1
+            for row in backends
+            if isinstance(row, Mapping) and row.get("status") == "degraded"
+        )
+        down = sum(1 for row in backends if isinstance(row, Mapping) and row.get("status") == "down")
+        state = "ok" if down == 0 and degraded == 0 else ("warn" if up else "bad")
+        items.append(
+            {
+                "label": "Backends",
+                "state": state,
+                "detail": f"{up} up, {degraded} degraded, {down} down.",
+            }
+        )
+    return items
+
+
+def _setup_admin_context(request: Request) -> AdminContext | None:
+    try:
+        actor = ADMIN_AUTH(request)
+    except AdminAuthError:
+        return None
+    return actor if actor.is_admin else None
+
+
+async def _setup_page_response(
     request: Request,
     *,
     claim_error: str | None = None,
+    app_error: str | None = None,
+    one_time_key: Mapping[str, Any] | None = None,
     status_code: int = 200,
 ) -> Response:
     session = _oidc_session_from_request(request)
@@ -9091,6 +9206,21 @@ def _setup_page_response(
     if session is not None and session.role in {"owner", "admin", "superadmin"}:
         is_admin_signed_in = True
         actor_label = session.email or session.subject or None
+    app_count, active_key_count = _setup_admin_counts()
+    personal_app = _setup_personal_app_for_session(session) if is_admin_signed_in else None
+    personal_app_name = (
+        str(personal_app.get("name") or "") if personal_app is not None else None
+    )
+    personal_active_key_count = _setup_active_key_count_for_app(
+        str(personal_app.get("id") or "") if personal_app is not None else None
+    )
+    status_payload: Mapping[str, Any] | None = None
+    if is_admin_signed_in:
+        try:
+            status_payload = await status_endpoint.get_cached_status(config)
+        except Exception as e:  # noqa: BLE001
+            print(f"[proxy] setup status enrichment failed: {e}", flush=True)
+            status_payload = None
     body = render_setup_page(
         owner_or_admin_exists=_owner_or_admin_exists(),
         oidc_enabled=ADMIN_OIDC_CONFIG.enabled,
@@ -9100,6 +9230,22 @@ def _setup_page_response(
         logout_url="/logout" if is_admin_signed_in else None,
         claim_error=claim_error,
         can_claim_with_admin_key=bool(_browser_admin_session_signing_key()),
+        csrf_token=_csrf_token_for_oidc_session(session) if session else "",
+        public_base_url=_public_base_url(request) or "http://127.0.0.1:5000",
+        app_count=app_count,
+        active_key_count=active_key_count,
+        personal_app_name=personal_app_name,
+        personal_active_key_count=personal_active_key_count,
+        app_error=app_error,
+        one_time_key=one_time_key,
+        doctor_items=_setup_doctor_items(
+            signed_in_admin=is_admin_signed_in,
+            app_count=app_count,
+            active_key_count=active_key_count,
+            status_payload=status_payload,
+        )
+        if is_admin_signed_in
+        else [],
     )
     return Response(
         content=body,
@@ -9111,27 +9257,33 @@ def _setup_page_response(
 
 @app.get("/setup", include_in_schema=False)
 async def setup_page(request: Request):
-    return _setup_page_response(request)
+    return await _setup_page_response(request)
 
 
-async def _setup_claim_admin_key_value(request: Request) -> str:
+async def _setup_form_values(request: Request) -> dict[str, str]:
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("application/json"):
         try:
             body = await request.json()
         except Exception:
             body = {}
-        return str(body.get("admin_key") or "").strip() if isinstance(body, Mapping) else ""
+        if not isinstance(body, Mapping):
+            return {}
+        return {str(key): str(value).strip() for key, value in body.items()}
     raw = (await request.body()).decode("utf-8", errors="replace")
     parsed = parse_qs(raw, keep_blank_values=True)
-    return str((parsed.get("admin_key") or [""])[0]).strip()
+    return {key: str((values or [""])[0]).strip() for key, values in parsed.items()}
+
+
+async def _setup_claim_admin_key_value(request: Request) -> str:
+    return (await _setup_form_values(request)).get("admin_key", "")
 
 
 @app.post("/setup/claim", include_in_schema=False)
 async def setup_claim_admin_key(request: Request):
     signing_key = _browser_admin_session_signing_key()
     if not signing_key:
-        return _setup_page_response(
+        return await _setup_page_response(
             request,
             claim_error=(
                 "Browser admin sessions need admin.session_signing_key or "
@@ -9142,7 +9294,7 @@ async def setup_claim_admin_key(request: Request):
         )
     admin_key = await _setup_claim_admin_key_value(request)
     if admin_key.startswith("opk_"):
-        return _setup_page_response(
+        return await _setup_page_response(
             request,
             claim_error=(
                 "That looks like a runtime App key (opk_). Setup needs an "
@@ -9151,7 +9303,7 @@ async def setup_claim_admin_key(request: Request):
             status_code=400,
         )
     if not admin_key.startswith("oak_"):
-        return _setup_page_response(
+        return await _setup_page_response(
             request,
             claim_error="Paste the oak_ admin key printed by generate-admin-key.",
             status_code=400,
@@ -9161,7 +9313,7 @@ async def setup_claim_admin_key(request: Request):
         path=ADMIN_STORE.path,
     )
     if credential is None or not _admin_credential_active(credential):
-        return _setup_page_response(
+        return await _setup_page_response(
             request,
             claim_error="That admin key was not found, expired, or has been revoked.",
             status_code=400,
@@ -9169,7 +9321,7 @@ async def setup_claim_admin_key(request: Request):
     subject_kind = str(credential.get("subject_kind") or "")
     subject_id = str(credential.get("subject_id") or "")
     if subject_kind not in {"user", "service_account"} or not subject_id:
-        return _setup_page_response(
+        return await _setup_page_response(
             request,
             claim_error="That key is not an admin key.",
             status_code=400,
@@ -9185,7 +9337,7 @@ async def setup_claim_admin_key(request: Request):
     elif "admin" in role_names or "superadmin" in role_names:
         role = "admin"
     else:
-        return _setup_page_response(
+        return await _setup_page_response(
             request,
             claim_error="That admin key does not have owner or admin permission.",
             status_code=403,
@@ -9231,6 +9383,109 @@ async def setup_claim_admin_key(request: Request):
         domain=cookie.domain,
     )
     return response
+
+
+@app.post("/setup/first-app", include_in_schema=False)
+async def setup_create_first_app(request: Request):
+    actor = _setup_admin_context(request)
+    session = _oidc_session_from_request(request)
+    if actor is None or actor.auth_method != "session":
+        return await _setup_page_response(
+            request,
+            claim_error="Sign in or claim an admin browser session before creating an App.",
+            status_code=401,
+        )
+    values = await _setup_form_values(request)
+    expected = actor.csrf_token or ""
+    supplied = values.get("csrf_token") or request.headers.get("x-ai-gateway-csrf") or ""
+    if expected and not hmac.compare_digest(supplied, expected):
+        return await _setup_page_response(
+            request,
+            app_error="The setup form expired. Reload /setup and try again.",
+            status_code=403,
+        )
+    app_name = (values.get("app_name") or "first-app").strip()
+    key_label = (values.get("key_label") or "Setup key").strip()
+    if not app_name:
+        return await _setup_page_response(
+            request,
+            app_error="App name is required.",
+            status_code=400,
+        )
+    try:
+        if session is not None and _user_self_service_enabled():
+            app_record = _setup_personal_app_for_session(session)
+            if app_record is None:
+                payload = request_user_access(
+                    session,
+                    default_profile_id=_default_profile_id_for_session(session),
+                    path=ADMIN_STORE.path,
+                )
+                app_record = payload["app"]
+            credential = mint_user_app_key(
+                session,
+                str(app_record["id"]),
+                label=key_label,
+                default_profile_id=_default_profile_id_for_session(session),
+                path=ADMIN_STORE.path,
+            )
+            admin_store.record_audit(
+                "setup.first_app_key",
+                actor_kind="user",
+                actor_id=str(getattr(session, "subject", "") or ""),
+                target_kind="credential",
+                target_id=str(credential.get("id") or ""),
+                metadata={
+                    "via": "setup_page",
+                    "app_id": app_record.get("id"),
+                    "prefix": credential.get("prefix"),
+                },
+                path=ADMIN_STORE.path,
+            )
+        else:
+            app_record = ADMIN_STORE.create_app(
+                data={"name": app_name, "kind": "service"},
+                actor=actor,
+            )
+            credential = ADMIN_STORE.create_credential(
+                app_id=str(app_record["id"]),
+                data={"label": key_label},
+                actor=actor,
+            )
+            admin_store.record_audit(
+                "setup.first_app_key",
+                actor_kind="admin",
+                actor_id=actor.subject,
+                target_kind="credential",
+                target_id=str(credential.get("id") or ""),
+                metadata={
+                    "via": "setup_page",
+                    "app_id": app_record.get("id"),
+                    "prefix": credential.get("prefix"),
+                },
+                path=ADMIN_STORE.path,
+            )
+    except UserPortalError as e:
+        return await _setup_page_response(
+            request,
+            app_error=e.message,
+            status_code=e.status_code,
+        )
+    except Exception as e:  # noqa: BLE001
+        return await _setup_page_response(
+            request,
+            app_error=f"Could not create the App key: {str(e)[:180]}",
+            status_code=400,
+        )
+    return await _setup_page_response(
+        request,
+        one_time_key={
+            "api_key": credential.get("api_key"),
+            "app_name": app_record.get("name") or app_name,
+            "credential_prefix": credential.get("prefix"),
+        },
+        status_code=201,
+    )
 
 
 @app.get("/login", include_in_schema=False)

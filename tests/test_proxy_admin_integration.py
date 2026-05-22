@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1271,6 +1272,84 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self.assertIn("local-admin", setup.text)
         admin = self.client.get("/admin")
         self.assertEqual(admin.status_code, 200, admin.text)
+
+    def test_setup_signed_in_admin_can_create_first_personal_app_key(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "real-owner",
+            path=self.db,
+        )
+        response = self.client.post(
+            "/setup/claim",
+            data={"admin_key": admin_key},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+
+        async def fake_status(_config):
+            return {"backends": [{"name": "loopback", "status": "up"}]}
+
+        with patch.object(proxy.status_endpoint, "get_cached_status", fake_status):
+            setup = self.client.get("/setup")
+            self.assertEqual(setup.status_code, 200, setup.text)
+            self.assertIn("Connect a client", setup.text)
+            self.assertIn("Gateway checks", setup.text)
+            match = re.search(r'name="csrf_token" value="([^"]+)"', setup.text)
+            self.assertIsNotNone(match, setup.text)
+
+            created = self.client.post(
+                "/setup/first-app",
+                data={
+                    "csrf_token": match.group(1),
+                    "app_name": "first-app",
+                    "key_label": "Laptop",
+                },
+            )
+            self.assertEqual(created.status_code, 201, created.text)
+
+            key_match = re.search(r"opk_[A-Za-z0-9_-]+", created.text)
+            self.assertIsNotNone(key_match, created.text)
+            api_key = key_match.group(0)
+            self.assertIn("This value is shown once", created.text)
+            self.assertIn("/openai/v1", created.text)
+
+            apps = admin_store.list_apps(path=self.db)
+            self.assertEqual(len(apps), 1)
+            self.assertEqual(apps[0]["kind"], "personal")
+            credentials = [
+                credential
+                for credential in admin_store.list_credentials(path=self.db)
+                if credential["subject_kind"] == "app"
+            ]
+            self.assertEqual(len(credentials), 1)
+            self.assertEqual(credentials[0]["display_name"], "Laptop")
+            audit_actions = [
+                event["action"] for event in admin_store.list_audit(path=self.db)
+            ]
+            self.assertIn("setup.first_app_key", audit_actions)
+
+            refreshed = self.client.get("/setup")
+            self.assertEqual(refreshed.status_code, 200, refreshed.text)
+            self.assertNotIn(api_key, refreshed.text)
+            self.assertIn("Personal App keys: 1", refreshed.text)
+
+    def test_setup_first_app_rejects_stale_csrf(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "real-owner",
+            path=self.db,
+        )
+        response = self.client.post(
+            "/setup/claim",
+            data={"admin_key": admin_key},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+
+        created = self.client.post(
+            "/setup/first-app",
+            data={"csrf_token": "stale", "app_name": "first-app"},
+        )
+        self.assertEqual(created.status_code, 403, created.text)
+        self.assertIn("setup form expired", created.text)
 
     def test_signed_in_admin_sees_actor_label_and_sign_out_on_setup(self) -> None:
         # Stand up a real owner + sign-in cookie, then verify /setup shows

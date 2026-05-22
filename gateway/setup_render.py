@@ -22,6 +22,8 @@ response. Chrome (header, fonts, layout tokens) is shared with ``/`` and
 
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 from gateway.gateway_shell import (
     SHELL_CSS,
     esc,
@@ -192,6 +194,63 @@ _PAGE_CSS = """
     background: var(--bad-bg);
     color: var(--bad);
     padding: var(--space-3);
+  }
+  .setup-columns {
+    display: grid;
+    gap: var(--space-4);
+  }
+  .setup-card h3 {
+    margin: 0;
+    font-size: 1.05rem;
+  }
+  .setup-secret {
+    display: grid;
+    gap: var(--space-2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--good) 10%, var(--panel-2));
+    padding: var(--space-3);
+  }
+  .setup-secret code, .setup-snippet {
+    display: block;
+    overflow-wrap: anywhere;
+    color: var(--text);
+  }
+  .setup-snippet {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--bg) 62%, transparent);
+    padding: var(--space-3);
+    font: 0.85rem/1.5 var(--font-mono);
+  }
+  .doctor-list {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .doctor-list li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-2);
+    align-items: start;
+    color: var(--muted);
+  }
+  .doctor-dot {
+    width: 0.65rem;
+    height: 0.65rem;
+    margin-top: 0.45rem;
+    border-radius: var(--radius-pill);
+    background: var(--soft);
+  }
+  .doctor-list li.ok .doctor-dot { background: var(--good); }
+  .doctor-list li.warn .doctor-dot { background: var(--warn); }
+  .doctor-list li.bad .doctor-dot { background: var(--bad); }
+  .doctor-list strong {
+    display: block;
+    color: var(--text);
+    font-weight: 650;
   }
   @media (max-width: 540px) {
     .setup-card { padding: var(--space-4); }
@@ -365,6 +424,110 @@ def _complete_card(
     )
 
 
+def _setup_doctor_card(
+    *,
+    doctor_items: list[Mapping[str, Any]],
+) -> str:
+    if not doctor_items:
+        return ""
+    rows = []
+    for item in doctor_items:
+        state = str(item.get("state") or "warn")
+        if state not in {"ok", "warn", "bad"}:
+            state = "warn"
+        label = esc(item.get("label") or "Check")
+        detail = esc(item.get("detail") or "")
+        rows.append(
+            f'<li class="{state}"><span class="doctor-dot" aria-hidden="true"></span>'
+            f"<span><strong>{label}</strong>{detail}</span></li>"
+        )
+    return (
+        '<section class="setup-card" aria-labelledby="doctor-heading">'
+        '<p class="eyebrow">Setup doctor</p>'
+        '<h2 id="doctor-heading">Gateway checks</h2>'
+        '<ul class="doctor-list">'
+        + "".join(rows)
+        + "</ul>"
+        "</section>"
+    )
+
+
+def _first_app_card(
+    *,
+    csrf_token: str,
+    public_base_url: str,
+    app_count: int,
+    active_key_count: int,
+    personal_app_name: str | None,
+    personal_active_key_count: int,
+    app_error: str | None,
+    one_time_key: Mapping[str, Any] | None,
+) -> str:
+    secret_html = ""
+    if one_time_key:
+        key = esc(one_time_key.get("api_key") or "")
+        app_name = esc(one_time_key.get("app_name") or "Setup App")
+        base = esc(public_base_url.rstrip("/") + "/openai/v1")
+        secret_html = (
+            '<div class="setup-secret" role="status">'
+            f"<p><strong>{app_name}</strong> has a new runtime key. This value is shown once.</p>"
+            f"<code>{key}</code>"
+            '<div class="setup-snippet">'
+            f'export OPENAI_BASE_URL="{base}"<br>'
+            f'export OPENAI_API_KEY="{key}"'
+            "</div>"
+            "</div>"
+        )
+    error_html = (
+        f'<p class="setup-error" role="alert">{esc(app_error)}</p>'
+        if app_error
+        else ""
+    )
+    if personal_app_name:
+        target_count = personal_active_key_count
+        lead = (
+            f"Your personal App is {personal_app_name}. Mint another key only "
+            "when a new tool or script needs its own boundary."
+            if target_count
+            else f"Your personal App is {personal_app_name}. Mint its first "
+            "runtime key to connect an SDK or local client."
+        )
+        count_line = f"Personal App keys: {target_count}. Active runtime keys: {active_key_count}."
+        app_name_field = ""
+    else:
+        target_count = active_key_count
+        lead = (
+            "You already have a runtime key. Create another only when a new tool "
+            "or script needs its own boundary."
+            if target_count
+            else "Create one personal App for the first tool you want to connect. "
+            "The App gets one runtime key and inherits the default Profile."
+        )
+        count_line = f"Apps: {app_count}. Active runtime keys: {active_key_count}."
+        app_name_field = (
+            '<label><span>App name</span>'
+            '<input name="app_name" value="first-app" maxlength="80" required></label>'
+        )
+    button = "Mint another key" if target_count else "Mint first App key"
+    return (
+        '<section class="setup-card" aria-labelledby="first-app-heading">'
+        '<p class="eyebrow">First useful key</p>'
+        '<h2 id="first-app-heading">Connect a client</h2>'
+        f"<p>{esc(lead)}</p>"
+        f"<p class=\"meta\">{esc(count_line)}</p>"
+        + secret_html
+        + error_html
+        + '<form class="setup-form" method="post" action="/setup/first-app">'
+        + f'<input type="hidden" name="csrf_token" value="{esc(csrf_token)}">'
+        + app_name_field
+        + '<label><span>Key label</span>'
+        + '<input name="key_label" value="Setup key" maxlength="80" required></label>'
+        + f"<button type=\"submit\">{esc(button)}</button>"
+        "</form>"
+        "</section>"
+    )
+
+
 def render_setup_page(
     *,
     title: str = "AI Gateway setup",
@@ -376,6 +539,15 @@ def render_setup_page(
     logout_url: str | None = None,
     claim_error: str | None = None,
     can_claim_with_admin_key: bool = False,
+    csrf_token: str = "",
+    public_base_url: str = "http://127.0.0.1:5000",
+    app_count: int = 0,
+    active_key_count: int = 0,
+    personal_app_name: str | None = None,
+    personal_active_key_count: int = 0,
+    app_error: str | None = None,
+    one_time_key: Mapping[str, Any] | None = None,
+    doctor_items: list[Mapping[str, Any]] | None = None,
 ) -> str:
     """Return the first-run setup HTML for the gateway.
 
@@ -413,6 +585,22 @@ def render_setup_page(
             claim_error=claim_error,
             can_claim_with_admin_key=can_claim_with_admin_key,
         )
+        if is_admin_signed_in:
+            body += (
+                '<div class="setup-columns">'
+                + _first_app_card(
+                    csrf_token=csrf_token,
+                    public_base_url=public_base_url,
+                    app_count=app_count,
+                    active_key_count=active_key_count,
+                    personal_app_name=personal_app_name,
+                    personal_active_key_count=personal_active_key_count,
+                    app_error=app_error,
+                    one_time_key=one_time_key,
+                )
+                + _setup_doctor_card(doctor_items=doctor_items or [])
+                + "</div>"
+            )
 
     header_html = render_shell_header(
         title=title,

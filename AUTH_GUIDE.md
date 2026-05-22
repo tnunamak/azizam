@@ -51,8 +51,9 @@ For a fresh deployment, the normal entry point is the web UI, not the CLI:
    `generate-admin-key owner-cli` command to run and accepts the printed
    `oak_...` key through `/setup/claim` to create a signed browser admin
    session.
-6. From there, all Apps, Profiles, API keys, and access policy are managed
-   from `/admin`.
+6. From there, `/setup` can create or reuse the signed-in account's first App
+   and mint one `opk_...` runtime key shown once. Profiles, users, shared Apps,
+   role mappings, and access policy are managed from `/admin`.
 
 The full operator-facing walkthrough is in
 [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md). What follows in this
@@ -61,8 +62,10 @@ guide is the runtime/auth model and the CLI recovery paths.
 ## Quick Start For Apps (Dashboard)
 
 Once the gateway is running and you have signed in, the normal way to mint
-an App API key is from the dashboard or the account portal:
+an App API key is from setup, the dashboard, or the account portal:
 
+- During first run, a signed-in owner/admin opens `/setup` and mints the first
+  `opk_...` key for their Personal App. This is the quickest smoke-test path.
 - An operator opens `/admin`, creates an App, attaches a Profile, and
   generates an `opk_...` key for it.
 - A signed-in user opens `/` (the account portal), creates a Personal App,
