@@ -143,9 +143,9 @@ so they speak clearly.
 - gateway-specific audio generation for ACE-Step/TangoFlux-style workflows
 - signed cached image URLs
 - model aliasing and operation-specific model compatibility
-- hashed proxy API keys
-- per-key downstream credential mapping
-- per-key usage/status metrics
+- hashed App API keys in the admin store
+- Profile-scoped runtime authorization
+- per-App usage/status metrics
 - ComfyUI websocket progress
 - VRAM estimates and adaptive image batching
 - workflow drift detection
@@ -168,12 +168,13 @@ Implemented (lives on `main`):
   `PolicyRequest`, `PolicyDecision`, fallback/native-passthrough/visibility
   policies, and an `evaluate` entry point. It is used by the live gateway
   discovery view, image route receipts, and protocol frontends.
-- `gateway/profiles.py`: pure loader from existing proxy key-entry dicts into
+- `gateway/profiles.py`: pure loader from stored profile/config dicts into
   `AppProfile`, keeping credential lookup and file I/O outside the policy
   layer.
-- `gateway/runtime_auth.py`: bridge between the existing proxy key registry and
-  profile-aware gateway identities. Real `proxy_api_keys.yml` entries can now
-  carry additive `profile:` blocks without rotating keys.
+- `gateway/runtime_auth.py`: bridge between stored App credentials and
+  profile-aware gateway identities. Runtime authorization is admin-db backed;
+  imported legacy hashes keep old `opk_...` values working without a YAML
+  registry.
 - `gateway/discovery.py`: pure workflow registry with audience-aware summaries
   (`internal`, `admin`, `client`).
 - `gateway/manifests.py`: workflow manifest load/validate plus

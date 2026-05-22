@@ -38,10 +38,13 @@ def authenticated_profile(profile: AppProfile, downstream: dict | None = None):
         downstream=downstream or {},
         profile=profile,
     )
+    def lookup(candidate_hash: str, **_kwargs):
+        return identity if candidate_hash == key_hash else None
+
     with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-        proxy, "AUTH_REGISTRY", {key_hash: identity}
-    ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
-        yield
+        proxy, "runtime_identity_for_app_credential_hash", side_effect=lookup
+    ):
+        yield identity
 
 
 def ok_response() -> Response:
@@ -677,16 +680,14 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             ),
         )
 
-        with authenticated_profile(existing_only), patch.object(
+        with authenticated_profile(existing_only) as identity, patch.object(
             proxy, "COMFY_ENABLED", True
         ), patch.object(
             proxy.ADMIN_STORE,
             "operator_overrides",
             return_value={},
         ):
-            auth_context = proxy.AuthContext(
-                proxy.AUTH_REGISTRY[proxy.hash_api_key(RAW_KEY)]
-            )
+            auth_context = proxy.AuthContext(identity)
             allowed = proxy._workflow_target_policy_decision(
                 auth_context,
                 requested="sdxl-seamless-tile",
@@ -695,12 +696,10 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         self.assertIsNone(allowed)
 
-        with authenticated_profile(existing_only), patch.object(
+        with authenticated_profile(existing_only) as identity, patch.object(
             proxy, "COMFY_ENABLED", False
         ):
-            auth_context = proxy.AuthContext(
-                proxy.AUTH_REGISTRY[proxy.hash_api_key(RAW_KEY)]
-            )
+            auth_context = proxy.AuthContext(identity)
             denied = proxy._workflow_target_policy_decision(
                 auth_context,
                 requested="sdxl-seamless-tile",
@@ -846,9 +845,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(_CaptureForwardClient.urls, [])
 
     def test_ollama_model_mutation_routes_require_auth(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-            proxy, "AUTH_REGISTRY", {}
-        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+        with patch.object(proxy, "AUTH_ENABLED", True):
             response = self.client.post("/api/pull", json={"name": "llama3"})
 
         self.assertEqual(response.status_code, 401, response.text)

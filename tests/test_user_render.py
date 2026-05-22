@@ -47,7 +47,7 @@ class UserPortalRenderTests(unittest.TestCase):
     def test_does_not_render_real_api_key_material(self) -> None:
         html = render_user_portal()
         self.assertNotIn("sk-secret", html)
-        self.assertNotIn("proxy_api_keys.yml", html)
+        self.assertNotIn("local-key-store", html)
         self.assertNotIn("opk_real", html)
         self.assertNotIn("Bearer opk_secret", html)
 

@@ -131,11 +131,11 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(result["details"]["variables"], {"OPENAI_PROXY_API_KEY": "<redacted>"})
         self.assertNotIn("sk-local-secret", repr(result))
 
-    def test_run_doctor_does_not_read_proxy_api_keys_file(self) -> None:
+    def test_run_doctor_does_not_read_local_key_store(self) -> None:
         def forbidden_open(*args, **kwargs):  # type: ignore[no-untyped-def]
             path = str(args[0])
-            if path.endswith("proxy_api_keys.yml"):
-                raise AssertionError("doctor must not read proxy_api_keys.yml")
+            if path.endswith("local-key-store.yml"):
+                raise AssertionError("doctor must not read local key stores")
             return original_open(*args, **kwargs)
 
         original_open = Path.open

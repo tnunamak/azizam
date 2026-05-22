@@ -275,7 +275,6 @@ model_compatibility:
       category: embeddings
 auth:
   enabled: true
-  keys_file: proxy_api_keys.yml
   public_paths:
     - /health
   api_key_env: TABBY_API_KEY

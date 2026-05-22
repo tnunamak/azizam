@@ -45,8 +45,9 @@ If a needed capability is absent or unavailable, stop and report that honestly.
 - Use `Authorization: Bearer $AI_GATEWAY_API_KEY` (or the legacy `$OPENAI_PROXY_API_KEY` env-var name when that is already set).
 - Bearer tokens start with `opk_` regardless of which env-var name your client uses.
 - Never ask the user to paste a raw `opk_...` token into chat.
-- Never read, print, or echo `proxy_api_keys.yml`.
-- Do not put real OpenAI, Anthropic, or vendor API keys into `proxy_api_keys.yml`.
+- Never read, print, or echo local key stores.
+- Do not put real OpenAI, Anthropic, or vendor API keys into source files,
+  prompts, or shared docs.
 - Prefer environment variables, local secret stores, or existing app config.
 
 ## Debugging

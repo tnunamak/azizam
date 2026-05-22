@@ -9,7 +9,7 @@ Design:
 
 Privacy:
 - Never expose the bearer token, raw API keys, or full tracebacks.
-- Only key NAMES from AUTH_REGISTRY are surfaced.
+- Only App/Credential display names from the admin store are surfaced.
 - Prompt text is truncated to 200 chars and only shown for in-flight video jobs.
 """
 
@@ -3037,8 +3037,8 @@ async def build_status_payload(config: dict) -> dict:
 
     # The proxy is launched via `python3 proxy.py`, which means its module
     # name at runtime is `__main__` rather than `proxy`. Reach for that first
-    # so we share the live `_video_progress` / `AUTH_REGISTRY` dicts; fall back
-    # to a regular import only when this module is exercised in isolation.
+    # so we share the live `_video_progress` dict; fall back to a regular
+    # import only when this module is exercised in isolation.
     proxy_module = None
     try:
         import sys as _sys
@@ -3199,8 +3199,24 @@ async def build_status_payload(config: dict) -> dict:
     known_names: list[str] = []
     if proxy_module is not None:
         try:
-            registry = getattr(proxy_module, "AUTH_REGISTRY", {}) or {}
-            known_names = sorted({getattr(v, "name", None) for v in registry.values() if getattr(v, "name", None)})
+            from gateway import admin_store as _admin_store  # noqa: WPS433
+
+            store = getattr(proxy_module, "ADMIN_STORE", None)
+            db_path = getattr(store, "path", _admin_store.DB_PATH)
+            credentials = _admin_store.list_active_credentials(
+                subject_kind="app",
+                path=db_path,
+            )
+            names: set[str] = set()
+            for credential in credentials:
+                app_id = credential.get("app_id") or credential.get("subject_id")
+                app = _admin_store.get_app(str(app_id), path=db_path) if app_id else None
+                app_name = app.get("name") if app else None
+                display_name = credential.get("display_name")
+                label = str(app_name or display_name or "").strip()
+                if label:
+                    names.add(label)
+            known_names = sorted(names)
         except Exception:
             known_names = []
     if firehose_metrics is not None:

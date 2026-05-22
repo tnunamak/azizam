@@ -168,7 +168,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
 
     def test_metadata_does_not_contain_secret_values(self) -> None:
         rendered = repr(build_gateway_discovery_metadata(base_url="http://gw"))
-        self.assertNotIn("proxy_api_keys.yml:", rendered)
+        self.assertNotIn("local-key-store:", rendered)
         self.assertNotIn("sha256:", rendered)
         self.assertNotIn("Bearer opk_", rendered)
 

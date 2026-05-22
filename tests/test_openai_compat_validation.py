@@ -270,11 +270,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
             self.assertIn("not configured or supported", body["error"]["message"])
 
     def test_image_variations_missing_auth_returns_auth_error(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-            proxy,
-            "AUTH_REGISTRY",
-            {},
-        ), patch.object(proxy, "refresh_auth_registry", return_value=None):
+        with patch.object(proxy, "AUTH_ENABLED", True):
             resp = self.client.post(
                 "/v1/images/variations",
                 files={"image": ("source.png", b"not-used", "image/png")},
@@ -338,11 +334,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
             self.assertIn("not implemented", body["error"]["message"])
 
     def test_unsupported_openai_api_stubs_still_require_auth(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-            proxy,
-            "AUTH_REGISTRY",
-            {},
-        ), patch.object(proxy, "refresh_auth_registry", return_value=None):
+        with patch.object(proxy, "AUTH_ENABLED", True):
             resp = self.client.get("/v1/files")
 
         self.assertEqual(resp.status_code, 401)

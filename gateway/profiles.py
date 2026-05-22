@@ -1,7 +1,6 @@
 """App profile loader.
 
-Pure mapping from plain configuration dicts (the shapes already used by
-``proxy_api_keys.yml`` entries and the in-process ``auth_cfg`` block) into
+Pure mapping from plain configuration dicts into
 :class:`gateway.policy.AppProfile` instances.
 
 This module:
@@ -10,11 +9,10 @@ This module:
 * never imports :mod:`proxy`,
 * makes no network or secret lookups,
 * falls back to :data:`gateway.policy.DEFAULT_PROFILE` when an entry has no
-  ``profile`` block, preserving compatibility with existing key entries.
+  ``profile`` block.
 
-Callers (e.g. ``proxy.py``) are expected to read YAML / environment data and
-pass already-parsed dicts to :func:`load_profile_from_entry` or
-:func:`load_profiles_from_entries`.
+Callers are expected to read database/config data and pass already-parsed dicts
+to :func:`load_profile_from_entry` or :func:`load_profiles_from_entries`.
 """
 
 from __future__ import annotations
@@ -292,13 +290,11 @@ def load_profile(
 
 
 def load_profile_from_entry(entry: Mapping[str, object]) -> AppProfile:
-    """Build an :class:`AppProfile` from a proxy key entry dict.
+    """Build an :class:`AppProfile` from a mapping with an optional profile.
 
-    The entry shape matches ``proxy_api_keys.yml`` rows: a mapping with
-    optional ``name`` and an optional ``profile`` block. When the entry has
-    no profile block, :data:`DEFAULT_PROFILE` (with the entry name as id when
-    present) is returned. The entry's ``downstream`` block is ignored here —
-    credential resolution stays in the auth layer.
+    When the entry has no profile block, :data:`DEFAULT_PROFILE` (with the
+    entry name as id when present) is returned. Any ``downstream`` block is
+    ignored here; credential resolution stays in the auth layer.
     """
     if not isinstance(entry, Mapping):
         raise ProfileLoadError(

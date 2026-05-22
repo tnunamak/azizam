@@ -22,7 +22,7 @@ Public surface:
 
 Privacy:
     - Never store request/response bodies.
-    - Never store API keys (only the `name` field from AUTH_REGISTRY).
+    - Never store API keys (only the resolved App display name).
     - Truncate error messages to 160 chars.
 """
 

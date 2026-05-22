@@ -2,10 +2,6 @@
 
 These tests target seams in ``proxy.py`` that the owner is actively wiring:
 
-* ``create_proxy_key`` preserving an existing ``profile:`` block on rotation.
-* ``build_auth_registry`` / ``key_hashes_for_entry`` resolving ``key_env``
-  through proxy-injected ``os.environ`` (the proxy-side helper still consults
-  the live environment by design).
 * ``/gateway/v1/*`` discovery/capabilities/receipts mounted *before* the
   catch-all and rejecting unauthenticated requests when proxy auth is enabled.
 * Gateway receipt/capability routes using a profile-derived audience
@@ -36,7 +32,6 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from unittest.mock import AsyncMock, patch
 
-import yaml
 from fastapi import Response
 from fastapi.testclient import TestClient
 
@@ -45,7 +40,6 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import receipt_store  # noqa: E402
-from gateway import runtime_auth as gw_runtime_auth  # noqa: E402
 from gateway.policy import AppProfile, StatusVisibilityPolicy  # noqa: E402
 
 
@@ -96,159 +90,6 @@ class _FakeStreamClient:
 
 
 # ---------------------------------------------------------------------------
-# create_proxy_key: profile preservation + no profile invention on create
-# ---------------------------------------------------------------------------
-
-
-class TestCreateProxyKeyPreservesProfile(unittest.TestCase):
-    """Rotating a named key MUST keep its ``profile:`` block intact."""
-
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.keys_file = Path(self._tmp.name) / "proxy_api_keys.yml"
-
-    def tearDown(self) -> None:
-        self._tmp.cleanup()
-
-    def _write(self, data: dict) -> None:
-        with open(self.keys_file, "w") as f:
-            yaml.safe_dump(data, f, sort_keys=False)
-
-    def _load(self) -> dict:
-        with open(self.keys_file) as f:
-            return yaml.safe_load(f) or {}
-
-    def test_existing_profile_is_preserved_on_rotation(self) -> None:
-        self._write(
-            {
-                "keys": [
-                    {
-                        "name": "alice",
-                        "key_hash": "sha256:stale",
-                        "downstream": {"tabby": {"api_key": "old"}},
-                        "profile": "image-agent",
-                    }
-                ]
-            }
-        )
-
-        new_key = proxy.create_proxy_key("alice", keys_file=self.keys_file)
-        self.assertTrue(new_key.startswith("opk_"))
-
-        entries = self._load().get("keys") or []
-        entry = next(e for e in entries if e.get("name") == "alice")
-
-        self.assertEqual(
-            entry.get("profile"),
-            "image-agent",
-            "rotation must preserve the existing profile binding",
-        )
-        # The hash MUST be rotated, not kept.
-        self.assertNotEqual(entry.get("key_hash"), "sha256:stale")
-        # Downstream is preserved as well — it shares the same code path.
-        self.assertEqual(
-            entry.get("downstream", {}).get("tabby", {}).get("api_key"), "old"
-        )
-
-    def test_new_key_does_not_invent_a_profile(self) -> None:
-        # File doesn't exist yet — create a brand-new entry.
-        proxy.create_proxy_key("bob", keys_file=self.keys_file)
-
-        entries = self._load().get("keys") or []
-        entry = next(e for e in entries if e.get("name") == "bob")
-        self.assertNotIn(
-            "profile",
-            entry,
-            "creating a fresh key must not invent a profile binding",
-        )
-
-    def test_existing_profile_dict_is_preserved(self) -> None:
-        # Profile may also be a mapping (e.g. inline overrides). The rotation
-        # must not flatten or drop it.
-        self._write(
-            {
-                "keys": [
-                    {
-                        "name": "carol",
-                        "key_hash": "sha256:stale",
-                        "downstream": {"tabby": {}},
-                        "profile": {
-                            "name": "ops",
-                            "policy": {"native_passthrough": False},
-                        },
-                    }
-                ]
-            }
-        )
-        proxy.create_proxy_key("carol", keys_file=self.keys_file)
-
-        entry = next(
-            e for e in self._load().get("keys", []) if e.get("name") == "carol"
-        )
-        self.assertEqual(
-            entry.get("profile"),
-            {"name": "ops", "policy": {"native_passthrough": False}},
-        )
-
-
-# ---------------------------------------------------------------------------
-# build_auth_registry / key_hashes_for_entry: env resolution via os.environ
-# ---------------------------------------------------------------------------
-
-
-class TestProxyAuthRegistryEnvResolution(unittest.TestCase):
-    """The proxy-side helpers resolve ``key_env`` against ``os.environ``."""
-
-    def test_key_hashes_resolves_key_env_via_os_environ(self) -> None:
-        with patch.dict(proxy.os.environ, {"PROXY_TEST_KEY": "literal-key-1"}):
-            hashes = proxy.key_hashes_for_entry({"key_env": "PROXY_TEST_KEY"})
-        self.assertEqual(hashes, [proxy.hash_api_key("literal-key-1")])
-
-    def test_key_env_missing_falls_back_to_literal_key(self) -> None:
-        with patch.dict(proxy.os.environ, {}, clear=False):
-            proxy.os.environ.pop("PROXY_TEST_MISSING", None)
-            hashes = proxy.key_hashes_for_entry(
-                {"key": "literal-key-2", "key_env": "PROXY_TEST_MISSING"}
-            )
-        self.assertEqual(hashes, [proxy.hash_api_key("literal-key-2")])
-
-    def test_build_auth_registry_registers_env_resolved_hash(self) -> None:
-        with patch.dict(proxy.os.environ, {"PROXY_TEST_KEY2": "literal-key-3"}):
-            registry = proxy.build_auth_registry(
-                [
-                    {
-                        "name": "alice",
-                        "key_env": "PROXY_TEST_KEY2",
-                        "downstream": {"tabby": {}},
-                    }
-                ]
-            )
-        expected_hash = proxy.hash_api_key("literal-key-3")
-        self.assertIn(expected_hash, registry)
-        identity = registry[expected_hash]
-        self.assertEqual(identity.name, "alice")
-
-    def test_proxy_helper_does_not_require_env_argument(self) -> None:
-        # The proxy.py helper is intentionally a thin wrapper that reads
-        # ``os.environ`` — unlike the gateway.runtime_auth helper which takes
-        # an explicit ``env`` mapping. This pins that contract so the wiring
-        # task doesn't accidentally tighten the proxy signature.
-        sig = inspect.signature(proxy.key_hashes_for_entry)
-        self.assertEqual(
-            list(sig.parameters),
-            ["entry"],
-            "proxy.key_hashes_for_entry must accept only `entry` — env is read"
-            " from os.environ for the proxy-side helper",
-        )
-
-    def test_gateway_runtime_auth_still_takes_explicit_env(self) -> None:
-        # The pure gateway helper still requires an explicit env mapping; the
-        # two helpers are intentionally separate. This pins the seam.
-        sig = inspect.signature(gw_runtime_auth.key_hashes_for_entry)
-        self.assertIn("env", sig.parameters)
-
-
-# ---------------------------------------------------------------------------
 # Gateway router: mounted before catch-all, unauth requests rejected
 # ---------------------------------------------------------------------------
 
@@ -288,11 +129,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             )
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-            proxy, "AUTH_REGISTRY", {"sha256:only-known": proxy.AuthIdentity(
-                name="alice", key_hash="sha256:only-known"
-            )},
-        ):
+        with patch.object(proxy, "AUTH_ENABLED", True):
             response = client.get("/gateway/v1/workflows")
             # Unauthenticated → 401. The catch-all would have returned a
             # ProxyError-shaped 401 too, but we additionally verify the body

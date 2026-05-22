@@ -268,7 +268,7 @@ def build_gateway_discovery_metadata(
             "secret_handling": [
                 "Do not ask users to paste raw opk tokens into chat.",
                 "Use environment variables or local secret stores.",
-                "Do not read or print proxy_api_keys.yml.",
+                "Do not read or print local key stores.",
             ],
         },
         "protocols": list(PUBLIC_PROTOCOLS),

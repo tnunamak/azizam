@@ -7,7 +7,7 @@ from gateway.config_sources import CONFIG_SPECS, inventory_config_sources
 def test_secrets_are_redacted_for_config_and_env():
     rows = inventory_config_sources(
         {
-            "auth": {"keys": [{"name": "legacy", "key": "sk-live-secret"}]},
+            "images": {"signed_url_secret": "image-secret"},
             "oidc": {"client_secret": "oidc-secret", "issuer": "https://issuer.example"},
         },
         env={"OPENAI_API_KEY": "sk-env-secret", "OIDC_CLIENT_ID": "client-id"},
@@ -16,13 +16,13 @@ def test_secrets_are_redacted_for_config_and_env():
 
     by_id = {row["id"]: row for row in rows}
 
-    assert by_id["config:auth.keys"]["secret"] is True
-    assert by_id["config:auth.keys"]["current_value_summary"] == "<redacted>"
+    assert by_id["config:images.signed_url_secret"]["secret"] is True
+    assert by_id["config:images.signed_url_secret"]["current_value_summary"] == "<redacted>"
     assert by_id["env:OPENAI_API_KEY"]["secret"] is True
     assert by_id["env:OPENAI_API_KEY"]["current_value_summary"] == "<redacted>"
     assert by_id["env:OIDC_CLIENT_ID"]["secret"] is False
     assert by_id["env:OIDC_CLIENT_ID"]["current_value_summary"] == "client-id"
-    assert "sk-live-secret" not in repr(rows)
+    assert "image-secret" not in repr(rows)
     assert "sk-env-secret" not in repr(rows)
 
 

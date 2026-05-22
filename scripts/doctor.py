@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Safe local diagnostics for the OpenAI proxy gateway.
 
-The doctor deliberately avoids proxy_api_keys.yml. Auth-related diagnostics
-only report whether relevant environment variables are present, with values
-redacted.
+The doctor deliberately avoids local key stores. Auth-related diagnostics only
+report whether relevant environment variables are present, with values redacted.
 """
 
 from __future__ import annotations

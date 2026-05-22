@@ -16,15 +16,9 @@ Public base host:  https://ai.vivid.fish         # optional, when exposed
 Client API key:    opk_...                       # never commit, never log
 ```
 
-For new installs, create a key from `/setup` or the account portal (`/`) so it
-is stored in `admin.db`, as documented in `AUTH_GUIDE.md`. The legacy CLI path
-is still available for headless recovery or existing key-file installs:
-
-```bash
-./venv/bin/python proxy.py generate-key <agent-or-app-name>
-```
-
-Then export it in the shell you run smoke commands from:
+For new installs, create a key from `/setup`, the account portal (`/`), or
+`/admin` so it is stored in `admin.db`, as documented in `AUTH_GUIDE.md`. Then
+export it in the shell you run smoke commands from:
 
 ```bash
 export OPENAI_PROXY_API_KEY='opk_...'
@@ -115,7 +109,7 @@ curl -s http://127.0.0.1:5000/gateway/v1/models/flux2-klein-4b-edit/capabilities
 `scripts/doctor.py` checks public health, public discovery metadata, optional
 ComfyUI health, manifest registry shape, and workflow bindings. Auth
 diagnostics are limited to redacted environment-variable presence; do not
-inspect or print `proxy_api_keys.yml`.
+inspect or print local key stores.
 
 ## Workflow Control Examples
 
@@ -658,7 +652,7 @@ print(msg.content[0].text)
 Streaming calls such as `client.messages.stream(...)` are supported. The
 Anthropic model list lives at `GET /anthropic/v1/models`, and token counting
 uses `POST /anthropic/v1/messages/count_tokens`. Do not put real Anthropic keys
-into `proxy_api_keys.yml`.
+into source files, prompts, or shared docs.
 
 ## Recipe: OpenAI SDK clients
 
@@ -792,52 +786,43 @@ Agents debugging a "why did this fail?" should:
 3. Inspect `warnings` for fallback notes.
 4. Re-check `capabilities` if the intent appears unsupported.
 
-## Migrating to Profile-Scoped Keys
+## Profile-Scoped Keys
 
-Dashboard-generated `opk_...` keys inherit the App's stored Profile from
-`admin.db`. Legacy key-file entries may also carry a live `profile:` block
-(see `AUTH_GUIDE.md` § "Downstream Credential Mapping"). The `AppProfile`
-concept (`gateway/profiles.py`, `gateway/policy.py`) layers a named policy
-bundle on top of each client key:
+Dashboard-generated and imported `opk_...` keys authenticate through
+`admin.db`. Each key belongs to an App, and the App's stored Profile layers a
+named policy bundle on top of the runtime key:
 
 - which protocols a client can use
 - which model aliases it sees
 - whether cloud fallback is allowed
-- which credentials may be used downstream
 - how much status and diagnostics it may see
 - which native passthrough lanes are allowed
 
-The legacy key-file migration path is:
+The profile-binding path is:
 
-1. **Do not rotate keys preemptively.** The existing `opk_...` values keep
-   working; profile binding is additive in `proxy_api_keys.yml`.
-2. **Add a `profile:` field** to each agent entry in `proxy_api_keys.yml`
-   referencing a profile ID (e.g. `continue-local`, `image-agent`,
-   `experimental-cloud`). The proxy reloads the file without restart.
-3. **Use the profile fields in `proxy_api_keys.yml`.** Profiles never contain
-   raw secrets; they reference downstream credential slots by name, exactly
-   like the existing `downstream:` block.
-4. **Verify with `/gateway/v1/capabilities`.** After binding a profile, the
+1. **Do not rotate keys preemptively.** Existing imported `opk_...` values keep
+   working after their hashes are in `admin.db`.
+2. **Create or edit a Profile** in `/admin` referencing the protocols, models,
+   workflows, and provider-native surfaces the App should use.
+3. **Attach the Profile to the App** in `/admin`, or let the App inherit from
+   the owning user's dashboard-managed identity/Profile mapping.
+4. **Verify with `/gateway/v1/capabilities`.** After binding a Profile, the
    capabilities listed for that key should narrow or widen to match. If the
-   set looks wrong, the profile is misconfigured; do not rotate the key.
+   set looks wrong, the Profile is misconfigured; do not rotate the key.
 5. **Only rotate the `opk_...` key itself** if it was exposed (committed,
-   pasted, sent to a third party). Profile changes do not require key
-   rotation. Use `proxy.py generate-key <name>` to rotate; the printed
-   `opk_...` is shown once and never stored in plaintext.
+   pasted, sent to a third party). Profile changes do not require key rotation.
 
-What this document deliberately does *not* do: print any real key, real
-hash, real env name from a downstream service block, or any value from a
-live `proxy_api_keys.yml`. The placeholders `opk_...`, `sha256:...`, and
-`$OPENAI_PROXY_API_KEY` are the only forms that should appear in shared
-docs and commit history.
+What this document deliberately does *not* do: print any real key, real hash,
+real env name from a downstream service block, or any value from a live key
+store. The placeholders `opk_...`, `sha256:...`, and `$OPENAI_PROXY_API_KEY`
+are the only forms that should appear in shared docs and commit history.
 
 ## Operational Notes
 
 - `/health` is the only unauthenticated endpoint. Use it for liveness in
   Docker/systemd; do not use authenticated endpoints for health checks.
-- The proxy reloads `proxy_api_keys.yml` on change for legacy key-file Apps.
-  Dashboard Apps and keys live in `admin.db` and apply live through the admin
-  store.
+- Dashboard Apps, Profiles, and keys live in `admin.db` and apply live through
+  the admin store.
 - Streaming clients must respect server-side idle timeouts on
   `/v1/chat/completions` and `/v1/completions`. A long stall in an
   intermediate proxy/CDN will surface as a dropped stream to the SDK.

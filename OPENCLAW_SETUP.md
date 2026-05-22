@@ -10,31 +10,18 @@ This setup provides a unified OpenAI-compatible API on `http://127.0.0.1:5000` w
 ### API Configuration
 ```
 Base URL: http://127.0.0.1:5000/v1
-API Key: create one with `./venv/bin/python proxy.py generate-key openclaw`
+API Key: create an `openclaw` App key from `/`, `/setup`, or `/admin`
 ```
 
-The proxy stores only the API key hash in `proxy_api_keys.yml`. Use the printed
-`opk_...` value as the OpenAI API key in clients. Proxied `/v1` requests are
-rejected without a valid proxy key; `/health` remains public for service checks.
+The proxy stores only the API key hash in `admin.db`. Use the printed `opk_...`
+value as the OpenAI API key in clients. Proxied `/v1` requests are rejected
+without a valid proxy key; `/health` remains public for service checks.
 
 See `AUTH_GUIDE.md` for the agent-facing key generation and rotation guide.
 See `MODEL_COMPATIBILITY.md` for how OpenAI model names map to local backends.
 
-Per-key downstream overrides can be added in `proxy_api_keys.yml` when an agent
-needs different provider credentials:
-```yaml
-keys:
-  - name: simon
-    key_hash: sha256:...
-    downstream:
-      tabby:
-        api_key_env: SIMON_TABBY_API_KEY
-      tts:
-        headers:
-          Authorization:
-            env: SIMON_TTS_API_KEY
-            prefix: Bearer
-```
+Use the dashboard Profile attached to the `openclaw` App to decide which
+protocols, models, workflows, and provider-native routes OpenClaw may call.
 
 ### Speech-to-Text (STT)
 ```

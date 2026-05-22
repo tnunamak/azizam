@@ -85,8 +85,6 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
     ConfigSpec(("oidc",), "OIDC settings", "auth/admin", MIXED, RESTART, "Keep OIDC secrets in env; expose non-secret status read-only."),
     ConfigSpec(("admin",), "Admin settings", "auth/admin", MIXED, RUNTIME, "UI should own admin runtime policy backed by admin.db."),
     ConfigSpec(("admin", "user_defaults"), "User access defaults", "auth/admin", UI, RUNTIME, "Bootstrap defaults seed admin.db; manage ongoing identity/Profile mappings in the dashboard."),
-    ConfigSpec(("auth", "keys_file"), "Legacy runtime keys file", "auth/admin", FILE, ADVANCED, "Legacy compatibility only; create new runtime keys from setup or the dashboard so they live in admin.db."),
-    ConfigSpec(("auth", "keys"), "Legacy inline runtime keys", "auth/admin", FILE, ADVANCED, "Legacy compatibility only; prefer dashboard App keys stored in admin.db.", True),
 )
 
 ENV_RECOMMENDATIONS: Mapping[str, tuple[str, str, str]] = {
@@ -122,9 +120,7 @@ KNOWN_ENV_SOURCE_NAMES: tuple[str, ...] = (
     "OPENAI_PROXY_ADMIN_DB",
     "OPENAI_PROXY_ADMIN_SESSION_KEY",
     "OPENAI_PROXY_AUTH_ENABLED",
-    "OPENAI_PROXY_AUTH_PROFILE_STRICT",
     "OPENAI_PROXY_BASE_URL",
-    "OPENAI_PROXY_KEYS_FILE",
     "OPENAI_PROXY_MODEL_COMPAT_ENABLED",
     "OPENAI_PROXY_PORT",
     "OPENAI_PROXY_PUBLIC_URL",

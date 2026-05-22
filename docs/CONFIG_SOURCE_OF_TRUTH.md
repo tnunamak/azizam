@@ -73,7 +73,7 @@ pins the mapping; if you change one side you must change the other.
 | `resource admission` | dashboard   | caps, throttles, reserved tokens                | nothing                                          |
 | `workflow manifests` | provisioned | nothing                                         | the manifest files themselves                    |
 | `model compatibility`| bootstrap   | nothing                                         | the compatibility table file                     |
-| `auth/admin`         | split       | admin user list, roles, Profiles, Apps, App keys, user access defaults, identity/Profile mappings | session keys, OIDC client secret, trust roots, legacy key file |
+| `auth/admin`         | split       | admin user list, roles, Profiles, Apps, App keys, user access defaults, identity/Profile mappings | session keys, OIDC client secret, trust roots |
 
 Implications:
 
@@ -87,13 +87,12 @@ Implications:
   and identity Profile mappings into `admin.db` when they are not already
   present. Disabled dashboard mappings are not re-enabled by the bootstrap
   seed.
-- `proxy_api_keys.yml` is a legacy compatibility key registry for existing
-  installs and headless rotation. New first-run and dashboard keys live in
-  `admin.db`.
-- Split domains keep two rows of mental model: a YAML row for the bootstrap
-  half, an `admin.db`-backed row for the runtime half. The inventory's
-  `authored_via` and `stored_in` strings spell this out so neither half
-  hides behind the other.
+- Runtime Apps, Profiles, and keys live in `admin.db`. Bootstrap config stays
+  in YAML/env, but runtime authorization decisions do not read a key file.
+- Split domains keep two rows of mental model: a YAML/env row for bootstrap
+  wiring and an `admin.db`-backed row for runtime policy. The inventory's
+  `authored_via` and `stored_in` strings spell this out so neither half hides
+  behind the other.
 
 ## Provisioning bundles
 

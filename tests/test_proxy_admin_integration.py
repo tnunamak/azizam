@@ -34,8 +34,6 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.old_signing_key = proxy.ADMIN_AUTH.signing_key
         self.old_cookie = proxy.ADMIN_AUTH.cookie
         self.old_auth_enabled = proxy.AUTH_ENABLED
-        self.old_auth_registry = proxy.AUTH_REGISTRY
-        self.old_refresh_auth_registry = proxy.refresh_auth_registry
         self.env_patcher = patch.dict(os.environ, {}, clear=False)
         self.env_patcher.start()
         os.environ.pop("AI_GATEWAY_USER_SELF_SERVICE", None)
@@ -43,8 +41,6 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_STORE.path = self.db
         proxy.ADMIN_OIDC_STATES.clear()
         proxy.AUTH_ENABLED = True
-        proxy.AUTH_REGISTRY = {}
-        proxy.refresh_auth_registry = lambda force=False: None
         admin_store.init_db(self.db)
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
@@ -57,8 +53,6 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.signing_key = self.old_signing_key
         proxy.ADMIN_AUTH.cookie = self.old_cookie
         proxy.AUTH_ENABLED = self.old_auth_enabled
-        proxy.AUTH_REGISTRY = self.old_auth_registry
-        proxy.refresh_auth_registry = self.old_refresh_auth_registry
         self.env_patcher.stop()
         proxy.ADMIN_OIDC_STATES.clear()
         self.tmp.cleanup()
@@ -1246,13 +1240,9 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self.old_signing_key = proxy.ADMIN_AUTH.signing_key
         self.old_cookie = proxy.ADMIN_AUTH.cookie
         self.old_auth_enabled = proxy.AUTH_ENABLED
-        self.old_auth_registry = proxy.AUTH_REGISTRY
-        self.old_refresh_auth_registry = proxy.refresh_auth_registry
         proxy.ADMIN_STORE.path = self.db
         proxy.ADMIN_OIDC_STATES.clear()
         proxy.AUTH_ENABLED = True
-        proxy.AUTH_REGISTRY = {}
-        proxy.refresh_auth_registry = lambda force=False: None
         proxy.ADMIN_AUTH.signing_key = b"s" * 32
         proxy.ADMIN_AUTH.cookie = CookieConfig(secure=False)
         admin_store.init_db(self.db)
@@ -1265,8 +1255,6 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.signing_key = self.old_signing_key
         proxy.ADMIN_AUTH.cookie = self.old_cookie
         proxy.AUTH_ENABLED = self.old_auth_enabled
-        proxy.AUTH_REGISTRY = self.old_auth_registry
-        proxy.refresh_auth_registry = self.old_refresh_auth_registry
         proxy.ADMIN_OIDC_STATES.clear()
         self.tmp.cleanup()
 

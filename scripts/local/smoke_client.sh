@@ -14,8 +14,7 @@ BASE="${OPENAI_PROXY_BASE:-http://127.0.0.1:5000}"
 MODEL="${OPENAI_PROXY_SMOKE_MODEL:-auto}"
 
 if [[ -z "${OPENAI_PROXY_API_KEY:-}" ]]; then
-  echo "OPENAI_PROXY_API_KEY is not set; generate one with:" >&2
-  echo "  ./venv/bin/python proxy.py generate-key <agent-name>" >&2
+  echo "OPENAI_PROXY_API_KEY is not set; create an App key from /setup, /, or /admin." >&2
   exit 2
 fi
 

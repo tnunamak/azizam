@@ -177,11 +177,9 @@ from gateway.policy import DEFAULT_PROFILE, DENIED, PolicyDecision
 from gateway.receipts import RouteReceipt
 from gateway.runtime_auth import (
     RuntimeIdentity,
-    build_identity_registry,
     discovery_audience_for_profile,
     evaluate_and_apply,
     hash_api_key as runtime_hash_api_key,
-    key_hashes_for_entry as runtime_key_hashes_for_entry,
     make_policy_request,
     normalize_key_hash as runtime_normalize_key_hash,
 )
@@ -1108,15 +1106,7 @@ def config_path(value: str | None, default_name: str) -> Path:
     return Path(__file__).parent / path
 
 
-AUTH_KEYS_FILE = config_path(
-    os.environ.get("OPENAI_PROXY_KEYS_FILE", auth_cfg.get("keys_file")),
-    "proxy_api_keys.yml",
-)
 AUTH_PUBLIC_PATHS = auth_cfg.get("public_paths") or ["/health"]
-AUTH_PROFILE_STRICT = bool_from_config(
-    os.environ.get("OPENAI_PROXY_AUTH_PROFILE_STRICT", auth_cfg.get("profile_strict")),
-    False,
-)
 
 
 def _admin_db_path() -> Path:
@@ -1591,69 +1581,22 @@ def get_client_api_key_from_headers(headers) -> str:
     return ""
 
 
-def load_proxy_key_entries() -> list[dict]:
-    """Load client-facing proxy key records from config and the local key file."""
-    entries = []
-    config_entries = auth_cfg.get("keys") or auth_cfg.get("proxy_keys") or []
-    if isinstance(config_entries, list):
-        entries.extend(config_entries)
-
-    if AUTH_KEYS_FILE.exists():
-        try:
-            with open(AUTH_KEYS_FILE) as f:
-                file_data = yaml.safe_load(f) or {}
-            file_entries = file_data if isinstance(file_data, list) else file_data.get("keys", [])
-            if isinstance(file_entries, list):
-                entries.extend(file_entries)
-        except Exception as e:
-            print(f"[proxy] Warning: Failed to load proxy auth keys: {e}", flush=True)
-
-    return entries
-
-
-def key_hashes_for_entry(entry: dict) -> list[str]:
-    """Return every usable hash for one auth entry."""
-    return runtime_key_hashes_for_entry(entry, env=os.environ)
-
-
-def build_auth_registry(entries: list[dict]) -> dict[str, AuthIdentity]:
-    """Build a hash-indexed registry of valid proxy keys."""
-    return build_identity_registry(
-        entries,
-        env=os.environ,
-        strict=AUTH_PROFILE_STRICT,
-    )
-
-
-AUTH_REGISTRY: dict[str, AuthIdentity] = {}
-AUTH_KEYS_FILE_MTIME: Optional[int] = None
-AUTH_REGISTRY_LOADED = False
-
-
-def auth_keys_file_mtime() -> Optional[int]:
-    if not AUTH_KEYS_FILE.exists():
-        return None
-    return AUTH_KEYS_FILE.stat().st_mtime_ns
-
-
-def refresh_auth_registry(force: bool = False):
-    """Reload proxy keys when the key file changes."""
-    global AUTH_REGISTRY, AUTH_KEYS_FILE_MTIME, AUTH_REGISTRY_LOADED
-
-    current_mtime = auth_keys_file_mtime()
-    if AUTH_REGISTRY_LOADED and not force and current_mtime == AUTH_KEYS_FILE_MTIME:
-        return
-
-    AUTH_REGISTRY = build_auth_registry(load_proxy_key_entries())
-    AUTH_KEYS_FILE_MTIME = current_mtime
-    AUTH_REGISTRY_LOADED = True
-
-
-refresh_auth_registry(force=True)
 AUTH_ENABLED = bool_from_config(
     os.environ.get("OPENAI_PROXY_AUTH_ENABLED", auth_cfg.get("enabled")),
     True,
 )
+
+
+def active_app_credential_count() -> int:
+    try:
+        return len(
+            admin_store.list_active_credentials(
+                subject_kind="app",
+                path=ADMIN_STORE.path,
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def is_public_path(path: str) -> bool:
@@ -1686,20 +1629,16 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
     if not AUTH_ENABLED or is_public_path(request_path):
         return NO_AUTH_CONTEXT
 
-    refresh_auth_registry()
-
     api_key = get_client_api_key_from_headers(request.headers)
     if not api_key:
         return auth_error("Missing API key.")
 
     key_hash = hash_api_key(api_key)
-    identity = AUTH_REGISTRY.get(key_hash)
-    if not identity:
-        identity = runtime_identity_for_app_credential_hash(
-            key_hash,
-            inherited_profile_id_for_app=_inherited_profile_id_for_app,
-            path=ADMIN_STORE.path,
-        )
+    identity = runtime_identity_for_app_credential_hash(
+        key_hash,
+        inherited_profile_id_for_app=_inherited_profile_id_for_app,
+        path=ADMIN_STORE.path,
+    )
     if not identity:
         return auth_error("Invalid API key.")
 
@@ -1805,58 +1744,6 @@ def prepare_downstream_headers(
     return headers
 
 
-def generate_proxy_api_key() -> str:
-    return f"opk_{secrets.token_urlsafe(32)}"
-
-
-def create_proxy_key(name: str, keys_file: Path = AUTH_KEYS_FILE) -> str:
-    """Create or rotate a named proxy key, storing only its hash."""
-    api_key = generate_proxy_api_key()
-    data = {}
-
-    if keys_file.exists():
-        with open(keys_file) as f:
-            data = yaml.safe_load(f) or {}
-        if isinstance(data, list):
-            data = {"keys": data}
-
-    entries = data.setdefault("keys", [])
-    if not isinstance(entries, list):
-        entries = []
-        data["keys"] = entries
-
-    for idx, entry in enumerate(entries):
-        if isinstance(entry, dict) and entry.get("name") == name:
-            downstream = entry.get("downstream")
-            if not isinstance(downstream, dict):
-                downstream = {"tabby": {}}
-            new_entry = {
-                "name": name,
-                "key_hash": hash_api_key(api_key),
-                "downstream": downstream,
-            }
-            if "profile" in entry:
-                new_entry["profile"] = entry.get("profile")
-            entries[idx] = new_entry
-            break
-    else:
-        new_entry = {
-            "name": name,
-            "key_hash": hash_api_key(api_key),
-            "downstream": {
-                "tabby": {},
-            },
-        }
-        entries.append(new_entry)
-
-    keys_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(keys_file, "w") as f:
-        yaml.safe_dump(data, f, sort_keys=False)
-    os.chmod(keys_file, 0o600)
-
-    return api_key
-
-
 def handle_cli_command() -> bool:
     if len(sys.argv) < 2:
         return False
@@ -1894,24 +1781,7 @@ def handle_cli_command() -> bool:
         print(api_key)
         return True
 
-    if sys.argv[1] != "generate-key":
-        return False
-
-    if len(sys.argv) != 3:
-        print("Usage: python3 proxy.py generate-key <name>", file=sys.stderr)
-        sys.exit(2)
-
-    name = sys.argv[2].strip()
-    if not name:
-        print("Key name cannot be empty.", file=sys.stderr)
-        sys.exit(2)
-
-    api_key = create_proxy_key(name)
-    print(f"Created proxy API key for {name}.")
-    print(f"Stored key hash in {AUTH_KEYS_FILE}.")
-    print("Use this key as the client-facing OpenAI API key:")
-    print(api_key)
-    return True
+    return False
 
 
 # TabbyAPI config path
@@ -7475,10 +7345,8 @@ async def lifespan(app: FastAPI):
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
     print(f"[proxy] ComfyUI backend: {COMFY_HOST} (enabled: {COMFY_ENABLED})", flush=True)
-    print(f"[proxy] Proxy auth: {'enabled' if AUTH_ENABLED else 'disabled'} ({len(AUTH_REGISTRY)} key(s))", flush=True)
+    print(f"[proxy] Proxy auth: {'enabled' if AUTH_ENABLED else 'disabled'}", flush=True)
     print(f"[proxy] Model compatibility: {'enabled' if MODEL_COMPAT_ENABLED else 'disabled'}", flush=True)
-    if AUTH_ENABLED and not AUTH_REGISTRY:
-        print(f"[proxy] WARNING: No proxy API keys configured; proxied requests will be rejected", flush=True)
 
     # Replay persisted firehose metrics so per-key counters and the recent-event
     # timeline survive proxy restarts. The window stays bounded at 24h; older
@@ -7628,6 +7496,17 @@ async def lifespan(app: FastAPI):
     try:
         ADMIN_STORE.init_db()
         print(f"[proxy] Admin store initialized (db={ADMIN_DB_PATH})", flush=True)
+        app_key_count = active_app_credential_count()
+        print(
+            f"[proxy] Runtime App credentials: {app_key_count} active",
+            flush=True,
+        )
+        if AUTH_ENABLED and not app_key_count:
+            print(
+                "[proxy] WARNING: No active App credentials in admin.db; "
+                "proxied requests will be rejected",
+                flush=True,
+            )
         seeded_defaults = _seed_user_defaults_from_bootstrap_config()
         if seeded_defaults["settings"] or seeded_defaults["mappings"]:
             print(
@@ -9438,9 +9317,8 @@ def _setup_config_source_item() -> dict[str, str]:
     except Exception:  # noqa: BLE001
         access_defaults = None
     has_bootstrap_defaults = _has_bootstrap_user_access_defaults()
-    legacy_key_count = len(AUTH_REGISTRY)
     if access_defaults is not None:
-        state = "ok" if not legacy_key_count else "warn"
+        state = "ok"
         detail = (
             "Runtime Apps, keys, Profiles, and identity defaults are admin.db-backed."
         )
@@ -9453,11 +9331,6 @@ def _setup_config_source_item() -> dict[str, str]:
     else:
         state = "ok"
         detail = "No bootstrap runtime defaults are pending migration."
-    if legacy_key_count:
-        detail += (
-            f" {legacy_key_count} legacy proxy_api_keys.yml key(s) are still loaded; "
-            "new setup/dashboard keys live in admin.db."
-        )
     return {
         "label": "Config source of truth",
         "state": state,
@@ -9958,7 +9831,8 @@ async def _firehose_request_counter(request: Request, call_next):
     """Record per-API-key request activity for the firehose status panel.
 
     Identity is resolved best-effort by hashing the bearer token against
-    AUTH_REGISTRY. Body is never read; this only inspects path + status.
+    admin.db App credentials. Body is never read; this only inspects path +
+    status.
     """
     path = request.url.path
     skip = (
@@ -9974,10 +9848,14 @@ async def _firehose_request_counter(request: Request, call_next):
         if not skip:
             try:
                 key_name: Optional[str] = None
-                if AUTH_ENABLED and AUTH_REGISTRY:
+                if AUTH_ENABLED:
                     raw = get_client_api_key_from_headers(request.headers)
                     if raw:
-                        ident = AUTH_REGISTRY.get(hash_api_key(raw))
+                        ident = runtime_identity_for_app_credential_hash(
+                            hash_api_key(raw),
+                            inherited_profile_id_for_app=_inherited_profile_id_for_app,
+                            path=ADMIN_STORE.path,
+                        )
                         if ident:
                             key_name = ident.name
                 latency_ms = (time.monotonic() - t0) * 1000.0
@@ -10025,7 +9903,7 @@ async def health():
     return {
         "status": "healthy",
         "auth_enabled": AUTH_ENABLED,
-        "proxy_keys_configured": len(AUTH_REGISTRY),
+        "app_credentials_configured": active_app_credential_count(),
     }
 
 
@@ -12112,13 +11990,13 @@ def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthCont
     key_hash = auth.get("key_hash")
     if not isinstance(key_hash, str) or not key_hash:
         return NO_AUTH_CONTEXT
-    refresh_auth_registry()
-    identity = AUTH_REGISTRY.get(key_hash)
+    identity = runtime_identity_for_app_credential_hash(
+        key_hash,
+        inherited_profile_id_for_app=_inherited_profile_id_for_app,
+        path=ADMIN_STORE.path,
+    )
     if identity is None:
-        identity = AuthIdentity(
-            name=str(auth.get("name") or "image-media-job"),
-            key_hash=key_hash,
-        )
+        return NO_AUTH_CONTEXT
     return AuthContext(identity=identity)
 
 

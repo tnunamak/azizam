@@ -76,34 +76,19 @@ exactly once; the hash is what persists. Use it as the OpenAI API key
 inside the consuming app. Store it in the app's secret store or
 environment. Do not put the printed key in source files, logs, or prompts.
 
-## Quick Start For Apps (CLI, recovery / legacy)
+## Quick Start For Apps
 
-The CLI path is still supported for legacy installs, scripted rotation, and
-recovery when the dashboard is unavailable. New installs should use `/setup`
-to create the first browser admin session and mint the first App key into
-`admin.db`. Run this from the gateway directory when you intentionally need
-the legacy key file:
-
-```bash
-cd /home/tnunamak/applications/openai-proxy
-./venv/bin/python proxy.py generate-key <app-name>
-```
-
-Example:
-
-```bash
-./venv/bin/python proxy.py generate-key simon
-```
-
-The command prints one App API key:
+Runtime App keys are database-backed. Use `/setup`, the account portal at `/`,
+or `/admin` to create an App and mint an `opk_...` key. The key value is shown
+once:
 
 ```text
 opk_...
 ```
 
-Use that value as the OpenAI API key inside the app. Store it in the app's
-secret store or environment. Do not put the printed key in source files, logs,
-or prompts.
+Use that value as the OpenAI API key inside the consuming app. Store it in the
+app's secret store or environment. Do not put the printed key in source files,
+logs, or prompts.
 
 Typical app settings:
 
@@ -123,31 +108,13 @@ The previous host `https://openai.vivid.fish/v1` remains a compatibility alias
 — every route resolves identically — so apps that are already configured
 against it do not need to change.
 
-## What The Command Does
+## What Key Creation Does
 
-`generate-key` creates or rotates an App entry in `proxy_api_keys.yml`.
-
-The file stores only a SHA-256 hash of the App API key:
-
-```yaml
-keys:
-  - name: simon
-    key_hash: sha256:...
-    downstream:
-      tabby: {}
-```
-
-The raw `opk_...` key is shown only once when generated. If it is lost,
-generate a new key for the same App name and update that app's configuration.
-
-If the same `<app-name>` already exists, the command rotates that App's API
-key while preserving its downstream mapping, Profile block, and audit trail.
-
-`generate-key` is the legacy-compatible App-key path. It remains useful for a
-single-user install, for apps already wired to `proxy_api_keys.yml`, and for
-scripted rotation. The documented first-run path for new deployments is
-`/setup` → browser admin session → `/admin`, which writes to the durable
-admin database instead of `proxy_api_keys.yml`.
+Creating a key inserts one active Credential row for an App in `admin.db`. The
+database stores the App, its default Profile, the key hash, display label,
+expiry/revocation metadata, and audit timestamps. The raw `opk_...` key is
+shown only once. If it is lost, create a new key for the same App and update
+the consuming app's configuration.
 
 ## Admin Control Plane
 
@@ -352,61 +319,17 @@ configured for the gateway:
 - Tabby admin key: `TABBY_ADMIN_KEY` or Tabby's `api_tokens.yml`
 - TTS, STT, ComfyUI, Kobold: no extra auth unless configured per key
 
-For legacy key-file Apps, per-App overrides can be added in
-`proxy_api_keys.yml` when an App needs different downstream credentials:
-
-```yaml
-keys:
-  - name: simon
-    key_hash: sha256:...
-    downstream:
-      tabby:
-        api_key_env: SIMON_TABBY_API_KEY
-        admin_key_env: SIMON_TABBY_ADMIN_KEY
-      tts:
-        headers:
-          Authorization:
-            env: SIMON_TTS_API_KEY
-            prefix: Bearer
-      comfyui:
-        headers:
-          X-API-Key:
-            env: SIMON_COMFY_API_KEY
-```
-
-Supported downstream keys:
-
-- `tabby.api_key` or `tabby.api_key_env`
-- `tabby.admin_key` or `tabby.admin_key_env`
-- `<service>.headers` for arbitrary backend headers
-
-Header values can be literal strings:
-
-```yaml
-headers:
-  X-API-Key: local-dev-secret
-```
-
-or environment-backed values:
-
-```yaml
-headers:
-  Authorization:
-    env: SIMON_TTS_API_KEY
-    prefix: Bearer
-```
-
-The gateway reloads `proxy_api_keys.yml` when it changes, so legacy key-file
-Apps do not require a service restart when rotated or removed. Dashboard Apps
-and keys live in `admin.db` and apply live through the admin store.
+The current DB runtime path does not expose per-App downstream credential
+overrides. Use Profiles to decide which protocols, models, workflows, and
+provider-native routes an App may call; use the gateway's global provider
+configuration to decide which local services and backend credentials those
+allowed calls use.
 
 ## Policy Profiles
 
-A Profile is the authorization and audience boundary attached to an App. In
-the durable admin store, Apps point at stored Profiles and App keys inherit
-that Profile at runtime. Legacy `proxy_api_keys.yml` entries may also carry an
-optional `profile:` block loaded by `gateway.profiles.load_profile_from_entry`.
-When mounted in the request path, the Profile decides:
+A Profile is the authorization and audience boundary attached to an App. Apps
+point at stored Profiles in the durable admin store, and App keys inherit that
+Profile at runtime. When mounted in the request path, the Profile decides:
 
 - which protocols the App may use (e.g. `openai.chat`, `openai.images`,
   `openai.audio`, `openai.responses`, `anthropic.messages`, `ollama.chat`,
@@ -416,9 +339,8 @@ When mounted in the request path, the Profile decides:
 - whether — and where — native passthrough is permitted
 - how much status, discovery, and receipt detail the App sees
 
-Missing `profile:` blocks stay backward-compatible: the loader falls back to
-`DEFAULT_PROFILE` (local-only, basic visibility), so existing Apps keep
-working unchanged.
+Missing Profile bindings fall back to `DEFAULT_PROFILE` (local-only, basic
+visibility), so simple Apps keep working unchanged.
 
 Allow-lists are conservative by construction:
 
@@ -455,22 +377,18 @@ not a product noun — the requester is still an App:
 | `standard` | admin          | Routing facts, fallback reasons                |
 | `full`     | internal       | Backend, policy source, manifest hash, diags   |
 
-Example profile block on a key entry:
+Example stored Profile body:
 
 ```yaml
-keys:
-  - name: image-agent
-    key_hash: sha256:...
-    profile:
-      id: image-agent
-      protocols: ["openai.images"]
-      workflows: ["image.edit.controlnet.example"]
-      models: ["sdxl-base"]
-      backends: ["comfyui.local"]
-      fallback:
-        cloud_allowed: false
-      status_visibility:
-        level: basic
+id: image-agent
+protocols: ["openai.images"]
+workflows: ["image.edit.controlnet.example"]
+models: ["sdxl-base"]
+backends: ["comfyui.local"]
+fallback:
+  cloud_allowed: false
+status_visibility:
+  level: basic
 ```
 
 ### Native passthrough
@@ -480,13 +398,12 @@ ComfyUI DSL — it is a privileged lane for specific operations on specific
 backends, and every use is recorded in receipts.
 
 ```yaml
-profile:
-  id: comfy-tinkerer
-  native_passthrough:
-    enabled: true
-    allowed_backends: ["comfyui.local"]
-    allowed_operations: ["queue_prompt", "history"]
-    audit: true
+id: comfy-tinkerer
+native_passthrough:
+  enabled: true
+  allowed_backends: ["comfyui.local"]
+  allowed_operations: ["queue_prompt", "history"]
+  audit: true
 ```
 
 Provider-native HTTP passthrough is deliberately namespaced below
@@ -522,79 +439,55 @@ inputs are recorded as ignored. The gateway never silently drops inputs.
 ### Templates for current Apps
 
 Safe starter Profiles for the agent/UI/harness Apps this gateway serves today.
-Drop these under the matching key entry — they use non-secret placeholders
-only. Tighten the allow-lists when an App has a narrow role; leave them
-omitted to keep "no opinion" semantics until you need to restrict.
+Create these in the dashboard as stored Profiles, then attach them to Apps.
+They use non-secret placeholders only. Tighten the allow-lists when an App has
+a narrow role; leave fields unset to keep "no opinion" semantics until you need
+to restrict.
 
 ```yaml
-# Agent/coding apps (Claude Code-style, Continue, Cline):
-- name: simon
-  key_hash: sha256:...
-  profile:
-    id: simon
-    # Omit protocols/models to stay permissive; add lists when narrowing.
-    fallback:
-      cloud_allowed: false
-    status_visibility:
-      level: standard
+id: simon
+# Omit protocols/models to stay permissive; add lists when narrowing.
+fallback:
+  cloud_allowed: false
+status_visibility:
+  level: standard
 
-# UI apps (LibreChat, Open WebUI):
-- name: librechat
-  key_hash: sha256:...
-  profile:
-    id: librechat
-    protocols: ["openai.chat", "openai.responses", "openai.audio"]
-    fallback:
-      cloud_allowed: false
-    status_visibility:
-      level: basic
+---
+id: librechat
+protocols: ["openai.chat", "openai.responses", "openai.audio"]
+fallback:
+  cloud_allowed: false
+status_visibility:
+  level: basic
 
-- name: open-webui
-  key_hash: sha256:...
-  profile:
-    id: open-webui
-    protocols: ["openai.chat", "openai.responses", "openai.audio", "openai.images"]
-    fallback:
-      cloud_allowed: false
-    status_visibility:
-      level: basic
+---
+id: open-webui
+protocols: ["openai.chat", "openai.responses", "openai.audio", "openai.images"]
+fallback:
+  cloud_allowed: false
+status_visibility:
+  level: basic
 
-# Compatibility harness / test App:
-- name: claude-test
-  key_hash: sha256:...
-  profile:
-    id: claude-test
-    protocols: ["anthropic.messages"]
-    fallback:
-      cloud_allowed: false
-    status_visibility:
-      level: full
-
-# Helper agents (daisy, cap): leave profile omitted to inherit
-# DEFAULT_PROFILE (local-only, basic visibility) until a narrower
-# boundary is needed.
+---
+id: claude-test
+protocols: ["anthropic.messages"]
+fallback:
+  cloud_allowed: false
+status_visibility:
+  level: full
 ```
 
 ## Rotation And Deletion
 
 Rotate one App's API key:
 
-```bash
-./venv/bin/python proxy.py generate-key simon
-```
+1. Open `/` for keys you own, or `/admin` as an operator.
+2. Delete or revoke the old Credential.
+3. Create a new key on the same App.
+4. Update that App to use the newly printed `opk_...` value.
 
-Then update that App to use the newly printed `opk_...` value.
-
-Delete an App's API key:
-
-For dashboard-created keys, delete the Credential from `/` or `/admin`; it is
-revoked immediately in `admin.db`.
-
-For legacy key-file Apps:
-
-1. Remove that App's entry from `proxy_api_keys.yml`.
-2. Save the file.
-3. The gateway will reject that key on subsequent `/v1` requests.
+Delete an App's API key from `/` or `/admin`; it is revoked immediately in
+`admin.db` and rejected on subsequent runtime requests.
 
 ## Common Failures
 
@@ -605,13 +498,13 @@ The request reached an authenticated endpoint without
 
 `401 Invalid API key.`
 
-The presented App API key does not match any active dashboard credential or
-legacy key-file hash.
+The presented App API key does not match any active App credential in
+`admin.db`, or the owning App is disabled.
 
-`503 Proxy auth is enabled, but no proxy API keys are configured.`
+`401/403 after deleting a key.`
 
-Auth is fail-closed and no usable App API keys are loaded. Generate at least
-one.
+Deleted credentials are revoked immediately. Create a new key on the same App
+and update the consuming app.
 
 `502` or `503` backend errors.
 

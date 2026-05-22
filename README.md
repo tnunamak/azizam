@@ -169,12 +169,14 @@ The normal first-run path is web-first:
 
 App keys (`opk_...`) are for runtime clients and SDKs. Admin keys (`oak_...`) are for the control plane and can also bootstrap a browser admin session through `/setup/claim`. See [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md) for the full first-run contract.
 
-New App API keys created from `/setup` or `/admin` are stored as sha256
-hashes in `admin.db`. `proxy_api_keys.yml` is a legacy compatibility registry
-for existing CLI-generated runtime keys; the yaml only ever holds hashes. The
-bearer key apps present is `Authorization: Bearer opk_...`.
+App API keys created from `/setup`, `/`, or `/admin` are stored as sha256
+hashes in `admin.db`. The bearer key apps present is
+`Authorization: Bearer opk_...`; the raw value is shown once and cannot be
+recovered from disk.
 
-Per-key downstream overrides are supported — any one App API key can map to different upstream credentials per provider (TabbyAPI key, TTS auth header, etc.). See [`proxy_api_keys.example.yml`](proxy_api_keys.example.yml) for the structure.
+Runtime provider credentials are configured globally in `proxy_config.yml` and
+environment variables. Per-App downstream credential overrides are not part of
+the current DB runtime path; use Profiles to decide what an App may access.
 
 Admin/control-plane credentials are separate from App keys. The `oak_...` admin key administers `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser login starts at `/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. Admins are Users with an admin-capable role, so signed-in admins also see an Admin link from the account portal. The dashboard can create Apps, Profiles, and API keys, revoke credentials, and simulate policy decisions before handing someone access.
 
@@ -210,8 +212,6 @@ proxy.py                       # Main FastAPI app: routing, auth, ComfyUI orches
 status_endpoint.py             # /v1/status — admin-only backend health, GPU/disk/queue rollup
 firehose_metrics.py            # /v1/metrics firehose — recent renders, jobs, events
 proxy_config.yml               # Bootstrap wiring, provider config, optional one-time defaults
-proxy_api_keys.example.yml     # Hash-only key store template (commit)
-proxy_api_keys.yml             # Legacy CLI runtime keys — gitignored
 openai_model_aliases.generated.yml   # OpenAI-name → local-model rewrite table
 requirements.txt               # Python deps (FastAPI, httpx, PyYAML, ...)
 start.sh                       # Service starter (systemd ExecStart)
@@ -298,20 +298,19 @@ curl -s http://127.0.0.1:5000/v1/models -H "Authorization: Bearer opk_..."
 The operator status page is served by the proxy at `/status`. The product root
 `/` serves the account portal; `/me` is a legacy browser redirect to `/`.
 
-### Recovery: CLI key generation
+### Recovery: admin key generation
 
-The CLI commands are still supported for headless automation and recovery (broken OIDC, config-management provisioning, scripted rotation):
+The runtime `opk_...` key path is dashboard/database backed. Use `/setup`, `/`,
+or `/admin` to create and rotate App keys. The remaining CLI recovery command
+is for regaining control-plane access when browser/OIDC admin access is broken:
 
 ```bash
 # Recovery / headless admin key. Initializes the admin store if needed.
 ./venv/bin/python proxy.py generate-admin-key owner-cli
-
-# Legacy App key path for recovery/headless rotation. Rewrites proxy_api_keys.yml.
-cp proxy_api_keys.example.yml proxy_api_keys.yml
-./venv/bin/python proxy.py generate-key first-app
 ```
 
-Both commands print one secret value once and store only a hash. Neither key is recoverable from disk. Treat these as the back door, not the front door.
+The command prints one `oak_...` secret value once and stores only a hash. It is
+not recoverable from disk. Treat it as the back door, not the front door.
 
 ## Status page
 

@@ -36,7 +36,7 @@ The status of each build-order item below reflects what currently lives on
       `/gateway/v1/providers/*`, including streamed response bodies rather
       than full buffering
 - [x] Live image workflow extension binding for supported manifest controls
-- [x] `generate-key` preserves existing `profile:` blocks on rotation
+- [x] Runtime App key auth is admin-db backed; imported legacy key hashes no longer require the YAML registry
 - [x] SDK compatibility harness with executable registered probes (`scripts/compat/`, `tests/compat/`, `docs/SDK_COMPATIBILITY_HARNESS.md`)
 
 In-progress / next integration targets:

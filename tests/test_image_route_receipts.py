@@ -52,6 +52,15 @@ def _identity(name: str) -> proxy.AuthIdentity:
     return proxy.AuthIdentity(name=name, key_hash=f"sha256:{name}")
 
 
+def _lookup_from_identities(*identities: proxy.AuthIdentity):
+    by_hash = {identity.key_hash: identity for identity in identities}
+
+    def lookup(key_hash: str, **_kwargs):
+        return by_hash.get(key_hash)
+
+    return lookup
+
+
 @dataclass
 class _StubResponse:
     status_code: int
@@ -216,13 +225,14 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         client = TestClient(proxy.app)
         bob_hash = proxy.hash_api_key("bob")
 
-        registry = {
-            owner_hash: proxy.AuthIdentity(name="alice", key_hash=owner_hash),
-            bob_hash: proxy.AuthIdentity(name="bob", key_hash=bob_hash),
-        }
         with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-            proxy, "AUTH_REGISTRY", registry
-        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            proxy,
+            "runtime_identity_for_app_credential_hash",
+            side_effect=_lookup_from_identities(
+                proxy.AuthIdentity(name="alice", key_hash=owner_hash),
+                proxy.AuthIdentity(name="bob", key_hash=bob_hash),
+            ),
+        ):
             no_auth = client.get(path, params=query)
             self.assertEqual(no_auth.status_code, 200, no_auth.text)
             self.assertEqual(no_auth.headers["content-type"], "image/png")
@@ -275,11 +285,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
                 proxy,
                 "AUTH_ENABLED",
                 True,
-            ), patch.object(
-                proxy,
-                "AUTH_REGISTRY",
-                {},
-            ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            ):
                 ok = client.get(
                     path,
                     params=query,
@@ -303,11 +309,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         query = {"expires": str(expires), "sig": sig}
         client = TestClient(proxy.app)
 
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-            proxy,
-            "AUTH_REGISTRY",
-            {},
-        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+        with patch.object(proxy, "AUTH_ENABLED", True):
             ok = client.get(
                 f"/v1/assets/{asset_id}/content",
                 params=query,
@@ -340,9 +342,9 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
             proxy,
-            "AUTH_REGISTRY",
-            {owner_hash: identity(chat_only)},
-        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            "runtime_identity_for_app_credential_hash",
+            side_effect=_lookup_from_identities(identity(chat_only)),
+        ):
             denied = client.get(
                 f"/gateway/v1/assets/{asset_id}",
                 headers={"Authorization": f"Bearer {raw_key}"},
@@ -352,9 +354,9 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
             proxy,
-            "AUTH_REGISTRY",
-            {owner_hash: identity(image_profile)},
-        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            "runtime_identity_for_app_credential_hash",
+            side_effect=_lookup_from_identities(identity(image_profile)),
+        ):
             ok = client.get(
                 f"/gateway/v1/assets/{asset_id}",
                 headers={"Authorization": f"Bearer {raw_key}"},
@@ -394,9 +396,9 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
             proxy,
-            "AUTH_REGISTRY",
-            {owner_hash: identity},
-        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            "runtime_identity_for_app_credential_hash",
+            side_effect=_lookup_from_identities(identity),
+        ):
             ok = TestClient(proxy.app).get(
                 f"/gateway/v1/assets/{asset_id}/content",
                 params={"expires": str(expires), "sig": sig},
@@ -425,9 +427,9 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
             proxy,
-            "AUTH_REGISTRY",
-            {owner_hash: identity},
-        ), patch.object(proxy, "refresh_auth_registry", lambda force=False: None):
+            "runtime_identity_for_app_credential_hash",
+            side_effect=_lookup_from_identities(identity),
+        ):
             response = TestClient(proxy.app).get(
                 f"/v1/assets/{asset_id}/content",
                 params={"expires": str(expires), "sig": sig},

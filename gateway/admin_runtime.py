@@ -769,10 +769,9 @@ def runtime_identity_for_app_credential_hash(
 ) -> RuntimeIdentity | None:
     """Return a data-plane identity for an admin-store App credential.
 
-    Dashboard-minted ``opk_...`` keys live in the durable admin store, not in
-    ``proxy_api_keys.yml``. Runtime auth must accept only active App
-    credentials from that store; user/service-account admin keys remain
-    control-plane-only.
+    Runtime ``opk_...`` keys live in the durable admin store. Runtime auth must
+    accept only active App credentials from that store; user/service-account
+    admin keys remain control-plane-only.
     """
     credential = admin_store.find_credential_by_hash(key_hash, path=path)
     if credential is None or not _credential_active(credential):

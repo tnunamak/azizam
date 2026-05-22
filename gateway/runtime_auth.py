@@ -1,7 +1,7 @@
 """Runtime auth/profile bridge.
 
-Pure mapping from existing proxy key-entry dicts (the rows already produced by
-``proxy.load_proxy_key_entries``) to a runtime identity that carries:
+Pure mapping from legacy/import key-entry dicts to a runtime identity that
+carries:
 
 * ``name``
 * ``key_hash`` (normalized)
@@ -17,10 +17,10 @@ This module:
 * fails soft on malformed optional ``profile`` blocks (attaches
   :data:`DEFAULT_PROFILE`) unless the caller opts into ``strict`` validation.
 
-The aim is to mirror :func:`proxy.build_auth_registry` semantics 1:1 — same
-hash normalization, same precedence (last duplicate hash wins), same support
-for ``key_hash`` / ``key`` / ``key_env`` — while attaching a policy profile
-and exposing helpers that bridge into :mod:`gateway.policy` and
+The aim is to preserve the legacy/import semantics in a pure helper: same hash
+normalization, same precedence (last duplicate hash wins), same support for
+``key_hash`` / ``key`` / ``key_env`` while attaching a policy profile and
+exposing helpers that bridge into :mod:`gateway.policy` and
 :mod:`gateway.receipts`.
 
 ``proxy.py`` wires the live handlers; this module stays pure and testable.
@@ -97,8 +97,8 @@ class RuntimeIdentity:
 
 
 # ---------------------------------------------------------------------------
-# Hash extraction — mirrors proxy.key_hashes_for_entry but takes an injected
-# env mapping instead of reading os.environ.
+# Hash extraction — takes an injected env mapping instead of reading
+# os.environ.
 # ---------------------------------------------------------------------------
 
 
@@ -109,7 +109,7 @@ def key_hashes_for_entry(
 ) -> list[str]:
     """Return every usable hash for one entry.
 
-    Supports the same three shapes as ``proxy.key_hashes_for_entry``:
+    Supports the three legacy/import entry shapes:
 
     * ``key_hash`` — already-hashed, normalized to ``sha256:...``
     * ``key`` — literal client key, hashed here
@@ -186,9 +186,9 @@ def build_identity_registry(
     env: Mapping[str, str] | None = None,
     strict: bool = False,
 ) -> dict[str, RuntimeIdentity]:
-    """Build a hash-indexed identity registry from proxy key entries.
+    """Build a hash-indexed identity registry from legacy/import key entries.
 
-    Mirrors :func:`proxy.build_auth_registry` semantics:
+    Preserves the legacy duplicate/invalid-entry semantics:
 
     * non-mapping entries are skipped silently,
     * each entry can register under multiple hashes,

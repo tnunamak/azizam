@@ -83,12 +83,12 @@ Anthropic/Ollama protocol frontends:
 - `gateway/policy.py` — `AppProfile`, `PolicyRequest`, `PolicyDecision`,
   `evaluate(...)`. Consulted by the live gateway/image/protocol handlers
   through the runtime-auth bridge; pure module remains independently testable.
-- `gateway/profiles.py` — loader from existing proxy key-entry dicts into
-  `AppProfile`, without reading files or resolving secrets. `profile:` blocks
-  on key entries hot-reload with the rest of `proxy_api_keys.yml`.
-- `gateway/runtime_auth.py` — pure bridge from proxy key-entry dicts to
-  `RuntimeIdentity` (name, key hash, downstream config, loaded
-  `AppProfile`). Supplies `evaluate_and_apply` and a
+- `gateway/profiles.py` — pure loader from profile dicts into `AppProfile`,
+  without reading files or resolving secrets. It remains useful for imports,
+  tests, and DB-stored Profile validation.
+- `gateway/runtime_auth.py` — pure bridge from stored App credentials to
+  `RuntimeIdentity` (name, key hash, downstream config, loaded `AppProfile`).
+  Supplies `evaluate_and_apply` and a
   `discovery_audience_for_profile` helper that maps
   `status_visibility.level` → audience tier.
 - `gateway/manifests.py` — workflow manifest load/validate plus
@@ -419,10 +419,8 @@ whether matching Profiles can see it.
 
 A Profile is a named policy bundle tied to an App. In the durable admin store,
 Apps point at stored Profiles and App keys inherit that Profile at runtime.
-Legacy `proxy_api_keys.yml` entries may also carry optional `profile:` blocks
-that hot-reload alongside the entries that carry them. Missing blocks fall
-back to `DEFAULT_PROFILE` (local-only, basic visibility) so existing Apps keep
-working unchanged.
+Missing Profile bindings fall back to `DEFAULT_PROFILE` (local-only, basic
+visibility) so simple Apps keep working unchanged.
 
 Example:
 
