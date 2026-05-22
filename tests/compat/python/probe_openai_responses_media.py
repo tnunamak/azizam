@@ -15,23 +15,29 @@ Run local checks with::
 
 Optional live checks::
 
-    OPENAI_PROXY_SMOKE_RESPONSES=1         # client.responses.create
-    OPENAI_PROXY_SMOKE_IMAGES=1            # client.images.generate
-    OPENAI_PROXY_SMOKE_AUDIO_SPEECH=1      # client.audio.speech.create
-    OPENAI_PROXY_SMOKE_VIDEO=1             # client.videos.create
+    OPENAI_PROXY_SMOKE_RESPONSES=1            # client.responses.create
+    OPENAI_PROXY_SMOKE_IMAGES=1               # client.images.generate
+    OPENAI_PROXY_SMOKE_AUDIO_SPEECH=1         # client.audio.speech.create
+    OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION=1  # client.audio.transcriptions.create
+    OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION=1    # client.audio.translations.create
+    OPENAI_PROXY_SMOKE_VIDEO=1                # client.videos.create
 
-The Python SDK exposes helpers for images, audio speech/transcription/
-translation, and videos in recent releases. This probe does not include a live
-transcription/translation case because there is no tiny, dependency-free audio
-fixture in this repo; adding one later would make those practical to exercise.
+The transcription/translation cases use a tiny in-memory PCM16 WAV
+(``tests.compat.harness.silent_wav_bytes``) so no binary fixture is
+checked in. Translation is conditionally supported: if the configured
+STT backend does not advertise the ``translation`` capability the
+gateway returns a 400 ``unsupported_audio_translation`` error and the
+SDK-level probe self-skips, deferring to the shape probe in
+``probe_gateway_contract.py``.
 """
 
 from __future__ import annotations
 
+import io
 import os
 import unittest
 
-from tests.compat.harness import ConfigError, load_config
+from tests.compat.harness import ConfigError, load_config, silent_wav_bytes
 
 try:  # pragma: no cover - optional dependency
     import openai as _openai  # type: ignore[import-not-found]
@@ -150,6 +156,71 @@ class TestOpenAIResponsesMediaLive(unittest.TestCase):
         content = result.read()
         self.assertIsInstance(content, bytes)
         self.assertGreater(len(content), 0)
+
+    def _wav_upload(self) -> tuple[str, io.BytesIO, str]:
+        # Re-build the WAV per call so the file pointer is at byte 0; the
+        # SDK consumes the stream during multipart encoding.
+        return ("probe.wav", io.BytesIO(silent_wav_bytes()), "audio/wav")
+
+    def test_audio_transcriptions_create(self) -> None:
+        self._require_flag("OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION")
+        assert _openai is not None
+        try:
+            result = self.client.audio.transcriptions.create(
+                model=os.environ.get(
+                    "OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION_MODEL", "default"
+                ),
+                file=self._wav_upload(),
+            )
+        except _openai.APIStatusError as exc:
+            self.fail(
+                f"transcription returned {exc.status_code}: {exc.response.text[:300]}"
+            )
+        text = getattr(result, "text", None)
+        self.assertIsInstance(
+            text,
+            str,
+            f"OpenAI transcription response must expose .text as a string, got {result!r}",
+        )
+
+    def test_audio_translations_create(self) -> None:
+        """Translation is optional — auto-skip when the backend lacks it.
+
+        On gateways where translation is unsupported, the gateway returns
+        a 400 ``unsupported_audio_translation`` error and this case
+        skips. The corresponding shape probe in
+        ``probe_gateway_contract.py`` covers the error envelope.
+        """
+
+        self._require_flag("OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION")
+        assert _openai is not None
+        try:
+            result = self.client.audio.translations.create(
+                model=os.environ.get(
+                    "OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION_MODEL", "default"
+                ),
+                file=self._wav_upload(),
+            )
+        except _openai.BadRequestError as exc:
+            body = getattr(exc, "body", None) or {}
+            if not isinstance(body, dict):
+                try:
+                    body = exc.response.json()
+                except Exception:
+                    body = {}
+            error = body.get("error", body) if isinstance(body, dict) else None
+            code = (error or {}).get("code") if isinstance(error, dict) else None
+            if code == "unsupported_audio_translation":
+                self.skipTest(
+                    "gateway backend does not advertise translation capability"
+                )
+            raise
+        text = getattr(result, "text", None)
+        self.assertIsInstance(
+            text,
+            str,
+            f"OpenAI translation response must expose .text as a string, got {result!r}",
+        )
 
     def test_video_create(self) -> None:
         self._require_flag("OPENAI_PROXY_SMOKE_VIDEO")

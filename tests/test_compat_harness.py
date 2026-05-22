@@ -29,6 +29,7 @@ from tests.compat.harness import (
     build_matrix,
     load_config,
     matrix_to_json,
+    silent_wav_bytes,
 )
 from tests.compat.harness.fake_backends import (
     fake_chat_completion,
@@ -272,6 +273,29 @@ class TestFakeBackends(unittest.TestCase):
     def test_ollama_embeddings_envelope(self) -> None:
         payload = fake_ollama_embeddings(vector=[0.1, 0.2])
         self.assertEqual(payload["embedding"], [0.1, 0.2])
+
+
+class TestSilentWavFixture(unittest.TestCase):
+    def test_returns_valid_riff_wav(self) -> None:
+        import wave
+
+        data = silent_wav_bytes()
+        # WAV RIFF header sanity.
+        self.assertEqual(data[:4], b"RIFF")
+        self.assertEqual(data[8:12], b"WAVE")
+        # Cheap enough to keep test runs fast (well under 100 KB).
+        self.assertLess(len(data), 100_000)
+        with wave.open(io.BytesIO(data), "rb") as w:
+            self.assertEqual(w.getnchannels(), 1)
+            self.assertEqual(w.getsampwidth(), 2)
+            self.assertEqual(w.getframerate(), 16000)
+            self.assertGreater(w.getnframes(), 0)
+
+    def test_rejects_nonpositive_args(self) -> None:
+        with self.assertRaises(ValueError):
+            silent_wav_bytes(duration_s=0)
+        with self.assertRaises(ValueError):
+            silent_wav_bytes(sample_rate=0)
 
 
 class TestRunMatrixCLI(unittest.TestCase):

@@ -166,6 +166,14 @@ PROBES: Tuple[ProbeSpec, ...] = (
             ("responses.create", "test_responses_create"),
             ("images.generate", "test_images_generate"),
             ("audio.speech.create", "test_audio_speech_create"),
+            (
+                "audio.transcriptions.create",
+                "test_audio_transcriptions_create",
+            ),
+            (
+                "audio.translations.create",
+                "test_audio_translations_create",
+            ),
             ("videos.create", "test_video_create"),
         ),
     ),

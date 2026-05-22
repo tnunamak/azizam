@@ -62,6 +62,7 @@ The gateway should prove compatibility with real SDKs and apps as it evolves. Cu
   `media_type`) still parse through official SDK response models
 - audio speech
 - audio transcription multipart upload
+- audio translation multipart upload where the backend advertises it
 - protocol-shaped validation error
 - backend unavailable error
 - unsupported hosted-tool error

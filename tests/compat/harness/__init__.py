@@ -5,6 +5,7 @@ modules under ``tests/compat/python/`` and ``tests/compat/node/`` and are
 imported lazily so the main test suite never requires them.
 """
 
+from .audio_fixtures import silent_wav_bytes
 from .config import HarnessConfig, load_config, ConfigError
 from .matrix import (
     ProbeResult,
@@ -23,4 +24,5 @@ __all__ = [
     "build_matrix",
     "load_config",
     "matrix_to_json",
+    "silent_wav_bytes",
 ]

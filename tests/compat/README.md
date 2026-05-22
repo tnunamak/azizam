@@ -62,6 +62,8 @@ re-map them onto each SDK's own knobs.
 | `OPENAI_PROXY_SMOKE_OLLAMA_EMBED_MODEL` | no | Ollama embed/embeddings probe model. Default `nomic-embed-text-v1.5`. |
 | `OPENAI_PROXY_SMOKE_LIVE_VISION` | no | Opt-in for the chat image-input-block SDK probe. Default off — text-only local backends 4xx an image content block, which would be a false negative for gateway shape conformance. |
 | `OPENAI_PROXY_SMOKE_LIVE_TOOLS` | no | Opt-in for the Anthropic `messages.create.tool_use` SDK probe. Default off — local backends without tools-capable models would 4xx the request and that isn't a gateway-shape failure. |
+| `OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION` | no | Opt-in for the OpenAI Python `audio.transcriptions.create` SDK probe. Uses a stdlib-generated tiny PCM16 WAV (no committed binary fixture). |
+| `OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION` | no | Opt-in for the OpenAI Python `audio.translations.create` SDK probe. Auto-skips when the gateway's STT backend does not advertise translation; the shape contract is still gated by `probe_gateway_contract.py`. |
 
 ## Running the core unit tests
 
