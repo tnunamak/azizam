@@ -1,7 +1,7 @@
 #!/bin/bash
-# OpenAI Proxy service starter
-# Unified OpenAI-compatible API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI backends
-# Served externally at openai.vivid.fish (via Traefik on 192.168.1.4)
+# Vivid Fish AI Gateway service starter
+# Unified local AI API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI backends
+# Served externally at ai.vivid.fish (via Traefik on 192.168.1.4)
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 

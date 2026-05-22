@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenAI Proxy - Unified OpenAI-compatible API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI
+Description=Vivid Fish AI Gateway - Unified local AI API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI
 After=network.target
 
 [Service]
