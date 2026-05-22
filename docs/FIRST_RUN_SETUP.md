@@ -18,26 +18,16 @@ client?"
 
 If you just want a working gateway, in order:
 
-1. Provide an admin session signing key. Either set
-   `AI_GATEWAY_ADMIN_SESSION_KEY` to a 32+ byte random string, or set
-   `admin.session_signing_key` in `proxy_config.yml`. Without one, the browser
-   admin session cannot be issued.
-2. Start the service (`./start.sh`, the systemd unit, or `docker compose up`
+1. Start the service (`./start.sh`, the systemd unit, or `docker compose up`
    once a compose file is provided for your deployment).
-3. Open `http://127.0.0.1:5000/setup`.
-4. Claim or create the first owner (see [Setup States](#setup-states)).
-5. Mint the first `opk_...` runtime key from the same page and configure your
+2. Open `http://127.0.0.1:5000/setup`.
+3. Claim or create the first owner (see [Setup States](#setup-states)).
+4. Mint the first `opk_...` runtime key from the same page and configure your
    client against `/openai/v1`.
-6. Everything else — Profiles, identity/Profile mappings, role/model bindings,
+5. Everything else — Profiles, identity/Profile mappings, role/model bindings,
    provider toggles, admission caps, OIDC details, additional Apps and keys —
-   is dashboard work at `/admin`. Restart is only required for bootstrap
-   changes (listener, TLS, OIDC issuer/client, signing keys, provider base URLs
-   and secrets).
-
-> **Implementation gap.** The session signing key is not auto-generated yet.
-> If the env var and YAML value are both missing, `/setup/claim` will refuse to
-> issue a browser admin session. Set one explicitly until the app persists a
-> generated key on first boot.
+   is dashboard work at `/admin`. Restart is only required for deployment
+   bootstrap changes such as listener/TLS settings or provider base URLs.
 
 ## Bootstrap Config
 
@@ -45,8 +35,13 @@ Before opening the page, the service needs only the things required to start
 safely:
 
 - listener host/port and deployment shape,
-- `admin.session_signing_key` (or `AI_GATEWAY_ADMIN_SESSION_KEY`),
-- optional `admin.oidc` issuer/client/trust configuration,
+- optional `admin.session_signing_key` (or
+  `AI_GATEWAY_ADMIN_SESSION_KEY`) when you want to externalize the browser
+  session secret. If omitted, the gateway creates a persistent
+  `data/admin_session_key` file next to `admin.db`,
+- optional bootstrap `admin.oidc` issuer/client/trust configuration when you
+  want OIDC before the first local owner login. Otherwise configure OIDC from
+  `/admin` after setup,
 - backend base URLs, model directories, and provider secrets,
 - optional `admin.user_defaults` or user-access env flags as a one-time
   bootstrap seed for self-service defaults and identity/Profile mappings.
@@ -73,17 +68,12 @@ account, and can mint the first key for the user's Personal App.
 
 ### No OIDC, No Owner
 
-`/setup` shows the host-side recovery command that mints the first admin key:
+`/setup` shows a short local owner form: email, password, confirmation. That
+creates a local `owner` user, stores a password verifier in `admin.db`, issues
+the browser admin session, and redirects back to `/setup`.
 
-```bash
-./venv/bin/python proxy.py generate-admin-key owner-cli
-```
-
-The command prints one `oak_...` admin key. Paste that key into `/setup`;
-`POST /setup/claim` validates it, creates a signed browser admin session, and
-redirects back to `/setup`. This is the only normal-path use of the CLI; once
-the browser session is active, all subsequent owner/admin work happens through
-`/setup` and `/admin`.
+The host-side `generate-admin-key owner-cli` command remains in a recovery
+disclosure on the page. It is not the happy path.
 
 An `opk_...` key is a runtime App key and is rejected here with a clear error.
 It should be used in OpenAI/Ollama/Anthropic clients, not to administer the
@@ -109,8 +99,9 @@ policy.
 `/setup` remains a thin handoff page:
 
 - unsigned operators with OIDC configured can sign in;
-- unsigned operators without OIDC can paste an existing `oak_...` admin key to
-  open a browser admin session;
+- unsigned operators without OIDC can sign in with the local owner account;
+- an existing `oak_...` admin key can still open a browser admin session from
+  the recovery disclosure;
 - no runtime secrets, backend details, or admin-only setup doctor are shown.
 
 ## Recovery And Automation
@@ -129,7 +120,8 @@ Admin keys are never runtime keys. Use `oak_...` only for `/admin`,
 
 | Concern                                             | Edited via       | Restart? |
 |-----------------------------------------------------|------------------|----------|
-| Listener, TLS, OIDC issuer/client, signing keys     | `proxy_config.yml` / env / Docker secrets | yes |
+| Listener, TLS, session signing key                  | `proxy_config.yml` / env / generated `data/admin_session_key` | yes for explicit changes |
+| OIDC provider settings                              | `/admin` (optional bootstrap fallback in `proxy_config.yml`) | no |
 | Provider base URLs, model directories, secrets      | `proxy_config.yml` / env / Docker secrets | yes |
 | Owner/admin roles, Apps, Profiles, App API keys     | `/setup`, `/`, `/admin`                  | no  |
 | Identity → Profile mappings, role/model bindings    | `/admin`                                 | no  |
@@ -145,7 +137,6 @@ for first-run. Default Profiles and user-access defaults are seeded into
 Do not turn `/setup` into a second dashboard or YAML editor:
 
 - no backend-specific wizards,
-- no in-browser OIDC secret editor,
 - no Profile picker before the first App key,
 - no duplicate policy editor,
 - no separate "setup mode" flag.

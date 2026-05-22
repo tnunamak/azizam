@@ -40,17 +40,17 @@ decision before it runs, and produces exactly one body-free **Receipt**.
 For a fresh deployment, the normal entry point is the web UI, not the CLI.
 The short version:
 
-1. Start the gateway with a minimal bootstrap (`AI_GATEWAY_ADMIN_SESSION_KEY`
-   set, optional `admin.oidc` and provider URLs in `proxy_config.yml`).
+1. Start the gateway. It defaults to `data/admin.db` and creates a persistent
+   browser-session signing key if none is supplied.
 2. Open `/setup`.
-3. Claim or create the first owner — OIDC sign-in when configured, or paste an
-   `oak_...` admin key minted via the one-time recovery command shown on the
-   page.
+3. Claim or create the first owner — OIDC sign-in when configured, or a local
+   owner account created in the browser when OIDC is not configured yet.
 4. The app seeds default Profiles and identity/Profile mappings, creates the
    signed-in user's first App, and mints one `opk_...` runtime key shown once.
 5. Manage providers, users, Apps, Profiles, keys, admission limits, and
-   service availability from `/admin`. Provisioning / as-code config export is
-   deferred; default Profiles live in `admin.db`, not YAML.
+   service availability from `/admin`. OIDC provider settings are dashboard
+   owned after setup. Provisioning / as-code config export is deferred; default
+   Profiles live in `admin.db`, not YAML.
 
 The full operator-facing walkthrough is in
 [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md). What follows in this
@@ -124,15 +124,15 @@ The control plane is separate from the runtime `/v1` plane.
   into OpenAI-compatible apps.
 
 The normal way to gain admin access on a fresh deployment is `/setup`: OIDC
-when available, or an existing `oak_...` admin key when the operator has not
-configured an IdP. From there, everything is dashboard-driven.
+when available, or a local owner account when the operator has not configured
+an IdP. From there, everything is dashboard-driven.
 
 ### Recovery / headless admin key
 
 If OIDC is unreachable or misconfigured, or you are provisioning the
 gateway from a config-management tool, you can mint an admin key from the
-CLI. This is the recovery/headless path and the no-OIDC bootstrap credential
-that `/setup/claim` can exchange for a browser admin session:
+CLI. This is the recovery/headless path that `/setup/claim` can exchange for a
+browser admin session:
 
 ```bash
 ./venv/bin/python proxy.py generate-admin-key owner-cli
@@ -149,14 +149,19 @@ curl -s https://ai.vivid.fish/admin/api/overview \
 
 ### OIDC configuration
 
-OIDC browser login is configured under `admin.oidc` in `proxy_config.yml`.
-The first-run entry point is `/setup`; `/login` is the raw OIDC redirect
-starter, while `/me/login` and `/admin/login` are compatibility redirects into
-that route. After login, normal users land on `/`, while admins can follow the
-Admin link from the account portal or go directly to `/admin`.
-`/me` is a legacy browser alias that redirects to `/`, never an API-key
-error page.
-Secrets should come from environment variables:
+OIDC browser login is normally configured from `/admin` after the local owner
+has signed in. `admin.oidc` in `proxy_config.yml` remains a bootstrap fallback
+for operators who need IdP login before the first browser claim. `/login` is
+the raw OIDC redirect starter, while `/me/login` and `/admin/login` are
+compatibility redirects into that route. After login, normal users land on
+`/`, while admins can follow the Admin link from the account portal or go
+directly to `/admin`. `/me` is a legacy browser alias that redirects to `/`,
+never an API-key error page.
+
+Dashboard-saved OIDC client secrets are stored in `admin.db`, redacted in UI
+and API responses, and preserved when the secret field is left blank. If your
+deployment requires external secret storage, keep the secret in env and use
+the YAML bootstrap fallback instead:
 
 ```yaml
 admin:

@@ -21,7 +21,8 @@ For the operator-facing first-run story this split implies, see
   only — the things the gateway needs to start safely.
 - **`admin.db` and the dashboard** own runtime product state — owner/admin
   roles, Apps, Profiles, App API keys, identity/Profile mappings, role/model
-  bindings, admission caps, runtime routing toggles, and service availability.
+  bindings, admission caps, runtime routing toggles, OIDC provider settings,
+  and service availability.
 - **Provisioning / as-code config export is deferred.** Default Profiles and
   user-access defaults are seeded into `admin.db` on startup; once seeded, the
   dashboard is authoritative. No YAML "policy file" exists for those settings.
@@ -32,10 +33,7 @@ For the operator-facing first-run story this split implies, see
 > `proxy_config.yml` is a bootstrap seed only; after startup, dashboard/API
 > state is authoritative. The legacy `AI_GATEWAY_USER_SELF_SERVICE` and
 > `AI_GATEWAY_AUTO_CREATE_PERSONAL_APP` env vars are also bootstrap seed
-> inputs, not live overrides after the setting exists in `admin.db`. Some
-> dashboard-plane controls are still exposed through `/admin/api/*` before
-> they have polished UI, but the dashboard must never *write* a
-> bootstrap-plane field.
+> inputs, not live overrides after the setting exists in `admin.db`.
 
 ## Ownership planes
 
@@ -44,17 +42,17 @@ Concretely:
 
 1. **Bootstrap plane** — `proxy_config.yml`, service environment variables,
    and referenced secret stores. Everything the gateway needs to *start*: the
-   listener, TLS, OIDC issuer/client, signing/session keys, trust roots,
-   downstream provider credentials, on-disk model directories. Never
-   dashboard-writable. Restart to apply. Provisioning bundles never carry
-   these values.
+   listener, TLS, optional explicit session signing keys, trust roots,
+   downstream provider credentials, provider base URLs, and on-disk model
+   directories. Never dashboard-writable. Restart to apply. Provisioning
+   bundles never carry these values.
 2. **Dashboard plane** — `admin.db`, edited through `/admin` (and the
    `/admin/api/*` JSON surface). Runtime access policy: the admin user list,
    role grants, Profiles, Apps, App API keys, user access defaults,
    identity/Profile mappings, role→model bindings, admission caps, throttles,
-   runtime routing overrides — anything an operator should legitimately be
-   able to change after boot without touching a file. Audited, applies live
-   unless the apply_mode says otherwise.
+   runtime routing overrides, and OIDC provider settings — anything an
+   operator should legitimately be able to change after boot without touching
+   a file. Audited, applies live unless the apply_mode says otherwise.
 3. **Provisioned plane** — workflow manifests and catalog files committed in
    the repo (`workflows/`, the model compatibility table). The operator's
    change path is editing the file in version control. The dashboard surfaces
@@ -81,15 +79,18 @@ pins the mapping; if you change one side you must change the other.
 | `resource admission` | dashboard   | caps, throttles, reserved tokens                | nothing                                          |
 | `workflow manifests` | provisioned | nothing                                         | the manifest files themselves                    |
 | `model compatibility`| bootstrap   | nothing                                         | the compatibility table file                     |
-| `auth/admin`         | split       | admin user list, roles, Profiles, Apps, App keys, user access defaults, identity/Profile mappings | session keys, OIDC client secret, trust roots |
+| `auth/admin`         | split       | OIDC provider settings, admin user list, roles, Profiles, Apps, App keys, user access defaults, identity/Profile mappings | explicit session keys, trust roots, optional OIDC bootstrap fallback |
 
 Implications:
 
 - The dashboard never writes a value that lives in YAML or env. If an
   operator wants such a value to change, the change path is "edit the file
   and restart" — surfaced in `change_path` and `apply_mode`.
-- The dashboard never writes a secret. Secrets are `secret_bootstrap` in the
-  inventory and excluded from provisioning bundles by construction.
+- The dashboard never writes downstream provider secrets or browser session
+  signing keys. OIDC `client_secret` is the single intentional exception:
+  when configured from `/admin`, it is stored in `admin.db`, redacted in UI/API
+  responses, preserved on blank updates, and audited. Operators who require an
+  external secret store should use the `client_secret_env` bootstrap fallback.
 - `admin.user_defaults` and the user-access env flags are bootstrap seeds, not
   ongoing runtime policy. On startup, the gateway imports self-service defaults
   and identity Profile mappings into `admin.db` when they are not already
