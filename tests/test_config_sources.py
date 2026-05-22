@@ -271,6 +271,36 @@ def test_legacy_compat_fields_are_preserved():
     assert by_id["config:roles"]["change_path"] == "Manage in this dashboard."
 
 
+def test_admin_db_oidc_marks_oidc_as_dashboard_owned():
+    """When a DB OIDC config is present, OIDC reports as dashboard-managed."""
+    rows = inventory_config_sources(
+        {"oidc": {"client_secret": "shh", "issuer": "https://idp.example"}},
+        admin_db_oidc={"enabled": True, "issuer": "https://idp.example"},
+    )
+    by_id = {row["id"]: row for row in rows}
+
+    # The OIDC config row now reports dashboard ownership.
+    assert by_id["config:oidc"]["ui_owner"] == "ui"
+    assert by_id["config:oidc"]["plane"] == "dashboard"
+    assert by_id["config:oidc"]["editability"] == "runtime"
+
+    # An admin-db:oidc row is added to surface the new authoritative location.
+    assert "admin-db:oidc" in by_id
+    db_row = by_id["admin-db:oidc"]
+    assert db_row["ui_owner"] == "ui"
+    assert db_row["plane"] == "dashboard"
+    assert db_row["source"] == "admin.db"
+
+
+def test_oidc_remains_split_without_admin_db_setting():
+    rows = inventory_config_sources(
+        {"oidc": {"client_secret": "shh", "issuer": "https://idp.example"}},
+    )
+    by_id = {row["id"]: row for row in rows}
+    assert by_id["config:oidc"]["ui_owner"] == "mixed"
+    assert "admin-db:oidc" not in by_id
+
+
 def test_doc_and_inventory_agree_on_domains():
     """Pin docs/CONFIG_SOURCE_OF_TRUTH.md to CONFIG_SPECS so neither drifts.
 

@@ -163,6 +163,12 @@ class AdminStore(Protocol):
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
+    def get_oidc_config_setting(self) -> dict[str, Any] | None: ...
+
+    def update_oidc_config_setting(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]: ...
 
 
@@ -493,6 +499,101 @@ def _validate_media_job_admission_overrides(
 _USER_ACCESS_DEFAULT_FIELDS = frozenset(
     {"self_service_apps", "auto_create_personal_app"}
 )
+
+_OIDC_CONFIG_FIELDS = frozenset(
+    {
+        "enabled",
+        "issuer",
+        "client_id",
+        "client_secret",
+        "redirect_uri",
+        "scopes",
+        "allowed_email_domains",
+        "admin_emails",
+        "admin_groups",
+        "admin_roles",
+        "authorization_endpoint",
+        "token_endpoint",
+        "jwks_uri",
+        "clock_skew_seconds",
+    }
+)
+_OIDC_STRING_FIELDS = frozenset(
+    {
+        "issuer",
+        "client_id",
+        "client_secret",
+        "redirect_uri",
+        "authorization_endpoint",
+        "token_endpoint",
+        "jwks_uri",
+    }
+)
+_OIDC_LIST_FIELDS = frozenset(
+    {
+        "scopes",
+        "allowed_email_domains",
+        "admin_emails",
+        "admin_groups",
+        "admin_roles",
+    }
+)
+
+
+def _validate_oidc_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    unknown = set(payload.keys()) - _OIDC_CONFIG_FIELDS
+    if unknown:
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_oidc_config",
+            f"unknown oidc fields: {sorted(unknown)}",
+        )
+    out: dict[str, Any] = {}
+    if "enabled" in payload:
+        out["enabled"] = _validate_bool_field(payload["enabled"], field="enabled")
+    for key in _OIDC_STRING_FIELDS:
+        if key not in payload:
+            continue
+        value = payload[key]
+        if value is None:
+            out[key] = ""
+            continue
+        if not isinstance(value, str):
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_oidc_config",
+                f"{key} must be a string",
+            )
+        out[key] = value.strip()
+    for key in _OIDC_LIST_FIELDS:
+        if key not in payload:
+            continue
+        out[key] = _validate_string_list(payload[key], field=key)
+    if "clock_skew_seconds" in payload:
+        value = payload["clock_skew_seconds"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_oidc_config",
+                "clock_skew_seconds must be a non-negative integer",
+            )
+        seconds = int(value)
+        if seconds < 0:
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_oidc_config",
+                "clock_skew_seconds must be a non-negative integer",
+            )
+        out["clock_skew_seconds"] = seconds
+    if out.get("enabled"):
+        for required in ("issuer", "client_id", "redirect_uri"):
+            if required in out and not out[required]:
+                raise _RouteError(
+                    status.HTTP_400_BAD_REQUEST,
+                    "invalid_oidc_config",
+                    f"{required} is required when enabled=true",
+                )
+    return out
 
 
 def _validate_bool_field(value: Any, *, field: str) -> bool:
@@ -1117,6 +1218,39 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"media_job_admission": record},
+        )
+
+    @router.get("/oidc-config")
+    def get_oidc_config(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = store.get_oidc_config_setting()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"oidc_config": record},
+        )
+
+    @router.put("/oidc-config")
+    async def update_oidc_config(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            payload = _validate_oidc_config_payload(body)
+            record = store.update_oidc_config_setting(data=payload, actor=ctx)
+        except _RouteError as exc:
+            return exc.as_response()
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_oidc_config",
+                str(exc),
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"oidc_config": record},
         )
 
     @router.get("/audit")

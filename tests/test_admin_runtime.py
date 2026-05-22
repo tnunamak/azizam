@@ -21,6 +21,7 @@ from gateway.admin_oidc import (  # noqa: E402
 from gateway.admin_runtime import (  # noqa: E402
     AdminAuthenticator,
     AdminSQLiteStore,
+    OIDC_PROVIDER_SETTING_KEY,
     create_admin_service_account_key,
     runtime_identity_for_app_credential_hash,
 )
@@ -494,6 +495,151 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertIn("operator.user_access_defaults.update", actions)
         self.assertIn("operator.service_availability.update", actions)
         self.assertIn("operator.media_job_admission.update", actions)
+
+
+class AdminOidcSettingsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "admin.db"
+        admin_store.init_db(self.db)
+        self.store = AdminSQLiteStore(self.db)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _client(self, key: str) -> TestClient:
+        app = FastAPI()
+        app.include_router(
+            create_admin_router(
+                self.store,
+                auth=AdminAuthenticator(self.store),
+                profile_resolver=self.store.profile_for_id,
+            )
+        )
+        client = TestClient(app)
+        client.headers.update({"Authorization": f"Bearer {key}"})
+        return client
+
+    def test_get_returns_none_when_no_setting(self) -> None:
+        self.assertIsNone(self.store.get_oidc_config_setting())
+
+    def test_put_redacts_secret_and_preserves_on_blank(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+
+        resp = client.put(
+            "/admin/api/oidc-config",
+            json={
+                "enabled": True,
+                "issuer": "https://idp.example.com",
+                "client_id": "client-A",
+                "client_secret": "topsecret-A",
+                "redirect_uri": "https://gw.example.com/admin/oidc/callback",
+                "scopes": ["openid", "email", "profile"],
+                "admin_emails": ["owner@example.com"],
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()["oidc_config"]
+        self.assertEqual(body["issuer"], "https://idp.example.com")
+        self.assertEqual(body["client_id"], "client-A")
+        self.assertEqual(body["client_secret"], "<redacted>")
+        self.assertTrue(body["client_secret_set"])
+        self.assertNotIn("topsecret-A", resp.text)
+
+        # Raw secret is preserved internally.
+        raw = self.store.get_oidc_config_setting_raw()
+        self.assertEqual(raw["client_secret"], "topsecret-A")
+
+        # Update with blank/omitted secret must NOT clobber it.
+        resp2 = client.put(
+            "/admin/api/oidc-config",
+            json={"client_secret": "", "client_id": "client-B"},
+        )
+        self.assertEqual(resp2.status_code, 200, resp2.text)
+        raw = self.store.get_oidc_config_setting_raw()
+        self.assertEqual(raw["client_secret"], "topsecret-A")
+        self.assertEqual(raw["client_id"], "client-B")
+
+        # Sending the redacted sentinel also preserves the existing secret.
+        resp3 = client.put(
+            "/admin/api/oidc-config",
+            json={"client_secret": "<redacted>"},
+        )
+        self.assertEqual(resp3.status_code, 200, resp3.text)
+        raw = self.store.get_oidc_config_setting_raw()
+        self.assertEqual(raw["client_secret"], "topsecret-A")
+
+        # Replacing with a real value works.
+        resp4 = client.put(
+            "/admin/api/oidc-config",
+            json={"client_secret": "rotated-B"},
+        )
+        self.assertEqual(resp4.status_code, 200, resp4.text)
+        raw = self.store.get_oidc_config_setting_raw()
+        self.assertEqual(raw["client_secret"], "rotated-B")
+
+    def test_get_endpoint_redacts_secret(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        client.put(
+            "/admin/api/oidc-config",
+            json={
+                "enabled": True,
+                "issuer": "https://idp.example.com",
+                "client_id": "c",
+                "client_secret": "sekret",
+                "redirect_uri": "https://gw.example.com/admin/oidc/callback",
+            },
+        )
+        resp = client.get("/admin/api/oidc-config")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()["oidc_config"]
+        self.assertEqual(body["client_secret"], "<redacted>")
+        self.assertNotIn("sekret", resp.text)
+
+    def test_put_rejects_unknown_fields(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        resp = client.put(
+            "/admin/api/oidc-config",
+            json={"unknown_field": "x"},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertEqual(resp.json()["error"]["code"], "invalid_oidc_config")
+
+    def test_put_rejects_enabled_without_required_fields(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        resp = client.put(
+            "/admin/api/oidc-config",
+            json={"enabled": True, "issuer": "", "client_id": "c", "redirect_uri": "u"},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+
+    def test_audit_records_update(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        client.put(
+            "/admin/api/oidc-config",
+            json={"client_id": "x"},
+        )
+        actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
+        self.assertIn("operator.oidc_provider_config.update", actions)
+
+    def test_setting_key_is_stable(self) -> None:
+        # External callers (config_sources, proxy.py) depend on this key.
+        self.assertEqual(OIDC_PROVIDER_SETTING_KEY, "oidc_provider_config")
 
 
 if __name__ == "__main__":

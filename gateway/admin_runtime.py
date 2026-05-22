@@ -41,6 +41,27 @@ ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
 SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
 MEDIA_JOB_ADMISSION_OVERRIDES_KEY = "media_job_admission_overrides"
 USER_ACCESS_DEFAULTS_SETTING_KEY = "user_access_defaults"
+OIDC_PROVIDER_SETTING_KEY = "oidc_provider_config"
+
+OIDC_PROVIDER_FIELDS: tuple[str, ...] = (
+    "enabled",
+    "issuer",
+    "client_id",
+    "client_secret",
+    "redirect_uri",
+    "scopes",
+    "allowed_email_domains",
+    "admin_emails",
+    "admin_groups",
+    "admin_roles",
+    "authorization_endpoint",
+    "token_endpoint",
+    "jwks_uri",
+    "clock_skew_seconds",
+)
+
+OIDC_SECRET_FIELDS: frozenset[str] = frozenset({"client_secret"})
+_OIDC_SECRET_REDACTED = "<redacted>"
 
 
 def _bool_setting(value: Any, default: bool) -> bool:
@@ -111,6 +132,63 @@ def _profile_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         else:
             out["status_visibility"] = "basic"
     return out
+
+
+def _redact_oidc_setting(
+    value: Mapping[str, Any], *, updated_at: Any = None
+) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in OIDC_PROVIDER_FIELDS:
+        if key not in value:
+            continue
+        if key in OIDC_SECRET_FIELDS:
+            out[key] = _OIDC_SECRET_REDACTED if value.get(key) else ""
+            out[f"{key}_set"] = bool(value.get(key))
+        else:
+            out[key] = value[key]
+    if updated_at is not None:
+        out["updated_at"] = updated_at
+    return out
+
+
+def _merge_oidc_setting(
+    current: Mapping[str, Any], update: Mapping[str, Any]
+) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for key in OIDC_PROVIDER_FIELDS:
+        if key in update:
+            new_value = update[key]
+            if key in OIDC_SECRET_FIELDS and _is_blank_or_redacted(new_value):
+                # Preserve the existing secret when caller omits/clears it.
+                if key in current:
+                    merged[key] = current[key]
+            else:
+                merged[key] = new_value
+        elif key in current:
+            merged[key] = current[key]
+    return merged
+
+
+def _is_blank_or_redacted(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped == "" or stripped == _OIDC_SECRET_REDACTED
+    return False
+
+
+def _oidc_secret_changed(
+    current: Mapping[str, Any], update: Mapping[str, Any]
+) -> bool:
+    for key in OIDC_SECRET_FIELDS:
+        if key not in update:
+            continue
+        if _is_blank_or_redacted(update[key]):
+            continue
+        if str(current.get(key) or "") != str(update[key] or ""):
+            return True
+    return False
 
 
 class AdminSQLiteStore:
@@ -515,6 +593,80 @@ class AdminSQLiteStore:
         )
         return record["value"]
 
+    def get_oidc_config_setting(self) -> dict[str, Any] | None:
+        """Return the DB-stored OIDC provider config with secrets redacted.
+
+        Returns ``None`` when no operator has saved an OIDC config yet —
+        callers should fall back to bootstrap YAML/env in that case.
+        """
+        record = admin_store.get_operator_setting(
+            OIDC_PROVIDER_SETTING_KEY,
+            path=self.path,
+        )
+        if record is None:
+            return None
+        value = record.get("value")
+        if not isinstance(value, Mapping):
+            return None
+        return _redact_oidc_setting(value, updated_at=record.get("updated_at"))
+
+    def get_oidc_config_setting_raw(self) -> Mapping[str, Any] | None:
+        """Return the raw DB-stored OIDC provider config (secret intact).
+
+        Internal callers (e.g. the OIDC login flow) need the secret to call
+        the token endpoint. UI/API surfaces must use
+        :meth:`get_oidc_config_setting`.
+        """
+        record = admin_store.get_operator_setting(
+            OIDC_PROVIDER_SETTING_KEY,
+            path=self.path,
+        )
+        if record is None:
+            return None
+        value = record.get("value")
+        if not isinstance(value, Mapping):
+            return None
+        return dict(value)
+
+    def update_oidc_config_setting(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        """Persist the DB-stored OIDC provider config.
+
+        Preserves the existing ``client_secret`` when the update omits it or
+        passes an empty/redacted value. Unknown fields are rejected so a
+        misspelled key never silently disables auth.
+        """
+        unknown = set(data.keys()) - set(OIDC_PROVIDER_FIELDS)
+        if unknown:
+            raise ValueError(
+                f"unknown oidc_provider_config fields: {sorted(unknown)}"
+            )
+        current_raw = self.get_oidc_config_setting_raw() or {}
+        merged = _merge_oidc_setting(current_raw, data)
+        record = admin_store.put_operator_setting(
+            OIDC_PROVIDER_SETTING_KEY,
+            merged,
+            updated_by=actor.subject,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            "operator.oidc_provider_config.update",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="operator_setting",
+            target_id=OIDC_PROVIDER_SETTING_KEY,
+            metadata={
+                "fields": sorted(str(k) for k in data.keys()),
+                "secret_changed": _oidc_secret_changed(current_raw, data),
+            },
+            path=self.path,
+        )
+        return _redact_oidc_setting(
+            record["value"],
+            updated_at=record.get("updated_at"),
+        )
+
     def create_runtime_profile_mapping(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
@@ -856,5 +1008,8 @@ __all__ = [
     "create_admin_service_account_key",
     "generate_admin_api_key",
     "generate_app_api_key",
+    "OIDC_PROVIDER_FIELDS",
+    "OIDC_PROVIDER_SETTING_KEY",
+    "OIDC_SECRET_FIELDS",
     "USER_ACCESS_DEFAULTS_SETTING_KEY",
 ]

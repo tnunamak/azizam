@@ -1173,10 +1173,11 @@ def _admin_session_signing_key() -> bytes | None:
         return None
 
 
-def _load_admin_oidc_config():
+def _bootstrap_admin_oidc_cfg() -> dict:
     oidc_cfg = admin_cfg.get("oidc") or {}
     if not isinstance(oidc_cfg, Mapping):
         oidc_cfg = {}
+    oidc_cfg = dict(oidc_cfg)
     if (
         oidc_cfg.get("enabled")
         and not oidc_cfg.get("signing_key")
@@ -1184,13 +1185,19 @@ def _load_admin_oidc_config():
     ):
         session_env = admin_cfg.get("session_signing_key_env")
         if session_env:
-            oidc_cfg = dict(oidc_cfg)
             oidc_cfg["signing_key_env"] = session_env
         elif admin_cfg.get("session_signing_key"):
-            oidc_cfg = dict(oidc_cfg)
             oidc_cfg["signing_key"] = admin_cfg.get("session_signing_key")
+        else:
+            generated_key = _admin_session_signing_key()
+            if generated_key:
+                oidc_cfg["signing_key"] = generated_key
+    return oidc_cfg
+
+
+def _load_admin_oidc_config():
     try:
-        return load_oidc_config(oidc_cfg, env=os.environ)
+        return load_oidc_config(_bootstrap_admin_oidc_cfg(), env=os.environ)
     except OIDCConfigError as e:
         print(f"[proxy] WARNING: admin OIDC disabled: {e}", flush=True)
         return load_oidc_config({"enabled": False})
@@ -8136,8 +8143,45 @@ app.include_router(
 )
 
 
+def _effective_admin_oidc_config():
+    """Return the OIDC config, preferring DB settings over YAML bootstrap.
+
+    DB-stored fields layer on top of the bootstrap config. The session
+    signing key always comes from the browser-session key resolver so that
+    the admin cookie remains valid across DB toggles (changing the signing
+    key on the fly would silently log everyone out).
+    """
+    try:
+        db_value = ADMIN_STORE.get_oidc_config_setting_raw()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] admin OIDC db read failed: {exc}", flush=True)
+        db_value = None
+    if not db_value:
+        return ADMIN_OIDC_CONFIG
+    merged = dict(_bootstrap_admin_oidc_cfg())
+    for key, value in db_value.items():
+        if value in (None, "", [], ()):
+            continue
+        merged[key] = value
+    if not merged.get("signing_key") and not merged.get("signing_key_env"):
+        if ADMIN_SESSION_SIGNING_KEY:
+            merged["signing_key"] = ADMIN_SESSION_SIGNING_KEY
+    try:
+        cfg = load_oidc_config(merged, env=os.environ)
+    except OIDCConfigError as exc:
+        print(f"[proxy] WARNING: admin OIDC db config invalid: {exc}", flush=True)
+        return ADMIN_OIDC_CONFIG
+    # Preserve the established signing key/cookie so admin sessions survive
+    # DB-driven provider changes.
+    return replace(
+        cfg,
+        signing_key=ADMIN_SESSION_SIGNING_KEY or cfg.signing_key,
+        cookie=ADMIN_OIDC_CONFIG.cookie,
+    )
+
+
 async def _admin_oidc_config_with_discovery():
-    cfg = ADMIN_OIDC_CONFIG
+    cfg = _effective_admin_oidc_config()
     if not cfg.enabled:
         return cfg
     if cfg.authorization_endpoint and cfg.token_endpoint and cfg.jwks_uri:
@@ -8375,7 +8419,7 @@ def _render_user_portal_response(request: Request, *, login_return_to: str) -> R
         title="AI Gateway",
         public_base_url=_public_base_url(request) or "https://ai.vivid.fish",
         account=account,
-        oidc_enabled=ADMIN_OIDC_CONFIG.enabled,
+        oidc_enabled=_effective_admin_oidc_config().enabled,
         login_url=_login_url(return_to=login_return_to),
         csrf_token=_csrf_token_for_oidc_session(session) if session else "",
     )
@@ -8705,12 +8749,14 @@ def _admin_config_sources(
                 "source_ref": f"{len(workflow_inventory)} discovered workflows",
             }
         )
+    oidc_db_setting = ADMIN_STORE.get_oidc_config_setting()
     return inventory_config_sources(
         config,
         env=os.environ,
         env_names=env_names,
         manifest_rows=manifest_sources,
         admin_db_summary=admin_summary,
+        admin_db_oidc=oidc_db_setting,
     )
 
 
@@ -9137,7 +9183,7 @@ async def admin_dashboard(request: Request):
     except AdminAuthError as exc:
         if (
             exc.status_code == 401
-            and ADMIN_OIDC_CONFIG.enabled
+            and _effective_admin_oidc_config().enabled
             and not request.headers.get("authorization")
         ):
             return RedirectResponse(_login_url(return_to="/admin"), status_code=302)
@@ -9189,7 +9235,7 @@ async def admin_dashboard(request: Request):
 
 
 async def _start_browser_login(request: Request, *, default_return_to: str) -> Response:
-    if not ADMIN_OIDC_CONFIG.enabled:
+    if not _effective_admin_oidc_config().enabled:
         return Response(
             content=(
                 "OIDC browser login is not configured on this gateway yet. "
@@ -9422,7 +9468,7 @@ async def _setup_page_response(
             status_payload = None
     body = render_setup_page(
         owner_or_admin_exists=_owner_or_admin_exists(),
-        oidc_enabled=ADMIN_OIDC_CONFIG.enabled,
+        oidc_enabled=_effective_admin_oidc_config().enabled,
         login_url=_login_url(return_to="/setup"),
         is_admin_signed_in=is_admin_signed_in,
         actor_label=actor_label,
@@ -9955,7 +10001,7 @@ async def admin_login_compat(request: Request):
 
 @app.get("/admin/oidc/callback", include_in_schema=False)
 async def admin_oidc_callback(request: Request):
-    if not ADMIN_OIDC_CONFIG.enabled:
+    if not _effective_admin_oidc_config().enabled:
         return Response(status_code=404)
     error = request.query_params.get("error")
     if error:
@@ -10077,7 +10123,7 @@ async def admin_oidc_callback(request: Request):
 
 @app.post("/admin/logout", include_in_schema=False)
 async def admin_logout():
-    target = _login_url(return_to="/admin") if ADMIN_OIDC_CONFIG.enabled else "/setup"
+    target = _login_url(return_to="/admin") if _effective_admin_oidc_config().enabled else "/setup"
     response = RedirectResponse(target, status_code=302)
     cookie = _browser_admin_cookie_config()
     response.delete_cookie(
@@ -15019,7 +15065,7 @@ async def _render_status_html(request: Request) -> Response:
     except AdminAuthError as exc:
         if (
             exc.status_code == 401
-            and ADMIN_OIDC_CONFIG.enabled
+            and _effective_admin_oidc_config().enabled
             and not request.headers.get("authorization")
         ):
             return RedirectResponse(_login_url(return_to="/status"), status_code=302)

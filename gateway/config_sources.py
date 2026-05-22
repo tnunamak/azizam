@@ -142,14 +142,20 @@ def inventory_config_sources(
     env_names: Sequence[str] | None = None,
     manifest_rows: Sequence[Mapping[str, Any]] | None = None,
     admin_db_summary: Mapping[str, Any] | None = None,
+    admin_db_oidc: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Return JSON-able config source inventory rows sorted by stable id."""
+
+    oidc_dashboard_managed = bool(admin_db_oidc)
 
     rows: list[dict[str, Any]] = []
 
     for spec in CONFIG_SPECS:
         value = _get_path(proxy_config, spec.path)
         if value is _MISSING:
+            continue
+        if spec.path == ("oidc",) and oidc_dashboard_managed:
+            rows.append(_config_row(_dashboard_oidc_spec(spec), value))
             continue
         rows.append(_config_row(spec, value))
 
@@ -172,7 +178,45 @@ def inventory_config_sources(
             )
         )
 
+    if oidc_dashboard_managed:
+        rows.append(
+            _row(
+                row_id="admin-db:oidc",
+                label="OIDC provider config (admin.db)",
+                domain="auth/admin",
+                source="admin.db",
+                source_ref="operator_settings.oidc_provider_config",
+                ui_owner=UI,
+                editability=RUNTIME,
+                secret=False,
+                current_value_summary=_summarize(admin_db_oidc),
+                recommendation=(
+                    "Manage OIDC provider in the admin dashboard. "
+                    "client_secret is stored in admin.db; for at-rest "
+                    "encryption use client_secret_env to point at a secret "
+                    "supplied via the service environment."
+                ),
+            )
+        )
+
     return sorted(rows, key=lambda row: row["id"])
+
+
+def _dashboard_oidc_spec(spec: ConfigSpec) -> ConfigSpec:
+    return ConfigSpec(
+        path=spec.path,
+        label=spec.label,
+        domain=spec.domain,
+        ui_owner=UI,
+        editability=RUNTIME,
+        recommendation=(
+            "Dashboard-managed OIDC provider config overrides this YAML "
+            "block; bootstrap values stay as a fallback when no admin.db "
+            "setting is saved."
+        ),
+        secret=spec.secret,
+        source=spec.source,
+    )
 
 
 def _config_row(spec: ConfigSpec, value: Any) -> dict[str, Any]:
