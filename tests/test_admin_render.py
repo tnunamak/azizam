@@ -177,6 +177,45 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("Allow cloud fallback", html)
         self.assertIn("Allow provider-native passthrough", html)
 
+    def test_includes_oidc_provider_settings_flow(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        identity_section = html[html.index('id="identity"') : html.index('id="policy-test"')]
+        self.assertIn("OIDC login", identity_section)
+        self.assertIn("OIDC browser login", identity_section)
+        self.assertIn('action="/admin/api/oidc-config"', identity_section)
+        self.assertIn("data-oidc-config", identity_section)
+        self.assertIn('name="issuer"', identity_section)
+        self.assertIn('name="client_id"', identity_section)
+        self.assertIn('name="client_secret"', identity_section)
+        self.assertIn("Runtime access still comes from Profiles", identity_section)
+        self.assertIn("oidcForm", html)
+        self.assertIn("json(f.action,body,'PUT')", html)
+
+    def test_oidc_provider_settings_redacts_saved_secret(self) -> None:
+        snapshot = _snapshot()
+        snapshot["oidc_config"] = {
+            "enabled": True,
+            "issuer": "https://idp.example.com",
+            "client_id": "ai-gateway",
+            "client_secret": "<redacted>",
+            "client_secret_set": True,
+            "redirect_uri": "https://ai.example.com/admin/oidc/callback",
+            "scopes": ["openid", "email", "profile"],
+            "admin_groups": ["trusted-users"],
+        }
+        html = render_admin_dashboard(snapshot)
+        identity_section = html[html.index('id="identity"') : html.index('id="policy-test"')]
+
+        self.assertIn('name="enabled" checked', identity_section)
+        self.assertIn('value="https://idp.example.com"', identity_section)
+        self.assertIn('value="ai-gateway"', identity_section)
+        self.assertIn("Client secret saved", identity_section)
+        self.assertIn("Leave blank to keep saved secret", identity_section)
+        self.assertIn('value="openid, email, profile"', identity_section)
+        self.assertIn('value="trusted-users"', identity_section)
+        self.assertNotIn("topsecret", identity_section)
+        self.assertNotIn('value="&lt;redacted&gt;"', identity_section)
+
     def test_create_profile_is_a_direct_policy_builder(self) -> None:
         html = render_admin_dashboard(_snapshot())
         self.assertIn("const policyCatalog=", html)

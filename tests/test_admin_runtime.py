@@ -625,6 +625,13 @@ class AdminOidcSettingsTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 400, resp.text)
 
+        resp2 = client.put(
+            "/admin/api/oidc-config",
+            json={"enabled": True},
+        )
+        self.assertEqual(resp2.status_code, 400, resp2.text)
+        self.assertIn("issuer is required", resp2.text)
+
     def test_audit_records_update(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db

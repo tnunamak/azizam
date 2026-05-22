@@ -9222,6 +9222,11 @@ async def admin_dashboard(request: Request):
     snapshot["policy_catalog"] = profile_policy_catalog()
     snapshot["model_visibility"] = _admin_model_visibility(status_payload)
     snapshot["identity_mappings"] = _admin_identity_mappings()
+    try:
+        snapshot["oidc_config"] = ADMIN_STORE.get_oidc_config_setting()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] admin OIDC setting read failed: {exc}", flush=True)
+        snapshot["oidc_config"] = None
     body = render_admin_dashboard(
         snapshot,
         title="AI Gateway Admin",

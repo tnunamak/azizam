@@ -1672,6 +1672,95 @@ def _profile_form(
     )
 
 
+def _oidc_value(config: Mapping[str, Any], key: str) -> str:
+    value = config.get(key)
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return ", ".join(str(item) for item in value if str(item).strip())
+    return str(value)
+
+
+def _oidc_config_form(
+    config: Mapping[str, Any] | None,
+    *,
+    oidc_config_action: str,
+) -> str:
+    record = config if isinstance(config, Mapping) else {}
+    enabled = bool(record.get("enabled"))
+    checked = " checked" if enabled else ""
+    secret_set = bool(record.get("client_secret_set")) or bool(
+        record.get("client_secret") == "<redacted>"
+    )
+    secret_note = (
+        '<p class="form-note">Client secret saved. Leave the field blank to keep it.</p>'
+        if secret_set
+        else '<p class="form-note">Paste the client secret once. It is stored redacted and is not shown again.</p>'
+    )
+    return (
+        '<form class="flow" method="post" action="'
+        + _esc(oidc_config_action)
+        + '" data-oidc-config>'
+        "<label>OIDC browser login</label>"
+        '<p class="form-note">Controls who can sign in to this dashboard. Runtime access still comes from Profiles and identity mappings.</p>'
+        '<label class="check"><input type="checkbox" name="enabled"'
+        + checked
+        + "> Enable OIDC login</label>"
+        '<div class="stack">'
+        + '<input type="url" name="issuer" placeholder="Issuer URL, e.g. https://idp.example.com/realms/home" aria-label="OIDC issuer" value="'
+        + _esc(_oidc_value(record, "issuer"))
+        + '">'
+        + '<input type="text" name="client_id" placeholder="Client ID" aria-label="OIDC client ID" value="'
+        + _esc(_oidc_value(record, "client_id"))
+        + '">'
+        + '<input type="password" name="client_secret" placeholder="'
+        + ("Leave blank to keep saved secret" if secret_set else "Client secret")
+        + '" aria-label="OIDC client secret" autocomplete="off">'
+        + '<input type="url" name="redirect_uri" placeholder="https://ai.vivid.fish/admin/oidc/callback" aria-label="OIDC redirect URI" value="'
+        + _esc(_oidc_value(record, "redirect_uri"))
+        + '">'
+        + "</div>"
+        + secret_note
+        + '<div class="stack">'
+        + '<input type="text" name="scopes" placeholder="openid email profile" aria-label="OIDC scopes" value="'
+        + _esc(_oidc_value(record, "scopes"))
+        + '">'
+        + '<input type="text" name="allowed_email_domains" placeholder="Allowed email domains, comma separated" aria-label="Allowed email domains" value="'
+        + _esc(_oidc_value(record, "allowed_email_domains"))
+        + '">'
+        + '<input type="text" name="admin_groups" placeholder="Admin groups, comma separated" aria-label="OIDC admin groups" value="'
+        + _esc(_oidc_value(record, "admin_groups"))
+        + '">'
+        + '<input type="text" name="admin_roles" placeholder="Admin roles, comma separated" aria-label="OIDC admin roles" value="'
+        + _esc(_oidc_value(record, "admin_roles"))
+        + '">'
+        + "</div>"
+        + '<details class="panel"><summary>Advanced OIDC endpoints</summary>'
+        + '<p class="form-note">Usually discovered from the issuer. Fill these only when your IdP needs explicit endpoints.</p>'
+        + '<div class="stack">'
+        + '<input type="url" name="authorization_endpoint" placeholder="Authorization endpoint" aria-label="OIDC authorization endpoint" value="'
+        + _esc(_oidc_value(record, "authorization_endpoint"))
+        + '">'
+        + '<input type="url" name="token_endpoint" placeholder="Token endpoint" aria-label="OIDC token endpoint" value="'
+        + _esc(_oidc_value(record, "token_endpoint"))
+        + '">'
+        + '<input type="url" name="jwks_uri" placeholder="JWKS URI" aria-label="OIDC JWKS URI" value="'
+        + _esc(_oidc_value(record, "jwks_uri"))
+        + '">'
+        + '<input type="number" min="0" name="clock_skew_seconds" placeholder="Clock skew seconds" aria-label="OIDC clock skew seconds" value="'
+        + _esc(_oidc_value(record, "clock_skew_seconds"))
+        + '">'
+        + "</div></details>"
+        + '<div class="row">'
+        + '<span class="hint">'
+        + ("OIDC login is enabled." if enabled else "OIDC login is off until enabled here.")
+        + "</span>"
+        + '<button type="submit">Save OIDC</button>'
+        + "</div>"
+        + "</form>"
+    )
+
+
 def _policy_simulator_form(
     profiles: list[Mapping[str, Any]],
     *,
@@ -1754,6 +1843,7 @@ def render_admin_dashboard(
     update_app_action_template: str = "/admin/api/apps/{app_id}",
     create_admin_key_action: str = "/admin/api/admin-keys",
     policy_simulate_action: str = "/admin/api/policy/simulate",
+    oidc_config_action: str = "/admin/api/oidc-config",
     logout_url: str = "/me/logout",
 ) -> str:
     """Render a server-side HTML admin dashboard from a snapshot dict.
@@ -1785,6 +1875,9 @@ def render_admin_dashboard(
     services = list(snapshot.get("services") or [])
     workflow_inventory = list(snapshot.get("workflow_inventory") or [])
     identity_mappings = list(snapshot.get("identity_mappings") or [])
+    oidc_config = snapshot.get("oidc_config")
+    if not isinstance(oidc_config, Mapping):
+        oidc_config = {}
     config_sources = [
         source
         for source in list(snapshot.get("config_sources") or [])
@@ -1891,6 +1984,10 @@ def render_admin_dashboard(
         profiles,
         create_mapping_action=create_mapping_action,
     )
+    oidc_config_html = _oidc_config_form(
+        oidc_config,
+        oidc_config_action=oidc_config_action,
+    )
 
     result_html = (
         '<div class="message" id="admin-flow-message" aria-live="polite"></div>'
@@ -1951,6 +2048,11 @@ def render_admin_dashboard(
     )
     identity_html = (
         _subsection(
+            "OIDC login",
+            oidc_config_html,
+            intro="Configure browser sign-in for users and admins. Profile mappings below decide runtime access.",
+        )
+        + _subsection(
             "Runtime Profile mappings",
             runtime_mapping_html + identity_mappings_table,
             intro="Default Profiles for self-service Apps. These mappings do not grant admin access.",
@@ -2027,9 +2129,15 @@ def render_admin_dashboard(
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
         "document.addEventListener('submit',async e=>{"
-        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]'),operatorForm=e.target.closest('[data-operator-control]');"
-        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm&&!operatorForm)return;e.preventDefault();"
+        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]'),operatorForm=e.target.closest('[data-operator-control]'),oidcForm=e.target.closest('[data-oidc-config]');"
+        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm&&!operatorForm&&!oidcForm)return;e.preventDefault();"
         "if(adminKeyForm){const f=adminKeyForm,fd=new FormData(f);const body={name:fd.get('name'),role:fd.get('role')||'admin'};try{const data=await json(f.action,body);f.reset();await refreshMain();showSecret(data,'Admin automation key created. Copy it now; it will not be shown again.','Use this oak_ key only for /admin/api and /status. Never paste it into chat apps, SDK tools, browser code, prompts, logs, or issue trackers.')}catch(err){showError(err)}return}"
+        "if(oidcForm){const f=oidcForm,fd=new FormData(f);const body={enabled:fd.get('enabled')==='on'};"
+        "['issuer','client_id','redirect_uri','authorization_endpoint','token_endpoint','jwks_uri'].forEach(k=>{body[k]=String(fd.get(k)||'').trim()});"
+        "const secret=String(fd.get('client_secret')||'').trim();if(secret)body.client_secret=secret;"
+        "['scopes','allowed_email_domains','admin_groups','admin_roles'].forEach(k=>{body[k]=list(fd.get(k))});"
+        "const skew=String(fd.get('clock_skew_seconds')||'').trim();if(skew)body.clock_skew_seconds=Number(skew);"
+        "try{const data=await json(f.action,body,'PUT');await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(profileForm){const f=profileForm,fd=new FormData(f);const label=String(fd.get('label')||'').trim();const profile=buildProfileFromForm(fd,f,String(fd.get('id')||'').trim()||slug(label));"
         "const extra=String(fd.get('advanced_json')||'').trim();"
         "try{if(extra){Object.assign(profile,JSON.parse(extra))}"

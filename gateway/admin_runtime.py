@@ -191,6 +191,14 @@ def _oidc_secret_changed(
     return False
 
 
+def _validate_merged_oidc_setting(value: Mapping[str, Any]) -> None:
+    if not value.get("enabled"):
+        return
+    for key in ("issuer", "client_id", "client_secret", "redirect_uri"):
+        if not str(value.get(key) or "").strip():
+            raise ValueError(f"{key} is required when enabled=true")
+
+
 class AdminSQLiteStore:
     """Adapter from ``admin_store`` functions to ``gateway.admin_api``."""
 
@@ -644,6 +652,7 @@ class AdminSQLiteStore:
             )
         current_raw = self.get_oidc_config_setting_raw() or {}
         merged = _merge_oidc_setting(current_raw, data)
+        _validate_merged_oidc_setting(merged)
         record = admin_store.put_operator_setting(
             OIDC_PROVIDER_SETTING_KEY,
             merged,
