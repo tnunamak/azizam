@@ -500,6 +500,174 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertNotIn("sk-secret-should-never-render", services_section)
         self.assertNotIn("/very/long/bootstrap/path/that/should/not", services_section)
 
+    def test_admin_dashboard_renders_config_lifecycle_facts(self) -> None:
+        """Sources of Truth must surface authored_via/stored_in/writable/provisioning/apply_mode compactly."""
+
+        snapshot = _snapshot()
+        snapshot["config_sources"] = [
+            {
+                "id": "config:roles",
+                "label": "Role policy",
+                "domain": "roles/models",
+                "source": "proxy_config.yml",
+                "source_ref": "roles",
+                "ui_owner": "ui",
+                "editability": "runtime",
+                "plane": "dashboard",
+                "plane_label": "Managed here",
+                "change_path": "Manage in this dashboard.",
+                "restart_required": False,
+                "secret": False,
+                "current_value_summary": "1 keys: admin",
+                "recommendation": "UI owns runtime policy.",
+                "authored_via": "Dashboard/API",
+                "stored_in": "admin.db",
+                "writable": {"dashboard": True, "api": True},
+                "provisioning": "bundle_candidate",
+                "apply_mode": "live",
+            },
+            {
+                "id": "config:proxy",
+                "label": "Proxy server",
+                "domain": "proxy/network",
+                "source": "proxy_config.yml",
+                "source_ref": "proxy",
+                "ui_owner": "file",
+                "editability": "restart",
+                "plane": "bootstrap",
+                "plane_label": "Bootstrap config",
+                "change_path": "Edit proxy_config.yml field proxy and restart.",
+                "restart_required": True,
+                "secret": False,
+                "current_value_summary": "1 keys: host",
+                "recommendation": "Keep bootstrap listener settings in YAML.",
+                "authored_via": "proxy_config.yml",
+                "stored_in": "proxy_config.yml",
+                "writable": {"dashboard": False, "api": False},
+                "provisioning": "bootstrap_only",
+                "apply_mode": "restart",
+            },
+            {
+                "id": "env:OIDC_CLIENT_SECRET",
+                "label": "OIDC environment: OIDC_CLIENT_SECRET",
+                "domain": "auth/admin",
+                "source": "env",
+                "source_ref": "OIDC_CLIENT_SECRET",
+                "ui_owner": "env",
+                "editability": "restart",
+                "plane": "bootstrap",
+                "plane_label": "Bootstrap config",
+                "change_path": "Set OIDC_CLIENT_SECRET in the service environment and restart.",
+                "restart_required": True,
+                "secret": True,
+                "current_value_summary": "<redacted>",
+                "recommendation": "Keep OIDC secrets in env.",
+                "authored_via": "Service environment",
+                "stored_in": "service environment",
+                "writable": {"dashboard": False, "api": False},
+                "provisioning": "secret_bootstrap",
+                "apply_mode": "restart",
+            },
+            {
+                "id": "config:backends",
+                "label": "Backend providers",
+                "domain": "backends",
+                "source": "proxy_config.yml",
+                "source_ref": "backends",
+                "ui_owner": "mixed",
+                "editability": "advanced",
+                "plane": "split",
+                "plane_label": "Split ownership",
+                "change_path": "Use dashboard controls for runtime overrides; edit file/env-owned bootstrap fields outside the dashboard.",
+                "restart_required": False,
+                "secret": False,
+                "current_value_summary": "1 keys: openai",
+                "recommendation": "UI for enablement; YAML/env for wiring.",
+                "authored_via": "Dashboard plus proxy_config.yml",
+                "stored_in": "admin.db plus proxy_config.yml",
+                "writable": {"dashboard": True, "api": True},
+                "provisioning": "split",
+                "apply_mode": "split",
+            },
+            {
+                "id": "manifest:video-default",
+                "label": "video-default",
+                "domain": "video workflows",
+                "source": "manifest",
+                "source_ref": "workflows/video.yml",
+                "ui_owner": "manifest",
+                "editability": "read_only",
+                "plane": "provisioned",
+                "plane_label": "Provisioned artifacts",
+                "change_path": "Edit the manifest source workflows/video.yml; reload or restart if the gateway does not pick it up automatically.",
+                "restart_required": False,
+                "secret": False,
+                "current_value_summary": "3 keys: id, kind, path",
+                "recommendation": "Manifest-owned workflow definition.",
+                "authored_via": "Workflow manifest",
+                "stored_in": "workflow manifest",
+                "writable": {"dashboard": False, "api": False},
+                "provisioning": "source_manifest",
+                "apply_mode": "read_only",
+            },
+            {
+                "id": "admin-db",
+                "label": "Admin database",
+                "domain": "auth/admin",
+                "source": "admin.db",
+                "source_ref": "admin.db",
+                "ui_owner": "ui",
+                "editability": "runtime",
+                "plane": "dashboard",
+                "plane_label": "Managed here",
+                "change_path": "Manage in this dashboard.",
+                "restart_required": False,
+                "secret": False,
+                "current_value_summary": "1 keys: runtime_overrides",
+                "recommendation": "Dashboard-managed runtime policy.",
+                "authored_via": "Dashboard/API",
+                "stored_in": "admin.db",
+                "writable": {"dashboard": True, "api": True},
+                "provisioning": "bundle_candidate",
+                "apply_mode": "live",
+            },
+        ]
+        html = render_admin_dashboard(snapshot)
+        services_section = html[html.index('id="services"') : html.index('id="apis"')]
+        # Header still reads as before.
+        self.assertIn(">Sources of Truth</h3>", services_section)
+
+        # Dashboard-owned row: authored Dashboard/API, stored in admin.db/defaults, applies live,
+        # writable dashboard+API, candidate for the provisioning bundle.
+        self.assertIn("authored Dashboard/API", services_section)
+        self.assertIn("stored admin.db", services_section)
+        self.assertIn("Applies live", services_section)
+        self.assertIn("UI/API writable: dashboard+API", services_section)
+        self.assertIn("in provisioning bundle", services_section)
+
+        # File-owned bootstrap: authored proxy_config.yml only, bootstrap-only, restart.
+        self.assertIn("authored proxy_config.yml", services_section)
+        self.assertIn("bootstrap-only", services_section)
+        self.assertIn("Restart required", services_section)
+
+        # Env-owned secret: marked secret_bootstrap, still redacted.
+        self.assertIn("bootstrap-only (secret)", services_section)
+        self.assertIn("redacted", services_section)
+
+        # Mixed: apply_mode split rendered as "Live + restart (split)" and split provisioning.
+        self.assertIn("Live + restart (split)", services_section)
+        self.assertIn("split provisioning", services_section)
+        self.assertIn("authored Dashboard plus proxy_config.yml", services_section)
+
+        # Manifest-owned: read-only with source manifest label.
+        self.assertIn("Read-only here", services_section)
+        self.assertIn("source manifest", services_section)
+        self.assertIn("authored Workflow manifest", services_section)
+
+        # Negative checks: no secret leaks, no env/source values bleeding through.
+        self.assertNotIn("sk-", services_section)
+        self.assertNotIn("super-secret", services_section)
+
     def test_empty_runtime_sections_are_hidden_cleanly(self) -> None:
         html = render_admin_dashboard({"services": [{"key": "kobold", "status": "healthy"}]})
         services_section = html[html.index('id="services"') : html.index("</main>")]

@@ -50,6 +50,11 @@ def test_env_overrides_are_represented_without_reading_process_env():
         "secret": True,
         "current_value_summary": "<redacted>",
         "recommendation": "Keep bootstrap storage wiring in env.",
+        "authored_via": "Service environment",
+        "stored_in": "service environment",
+        "writable": {"dashboard": False, "api": False},
+        "provisioning": "secret_bootstrap",
+        "apply_mode": "restart",
     }
     assert by_id["env:REPORTING_DSN"]["secret"] is True
     assert by_id["env:REPORTING_DSN"]["current_value_summary"] == "<redacted>"
@@ -144,4 +149,110 @@ def test_rows_are_jsonable_stable_and_sorted():
             "secret",
             "current_value_summary",
             "recommendation",
+            "authored_via",
+            "stored_in",
+            "writable",
+            "provisioning",
+            "apply_mode",
         }
+
+
+def test_lifecycle_semantics_per_ownership_category():
+    rows = inventory_config_sources(
+        {
+            "proxy": {"host": "0.0.0.0"},
+            "roles": {"admin": ["gpt-4.1"]},
+            "backends": {"openai": {"enabled": True}},
+            "images": {"signed_url_secret": "super-secret"},
+            "workflows": {"video": {"manifest": "workflows/video.yml"}},
+        },
+        env={"OIDC_CLIENT_SECRET": "shh", "DATABASE_URL": "sqlite:///admin.db"},
+        env_names=["OIDC_CLIENT_SECRET", "DATABASE_URL"],
+        manifest_rows=[{"id": "video-default", "kind": "video", "path": "workflows/video.yml"}],
+        admin_db_summary={"runtime_overrides": 1},
+    )
+    by_id = {row["id"]: row for row in rows}
+
+    # Dashboard-owned: UI authors it, it lives in admin.db, both dashboard and API can write it,
+    # it belongs in a provisioning bundle, and changes take effect live.
+    dashboard = by_id["config:roles"]
+    assert dashboard["authored_via"] == "Dashboard/API"
+    assert dashboard["stored_in"] == "admin.db plus proxy_config.yml defaults"
+    assert dashboard["writable"] == {"dashboard": True, "api": True}
+    assert dashboard["provisioning"] == "bundle_candidate"
+    assert dashboard["apply_mode"] == "live"
+
+    # Admin-db summary row should report the same lifecycle as other dashboard-owned rows.
+    admin_db = by_id["admin-db"]
+    assert admin_db["authored_via"] == "Dashboard/API"
+    assert admin_db["stored_in"] == "admin.db"
+    assert admin_db["writable"] == {"dashboard": True, "api": True}
+    assert admin_db["provisioning"] == "bundle_candidate"
+    assert admin_db["apply_mode"] == "live"
+
+    # File-owned bootstrap: authored in proxy_config.yml, not dashboard-writable,
+    # bootstrap_only (never in a provisioning bundle), restart to apply.
+    file_row = by_id["config:proxy"]
+    assert file_row["authored_via"] == "proxy_config.yml"
+    assert file_row["stored_in"] == "proxy_config.yml"
+    assert file_row["writable"] == {"dashboard": False, "api": False}
+    assert file_row["provisioning"] == "bootstrap_only"
+    assert file_row["apply_mode"] == "restart"
+
+    # File-owned secret: stays bootstrap-only but flagged as secret_bootstrap so the
+    # provisioning bundle generator can exclude it.
+    secret_file_row = by_id["config:images.signed_url_secret"]
+    assert secret_file_row["secret"] is True
+    assert secret_file_row["writable"] == {"dashboard": False, "api": False}
+    assert secret_file_row["provisioning"] == "secret_bootstrap"
+    assert secret_file_row["apply_mode"] == "restart"
+
+    # Env-owned secret: env-managed, secret_bootstrap, restart.
+    env_secret = by_id["env:OIDC_CLIENT_SECRET"]
+    assert env_secret["authored_via"] == "Service environment"
+    assert env_secret["stored_in"] == "service environment"
+    assert env_secret["writable"] == {"dashboard": False, "api": False}
+    assert env_secret["provisioning"] == "secret_bootstrap"
+    assert env_secret["apply_mode"] == "restart"
+
+    # Env-owned non-secret would be plain bootstrap_only — but DATABASE_URL is detected
+    # as secret (creds-bearing URL), so we lock the secret variant here too.
+    env_db = by_id["env:DATABASE_URL"]
+    assert env_db["provisioning"] == "secret_bootstrap"
+
+    # Mixed/split: authored in both planes, dashboard+API writable for the runtime slice,
+    # provisioning=split, apply_mode=split so renderers can call out both paths.
+    mixed = by_id["config:backends"]
+    assert mixed["authored_via"] == "Dashboard plus proxy_config.yml"
+    assert mixed["stored_in"] == "admin.db plus proxy_config.yml"
+    assert mixed["writable"] == {"dashboard": True, "api": True}
+    assert mixed["provisioning"] == "split"
+    assert mixed["apply_mode"] == "split"
+
+    # Manifest-owned workflow definitions are read-only artifacts; dashboard shows status only.
+    manifest_yaml = by_id["config:workflows"]
+    assert manifest_yaml["authored_via"] == "Workflow manifest"
+    assert manifest_yaml["stored_in"] == "workflow manifest plus proxy_config.yml pointer"
+    assert manifest_yaml["writable"] == {"dashboard": False, "api": False}
+    assert manifest_yaml["provisioning"] == "source_manifest"
+    assert manifest_yaml["apply_mode"] == "read_only"
+
+    manifest_row = by_id["manifest:video-default"]
+    assert manifest_row["provisioning"] == "source_manifest"
+    assert manifest_row["apply_mode"] == "read_only"
+
+
+def test_legacy_compat_fields_are_preserved():
+    rows = inventory_config_sources(
+        {"proxy": {"host": "0.0.0.0"}, "roles": {"admin": ["gpt-4.1"]}},
+    )
+    by_id = {row["id"]: row for row in rows}
+
+    # plane, change_path, and restart_required keep their previous semantics.
+    assert by_id["config:proxy"]["plane"] == "bootstrap"
+    assert by_id["config:proxy"]["plane_label"] == "Bootstrap config"
+    assert by_id["config:proxy"]["restart_required"] is True
+    assert "Edit proxy_config.yml field proxy and restart." == by_id["config:proxy"]["change_path"]
+    assert by_id["config:roles"]["plane"] == "dashboard"
+    assert by_id["config:roles"]["restart_required"] is False
+    assert by_id["config:roles"]["change_path"] == "Manage in this dashboard."

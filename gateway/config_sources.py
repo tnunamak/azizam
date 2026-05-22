@@ -30,6 +30,18 @@ RESTART = "restart"
 READ_ONLY = "read_only"
 ADVANCED = "advanced"
 
+APPLY_LIVE = "live"
+APPLY_RESTART = "restart"
+APPLY_RELOAD_OR_RESTART = "reload_or_restart"
+APPLY_READ_ONLY = "read_only"
+APPLY_SPLIT = "split"
+
+PROV_BUNDLE_CANDIDATE = "bundle_candidate"
+PROV_BOOTSTRAP_ONLY = "bootstrap_only"
+PROV_SOURCE_MANIFEST = "source_manifest"
+PROV_SPLIT = "split"
+PROV_SECRET_BOOTSTRAP = "secret_bootstrap"
+
 _REDACTED = "<redacted>"
 _MISSING = "<not set>"
 _SECRET_WORDS = ("key", "secret", "token", "password", "credential", "client_secret")
@@ -238,6 +250,12 @@ def _row(
     recommendation: str,
 ) -> dict[str, Any]:
     plane = _plane_for(ui_owner)
+    lifecycle = _lifecycle_for(
+        ui_owner=ui_owner,
+        editability=editability,
+        source=source,
+        secret=secret,
+    )
     return {
         "id": row_id,
         "label": label,
@@ -258,6 +276,73 @@ def _row(
         "secret": secret,
         "current_value_summary": current_value_summary,
         "recommendation": recommendation,
+        "authored_via": lifecycle["authored_via"],
+        "stored_in": lifecycle["stored_in"],
+        "writable": lifecycle["writable"],
+        "provisioning": lifecycle["provisioning"],
+        "apply_mode": lifecycle["apply_mode"],
+    }
+
+
+def _lifecycle_for(
+    *,
+    ui_owner: str,
+    editability: str,
+    source: str,
+    secret: bool,
+) -> dict[str, Any]:
+    """Map (ui_owner, editability, source) to explicit lifecycle facts.
+
+    The five facts answer: how is the setting authored, where does it live,
+    can the dashboard/API write it, does it belong in a provisioning bundle,
+    and how does a change take effect.
+    """
+
+    if ui_owner == UI:
+        stored_in = "admin.db"
+        if source != "admin.db":
+            stored_in = f"admin.db plus {source} defaults"
+        return {
+            "authored_via": "Dashboard/API",
+            "stored_in": stored_in,
+            "writable": {"dashboard": True, "api": True},
+            "provisioning": PROV_BUNDLE_CANDIDATE,
+            "apply_mode": APPLY_LIVE if editability != RESTART else APPLY_RESTART,
+        }
+    if ui_owner == ENV:
+        return {
+            "authored_via": "Service environment",
+            "stored_in": "service environment",
+            "writable": {"dashboard": False, "api": False},
+            "provisioning": PROV_SECRET_BOOTSTRAP if secret else PROV_BOOTSTRAP_ONLY,
+            "apply_mode": APPLY_RESTART,
+        }
+    if ui_owner == FILE:
+        return {
+            "authored_via": source,
+            "stored_in": source,
+            "writable": {"dashboard": False, "api": False},
+            "provisioning": PROV_SECRET_BOOTSTRAP if secret else PROV_BOOTSTRAP_ONLY,
+            "apply_mode": APPLY_RESTART if editability == RESTART else APPLY_RELOAD_OR_RESTART,
+        }
+    if ui_owner == MANIFEST:
+        manifest_source = "workflow manifest"
+        if source != MANIFEST:
+            manifest_source = f"workflow manifest plus {source} pointer"
+        return {
+            "authored_via": "Workflow manifest",
+            "stored_in": manifest_source,
+            "writable": {"dashboard": False, "api": False},
+            "provisioning": PROV_SOURCE_MANIFEST,
+            "apply_mode": APPLY_READ_ONLY,
+        }
+    # MIXED / split ownership
+    return {
+        "authored_via": f"Dashboard plus {source}",
+        "stored_in": f"admin.db plus {source}",
+        "writable": {"dashboard": True, "api": True},
+        "provisioning": PROV_SPLIT,
+        "apply_mode": APPLY_SPLIT,
     }
 
 

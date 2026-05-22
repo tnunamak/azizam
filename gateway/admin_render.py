@@ -915,6 +915,7 @@ def _config_source_row(record: Mapping[str, Any]) -> str:
     source_value = _safe_config_text(record.get("source") or record.get("kind") or "unknown")
     source_ref = _safe_config_text(record.get("source_ref") or record.get("path") or record.get("key") or "")
     provisioned = _esc(source_value if not source_ref or source_ref == "—" else f"{source_value}: {source_ref}")
+    authored_stored = _esc(_authored_stored_summary(record))
     live_state = _esc(
         _safe_config_text(
             record.get("current_value_summary")
@@ -925,21 +926,80 @@ def _config_source_row(record: Mapping[str, Any]) -> str:
         )
     )
     change_path = _esc(_config_change_path(record))
-    restart = "Restart required" if bool(record.get("restart_required")) else _editability_label(record)
+    apply_label = _esc(_apply_mode_label(record))
+    lifecycle_meta = _esc(_lifecycle_meta_summary(record))
     recommendation = _esc(
         _safe_config_text(
             record.get("recommendation") or record.get("note") or record.get("description"),
             record=record,
         )
     )
+    source_sub = provisioned
+    if authored_stored:
+        source_sub = f"{provisioned} | {authored_stored}" if provisioned and provisioned != "—" else authored_stored
+    change_sub = recommendation
+    if lifecycle_meta:
+        change_sub = f"{lifecycle_meta} | {recommendation}" if recommendation and recommendation != "—" else lifecycle_meta
     return (
         "<tr>"
         f'<td><div class="cell-main">{label}</div><div class="cell-sub">{domain}</div></td>'
-        f'<td><span class="badge {badge_class}">{plane_label}</span><div class="cell-sub">{provisioned}</div></td>'
-        f'<td><div class="cell-main">{live_state}</div><div class="cell-sub">{_esc(restart)}</div></td>'
-        f'<td><div class="cell-main">{change_path}</div><div class="cell-sub">{recommendation}</div></td>'
+        f'<td><span class="badge {badge_class}">{plane_label}</span><div class="cell-sub">{source_sub}</div></td>'
+        f'<td><div class="cell-main">{live_state}</div><div class="cell-sub">{apply_label}</div></td>'
+        f'<td><div class="cell-main">{change_path}</div><div class="cell-sub">{change_sub}</div></td>'
         "</tr>"
     )
+
+
+def _authored_stored_summary(record: Mapping[str, Any]) -> str:
+    authored = _safe_config_text(record.get("authored_via") or "")
+    stored = _safe_config_text(record.get("stored_in") or "")
+    if not authored and not stored:
+        return ""
+    if authored and stored and authored != stored:
+        return f"authored {authored}; stored {stored}"
+    return f"authored {authored or stored}"
+
+
+def _apply_mode_label(record: Mapping[str, Any]) -> str:
+    explicit = str(record.get("apply_mode") or "").strip().lower()
+    label = {
+        "live": "Applies live",
+        "restart": "Restart required",
+        "reload_or_restart": "Reload or restart",
+        "read_only": "Read-only here",
+        "split": "Live + restart (split)",
+    }.get(explicit, "")
+    if label:
+        return label
+    # Fallback to legacy editability rendering when apply_mode is absent.
+    if bool(record.get("restart_required")):
+        return "Restart required"
+    return _editability_label(record)
+
+
+def _lifecycle_meta_summary(record: Mapping[str, Any]) -> str:
+    parts: list[str] = []
+    writable = record.get("writable")
+    if isinstance(writable, Mapping) and (writable.get("dashboard") or writable.get("api")):
+        targets = []
+        if writable.get("dashboard"):
+            targets.append("dashboard")
+        if writable.get("api"):
+            targets.append("API")
+        parts.append("UI/API writable: " + "+".join(targets))
+    elif isinstance(writable, Mapping):
+        parts.append("UI/API writable: no")
+    provisioning = str(record.get("provisioning") or "").strip().lower()
+    provisioning_label = {
+        "bundle_candidate": "in provisioning bundle",
+        "bootstrap_only": "bootstrap-only",
+        "secret_bootstrap": "bootstrap-only (secret)",
+        "source_manifest": "source manifest",
+        "split": "split provisioning",
+    }.get(provisioning, "")
+    if provisioning_label:
+        parts.append(provisioning_label)
+    return " | ".join(parts)
 
 
 def _config_source_plane(record: Mapping[str, Any]) -> str:
