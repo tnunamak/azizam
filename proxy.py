@@ -156,6 +156,21 @@ from gateway.video_extensions import (
     STANDARD_VIDEO_CREATE_FIELDS,
     bind_video_workflow_extensions,
 )
+from gateway.openai_media_schemas import (
+    AUDIO_GENERATE_OPENAPI,
+    AUDIO_MODELS_OPENAPI,
+    AUDIO_SPEECH_OPENAPI,
+    AUDIO_TRANSCRIPTIONS_OPENAPI,
+    AUDIO_TRANSLATIONS_OPENAPI,
+    IMAGES_EDITS_OPENAPI,
+    IMAGES_GENERATIONS_OPENAPI,
+    IMAGES_VARIATIONS_OPENAPI,
+    SIGNED_IMAGE_CONTENT_OPENAPI,
+    VIDEOS_CONTENT_OPENAPI,
+    VIDEOS_CREATE_OPENAPI,
+    VIDEOS_STATUS_OPENAPI,
+    VOICES_LIST_OPENAPI,
+)
 from gateway.policy import DEFAULT_PROFILE, DENIED, PolicyDecision
 from gateway.receipts import RouteReceipt
 from gateway.runtime_auth import (
@@ -9300,10 +9315,10 @@ async def llms_txt(request: Request):
     return Response(content=body, media_type="text/plain; charset=utf-8")
 
 
-@app.get("/openai/v1/voices")
-@app.get("/openai/v1/audio/voices")
-@app.get("/v1/voices")
-@app.get("/v1/audio/voices")
+@app.get("/openai/v1/voices", openapi_extra=VOICES_LIST_OPENAPI)
+@app.get("/openai/v1/audio/voices", openapi_extra=VOICES_LIST_OPENAPI)
+@app.get("/v1/voices", openapi_extra=VOICES_LIST_OPENAPI)
+@app.get("/v1/audio/voices", openapi_extra=VOICES_LIST_OPENAPI)
 async def list_voices(request: Request):
     """Return available TTS voices (OpenAI-compatible names)."""
     canonical_path = "/v1/audio/voices" if request.url.path.endswith("/audio/voices") else "/v1/voices"
@@ -9331,8 +9346,8 @@ async def list_voices(request: Request):
     return {"voices": voices}
 
 
-@app.post("/openai/v1/audio/speech")
-@app.post("/v1/audio/speech")
+@app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
+@app.post("/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
 async def audio_speech(request: Request):
     """OpenAI-compatible TTS endpoint - routes to TTS backend with voice mapping."""
     auth_context = authenticate_request(request, "/v1/audio/speech")
@@ -9344,8 +9359,8 @@ async def audio_speech(request: Request):
     return await proxy_tts_request(request, auth_context)
 
 
-@app.post("/openai/v1/audio/transcriptions")
-@app.post("/v1/audio/transcriptions")
+@app.post("/openai/v1/audio/transcriptions", openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI)
+@app.post("/v1/audio/transcriptions", openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI)
 async def audio_transcriptions(request: Request):
     """OpenAI-compatible STT endpoint - routes to STT backend."""
     auth_context = authenticate_request(request, "/v1/audio/transcriptions")
@@ -9359,8 +9374,8 @@ async def audio_transcriptions(request: Request):
     return await proxy_stt_request(request, auth_context)
 
 
-@app.post("/openai/v1/audio/translations")
-@app.post("/v1/audio/translations")
+@app.post("/openai/v1/audio/translations", openapi_extra=AUDIO_TRANSLATIONS_OPENAPI)
+@app.post("/v1/audio/translations", openapi_extra=AUDIO_TRANSLATIONS_OPENAPI)
 async def audio_translations(request: Request):
     """OpenAI-compatible audio translation endpoint, if the STT backend supports it."""
     auth_context = authenticate_request(request, "/v1/audio/translations")
@@ -12970,8 +12985,8 @@ async def gateway_media_job_content(job_id: str, request: Request):
     )
 
 
-@app.post("/openai/v1/images/generations")
-@app.post("/v1/images/generations")
+@app.post("/openai/v1/images/generations", openapi_extra=IMAGES_GENERATIONS_OPENAPI)
+@app.post("/v1/images/generations", openapi_extra=IMAGES_GENERATIONS_OPENAPI)
 async def images_generations(request: Request):
     """OpenAI-compatible image generation endpoint - routes to ComfyUI backend."""
     auth_context = authenticate_request(request, "/v1/images/generations")
@@ -12988,8 +13003,8 @@ async def images_generations(request: Request):
     return response
 
 
-@app.post("/openai/v1/images/variations")
-@app.post("/v1/images/variations")
+@app.post("/openai/v1/images/variations", openapi_extra=IMAGES_VARIATIONS_OPENAPI)
+@app.post("/v1/images/variations", openapi_extra=IMAGES_VARIATIONS_OPENAPI)
 async def images_variations(request: Request):
     """OpenAI-compatible image variations endpoint - explicitly unsupported."""
     auth_context = authenticate_request(request, "/v1/images/variations")
@@ -13009,8 +13024,8 @@ async def images_variations(request: Request):
     return response
 
 
-@app.post("/openai/v1/images/edits")
-@app.post("/v1/images/edits")
+@app.post("/openai/v1/images/edits", openapi_extra=IMAGES_EDITS_OPENAPI)
+@app.post("/v1/images/edits", openapi_extra=IMAGES_EDITS_OPENAPI)
 async def images_edits(request: Request):
     """OpenAI-compatible image edit endpoint - routes to ComfyUI backend."""
     auth_context = authenticate_request(request, "/v1/images/edits")
@@ -13027,8 +13042,8 @@ async def images_edits(request: Request):
     return response
 
 
-@app.get("/openai/v1/images/{image_id}/content")
-@app.get("/v1/images/{image_id}/content")
+@app.get("/openai/v1/images/{image_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
+@app.get("/v1/images/{image_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
 async def images_content(image_id: str, request: Request):
     """Serve a cached image referenced by a signed URL.
 
@@ -13046,8 +13061,8 @@ async def images_content(image_id: str, request: Request):
     )
 
 
-@app.get("/openai/v1/assets/{asset_id}/content")
-@app.get("/v1/assets/{asset_id}/content")
+@app.get("/openai/v1/assets/{asset_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
+@app.get("/v1/assets/{asset_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
 async def assets_content(asset_id: str, request: Request):
     """Serve a cached generated asset referenced by a signed URL."""
     return _signed_asset_content_response(
@@ -13185,8 +13200,8 @@ def _signed_asset_content_response(
     )
 
 
-@app.post("/openai/v1/videos")
-@app.post("/v1/videos")
+@app.post("/openai/v1/videos", openapi_extra=VIDEOS_CREATE_OPENAPI)
+@app.post("/v1/videos", openapi_extra=VIDEOS_CREATE_OPENAPI)
 async def videos_create(request: Request):
     """Sora-shaped video generation submit. Returns {id, status: queued}."""
     auth_context = authenticate_request(request, "/v1/videos")
@@ -13198,8 +13213,8 @@ async def videos_create(request: Request):
     return await proxy_comfy_video_create(request, auth_context)
 
 
-@app.get("/openai/v1/videos/{video_id}")
-@app.get("/v1/videos/{video_id}")
+@app.get("/openai/v1/videos/{video_id}", openapi_extra=VIDEOS_STATUS_OPENAPI)
+@app.get("/v1/videos/{video_id}", openapi_extra=VIDEOS_STATUS_OPENAPI)
 async def videos_status(video_id: str, request: Request):
     """Poll a previously-submitted video job."""
     auth_context = authenticate_request(request, "/v1/videos/{video_id}")
@@ -13213,8 +13228,8 @@ async def videos_status(video_id: str, request: Request):
     return await proxy_comfy_video_status(video_id, auth_context)
 
 
-@app.get("/openai/v1/videos/{video_id}/content")
-@app.get("/v1/videos/{video_id}/content")
+@app.get("/openai/v1/videos/{video_id}/content", openapi_extra=VIDEOS_CONTENT_OPENAPI, response_class=Response)
+@app.get("/v1/videos/{video_id}/content", openapi_extra=VIDEOS_CONTENT_OPENAPI, response_class=Response)
 async def videos_content(video_id: str, request: Request):
     """Download the rendered mp4 once status=succeeded."""
     auth_context = authenticate_request(request, "/v1/videos/{video_id}/content")
@@ -13603,8 +13618,8 @@ async def proxy_audio_generate(request: Request, auth_context):
         )
 
 
-@app.post("/openai/v1/audio/generate")
-@app.post("/v1/audio/generate")
+@app.post("/openai/v1/audio/generate", openapi_extra=AUDIO_GENERATE_OPENAPI)
+@app.post("/v1/audio/generate", openapi_extra=AUDIO_GENERATE_OPENAPI)
 async def audio_generate(request: Request):
     """OpenAI-compatible audio generation endpoint."""
     auth_context = authenticate_request(request, "/v1/audio/generate")
@@ -13616,8 +13631,8 @@ async def audio_generate(request: Request):
     return await proxy_audio_generate(request, auth_context)
 
 
-@app.get("/openai/v1/audio/models")
-@app.get("/v1/audio/models")
+@app.get("/openai/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
+@app.get("/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
 async def audio_models(request: Request):
     """List available audio generation models."""
     auth_context = authenticate_request(request, "/v1/audio/models")
