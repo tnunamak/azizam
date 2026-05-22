@@ -97,6 +97,10 @@ def test_ui_file_env_and_manifest_categories_are_sane():
             {"id": "tts-default", "kind": "audio", "path": "workflows/audio.yml"},
         ],
         admin_db_summary={"runtime_overrides": 3, "admins": 2},
+        admin_db_service_registry={
+            "services": {"comfyui": {"id": "comfyui"}},
+            "protocol_frontends": {"openai": {"id": "openai"}},
+        },
     )
 
     by_id = {row["id"]: row for row in rows}
@@ -105,16 +109,17 @@ def test_ui_file_env_and_manifest_categories_are_sane():
     assert by_id["config:proxy"]["editability"] == "restart"
     assert by_id["config:proxy"]["plane"] == "bootstrap"
     assert by_id["config:proxy"]["restart_required"] is True
-    assert by_id["config:model_routing"]["ui_owner"] == "mixed"
+    assert by_id["config:model_routing"]["ui_owner"] == "file"
     assert by_id["config:model_routing"]["editability"] == "advanced"
-    assert by_id["config:model_routing"]["plane"] == "split"
+    assert by_id["config:model_routing"]["plane"] == "bootstrap"
     assert by_id["config:images.signed_url_secret"]["secret"] is True
     assert by_id["config:images.signed_url_secret"]["current_value_summary"] == "<redacted>"
     assert by_id["config:roles"]["ui_owner"] == "ui"
     assert by_id["config:roles"]["plane"] == "dashboard"
     assert by_id["config:roles"]["restart_required"] is False
     assert by_id["config:resource_admission"]["ui_owner"] == "ui"
-    assert by_id["config:backends"]["ui_owner"] == "mixed"
+    assert by_id["config:backends"]["ui_owner"] == "file"
+    assert by_id["config:backends"]["domain"] == "services/providers"
     assert by_id["config:image_cache"]["ui_owner"] == "mixed"
     assert by_id["config:model_compatibility"]["ui_owner"] == "file"
     assert by_id["config:workflows"]["ui_owner"] == "manifest"
@@ -127,6 +132,8 @@ def test_ui_file_env_and_manifest_categories_are_sane():
     assert by_id["manifest:video-default"]["domain"] == "video workflows"
     assert by_id["manifest:tts-default"]["domain"] == "audio workflows"
     assert by_id["admin-db"]["ui_owner"] == "ui"
+    assert by_id["admin-db:service-registry"]["ui_owner"] == "ui"
+    assert by_id["admin-db:service-registry"]["domain"] == "services/providers"
 
 
 def test_rows_are_jsonable_stable_and_sorted():
@@ -183,6 +190,10 @@ def test_lifecycle_semantics_per_ownership_category():
         env_names=["OIDC_CLIENT_SECRET", "DATABASE_URL"],
         manifest_rows=[{"id": "video-default", "kind": "video", "path": "workflows/video.yml"}],
         admin_db_summary={"runtime_overrides": 1},
+        admin_db_service_registry={
+            "services": {"openai": {"id": "openai"}},
+            "protocol_frontends": {},
+        },
     )
     by_id = {row["id"]: row for row in rows}
 
@@ -202,6 +213,13 @@ def test_lifecycle_semantics_per_ownership_category():
     assert admin_db["writable"] == {"dashboard": True, "api": True}
     assert admin_db["provisioning"] == "bundle_candidate"
     assert admin_db["apply_mode"] == "live"
+
+    service_registry = by_id["admin-db:service-registry"]
+    assert service_registry["authored_via"] == "Dashboard/API"
+    assert service_registry["stored_in"] == "admin.db"
+    assert service_registry["writable"] == {"dashboard": True, "api": True}
+    assert service_registry["provisioning"] == "bundle_candidate"
+    assert service_registry["apply_mode"] == "live"
 
     # File-owned bootstrap: authored in proxy_config.yml, not dashboard-writable,
     # bootstrap_only (never in a provisioning bundle), restart to apply.
@@ -233,14 +251,14 @@ def test_lifecycle_semantics_per_ownership_category():
     env_db = by_id["env:DATABASE_URL"]
     assert env_db["provisioning"] == "secret_bootstrap"
 
-    # Mixed/split: authored in both planes, dashboard+API writable for the runtime slice,
-    # provisioning=split, apply_mode=split so renderers can call out both paths.
-    mixed = by_id["config:backends"]
-    assert mixed["authored_via"] == "Dashboard plus proxy_config.yml"
-    assert mixed["stored_in"] == "admin.db plus proxy_config.yml"
-    assert mixed["writable"] == {"dashboard": True, "api": True}
-    assert mixed["provisioning"] == "split"
-    assert mixed["apply_mode"] == "split"
+    # Service/provider seed data is file-owned input. Runtime service records
+    # live in the DB registry after seeding/import.
+    backend_seed = by_id["config:backends"]
+    assert backend_seed["authored_via"] == "proxy_config.yml"
+    assert backend_seed["stored_in"] == "proxy_config.yml"
+    assert backend_seed["writable"] == {"dashboard": False, "api": False}
+    assert backend_seed["provisioning"] == "bootstrap_only"
+    assert backend_seed["apply_mode"] == "read_only"
 
     # Manifest-owned workflow definitions are read-only artifacts; dashboard shows status only.
     manifest_yaml = by_id["config:workflows"]
@@ -297,7 +315,8 @@ def test_oidc_remains_split_without_admin_db_setting():
         {"oidc": {"client_secret": "shh", "issuer": "https://idp.example"}},
     )
     by_id = {row["id"]: row for row in rows}
-    assert by_id["config:oidc"]["ui_owner"] == "mixed"
+    assert by_id["config:oidc"]["ui_owner"] == "ui"
+    assert by_id["config:oidc"]["plane"] == "dashboard"
     assert "admin-db:oidc" not in by_id
 
 

@@ -13,6 +13,8 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway.discovery_metadata import (  # noqa: E402
+    build_public_protocols,
+    build_public_recipes,
     build_gateway_discovery_metadata,
     build_llms_txt,
     build_skill_catalog,
@@ -20,6 +22,72 @@ from gateway.discovery_metadata import (  # noqa: E402
 
 
 class TestPureDiscoveryMetadata(unittest.TestCase):
+    def test_public_protocols_are_projected_from_frontend_records(self) -> None:
+        protocols = build_public_protocols(
+            (
+                {
+                    "id": "custom",
+                    "enabled": True,
+                    "routes": ["/custom/v1", {"method": "POST", "path": "/compat"}],
+                    "public_discovery": {
+                        "compatibility": "custom-compatible",
+                        "default": False,
+                        "base_url_recipe": "{base_url}/custom/v1",
+                        "streaming": {"events": True},
+                        "endpoints": ["/custom/v1/run"],
+                    },
+                },
+            )
+        )
+
+        self.assertEqual(
+            protocols,
+            (
+                {
+                    "id": "custom",
+                    "base_path": "/custom/v1",
+                    "canonical_base_path": "/custom/v1",
+                    "convenience_base_path": "/compat",
+                    "compatibility": "custom-compatible",
+                    "default": False,
+                    "base_url_recipe": "{base_url}/custom/v1",
+                    "streaming": {"events": True},
+                    "endpoints": ["/custom/v1/run"],
+                },
+            ),
+        )
+
+    def test_public_recipes_are_projected_from_frontend_records(self) -> None:
+        recipes = build_public_recipes(
+            root="http://gw",
+            protocol_frontends=(
+                {
+                    "id": "custom-api",
+                    "enabled": True,
+                    "public_discovery": {
+                        "recipe": {
+                            "canonical_base_url": "/custom/v1",
+                            "root_url": "/",
+                            "auth": "Authorization: Bearer $TOKEN",
+                            "notes": ["Use /custom/v1/run."],
+                        },
+                    },
+                },
+            ),
+        )
+
+        self.assertEqual(
+            recipes,
+            {
+                "custom_api": {
+                    "canonical_base_url": "http://gw/custom/v1",
+                    "root_url": "http://gw",
+                    "auth": "Authorization: Bearer $TOKEN",
+                    "notes": ["Use /custom/v1/run."],
+                },
+            },
+        )
+
     def test_metadata_has_protocols_auth_and_links(self) -> None:
         metadata = build_gateway_discovery_metadata(base_url="http://gw")
         self.assertEqual(metadata["object"], "ai_gateway_discovery")
@@ -156,6 +224,30 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
             "/gateway/v1/assets/{asset_id}/content",
         )
         self.assertEqual(metadata["links"]["asset_content"], "/v1/assets/{asset_id}/content")
+
+    def test_metadata_protocols_can_come_from_live_registry(self) -> None:
+        metadata = build_gateway_discovery_metadata(
+            base_url="http://gw",
+            registry={
+                "protocol_frontends": {
+                    "custom": {
+                        "id": "custom",
+                        "enabled": True,
+                        "routes": ["/custom/v1"],
+                        "public_discovery": {
+                            "compatibility": "custom-compatible",
+                            "default": False,
+                            "base_url_recipe": "{base_url}/custom/v1",
+                            "streaming": {"events": True},
+                            "endpoints": ["/custom/v1/run"],
+                        },
+                    }
+                }
+            },
+        )
+
+        self.assertEqual([p["id"] for p in metadata["protocols"]], ["custom"])
+        self.assertEqual(metadata["protocols"][0]["base_path"], "/custom/v1")
 
     def test_service_block_advertises_canonical_host_and_alias(self) -> None:
         metadata = build_gateway_discovery_metadata(base_url="http://gw")

@@ -63,14 +63,14 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
     ConfigSpec(("proxy",), "Proxy server", "proxy/network", FILE, RESTART, "Keep bootstrap listener settings in YAML."),
     ConfigSpec(("server",), "Server network", "proxy/network", FILE, RESTART, "Keep bind and deployment shape in files."),
     ConfigSpec(("network",), "Network policy", "proxy/network", MIXED, RESTART, "Expose safe runtime overrides only when operators need them."),
-    ConfigSpec(("backends",), "Backend providers", "backends", MIXED, ADVANCED, "Use UI for enablement and priority; keep provider wiring in YAML/env."),
-    ConfigSpec(("providers",), "Provider definitions", "backends", MIXED, ADVANCED, "Keep credentials out of UI; allow runtime routing policy edits."),
-    ConfigSpec(("models",), "Model catalog", "model routing", MIXED, RUNTIME, "Let UI manage routing overrides, not the whole model catalog."),
-    ConfigSpec(("model_routing",), "Model routing", "model routing", MIXED, ADVANCED, "Keep model directories and service names in files; use UI only for explicit runtime route policy."),
+    ConfigSpec(("backends",), "Service/provider registry seed", "services/providers", FILE, READ_ONLY, "Seed/provisioning input only; DB/UI service registry is the live operator surface."),
+    ConfigSpec(("providers",), "Provider registry seed", "services/providers", FILE, READ_ONLY, "Seed/provisioning input only; DB/UI service registry is the live operator surface."),
+    ConfigSpec(("models",), "Model catalog seed", "model routing", FILE, READ_ONLY, "Seed/provisioning input only; UI-managed targets and aliases live in admin.db."),
+    ConfigSpec(("model_routing",), "Model routing bootstrap", "model routing", FILE, ADVANCED, "Keep model directories and compatibility sources in files; UI owns runtime target routing."),
     ConfigSpec(("routing",), "Routing policy", "model routing", UI, RUNTIME, "Good candidate for admin runtime policy controls."),
     ConfigSpec(("roles",), "Role policy", "roles/models", UI, RUNTIME, "UI should own operator-facing role access policy."),
     ConfigSpec(("role_models",), "Role model grants", "roles/models", UI, RUNTIME, "UI should own role-to-model runtime policy."),
-    ConfigSpec(("images",), "Image generation/cache", "media jobs", MIXED, ADVANCED, "Files own storage and signing-secret bootstrap; UI owns runtime admission and queue policy."),
+    ConfigSpec(("images",), "Image generation/cache", "media jobs", UI, RUNTIME, "UI owns runtime admission and queue policy; files own only storage roots and signing-secret bootstrap."),
     ConfigSpec(("images", "signed_url_secret"), "Image URL signing secret", "media jobs", FILE, RESTART, "Keep URL signing secrets in env or file bootstrap; never edit them in the UI.", True),
     ConfigSpec(("image_cache",), "Image cache", "media jobs", MIXED, RUNTIME, "UI can own limits and cleanup policy; files own storage bootstrap."),
     ConfigSpec(("media_jobs",), "Media jobs", "media jobs", UI, RUNTIME, "Expose admission limits and queue controls in UI."),
@@ -81,9 +81,9 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
     ConfigSpec(("workflows",), "Workflow config", "workflow manifests", MANIFEST, READ_ONLY, "Keep workflow definitions in manifests; show status in UI."),
     ConfigSpec(("model_compatibility",), "Model compatibility", "model compatibility", FILE, ADVANCED, "Keep compatibility tables in versioned files."),
     ConfigSpec(("compatibility",), "Compatibility rules", "model compatibility", FILE, ADVANCED, "Keep compatibility tables in versioned files."),
-    ConfigSpec(("auth",), "Auth settings", "auth/admin", MIXED, RESTART, "UI may own policy; env/files own trust roots and secrets."),
-    ConfigSpec(("oidc",), "OIDC settings", "auth/admin", MIXED, RESTART, "Keep OIDC secrets in env; expose non-secret status read-only."),
-    ConfigSpec(("admin",), "Admin settings", "auth/admin", MIXED, RUNTIME, "UI should own admin runtime policy backed by admin.db."),
+    ConfigSpec(("auth",), "Auth settings", "auth/admin", UI, RUNTIME, "UI owns admin policy; env/files own only trust roots and explicit secret bootstrap."),
+    ConfigSpec(("oidc",), "OIDC settings", "auth/admin", UI, RUNTIME, "Dashboard-managed OIDC provider config; secret references may point at env or secret stores."),
+    ConfigSpec(("admin",), "Admin settings", "auth/admin", UI, RUNTIME, "UI should own admin runtime policy backed by admin.db."),
     ConfigSpec(("admin", "user_defaults"), "User access defaults", "auth/admin", UI, RUNTIME, "Bootstrap defaults seed admin.db; manage ongoing identity/Profile mappings in the dashboard."),
 )
 
@@ -91,8 +91,8 @@ ENV_RECOMMENDATIONS: Mapping[str, tuple[str, str, str]] = {
     "AI_GATEWAY_USER_SELF_SERVICE": ("User access bootstrap environment", "auth/admin", "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."),
     "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP": ("User access bootstrap environment", "auth/admin", "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."),
     "OIDC": ("OIDC environment", "auth/admin", "Keep OIDC secrets and issuer bootstrap in env."),
-    "OPENAI": ("OpenAI provider environment", "backends", "Keep provider credentials in env."),
-    "ANTHROPIC": ("Anthropic provider environment", "backends", "Keep provider credentials in env."),
+    "OPENAI": ("OpenAI provider environment", "services/providers", "Keep provider credentials in env or secret stores."),
+    "ANTHROPIC": ("Anthropic provider environment", "services/providers", "Keep provider credentials in env or secret stores."),
     "API_KEY": ("API key environment", "auth/admin", "Keep API keys outside runtime UI."),
     "SECRET": ("Secret environment", "auth/admin", "Keep secrets outside runtime UI."),
     "DATABASE": ("Database environment", "auth/admin", "Keep bootstrap storage wiring in env."),
@@ -143,6 +143,7 @@ def inventory_config_sources(
     manifest_rows: Sequence[Mapping[str, Any]] | None = None,
     admin_db_summary: Mapping[str, Any] | None = None,
     admin_db_oidc: Mapping[str, Any] | None = None,
+    admin_db_service_registry: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Return JSON-able config source inventory rows sorted by stable id."""
 
@@ -195,6 +196,27 @@ def inventory_config_sources(
                     "client_secret is stored in admin.db; for at-rest "
                     "encryption use client_secret_env to point at a secret "
                     "supplied via the service environment."
+                ),
+            )
+        )
+
+    if admin_db_service_registry:
+        rows.append(
+            _row(
+                row_id="admin-db:service-registry",
+                label="Service registry (admin.db)",
+                domain="services/providers",
+                source="admin.db",
+                source_ref="operator_settings.service_registry",
+                ui_owner=UI,
+                editability=RUNTIME,
+                secret=False,
+                current_value_summary=_summarize(admin_db_service_registry),
+                recommendation=(
+                    "Dashboard-managed services, providers, protocol "
+                    "frontends, and extension catalog records stored in "
+                    "admin.db. proxy_config.yml and bundled registry files "
+                    "only seed this registry."
                 ),
             )
         )
@@ -363,12 +385,15 @@ def _lifecycle_for(
             "apply_mode": APPLY_RESTART,
         }
     if ui_owner == FILE:
+        apply_mode = APPLY_RESTART if editability == RESTART else APPLY_RELOAD_OR_RESTART
+        if editability == READ_ONLY:
+            apply_mode = APPLY_READ_ONLY
         return {
             "authored_via": source,
             "stored_in": source,
             "writable": {"dashboard": False, "api": False},
             "provisioning": PROV_SECRET_BOOTSTRAP if secret else PROV_BOOTSTRAP_ONLY,
-            "apply_mode": APPLY_RESTART if editability == RESTART else APPLY_RELOAD_OR_RESTART,
+            "apply_mode": apply_mode,
         }
     if ui_owner == MANIFEST:
         manifest_source = "workflow manifest"

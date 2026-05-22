@@ -21,7 +21,7 @@ from typing import Any, Mapping
 
 from fastapi import Request, status
 
-from gateway import admin_store
+from gateway import admin_store, extension_packages, service_registry
 from gateway.admin_api import AdminAuthError, AdminContext, access_model_summary
 from gateway.admin_oidc import (
     CookieConfig,
@@ -42,6 +42,8 @@ SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
 MEDIA_JOB_ADMISSION_OVERRIDES_KEY = "media_job_admission_overrides"
 USER_ACCESS_DEFAULTS_SETTING_KEY = "user_access_defaults"
 OIDC_PROVIDER_SETTING_KEY = "oidc_provider_config"
+SERVICE_REGISTRY_SETTING_KEY = service_registry.SERVICE_REGISTRY_SETTING_KEY
+EXTENSION_PACKAGE_INDEX_SETTING_KEY = extension_packages.EXTENSION_PACKAGE_INDEX_SETTING_KEY
 
 OIDC_PROVIDER_FIELDS: tuple[str, ...] = (
     "enabled",
@@ -516,6 +518,7 @@ class AdminSQLiteStore:
             "media_job_admission": (
                 media_setting["value"] if media_setting is not None else {}
             ),
+            "extension_package_index": self.get_extension_package_index(),
         }
 
     def user_access_defaults(self) -> dict[str, bool]:
@@ -600,6 +603,116 @@ class AdminSQLiteStore:
             path=self.path,
         )
         return record["value"]
+
+    def get_service_registry(self) -> dict[str, Any]:
+        registry = service_registry.load_service_registry(path=self.path)
+        if registry is None:
+            return {
+                "schema_version": service_registry.SERVICE_REGISTRY_SCHEMA_VERSION,
+                "services": {},
+                "protocol_frontends": {},
+                "workflows": {},
+                "capabilities": {},
+            }
+        return registry
+
+    def update_service_registry(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        value = service_registry.normalize_service_registry(data)
+        record = admin_store.put_operator_setting(
+            SERVICE_REGISTRY_SETTING_KEY,
+            value,
+            updated_by=actor.subject,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            "operator.service_registry.update",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="operator_setting",
+            target_id=SERVICE_REGISTRY_SETTING_KEY,
+            metadata={
+                "service_count": len(value.get("services") or {}),
+                "protocol_frontend_count": len(value.get("protocol_frontends") or {}),
+                "workflow_count": len(value.get("workflows") or {}),
+                "capability_count": len(value.get("capabilities") or {}),
+            },
+            path=self.path,
+        )
+        return record["value"]
+
+    def get_extension_package_index(self) -> dict[str, Any]:
+        record = admin_store.get_operator_setting(
+            EXTENSION_PACKAGE_INDEX_SETTING_KEY,
+            path=self.path,
+        )
+        value = record["value"] if record is not None else {}
+        return extension_packages.normalize_extension_package_index(value)
+
+    def validate_extension_package_source(
+        self, *, source: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        del actor
+        return extension_packages.validate_extension_package_source(source)
+
+    def enable_extension_package(
+        self, *, source: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        review = extension_packages.validate_extension_package_source(
+            source,
+            install_root=self.path.parent / "extensions" / "installed",
+        )
+        if not review.get("ok"):
+            return {
+                "extension_package": None,
+                "review": review,
+                "service_registry": self.get_service_registry(),
+                "extension_packages": self.get_extension_package_index(),
+            }
+
+        imported = extension_packages.imported_registry_records(review)
+        registry = service_registry.merge_imported_records(
+            self.get_service_registry(),
+            services=imported["services"],
+            protocol_frontends=imported["protocol_frontends"],
+            workflows=imported["workflows"],
+            capabilities=imported["capabilities"],
+        )
+        registry_record = self.update_service_registry(data=registry, actor=actor)
+        package_index = extension_packages.merge_package_index(
+            self.get_extension_package_index(),
+            review,
+            source=source,
+        )
+        index_record = admin_store.put_operator_setting(
+            EXTENSION_PACKAGE_INDEX_SETTING_KEY,
+            package_index,
+            updated_by=actor.subject,
+            path=self.path,
+        )
+        package_id = str((review.get("package") or {}).get("id") or "")
+        admin_store.record_audit(
+            "operator.extension_package.enable",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="extension_package",
+            target_id=package_id,
+            metadata={
+                "service_count": len(imported["services"]),
+                "protocol_frontend_count": len(imported["protocol_frontends"]),
+                "workflow_count": len(imported["workflows"]),
+                "capability_count": len(imported["capabilities"]),
+                "package_hash": review.get("package_hash"),
+            },
+            path=self.path,
+        )
+        return {
+            "extension_package": (index_record["value"].get("packages") or {}).get(package_id),
+            "review": review,
+            "service_registry": registry_record,
+            "extension_packages": index_record["value"],
+        }
 
     def get_oidc_config_setting(self) -> dict[str, Any] | None:
         """Return the DB-stored OIDC provider config with secrets redacted.
@@ -1015,6 +1128,7 @@ __all__ = [
     "AdminAuthenticator",
     "AdminSQLiteStore",
     "create_admin_service_account_key",
+    "EXTENSION_PACKAGE_INDEX_SETTING_KEY",
     "generate_admin_api_key",
     "generate_app_api_key",
     "OIDC_PROVIDER_FIELDS",

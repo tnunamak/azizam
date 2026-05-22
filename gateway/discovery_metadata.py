@@ -1,183 +1,156 @@
 """Public discovery metadata for agent clients.
 
-This module is deliberately pure: no filesystem, no environment, no secrets.
-The live FastAPI app passes a request-derived base URL when it wants absolute
-links; tests and docs can use the same builder with a fixed base URL.
+Protocol/front-door facts are projected from the public protocol frontend
+catalog. The live FastAPI app passes a request-derived base URL when it wants
+absolute links; tests and docs can use the same builder with a fixed base URL.
 """
 
 from __future__ import annotations
 
+import copy
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
+import yaml
 
-PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = (
-    {
-        "id": "openai",
-        "base_path": "/openai/v1",
-        "canonical_base_path": "/openai/v1",
-        "convenience_base_path": "/v1",
-        "compatibility": "openai-compatible",
-        "default": True,
-        "base_url_recipe": "{base_url}/openai/v1",
-        "streaming": {
-            "chat_completions": True,
-            "responses": True,
-            "images": False,
-            "audio": False,
-        },
-        "endpoints": [
-            "/openai/v1/models",
-            "/openai/v1/chat/completions",
-            "/openai/v1/completions",
-            "/openai/v1/embeddings",
-            "/openai/v1/responses",
-            "/openai/v1/images/generations",
-            "/openai/v1/images/edits",
-            "/openai/v1/images/variations",
-            "/openai/v1/audio/speech",
-            "/openai/v1/audio/transcriptions",
-            "/openai/v1/audio/translations",
-            "/openai/v1/assistants",
-            "/openai/v1/files",
-            "/openai/v1/batches",
-            "/openai/v1/fine_tuning/jobs",
-            "/openai/v1/realtime",
-            "/openai/v1/videos",
-            "/v1/models",
-            "/v1/chat/completions",
-            "/v1/completions",
-            "/v1/embeddings",
-            "/v1/responses",
-            "/v1/images/generations",
-            "/v1/images/edits",
-            "/v1/images/variations",
-            "/v1/audio/speech",
-            "/v1/audio/transcriptions",
-            "/v1/audio/translations",
-            "/v1/assistants",
-            "/v1/files",
-            "/v1/batches",
-            "/v1/fine_tuning/jobs",
-            "/v1/realtime",
-            "/v1/videos",
-        ],
-        "limits": [
-            "audio translations are registered but return an OpenAI-shaped unsupported_audio_translation error unless the local STT backend declares translation support",
-            "images variations are registered but return an OpenAI-shaped unsupported_image_variations error",
-            "assistants, files, batches, fine-tuning, and realtime routes are registered but return OpenAI-shaped unsupported_operation errors",
-        ],
-    },
-    {
-        "id": "anthropic",
-        "base_path": "/anthropic/v1",
-        "canonical_base_path": "/anthropic/v1",
-        "compatibility": "anthropic-messages-subset",
-        "default": False,
-        "base_url_recipe": "{base_url}/anthropic",
-        "streaming": {"messages": True},
-        "endpoints": [
-            "/anthropic/v1/models",
-            "/anthropic/v1/messages",
-            "/anthropic/v1/messages/count_tokens",
-            "/v1/messages",
-            "/v1/messages/count_tokens",
-        ],
-        "limits": [
-            "image blocks are translated to gateway multimodal chat; document/thinking blocks are rejected",
-            "/v1/models remains OpenAI-shaped; use /anthropic/v1/models for Anthropic ModelInfoList",
-            "count_tokens is a best-effort gateway estimator",
-        ],
-    },
-    {
-        "id": "ollama",
-        "base_path": "/ollama/api",
-        "canonical_base_path": "/ollama/api",
-        "convenience_base_path": "/api",
-        "compatibility": "ollama-subset",
-        "default": False,
-        "base_url_recipe": "{base_url}/ollama",
-        "streaming": {"chat": True, "generate": True, "embed": False},
-        "endpoints": [
-            "/ollama/api/tags",
-            "/ollama/api/chat",
-            "/ollama/api/generate",
-            "/ollama/api/embed",
-            "/ollama/api/embeddings",
-            "/ollama/api/show",
-            "/ollama/api/ps",
-            "/ollama/api/version",
-            "/ollama/api/create",
-            "/ollama/api/copy",
-            "/ollama/api/pull",
-            "/ollama/api/push",
-            "/ollama/api/delete",
-            "/api/tags",
-            "/api/chat",
-            "/api/generate",
-            "/api/embed",
-            "/api/embeddings",
-            "/api/show",
-            "/api/ps",
-            "/api/version",
-            "/api/create",
-            "/api/copy",
-            "/api/pull",
-            "/api/push",
-            "/api/delete",
-        ],
-        "limits": [
-            "model catalog/status endpoints are projected from the gateway; model mutation endpoints return unsupported_operation",
-            "model lifecycle endpoints create/pull/push/copy/delete do not mutate local model files through the gateway",
-            "backend-native options without portable meaning are rejected",
-        ],
-    },
-    {
-        "id": "gateway",
-        "base_path": "/gateway/v1",
-        "compatibility": "ai-gateway-native",
-        "default": False,
-        "base_url_recipe": "{base_url}/gateway/v1",
-        "streaming": {},
-        "endpoints": [
-            "/gateway/v1/capabilities",
-            "/gateway/v1/workflows",
-            "/gateway/v1/receipts",
-            "/gateway/v1/media/jobs",
-            "/gateway/v1/assets/{asset_id}",
-            "/gateway/v1/assets/{asset_id}/content",
-            "/openai/v1/audio/generate",
-            "/openai/v1/audio/models",
-            "/v1/audio/generate",
-            "/v1/audio/models",
-            "/gateway/v1/providers",
-            "/gateway/v1/providers/{provider}",
-        ],
-        "limits": [
-            "/openai/v1/audio/generate and /v1/audio/generate are gateway-native music/SFX generation routes, not OpenAI SDK-compatible audio endpoints",
-            "signed asset content URLs are bearerless capability URLs until expiry; asset metadata and input reuse remain API-key scoped",
-        ],
-    },
-    {
-        "id": "provider-native",
-        "base_path": "/gateway/v1/providers",
-        "compatibility": "provider-native-passthrough",
-        "default": False,
-        "base_url_recipe": "{base_url}/gateway/v1/providers/{provider}",
-        "streaming": {},
-        "policy": [
-            "requires provider-native protocol access",
-            "requires native_passthrough enabled for the App profile",
-            "provider and operation must be allowed by policy",
-            "no root catch-all or legacy root Tabby shim",
-            "protocol frontend path collisions stay owned by the frontend; use /gateway/v1/providers/{provider}/{path...} for raw provider-native paths",
-        ],
-        "endpoints": [
-            "/gateway/v1/providers",
-            "/gateway/v1/providers/{provider}",
-            "/gateway/v1/providers/{provider}/{path...}",
-        ],
-    },
+PROTOCOL_FRONTENDS_CATALOG_PATH = (
+    Path(__file__).resolve().parent.parent / "registry" / "protocol_frontends.yml"
 )
+
+
+def _load_protocol_frontend_records(
+    path: Path = PROTOCOL_FRONTENDS_CATALOG_PATH,
+) -> tuple[dict[str, Any], ...]:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    records = raw.get("records") if isinstance(raw, Mapping) else None
+    if not isinstance(records, list):
+        return ()
+    return tuple(dict(record) for record in records if isinstance(record, Mapping))
+
+
+def _route_path(route: Any) -> str:
+    if isinstance(route, Mapping):
+        return str(route.get("path") or "").strip()
+    return str(route or "").strip()
+
+
+def _route_paths(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    out = []
+    for route in value:
+        path = _route_path(route)
+        if path and path not in out:
+            out.append(path)
+    return out
+
+
+def _canonical_base_path(record: Mapping[str, Any], discovery: Mapping[str, Any]) -> str:
+    if discovery.get("canonical_base_path"):
+        return str(discovery["canonical_base_path"])
+    routes = _route_paths(record.get("routes"))
+    return next((route for route in routes if route), "")
+
+
+def _convenience_base_path(record: Mapping[str, Any], canonical_base_path: str) -> str | None:
+    routes = _route_paths(record.get("routes"))
+    for route in routes:
+        if route and route != canonical_base_path:
+            return route
+    return None
+
+
+def _protocol_frontend_records(
+    protocol_frontends: Mapping[str, Any] | tuple[Mapping[str, Any], ...] | None,
+) -> Any:
+    if protocol_frontends is None:
+        return _load_protocol_frontend_records()
+    if isinstance(protocol_frontends, Mapping):
+        return protocol_frontends.values()
+    return protocol_frontends
+
+
+def build_public_protocols(
+    protocol_frontends: Mapping[str, Any] | tuple[Mapping[str, Any], ...] | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Project registry protocol frontend records into public discovery JSON."""
+
+    protocols: list[dict[str, Any]] = []
+    for record in _protocol_frontend_records(protocol_frontends):
+        if not isinstance(record, Mapping):
+            continue
+        if record.get("enabled") is False:
+            continue
+        discovery = record.get("public_discovery")
+        if not isinstance(discovery, Mapping):
+            continue
+        protocol_id = str(record.get("id") or record.get("protocol") or "").strip()
+        if not protocol_id:
+            continue
+        canonical_base_path = _canonical_base_path(record, discovery)
+        protocol: dict[str, Any] = {
+            "id": protocol_id,
+            "base_path": str(discovery.get("base_path") or canonical_base_path),
+        }
+        if canonical_base_path:
+            protocol["canonical_base_path"] = canonical_base_path
+        convenience_base_path = discovery.get("convenience_base_path")
+        if convenience_base_path is None:
+            convenience_base_path = _convenience_base_path(record, canonical_base_path)
+        if convenience_base_path:
+            protocol["convenience_base_path"] = str(convenience_base_path)
+        for key in (
+            "compatibility",
+            "default",
+            "base_url_recipe",
+            "streaming",
+            "policy",
+            "endpoints",
+            "limits",
+        ):
+            if key in discovery:
+                protocol[key] = copy.deepcopy(discovery[key])
+        protocols.append(protocol)
+    return tuple(protocols)
+
+
+PUBLIC_PROTOCOLS: tuple[dict[str, Any], ...] = build_public_protocols()
+
+
+def _recipe_value(root: str, key: str, value: Any) -> Any:
+    url_field = key.endswith(("_url", "_base_url", "_url_template"))
+    if url_field and isinstance(value, str) and value.startswith("/"):
+        if value == "/":
+            return root
+        return f"{root}{value}"
+    return copy.deepcopy(value)
+
+
+def build_public_recipes(
+    *,
+    root: str,
+    protocol_frontends: Mapping[str, Any] | tuple[Mapping[str, Any], ...] | None = None,
+) -> dict[str, Any]:
+    """Project public recipe fragments from protocol frontend records."""
+
+    recipes: dict[str, Any] = {}
+    for record in _protocol_frontend_records(protocol_frontends):
+        if not isinstance(record, Mapping) or record.get("enabled") is False:
+            continue
+        discovery = record.get("public_discovery")
+        if not isinstance(discovery, Mapping):
+            continue
+        recipe = discovery.get("recipe")
+        if not isinstance(recipe, Mapping):
+            continue
+        protocol_id = str(record.get("id") or record.get("protocol") or "").strip()
+        if not protocol_id:
+            continue
+        recipes[protocol_id.replace("-", "_")] = {
+            key: _recipe_value(root, key, value) for key, value in recipe.items()
+        }
+    return recipes
 
 
 def _join(base_url: str | None, path: str) -> str:
@@ -194,9 +167,16 @@ def build_gateway_discovery_metadata(
     *,
     base_url: str | None = None,
     service_name: str = "vivid-fish-ai-gateway",
+    registry: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return unauthenticated public metadata for agent/client discovery."""
     root = _base_url(base_url)
+    protocol_frontends = None
+    if isinstance(registry, Mapping) and isinstance(
+        registry.get("protocol_frontends"),
+        Mapping,
+    ):
+        protocol_frontends = registry["protocol_frontends"]
     links = {
         "health": "/health",
         "login": "/login",
@@ -271,54 +251,14 @@ def build_gateway_discovery_metadata(
                 "Do not read or print local key stores.",
             ],
         },
-        "protocols": list(PUBLIC_PROTOCOLS),
-        "recipes": {
-            "openai": {
-                "canonical_base_url": f"{root}/openai/v1",
-                "compatibility_base_url": f"{root}/v1",
-                "auth": "Authorization: Bearer $OPENAI_PROXY_API_KEY",
-                "models_url": f"{root}/openai/v1/models",
-                "chat_url": f"{root}/openai/v1/chat/completions",
-            },
-            "anthropic": {
-                "canonical_base_url": f"{root}/anthropic",
-                "messages_url": f"{root}/anthropic/v1/messages",
-                "auth": "x-api-key or Authorization bearer accepted by SDK/client; store the opk token outside prompts and config checked into git",
-                "notes": [
-                    "OpenAI-style /v1/messages remains a legacy convenience alias; prefer /anthropic/v1/messages.",
-                    "Image, document, thinking, prompt-cache, and beta-header semantics are not represented.",
-                ],
-            },
-            "ollama": {
-                "canonical_base_url": f"{root}/ollama",
-                "compatibility_base_url": root,
-                "tags_url": f"{root}/ollama/api/tags",
-                "chat_url": f"{root}/ollama/api/chat",
-                "auth": "Authorization: Bearer $OPENAI_PROXY_API_KEY; this is not an unauthenticated local Ollama daemon",
-                "unsupported_lifecycle": [
-                    "create",
-                    "pull",
-                    "push",
-                    "copy",
-                    "delete",
-                ],
-                "unsupported_lifecycle_note": "Lifecycle routes return unsupported_operation and never mutate local model files.",
-            },
-            "gateway": {
-                "canonical_base_url": f"{root}/gateway/v1",
-                "capabilities_url": f"{root}/gateway/v1/capabilities",
-                "providers_url": f"{root}/gateway/v1/providers",
-                "auth": "Authorization: Bearer $OPENAI_PROXY_API_KEY",
-            },
-            "provider_native": {
-                "discovery_url": f"{root}/gateway/v1/providers",
-                "provider_url": f"{root}/gateway/v1/providers/{{provider}}",
-                "passthrough_url_template": f"{root}/gateway/v1/providers/{{provider}}/{{path...}}",
-                "auth": "Authorization: Bearer $OPENAI_PROXY_API_KEY plus App profile native_passthrough permission",
-                "discovery_facts": "Provider rows include caller-projected native_passthrough policy, allowed operations/backends, required gateway auth, non-secret downstream auth classes when known, and live enabled state.",
-                "collision_strategy": "Canonical protocol frontends own /openai/v1, /anthropic/v1, /ollama/api, /v1, and /api. Provider-native passthrough is only under /gateway/v1/providers/{provider}/{path...}.",
-            },
-        },
+        "protocols": [
+            copy.deepcopy(protocol)
+            for protocol in build_public_protocols(protocol_frontends)
+        ],
+        "recipes": build_public_recipes(
+            root=root,
+            protocol_frontends=protocol_frontends,
+        ),
         "links": links,
         "absolute_links": {
             key: _join(base_url, path) for key, path in links.items()
@@ -401,6 +341,8 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
 
 __all__ = [
     "PUBLIC_PROTOCOLS",
+    "build_public_protocols",
+    "build_public_recipes",
     "build_gateway_discovery_metadata",
     "build_llms_txt",
     "build_skill_catalog",

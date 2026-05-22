@@ -1,0 +1,584 @@
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+from gateway.extension_packages import (
+    EXTENSION_PACKAGE_INDEX_SETTING_KEY,
+    empty_extension_package_index,
+    imported_registry_records,
+    merge_package_index,
+    normalize_extension_package_index,
+    package_index_record,
+    review_local_directory_package,
+    validate_extension_package_source,
+)
+
+
+def _write_package(tmp_path: Path, manifest: str, files: dict[str, str] | None = None) -> Path:
+    package_dir = tmp_path / "package"
+    package_dir.mkdir()
+    (package_dir / "extension.yml").write_text(manifest, encoding="utf-8")
+    for name, payload in (files or {}).items():
+        path = package_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload, encoding="utf-8")
+    return package_dir
+
+
+def _commit_package_repo(package_dir: Path) -> str:
+    subprocess.run(["git", "init"], cwd=package_dir, check=True, stdout=subprocess.PIPE)
+    subprocess.run(["git", "add", "."], cwd=package_dir, check=True, stdout=subprocess.PIPE)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test User",
+            "commit",
+            "-m",
+            "package",
+        ],
+        cwd=package_dir,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=package_dir,
+        text=True,
+    ).strip()
+
+
+def test_valid_local_directory_package_parses_data_objects(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: demo-package
+version: 0.1.0
+objects:
+  services:
+    - objects/service.yml
+  protocol_frontends:
+    - path: objects/frontend.yml
+""",
+        {
+            "objects/service.yml": """
+id: demo-service
+name: Demo Service
+source: provisioned
+capabilities: [chat]
+config:
+  base_url: http://localhost:9999
+""",
+            "objects/frontend.yml": """
+id: demo-api
+name: Demo API
+protocol: demo
+source: builtin
+routes:
+  - /demo/v1
+intents:
+  - demo.run
+""",
+        },
+    )
+
+    review = review_local_directory_package(package_dir)
+
+    assert review["errors"] == []
+    assert review["ok"] is True
+    assert review["warnings"] == []
+    assert review["package"] == {
+        "schema_version": 1,
+        "kind": "extension_package",
+        "id": "demo-package",
+        "version": "0.1.0",
+    }
+    assert review["object_counts"] == {
+        "services": 1,
+        "protocol_frontends": 1,
+        "capabilities": 0,
+        "workflows": 0,
+    }
+    assert review["services"][0]["id"] == "demo-service"
+    assert review["services"][0]["config"]["base_url"] == "http://localhost:9999"
+    assert review["protocol_frontends"][0]["routes"] == ["/demo/v1"]
+    assert len(review["package_hash"]) == 64
+
+
+def test_missing_manifest_returns_validation_error(tmp_path: Path) -> None:
+    package_dir = tmp_path / "package"
+    package_dir.mkdir()
+
+    review = review_local_directory_package(package_dir)
+
+    assert review["ok"] is False
+    assert review["object_counts"] == {
+        "services": 0,
+        "protocol_frontends": 0,
+        "capabilities": 0,
+        "workflows": 0,
+    }
+    assert review["errors"] == ["extension.yml: file not found"]
+
+
+def test_rejects_referenced_path_traversal(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: bad-package
+version: 0.1.0
+objects:
+  services:
+    - ../outside.yml
+""",
+    )
+
+    review = review_local_directory_package(package_dir)
+
+    assert review["ok"] is False
+    assert review["services"] == []
+    assert "../outside.yml: path traversal is not allowed" in review["errors"]
+
+
+def test_unknown_object_kinds_are_reported_as_deferred_warnings(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: future-package
+version: 0.1.0
+objects:
+  widgets:
+    - objects/widget.yml
+""",
+    )
+
+    review = review_local_directory_package(package_dir)
+
+    assert review["ok"] is True
+    assert review["errors"] == []
+    assert review["warnings"] == [
+        "extension.yml: objects.widgets is deferred; unknown object kind"
+    ]
+
+
+def test_local_directory_package_parses_capability_and_workflow_objects(
+    tmp_path: Path,
+) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: data-package
+version: 0.1.0
+objects:
+  capabilities:
+    - objects/capability.yml
+  workflows:
+    - objects/workflow.yml
+""",
+        {
+            "objects/capability.yml": """
+kind: capability
+id: local-image-capability
+intent: image.generate
+backend: comfyui.local
+workflow: image.generate.demo
+input_modalities: [text]
+output_modalities: [image]
+execution: job
+streaming: false
+exposure: opt_in
+trust_tier: experimental
+resource_tier: batch
+tags: [demo]
+resources:
+  gpu_required: true
+  vram_gb_estimate: 8
+caveats:
+  - review-only package object
+""",
+            "objects/workflow.yml": """
+schema_version: 1
+version: 0.1.0
+id: image.generate.demo
+intent: image.generate
+source: package
+trusted: false
+inputs:
+  prompt:
+    type: string
+    required: true
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/demo.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+""",
+        },
+    )
+
+    review = review_local_directory_package(package_dir)
+
+    assert review["ok"] is True
+    assert review["errors"] == []
+    assert review["warnings"] == []
+    assert review["object_counts"] == {
+        "services": 0,
+        "protocol_frontends": 0,
+        "capabilities": 1,
+        "workflows": 1,
+    }
+
+    capability = review["capabilities"][0]
+    assert capability["id"] == "local-image-capability"
+    assert capability["intent"] == "image.generate"
+    assert capability["backend"] == "comfyui.local"
+    assert capability["workflow"] == "image.generate.demo"
+    assert capability["resources"] == {
+        "gpu_required": True,
+        "vram_gb_estimate": 8,
+    }
+
+    workflow = review["workflows"][0]
+    assert workflow["id"] == "image.generate.demo"
+    assert workflow["intent"] == "image.generate"
+    assert workflow["supported_backends"] == ["comfyui"]
+    assert workflow["bindings"][0]["backend"] == "comfyui"
+    assert workflow["bindings"][0]["mapped_inputs"] == ["prompt"]
+    assert workflow["bindings"][0]["map"] == {
+        "prompt": [{"node": "6", "input": "text"}]
+    }
+
+
+def test_invalid_capability_and_workflow_objects_return_validation_errors(
+    tmp_path: Path,
+) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: invalid-data-package
+version: 0.1.0
+objects:
+  capabilities:
+    - objects/capability.yml
+  workflows:
+    - objects/workflow.yml
+""",
+        {
+            "objects/capability.yml": """
+kind: capability
+id: bad-capability
+intent: image.generate
+backend: comfyui.local
+execution: forever
+""",
+            "objects/workflow.yml": """
+schema_version: 1
+id: bad-workflow
+intent: image.generate
+inputs: {}
+outputs: {}
+""",
+        },
+    )
+
+    review = review_local_directory_package(package_dir)
+
+    assert review["ok"] is False
+    assert review["capabilities"] == []
+    assert review["workflows"] == []
+    assert review["object_counts"] == {
+        "services": 0,
+        "protocol_frontends": 0,
+        "capabilities": 0,
+        "workflows": 0,
+    }
+    assert (
+        "objects/capability.yml: invalid capability: execution must be one of"
+        in review["errors"][0]
+    )
+    assert review["errors"][1] == (
+        "objects/workflow.yml: invalid workflow manifest: "
+        "manifest missing required field: bindings"
+    )
+
+
+def test_code_bearing_adapter_is_an_error(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: code-package
+version: 0.1.0
+objects:
+  services:
+    - objects/service.yml
+""",
+        {
+            "objects/service.yml": """
+id: coded-service
+name: Coded Service
+adapter:
+  module: gateway.adapters.demo
+config: {}
+""",
+        },
+    )
+
+    review = review_local_directory_package(package_dir)
+
+    assert review["ok"] is False
+    assert review["services"][0]["id"] == "coded-service"
+    assert review["errors"] == [
+        "services.coded-service: code-bearing adapters are not allowed in data-only packages"
+    ]
+
+
+def test_secret_looking_service_config_is_split_via_service_registry(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: secret-package
+version: 0.1.0
+objects:
+  services:
+    - objects/service.yml
+""",
+        {
+            "objects/service.yml": """
+id: secret-service
+name: Secret Service
+config:
+  api_key: sk-test
+  api_key_env: SECRET_SERVICE_API_KEY
+  base_url: http://localhost:9999
+""",
+        },
+    )
+
+    review = review_local_directory_package(package_dir)
+
+    service = review["services"][0]
+    assert review["errors"] == []
+    assert service["config"] == {
+        "api_key_env": "SECRET_SERVICE_API_KEY",
+        "base_url": "http://localhost:9999",
+    }
+    assert service["secret_refs"] == {"api_key": "<external-secret>"}
+
+
+def test_validate_extension_package_source_accepts_local_directory(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: source-package
+version: 0.1.0
+objects: {}
+""",
+    )
+
+    review = validate_extension_package_source(
+        {"type": "local_directory", "path": str(package_dir)}
+    )
+
+    assert review["ok"] is True
+    assert review["package"]["id"] == "source-package"
+
+
+def test_validate_extension_package_source_rejects_non_local_source() -> None:
+    review = validate_extension_package_source({"type": "archive", "path": "repo"})
+
+    assert review["ok"] is False
+    assert review["errors"] == ["unsupported extension package source type: archive"]
+
+
+def test_validate_extension_package_source_accepts_git_source(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: git-package
+version: 0.1.0
+objects: {}
+""",
+    )
+    commit = _commit_package_repo(package_dir)
+    install_root = tmp_path / "installed"
+
+    review = validate_extension_package_source(
+        {"type": "git", "url": str(package_dir), "ref": commit},
+        install_root=install_root,
+    )
+
+    assert review["ok"] is True
+    assert review["package"]["id"] == "git-package"
+    assert review["resolved_source"]["type"] == "git"
+    assert review["resolved_source"]["resolved_ref"] == commit
+    assert str(install_root) in review["resolved_source"]["path"]
+
+
+def test_extension_package_index_helpers_are_stable() -> None:
+    assert EXTENSION_PACKAGE_INDEX_SETTING_KEY == "extension_package_index"
+    assert empty_extension_package_index() == {
+        "schema_version": 1,
+        "sources": [],
+        "packages": {},
+        "updated_at": 0,
+    }
+
+    normalized = normalize_extension_package_index(
+        {
+            "schema_version": "2",
+            "sources": [{"type": "local_directory", "path": "/tmp/pkg"}, "bad"],
+            "packages": {"demo": {"id": "demo"}, "bad": []},
+            "updated_at": "123",
+        }
+    )
+
+    assert normalized == {
+        "schema_version": 2,
+        "sources": [{"type": "local_directory", "path": "/tmp/pkg"}],
+        "packages": {"demo": {"id": "demo"}},
+        "updated_at": 123,
+    }
+
+
+def test_imported_registry_records_add_package_provenance(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: imported-package
+version: 0.1.0
+objects:
+  services:
+    - objects/service.yml
+""",
+        {
+            "objects/service.yml": """
+id: imported-service
+name: Imported Service
+config:
+  base_url: http://localhost:9999
+""",
+        },
+    )
+    review = review_local_directory_package(package_dir)
+
+    records = imported_registry_records(review)
+
+    service = records["services"]["imported-service"]
+    assert service["source"] == "imported"
+    assert service["provenance"]["package_id"] == "imported-package"
+    assert service["provenance"]["package_version"] == "0.1.0"
+    assert service["provenance"]["package_hash"] == review["package_hash"]
+
+
+def test_imported_registry_records_include_workflows_and_capabilities(
+    tmp_path: Path,
+) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: imported-data-package
+version: 0.1.0
+objects:
+  capabilities:
+    - objects/capability.yml
+  workflows:
+    - objects/workflow.yml
+""",
+        {
+            "objects/capability.yml": """
+kind: capability
+id: imported-image-capability
+intent: image.generate
+backend: comfyui
+workflow: image.generate.imported
+input_modalities: [text]
+output_modalities: [image]
+execution: job
+resources:
+  gpu_required: true
+""",
+            "objects/workflow.yml": """
+schema_version: 1
+version: 0.1.0
+id: image.generate.imported
+intent: image.generate
+inputs:
+  prompt:
+    type: string
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/imported.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+""",
+        },
+    )
+    review = review_local_directory_package(package_dir)
+
+    records = imported_registry_records(review)
+
+    workflow = records["workflows"]["image.generate.imported"]
+    capability = records["capabilities"]["imported-image-capability"]
+    assert workflow["source"] == "imported"
+    assert workflow["provenance"]["package_id"] == "imported-data-package"
+    assert capability["source"] == "imported"
+    assert capability["provenance"]["package_hash"] == review["package_hash"]
+
+
+def test_package_index_record_and_merge(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: indexed-package
+version: 0.1.0
+objects: {}
+""",
+    )
+    review = review_local_directory_package(package_dir)
+    source = {"type": "local_directory", "path": str(package_dir)}
+
+    record = package_index_record(review, source=source)
+    index = merge_package_index(empty_extension_package_index(), review, source=source)
+
+    assert record["id"] == "indexed-package"
+    assert record["enabled"] is True
+    assert record["source"] == source
+    assert index["packages"]["indexed-package"]["package_hash"] == review["package_hash"]
+    assert index["sources"] == [source]

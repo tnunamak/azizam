@@ -1,0 +1,141 @@
+protocols:
+  - id: openai
+    label: OpenAI-compatible
+    summary_label: OpenAI-compatible
+    description: /openai/v1 and /v1 SDKs
+    default: true
+  - id: anthropic
+    label: Anthropic Messages
+    summary_label: Anthropic Messages
+    description: /anthropic/v1/messages clients
+  - id: ollama
+    label: Ollama-compatible
+    summary_label: Ollama-compatible
+    description: /ollama/api and /api clients
+  - id: gateway
+    label: Gateway jobs
+    summary_label: Gateway jobs
+    description: capabilities, assets, receipts, media jobs
+  - id: provider-native
+    label: Provider-native passthrough
+    summary_label: Provider-native passthrough
+    description: raw provider APIs under /gateway/v1/providers/{provider}
+    profile_form: false
+    simulator: false
+
+intents:
+  - id: chat
+    label: Chat
+    summary_label: chat
+    description: chat completions and messages
+    default: true
+  - id: text.completions
+    label: Text completions
+    summary_label: text completions
+    description: legacy completion clients
+  - id: text.embeddings
+    label: Embeddings
+    summary_label: embeddings
+    description: RAG, search, memory, indexes
+  - id: image.generate
+    label: Image generation
+    summary_label: image generation
+    description: text to image workflows
+  - id: image.edit
+    label: Image editing
+    summary_label: image editing
+    description: inpaint, mask, ControlNet-like workflows
+  - id: speech.synthesis
+    label: Text to speech
+    summary_label: text to speech
+    description: voice output
+  - id: speech.transcription
+    label: Speech to text
+    summary_label: speech transcription
+    description: transcription input
+  - id: audio.generate
+    label: Music / sound
+    summary_label: music/audio generation
+    description: audio generation workflows
+  - id: video.generate
+    label: Video
+    summary_label: video generation
+    description: expensive queued video jobs
+  - id: models.list
+    label: Model list
+    summary_label: model list
+    description: show compatible models to clients
+
+resource_tiers:
+  - id: interactive
+    label: Interactive
+    summary_label: interactive
+    description: fast requests, normal chat
+    default: true
+  - id: batch
+    label: Batch
+    summary_label: batch
+    description: queued media and longer jobs
+  - id: expensive
+    label: Expensive
+    summary_label: expensive
+    description: video and heavy GPU workflows
+
+exposure:
+  - id: default
+    label: Default capabilities
+    summary_label: default capabilities
+    description: normal model and workflow catalog
+    default: true
+  - id: opt_in
+    label: Opt-in capabilities
+    summary_label: opt-in capabilities
+    description: operator-curated extras
+
+trust_tiers:
+  - id: stable
+    label: Stable
+    summary_label: stable
+    description: expected to work for users
+    default: true
+  - id: experimental
+    label: Experimental
+    summary_label: experimental
+    description: new, flaky, or changing
+  - id: private
+    label: Private
+    summary_label: private
+    description: personal/local-only workflows
+
+target_visibility:
+  - id: catalog
+    label: Allowed catalog
+    summary_label: allowed catalog
+    description: Clients can see targets this Profile is allowed to use, even when a target may be cold.
+    default: true
+  - id: available
+    label: Available now
+    summary_label: available now
+    description: Clients only see targets the gateway believes are currently usable under this Profile and runtime state.
+
+target_activation:
+  - id: may_activate
+    label: May activate
+    summary_label: may activate
+    description: Requests may load, switch, start, or queue a target when the Profile and runtime policy allow it.
+    default: true
+  - id: existing_only
+    label: Existing only
+    summary_label: existing only
+    description: Requests must use already loaded/running/selected targets; cold or disruptive switches are denied.
+
+status_visibility:
+  - id: none
+    label: None
+  - id: basic
+    label: Basic
+    default: true
+  - id: standard
+    label: Standard
+  - id: full
+    label: Full

@@ -37,6 +37,7 @@ from gateway.policy import (
     evaluate,
 )
 from gateway.profiles import ProfileLoadError, load_profile
+from gateway import extension_packages, service_registry
 
 __all__ = [
     "AdminAuthError",
@@ -161,6 +162,22 @@ class AdminStore(Protocol):
 
     def update_media_job_admission_overrides(
         self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
+    def get_service_registry(self) -> dict[str, Any]: ...
+
+    def update_service_registry(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
+    def get_extension_package_index(self) -> dict[str, Any]: ...
+
+    def validate_extension_package_source(
+        self, *, source: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
+    def enable_extension_package(
+        self, *, source: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
     def get_oidc_config_setting(self) -> dict[str, Any] | None: ...
@@ -494,6 +511,29 @@ def _validate_media_job_admission_overrides(
             field="retry_after_seconds",
         ),
     }
+
+
+def _validate_service_registry(payload: Mapping[str, Any]) -> dict[str, Any]:
+    try:
+        return service_registry.normalize_service_registry(payload)
+    except Exception as exc:  # noqa: BLE001
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_service_registry",
+            f"invalid service registry: {exc}",
+        ) from exc
+
+
+def _validate_extension_package_source(payload: Mapping[str, Any]) -> dict[str, Any]:
+    source = payload.get("source") if isinstance(payload, Mapping) else None
+    if not isinstance(source, Mapping):
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_extension_package_source",
+            "extension package source must be an object",
+        )
+    review = extension_packages.validate_extension_package_source(source)
+    return {"source": dict(source), "review": review}
 
 
 _USER_ACCESS_DEFAULT_FIELDS = frozenset(
@@ -1191,6 +1231,106 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"service_availability": record},
+        )
+
+    @router.get("/operator/service-registry")
+    def get_service_registry(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"service_registry": store.get_service_registry()},
+        )
+
+    @router.put("/operator/service-registry")
+    async def update_service_registry(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            registry = _validate_service_registry(body)
+            record = store.update_service_registry(data=registry, actor=ctx)
+        except _RouteError as exc:
+            return exc.as_response()
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_service_registry",
+                str(exc),
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"service_registry": record},
+        )
+
+    @router.get("/extensions")
+    def list_extension_packages(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"extension_packages": store.get_extension_package_index()},
+        )
+
+    @router.post("/extensions/validate")
+    async def validate_extension_package(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            validated = _validate_extension_package_source(body)
+            review = store.validate_extension_package_source(
+                source=validated["source"],
+                actor=ctx,
+            )
+        except _RouteError as exc:
+            return exc.as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"review": review},
+        )
+
+    @router.post("/extensions/enable")
+    async def enable_extension_package(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            validated = _validate_extension_package_source(body)
+            result = store.enable_extension_package(
+                source=validated["source"],
+                actor=ctx,
+            )
+            review = result.get("review") if isinstance(result, Mapping) else None
+            if isinstance(review, Mapping) and not review.get("ok"):
+                return _RouteError(
+                    status.HTTP_400_BAD_REQUEST,
+                    "invalid_extension_package",
+                    "; ".join(str(item) for item in review.get("errors") or [])
+                    or "invalid extension package",
+                ).as_response()
+        except _RouteError as exc:
+            return exc.as_response()
+        except service_registry.ServiceRegistryConflict as exc:
+            return _RouteError(
+                status.HTTP_409_CONFLICT,
+                "extension_package_conflict",
+                str(exc),
+            ).as_response()
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_extension_package",
+                str(exc),
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=result,
         )
 
     @router.put("/operator/media-job-admission")

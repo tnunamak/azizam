@@ -2,7 +2,9 @@
 
 > Project directory and Python package are still named `openai-proxy`. The product, public discovery surfaces, and self-hoster docs are now branded **Vivid Fish AI Gateway** (or **AI Gateway** for short). Existing app configs that point at `openai.vivid.fish` keep working unchanged.
 
-Self-hosted, OpenAI-compatible HTTP gateway and control plane that fronts a stack of local AI backends:
+Self-hosted, OpenAI-compatible HTTP gateway and control plane. The repo ships
+seed records and adapters for a local AI stack, but live service/provider
+availability is resolved from the DB/UI registry:
 
 - **TabbyAPI** (Qwen3-VL EXL3) — chat / completions / vision
 - **llama.cpp / koboldcpp** — GGUF chat/completions (mutually exclusive with TabbyAPI on the same GPU; swap via systemd)
@@ -74,7 +76,7 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 
 ## Endpoint surface
 
-| Method + Path | Backend | Purpose |
+| Method + Path | Resolved lane | Purpose |
 |---|---|---|
 | `GET  /` | proxy | Browser account portal |
 | `GET  /setup` | proxy | First-run setup and owner/admin browser-session handoff |
@@ -85,27 +87,27 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `GET  /admin` | proxy | Admin dashboard; browser sessions redirect through `/login` |
 | `GET  /status` | proxy | Operator status dashboard; requires admin OIDC session or `oak_...` admin key |
 | `GET  /health` | proxy | Liveness; public, no auth |
-| `GET  /v1/models` | active LLM backend | List models; augments with currently loaded GGUF |
+| `GET  /v1/models` | active LLM lane | List models; augments with currently loaded GGUF |
 | `POST /anthropic/v1/messages` | chat pipeline | Anthropic Messages-compatible request/response and SSE streaming; `/v1/messages` remains a convenience route |
 | `GET  /ollama/api/tags` | proxy catalog | Ollama-compatible model list; `/api/tags` remains a convenience route |
 | `POST /ollama/api/chat`, `POST /ollama/api/generate` | chat pipeline | Ollama-compatible chat/generate with NDJSON streaming; `/api/chat` and `/api/generate` remain convenience routes |
-| `POST /ollama/api/embed`, `POST /ollama/api/embeddings` | embeddings backend | Ollama-compatible current and legacy embeddings; `/api/embed`, `/api/embeddings` remain convenience routes |
+| `POST /ollama/api/embed`, `POST /ollama/api/embeddings` | selected embeddings provider | Ollama-compatible current and legacy embeddings; `/api/embed`, `/api/embeddings` remain convenience routes |
 | `POST /ollama/api/show`, `GET /ollama/api/ps`, `GET /ollama/api/version` | proxy catalog/status | Ollama-compatible read-only model metadata/status; `/api/show`, `/api/ps`, `/api/version` remain convenience routes |
 | `GET  /v1/voices`, `GET /v1/audio/voices` | proxy (static) | List TTS voices |
-| `POST /v1/chat/completions` | tabby (default) or kobold (auto-routed) | Chat completion (vision-capable on tabby) |
-| `POST /v1/completions` | tabby/kobold | Text completion |
-| `POST /v1/embeddings` | nomic CPU embeddings | OpenAI-compatible embeddings; no GPU budget claim |
-| `POST /v1/audio/speech` | Voxtral TTS | OpenAI-compatible TTS, voice-mapped; `response_format` supports `wav` and `mp3` |
-| `POST /v1/audio/transcriptions` | Parakeet STT | Multipart audio → transcript |
-| `POST /v1/audio/translations` | STT backend | OpenAI-compatible route; returns `unsupported_audio_translation` unless the local STT backend declares translation support |
-| `POST /v1/images/generations` | ComfyUI | Text-to-image (default `flux2-klein-4b`) |
-| `POST /v1/images/edits` | ComfyUI | Image edit; multipart with input image and optional top-level OpenAI `mask` |
+| `POST /v1/chat/completions` | Profile-selected chat provider | Chat completion; vision requests require a vision-capable lane |
+| `POST /v1/completions` | Profile-selected text provider | Text completion |
+| `POST /v1/embeddings` | Profile-selected embeddings provider | OpenAI-compatible embeddings; no GPU budget claim |
+| `POST /v1/audio/speech` | Profile-selected TTS provider | OpenAI-compatible TTS, voice-mapped; `response_format` supports `wav` and `mp3` |
+| `POST /v1/audio/transcriptions` | Profile-selected STT provider | Multipart audio → transcript |
+| `POST /v1/audio/translations` | Profile-selected STT provider | OpenAI-compatible route; returns `unsupported_audio_translation` unless the selected STT provider declares translation support |
+| `POST /v1/images/generations` | Profile-selected image provider/workflow | Text-to-image (default seed workflow `flux2-klein-4b`) |
+| `POST /v1/images/edits` | Profile-selected image provider/workflow | Image edit; multipart with input image and optional top-level OpenAI `mask` |
 | `GET  /v1/images/{id}/content` | proxy cache | Fetch a cached image referenced by a `response_format: "url"` result. Signed capability URL; no bearer required until expiry. |
-| `POST /gateway/v1/media/jobs` | proxy + ComfyUI | Durable media-job submit. For images, send `{"intent":"image.generate","request":{...}}`. |
+| `POST /gateway/v1/media/jobs` | proxy + selected media provider/workflow | Durable media-job submit. For images, send `{"intent":"image.generate","request":{...}}`. |
 | `GET  /gateway/v1/media/jobs/{id}/content` | proxy cache | Fetch the OpenAI-shaped image payload for a completed durable image job. |
-| `POST /v1/videos` | ComfyUI | Submit video job (Sora-shaped, async) |
-| `GET  /v1/videos/{id}` | ComfyUI | Poll job status (`queued` → `running` → `succeeded`/`failed`) |
-| `GET  /v1/videos/{id}/content` | ComfyUI | Fetch rendered MP4 once `status=succeeded` |
+| `POST /v1/videos` | Profile-selected video provider/workflow | Submit video job (Sora-shaped, async) |
+| `GET  /v1/videos/{id}` | selected video provider/workflow | Poll job status (`queued` → `running` → `succeeded`/`failed`) |
+| `GET  /v1/videos/{id}/content` | selected video provider/workflow | Fetch rendered MP4 once `status=succeeded` |
 | `GET  /gateway/v1/extensions` | proxy | Live extension namespace and route discovery |
 | `GET  /gateway/v1/models/{model}/capabilities` | proxy | Live model-specific capability and workflow-control discovery |
 | `GET  /gateway/v1/providers` | proxy | List provider-native lanes projected through the caller's App profile policy. |
@@ -171,9 +173,10 @@ The normal first-run path is web-first:
 5. Configure your OpenAI-compatible client against
    `https://ai.vivid.fish/openai/v1` (or `http://127.0.0.1:5000/openai/v1`
    locally).
-6. Manage providers, OIDC, users, Apps, Profiles, keys, admission limits, and
-   service availability from `/admin`. Restart is only required for deployment
-   bootstrap fields such as listener/TLS settings and provider base URLs.
+6. Manage the service/provider registry, OIDC, users, Apps, Profiles, keys,
+   admission limits, and service availability from `/admin`. Restart is only
+   required for irreducible deployment bootstrap such as listener/TLS settings
+   and secret/env changes.
 
 App keys (`opk_...`) are for runtime clients and SDKs. Admin keys (`oak_...`) are for the control plane and can also bootstrap a browser admin session through `/setup/claim`. See [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md) for the full first-run contract.
 
@@ -182,9 +185,13 @@ hashes in `admin.db`. The bearer key apps present is
 `Authorization: Bearer opk_...`; the raw value is shown once and cannot be
 recovered from disk.
 
-Runtime provider credentials are configured globally in `proxy_config.yml` and
-environment variables. Per-App downstream credential overrides are not part of
-the current DB runtime path; use Profiles to decide what an App may access.
+Service/provider records live in the DB/UI service registry. `proxy_config.yml`
+is seed/provisioning/bootstrap input, not the normal live operator surface.
+Env and Docker secrets remain for irreducible bootstrap and provider secret
+references. Provisioned services are visible and testable in `/admin`, but
+read-only unless detached or copied to UI-managed ownership. Per-App
+downstream credential overrides are not part of the current DB runtime path;
+use Profiles to decide what an App may access.
 
 Admin/control-plane credentials are separate from App keys. The `oak_...` admin key administers `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser login starts at `/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. Admins are Users with an admin-capable role, so signed-in admins also see an Admin link from the account portal. The dashboard can create Apps, Profiles, and API keys, revoke credentials, and simulate policy decisions before handing someone access.
 
@@ -219,7 +226,7 @@ See [`AUTH_GUIDE.md`](AUTH_GUIDE.md) for the full key-generation and rotation wo
 proxy.py                       # Main FastAPI app: routing, auth, ComfyUI orchestration
 status_endpoint.py             # /v1/status — admin-only backend health, GPU/disk/queue rollup
 firehose_metrics.py            # /v1/metrics firehose — recent renders, jobs, events
-proxy_config.yml               # Bootstrap wiring, provider config, optional one-time defaults
+proxy_config.yml               # Bootstrap wiring, service/provider seed/provisioning, optional one-time defaults
 openai_model_aliases.generated.yml   # OpenAI-name → local-model rewrite table
 requirements.txt               # Python deps (FastAPI, httpx, PyYAML, ...)
 start.sh                       # Service starter (systemd ExecStart)
@@ -268,15 +275,16 @@ holds every runtime decision the dashboard manages (owner, Apps, Profiles,
 keys, identity mappings, admission caps). Back it up; mount its directory on a
 volume in container deployments.
 
-Anything else in `proxy_config.yml` is optional bootstrap detail:
+Anything else in `proxy_config.yml` is optional seed/provisioning/bootstrap
+detail:
 
 - Listener host/port and TLS terminator.
-- Backend base URLs and downstream provider credentials (env-backed).
+- Service/provider seed records and downstream provider secret references.
 - Optional bootstrap `admin.oidc` if you want IdP login before creating a
   local owner. Otherwise create the local owner first and configure OIDC from
   `/admin`.
 
-The shipped backend defaults assume:
+Bundled seed service records target these local development defaults:
 
 - TabbyAPI on `127.0.0.1:5050`
 - llama.cpp/koboldcpp on `127.0.0.1:5051`
@@ -284,14 +292,16 @@ The shipped backend defaults assume:
 - Parakeet STT on `127.0.0.1:5092`
 - ComfyUI on `127.0.0.1:7890`
 
-Adjust hosts, ports, model paths, and role mappings as needed. Runtime access
-policy (Profiles, Apps, role/model bindings, admission caps, identity
-mappings, service availability) is **not** configured here — it lives in
-`admin.db` and is edited from the dashboard. Provisioning / as-code config
-export is deferred; default Profiles are seeded into `admin.db` on first
-startup, not YAML-managed. See
+After boot, provider/service availability lives in the DB/UI registry with an
+explicit ownership mode: `ui`, `provisioned`, `builtin`, or `discovered`.
+Provisioned services are visible and testable but read-only unless detached or
+copied to UI-managed ownership. Runtime access policy (Profiles, Apps,
+role/model bindings, admission caps, identity mappings, service availability)
+lives in `admin.db` and is edited from the dashboard. Provisioning / as-code
+config export is deferred; default Profiles are seeded into `admin.db` on
+first startup, not YAML-managed. See
 [`docs/CONFIG_SOURCE_OF_TRUTH.md`](docs/CONFIG_SOURCE_OF_TRUTH.md) for the
-full split.
+full policy.
 
 ### 3. Start the proxy
 
@@ -323,9 +333,9 @@ shell required after the service is running:
 
 Once the browser holds an admin session, `/setup` mints the first one-time
 `opk_...` runtime key for your client. Everything else — Profiles, identity
-mappings, shared Apps, role/model bindings, admission policy, provider and
-service availability — is dashboard work at `/admin` and does not need a
-restart.
+mappings, shared Apps, role/model bindings, admission policy, and the
+service/provider registry — is dashboard work at `/admin` and does not need a
+restart for UI-managed records.
 
 ### 5. Smoke test
 

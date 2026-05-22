@@ -16,6 +16,7 @@ import proxy  # noqa: E402
 from gateway.comfyui_workflow_validation import (  # noqa: E402
     validate_comfyui_workflow_graph,
 )
+from gateway.discovery import WorkflowRegistry  # noqa: E402
 
 
 class TestComfyUIWorkflowValidation(unittest.TestCase):
@@ -72,6 +73,55 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
 
             with patch.object(proxy, "COMFY_WORKFLOWS_DIR", workflows_dir):
                 self.assertIsNone(proxy.load_comfy_workflow("bad"))
+
+    def test_proxy_loader_resolves_imported_package_workflow_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package_dir = Path(tmp)
+            workflows_dir = package_dir / "workflows"
+            workflows_dir.mkdir()
+            (workflows_dir / "demo.json").write_text(
+                json.dumps(
+                    {
+                        "3": {
+                            "class_type": "KSampler",
+                            "inputs": {"seed": 123},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            registry = WorkflowRegistry()
+            registry.add_manifest(
+                {
+                    "schema_version": 1,
+                    "id": "image.generate.demo",
+                    "intent": "image.generate",
+                    "inputs": {"prompt": {"type": "string"}},
+                    "outputs": {"image": {"media_type": "image/png"}},
+                    "bindings": {
+                        "comfyui": {
+                            "workflow": "package://workflows/demo.json",
+                            "map": {
+                                "prompt": [{"node": "3", "input": "text"}],
+                            },
+                        }
+                    },
+                },
+                source_path=package_dir,
+            )
+
+            with patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry), patch.object(
+                proxy,
+                "COMFY_WORKFLOWS_DIR",
+                package_dir / "empty",
+            ):
+                workflow = proxy.load_comfy_workflow("demo")
+                manifest = proxy._find_image_manifest("image.generate", "demo")
+
+            self.assertIsNotNone(workflow)
+            assert workflow is not None
+            self.assertIn("3", workflow)
+            self.assertEqual(manifest["id"], "image.generate.demo")
 
     def test_audio_and_video_loaders_reject_malformed_workflows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

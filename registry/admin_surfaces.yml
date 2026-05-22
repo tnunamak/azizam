@@ -1,0 +1,12 @@
+records:
+  - id: admin-api
+    name: Admin API
+    route_base: /admin/api
+    status: live
+    profile_gates:
+      - admin session
+      - oak_
+    clients:
+      - operators
+      - automation
+    description: Control-plane API for Apps, Profiles, keys, audit, and policy simulation.

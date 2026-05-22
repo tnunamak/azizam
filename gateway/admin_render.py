@@ -407,6 +407,77 @@ def _catalog_options(
     return list(options) if isinstance(options, list) else []
 
 
+def _visible_catalog_options(
+    catalog: Mapping[str, list[Mapping[str, Any]]],
+    section: str,
+    *,
+    flag: str,
+) -> list[Mapping[str, Any]]:
+    return [
+        option
+        for option in _catalog_options(catalog, section)
+        if option.get(flag, True) is not False
+    ]
+
+
+def _catalog_option_label(option: Mapping[str, Any], *, summary: bool = False) -> str:
+    if summary:
+        return str(
+            option.get("summary_label")
+            or option.get("label")
+            or option.get("id")
+            or ""
+        )
+    return str(
+        option.get("label")
+        or option.get("summary_label")
+        or option.get("id")
+        or ""
+    )
+
+
+def _catalog_default_summary(
+    catalog: Mapping[str, list[Mapping[str, Any]]],
+    section: str,
+    *,
+    separator: str = ", ",
+    empty: str = "none selected",
+) -> str:
+    labels = [
+        _catalog_option_label(option, summary=True)
+        for option in _catalog_options(catalog, section)
+        if option.get("default")
+    ]
+    labels = [label for label in labels if label]
+    return separator.join(labels) if labels else empty
+
+
+def _catalog_select_options(
+    catalog: Mapping[str, list[Mapping[str, Any]]],
+    section: str,
+    *,
+    selected: str | None = None,
+) -> str:
+    options = []
+    for option in _visible_catalog_options(catalog, section, flag="simulator"):
+        value = str(option.get("id") or "")
+        if not value:
+            continue
+        is_selected = selected == value or (
+            selected is None and bool(option.get("default"))
+        )
+        options.append(
+            '<option value="'
+            + _esc(value)
+            + '"'
+            + (" selected" if is_selected else "")
+            + ">"
+            + _esc(_catalog_option_label(option))
+            + "</option>"
+        )
+    return "".join(options)
+
+
 def _option_grid(
     *,
     name: str,
@@ -419,7 +490,7 @@ def _option_grid(
         if not value:
             continue
         checked = " checked" if option.get("default") else ""
-        label = _esc(option.get("label") or value)
+        label = _esc(_catalog_option_label(option))
         description = _esc(option.get("description") or "")
         description_html = f"<em>{description}</em>" if description else ""
         items.append(
@@ -448,7 +519,7 @@ def _radio_grid(
         if not value:
             continue
         checked = " checked" if option.get("default") else ""
-        label = _esc(option.get("label") or value)
+        label = _esc(_catalog_option_label(option))
         description = _esc(option.get("description") or "")
         items.append(
             '<label class="choice-card"><span><input type="radio" name="'
@@ -864,6 +935,9 @@ def _service_row(record: Mapping[str, Any]) -> str:
     name = _esc(record.get("name") or record.get("key") or "—")
     key = _esc(record.get("key") or "—")
     role = _esc(record.get("role") or "—")
+    source = _esc(record.get("source") or "ui")
+    editable = "editable" if record.get("editable", True) else "read-only"
+    priority = record.get("priority")
     capabilities = _format_optional_list(record.get("capabilities"))
     status_value = str(record.get("status") or record.get("live_status") or "unknown")
     status_class = {
@@ -897,7 +971,9 @@ def _service_row(record: Mapping[str, Any]) -> str:
     return (
         "<tr>"
         f'<td><div class="cell-main">{name}</div><div class="cell-sub"><code>{key}</code></div></td>'
-        f"<td>{role}</td>"
+        f"<td>{role}<div class=\"cell-sub\">{source}; {editable}"
+        + (f"; priority {_esc(priority)}" if priority is not None else "")
+        + "</div></td>"
         f"<td>{capabilities}</td>"
         f"<td>{status_html}</td>"
         f"<td>{runtime}</td>"
@@ -1287,6 +1363,80 @@ def _workflow_inventory_row(record: Mapping[str, Any]) -> str:
     )
 
 
+def _extension_package_row(record: Mapping[str, Any]) -> str:
+    package_id = _esc(record.get("id") or "—")
+    name = _esc(record.get("name") or package_id)
+    version = _esc(record.get("version") or "—")
+    enabled = bool(record.get("enabled"))
+    status_class = "active" if enabled else "revoked"
+    status = "enabled" if enabled else "disabled"
+    source = record.get("source") if isinstance(record.get("source"), Mapping) else {}
+    source_label = _esc(source.get("path") or source.get("url") or source.get("directory") or "—")
+    counts = _format_key_value_summary(record.get("object_counts") or {})
+    services = _format_optional_list(record.get("services"))
+    frontends = _format_optional_list(record.get("protocol_frontends"))
+    workflows = _format_optional_list(record.get("workflows"))
+    capabilities = _format_optional_list(record.get("capabilities"))
+    warnings = _format_optional_list(record.get("warnings"))
+    details = "; ".join(
+        part
+        for part in (
+            f"objects: {counts}" if counts else "",
+            f"services: {services}" if services else "",
+            f"frontends: {frontends}" if frontends else "",
+            f"workflows: {workflows}" if workflows else "",
+            f"capabilities: {capabilities}" if capabilities else "",
+            f"warnings: {warnings}" if warnings else "",
+        )
+        if part
+    )
+    return (
+        "<tr>"
+        f'<td><div class="cell-main">{name}</div><div class="cell-sub"><code>{package_id}</code></div></td>'
+        f"<td>{version}</td>"
+        f'<td><span class="badge {status_class}">{status}</span></td>'
+        f"<td><code>{source_label}</code></td>"
+        f"<td>{_esc(details or '—')}</td>"
+        "</tr>"
+    )
+
+
+def _extension_package_panel(index: Mapping[str, Any] | None) -> str:
+    packages = index.get("packages") if isinstance(index, Mapping) else {}
+    if not isinstance(packages, Mapping):
+        packages = {}
+    package_rows = _table(
+        ["Package", "Version", "Status", "Source", "Objects"],
+        (
+            _extension_package_row({"id": package_id, **package})
+            for package_id, package in sorted(packages.items())
+            if isinstance(package, Mapping)
+        ),
+    )
+    form = (
+        '<form class="flow" method="post" action="/admin/api/extensions/validate" '
+        'data-extension-package data-enable-action="/admin/api/extensions/enable">'
+        "<label>Validate or enable extension package</label>"
+        '<p class="form-note">Data-only packages can add services, protocol frontends, workflows, and capabilities. Use a local directory or a Git/GitHub URL.</p>'
+        '<div class="row">'
+        '<select name="source_type" aria-label="Extension package source type">'
+        '<option value="local_directory">Local directory</option>'
+        '<option value="git">Git / GitHub URL</option>'
+        "</select>"
+        '<input type="text" name="path" placeholder="/path/to/extension-package" aria-label="Extension package directory">'
+        '<input type="text" name="url" placeholder="https://github.com/user/package.git" aria-label="Git package URL">'
+        '<input type="text" name="ref" placeholder="tag, branch, or commit" aria-label="Git ref">'
+        '<input type="text" name="subdir" placeholder="optional subdir" aria-label="Git package subdir">'
+        '<div class="inline-form">'
+        '<button type="submit" value="validate">Validate</button>'
+        '<button type="submit" value="enable" data-enable-extension-package>Enable</button>'
+        "</div>"
+        "</div>"
+        "</form>"
+    )
+    return package_rows + form
+
+
 def _identity_mapping_row(record: Mapping[str, Any]) -> str:
     mapping_id = str(record.get("id") or "")
     source = _esc(record.get("source") or "—")
@@ -1546,7 +1696,7 @@ def _profile_form(
     inventory = profile_inventory or {}
     protocol_grid = _option_grid(
         name="protocols",
-        options=_catalog_options(catalog, "protocols"),
+        options=_visible_catalog_options(catalog, "protocols", flag="profile_form"),
         aria_label="Allowed APIs",
     )
     intent_grid = _option_grid(
@@ -1581,7 +1731,7 @@ def _profile_form(
         '<option value="' + _esc(option.get("id") or "") + '"'
         + (" selected" if option.get("default") else "")
         + ">"
-        + _esc(option.get("label") or option.get("id") or "")
+        + _esc(_catalog_option_label(option))
         + "</option>"
         for option in _catalog_options(catalog, "status_visibility")
         if option.get("id")
@@ -1591,6 +1741,20 @@ def _profile_form(
     model_items = _inventory_items(inventory, "models")
     workflow_items = _inventory_items(inventory, "workflows")
     backend_items = _inventory_items(inventory, "backends")
+    preview_apis = _catalog_default_summary(catalog, "protocols")
+    preview_work = _catalog_default_summary(catalog, "intents")
+    preview_cost = (
+        _catalog_default_summary(catalog, "resource_tiers")
+        + "; "
+        + _catalog_default_summary(catalog, "exposure")
+        + "; "
+        + _catalog_default_summary(catalog, "trust_tiers")
+    )
+    preview_targets = (
+        _catalog_default_summary(catalog, "target_visibility")
+        + "; "
+        + _catalog_default_summary(catalog, "target_activation")
+    )
     return (
         '<form class="flow" method="post" action="'
         + _esc(create_profile_action)
@@ -1621,10 +1785,18 @@ def _profile_form(
         + "</code></p>"
         + '<div class="policy-preview" id="profile-policy-preview" aria-live="polite">'
         + "<strong>Profile preview</strong>"
-        + '<span data-profile-preview-apis>APIs: OpenAI-compatible</span>'
-        + '<span data-profile-preview-work>Work: chat</span>'
-        + '<span data-profile-preview-cost>Cost gates: interactive; default capabilities; stable</span>'
-        + '<span data-profile-preview-models>Targets: allowed catalog; may activate</span>'
+        + '<span data-profile-preview-apis>APIs: '
+        + _esc(preview_apis)
+        + "</span>"
+        + '<span data-profile-preview-work>Work: '
+        + _esc(preview_work)
+        + "</span>"
+        + '<span data-profile-preview-cost>Cost gates: '
+        + _esc(preview_cost)
+        + "</span>"
+        + '<span data-profile-preview-models>Targets: '
+        + _esc(preview_targets)
+        + "</span>"
         + '<span data-profile-preview-guardrails>Guardrails: local only; provider-native passthrough off; admin blocked</span>'
         + "</div>"
         + '<div class="form-section"><strong>Guardrails</strong>'
@@ -1771,8 +1943,25 @@ def _policy_simulator_form(
     profiles: list[Mapping[str, Any]],
     *,
     policy_simulate_action: str,
+    policy_catalog: Mapping[str, list[Mapping[str, Any]]] | None = None,
 ) -> str:
     profile_options = _profile_options(profiles, include_default=True, default_label="Local default")
+    catalog = policy_catalog or profile_policy_catalog()
+    protocol_options = _catalog_select_options(catalog, "protocols", selected="openai")
+    if not protocol_options:
+        protocol_options = '<option value="">No protocols available</option>'
+    intent_options = _catalog_select_options(catalog, "intents", selected="chat")
+    if not intent_options:
+        intent_options = '<option value="">No intents available</option>'
+    exposure_options = _catalog_select_options(catalog, "exposure", selected="default")
+    if not exposure_options:
+        exposure_options = '<option value="">No exposure classes available</option>'
+    trust_options = _catalog_select_options(catalog, "trust_tiers", selected="stable")
+    if not trust_options:
+        trust_options = '<option value="">No trust tiers available</option>'
+    resource_options = _catalog_select_options(catalog, "resource_tiers", selected="interactive")
+    if not resource_options:
+        resource_options = '<option value="">No resource tiers available</option>'
     return (
         '<details class="panel"><summary>Simulate access</summary>'
         '<form class="flow" method="post" action="'
@@ -1783,38 +1972,20 @@ def _policy_simulator_form(
         '<div class="stack">'
         f'<select name="profile" aria-label="Profile to simulate">{profile_options}</select>'
         '<select name="protocol" aria-label="Request protocol">'
-        '<option value="openai">OpenAI-compatible</option>'
-        '<option value="anthropic">Anthropic Messages</option>'
-        '<option value="ollama">Ollama-compatible</option>'
-        '<option value="gateway">Gateway jobs/discovery</option>'
-        '<option value="provider-native">Provider-native passthrough</option>'
-        "</select>"
+        + protocol_options
+        + "</select>"
         '<select name="intent" aria-label="Request intent">'
-        '<option value="chat">Chat</option>'
-        '<option value="text.embeddings">Embeddings</option>'
-        '<option value="image.generate">Image generation</option>'
-        '<option value="image.edit">Image editing</option>'
-        '<option value="speech.synthesis">Text to speech</option>'
-        '<option value="speech.transcription">Speech transcription</option>'
-        '<option value="audio.generate">Music/audio generation</option>'
-        '<option value="video.generate">Video generation</option>'
-        '<option value="models.list">List models</option>'
-        "</select>"
+        + intent_options
+        + "</select>"
         '<select name="capability_exposure" aria-label="Capability exposure">'
-        '<option value="default">Default capability</option>'
-        '<option value="opt_in">Opt-in capability</option>'
-        '<option value="private">Private capability</option>'
-        "</select>"
+        + exposure_options
+        + "</select>"
         '<select name="capability_trust_tier" aria-label="Capability trust tier">'
-        '<option value="stable">Stable</option>'
-        '<option value="experimental">Experimental</option>'
-        '<option value="private">Private</option>'
-        "</select>"
+        + trust_options
+        + "</select>"
         '<select name="capability_resource_tier" aria-label="Capability resource tier">'
-        '<option value="interactive">Interactive</option>'
-        '<option value="batch">Batch</option>'
-        '<option value="expensive">Expensive</option>'
-        "</select>"
+        + resource_options
+        + "</select>"
         "</div>"
         '<details class="panel"><summary>Advanced request fields</summary>'
         '<div class="stack">'
@@ -1895,6 +2066,16 @@ def render_admin_dashboard(
         "Service": snapshot.get("service_overrides"),
     }
     model_visibility = snapshot.get("model_visibility")
+    extension_packages = snapshot.get("extension_packages")
+    if not isinstance(extension_packages, Mapping):
+        overrides = snapshot.get("operator_overrides")
+        extension_packages = (
+            overrides.get("extension_package_index")
+            if isinstance(overrides, Mapping)
+            else {}
+        )
+    if not isinstance(extension_packages, Mapping):
+        extension_packages = {}
     policy_catalog = coerce_policy_catalog(snapshot.get("policy_catalog"))
     profile_inventory = snapshot.get("profile_inventory")
     if not isinstance(profile_inventory, Mapping):
@@ -1959,6 +2140,17 @@ def render_admin_dashboard(
         ["Workflow", "Intent", "Backend", "Tier", "Trust"],
         (_workflow_inventory_row(workflow) for workflow in workflow_inventory),
     )
+    extension_package_panel = (
+        _extension_package_panel(extension_packages)
+        if (
+            services
+            or workflow_inventory
+            or config_sources
+            or model_visibility
+            or extension_packages
+        )
+        else ""
+    )
     identity_mappings_table = _table(
         ["Identity source", "Scope", "Default Profile", "Note", "Action"],
         (_identity_mapping_row(mapping) for mapping in identity_mappings),
@@ -1985,6 +2177,7 @@ def render_admin_dashboard(
     policy_simulator_html = _policy_simulator_form(
         profiles,
         policy_simulate_action=policy_simulate_action,
+        policy_catalog=policy_catalog,
     )
     runtime_mapping_html = _runtime_mapping_form(
         profiles,
@@ -2030,6 +2223,11 @@ def render_admin_dashboard(
             "Workflows",
             workflow_inventory_table,
             intro="Gateway workflow manifests currently available to Profiles and media routes.",
+        )
+        + _subsection(
+            "Extension Packages",
+            extension_package_panel,
+            intro="Validate local data-only packages and enable the services or protocol frontends they import.",
         )
     )
     apps_keys_html = (
@@ -2115,7 +2313,8 @@ def render_admin_dashboard(
         "const values=(fd,k)=>fd.getAll(k).flatMap(list);"
         "const slug=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'profile';"
         "const labelsFor=section=>Object.fromEntries((policyCatalog[section]||[]).map(o=>[o.id,o.summary_label||o.label||o.id]));"
-        "const protocolLabels={...labelsFor('protocols'),'provider-native':'Provider-native'};"
+        "const labelFor=(section,value)=>labelsFor(section)[value]||value;"
+        "const protocolLabels=labelsFor('protocols');"
         "const intentLabels=labelsFor('intents');"
         "const resourceLabels=labelsFor('resource_tiers');"
         "const exposureLabels=labelsFor('exposure');"
@@ -2124,7 +2323,7 @@ def render_admin_dashboard(
         "const checkedValues=(form,name)=>Array.from(form.querySelectorAll(`[name=\"${name}\"]:checked`)).map(el=>el.value);"
         "const profileProtocols=(fd,form)=>{const protocols=checkedValues(form,'protocols');if(fd.get('native_passthrough')==='on'&&!protocols.includes('provider-native'))protocols.push('provider-native');return protocols};"
         "const buildProfileFromForm=(fd,form,profileId)=>{const allow={intents:checkedValues(form,'intents'),exposure:checkedValues(form,'exposure'),trust_tiers:checkedValues(form,'trust_tiers'),resource_tiers:checkedValues(form,'resource_tiers')};const tags=values(fd,'tags');if(tags.length)allow.tags=tags;const profile={id:profileId,protocols:profileProtocols(fd,form),allow,status_visibility:{level:fd.get('status_visibility')||'basic'},fallback:{cloud_allowed:fd.get('cloud_allowed')==='on'},native_passthrough:{enabled:fd.get('native_passthrough')==='on'},target_policy:{visibility:fd.get('target_visibility')||'catalog',activation:fd.get('target_activation')||'may_activate'}};const models=values(fd,'models');if(models.length)profile.models=models;const workflows=values(fd,'workflows');if(workflows.length)profile.workflows=workflows;const backends=values(fd,'backends');if(backends.length)profile.backends=backends;return profile};"
-        "const updateProfilePreview=form=>{form=form||document.querySelector('[data-create-profile]');if(!form)return;const fd=new FormData(form);const apis=profileProtocols(fd,form),work=checkedValues(form,'intents'),resources=checkedValues(form,'resource_tiers'),exposure=checkedValues(form,'exposure'),trust=checkedValues(form,'trust_tiers');const targetVisibility=fd.get('target_visibility')==='available'?'available now':'allowed catalog';const targetActivation=fd.get('target_activation')==='existing_only'?'existing only':'may activate';const guard=(fd.get('cloud_allowed')==='on'?'cloud fallback allowed':'local only')+'; '+(fd.get('native_passthrough')==='on'?'provider-native passthrough on':'provider-native passthrough off')+'; admin blocked';const a=form.querySelector('[data-profile-preview-apis]'),w=form.querySelector('[data-profile-preview-work]'),c=form.querySelector('[data-profile-preview-cost]'),m=form.querySelector('[data-profile-preview-models]'),g=form.querySelector('[data-profile-preview-guardrails]');if(a)a.textContent='APIs: '+labelList(apis,protocolLabels,'none selected');if(w)w.textContent='Work: '+labelList(work,intentLabels,'none selected');if(c)c.textContent='Cost gates: '+labelList(resources,resourceLabels,'none selected')+'; '+labelList(exposure,exposureLabels,'none selected')+'; '+labelList(trust,trustLabels,'none selected');if(m)m.textContent='Targets: '+targetVisibility+'; '+targetActivation;if(g)g.textContent='Guardrails: '+guard};"
+        "const updateProfilePreview=form=>{form=form||document.querySelector('[data-create-profile]');if(!form)return;const fd=new FormData(form);const apis=profileProtocols(fd,form),work=checkedValues(form,'intents'),resources=checkedValues(form,'resource_tiers'),exposure=checkedValues(form,'exposure'),trust=checkedValues(form,'trust_tiers');const targetVisibility=labelFor('target_visibility',fd.get('target_visibility')||'catalog');const targetActivation=labelFor('target_activation',fd.get('target_activation')||'may_activate');const guard=(fd.get('cloud_allowed')==='on'?'cloud fallback allowed':'local only')+'; '+(fd.get('native_passthrough')==='on'?'provider-native passthrough on':'provider-native passthrough off')+'; admin blocked';const a=form.querySelector('[data-profile-preview-apis]'),w=form.querySelector('[data-profile-preview-work]'),c=form.querySelector('[data-profile-preview-cost]'),m=form.querySelector('[data-profile-preview-models]'),g=form.querySelector('[data-profile-preview-guardrails]');if(a)a.textContent='APIs: '+labelList(apis,protocolLabels,'none selected');if(w)w.textContent='Work: '+labelList(work,intentLabels,'none selected');if(c)c.textContent='Cost gates: '+labelList(resources,resourceLabels,'none selected')+'; '+labelList(exposure,exposureLabels,'none selected')+'; '+labelList(trust,trustLabels,'none selected');if(m)m.textContent='Targets: '+targetVisibility+'; '+targetActivation;if(g)g.textContent='Guardrails: '+guard};"
         "const initProfileForm=()=>updateProfilePreview(document.querySelector('[data-create-profile]'));"
         "document.addEventListener('change',e=>{const form=e.target.closest&&e.target.closest('[data-create-profile]');if(form)updateProfilePreview(form)});initProfileForm();"
         "const refreshMain=async()=>{const r=await fetch('/admin',{credentials:'same-origin',cache:'no-store'});"
@@ -2135,8 +2334,8 @@ def render_admin_dashboard(
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
         "document.addEventListener('submit',async e=>{"
-        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]'),operatorForm=e.target.closest('[data-operator-control]'),oidcForm=e.target.closest('[data-oidc-config]');"
-        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm&&!operatorForm&&!oidcForm)return;e.preventDefault();"
+        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]'),operatorForm=e.target.closest('[data-operator-control]'),oidcForm=e.target.closest('[data-oidc-config]'),extensionForm=e.target.closest('[data-extension-package]');"
+        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm&&!operatorForm&&!oidcForm&&!extensionForm)return;e.preventDefault();"
         "if(adminKeyForm){const f=adminKeyForm,fd=new FormData(f);const body={name:fd.get('name'),role:fd.get('role')||'admin'};try{const data=await json(f.action,body);f.reset();await refreshMain();showSecret(data,'Admin automation key created. Copy it now; it will not be shown again.','Use this oak_ key only for /admin/api and /status. Never paste it into chat apps, SDK tools, browser code, prompts, logs, or issue trackers.')}catch(err){showError(err)}return}"
         "if(oidcForm){const f=oidcForm,fd=new FormData(f);const body={enabled:fd.get('enabled')==='on'};"
         "['issuer','client_id','redirect_uri','authorization_endpoint','token_endpoint','jwks_uri'].forEach(k=>{body[k]=String(fd.get(k)||'').trim()});"
@@ -2163,6 +2362,10 @@ def render_admin_dashboard(
         "if(operatorForm){const f=operatorForm,fd=new FormData(f),body={},listFields=new Set(String(f.dataset.listFields||'').split(/\\s+/).filter(Boolean));"
         "fd.forEach((v,k)=>{if(listFields.has(k)){assign(body,k,list(v));return}if(v==='')return;assign(body,k,v)});"
         "try{const data=await json(f.action,body,f.dataset.method||'PATCH');await refreshMain();show(data)}catch(err){showError(err)}return}"
+        "if(extensionForm){const f=extensionForm,fd=new FormData(f),type=String(fd.get('source_type')||'local_directory').trim();const source={type};"
+        "['path','url','ref','subdir'].forEach(k=>{const v=String(fd.get(k)||'').trim();if(v)source[k]=v});"
+        "const enable=e.submitter&&e.submitter.dataset.enableExtensionPackage!==undefined;const url=enable?f.dataset.enableAction:f.action;"
+        "try{const data=await json(url,{source});if(enable)await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(appForm){const f=appForm,fd=new FormData(f);const body={name:fd.get('name'),kind:fd.get('kind')||'service'};"
         "if(fd.get('owner_user_id')) body.owner_user_id=fd.get('owner_user_id');"
         "if(fd.get('profile_id')) body.profile_id=fd.get('profile_id');"

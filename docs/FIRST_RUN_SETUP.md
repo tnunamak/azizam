@@ -6,8 +6,8 @@ The first-run contract is web-first. A new self-hoster should be able to:
 2. Open `/setup` in a browser.
 3. Claim or create the first local owner.
 4. Let the app seed sane defaults and mint the first App + `opk_...` runtime key.
-5. Manage providers, OIDC, users, Apps, Profiles, keys, limits, and service
-   availability from `/admin`.
+5. Manage the service/provider registry, OIDC, users, Apps, Profiles, keys,
+   limits, and service availability from `/admin`.
 
 `/setup` is intentionally small. It does not configure backends, edit OIDC, or
 create policy abstractions. It only answers: "Can this browser administer the
@@ -25,9 +25,10 @@ If you just want a working gateway, in order:
 4. Mint the first `opk_...` runtime key from the same page and configure your
    client against `/openai/v1`.
 5. Everything else — Profiles, identity/Profile mappings, role/model bindings,
-   provider toggles, admission caps, OIDC details, additional Apps and keys —
-   is dashboard work at `/admin`. Restart is only required for deployment
-   bootstrap changes such as listener/TLS settings or provider base URLs.
+   service/provider records, admission caps, OIDC details, additional Apps
+   and keys — is dashboard work at `/admin`. Restart is only required for
+   deployment bootstrap changes such as listener/TLS settings or secret/env
+   changes.
 
 ## Bootstrap Config
 
@@ -42,11 +43,16 @@ safely:
 - optional bootstrap `admin.oidc` issuer/client/trust configuration when you
   want OIDC before the first local owner login. Otherwise configure OIDC from
   `/admin` after setup,
-- backend base URLs, model directories, and provider secrets,
+- service/provider seed or provisioning input, model directories, and
+  provider secret references,
 - optional `admin.user_defaults` or user-access env flags as a one-time
   bootstrap seed for self-service defaults and identity/Profile mappings.
 
 Everything that can change after boot belongs in `admin.db` and the dashboard.
+The DB/UI service registry is the product source of truth for providers and
+services. `proxy_config.yml` can seed or provision records, but it is not the
+normal live operator surface. Provisioned services are visible and testable in
+`/admin`, but read-only unless detached or copied to UI-managed ownership.
 On startup, bootstrap user defaults are imported into `admin.db`; after that,
 dashboard/API state is authoritative. See
 [CONFIG_SOURCE_OF_TRUTH.md](CONFIG_SOURCE_OF_TRUTH.md).
@@ -122,11 +128,12 @@ Admin keys are never runtime keys. Use `oak_...` only for `/admin`,
 |-----------------------------------------------------|------------------|----------|
 | Listener, TLS, session signing key                  | `proxy_config.yml` / env / generated `data/admin_session_key` | yes for explicit changes |
 | OIDC provider settings                              | `/admin` (optional bootstrap fallback in `proxy_config.yml`) | no |
-| Provider base URLs, model directories, secrets      | `proxy_config.yml` / env / Docker secrets | yes |
+| Service/provider registry                           | `/admin` (`ui`, `provisioned`, `builtin`, `discovered` ownership modes) | no for UI-managed records |
+| Provider seed/provisioning input, model directories, secret references | `proxy_config.yml` / env / Docker secrets | yes |
 | Owner/admin roles, Apps, Profiles, App API keys     | `/setup`, `/`, `/admin`                  | no  |
 | Identity → Profile mappings, role/model bindings    | `/admin`                                 | no  |
 | Admission caps, throttles, runtime routing toggles  | `/admin`                                 | no  |
-| Provider/service enablement                         | `/admin`                                 | no  |
+| Provider/service enablement                         | `/admin` for UI-managed records; provisioned/builtin/discovered records are read-only until copied or detached | no  |
 
 Provisioning bundles and as-code config export are deliberately out of scope
 for first-run. Default Profiles and user-access defaults are seeded into

@@ -21,7 +21,9 @@ from gateway.admin_oidc import (  # noqa: E402
 from gateway.admin_runtime import (  # noqa: E402
     AdminAuthenticator,
     AdminSQLiteStore,
+    EXTENSION_PACKAGE_INDEX_SETTING_KEY,
     OIDC_PROVIDER_SETTING_KEY,
+    SERVICE_REGISTRY_SETTING_KEY,
     create_admin_service_account_key,
     runtime_identity_for_app_credential_hash,
 )
@@ -495,6 +497,177 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertIn("operator.user_access_defaults.update", actions)
         self.assertIn("operator.service_availability.update", actions)
         self.assertIn("operator.media_job_admission.update", actions)
+
+    def test_service_registry_persists_and_is_audited(self) -> None:
+        self.assertEqual(
+            self.store.get_service_registry(),
+            {
+                "schema_version": 1,
+                "services": {},
+                "protocol_frontends": {},
+                "workflows": {},
+                "capabilities": {},
+            },
+        )
+
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        resp = client.put(
+            "/admin/api/operator/service-registry",
+            json={
+                "services": {
+                    "Local Comfy": {
+                        "name": "Local ComfyUI",
+                        "source": "ui",
+                        "enabled": True,
+                        "capabilities": ["image.generate"],
+                        "config": {"base_url": "http://127.0.0.1:7890"},
+                    }
+                },
+                "protocol_frontends": {
+                    "Gateway Native": {
+                        "name": "Gateway-native",
+                        "protocol": "gateway",
+                        "source": "builtin",
+                        "routes": ["/gateway/v1"],
+                        "intents": ["jobs.create"],
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        registry = resp.json()["service_registry"]
+        self.assertEqual(sorted(registry["services"]), ["local-comfy"])
+        self.assertEqual(
+            registry["services"]["local-comfy"]["config"]["base_url"],
+            "http://127.0.0.1:7890",
+        )
+
+        reopened = AdminSQLiteStore(self.db)
+        self.assertEqual(reopened.get_service_registry(), registry)
+        stored = admin_store.get_operator_setting(
+            SERVICE_REGISTRY_SETTING_KEY,
+            path=self.db,
+        )
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["value"], registry)  # type: ignore[index]
+        actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
+        self.assertIn("operator.service_registry.update", actions)
+
+    def test_extension_package_enable_persists_registry_index_and_audit(self) -> None:
+        self.assertEqual(
+            self.store.get_extension_package_index(),
+            {"schema_version": 1, "sources": [], "packages": {}, "updated_at": 0},
+        )
+        package_dir = Path(self.tmp.name) / "package"
+        (package_dir / "objects").mkdir(parents=True)
+        (package_dir / "extension.yml").write_text(
+            """
+schema_version: 1
+kind: extension_package
+id: runtime-package
+version: 0.1.0
+objects:
+  services:
+    - objects/service.yml
+  workflows:
+    - objects/workflow.yml
+  capabilities:
+    - objects/capability.yml
+""",
+            encoding="utf-8",
+        )
+        (package_dir / "objects" / "service.yml").write_text(
+            """
+id: runtime-service
+name: Runtime Service
+config:
+  base_url: http://127.0.0.1:9999
+""",
+            encoding="utf-8",
+        )
+        (package_dir / "objects" / "workflow.yml").write_text(
+            """
+schema_version: 1
+id: image.generate.runtime
+intent: image.generate
+inputs:
+  prompt:
+    type: string
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/runtime.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+""",
+            encoding="utf-8",
+        )
+        (package_dir / "objects" / "capability.yml").write_text(
+            """
+kind: capability
+id: runtime-capability
+intent: image.generate
+backend: comfyui
+workflow: image.generate.runtime
+input_modalities: [text]
+output_modalities: [image]
+execution: job
+""",
+            encoding="utf-8",
+        )
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        source = {"type": "local_directory", "path": str(package_dir)}
+
+        validate_resp = client.post(
+            "/admin/api/extensions/validate",
+            json={"source": source},
+        )
+        enable_resp = client.post(
+            "/admin/api/extensions/enable",
+            json={"source": source},
+        )
+
+        self.assertEqual(validate_resp.status_code, 200, validate_resp.text)
+        self.assertTrue(validate_resp.json()["review"]["ok"])
+        self.assertEqual(enable_resp.status_code, 200, enable_resp.text)
+        body = enable_resp.json()
+        self.assertEqual(body["extension_package"]["id"], "runtime-package")
+        self.assertIn("runtime-service", body["service_registry"]["services"])
+        self.assertIn("image.generate.runtime", body["service_registry"]["workflows"])
+        self.assertIn("runtime-capability", body["service_registry"]["capabilities"])
+
+        reopened = AdminSQLiteStore(self.db)
+        registry = reopened.get_service_registry()
+        package_index = reopened.get_extension_package_index()
+        self.assertIn("runtime-service", registry["services"])
+        self.assertIn("image.generate.runtime", registry["workflows"])
+        self.assertIn("runtime-capability", registry["capabilities"])
+        self.assertIn("runtime-package", package_index["packages"])
+        stored = admin_store.get_operator_setting(
+            EXTENSION_PACKAGE_INDEX_SETTING_KEY,
+            path=self.db,
+        )
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["value"], package_index)  # type: ignore[index]
+        actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
+        self.assertIn("operator.extension_package.enable", actions)
+
+    def test_extension_package_index_setting_key_is_stable(self) -> None:
+        self.assertEqual(
+            EXTENSION_PACKAGE_INDEX_SETTING_KEY,
+            "extension_package_index",
+        )
 
 
 class AdminOidcSettingsTests(unittest.TestCase):

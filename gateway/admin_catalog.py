@@ -1,280 +1,201 @@
-"""Static admin dashboard catalogs.
+"""Admin dashboard catalog loaders.
 
-This module holds stable product vocabulary: protocol families, capability
-selectors, and front-door API surfaces. Live service state, workflows, models,
-and user data are layered in by ``proxy.py`` before rendering the dashboard.
+This module projects registry data into renderer-friendly catalog records.
+Live service state, workflows, models, and user data are layered in by
+``proxy.py`` before rendering the dashboard.
 """
 
 from __future__ import annotations
 
 import copy
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Mapping
 
+import yaml
+
+from gateway import service_registry
 from gateway.policy import (
     TARGET_ACTIVATION_MODES,
     TARGET_VISIBILITY_MODES,
     VISIBILITY_LEVELS,
 )
 
-_API_SURFACES: tuple[dict[str, Any], ...] = (
-    {
-        "name": "OpenAI-compatible",
-        "route_base": "/v1",
-        "status": "live",
-        "profile_gates": ["openai"],
-        "clients": ["OpenAI SDKs", "Open WebUI", "LibreChat", "Continue"],
-        "description": (
-            "Chat, completions, responses, embeddings, models, images, audio, "
-            "and video routes."
-        ),
-    },
-    {
-        "name": "Anthropic Messages",
-        "route_base": "/v1/messages",
-        "status": "partial",
-        "profile_gates": ["anthropic"],
-        "clients": ["Claude-shaped coding agents"],
-        "description": "Messages-compatible chat surface backed by local LLM routing.",
-    },
-    {
-        "name": "Ollama-compatible",
-        "route_base": "/api",
-        "status": "partial",
-        "profile_gates": ["ollama"],
-        "clients": ["Ollama SDKs", "local model tools"],
-        "description": "Ollama-shaped chat/generate/tags compatibility where it maps cleanly.",
-    },
-    {
-        "name": "Gateway-native",
-        "route_base": "/gateway/v1",
-        "status": "live",
-        "profile_gates": ["gateway"],
-        "clients": ["agents", "media tooling"],
-        "description": "Capabilities, workflows, receipts, and durable media jobs.",
-    },
-    {
-        "name": "Admin API",
-        "route_base": "/admin/api",
-        "status": "live",
-        "profile_gates": ["admin session", "oak_"],
-        "clients": ["operators", "automation"],
-        "description": "Control-plane API for Apps, Profiles, keys, audit, and policy simulation.",
-    },
-)
-
-_PROFILE_POLICY_CATALOG: dict[str, list[dict[str, Any]]] = {
-    "protocols": [
-        {
-            "id": "openai",
-            "label": "OpenAI-compatible",
-            "summary_label": "OpenAI-compatible",
-            "description": "/openai/v1 and /v1 SDKs",
-            "default": True,
-        },
-        {
-            "id": "anthropic",
-            "label": "Anthropic Messages",
-            "summary_label": "Anthropic Messages",
-            "description": "/anthropic/v1/messages clients",
-        },
-        {
-            "id": "ollama",
-            "label": "Ollama-compatible",
-            "summary_label": "Ollama-compatible",
-            "description": "/ollama/api and /api clients",
-        },
-        {
-            "id": "gateway",
-            "label": "Gateway jobs",
-            "summary_label": "Gateway jobs",
-            "description": "capabilities, assets, receipts, media jobs",
-        },
-    ],
-    "intents": [
-        {
-            "id": "chat",
-            "label": "Chat",
-            "summary_label": "chat",
-            "description": "chat completions and messages",
-            "default": True,
-        },
-        {
-            "id": "text.completions",
-            "label": "Text completions",
-            "summary_label": "text completions",
-            "description": "legacy completion clients",
-        },
-        {
-            "id": "text.embeddings",
-            "label": "Embeddings",
-            "summary_label": "embeddings",
-            "description": "RAG, search, memory, indexes",
-        },
-        {
-            "id": "image.generate",
-            "label": "Image generation",
-            "summary_label": "image generation",
-            "description": "text to image workflows",
-        },
-        {
-            "id": "image.edit",
-            "label": "Image editing",
-            "summary_label": "image editing",
-            "description": "inpaint, mask, ControlNet-like workflows",
-        },
-        {
-            "id": "speech.synthesis",
-            "label": "Text to speech",
-            "summary_label": "text to speech",
-            "description": "voice output",
-        },
-        {
-            "id": "speech.transcription",
-            "label": "Speech to text",
-            "summary_label": "speech transcription",
-            "description": "transcription input",
-        },
-        {
-            "id": "audio.generate",
-            "label": "Music / sound",
-            "summary_label": "music/audio generation",
-            "description": "audio generation workflows",
-        },
-        {
-            "id": "video.generate",
-            "label": "Video",
-            "summary_label": "video generation",
-            "description": "expensive queued video jobs",
-        },
-        {
-            "id": "models.list",
-            "label": "Model list",
-            "summary_label": "model list",
-            "description": "show compatible models to clients",
-        },
-    ],
-    "resource_tiers": [
-        {
-            "id": "interactive",
-            "label": "Interactive",
-            "summary_label": "interactive",
-            "description": "fast requests, normal chat",
-            "default": True,
-        },
-        {
-            "id": "batch",
-            "label": "Batch",
-            "summary_label": "batch",
-            "description": "queued media and longer jobs",
-        },
-        {
-            "id": "expensive",
-            "label": "Expensive",
-            "summary_label": "expensive",
-            "description": "video and heavy GPU workflows",
-        },
-    ],
-    "exposure": [
-        {
-            "id": "default",
-            "label": "Default capabilities",
-            "summary_label": "default capabilities",
-            "description": "normal model and workflow catalog",
-            "default": True,
-        },
-        {
-            "id": "opt_in",
-            "label": "Opt-in capabilities",
-            "summary_label": "opt-in capabilities",
-            "description": "operator-curated extras",
-        },
-    ],
-    "trust_tiers": [
-        {
-            "id": "stable",
-            "label": "Stable",
-            "summary_label": "stable",
-            "description": "expected to work for users",
-            "default": True,
-        },
-        {
-            "id": "experimental",
-            "label": "Experimental",
-            "summary_label": "experimental",
-            "description": "new, flaky, or changing",
-        },
-        {
-            "id": "private",
-            "label": "Private",
-            "summary_label": "private",
-            "description": "personal/local-only workflows",
-        },
-    ],
-    "target_visibility": [
-        {
-            "id": TARGET_VISIBILITY_MODES[0],
-            "label": "Allowed catalog",
-            "summary_label": "allowed catalog",
-            "description": (
-                "Clients can see targets this Profile is allowed to use, even "
-                "when a target may be cold."
-            ),
-            "default": True,
-        },
-        {
-            "id": TARGET_VISIBILITY_MODES[1],
-            "label": "Available now",
-            "summary_label": "available now",
-            "description": (
-                "Clients only see targets the gateway believes are currently "
-                "usable under this Profile and runtime state."
-            ),
-        },
-    ],
-    "target_activation": [
-        {
-            "id": TARGET_ACTIVATION_MODES[0],
-            "label": "May activate",
-            "summary_label": "may activate",
-            "description": (
-                "Requests may load, switch, start, or queue a target when the "
-                "Profile and runtime policy allow it."
-            ),
-            "default": True,
-        },
-        {
-            "id": TARGET_ACTIVATION_MODES[1],
-            "label": "Existing only",
-            "summary_label": "existing only",
-            "description": (
-                "Requests must use already loaded/running/selected targets; "
-                "cold or disruptive switches are denied."
-            ),
-        },
-    ],
-    "status_visibility": [
-        {
-            "id": level,
-            "label": level.replace("_", " ").title(),
-            "default": level == "basic",
-        }
-        for level in VISIBILITY_LEVELS
-    ],
+_REGISTRY_DIR = Path(__file__).resolve().parent.parent / "registry"
+_PROFILE_POLICY_CATALOG_PATH = _REGISTRY_DIR / "profile_policy_catalog.yml"
+_ADMIN_SURFACES_CATALOG_NAME = "admin_surfaces.yml"
+_PROFILE_POLICY_SECTION_VALIDATORS: dict[str, frozenset[str]] = {
+    "target_visibility": frozenset(TARGET_VISIBILITY_MODES),
+    "target_activation": frozenset(TARGET_ACTIVATION_MODES),
+    "status_visibility": frozenset(VISIBILITY_LEVELS),
 }
 
 
-def admin_api_surfaces() -> list[dict[str, Any]]:
-    return copy.deepcopy(list(_API_SURFACES))
+def admin_api_surfaces(
+    *,
+    registry: Mapping[str, Any] | None = None,
+    proxy_config: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    if registry is not None and isinstance(registry.get("protocol_frontends"), Mapping):
+        protocol_frontends = registry["protocol_frontends"]
+    else:
+        protocol_frontends = service_registry.load_seed_catalogs(
+            proxy_config or {}
+        ).get("protocol_frontends", {})
+
+    surfaces = [
+        _api_surface_from_protocol_frontend(frontend)
+        for frontend in protocol_frontends.values()
+        if isinstance(frontend, Mapping)
+    ]
+    surfaces.extend(load_admin_surfaces_catalog(_catalog_path(proxy_config, _ADMIN_SURFACES_CATALOG_NAME)))
+    return surfaces
 
 
-def profile_policy_catalog() -> dict[str, list[dict[str, Any]]]:
-    return copy.deepcopy(_PROFILE_POLICY_CATALOG)
+def _catalog_path(proxy_config: Mapping[str, Any] | None, name: str) -> Path:
+    if proxy_config is None:
+        return _REGISTRY_DIR / name
+    return service_registry.catalog_dir_from_config(proxy_config) / name
+
+
+def load_admin_surfaces_catalog(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    records = raw.get("records") if isinstance(raw, Mapping) else None
+    if not isinstance(records, list):
+        return []
+    return [
+        _normalize_admin_surface(record)
+        for record in records
+        if isinstance(record, Mapping)
+    ]
+
+
+def _normalize_admin_surface(record: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "name": str(record.get("name") or "Admin API"),
+        "route_base": str(record.get("route_base") or ""),
+        "status": str(record.get("status") or "live"),
+        "profile_gates": _string_list(record.get("profile_gates")),
+        "clients": _string_list(record.get("clients")),
+        "description": str(record.get("description") or ""),
+    }
+
+
+def _api_surface_from_protocol_frontend(frontend: Mapping[str, Any]) -> dict[str, Any]:
+    protocol = str(frontend.get("protocol") or frontend.get("id") or "")
+    return {
+        "name": str(frontend.get("name") or protocol or "Protocol frontend"),
+        "route_base": _surface_route_base(frontend.get("routes")),
+        "status": "live" if frontend.get("enabled", True) else "disabled",
+        "profile_gates": [protocol] if protocol else [],
+        "clients": [],
+        "description": _surface_description(frontend),
+    }
+
+
+def _surface_route_base(routes: Any) -> str:
+    if not isinstance(routes, (list, tuple)):
+        return ""
+    for route in reversed(routes):
+        if isinstance(route, Mapping):
+            path = str(route.get("path") or "").strip()
+            if path:
+                return path
+        else:
+            path = str(route or "").strip()
+            if path:
+                return path
+    return ""
+
+
+def _surface_description(frontend: Mapping[str, Any]) -> str:
+    intents = [
+        str(intent).strip().replace(".", " ").replace("_", " ")
+        for intent in frontend.get("intents") or []
+        if str(intent).strip()
+    ]
+    if intents:
+        return "Supports " + ", ".join(intents) + "."
+    protocol = str(frontend.get("protocol") or "protocol").strip()
+    return f"{protocol.title()} protocol frontend." if protocol else "Protocol frontend."
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+@lru_cache(maxsize=1)
+def _bundled_profile_policy_catalog() -> dict[str, list[dict[str, Any]]]:
+    return load_profile_policy_catalog(_PROFILE_POLICY_CATALOG_PATH)
+
+
+def load_profile_policy_catalog(path: Path) -> dict[str, list[dict[str, Any]]]:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return _normalize_profile_policy_catalog(raw, source=path)
+
+
+def _normalize_profile_policy_catalog(
+    raw: Any,
+    *,
+    source: object = "profile policy catalog",
+) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{source} must contain a mapping of catalog sections")
+
+    catalog: dict[str, list[dict[str, Any]]] = {}
+    for section, options in raw.items():
+        if not isinstance(section, str):
+            continue
+        if not isinstance(options, list):
+            raise ValueError(f"{source}:{section} must contain a list of options")
+        catalog[section] = [
+            _normalize_profile_policy_option(section, option, source=source)
+            for option in options
+            if isinstance(option, Mapping) and option.get("id")
+        ]
+    return catalog
+
+
+def _normalize_profile_policy_option(
+    section: str,
+    option: Mapping[str, Any],
+    *,
+    source: object,
+) -> dict[str, Any]:
+    option_id = str(option.get("id") or "").strip()
+    valid_ids = _PROFILE_POLICY_SECTION_VALIDATORS.get(section)
+    if valid_ids is not None and option_id not in valid_ids:
+        raise ValueError(f"{source}:{section} contains unsupported id {option_id!r}")
+
+    normalized = dict(option)
+    normalized["id"] = option_id
+    return normalized
+
+
+def profile_policy_catalog(
+    *,
+    catalog_dir: str | Path | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    if catalog_dir is None:
+        catalog = _bundled_profile_policy_catalog()
+    else:
+        path = Path(catalog_dir) / "profile_policy_catalog.yml"
+        catalog = (
+            load_profile_policy_catalog(path)
+            if path.exists()
+            else _bundled_profile_policy_catalog()
+        )
+    return copy.deepcopy(catalog)
 
 
 def profile_policy_label_map(section: str) -> dict[str, str]:
     return {
         str(option["id"]): str(option.get("summary_label") or option.get("label"))
-        for option in _PROFILE_POLICY_CATALOG.get(section, [])
+        for option in _bundled_profile_policy_catalog().get(section, [])
         if option.get("id")
     }
 

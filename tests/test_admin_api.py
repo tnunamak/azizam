@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from gateway import extension_packages, service_registry  # noqa: E402
 from gateway.admin_api import (  # noqa: E402
     AdminAuthError,
     AdminContext,
@@ -41,6 +42,16 @@ class FakeAdminStore:
         self.runtime_mappings: dict[str, dict[str, Any]] = {}
         self.service_availability: dict[str, Any] = {}
         self.media_job_admission: dict[str, Any] = {}
+        self.service_registry: dict[str, Any] = {
+            "schema_version": 1,
+            "services": {},
+            "protocol_frontends": {},
+            "workflows": {},
+            "capabilities": {},
+        }
+        self.extension_package_index: dict[str, Any] = (
+            extension_packages.empty_extension_package_index()
+        )
         self.user_access_defaults: dict[str, bool] = {
             "self_service_apps": True,
             "auto_create_personal_app": True,
@@ -340,6 +351,72 @@ class FakeAdminStore:
             }
         )
         return dict(self.media_job_admission)
+
+    def get_service_registry(self) -> dict[str, Any]:
+        return dict(self.service_registry)
+
+    def update_service_registry(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        self.service_registry = dict(data)
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "operator.service_registry.update",
+                "target": "service_registry",
+            }
+        )
+        return dict(self.service_registry)
+
+    def get_extension_package_index(self) -> dict[str, Any]:
+        return dict(self.extension_package_index)
+
+    def validate_extension_package_source(
+        self, *, source: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        del actor
+        return extension_packages.validate_extension_package_source(source)
+
+    def enable_extension_package(
+        self, *, source: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        review = extension_packages.validate_extension_package_source(source)
+        if not review.get("ok"):
+            return {
+                "extension_package": None,
+                "review": review,
+                "service_registry": self.service_registry,
+                "extension_packages": self.extension_package_index,
+            }
+        imported = extension_packages.imported_registry_records(review)
+        self.service_registry = service_registry.merge_imported_records(
+            self.service_registry,
+            services=imported["services"],
+            protocol_frontends=imported["protocol_frontends"],
+            workflows=imported["workflows"],
+            capabilities=imported["capabilities"],
+        )
+        self.extension_package_index = extension_packages.merge_package_index(
+            self.extension_package_index,
+            review,
+            source=source,
+        )
+        package_id = review["package"]["id"]
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "operator.extension_package.enable",
+                "target": package_id,
+            }
+        )
+        return {
+            "extension_package": self.extension_package_index["packages"][package_id],
+            "review": review,
+            "service_registry": self.service_registry,
+            "extension_packages": self.extension_package_index,
+        }
 
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
         return list(self.audit[-limit:])
@@ -1041,6 +1118,198 @@ class AdminOperatorOverrideTests(unittest.TestCase):
             store.service_availability["comfyui"]["state"],
             "disabled",
         )
+
+    def test_admin_can_read_service_registry(self) -> None:
+        client, store = _make_client()
+        store.service_registry = {
+            "schema_version": 1,
+            "services": {
+                "openai": {
+                    "id": "openai",
+                    "name": "OpenAI",
+                    "kind": "provider",
+                    "source": "provisioned",
+                    "enabled": True,
+                    "capabilities": ["chat.completions"],
+                }
+            },
+            "protocol_frontends": {},
+        }
+
+        resp = client.get(
+            "/admin/api/operator/service-registry",
+            headers=_auth(),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        registry = resp.json()["service_registry"]
+        self.assertEqual(registry["services"]["openai"]["name"], "OpenAI")
+        self.assertEqual(registry["protocol_frontends"], {})
+
+    def test_admin_can_update_service_registry(self) -> None:
+        client, store = _make_client()
+
+        resp = client.put(
+            "/admin/api/operator/service-registry",
+            json={
+                "services": {
+                    "Open AI": {
+                        "name": "OpenAI",
+                        "source": "provisioned",
+                        "capabilities": ["chat.completions"],
+                        "config": {"base_url": "https://api.openai.com/v1"},
+                    }
+                },
+                "protocol_frontends": {
+                    "OpenAI API": {
+                        "name": "OpenAI-compatible API",
+                        "protocol": "openai",
+                        "routes": ["/v1/chat/completions"],
+                        "intents": ["chat.completions"],
+                        "canonical": True,
+                    }
+                },
+            },
+            headers=_auth(),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        registry = resp.json()["service_registry"]
+        self.assertEqual(sorted(registry["services"]), ["open-ai"])
+        self.assertEqual(registry["services"]["open-ai"]["id"], "open-ai")
+        self.assertEqual(
+            registry["services"]["open-ai"]["config"]["base_url"],
+            "https://api.openai.com/v1",
+        )
+        self.assertEqual(
+            registry["protocol_frontends"]["openai-api"]["routes"],
+            ["/v1/chat/completions"],
+        )
+        self.assertEqual(store.service_registry, registry)
+        self.assertIn(
+            "operator.service_registry.update",
+            [event["action"] for event in store.audit],
+        )
+
+    def test_admin_can_list_validate_and_enable_extension_package(self) -> None:
+        client, store = _make_client()
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package_dir = root / "package"
+            (package_dir / "objects").mkdir(parents=True)
+            (package_dir / "extension.yml").write_text(
+                """
+schema_version: 1
+kind: extension_package
+id: demo-package
+version: 0.1.0
+objects:
+  services:
+    - objects/service.yml
+  protocol_frontends:
+    - objects/frontend.yml
+  workflows:
+    - objects/workflow.yml
+  capabilities:
+    - objects/capability.yml
+""",
+                encoding="utf-8",
+            )
+            (package_dir / "objects" / "service.yml").write_text(
+                """
+id: demo-service
+name: Demo Service
+config:
+  base_url: http://127.0.0.1:9999
+""",
+                encoding="utf-8",
+            )
+            (package_dir / "objects" / "frontend.yml").write_text(
+                """
+id: demo-api
+name: Demo API
+protocol: demo
+routes:
+  - /demo/v1
+""",
+                encoding="utf-8",
+            )
+            (package_dir / "objects" / "workflow.yml").write_text(
+                """
+schema_version: 1
+id: image.generate.demo
+intent: image.generate
+inputs:
+  prompt:
+    type: string
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/demo.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+""",
+                encoding="utf-8",
+            )
+            (package_dir / "objects" / "capability.yml").write_text(
+                """
+kind: capability
+id: demo-capability
+intent: image.generate
+backend: comfyui
+workflow: image.generate.demo
+input_modalities: [text]
+output_modalities: [image]
+execution: job
+""",
+                encoding="utf-8",
+            )
+            source = {"type": "local_directory", "path": str(package_dir)}
+
+            list_resp = client.get("/admin/api/extensions", headers=_auth())
+            validate_resp = client.post(
+                "/admin/api/extensions/validate",
+                json={"source": source},
+                headers=_auth(),
+            )
+            enable_resp = client.post(
+                "/admin/api/extensions/enable",
+                json={"source": source},
+                headers=_auth(),
+            )
+
+        self.assertEqual(list_resp.status_code, 200, list_resp.text)
+        self.assertEqual(validate_resp.status_code, 200, validate_resp.text)
+        self.assertTrue(validate_resp.json()["review"]["ok"])
+        self.assertEqual(enable_resp.status_code, 200, enable_resp.text)
+        body = enable_resp.json()
+        self.assertEqual(body["extension_package"]["id"], "demo-package")
+        self.assertIn("demo-service", body["service_registry"]["services"])
+        self.assertIn("demo-api", body["service_registry"]["protocol_frontends"])
+        self.assertIn("image.generate.demo", body["service_registry"]["workflows"])
+        self.assertIn("demo-capability", body["service_registry"]["capabilities"])
+        self.assertIn("demo-package", store.extension_package_index["packages"])
+        self.assertIn(
+            "operator.extension_package.enable",
+            [event["action"] for event in store.audit],
+        )
+
+    def test_enable_extension_package_rejects_invalid_package(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/extensions/enable",
+            json={"source": {"type": "local_directory", "path": "/no/such/package"}},
+            headers=_auth(),
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["code"], "invalid_extension_package")
 
     def test_operator_override_write_requires_admin(self) -> None:
         client, _ = _make_client()

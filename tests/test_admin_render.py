@@ -323,6 +323,11 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(snapshot)
         self.assertIn('name="protocols" value="acme"', html)
         self.assertIn("Acme API", html)
+        simulator = html[html.index('data-simulate-policy>') : html.index('name="workflow"')]
+        self.assertIn('<option value="acme">Acme API</option>', simulator)
+        self.assertNotIn('<option value="anthropic">Anthropic Messages</option>', simulator)
+        self.assertNotIn('<option value="ollama">Ollama-compatible</option>', simulator)
+        self.assertNotIn('<option value="provider-native">Provider-native passthrough</option>', simulator)
         self.assertIn("profile-model-options", html)
         self.assertIn('<option value="default" label="Default role"></option>', html)
         self.assertIn("profile-workflow-options", html)
@@ -510,6 +515,58 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("video.generate.wan", services_section)
         self.assertIn("Wan video", services_section)
         self.assertIn("expensive", services_section)
+
+    def test_admin_dashboard_renders_extension_package_controls(self) -> None:
+        snapshot = _snapshot()
+        snapshot["extension_packages"] = {
+            "schema_version": 1,
+            "sources": [{"type": "local_directory", "path": "/opt/gateway/ext"}],
+            "packages": {
+                "runtime-package": {
+                    "name": "Runtime package",
+                    "version": "0.1.0",
+                    "enabled": True,
+                    "source": {
+                        "type": "local_directory",
+                        "path": "/opt/gateway/ext",
+                    },
+                    "object_counts": {
+                        "services": 1,
+                        "protocol_frontends": 1,
+                        "workflows": 1,
+                        "capabilities": 1,
+                    },
+                    "services": ["runtime-service"],
+                    "protocol_frontends": ["runtime-api"],
+                    "workflows": ["image.generate.runtime"],
+                    "capabilities": ["runtime-capability"],
+                    "warnings": ["objects.models is deferred"],
+                }
+            },
+            "updated_at": 1,
+        }
+        html = render_admin_dashboard(snapshot)
+        services_section = html[html.index('id="services"') : html.index('id="apis"')]
+
+        self.assertIn(">Extension Packages</h3>", services_section)
+        self.assertIn("Runtime package", services_section)
+        self.assertIn("runtime-package", services_section)
+        self.assertIn("/opt/gateway/ext", services_section)
+        self.assertIn("runtime-service", services_section)
+        self.assertIn("runtime-api", services_section)
+        self.assertIn("image.generate.runtime", services_section)
+        self.assertIn("runtime-capability", services_section)
+        self.assertIn("objects.models is deferred", services_section)
+        self.assertIn('data-extension-package', services_section)
+        self.assertIn('action="/admin/api/extensions/validate"', services_section)
+        self.assertIn('data-enable-action="/admin/api/extensions/enable"', services_section)
+        self.assertIn('name="source_type"', services_section)
+        self.assertIn('name="path"', services_section)
+        self.assertIn('name="url"', services_section)
+        self.assertIn('name="ref"', services_section)
+        self.assertIn('name="subdir"', services_section)
+        self.assertIn("extensionForm", html)
+        self.assertIn("const source={type}", html)
 
     def test_admin_dashboard_renders_config_sources(self) -> None:
         snapshot = _snapshot()

@@ -60,6 +60,8 @@ from gateway import (
     media_jobs,
     receipt_store,
     resource_admission_http,
+    route_registry,
+    service_registry,
     video_media_job_http,
     video_media_jobs,
 )
@@ -208,6 +210,57 @@ def load_config() -> dict:
 
 
 config = load_config()
+
+
+def _configured_admin_db_path(admin_config: Mapping[str, Any] | None = None) -> Path:
+    admin_config = admin_config or {}
+    raw = (
+        os.environ.get("AI_GATEWAY_ADMIN_DB")
+        or os.environ.get("OPENAI_PROXY_ADMIN_DB")
+        or admin_config.get("db_path")
+        or "data/admin.db"
+    )
+    path = Path(str(raw))
+    if path.is_absolute():
+        return path
+    return Path(__file__).parent / path
+
+
+auth_cfg = config.get("auth", {})
+admin_cfg = config.get("admin", {}) or {}
+user_defaults_cfg = admin_cfg.get("user_defaults") or {}
+if not isinstance(user_defaults_cfg, Mapping):
+    user_defaults_cfg = {}
+
+ADMIN_DB_PATH = _configured_admin_db_path(admin_cfg)
+
+
+def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, Any]:
+    """Overlay DB-owned service registry onto bootstrap config."""
+
+    try:
+        admin_store.init_db(ADMIN_DB_PATH)
+        registry = service_registry.ensure_service_registry(
+            raw_config,
+            path=ADMIN_DB_PATH,
+            actor="startup",
+        )
+        return service_registry.apply_service_registry_to_config(raw_config, registry)
+    except Exception as e:  # noqa: BLE001
+        print(
+            "[proxy] WARNING: service registry unavailable; "
+            f"falling back to bootstrap config for this process: {e}",
+            flush=True,
+        )
+        return copy.deepcopy(dict(raw_config))
+
+
+config = _load_effective_runtime_config(config)
+auth_cfg = config.get("auth", {})
+admin_cfg = config.get("admin", {}) or {}
+user_defaults_cfg = admin_cfg.get("user_defaults") or {}
+if not isinstance(user_defaults_cfg, Mapping):
+    user_defaults_cfg = {}
 
 
 def bool_from_config(value, default: bool) -> bool:
@@ -378,35 +431,32 @@ MODELS_CATALOG = _normalize_models_catalog(config.get("models"))
 
 # TTS backend
 tts_cfg = config.get("backends", {}).get("tts", {})
-TTS_ENABLED = os.environ.get("TTS_ENABLED", "true").lower() in ("true", "1", "yes")
-TTS_HOST = os.environ.get("TTS_HOST", f"http://{tts_cfg.get('host', '127.0.0.1')}:{tts_cfg.get('port', 8880)}")
-TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", tts_cfg.get("timeout", 120)))
+TTS_ENABLED = bool_from_config(tts_cfg.get("enabled"), True)
+TTS_HOST = f"http://{tts_cfg.get('host', '127.0.0.1')}:{tts_cfg.get('port', 8880)}"
+TTS_TIMEOUT = int(tts_cfg.get("timeout", 120))
 
 # STT backend
 stt_cfg = config.get("backends", {}).get("stt", {})
-STT_ENABLED = os.environ.get("STT_ENABLED", "true").lower() in ("true", "1", "yes")
-STT_HOST = os.environ.get("STT_HOST", f"http://{stt_cfg.get('host', '127.0.0.1')}:{stt_cfg.get('port', 5092)}")
-STT_TIMEOUT = int(os.environ.get("STT_TIMEOUT", stt_cfg.get("timeout", 120)))
+STT_ENABLED = bool_from_config(stt_cfg.get("enabled"), True)
+STT_HOST = f"http://{stt_cfg.get('host', '127.0.0.1')}:{stt_cfg.get('port', 5092)}"
+STT_TIMEOUT = int(stt_cfg.get("timeout", 120))
 
 # Embeddings backend
 embeddings_cfg = config.get("backends", {}).get("embeddings", {})
 EMBEDDINGS_ENABLED = bool_from_config(
-    os.environ.get("EMBEDDINGS_ENABLED", embeddings_cfg.get("enabled")),
+    embeddings_cfg.get("enabled"),
     bool(embeddings_cfg),
 )
-EMBEDDINGS_HOST = os.environ.get(
-    "EMBEDDINGS_HOST",
-    f"http://{embeddings_cfg.get('host', '127.0.0.1')}:{embeddings_cfg.get('port', 5061)}",
-)
+EMBEDDINGS_HOST = f"http://{embeddings_cfg.get('host', '127.0.0.1')}:{embeddings_cfg.get('port', 5061)}"
 EMBEDDINGS_HEALTH_ENDPOINT = embeddings_cfg.get("health_endpoint", "/health")
 EMBEDDINGS_TIMEOUT = int(os.environ.get("EMBEDDINGS_TIMEOUT", embeddings_cfg.get("timeout", 120)))
 EMBEDDINGS_BACKEND_MODEL = embeddings_cfg.get("model_id", "nomic-embed-text-v1.5")
 
 # ComfyUI backend
 comfy_cfg = config.get("backends", {}).get("comfyui", {})
-COMFY_ENABLED = os.environ.get("COMFY_ENABLED", "true").lower() in ("true", "1", "yes")
-COMFY_HOST = os.environ.get("COMFY_HOST", f"http://{comfy_cfg.get('host', '127.0.0.1')}:{comfy_cfg.get('port', 7890)}")
-COMFY_TIMEOUT = int(os.environ.get("COMFY_TIMEOUT", comfy_cfg.get("timeout", 300)))
+COMFY_ENABLED = bool_from_config(comfy_cfg.get("enabled"), True)
+COMFY_HOST = f"http://{comfy_cfg.get('host', '127.0.0.1')}:{comfy_cfg.get('port', 7890)}"
+COMFY_TIMEOUT = int(comfy_cfg.get("timeout", 300))
 _workflows_dir_cfg = comfy_cfg.get("workflows_dir", "./workflows/images")
 COMFY_WORKFLOWS_DIR = Path(_workflows_dir_cfg)
 if not COMFY_WORKFLOWS_DIR.is_absolute():
@@ -2885,7 +2935,16 @@ def load_comfy_workflow(model_name: str) -> Optional[dict]:
     """
     workflow_path = COMFY_WORKFLOWS_DIR / f"{model_name}.json"
     if not workflow_path.exists():
+        workflow_path = _comfy_workflow_artifact_path_for_model(model_name)
+    if not workflow_path.exists():
         return None
+    workflow = _load_comfy_workflow_file(workflow_path)
+    if workflow is None:
+        return None
+    return workflow
+
+
+def _load_comfy_workflow_file(workflow_path: Path) -> Optional[dict]:
     with open(workflow_path) as f:
         workflow = json.load(f)
     errors = validate_comfyui_workflow_graph(workflow)
@@ -2899,6 +2958,45 @@ def load_comfy_workflow(model_name: str) -> Optional[dict]:
     if ui is not None:
         workflow["__ui_workflow__"] = ui
     return workflow
+
+
+def _comfy_workflow_artifact_path_for_model(model_name: str) -> Path:
+    try:
+        registry = GATEWAY_WORKFLOW_REGISTRY
+    except NameError:
+        return COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+    for record in registry.records():
+        bindings = record.manifest.get("bindings")
+        if not isinstance(bindings, Mapping):
+            continue
+        comfy = bindings.get("comfyui")
+        if not isinstance(comfy, Mapping):
+            continue
+        artifact = comfy.get("workflow")
+        if not isinstance(artifact, str) or not artifact:
+            continue
+        if Path(artifact.replace("package://", "")).stem != model_name:
+            continue
+        return _resolve_workflow_artifact_path(record, artifact)
+    return COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+
+
+def _resolve_workflow_artifact_path(record: Any, artifact: str) -> Path:
+    if artifact.startswith("package://"):
+        artifact = artifact.removeprefix("package://").lstrip("/")
+    path = Path(artifact)
+    if path.is_absolute():
+        return path
+
+    project_relative = (Path(__file__).resolve().parent / path).resolve()
+    if project_relative.exists():
+        return project_relative
+
+    source_path = Path(getattr(record, "source_path", "") or "")
+    if str(source_path):
+        base = source_path if source_path.is_dir() else source_path.parent
+        return (base / path).resolve()
+    return project_relative
 
 
 async def check_comfy_health() -> bool:
@@ -7645,42 +7743,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+_PROTOCOL_ROUTE_REGISTRY = (
+    service_registry.load_service_registry(path=ADMIN_DB_PATH)
+    or service_registry.build_service_registry_seed(config)
+)
 CANONICAL_PROTOCOL_ROUTE_ALIASES: tuple[dict[str, object], ...] = (
-    {"methods": ("GET",), "canonical": "/v1/models", "alias": "/openai/v1/models"},
-    {"methods": ("GET",), "canonical": "/v1/voices", "alias": "/openai/v1/voices"},
-    {"methods": ("GET",), "canonical": "/v1/audio/voices", "alias": "/openai/v1/audio/voices"},
-    {"methods": ("POST",), "canonical": "/v1/audio/speech", "alias": "/openai/v1/audio/speech"},
-    {"methods": ("POST",), "canonical": "/v1/audio/transcriptions", "alias": "/openai/v1/audio/transcriptions"},
-    {"methods": ("POST",), "canonical": "/v1/audio/translations", "alias": "/openai/v1/audio/translations"},
-    {"methods": ("POST",), "canonical": "/v1/audio/generate", "alias": "/openai/v1/audio/generate"},
-    {"methods": ("GET",), "canonical": "/v1/audio/models", "alias": "/openai/v1/audio/models"},
-    {"methods": ("POST",), "canonical": "/v1/images/generations", "alias": "/openai/v1/images/generations"},
-    {"methods": ("POST",), "canonical": "/v1/images/edits", "alias": "/openai/v1/images/edits"},
-    {"methods": ("GET",), "canonical": "/v1/images/{image_id}/content", "alias": "/openai/v1/images/{image_id}/content"},
-    {"methods": ("GET",), "canonical": "/v1/assets/{asset_id}/content", "alias": "/openai/v1/assets/{asset_id}/content"},
-    {"methods": ("POST",), "canonical": "/v1/videos", "alias": "/openai/v1/videos"},
-    {"methods": ("GET",), "canonical": "/v1/videos/{video_id}", "alias": "/openai/v1/videos/{video_id}"},
-    {"methods": ("GET",), "canonical": "/v1/videos/{video_id}/content", "alias": "/openai/v1/videos/{video_id}/content"},
-    {"methods": ("POST",), "canonical": "/v1/responses", "alias": "/openai/v1/responses"},
-    {"methods": ("GET",), "canonical": "/v1/responses/{response_id}", "alias": "/openai/v1/responses/{response_id}"},
-    {"methods": ("DELETE",), "canonical": "/v1/responses/{response_id}", "alias": "/openai/v1/responses/{response_id}"},
-    {"methods": ("POST",), "canonical": "/v1/chat/completions", "alias": "/openai/v1/chat/completions"},
-    {"methods": ("POST",), "canonical": "/v1/completions", "alias": "/openai/v1/completions"},
-    {"methods": ("POST",), "canonical": "/v1/embeddings", "alias": "/openai/v1/embeddings"},
-    {"methods": ("POST",), "canonical": "/v1/messages", "alias": "/anthropic/v1/messages"},
-    {"methods": ("POST",), "canonical": "/api/chat", "alias": "/ollama/api/chat"},
-    {"methods": ("POST",), "canonical": "/api/generate", "alias": "/ollama/api/generate"},
-    {"methods": ("POST",), "canonical": "/api/embed", "alias": "/ollama/api/embed"},
-    {"methods": ("POST",), "canonical": "/api/embeddings", "alias": "/ollama/api/embeddings"},
-    {"methods": ("GET",), "canonical": "/api/tags", "alias": "/ollama/api/tags"},
-    {"methods": ("POST",), "canonical": "/api/show", "alias": "/ollama/api/show"},
-    {"methods": ("GET",), "canonical": "/api/ps", "alias": "/ollama/api/ps"},
-    {"methods": ("GET",), "canonical": "/api/version", "alias": "/ollama/api/version"},
-    {"methods": ("POST",), "canonical": "/api/create", "alias": "/ollama/api/create"},
-    {"methods": ("POST",), "canonical": "/api/copy", "alias": "/ollama/api/copy"},
-    {"methods": ("POST",), "canonical": "/api/pull", "alias": "/ollama/api/pull"},
-    {"methods": ("POST",), "canonical": "/api/push", "alias": "/ollama/api/push"},
-    {"methods": ("DELETE",), "canonical": "/api/delete", "alias": "/ollama/api/delete"},
+    route_registry.canonical_protocol_route_aliases(
+        registry=_PROTOCOL_ROUTE_REGISTRY,
+        proxy_config=config,
+    )
 )
 
 _MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workflows"
@@ -7689,6 +7760,12 @@ _MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workf
 def _load_gateway_workflow_registry() -> WorkflowRegistry:
     try:
         registry = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR)
+        admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+        if admin_registry is not None:
+            for record in service_registry.workflow_records_from_registry(admin_registry):
+                if registry.get(record.id) is not None:
+                    continue
+                registry.add_manifest(record.manifest, source_path=record.source_path)
         if registry.errors:
             print(
                 f"[proxy] Gateway workflow registry loaded with {len(registry.errors)} error(s)",
@@ -8057,6 +8134,13 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
                 ))
             except Exception:
                 continue
+
+    try:
+        admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+        if admin_registry is not None:
+            capabilities.extend(service_registry.capabilities_from_registry(admin_registry))
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Registry capabilities unavailable: {e}", flush=True)
 
     return [
         _capability_for_profile(capability, auth_context)
@@ -8631,7 +8715,7 @@ async def user_portal_revoke_key(credential_id: str, request: Request):
 
 
 def _admin_api_surfaces() -> list[dict[str, Any]]:
-    return admin_api_surfaces()
+    return admin_api_surfaces(registry=ADMIN_STORE.get_service_registry())
 
 
 def _status_by_service_name(status_payload: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
@@ -8711,6 +8795,9 @@ def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dic
             {
                 "key": key,
                 "name": name,
+                "source": raw.get("service_source") or raw.get("source") or "ui",
+                "editable": bool_from_config(raw.get("editable"), True),
+                "priority": raw.get("priority"),
                 "role": role,
                 "capabilities": raw.get("capabilities") or [],
                 "status": live_status,
@@ -8757,6 +8844,7 @@ def _admin_config_sources(
         manifest_rows=manifest_sources,
         admin_db_summary=admin_summary,
         admin_db_oidc=oidc_db_setting,
+        admin_db_service_registry=ADMIN_STORE.get_service_registry(),
     )
 
 
@@ -10319,13 +10407,19 @@ def _public_base_url(request: Request) -> str | None:
 @app.get("/.well-known/ai-gateway", include_in_schema=False)
 async def well_known_ai_gateway(request: Request):
     """Unauthenticated agent-client discovery for this AI gateway."""
-    return build_gateway_discovery_metadata(base_url=_public_base_url(request))
+    return build_gateway_discovery_metadata(
+        base_url=_public_base_url(request),
+        registry=ADMIN_STORE.get_service_registry(),
+    )
 
 
 @app.get("/.well-known/openai-proxy", include_in_schema=False)
 async def well_known_openai_proxy(request: Request):
     """Alias of /.well-known/ai-gateway for OpenAI-style SDK clients."""
-    return build_gateway_discovery_metadata(base_url=_public_base_url(request))
+    return build_gateway_discovery_metadata(
+        base_url=_public_base_url(request),
+        registry=ADMIN_STORE.get_service_registry(),
+    )
 
 
 @app.get("/.well-known/skills", include_in_schema=False)
@@ -10555,133 +10649,18 @@ def _policy_denied_response(decision: PolicyDecision) -> Response:
     )
 
 
-_RUNTIME_ROUTE_POLICY: dict[str, dict[str, Any]] = {
-    "/v1/audio/speech": {
-        "protocol": "openai.audio",
-        "intent": INTENT_SPEECH,
-        "backend": "tts",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "interactive",
-    },
-    "/v1/audio/transcriptions": {
-        "protocol": "openai.audio",
-        "intent": INTENT_TRANSCRIPTIONS,
-        "backend": "stt",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "interactive",
-    },
-    "/v1/audio/translations": {
-        "protocol": "openai.audio",
-        "intent": INTENT_TRANSLATIONS,
-        "backend": "stt",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "interactive",
-    },
-    "/v1/audio/generate": {
-        "protocol": "openai.audio",
-        "intent": INTENT_AUDIO_GENERATE,
-        "backend": "comfyui",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "batch",
-    },
-    "/v1/audio/models": {
-        "protocol": "openai.audio",
-        "intent": "models.list",
-    },
-    "/v1/audio/voices": {
-        "protocol": "openai.audio",
-        "intent": INTENT_SPEECH,
-        "backend": "tts",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "interactive",
-    },
-    "/v1/voices": {
-        "protocol": "openai.audio",
-        "intent": INTENT_SPEECH,
-        "backend": "tts",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "interactive",
-    },
-    "/gateway/v1/media/jobs/{job_id}/content": {
-        "protocol": "openai.images",
-        "intent": "image.generate",
-        "backend": "comfyui",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "batch",
-    },
-    "/v1/images/{image_id}/content": {
-        "protocol": "openai.images",
-        "intent": "image.generate",
-        "backend": "comfyui",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "batch",
-    },
-    "/v1/assets/{asset_id}/content": {
-        "protocol": "openai.images",
-        "intent": "image.generate",
-        "backend": "comfyui",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "batch",
-    },
-    "/v1/videos": {
-        "protocol": "openai.video",
-        "intent": INTENT_VIDEO_GENERATE,
-        "backend": "comfyui",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "expensive",
-    },
-    "/v1/videos/{video_id}": {
-        "protocol": "openai.video",
-        "intent": INTENT_VIDEO_GENERATE,
-        "backend": "comfyui",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "expensive",
-    },
-    "/v1/videos/{video_id}/content": {
-        "protocol": "openai.video",
-        "intent": INTENT_VIDEO_GENERATE,
-        "backend": "comfyui",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "expensive",
-    },
-    "/v1/models": {
-        "protocol": "openai.models",
-        "intent": "models.list",
-    },
-}
+_RUNTIME_ROUTE_POLICY: dict[str, dict[str, Any]] = route_registry.runtime_route_policy(
+    registry=_PROTOCOL_ROUTE_REGISTRY,
+    proxy_config=config,
+)
 
 
-_ASSET_CONTENT_ROUTE_POLICY_BY_KIND: dict[str, dict[str, Any]] = {
-    "img": _RUNTIME_ROUTE_POLICY["/v1/assets/{asset_id}/content"],
-    "aud": {
-        "protocol": "openai.audio",
-        "intent": INTENT_AUDIO_GENERATE,
-        "backend": "comfyui",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "batch",
-    },
-    "vid": {
-        "protocol": "openai.video",
-        "intent": INTENT_VIDEO_GENERATE,
-        "backend": "comfyui",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "expensive",
-    },
-}
+_ASSET_CONTENT_ROUTE_POLICY_BY_KIND: dict[str, dict[str, Any]] = (
+    route_registry.asset_content_route_policy_by_kind(
+        registry=_PROTOCOL_ROUTE_REGISTRY,
+        proxy_config=config,
+    )
+)
 
 
 def _asset_content_route_policy(asset_id: str) -> dict[str, Any] | None:
@@ -11453,23 +11432,17 @@ def _attach_image_manifest_if_available(
 
 
 def _find_image_manifest(intent: str, resolved_model: str) -> dict[str, Any] | None:
-    manifests_dir = _MANIFEST_WORKFLOWS_DIR
-    if not manifests_dir.is_dir():
-        return None
     candidate_ids = {
         f"{intent}.{resolved_model}",
         f"{intent}.{resolved_model.removesuffix('-edit')}",
     }
-    for path in sorted(manifests_dir.glob("*.yml")):
-        try:
-            manifest = load_workflow_manifest(path)
-        except (ManifestError, OSError, ValueError):
-            continue
+    for record in GATEWAY_WORKFLOW_REGISTRY.records():
+        manifest = record.manifest
         mid = str(manifest.get("id") or "")
         if manifest.get("intent") != intent:
             continue
         if mid in candidate_ids or mid.endswith(f".{resolved_model}"):
-            return manifest
+            return copy.deepcopy(dict(manifest))
     return None
 
 
@@ -12336,9 +12309,9 @@ def _media_job_content_route_policy(job: Mapping[str, Any]) -> dict[str, Any] | 
     if intent == "image.generate":
         return _RUNTIME_ROUTE_POLICY["/gateway/v1/media/jobs/{job_id}/content"]
     if intent in _AUDIO_MEDIA_JOB_INTENTS:
-        return _audio_media_job_policy()
+        return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get("aud")
     if intent == INTENT_VIDEO_GENERATE:
-        return _RUNTIME_ROUTE_POLICY["/v1/videos/{video_id}/content"]
+        return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get("vid")
     return None
 
 
@@ -12834,14 +12807,7 @@ _audio_media_job_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
 
 
 def _audio_media_job_policy() -> dict[str, Any]:
-    return {
-        "protocol": "openai.audio",
-        "intent": INTENT_AUDIO_GENERATE,
-        "backend": "comfyui",
-        "capability_exposure": "default",
-        "capability_trust_tier": "stable",
-        "capability_resource_tier": "batch",
-    }
+    return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND["aud"]
 
 
 def _audio_generation_body_from_media_job_payload(
@@ -13197,7 +13163,7 @@ _VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS = 5.0
 
 
 def _video_media_job_policy() -> dict[str, Any]:
-    return _RUNTIME_ROUTE_POLICY["/v1/videos"]
+    return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND["vid"]
 
 
 def _video_generation_body_from_media_job_payload(
@@ -14302,12 +14268,6 @@ if not AUDIO_WORKFLOWS_DIR.is_absolute():
     AUDIO_WORKFLOWS_DIR = (Path(__file__).parent / _AUDIO_WORKFLOWS_DIR_CFG).resolve()
 AUDIO_WORKFLOWS_CFG = (_audio_cfg.get("workflows", {}) or {})
 AUDIO_ALIASES = (_audio_cfg.get("aliases", {}) or {})
-_AUDIO_MANIFESTS_DIR = Path(__file__).resolve().parent / "manifests" / "workflows"
-AUDIO_MANIFESTS_BY_WORKFLOW = {
-    "ace-step-1.5-2b-base": _AUDIO_MANIFESTS_DIR / "ace-step-1.5-2b-base.yml",
-    "ace-step-1.5-xl-turbo": _AUDIO_MANIFESTS_DIR / "ace-step-1.5-xl-turbo.yml",
-    "tangoflux": _AUDIO_MANIFESTS_DIR / "tangoflux.yml",
-}
 
 
 def _resolve_audio_workflow(model: str) -> tuple:
@@ -14346,10 +14306,21 @@ def _load_audio_workflow_file(workflow_cfg: dict):
 
 
 def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
-    manifest_path = AUDIO_MANIFESTS_BY_WORKFLOW.get(workflow_name)
-    if manifest_path is None:
-        return None
-    return load_workflow_manifest(manifest_path)
+    for record in GATEWAY_WORKFLOW_REGISTRY.records():
+        if not record.intent.startswith(("audio.", "music.", "sfx.")):
+            continue
+        if record.id == workflow_name or record.id.endswith(f".{workflow_name}"):
+            return copy.deepcopy(dict(record.manifest))
+        bindings = record.manifest.get("bindings")
+        if not isinstance(bindings, Mapping):
+            continue
+        comfy = bindings.get("comfyui")
+        if not isinstance(comfy, Mapping):
+            continue
+        artifact = comfy.get("workflow")
+        if isinstance(artifact, str) and Path(artifact).stem == workflow_name:
+            return copy.deepcopy(dict(record.manifest))
+    return None
 
 
 def _audio_extension_error_response(message: str, *, param: str = "extensions") -> Response:
@@ -16574,11 +16545,10 @@ _OPENAI_COMPAT_JSON_BODY_OPENAPI = {
     },
 }
 
-_OPENAI_PROXY_POLICY = {
-    "/v1/chat/completions": ("openai.chat", "chat.completions"),
-    "/v1/completions": ("openai.chat", "text.completions"),
-    "/v1/embeddings": ("openai.embeddings", "text.embeddings"),
-}
+_OPENAI_PROXY_POLICY = route_registry.openai_proxy_policy(
+    registry=_PROTOCOL_ROUTE_REGISTRY,
+    proxy_config=config,
+)
 
 _INTERNAL_PROTOCOL_FORWARD_HEADER = "x-vivid-fish-internal-protocol-forward"
 _INTERNAL_PROTOCOL_FORWARD_SECRET = secrets.token_urlsafe(32)
@@ -16836,28 +16806,7 @@ def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:
     return "".join(out_lines).encode("utf-8") if changed else chunk
 
 
-_PROVIDER_NATIVE_STATIC_HOSTS = {
-    "tabby": TABBY_HOST,
-    "kobold": KOBOLD_HOST,
-    "tts": TTS_HOST,
-    "stt": STT_HOST,
-    "comfyui": COMFY_HOST,
-}
-
-_PROVIDER_NATIVE_ENABLED = {
-    "tabby": True,
-    "kobold": True,
-    "tts": TTS_ENABLED,
-    "stt": STT_ENABLED,
-    "comfyui": COMFY_ENABLED,
-}
-
-_PROVIDER_NATIVE_EXCLUDED = {"openai-proxy", "self", "gateway", "proxy"}
-
-
 def _provider_native_host_from_config(provider: str, cfg: Mapping[str, Any]) -> str:
-    if provider in _PROVIDER_NATIVE_STATIC_HOSTS:
-        return _PROVIDER_NATIVE_STATIC_HOSTS[provider]
     raw_url = str(cfg.get("url") or cfg.get("base_url") or "").strip()
     if raw_url:
         return raw_url.rstrip("/")
@@ -16873,13 +16822,11 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
     targets: dict[str, dict[str, Any]] = {}
     for raw_name, raw_cfg in (config.get("backends") or {}).items():
         provider = str(raw_name).strip().lower()
-        if not provider or provider in _PROVIDER_NATIVE_EXCLUDED:
+        if not provider or not isinstance(raw_cfg, Mapping):
             continue
-        if not isinstance(raw_cfg, Mapping):
+        if not bool_from_config(raw_cfg.get("enabled"), True):
             continue
-        if raw_cfg.get("native_passthrough") is False:
-            continue
-        if _PROVIDER_NATIVE_ENABLED.get(provider, True) is False:
+        if raw_cfg.get("native_passthrough") is not True:
             continue
         host = _provider_native_host_from_config(provider, raw_cfg)
         if not host:
@@ -16888,7 +16835,7 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
             "backend": provider,
             "service": str(raw_cfg.get("downstream_service") or provider),
             "host": host,
-            "enabled": bool(_PROVIDER_NATIVE_ENABLED.get(provider, True)),
+            "enabled": True,
             "timeout": float(raw_cfg.get("timeout") or UPSTREAM_READ_TIMEOUT),
         }
     return targets
