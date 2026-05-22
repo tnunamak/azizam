@@ -56,6 +56,7 @@ import responses_translator
 from gateway import (
     admin_store,
     audio_media_jobs,
+    default_profiles,
     media_jobs,
     receipt_store,
     resource_admission_http,
@@ -7535,6 +7536,16 @@ async def lifespan(app: FastAPI):
             print(
                 "[proxy] WARNING: No active App credentials in admin.db; "
                 "proxied requests will be rejected",
+                flush=True,
+            )
+        seeded_profiles = default_profiles.seed_default_profiles(
+            path=ADMIN_STORE.path
+        )
+        if seeded_profiles:
+            print(
+                f"[proxy] Seeded {len(seeded_profiles)} default profile(s) "
+                f"into admin.db: "
+                f"{', '.join(row['name'] for row in seeded_profiles)}",
                 flush=True,
             )
         seeded_defaults = _seed_user_defaults_from_bootstrap_config()
