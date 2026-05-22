@@ -1297,9 +1297,13 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         # OIDC is disabled by default in this fixture (no _enable_oidc()).
         response = self.client.get("/setup")
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertIn("Claim this gateway from this machine", response.text)
+        # The primary first-run path is the web local-owner form, not the
+        # host-side CLI recipe.
+        self.assertIn("Create the local owner account", response.text)
+        self.assertIn('action="/setup/local-owner"', response.text)
+        # CLI recovery is still reachable but now lives inside a <details>
+        # disclosure, never as the headline action.
         self.assertIn("generate-admin-key owner-cli", response.text)
-        self.assertIn("oak_ admin key", response.text)
         # No "claim owner" CTA, no /login link.
         self.assertNotIn("Sign in to claim owner", response.text)
         self.assertIn('method="post" action="/setup/claim"', response.text)
@@ -1500,6 +1504,198 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 403, created.text)
         self.assertIn("setup form expired", created.text)
+
+    def test_setup_local_owner_create_claims_gateway_and_opens_session(self) -> None:
+        response = self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "owner@example.com",
+                "password": "correct-horse-battery",
+                "password_confirm": "correct-horse-battery",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(response.headers["location"], "/setup")
+        self.assertIn(
+            proxy.ADMIN_AUTH.cookie.name, response.headers.get("set-cookie", "")
+        )
+
+        users = admin_store.list_users(path=self.db)
+        self.assertEqual(len(users), 1)
+        self.assertEqual(users[0]["email"], "owner@example.com")
+        self.assertEqual(users[0]["issuer"], "local")
+
+        roles = admin_store.list_admin_roles(
+            subject_kind="user",
+            subject_id=users[0]["id"],
+            path=self.db,
+        )
+        self.assertEqual([row["role"] for row in roles], ["owner"])
+
+        verifier = admin_store.get_local_password_verifier(
+            users[0]["id"], path=self.db
+        )
+        self.assertIsNotNone(verifier)
+        # The persisted verifier is never the plaintext password.
+        self.assertNotIn("correct-horse-battery", str(verifier))
+
+        setup = self.client.get("/setup")
+        self.assertIn("Setup complete", setup.text)
+        # The signed-in landing shows the connect-a-client card.
+        self.assertIn("Connect a client", setup.text)
+        try:
+            self.client.cookies.clear()
+        except Exception:
+            pass
+
+    def test_setup_local_owner_create_rejects_mismatched_passwords(self) -> None:
+        response = self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "owner@example.com",
+                "password": "correct-horse-battery",
+                "password_confirm": "wrong-confirm-value",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("did not match", response.text)
+        # The submitted email is preserved so the operator doesn't retype it.
+        self.assertIn("owner@example.com", response.text)
+        self.assertEqual(admin_store.list_users(path=self.db), [])
+
+    def test_setup_local_owner_create_rejects_short_passwords(self) -> None:
+        response = self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "owner@example.com",
+                "password": "short",
+                "password_confirm": "short",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("at least", response.text)
+
+    def test_setup_local_owner_create_blocked_once_owner_exists(self) -> None:
+        create_admin_service_account_key("real-owner", path=self.db)
+        response = self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "second-owner@example.com",
+                "password": "correct-horse-battery",
+                "password_confirm": "correct-horse-battery",
+            },
+            follow_redirects=False,
+        )
+        # Idempotent: we 303 back to /setup rather than letting a second
+        # operator silently mint a second owner during first-run.
+        self.assertEqual(response.status_code, 303, response.text)
+        users = admin_store.list_users(path=self.db)
+        self.assertNotIn(
+            "second-owner@example.com",
+            {user["email"] for user in users},
+        )
+
+    def test_setup_local_login_signs_returning_owner_back_in(self) -> None:
+        create = self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "owner@example.com",
+                "password": "correct-horse-battery",
+                "password_confirm": "correct-horse-battery",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(create.status_code, 303, create.text)
+        # Drop the session cookie so we hit the "owner exists, viewer not
+        # signed in" branch on /setup.
+        self.client.cookies.clear()
+
+        setup = self.client.get("/setup")
+        self.assertEqual(setup.status_code, 200, setup.text)
+        self.assertIn('action="/setup/local-login"', setup.text)
+
+        signin = self.client.post(
+            "/setup/local-login",
+            data={
+                "email": "owner@example.com",
+                "password": "correct-horse-battery",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(signin.status_code, 303, signin.text)
+        self.assertIn(
+            proxy.ADMIN_AUTH.cookie.name, signin.headers.get("set-cookie", "")
+        )
+        landed = self.client.get("/setup")
+        self.assertIn("Setup complete", landed.text)
+        self.assertIn("Signed in as", landed.text)
+        self.client.cookies.clear()
+
+    def test_setup_local_login_rejects_wrong_password(self) -> None:
+        self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "owner@example.com",
+                "password": "correct-horse-battery",
+                "password_confirm": "correct-horse-battery",
+            },
+            follow_redirects=False,
+        )
+        self.client.cookies.clear()
+
+        bad = self.client.post(
+            "/setup/local-login",
+            data={
+                "email": "owner@example.com",
+                "password": "definitely-not-it",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(bad.status_code, 401, bad.text)
+        self.assertIn("did not match", bad.text)
+        # The prompt does not leak whether the email exists; same generic
+        # error for both wrong-email and wrong-password.
+        missing = self.client.post(
+            "/setup/local-login",
+            data={
+                "email": "ghost@example.com",
+                "password": "definitely-not-it",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(missing.status_code, 401, missing.text)
+        self.assertIn("did not match", missing.text)
+
+    def test_session_signing_key_persists_without_env_var(self) -> None:
+        # The happy first-run path: no env var, no proxy_config secret —
+        # _admin_session_signing_key() should still return a stable, on-disk
+        # key so /setup can issue and verify the browser cookie.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            db_path = tmp_path / "admin.db"
+            old_db_path = proxy.ADMIN_DB_PATH
+
+            def fake_db_path() -> Path:
+                return db_path
+
+            with patch.object(proxy, "_admin_db_path", fake_db_path), patch.object(
+                proxy, "_admin_session_signing_key_from_config", lambda: None
+            ):
+                first = proxy._admin_session_signing_key()
+                second = proxy._admin_session_signing_key()
+            self.assertIsNotNone(first)
+            self.assertGreaterEqual(len(first), 32)
+            self.assertEqual(first, second)
+            self.assertTrue((tmp_path / "admin_session_key").exists())
+            # File permissions are owner-only on platforms that honor chmod.
+            mode = (tmp_path / "admin_session_key").stat().st_mode & 0o777
+            self.assertEqual(mode, 0o600)
+            # Sanity: restoring the real db path doesn't matter because we
+            # patched _admin_db_path, but make the test independent anyway.
+            self.assertEqual(old_db_path, proxy.ADMIN_DB_PATH)
 
     def test_signed_in_admin_sees_actor_label_and_sign_out_on_setup(self) -> None:
         # Stand up a real owner + sign-in cookie, then verify /setup shows

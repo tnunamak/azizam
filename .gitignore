@@ -38,6 +38,8 @@ data/admin.db
 data/admin.db-wal
 data/admin.db-shm
 data/admin.db.broken-*
+data/admin_session_key
+data/admin_session_key.tmp
 
 # GPU incident snapshots — ephemeral diagnostic captures written by
 # ~/.local/bin/gpu-incident-watcher

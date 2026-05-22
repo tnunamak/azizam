@@ -168,6 +168,14 @@ CREATE TABLE IF NOT EXISTS runtime_profile_mappings (
 CREATE INDEX IF NOT EXISTS runtime_profile_mappings_lookup
   ON runtime_profile_mappings(source_kind, source_value, disabled_at);
 
+CREATE TABLE IF NOT EXISTS local_password_credentials (
+  user_id TEXT PRIMARY KEY,
+  verifier TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS operator_settings (
   key TEXT PRIMARY KEY,
   value_json TEXT NOT NULL,
@@ -367,6 +375,110 @@ def list_users(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
             "SELECT * FROM users ORDER BY created_at ASC"
         ).fetchall()
     return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
+
+
+def find_user_by_email(
+    email: str,
+    *,
+    issuer: str | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Return the user row with this email (lowercased), or None.
+
+    When ``issuer`` is supplied the lookup is scoped to that issuer, which
+    lets the local-owner sign-in path ignore an OIDC user that happens to
+    share an email with the local break-glass account.
+    """
+    needle = (email or "").strip().lower()
+    if not needle:
+        return None
+    sql = "SELECT * FROM users WHERE LOWER(email) = ?"
+    params: list[Any] = [needle]
+    if issuer is not None:
+        sql += " AND issuer = ?"
+        params.append(issuer)
+    sql += " ORDER BY created_at ASC LIMIT 1"
+    with _conn(path) as conn:
+        row = conn.execute(sql, params).fetchone()
+    return _row_to_dict(row)
+
+
+# ---------------------------------------------------------------------------
+# local password credentials (web-first first-run owner / break-glass admin)
+# ---------------------------------------------------------------------------
+
+
+def set_local_password_verifier(
+    user_id: str,
+    verifier: str,
+    *,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Store (or replace) the password verifier attached to a local user.
+
+    Raw passwords are never persisted — the caller computes the verifier
+    string with :func:`gateway.local_owner.hash_password` and hands us the
+    opaque result.
+    """
+    if not user_id:
+        raise ValueError("user_id is required")
+    if not verifier or not isinstance(verifier, str):
+        raise ValueError("verifier is required")
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        existing = conn.execute(
+            "SELECT user_id, created_at FROM local_password_credentials "
+            "WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO local_password_credentials"
+                "(user_id, verifier, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?)",
+                (user_id, verifier, ts, ts),
+            )
+        else:
+            conn.execute(
+                "UPDATE local_password_credentials "
+                "SET verifier = ?, updated_at = ? WHERE user_id = ?",
+                (verifier, ts, user_id),
+            )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM local_password_credentials WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return _row_to_dict(row)  # type: ignore[return-value]
+
+
+def get_local_password_verifier(
+    user_id: str, *, path: Path = DB_PATH
+) -> dict[str, Any] | None:
+    if not user_id:
+        return None
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM local_password_credentials WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def delete_local_password_verifier(
+    user_id: str, *, path: Path = DB_PATH
+) -> bool:
+    """Drop the verifier for a user. Returns True if a row was removed."""
+    if not user_id:
+        return False
+    with _conn(path) as conn:
+        cur = conn.execute(
+            "DELETE FROM local_password_credentials WHERE user_id = ?",
+            (user_id,),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------
@@ -1367,6 +1479,10 @@ __all__ = [
     "upsert_oidc_user",
     "get_user",
     "list_users",
+    "find_user_by_email",
+    "set_local_password_verifier",
+    "get_local_password_verifier",
+    "delete_local_password_verifier",
     "replace_user_identity_claims",
     "list_user_identity_claims",
     "create_service_account",

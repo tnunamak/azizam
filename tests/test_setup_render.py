@@ -29,7 +29,7 @@ class SetupRenderTests(unittest.TestCase):
         # No "Setup complete" copy yet.
         self.assertNotIn("Setup complete", html)
         # OIDC has a small recovery hatch so a broken IdP is not a dead end.
-        self.assertIn("OIDC not working?", html)
+        self.assertIn("oak_ admin key", html)
 
     def test_oidc_enabled_can_show_admin_key_recovery_form(self) -> None:
         html = render_setup_page(
@@ -37,32 +37,74 @@ class SetupRenderTests(unittest.TestCase):
             oidc_enabled=True,
             can_claim_with_admin_key=True,
         )
-        self.assertIn("OIDC not working?", html)
+        # The recovery disclosure surfaces the host-side command and the paste
+        # form, but it's behind a <details> and never the primary action.
         self.assertIn("generate-admin-key owner-cli", html)
         self.assertIn('method="post" action="/setup/claim"', html)
+        self.assertIn("<summary>OIDC not working?", html)
 
-    def test_oidc_disabled_no_owner_explains_what_to_configure(self) -> None:
+    def test_oidc_disabled_no_owner_offers_local_owner_create_form(self) -> None:
+        html = render_setup_page(
+            owner_or_admin_exists=False,
+            oidc_enabled=False,
+        )
+        # The primary action is creating the local owner account, not pasting
+        # an admin key from a CLI recipe.
+        self.assertIn("Create the local owner account", html)
+        self.assertIn('action="/setup/local-owner"', html)
+        self.assertIn('name="email"', html)
+        self.assertIn('name="password"', html)
+        self.assertIn('name="password_confirm"', html)
+        # No primary OIDC sign-in CTA when OIDC is disabled.
+        self.assertNotIn('href="/login?return_to=/setup"', html)
+        self.assertNotIn("Sign in to claim owner", html)
+        # The CLI recipe is still reachable, but only inside the recovery
+        # disclosure — no more "run one host-side command" framing.
+        self.assertNotIn("run one host-side command", html)
+        self.assertNotIn("Run one ", html)
+
+    def test_oidc_disabled_no_owner_offers_admin_key_recovery_when_signing_key_present(
+        self,
+    ) -> None:
         html = render_setup_page(
             owner_or_admin_exists=False,
             oidc_enabled=False,
             can_claim_with_admin_key=True,
         )
-        self.assertIn("Claim this gateway from this machine", html)
+        self.assertIn("Create the local owner account", html)
+        # Recovery disclosure is present but secondary.
         self.assertIn("generate-admin-key owner-cli", html)
-        self.assertIn("oak_ admin key", html)
-        # No primary OIDC sign-in CTA when OIDC is disabled.
-        self.assertNotIn('href="/login?return_to=/setup"', html)
-        self.assertNotIn("Sign in to claim owner", html)
         self.assertIn('method="post" action="/setup/claim"', html)
-        self.assertIn('placeholder="oak_..."', html)
+        # Even with the admin-key path available, the create form remains the
+        # primary action above the recovery details.
+        create_pos = html.index('action="/setup/local-owner"')
+        recovery_pos = html.index('action="/setup/claim"')
+        self.assertLess(create_pos, recovery_pos)
 
-    def test_oidc_disabled_without_session_key_explains_missing_bootstrap_secret(self) -> None:
+    def test_oidc_disabled_no_owner_without_signing_key_hides_admin_key_form(
+        self,
+    ) -> None:
+        # When the gateway has no signing key at all, the admin-key paste form
+        # can't be honored, so we hide it. The local-owner create form is still
+        # the primary path.
         html = render_setup_page(
             owner_or_admin_exists=False,
             oidc_enabled=False,
         )
-        self.assertIn("AI_GATEWAY_ADMIN_SESSION_KEY", html)
+        self.assertIn("Create the local owner account", html)
         self.assertNotIn('action="/setup/claim"', html)
+        # No leftover "set this env var" copy from the legacy admin-key path.
+        self.assertNotIn("AI_GATEWAY_ADMIN_SESSION_KEY", html)
+
+    def test_create_error_surfaces_above_form_with_prefill(self) -> None:
+        html = render_setup_page(
+            owner_or_admin_exists=False,
+            oidc_enabled=False,
+            create_error="Passwords did not match.",
+            create_email="owner@example.com",
+        )
+        self.assertIn("Passwords did not match.", html)
+        self.assertIn('value="owner@example.com"', html)
 
     def test_owner_exists_shows_setup_complete_with_links(self) -> None:
         html = render_setup_page(
@@ -88,15 +130,43 @@ class SetupRenderTests(unittest.TestCase):
         self.assertIn('<details class="recovery" open>', html)
         self.assertIn("That key was rejected.", html)
 
-    def test_owner_exists_without_oidc_can_still_open_browser_session_with_admin_key(self) -> None:
+    def test_owner_exists_without_oidc_shows_local_signin_form(self) -> None:
+        html = render_setup_page(
+            owner_or_admin_exists=True,
+            oidc_enabled=False,
+        )
+        self.assertIn("Setup complete", html)
+        # Returning operators sign in with the same credentials they set on
+        # first run, not with an oak_ admin key.
+        self.assertIn('action="/setup/local-login"', html)
+        self.assertIn('name="email"', html)
+        self.assertIn('name="password"', html)
+
+    def test_owner_exists_without_oidc_keeps_admin_key_recovery_available(
+        self,
+    ) -> None:
         html = render_setup_page(
             owner_or_admin_exists=True,
             oidc_enabled=False,
             can_claim_with_admin_key=True,
         )
-        self.assertIn("Setup complete", html)
-        self.assertIn("Use an existing admin key", html)
-        self.assertIn('method="post" action="/setup/claim"', html)
+        # Both the primary local sign-in form and the recovery admin-key form
+        # are reachable; the local form is primary.
+        self.assertIn('action="/setup/local-login"', html)
+        self.assertIn('action="/setup/claim"', html)
+        local_pos = html.index('action="/setup/local-login"')
+        recovery_pos = html.index('action="/setup/claim"')
+        self.assertLess(local_pos, recovery_pos)
+
+    def test_login_error_surfaces_above_signin_form_with_prefill(self) -> None:
+        html = render_setup_page(
+            owner_or_admin_exists=True,
+            oidc_enabled=False,
+            login_error="Wrong email or password.",
+            login_email="owner@example.com",
+        )
+        self.assertIn("Wrong email or password.", html)
+        self.assertIn('value="owner@example.com"', html)
 
     def test_admin_signed_in_sees_actor_pill_and_sign_out(self) -> None:
         html = render_setup_page(
@@ -158,6 +228,15 @@ class SetupRenderTests(unittest.TestCase):
             is_admin_signed_in=True,
             actor_label="<script>alert(1)</script>",
             logout_url="/logout",
+        )
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_prefill_email_is_html_escaped(self) -> None:
+        html = render_setup_page(
+            owner_or_admin_exists=False,
+            oidc_enabled=False,
+            create_email='"><script>alert(1)</script>',
         )
         self.assertNotIn("<script>alert(1)</script>", html)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)

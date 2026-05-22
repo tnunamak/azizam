@@ -87,6 +87,11 @@ from gateway.admin_oidc import (
     validate_id_token_claims,
 )
 from gateway.admin_render import render_admin_dashboard
+from gateway.local_owner import (
+    hash_password as local_hash_password,
+    load_or_create_signing_key as local_load_signing_key,
+    verify_password as local_verify_password,
+)
 from gateway.setup_render import render_setup_page
 from gateway.admin_runtime import (
     AdminAuthenticator,
@@ -1122,7 +1127,8 @@ def _admin_db_path() -> Path:
     return Path(__file__).parent / path
 
 
-def _admin_session_signing_key() -> bytes | None:
+def _admin_session_signing_key_from_config() -> bytes | None:
+    """Return an explicit signing key configured by env or proxy_config.yml."""
     raw = admin_cfg.get("session_signing_key") or ""
     env_name = admin_cfg.get("session_signing_key_env") or ""
     if env_name:
@@ -1135,11 +1141,35 @@ def _admin_session_signing_key() -> bytes | None:
     if len(key) < 32:
         print(
             "[proxy] WARNING: admin session signing key is shorter than 32 bytes; "
-            "browser sessions disabled",
+            "falling back to the persistent generated key",
             flush=True,
         )
         return None
     return key
+
+
+def _admin_session_signing_key_path() -> Path:
+    """Path to the persistent auto-generated browser-session signing key."""
+    return _admin_db_path().with_name("admin_session_key")
+
+
+def _admin_session_signing_key() -> bytes | None:
+    """Resolve the browser-session signing key.
+
+    Order of precedence:
+      1. ``admin.session_signing_key`` / ``AI_GATEWAY_ADMIN_SESSION_KEY`` /
+         ``OPENAI_PROXY_ADMIN_SESSION_KEY`` — explicit operator config.
+      2. A persistent, restrictive-permission file next to ``admin.db`` —
+         auto-generated on first call so the happy path requires no env var.
+    """
+    explicit = _admin_session_signing_key_from_config()
+    if explicit:
+        return explicit
+    try:
+        return local_load_signing_key(_admin_session_signing_key_path())
+    except RuntimeError as exc:
+        print(f"[proxy] WARNING: {exc}", flush=True)
+        return None
 
 
 def _load_admin_oidc_config():
@@ -9351,6 +9381,10 @@ async def _setup_page_response(
     *,
     claim_error: str | None = None,
     app_error: str | None = None,
+    create_error: str | None = None,
+    create_email: str | None = None,
+    login_error: str | None = None,
+    login_email: str | None = None,
     one_time_key: Mapping[str, Any] | None = None,
     status_code: int = 200,
 ) -> Response:
@@ -9384,6 +9418,10 @@ async def _setup_page_response(
         logout_url="/logout" if is_admin_signed_in else None,
         claim_error=claim_error,
         can_claim_with_admin_key=bool(_browser_admin_session_signing_key()),
+        create_error=create_error,
+        create_email=create_email,
+        login_error=login_error,
+        login_email=login_email,
         csrf_token=_csrf_token_for_oidc_session(session) if session else "",
         public_base_url=_public_base_url(request) or "http://127.0.0.1:5000",
         app_count=app_count,
@@ -9440,11 +9478,10 @@ async def setup_claim_admin_key(request: Request):
         return await _setup_page_response(
             request,
             claim_error=(
-                "Browser admin sessions need admin.session_signing_key or "
-                "AI_GATEWAY_ADMIN_SESSION_KEY before this gateway can accept "
-                "an admin-key claim."
+                "Browser admin sessions are unavailable: this gateway "
+                "cannot read or write its session signing key file."
             ),
-            status_code=400,
+            status_code=500,
         )
     admin_key = await _setup_claim_admin_key_value(request)
     if admin_key.startswith("opk_"):
@@ -9537,6 +9574,255 @@ async def setup_claim_admin_key(request: Request):
         domain=cookie.domain,
     )
     return response
+
+
+# ---------------------------------------------------------------------------
+# Local owner: web-first claim + sign-in
+# ---------------------------------------------------------------------------
+
+
+_LOCAL_OWNER_ISSUER = "local"
+_LOCAL_OWNER_MIN_PASSWORD = 12
+
+
+def _normalize_local_email(value: str) -> str:
+    return (value or "").strip().lower()
+
+
+def _local_owner_user_record() -> Mapping[str, Any] | None:
+    """Return the local-issuer user that owns this gateway, if any.
+
+    Walks active owner/admin role assignments and returns the first that
+    belongs to a local-issuer user. We don't cache because the result is
+    only consulted during the unauthenticated /setup/local-login path and
+    when bootstrapping, both of which are cold by definition.
+    """
+    for role_row in admin_store.list_admin_roles(path=ADMIN_STORE.path):
+        if role_row.get("subject_kind") != "user":
+            continue
+        if role_row.get("role") not in {"owner", "admin", "superadmin"}:
+            continue
+        user_id = str(role_row.get("subject_id") or "")
+        if not user_id:
+            continue
+        user = admin_store.get_user(user_id, path=ADMIN_STORE.path)
+        if user is not None and user.get("issuer") == _LOCAL_OWNER_ISSUER:
+            return user
+    return None
+
+
+def _issue_browser_admin_session(
+    *,
+    user_id: str,
+    email: str,
+    role: str,
+    signing_key: bytes,
+    redirect_to: str = "/setup",
+) -> Response:
+    cookie = _browser_admin_cookie_config()
+    session = session_from_claims(
+        {"sub": user_id, "email": email},
+        role=role,
+        cookie=cookie,
+    )
+    response = RedirectResponse(redirect_to, status_code=303)
+    response.set_cookie(
+        cookie.name,
+        encode_session_cookie(session, signing_key=signing_key),
+        max_age=cookie.max_age_seconds,
+        secure=cookie.secure,
+        httponly=cookie.http_only,
+        samesite=cookie.same_site,
+        path=cookie.path,
+        domain=cookie.domain,
+    )
+    return response
+
+
+@app.post("/setup/local-owner", include_in_schema=False)
+async def setup_create_local_owner(request: Request):
+    """Create the first local owner account from the browser.
+
+    Only honored when no owner/admin role exists yet. After the account is
+    created it gets the ``owner`` role and the browser receives a signed
+    admin session; further calls land in the ``owner_or_admin_exists``
+    branch of /setup.
+    """
+    signing_key = _browser_admin_session_signing_key()
+    if not signing_key:
+        return await _setup_page_response(
+            request,
+            create_error=(
+                "Browser admin sessions are unavailable: this gateway "
+                "cannot read or write its session signing key file."
+            ),
+            status_code=500,
+        )
+    if _owner_or_admin_exists():
+        # First-run is over. Redirect through /setup so the operator sees the
+        # signed-in landing card and can sign in if needed.
+        return RedirectResponse("/setup", status_code=303)
+
+    values = await _setup_form_values(request)
+    email = _normalize_local_email(values.get("email", ""))
+    password = values.get("password", "")
+    confirm = values.get("password_confirm", "")
+
+    if not email or "@" not in email:
+        return await _setup_page_response(
+            request,
+            create_error="Enter the email address that should own this gateway.",
+            create_email=email or None,
+            status_code=400,
+        )
+    if len(password) < _LOCAL_OWNER_MIN_PASSWORD:
+        return await _setup_page_response(
+            request,
+            create_error=(
+                f"Password must be at least {_LOCAL_OWNER_MIN_PASSWORD} "
+                "characters."
+            ),
+            create_email=email,
+            status_code=400,
+        )
+    if password != confirm:
+        return await _setup_page_response(
+            request,
+            create_error="The two passwords did not match.",
+            create_email=email,
+            status_code=400,
+        )
+
+    try:
+        verifier = local_hash_password(password)
+    except ValueError as exc:
+        return await _setup_page_response(
+            request,
+            create_error=f"Could not store that password: {exc}",
+            create_email=email,
+            status_code=400,
+        )
+
+    user = admin_store.upsert_oidc_user(
+        _LOCAL_OWNER_ISSUER,
+        email,
+        email=email,
+        display_name=email,
+        path=ADMIN_STORE.path,
+    )
+    admin_store.set_local_password_verifier(
+        str(user["id"]),
+        verifier,
+        path=ADMIN_STORE.path,
+    )
+    admin_store.assign_admin_role(
+        role="owner",
+        subject_kind="user",
+        subject_id=str(user["id"]),
+        granted_by="setup-local-owner",
+        path=ADMIN_STORE.path,
+    )
+    admin_store.record_audit(
+        "setup.local_owner_create",
+        actor_kind="user",
+        actor_id=str(user["id"]),
+        target_kind="user",
+        target_id=str(user["id"]),
+        metadata={"email": email, "via": "setup_page"},
+        path=ADMIN_STORE.path,
+    )
+    return _issue_browser_admin_session(
+        user_id=str(user["id"]),
+        email=email,
+        role="owner",
+        signing_key=signing_key,
+    )
+
+
+@app.post("/setup/local-login", include_in_schema=False)
+async def setup_local_login(request: Request):
+    """Sign an existing local owner / admin back in from /setup."""
+    signing_key = _browser_admin_session_signing_key()
+    if not signing_key:
+        return await _setup_page_response(
+            request,
+            login_error=(
+                "Browser admin sessions are unavailable: this gateway "
+                "cannot read or write its session signing key file."
+            ),
+            status_code=500,
+        )
+
+    values = await _setup_form_values(request)
+    email = _normalize_local_email(values.get("email", ""))
+    password = values.get("password", "")
+    generic_error = "Email or password did not match a local owner account."
+
+    if not email or not password:
+        return await _setup_page_response(
+            request,
+            login_error=generic_error,
+            login_email=email or None,
+            status_code=400,
+        )
+
+    user = admin_store.find_user_by_email(
+        email, issuer=_LOCAL_OWNER_ISSUER, path=ADMIN_STORE.path
+    )
+    if user is None:
+        return await _setup_page_response(
+            request,
+            login_error=generic_error,
+            login_email=email,
+            status_code=401,
+        )
+    verifier_row = admin_store.get_local_password_verifier(
+        str(user["id"]), path=ADMIN_STORE.path
+    )
+    if verifier_row is None or not local_verify_password(
+        password, str(verifier_row.get("verifier") or "")
+    ):
+        return await _setup_page_response(
+            request,
+            login_error=generic_error,
+            login_email=email,
+            status_code=401,
+        )
+    roles = admin_store.list_admin_roles(
+        subject_kind="user",
+        subject_id=str(user["id"]),
+        path=ADMIN_STORE.path,
+    )
+    role_names = {str(role.get("role") or "") for role in roles}
+    if "owner" in role_names:
+        role = "owner"
+    elif "admin" in role_names or "superadmin" in role_names:
+        role = "admin"
+    else:
+        return await _setup_page_response(
+            request,
+            login_error=(
+                "That account no longer has owner or admin permission. "
+                "Ask another admin to restore your role."
+            ),
+            login_email=email,
+            status_code=403,
+        )
+    admin_store.record_audit(
+        "setup.local_owner_login",
+        actor_kind="user",
+        actor_id=str(user["id"]),
+        target_kind="user",
+        target_id=str(user["id"]),
+        metadata={"email": email, "via": "setup_page"},
+        path=ADMIN_STORE.path,
+    )
+    return _issue_browser_admin_session(
+        user_id=str(user["id"]),
+        email=email,
+        role=role,
+        signing_key=signing_key,
+    )
 
 
 @app.post("/setup/first-app", include_in_schema=False)

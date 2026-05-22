@@ -1,19 +1,24 @@
 """Server-rendered first-run setup page for the AI Gateway.
 
 The gateway is web-first: a new self-hoster starts the service, opens
-``/setup`` in a browser, and either claims the first owner via OIDC or
-sees what they still need to configure. ``render_setup_page`` is a pure
-function that returns HTML for the first-run states:
+``/setup`` in a browser, and creates the first owner directly in the
+browser. ``render_setup_page`` is a pure function that returns HTML for
+the first-run states:
 
 * OIDC is configured and no owner exists -> primary action that links to
   ``/login?return_to=/setup`` and copy that calls out that the first
   allowed OIDC login becomes owner.
-* OIDC is not configured and no owner exists -> shows the local admin-key
-  claim path: run the host-side ``generate-admin-key`` command, paste the
-  printed ``oak_`` key, and receive a signed browser session.
+* OIDC is not configured and no owner exists -> primary action is a
+  short "create the local owner account" form (email + password). After
+  submitting it the operator has an owner session and can mint Apps and
+  manage the gateway from the browser.
 * An owner/admin already exists -> setup-complete card with links to the
   account portal and the admin dashboard, a sign-out affordance when signed
-  in as admin, and an admin-key sign-in form when OIDC is unavailable.
+  in as admin, and a local owner sign-in form when OIDC is unavailable.
+
+Every state offers a small "Recovery / advanced" disclosure that exposes
+the host-side ``generate-admin-key`` recipe — the same flow still works
+for SSH/headless recovery, it's just not the primary first-run path.
 
 No I/O, no framework imports. Callers compose the returned string into a
 response. Chrome (header, fonts, layout tokens) is shared with ``/`` and
@@ -259,6 +264,119 @@ _PAGE_CSS = """
 """
 
 
+# ---------------------------------------------------------------------------
+# Local owner forms: create (first-run) and sign-in (returning operator)
+# ---------------------------------------------------------------------------
+
+
+def _local_owner_create_form(
+    *,
+    create_error: str | None,
+    prefill_email: str | None = None,
+) -> str:
+    error_html = (
+        f'<p class="setup-error" role="alert">{esc(create_error)}</p>'
+        if create_error
+        else ""
+    )
+    email_value = esc(prefill_email or "")
+    return (
+        error_html
+        + '<form class="setup-form" method="post" action="/setup/local-owner">'
+        '<label><span>Owner email</span>'
+        f'<input name="email" type="email" autocomplete="username" '
+        f'spellcheck="false" required value="{email_value}"></label>'
+        '<label><span>Password (min 12 characters)</span>'
+        '<input name="password" type="password" autocomplete="new-password" '
+        'minlength="12" required></label>'
+        '<label><span>Confirm password</span>'
+        '<input name="password_confirm" type="password" '
+        'autocomplete="new-password" minlength="12" required></label>'
+        '<button type="submit">Create owner and continue</button>'
+        "</form>"
+    )
+
+
+def _local_owner_signin_form(
+    *,
+    login_error: str | None,
+    prefill_email: str | None = None,
+) -> str:
+    error_html = (
+        f'<p class="setup-error" role="alert">{esc(login_error)}</p>'
+        if login_error
+        else ""
+    )
+    email_value = esc(prefill_email or "")
+    return (
+        error_html
+        + '<form class="setup-form" method="post" action="/setup/local-login">'
+        '<label><span>Owner email</span>'
+        f'<input name="email" type="email" autocomplete="username" '
+        f'spellcheck="false" required value="{email_value}"></label>'
+        '<label><span>Password</span>'
+        '<input name="password" type="password" '
+        'autocomplete="current-password" required></label>'
+        '<button type="submit">Sign in</button>'
+        "</form>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Recovery disclosure (admin-key paste) — always advanced, never primary
+# ---------------------------------------------------------------------------
+
+
+def _admin_key_claim_form(
+    *,
+    claim_error: str | None,
+    can_claim_with_admin_key: bool,
+) -> str:
+    if not can_claim_with_admin_key:
+        return ""
+    error_html = (
+        f'<p class="setup-error" role="alert">{esc(claim_error)}</p>'
+        if claim_error
+        else ""
+    )
+    return (
+        error_html
+        + '<form class="setup-form" method="post" action="/setup/claim">'
+        "<label><span>Admin key (recovery)</span>"
+        '<input name="admin_key" type="password" autocomplete="off" '
+        'spellcheck="false" placeholder="oak_..." required></label>'
+        '<button type="submit">Open dashboard</button>'
+        "</form>"
+    )
+
+
+def _recovery_admin_key_details(
+    *,
+    claim_error: str | None,
+    can_claim_with_admin_key: bool,
+    summary: str = "Recovery: paste an oak_ admin key",
+) -> str:
+    open_attr = " open" if claim_error else ""
+    return (
+        f'<details class="recovery"{open_attr}>'
+        f"<summary>{esc(summary)}</summary>"
+        "<p>For SSH or headless recovery only. Mint a one-shot admin key "
+        "on the host, paste it here, and the browser receives an owner "
+        "session. The web flow above is the normal way in.</p>"
+        "<pre>./venv/bin/python proxy.py generate-admin-key owner-cli</pre>"
+        + _admin_key_claim_form(
+            claim_error=claim_error,
+            can_claim_with_admin_key=can_claim_with_admin_key,
+        )
+        + "</details>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Claim cards: OIDC and no-OIDC variants for the no-owner state
+# ---------------------------------------------------------------------------
+
+
 def _claim_card_oidc(
     *,
     login_url: str,
@@ -276,86 +394,43 @@ def _claim_card_oidc(
         f'<a class="pill primary" href="{esc(login_url)}">'
         "Sign in to claim owner</a>"
         "</div>"
-        + _oidc_recovery_details(
+        + _recovery_admin_key_details(
             claim_error=claim_error,
             can_claim_with_admin_key=can_claim_with_admin_key,
+            summary="OIDC not working? Use an oak_ admin key",
         )
         + "</section>"
     )
 
 
-def _admin_key_claim_form(
+def _claim_card_local_owner(
     *,
-    claim_error: str | None,
-    can_claim_with_admin_key: bool,
-) -> str:
-    if not can_claim_with_admin_key:
-        return (
-            '<div class="recovery">'
-            "<p>Browser admin sessions need "
-            "<code>admin.session_signing_key</code> or "
-            "<code>AI_GATEWAY_ADMIN_SESSION_KEY</code>. Set that secret, "
-            "restart, then return here to claim the browser session.</p>"
-            "</div>"
-        )
-    error_html = (
-        f'<p class="setup-error" role="alert">{esc(claim_error)}</p>'
-        if claim_error
-        else ""
-    )
-    return (
-        error_html
-        + '<form class="setup-form" method="post" action="/setup/claim">'
-        "<label><span>Admin key</span>"
-        '<input name="admin_key" type="password" autocomplete="off" '
-        'spellcheck="false" placeholder="oak_..." required></label>'
-        "<button type=\"submit\">Open dashboard</button>"
-        "</form>"
-    )
-
-
-def _oidc_recovery_details(
-    *,
-    claim_error: str | None,
-    can_claim_with_admin_key: bool,
-) -> str:
-    open_attr = " open" if claim_error else ""
-    return (
-        f'<details class="recovery"{open_attr}>'
-        "<summary>OIDC not working?</summary>"
-        "<p>Run the host-side admin-key command and paste the printed "
-        "<code>oak_...</code> key here to open a browser admin session.</p>"
-        "<pre>./venv/bin/python proxy.py generate-admin-key owner-cli</pre>"
-        + _admin_key_claim_form(
-            claim_error=claim_error,
-            can_claim_with_admin_key=can_claim_with_admin_key,
-        )
-        + "</details>"
-    )
-
-
-def _claim_card_no_oidc(
-    *,
+    create_error: str | None,
+    create_email: str | None,
     claim_error: str | None,
     can_claim_with_admin_key: bool,
 ) -> str:
     return (
         '<section class="setup-card hero" aria-labelledby="claim-heading">'
         '<p class="eyebrow">First-run setup</p>'
-        '<h2 id="claim-heading">Claim this gateway from this machine</h2>'
-        "<p>No owner has signed in yet, and OIDC is not configured. Run one "
-        "host-side command to mint an <strong>oak_ admin key</strong>, paste "
-        "it here, and the browser will receive an owner/admin session.</p>"
+        '<h2 id="claim-heading">Create the local owner account</h2>'
+        "<p>No owner has signed in yet, and OIDC is not configured. Pick "
+        "an email and password to claim this gateway. You can configure "
+        "OIDC later from the admin dashboard.</p>"
         '<ul class="checklist" aria-label="Setup checklist">'
         '<li class="todo"><span class="mark" aria-hidden="true">○</span>'
-        "<span>On the gateway host, run "
-        "<code>./venv/bin/python proxy.py generate-admin-key owner-cli</code>.</span></li>"
+        "<span>Create the local owner account below.</span></li>"
         '<li class="todo"><span class="mark" aria-hidden="true">○</span>'
-        "<span>Paste the printed <code>oak_...</code> value below. It is shown once.</span></li>"
+        "<span>Use the setup page to mint a first runtime App key.</span></li>"
         '<li class="todo"><span class="mark" aria-hidden="true">○</span>'
-        "<span>Use the admin dashboard to create Apps, Profiles, and runtime keys.</span></li>"
+        "<span>Open the admin dashboard to configure OIDC, Profiles, and "
+        "shared Apps.</span></li>"
         "</ul>"
-        + _admin_key_claim_form(
+        + _local_owner_create_form(
+            create_error=create_error,
+            prefill_email=create_email,
+        )
+        + _recovery_admin_key_details(
             claim_error=claim_error,
             can_claim_with_admin_key=can_claim_with_admin_key,
         )
@@ -363,21 +438,9 @@ def _claim_card_no_oidc(
     )
 
 
-def _recovery_details() -> str:
-    return (
-        '<details class="recovery">'
-        "<summary>Headless or recovery setup (advanced)</summary>"
-        "<p>If you cannot run OIDC, you can mint a service-account admin "
-        "key from the command line. This is the no-OIDC claim path and the "
-        "recovery/headless automation path; OIDC deployments should normally "
-        "claim owner by signing in.</p>"
-        "<pre>python proxy.py generate-admin-key &lt;service-account-name&gt; "
-        "[role]</pre>"
-        '<p class="meta">The printed <code>oak_</code> key is an admin key, '
-        "not a runtime App key. Use <code>opk_</code> keys only for SDKs "
-        "and local AI clients.</p>"
-        "</details>"
-    )
+# ---------------------------------------------------------------------------
+# Setup-complete card (owner already exists)
+# ---------------------------------------------------------------------------
 
 
 def _complete_card(
@@ -387,6 +450,8 @@ def _complete_card(
     oidc_enabled: bool,
     claim_error: str | None,
     can_claim_with_admin_key: bool,
+    login_error: str | None,
+    login_email: str | None,
 ) -> str:
     if is_admin_signed_in and actor_label:
         signed_in_line = (
@@ -395,16 +460,21 @@ def _complete_card(
     elif oidc_enabled:
         signed_in_line = (
             "<p>Sign in with your OIDC account to manage Apps and Profiles.</p>"
-            + _oidc_recovery_details(
+            + _recovery_admin_key_details(
                 claim_error=claim_error,
                 can_claim_with_admin_key=can_claim_with_admin_key,
+                summary="OIDC not working? Use an oak_ admin key",
             )
         )
     else:
         signed_in_line = (
-            "<p>OIDC is not configured. Use an existing admin key to open a "
-            "browser admin session.</p>"
-            + _admin_key_claim_form(
+            "<p>Sign in with your local owner account to manage Apps and "
+            "Profiles.</p>"
+            + _local_owner_signin_form(
+                login_error=login_error,
+                prefill_email=login_email,
+            )
+            + _recovery_admin_key_details(
                 claim_error=claim_error,
                 can_claim_with_admin_key=can_claim_with_admin_key,
             )
@@ -423,6 +493,11 @@ def _complete_card(
         "</div>"
         "</section>"
     )
+
+
+# ---------------------------------------------------------------------------
+# Doctor / first-app cards (unchanged behaviorally)
+# ---------------------------------------------------------------------------
 
 
 def _setup_doctor_card(
@@ -540,6 +615,10 @@ def render_setup_page(
     logout_url: str | None = None,
     claim_error: str | None = None,
     can_claim_with_admin_key: bool = False,
+    create_error: str | None = None,
+    create_email: str | None = None,
+    login_error: str | None = None,
+    login_email: str | None = None,
     csrf_token: str = "",
     public_base_url: str = "http://127.0.0.1:5000",
     app_count: int = 0,
@@ -556,10 +635,11 @@ def render_setup_page(
       * ``owner_or_admin_exists=False`` + ``oidc_enabled=True`` -> claim card
         with the OIDC sign-in primary action.
       * ``owner_or_admin_exists=False`` + ``oidc_enabled=False`` -> local
-        admin-key claim form.
+        owner create form (email + password) as the primary action; the
+        admin-key paste is demoted to a recovery disclosure.
       * ``owner_or_admin_exists=True`` -> setup-complete card. When the
-        viewer is not signed in and OIDC is unavailable, the admin-key claim
-        form remains available so the dashboard is not a dead end.
+        viewer is not signed in and OIDC is unavailable, the local owner
+        sign-in form remains available so the dashboard is not a dead end.
 
     When the viewer is signed in as an admin/owner, the shared header
     surfaces "Admin" and a Sign out link.
@@ -573,7 +653,9 @@ def render_setup_page(
                 can_claim_with_admin_key=can_claim_with_admin_key,
             )
             if oidc_enabled
-            else _claim_card_no_oidc(
+            else _claim_card_local_owner(
+                create_error=create_error,
+                create_email=create_email,
                 claim_error=claim_error,
                 can_claim_with_admin_key=can_claim_with_admin_key,
             )
@@ -585,6 +667,8 @@ def render_setup_page(
             oidc_enabled=oidc_enabled,
             claim_error=claim_error,
             can_claim_with_admin_key=can_claim_with_admin_key,
+            login_error=login_error,
+            login_email=login_email,
         )
         if is_admin_signed_in:
             body += (
