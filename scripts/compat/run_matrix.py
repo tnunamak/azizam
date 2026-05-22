@@ -186,6 +186,27 @@ PROBES: Tuple[ProbeSpec, ...] = (
             ("messages.create", "test_messages_create"),
             ("messages.create.image_block", "test_messages_create_image_block"),
             ("messages.streaming", "test_messages_streaming"),
+            (
+                "messages.create.system_prompt",
+                "test_messages_create_system_prompt",
+            ),
+            ("messages.create.tool_use", "test_messages_create_tool_use"),
+            (
+                "messages.create.max_tokens_validation",
+                "test_messages_create_max_tokens_validation",
+            ),
+            (
+                "messages.streaming.event_names",
+                "test_messages_streaming_event_names",
+            ),
+            (
+                "messages.create.thinking_unsupported",
+                "test_messages_create_thinking_unsupported",
+            ),
+            (
+                "messages.create.unknown_model",
+                "test_messages_create_unknown_model",
+            ),
         ),
     ),
     ProbeSpec(
@@ -205,6 +226,9 @@ PROBES: Tuple[ProbeSpec, ...] = (
             ("chat.streaming", "test_chat_stream"),
             ("generate.non_streaming", "test_generate_nonstream"),
             ("generate.streaming", "test_generate_stream"),
+            ("pull.unsupported", "test_pull_returns_unsupported_error"),
+            ("delete.unsupported", "test_delete_returns_unsupported_error"),
+            ("push.unsupported", "test_push_returns_unsupported_error"),
         ),
     ),
 )

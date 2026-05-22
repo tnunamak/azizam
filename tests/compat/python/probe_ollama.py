@@ -146,6 +146,27 @@ class TestOllamaPythonSDK(unittest.TestCase):
         self.assertGreater(len(text), 0)
         self.assertTrue(done_seen)
 
+    def test_pull_returns_unsupported_error(self) -> None:
+        assert _ollama is not None
+        with self.assertRaises(_ollama.ResponseError) as ctx:
+            self.client.pull("llama3")
+        self.assertEqual(getattr(ctx.exception, "status_code", None), 501)
+        self.assertIn("unsupported", str(ctx.exception).lower())
+
+    def test_delete_returns_unsupported_error(self) -> None:
+        assert _ollama is not None
+        with self.assertRaises(_ollama.ResponseError) as ctx:
+            self.client.delete("llama3")
+        self.assertEqual(getattr(ctx.exception, "status_code", None), 501)
+        self.assertIn("unsupported", str(ctx.exception).lower())
+
+    def test_push_returns_unsupported_error(self) -> None:
+        assert _ollama is not None
+        with self.assertRaises(_ollama.ResponseError) as ctx:
+            self.client.push("llama3")
+        self.assertEqual(getattr(ctx.exception, "status_code", None), 501)
+        self.assertIn("unsupported", str(ctx.exception).lower())
+
     def _model(self) -> str:
         return os.environ.get("OPENAI_PROXY_SMOKE_OLLAMA_MODEL", "default")
 
