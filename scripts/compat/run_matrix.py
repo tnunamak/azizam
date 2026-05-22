@@ -98,6 +98,22 @@ PROBES: Tuple[ProbeSpec, ...] = (
                 "audio.transcriptions.error_shape",
                 "test_audio_transcription_empty_body_error_is_openai_shaped",
             ),
+            (
+                "audio.translations.unsupported_error_shape",
+                "test_audio_translation_empty_body_error_is_openai_shaped_unsupported",
+            ),
+            (
+                "chat.validation_error_envelope",
+                "test_chat_non_object_body_returns_protocol_shaped_400",
+            ),
+            (
+                "responses.hosted_tool_rejected",
+                "test_responses_hosted_tool_returns_protocol_shaped_400",
+            ),
+            (
+                "audio.speech.unsupported_response_format",
+                "test_audio_speech_unsupported_response_format_is_openai_shaped",
+            ),
         ),
     ),
     ProbeSpec(
@@ -112,6 +128,18 @@ PROBES: Tuple[ProbeSpec, ...] = (
             ("embeddings.create", "test_embeddings_create"),
             ("chat.completions.create", "test_chat_completions_create"),
             ("chat.completions.streaming", "test_chat_completions_streaming"),
+            (
+                "chat.completions.tool_call_envelope",
+                "test_chat_completions_tool_call_envelope",
+            ),
+            (
+                "chat.completions.json_response_format",
+                "test_chat_completions_json_response_format",
+            ),
+            (
+                "chat.completions.image_input_block",
+                "test_chat_completions_image_input_block",
+            ),
         ),
     ),
     ProbeSpec(

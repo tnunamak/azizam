@@ -202,6 +202,63 @@ class TestGatewayContractHTTP(unittest.TestCase):
         self.assertEqual(error.get("type"), "invalid_request_error")
         self.assertEqual(error.get("code"), "unsupported_audio_translation")
 
+    def test_chat_non_object_body_returns_protocol_shaped_400(self) -> None:
+        """A JSON list at the top level is a protocol-shape violation: the
+        gateway must reject it with the OpenAI error envelope, not forward
+        garbage to the backend."""
+        res = self._request("/v1/chat/completions", raw_body=b"[]")
+        self.assertEqual(res.status, 400, res.body[:500])
+        error = res.json().get("error")
+        self.assertIsInstance(error, dict)
+        self.assertEqual(error.get("type"), "invalid_request_error")
+        self.assertIsInstance(error.get("message"), str)
+        self.assertTrue(error.get("message"))
+
+    def test_responses_hosted_tool_returns_protocol_shaped_400(self) -> None:
+        """The gateway has no first-party hosted-tool surface, so hosted tools
+        on /v1/responses must be refused with a deterministic OpenAI-shaped
+        error envelope."""
+        res = self._request(
+            "/v1/responses",
+            body={
+                "model": "default",
+                "input": "hi",
+                "tools": [{"type": "web_search"}],
+            },
+        )
+        self.assertEqual(res.status, 400, res.body[:500])
+        error = res.json().get("error")
+        self.assertIsInstance(error, dict)
+        self.assertEqual(error.get("code"), "hosted_tool_not_supported")
+        param = error.get("param") or ""
+        self.assertTrue(
+            param.startswith("tools["),
+            f"expected tools[...] param pointer, got {param!r}",
+        )
+
+    def test_audio_speech_unsupported_response_format_is_openai_shaped(self) -> None:
+        """TTS must reject unsupported response_format values with an OpenAI
+        envelope (regression for the audit finding that `response_format`
+        was silently ignored)."""
+        res = self._request(
+            "/v1/audio/speech",
+            body={
+                "model": "default",
+                "voice": "alloy",
+                "input": "compatibility probe",
+                "response_format": "opus",
+            },
+        )
+        if res.status == 503:
+            # TTS not enabled on this gateway instance; the regression check
+            # cannot run without the TTS surface present.
+            self.skipTest("TTS not enabled on this gateway")
+        self.assertEqual(res.status, 400, res.body[:500])
+        error = res.json().get("error")
+        self.assertIsInstance(error, dict)
+        self.assertEqual(error.get("code"), "unsupported_response_format")
+        self.assertEqual(error.get("param"), "response_format")
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

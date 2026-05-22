@@ -60,6 +60,7 @@ re-map them onto each SDK's own knobs.
 | `OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS` | no | Raw HTTP smoke opt-in for embedding backend round-trips. Default off. |
 | `OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL` | no | OpenAI embeddings probe model. Default `nomic-embed-text-v1.5`. |
 | `OPENAI_PROXY_SMOKE_OLLAMA_EMBED_MODEL` | no | Ollama embed/embeddings probe model. Default `nomic-embed-text-v1.5`. |
+| `OPENAI_PROXY_SMOKE_LIVE_VISION` | no | Opt-in for the chat image-input-block SDK probe. Default off — text-only local backends 4xx an image content block, which would be a false negative for gateway shape conformance. |
 
 ## Running the core unit tests
 
