@@ -6168,6 +6168,49 @@ async def _resolve_input_reference(
     )
 
 
+class _VideoFormParseError(Exception):
+    """Raised when an incoming multipart /v1/videos request can't be normalized."""
+
+
+_VIDEO_FORM_FILE_FIELDS = frozenset({"input_reference"})
+
+
+async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
+    """Normalize an openai-python multipart /v1/videos request into a JSON body.
+
+    The OpenAI Python SDK always submits videos.create as multipart/form-data so
+    that `input_reference` can be uploaded as a file. The rest of the video
+    handler is written against a JSON-shaped dict (prompt/model/size/seconds/...
+    as scalars, input_reference as path / URL / data: URI / base64). Here we
+    flatten the form back into that shape so the downstream pipeline is unchanged.
+
+    File uploads for `input_reference` are converted to a data: URI so the
+    existing input_reference resolver can decode them without any new branch.
+    """
+    try:
+        form = await request.form()
+    except Exception as exc:
+        raise _VideoFormParseError(f"Invalid multipart body: {exc}") from exc
+
+    body: dict[str, Any] = {}
+    for name, value in form.multi_items():
+        if name in _VIDEO_FORM_FILE_FIELDS and hasattr(value, "read") and hasattr(value, "filename"):
+            try:
+                raw = await value.read()
+            except Exception as exc:
+                raise _VideoFormParseError(
+                    f"failed to read uploaded {name}: {exc}"
+                ) from exc
+            mime = getattr(value, "content_type", None) or "application/octet-stream"
+            body[name] = "data:" + mime + ";base64," + base64.b64encode(raw).decode("ascii")
+            continue
+        # Plain scalar form field. OpenAI's SDK sends everything else as text;
+        # callers may send numeric/bool-looking strings, which the existing JSON
+        # path also accepts as strings (it coerces seconds/seed via float()/int()).
+        body[name] = value if not hasattr(value, "read") else str(value)
+    return body
+
+
 async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) -> Response:
     """POST /v1/videos — submit a job and return {video_id, status: queued}."""
     if not COMFY_ENABLED:
@@ -6183,14 +6226,31 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
     if service_response is not None:
         return service_response
 
-    try:
-        body = await request.json()
-    except Exception:
-        return Response(
-            content=json.dumps({"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
-        )
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        # openai-python's videos.create always uploads as multipart/form-data so
+        # that input_reference can be a binary upload. Normalize the form into
+        # the JSON body shape the rest of this handler expects.
+        try:
+            body = await _read_video_create_form_body(request)
+        except _VideoFormParseError as exc:
+            return Response(
+                content=json.dumps({"error": {
+                    "message": str(exc),
+                    "type": "invalid_request_error",
+                }}),
+                status_code=400,
+                media_type="application/json",
+            )
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            return Response(
+                content=json.dumps({"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}}),
+                status_code=400,
+                media_type="application/json"
+            )
     unknown_video_fields = detect_unknown_top_level_fields(
         body,
         STANDARD_VIDEO_CREATE_FIELDS,
@@ -6710,16 +6770,21 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
                     f"requested={seconds_val:g} actual={actual_seconds:.4f} "
                     f"reason={duration_adjustment_reason}"
                 )
+            # `object` and `seconds` are typed against the OpenAI Python SDK's
+            # `Video` model (object: Literal["video"], seconds: Union[str, ...]).
+            # Sending a string keeps the SDK's loose-construct parser happy
+            # across SDK versions; the precise float lives in `actual_seconds`.
+            seconds_str = str(int(seconds_val)) if float(seconds_val).is_integer() else str(seconds_val)
             payload = {
                 "id": video_id,
-                "object": "video.generation",
+                "object": "video",
                 "model": workflow_name,
                 "status": "queued",
                 "progress": 0,
                 "created_at": now,
                 "expires_at": now + 86400,
                 "size": f"{width}x{height}",
-                "seconds": seconds_val,
+                "seconds": seconds_str,
                 "actual_seconds": round(actual_seconds, 4),
             }
             return Response(

@@ -169,6 +169,11 @@ class OpenApiMediaSchemaHonestyTests(unittest.TestCase):
             with self.subTest(path=path):
                 op = self._op(path)
                 self.assertJsonRequestBody(op)
+                self.assertMultipartRequestBody(op)
+                multipart_schema = op["requestBody"]["content"]["multipart/form-data"][
+                    "schema"
+                ]
+                self.assertIn("input_reference", multipart_schema["properties"])
                 ok = self._ok_response(op)
                 schema = ok["content"]["application/json"]["schema"]
                 self.assertIn("id", schema["properties"])

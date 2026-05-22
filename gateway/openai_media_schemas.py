@@ -462,11 +462,28 @@ def _video_create_request_schema() -> JsonObjectSchema:
             "prompt": {"type": "string"},
             "model": {"type": "string"},
             "size": {"type": "string", "description": "e.g. '1280x720'."},
-            "seconds": {"type": "number"},
+            "seconds": {"type": ["number", "string"]},
             "seed": {"type": "integer"},
+            "input_reference": {
+                "type": "string",
+                "description": "Reference image/video as URL, path, data URI, or base64 string.",
+            },
         },
         "additionalProperties": True,
     }
+
+
+def _video_create_multipart_request_schema() -> JsonObjectSchema:
+    schema = _video_create_request_schema()
+    schema["properties"] = {
+        **schema["properties"],
+        "input_reference": {
+            "type": "string",
+            "format": "binary",
+            "description": "Optional reference asset upload accepted by the OpenAI Python SDK.",
+        },
+    }
+    return schema
 
 
 def _video_status_schema() -> JsonObjectSchema:
@@ -484,7 +501,7 @@ def _video_status_schema() -> JsonObjectSchema:
             "created_at": {"type": "integer"},
             "model": {"type": "string"},
             "size": {"type": "string"},
-            "seconds": {"type": "number"},
+            "seconds": {"type": ["number", "string"]},
             "error": {"type": ["object", "string", "null"]},
         },
         "additionalProperties": True,
@@ -492,7 +509,13 @@ def _video_status_schema() -> JsonObjectSchema:
 
 
 VIDEOS_CREATE_OPENAPI: JsonObjectSchema = {
-    "requestBody": _json_request(_video_create_request_schema()),
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {"schema": _video_create_request_schema()},
+            "multipart/form-data": {"schema": _video_create_multipart_request_schema()},
+        },
+    },
     "responses": {
         "202": {
             "description": "Sora-shaped video job submitted.",
