@@ -35,9 +35,50 @@ or Activity views, not as a pile of top-level concepts.
 The invariant: every executed request resolves an App + Profile + policy
 decision before it runs, and produces exactly one body-free **Receipt**.
 
-## Quick Start For Apps
+## First-Run Setup
 
-Run this from the gateway directory:
+For a fresh deployment, the normal entry point is the web UI, not the CLI:
+
+1. Configure the bootstrap settings — listener, TLS, session signing key,
+   optional `admin.oidc`, trust roots — in `proxy_config.yml`. See
+   [Admin Control Plane](#admin-control-plane) for the OIDC block.
+2. Start the gateway.
+3. Open `/setup` in a browser.
+4. If OIDC is configured, sign in with the IdP account that should own the
+   deployment. The first allowed OIDC login is promoted to `owner` when no
+   owner exists yet.
+5. If OIDC is not configured, `/setup` shows the one host-side
+   `generate-admin-key owner-cli` command to run and accepts the printed
+   `oak_...` key through `/setup/claim` to create a signed browser admin
+   session.
+6. From there, all Apps, Profiles, API keys, and access policy are managed
+   from `/admin`.
+
+The full operator-facing walkthrough is in
+[`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md). What follows in this
+guide is the runtime/auth model and the CLI recovery paths.
+
+## Quick Start For Apps (Dashboard)
+
+Once the gateway is running and you have signed in, the normal way to mint
+an App API key is from the dashboard or the account portal:
+
+- An operator opens `/admin`, creates an App, attaches a Profile, and
+  generates an `opk_...` key for it.
+- A signed-in user opens `/` (the account portal), creates a Personal App,
+  and mints their own `opk_...` key bound to that App.
+
+Dashboard-minted keys live in `admin.db`. The raw `opk_...` value is shown
+exactly once; the hash is what persists. Use it as the OpenAI API key
+inside the consuming app. Store it in the app's secret store or
+environment. Do not put the printed key in source files, logs, or prompts.
+
+## Quick Start For Apps (CLI, recovery / legacy)
+
+The CLI path is still supported. It is the only option for single-user
+installs that have never enabled OIDC, for scripted rotation, and for
+recovery when the dashboard is unavailable. Run this from the gateway
+directory:
 
 ```bash
 cd /home/tnunamak/applications/openai-proxy
@@ -99,9 +140,10 @@ If the same `<app-name>` already exists, the command rotates that App's API
 key while preserving its downstream mapping, Profile block, and audit trail.
 
 `generate-key` is the legacy-compatible App-key path. It remains useful for a
-single-user install and for apps already wired to `proxy_api_keys.yml`, but it
-is not the control plane. New multi-user/admin workflows should use
-`/admin`, `/admin/api/*`, and the durable admin database.
+single-user install, for apps already wired to `proxy_api_keys.yml`, and for
+scripted rotation. The documented first-run path for new deployments is
+`/setup` → browser admin session → `/admin`, which writes to the durable
+admin database instead of `proxy_api_keys.yml`.
 
 ## Admin Control Plane
 
@@ -113,26 +155,39 @@ The control plane is separate from the runtime `/v1` plane.
 - An App key cannot administer the gateway, and an admin key should not be put
   into OpenAI-compatible apps.
 
-Bootstrap the first service-account admin key from the gateway directory:
+The normal way to gain admin access on a fresh deployment is `/setup`: OIDC
+when available, or an existing `oak_...` admin key when the operator has not
+configured an IdP. From there, everything is dashboard-driven.
+
+### Recovery / headless admin key
+
+If OIDC is unreachable or misconfigured, or you are provisioning the
+gateway from a config-management tool, you can mint an admin key from the
+CLI. This is the recovery/headless path and the no-OIDC bootstrap credential
+that `/setup/claim` can exchange for a browser admin session:
 
 ```bash
 ./venv/bin/python proxy.py generate-admin-key owner-cli
 ```
 
 The command initializes the durable admin store if needed and prints one
-`oak_...` key. Use it only for admin-plane requests:
+`oak_...` key. Paste it into `/setup` when claiming a browser session, or use
+it directly for admin-plane requests:
 
 ```bash
 curl -s https://ai.vivid.fish/admin/api/overview \
   -H "Authorization: Bearer oak_..."
 ```
 
+### OIDC configuration
+
 OIDC browser login is configured under `admin.oidc` in `proxy_config.yml`.
-The browser entry point is `/login`; `/me/login` and `/admin/login` are
-compatibility redirects into that route. After login, normal users land on
-`/`, while admins can follow the Admin link from the account portal or go
-directly to `/admin`. `/me` is a legacy browser alias that redirects to `/`,
-never an API-key error page.
+The first-run entry point is `/setup`; `/login` is the raw OIDC redirect
+starter, while `/me/login` and `/admin/login` are compatibility redirects into
+that route. After login, normal users land on `/`, while admins can follow the
+Admin link from the account portal or go directly to `/admin`.
+`/me` is a legacy browser alias that redirects to `/`, never an API-key
+error page.
 Secrets should come from environment variables:
 
 ```yaml

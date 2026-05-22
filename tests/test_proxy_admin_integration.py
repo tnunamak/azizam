@@ -1067,5 +1067,233 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             )
 
 
+class SetupRouteIntegrationTests(unittest.TestCase):
+    """Route-level tests for `/setup`.
+
+    Uses a clean admin DB with no service-account admin so the "first-run
+    claim" state is reachable. Individual tests promote a user to owner to
+    exercise the "setup complete" state.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "admin.db"
+        self.old_path = proxy.ADMIN_STORE.path
+        self.old_oidc = proxy.ADMIN_OIDC_CONFIG
+        self.old_signing_key = proxy.ADMIN_AUTH.signing_key
+        self.old_cookie = proxy.ADMIN_AUTH.cookie
+        self.old_auth_enabled = proxy.AUTH_ENABLED
+        self.old_auth_registry = proxy.AUTH_REGISTRY
+        self.old_refresh_auth_registry = proxy.refresh_auth_registry
+        proxy.ADMIN_STORE.path = self.db
+        proxy.ADMIN_OIDC_STATES.clear()
+        proxy.AUTH_ENABLED = True
+        proxy.AUTH_REGISTRY = {}
+        proxy.refresh_auth_registry = lambda force=False: None
+        proxy.ADMIN_AUTH.signing_key = b"s" * 32
+        proxy.ADMIN_AUTH.cookie = CookieConfig(secure=False)
+        admin_store.init_db(self.db)
+        # No service-account admin key here -> no owner/admin exists yet.
+        self.client = TestClient(proxy.app)
+
+    def tearDown(self) -> None:
+        proxy.ADMIN_STORE.path = self.old_path
+        proxy.ADMIN_OIDC_CONFIG = self.old_oidc
+        proxy.ADMIN_AUTH.signing_key = self.old_signing_key
+        proxy.ADMIN_AUTH.cookie = self.old_cookie
+        proxy.AUTH_ENABLED = self.old_auth_enabled
+        proxy.AUTH_REGISTRY = self.old_auth_registry
+        proxy.refresh_auth_registry = self.old_refresh_auth_registry
+        proxy.ADMIN_OIDC_STATES.clear()
+        self.tmp.cleanup()
+
+    def _enable_oidc(self) -> OIDCConfig:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset({"owner@example.com"}),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+        return cfg
+
+    def test_setup_renders_claim_card_when_oidc_enabled_and_no_owner(self) -> None:
+        self._enable_oidc()
+        response = self.client.get("/setup")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.headers.get("content-type"),
+            "text/html; charset=utf-8",
+        )
+        self.assertIn("Claim this gateway", response.text)
+        self.assertIn("Sign in to claim owner", response.text)
+        self.assertIn("/login?return_to=%2Fsetup", response.text)
+        self.assertIn("first allowed OIDC login", response.text)
+        self.assertNotIn("Setup complete", response.text)
+
+    def test_setup_explains_oidc_setup_when_disabled_and_no_owner(self) -> None:
+        # OIDC is disabled by default in this fixture (no _enable_oidc()).
+        response = self.client.get("/setup")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("Claim this gateway from this machine", response.text)
+        self.assertIn("generate-admin-key owner-cli", response.text)
+        self.assertIn("oak_ admin key", response.text)
+        # No "claim owner" CTA, no /login link.
+        self.assertNotIn("Sign in to claim owner", response.text)
+        self.assertIn('method="post" action="/setup/claim"', response.text)
+
+    def test_setup_shows_complete_card_when_owner_exists(self) -> None:
+        # Bootstrap a service-account owner -> _owner_or_admin_exists() is True.
+        create_admin_service_account_key("real-owner", path=self.db)
+        response = self.client.get("/setup")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("Setup complete", response.text)
+        self.assertIn("This gateway has an owner", response.text)
+        self.assertIn('href="/"', response.text)
+        self.assertIn('href="/admin"', response.text)
+        self.assertNotIn("Sign in to claim owner", response.text)
+
+    def test_safe_return_to_accepts_setup(self) -> None:
+        self.assertEqual(proxy._safe_admin_return_to("/setup"), "/setup")
+
+    def test_safe_return_to_still_rejects_external_redirects(self) -> None:
+        self.assertEqual(
+            proxy._safe_admin_return_to("//evil.example/setup"),
+            "/admin",
+        )
+
+    def test_login_falls_back_to_setup_message_when_oidc_disabled(self) -> None:
+        # OIDC disabled -> /login returns a 501 that points operators to /setup
+        # and clarifies that the CLI is recovery, not the normal path.
+        response = self.client.get("/login", follow_redirects=False)
+        self.assertEqual(response.status_code, 501, response.text)
+        body = response.text
+        self.assertIn("/setup", body)
+        self.assertIn("recovery and headless automation", body)
+        # No longer frames the CLI as the primary way in.
+        self.assertNotIn(
+            "Use `python proxy.py generate-admin-key <name>` for /admin/api",
+            body,
+        )
+
+    def test_setup_login_link_uses_setup_return_to(self) -> None:
+        self._enable_oidc()
+        response = self.client.get("/setup")
+        self.assertEqual(response.status_code, 200)
+        # The primary CTA's href is /login?return_to=%2Fsetup; after OIDC
+        # login the callback redirects back to /setup.
+        self.assertIn('href="/login?return_to=%2Fsetup"', response.text)
+
+    def test_setup_login_round_trip_redirects_back_to_setup(self) -> None:
+        # Confirm that the return_to value the page emits actually round-trips
+        # through /login -> OIDC -> callback -> /setup. Catches regressions if
+        # _safe_admin_return_to drops /setup from its whitelist.
+        cfg = self._enable_oidc()
+        login = self.client.get(
+            "/login?return_to=/setup", follow_redirects=False
+        )
+        self.assertEqual(login.status_code, 302, login.text)
+        self.assertIn("https://idp.example/authorize", login.headers["location"])
+
+        state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
+        self.assertEqual(record.return_to, "/setup")
+
+        async def fake_exchange(_code, *, config, pkce):
+            return {"id_token": "fake.id.token"}
+
+        async def fake_verify(_id_token, *, config):
+            return {
+                "iss": cfg.issuer,
+                "aud": cfg.client_id,
+                "sub": "oidc-subject",
+                "email": "owner@example.com",
+                "email_verified": True,
+                "nonce": record.nonce,
+                "exp": 4_000_000_000,
+                "iat": 1_700_000_000,
+            }
+
+        with patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
+            proxy, "_oidc_verify_id_token", fake_verify
+        ):
+            callback = self.client.get(
+                f"/admin/oidc/callback?state={state}&code=abc",
+                follow_redirects=False,
+            )
+        self.assertEqual(callback.status_code, 302, callback.text)
+        self.assertEqual(callback.headers["location"], "/setup")
+
+    def test_setup_does_not_leak_private_admin_data(self) -> None:
+        create_admin_service_account_key("real-owner", path=self.db)
+        response = self.client.get("/setup")
+        body = response.text
+        # No secret-shaped material should ever appear on /setup.
+        for needle in ("sk-", "client_secret_value", "Bearer oak_", "Bearer opk_"):
+            self.assertNotIn(needle, body)
+
+    def test_setup_claim_rejects_runtime_app_key_with_clear_error(self) -> None:
+        response = self.client.post(
+            "/setup/claim",
+            data={"admin_key": "opk_not_an_admin_key"},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("runtime App key", response.text)
+        self.assertIn("admin key", response.text)
+
+    def test_setup_claim_admin_key_creates_browser_admin_session(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "real-owner",
+            path=self.db,
+        )
+        response = self.client.post(
+            "/setup/claim",
+            data={"admin_key": admin_key},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(response.headers["location"], "/setup")
+        self.assertIn(proxy.ADMIN_AUTH.cookie.name, response.headers.get("set-cookie", ""))
+        setup = self.client.get("/setup")
+        self.assertEqual(setup.status_code, 200, setup.text)
+        self.assertIn("Setup complete", setup.text)
+        self.assertIn("local-admin", setup.text)
+        admin = self.client.get("/admin")
+        self.assertEqual(admin.status_code, 200, admin.text)
+
+    def test_signed_in_admin_sees_actor_label_and_sign_out_on_setup(self) -> None:
+        # Stand up a real owner + sign-in cookie, then verify /setup shows
+        # actor label and the Sign out link.
+        cfg = self._enable_oidc()
+        create_admin_service_account_key("real-owner", path=self.db)
+        session = session_from_claims(
+            {"sub": "owner-sub", "email": "owner@example.com"},
+            role="owner",
+            cookie=cfg.cookie,
+        )
+        cookie_value = encode_session_cookie(session, signing_key=cfg.signing_key)
+        self.client.cookies.set(cfg.cookie.name, cookie_value)
+        try:
+            response = self.client.get("/setup")
+        finally:
+            self.client.cookies.clear()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("Setup complete", response.text)
+        self.assertIn("owner@example.com", response.text)
+        self.assertIn("Sign out", response.text)
+        self.assertIn('href="/logout"', response.text)
+
+
 if __name__ == "__main__":
     unittest.main()

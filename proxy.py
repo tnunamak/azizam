@@ -38,7 +38,7 @@ from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Iterable, Mapping, Optional
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote
 
 import httpx
 import yaml
@@ -87,6 +87,7 @@ from gateway.admin_oidc import (
     validate_id_token_claims,
 )
 from gateway.admin_render import render_admin_dashboard
+from gateway.setup_render import render_setup_page
 from gateway.admin_runtime import (
     AdminAuthenticator,
     AdminSQLiteStore,
@@ -8120,7 +8121,7 @@ def _safe_admin_return_to(value: str | None, *, default: str = "/admin") -> str:
         return default
     if value in {"/", "/me"}:
         return "/"
-    if value == "/status":
+    if value in {"/status", "/setup"}:
         return value
     if value.startswith("/admin"):
         return value
@@ -8132,16 +8133,26 @@ def _login_url(*, return_to: str) -> str:
     return f"/login?return_to={quote(safe_return_to, safe='')}"
 
 
+def _browser_admin_session_signing_key() -> bytes | None:
+    return ADMIN_AUTH.signing_key or ADMIN_SESSION_SIGNING_KEY
+
+
+def _browser_admin_cookie_config():
+    return ADMIN_AUTH.cookie or ADMIN_OIDC_CONFIG.cookie
+
+
 def _oidc_session_from_request(request: Request):
-    if not ADMIN_OIDC_CONFIG.enabled:
+    signing_key = _browser_admin_session_signing_key()
+    if not signing_key:
         return None
-    raw = request.cookies.get(ADMIN_OIDC_CONFIG.cookie.name)
+    cookie = _browser_admin_cookie_config()
+    raw = request.cookies.get(cookie.name)
     if not raw:
         return None
     try:
         return decode_session_cookie(
             raw,
-            signing_key=ADMIN_OIDC_CONFIG.signing_key,
+            signing_key=signing_key,
         )
     except SessionError:
         return None
@@ -8230,10 +8241,11 @@ async def user_portal_login():
 @app.get("/me/logout", include_in_schema=False)
 async def user_portal_logout():
     response = RedirectResponse("/", status_code=302)
+    cookie = _browser_admin_cookie_config()
     response.delete_cookie(
-        ADMIN_OIDC_CONFIG.cookie.name,
-        path=ADMIN_OIDC_CONFIG.cookie.path,
-        domain=ADMIN_OIDC_CONFIG.cookie.domain,
+        cookie.name,
+        path=cookie.path,
+        domain=cookie.domain,
     )
     return response
 
@@ -9017,8 +9029,10 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         return Response(
             content=(
                 "OIDC browser login is not configured on this gateway yet. "
-                "Use `python proxy.py generate-admin-key <name>` for /admin/api "
-                "or configure admin.oidc before using browser login."
+                "Open /setup to see what to configure. "
+                "(`python proxy.py generate-admin-key <name>` is supported "
+                "for recovery and headless automation, not normal first-run "
+                "setup.)"
             ),
             status_code=501,
             media_type="text/plain; charset=utf-8",
@@ -9047,6 +9061,176 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
             status_code=500,
             media_type="text/plain; charset=utf-8",
         )
+
+
+def _owner_or_admin_exists() -> bool:
+    """True if any non-revoked owner or admin role is assigned.
+
+    Covers both OIDC user roles and service-account admin keys, since either
+    is enough to manage the gateway.
+    """
+    return bool(_existing_admin_roles_by_email())
+
+
+def _admin_credential_active(record: Mapping[str, Any]) -> bool:
+    if record.get("revoked_at"):
+        return False
+    expires_at = record.get("expires_at")
+    return expires_at is None or int(expires_at) > int(time.time())
+
+
+def _setup_page_response(
+    request: Request,
+    *,
+    claim_error: str | None = None,
+    status_code: int = 200,
+) -> Response:
+    session = _oidc_session_from_request(request)
+    is_admin_signed_in = False
+    actor_label: str | None = None
+    if session is not None and session.role in {"owner", "admin", "superadmin"}:
+        is_admin_signed_in = True
+        actor_label = session.email or session.subject or None
+    body = render_setup_page(
+        owner_or_admin_exists=_owner_or_admin_exists(),
+        oidc_enabled=ADMIN_OIDC_CONFIG.enabled,
+        login_url=_login_url(return_to="/setup"),
+        is_admin_signed_in=is_admin_signed_in,
+        actor_label=actor_label,
+        logout_url="/logout" if is_admin_signed_in else None,
+        claim_error=claim_error,
+        can_claim_with_admin_key=bool(_browser_admin_session_signing_key()),
+    )
+    return Response(
+        content=body,
+        status_code=status_code,
+        media_type="text/html; charset=utf-8",
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.get("/setup", include_in_schema=False)
+async def setup_page(request: Request):
+    return _setup_page_response(request)
+
+
+async def _setup_claim_admin_key_value(request: Request) -> str:
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("application/json"):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        return str(body.get("admin_key") or "").strip() if isinstance(body, Mapping) else ""
+    raw = (await request.body()).decode("utf-8", errors="replace")
+    parsed = parse_qs(raw, keep_blank_values=True)
+    return str((parsed.get("admin_key") or [""])[0]).strip()
+
+
+@app.post("/setup/claim", include_in_schema=False)
+async def setup_claim_admin_key(request: Request):
+    signing_key = _browser_admin_session_signing_key()
+    if not signing_key:
+        return _setup_page_response(
+            request,
+            claim_error=(
+                "Browser admin sessions need admin.session_signing_key or "
+                "AI_GATEWAY_ADMIN_SESSION_KEY before this gateway can accept "
+                "an admin-key claim."
+            ),
+            status_code=400,
+        )
+    admin_key = await _setup_claim_admin_key_value(request)
+    if admin_key.startswith("opk_"):
+        return _setup_page_response(
+            request,
+            claim_error=(
+                "That looks like a runtime App key (opk_). Setup needs an "
+                "admin key (oak_) from generate-admin-key."
+            ),
+            status_code=400,
+        )
+    if not admin_key.startswith("oak_"):
+        return _setup_page_response(
+            request,
+            claim_error="Paste the oak_ admin key printed by generate-admin-key.",
+            status_code=400,
+        )
+    credential = admin_store.find_credential_by_hash(
+        hash_api_key(admin_key),
+        path=ADMIN_STORE.path,
+    )
+    if credential is None or not _admin_credential_active(credential):
+        return _setup_page_response(
+            request,
+            claim_error="That admin key was not found, expired, or has been revoked.",
+            status_code=400,
+        )
+    subject_kind = str(credential.get("subject_kind") or "")
+    subject_id = str(credential.get("subject_id") or "")
+    if subject_kind not in {"user", "service_account"} or not subject_id:
+        return _setup_page_response(
+            request,
+            claim_error="That key is not an admin key.",
+            status_code=400,
+        )
+    roles = admin_store.list_admin_roles(
+        subject_kind=subject_kind,
+        subject_id=subject_id,
+        path=ADMIN_STORE.path,
+    )
+    role_names = {str(role.get("role") or "") for role in roles}
+    if "owner" in role_names:
+        role = "owner"
+    elif "admin" in role_names or "superadmin" in role_names:
+        role = "admin"
+    else:
+        return _setup_page_response(
+            request,
+            claim_error="That admin key does not have owner or admin permission.",
+            status_code=403,
+        )
+    user = admin_store.upsert_oidc_user(
+        "local-admin-key",
+        f"{subject_kind}:{subject_id}",
+        email="local-admin",
+        display_name="Local admin key",
+        path=ADMIN_STORE.path,
+    )
+    admin_store.assign_admin_role(
+        role=role,
+        subject_kind="user",
+        subject_id=str(user["id"]),
+        granted_by="setup-claim",
+        path=ADMIN_STORE.path,
+    )
+    admin_store.record_audit(
+        "setup.claim",
+        actor_kind=subject_kind,
+        actor_id=subject_id,
+        target_kind="user",
+        target_id=str(user["id"]),
+        metadata={"role": role, "credential_prefix": credential.get("prefix")},
+        path=ADMIN_STORE.path,
+    )
+    session = session_from_claims(
+        {"sub": str(user["id"]), "email": "local-admin"},
+        role=role,
+        cookie=_browser_admin_cookie_config(),
+    )
+    response = RedirectResponse("/setup", status_code=303)
+    cookie = _browser_admin_cookie_config()
+    response.set_cookie(
+        cookie.name,
+        encode_session_cookie(session, signing_key=signing_key),
+        max_age=cookie.max_age_seconds,
+        secure=cookie.secure,
+        httponly=cookie.http_only,
+        samesite=cookie.same_site,
+        path=cookie.path,
+        domain=cookie.domain,
+    )
+    return response
 
 
 @app.get("/login", include_in_schema=False)
@@ -9187,11 +9371,13 @@ async def admin_oidc_callback(request: Request):
 
 @app.post("/admin/logout", include_in_schema=False)
 async def admin_logout():
-    response = RedirectResponse(_login_url(return_to="/admin"), status_code=302)
+    target = _login_url(return_to="/admin") if ADMIN_OIDC_CONFIG.enabled else "/setup"
+    response = RedirectResponse(target, status_code=302)
+    cookie = _browser_admin_cookie_config()
     response.delete_cookie(
-        ADMIN_OIDC_CONFIG.cookie.name,
-        path=ADMIN_OIDC_CONFIG.cookie.path,
-        domain=ADMIN_OIDC_CONFIG.cookie.domain,
+        cookie.name,
+        path=cookie.path,
+        domain=cookie.domain,
     )
     return response
 

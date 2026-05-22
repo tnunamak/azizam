@@ -14,24 +14,43 @@ file and dashboard ownership.
 The principle is Rich-Hickey-shaped: each setting has exactly one durable
 home, and the dashboard only writes settings whose home is `admin.db`.
 
+For the operator-facing first-run story this split implies, see
+[`FIRST_RUN_SETUP.md`](FIRST_RUN_SETUP.md). In short: bootstrap once via
+`proxy_config.yml` + env, then drive everything else from `/admin`.
+
+> **Implementation honesty.** Not every dashboard-plane domain is fully
+> editable in the UI yet. The inventory in `gateway/config_sources.py` and
+> the table below define the *target* ownership; some domains still require
+> editing `admin.db` directly or going through `/admin/api/*`. The dashboard
+> should never *write* a bootstrap-plane field; if a UI control appears to,
+> that is a bug.
+
 ## Ownership planes
 
 There are four planes. Every domain in `CONFIG_SPECS` belongs to exactly one.
+Concretely:
 
-1. **Dashboard plane** — authored in the admin UI/API, stored in `admin.db`,
-   audited, included in provisioning bundles, applies live unless the
-   apply_mode says otherwise. Operators expect to manage these without
-   touching files or restarting the gateway.
-2. **Bootstrap plane** — authored in `proxy_config.yml` or service env,
-   stored where it was authored, never dashboard-writable, restart to apply.
-   Includes all secrets. Bundles never carry these values.
-3. **Provisioned plane** — workflow manifests and catalog files. Hackable on
-   disk by the operator, read-only in the dashboard. The dashboard shows
-   which manifest is loaded and whether it is healthy.
-4. **Split plane** — domains that legitimately have a bootstrap half and a
-   runtime half. The runtime half lives in `admin.db`; the bootstrap half
-   stays in YAML/env. The dashboard must render *both* paths, never collapse
-   them.
+1. **Bootstrap plane** — `proxy_config.yml`, service environment variables,
+   and referenced secret stores. Everything the gateway needs to *start*: the
+   listener, TLS, OIDC issuer/client, signing/session keys, trust roots,
+   downstream provider credentials, on-disk model directories. Never
+   dashboard-writable. Restart to apply. Provisioning bundles never carry
+   these values.
+2. **Dashboard plane** — `admin.db`, edited through `/admin` (and the
+   `/admin/api/*` JSON surface). Runtime access policy: the admin user list,
+   role grants, Profiles, Apps, App API keys, role→model bindings, admission
+   caps, throttles, runtime routing overrides — anything an operator should
+   legitimately be able to change after boot without touching a file. Audited,
+   applies live unless the apply_mode says otherwise.
+3. **Provisioned plane** — workflow manifests and catalog files committed in
+   the repo (`workflows/`, the model compatibility table). The operator's
+   change path is editing the file in version control. The dashboard surfaces
+   which manifest is loaded and whether it is healthy, but does not edit it.
+4. **Split plane** — domains with a legitimate bootstrap half (secrets, base
+   URLs, deployment shape) and a runtime half (enablement, policy, caps). The
+   bootstrap half stays in `proxy_config.yml`/env; the runtime half lives in
+   `admin.db`. The dashboard must render *both* paths so an operator can see
+   where each field actually lives, and only writes to the `admin.db` half.
 
 ## Per-domain ownership policy
 

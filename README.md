@@ -25,6 +25,9 @@ The canonical public host is **`https://ai.vivid.fish`**. The original **`https:
 Agents and apps can start without local repo context by fetching the public discovery surface (no auth required):
 
 - `GET /` — browser account portal
+- `GET /setup` — web-first owner claim and setup handoff
+- `POST /setup/claim` — accept an existing `oak_...` admin key and issue a
+  signed browser admin session
 - `GET /health`
 - `GET /login` — browser OIDC login entry point when configured
 - `GET /me` — legacy browser alias; redirects to `/`
@@ -72,6 +75,8 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | Method + Path | Backend | Purpose |
 |---|---|---|
 | `GET  /` | proxy | Browser account portal |
+| `GET  /setup` | proxy | First-run setup and owner/admin browser-session handoff |
+| `POST /setup/claim` | proxy | Claim a browser admin session with an existing `oak_...` admin key |
 | `GET  /login` | proxy + OIDC | Browser sign-in entry point; redirects back to `/` or `/admin` |
 | `GET  /me` | proxy | Legacy browser alias; redirects to `/` |
 | `GET  /admin` | proxy | Admin dashboard; browser sessions redirect through `/login` |
@@ -148,25 +153,23 @@ The legacy term **"client"** is preserved only in compatibility contexts (OpenAI
 
 ## Auth
 
-All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health`, `/`, `/me`, `/me/api/session`, and the `/.well-known/*` discovery surfaces are public. `/me` redirects to `/`; the account portal does not expose private data by itself. The browser uses either the signed OIDC session cookie or a pasted `opk_...` key to check effective access. Pasted keys are kept in browser session storage, not long-lived local storage.
+All `/v1`, `/api`, and `/gateway/v1` traffic requires a bearer token. `/health`, `/`, `/setup`, `/me`, `/me/api/session`, and the `/.well-known/*` discovery surfaces are public. `/me` redirects to `/`; the account portal and setup page do not expose private data by themselves. The browser uses either the signed admin/OIDC session cookie or a pasted `opk_...` key to check effective access. Pasted keys are kept in browser session storage, not long-lived local storage.
 
-App API keys are stored as sha256 hashes in `proxy_api_keys.yml` (gitignored). Generate or rotate one with:
+The normal first-run path is web-first:
 
-```bash
-./venv/bin/python proxy.py generate-key <app-name>
-```
+1. Configure the bootstrap settings (listener, session signing key, optional OIDC issuer/client, trust roots) in `proxy_config.yml` and start the service.
+2. Open `/setup`.
+3. If OIDC is configured, sign in through the IdP. If no owner exists yet, the first allowed OIDC login is promoted to `owner`.
+4. If OIDC is not configured, run the one host-side `generate-admin-key owner-cli` command shown on `/setup`, paste the printed `oak_...` key into the setup page, and the browser receives an admin session.
+5. Manage Apps, Profiles, API keys, role/model bindings, and access policy from the `/admin` dashboard.
 
-The printed `opk_...` value is the bearer key apps send as `Authorization: Bearer opk_...`. The yaml only ever holds the hash.
+App keys (`opk_...`) are for runtime clients and SDKs. Admin keys (`oak_...`) are for the control plane and can also bootstrap a browser admin session through `/setup/claim`. See [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md) for the full first-run contract.
+
+App API keys are stored as sha256 hashes in `proxy_api_keys.yml` (gitignored). The yaml only ever holds the hash; dashboard-minted keys live in `admin.db` instead. The bearer key apps present is `Authorization: Bearer opk_...`.
 
 Per-key downstream overrides are supported — any one App API key can map to different upstream credentials per provider (TabbyAPI key, TTS auth header, etc.). See [`proxy_api_keys.example.yml`](proxy_api_keys.example.yml) for the structure.
 
-Admin/control-plane credentials are separate. Bootstrap a service-account admin key with:
-
-```bash
-./venv/bin/python proxy.py generate-admin-key owner-cli
-```
-
-The printed `oak_...` key can administer `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser login starts at `/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. Admins are Users with an admin-capable role, so signed-in admins also see an Admin link from the account portal. The dashboard can create Apps, Profiles, and API keys, revoke credentials, and simulate policy decisions before handing someone access.
+Admin/control-plane credentials are separate from App keys. The `oak_...` admin key administers `/admin/api/*`; it is not an OpenAI-compatible `/v1` App key. Browser login starts at `/login` when `admin.oidc` is configured, and the admin dashboard is served at `/admin`. Admins are Users with an admin-capable role, so signed-in admins also see an Admin link from the account portal. The dashboard can create Apps, Profiles, and API keys, revoke credentials, and simulate policy decisions before handing someone access.
 
 OIDC can grant admin from configured IdP groups or roles without hardcoding a
 deployment's policy into the proxy. Set `admin.oidc.admin_groups` /
@@ -223,6 +226,8 @@ Both API-format (`*.json`) and UI-format (`*.ui.json`) workflows live in this re
 
 ## Setup
 
+The full first-run story lives in [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md). The short version:
+
 ### 1. Python deps
 
 ```bash
@@ -230,9 +235,17 @@ python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 ```
 
-### 2. Configure backends
+### 2. Bootstrap config
 
-Edit `proxy_config.yml`. The shipped config assumes:
+Edit `proxy_config.yml` to set:
+
+- Listener host/port, TLS terminator.
+- Backend URLs and any non-secret routing the gateway needs at boot.
+- `admin.session_signing_key` or `AI_GATEWAY_ADMIN_SESSION_KEY`; browser setup claims need a durable signing key.
+- Optional `admin.oidc` (issuer, client_id, client_secret env, redirect URI, signing key env, allowed email domains/admin emails). This turns `/setup` and `/login` into an IdP-backed sign-in flow.
+- Downstream provider credentials (as env-backed values, not literals).
+
+The shipped backend defaults assume:
 
 - TabbyAPI on `127.0.0.1:5050`
 - llama.cpp/koboldcpp on `127.0.0.1:5051`
@@ -240,19 +253,9 @@ Edit `proxy_config.yml`. The shipped config assumes:
 - Parakeet STT on `127.0.0.1:5092`
 - ComfyUI on `127.0.0.1:7890`
 
-Adjust hosts, ports, model paths, and role mappings as needed.
+Adjust hosts, ports, model paths, and role mappings as needed. Runtime access policy (Profiles, Apps, role/model bindings, admission caps) is **not** configured here — it lives in `admin.db` and is edited from the dashboard. See [`docs/CONFIG_SOURCE_OF_TRUTH.md`](docs/CONFIG_SOURCE_OF_TRUTH.md) for the full split.
 
-### 3. Create your first keys
-
-```bash
-cp proxy_api_keys.example.yml proxy_api_keys.yml
-./venv/bin/python proxy.py generate-key first-app
-./venv/bin/python proxy.py generate-admin-key owner-cli
-```
-
-`generate-key` rewrites `proxy_api_keys.yml` to add a hashed App entry and prints the `opk_...` bearer token once. `generate-admin-key` initializes the durable admin store and prints one `oak_...` admin token. Neither token is recoverable from disk.
-
-### 4. Start the proxy
+### 3. Start the proxy
 
 For development:
 
@@ -269,6 +272,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now openai-proxy.service
 ```
 
+### 4. Sign in and become owner
+
+Open `/setup` in a browser. If OIDC is configured, sign in with the IdP account that should own the deployment; the first allowed OIDC login is promoted to `owner` when no owner exists yet. If OIDC is not configured, `/setup` shows the one `generate-admin-key owner-cli` command to run on the host and accepts the printed `oak_...` key to create a browser admin session. After that, `/admin` is where Apps, Profiles, API keys, role/model bindings, and admission policy are managed.
+
 ### 5. Smoke test
 
 ```bash
@@ -279,6 +286,21 @@ curl -s http://127.0.0.1:5000/v1/models -H "Authorization: Bearer opk_..."
 
 The operator status page is served by the proxy at `/status`. The product root
 `/` serves the account portal; `/me` is a legacy browser redirect to `/`.
+
+### Recovery: CLI key generation
+
+The CLI commands are still supported for headless automation and recovery (broken OIDC, config-management provisioning, scripted rotation):
+
+```bash
+# Recovery / headless admin key. Initializes the admin store if needed.
+./venv/bin/python proxy.py generate-admin-key owner-cli
+
+# Single-user / legacy App key path. Rewrites proxy_api_keys.yml.
+cp proxy_api_keys.example.yml proxy_api_keys.yml
+./venv/bin/python proxy.py generate-key first-app
+```
+
+Both commands print one secret value once and store only a hash. Neither key is recoverable from disk. Treat these as the back door, not the front door.
 
 ## Status page
 
