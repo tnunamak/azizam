@@ -5,6 +5,7 @@ from pathlib import Path
 
 from gateway.extension_packages import (
     EXTENSION_PACKAGE_INDEX_SETTING_KEY,
+    _git_source_url,
     empty_extension_package_index,
     imported_registry_records,
     merge_package_index,
@@ -18,6 +19,20 @@ from gateway.extension_packages import (
 def _write_package(tmp_path: Path, manifest: str, files: dict[str, str] | None = None) -> Path:
     package_dir = tmp_path / "package"
     package_dir.mkdir()
+    (package_dir / "extension.yml").write_text(manifest, encoding="utf-8")
+    for name, payload in (files or {}).items():
+        path = package_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload, encoding="utf-8")
+    return package_dir
+
+
+def _write_package_at(
+    package_dir: Path,
+    manifest: str,
+    files: dict[str, str] | None = None,
+) -> Path:
+    package_dir.mkdir(parents=True)
     (package_dir / "extension.yml").write_text(manifest, encoding="utf-8")
     for name, payload in (files or {}).items():
         path = package_dir / name
@@ -265,6 +280,141 @@ bindings:
     }
 
 
+def test_workflow_package_uri_artifact_must_exist(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: missing-artifact-package
+version: 0.1.0
+objects:
+  workflows:
+    - objects/workflow.yml
+""",
+        {
+            "objects/workflow.yml": """
+schema_version: 1
+version: 0.1.0
+id: image.generate.missing-artifact
+intent: image.generate
+inputs:
+  prompt:
+    type: string
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: package://workflows/missing.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+""",
+        },
+    )
+
+    review = review_local_directory_package(package_dir)
+
+    assert review["ok"] is False
+    assert review["errors"] == [
+        "objects/workflow.yml: bindings.comfyui.workflow: "
+        "package artifact not found: package://workflows/missing.json"
+    ]
+
+
+def test_workflow_package_uri_artifact_cannot_traverse(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: traversal-artifact-package
+version: 0.1.0
+objects:
+  workflows:
+    - objects/workflow.yml
+""",
+        {
+            "objects/workflow.yml": """
+schema_version: 1
+version: 0.1.0
+id: image.generate.traversal-artifact
+intent: image.generate
+inputs:
+  prompt:
+    type: string
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: package://../outside.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+""",
+        },
+    )
+
+    review = review_local_directory_package(package_dir)
+
+    assert review["ok"] is False
+    assert "../outside.json: path traversal is not allowed" in review["errors"]
+
+
+def test_package_hash_includes_workflow_package_uri_artifact(tmp_path: Path) -> None:
+    manifest = """
+schema_version: 1
+kind: extension_package
+id: artifact-hash-package
+version: 0.1.0
+objects:
+  workflows:
+    - objects/workflow.yml
+"""
+    workflow_manifest = """
+schema_version: 1
+version: 0.1.0
+id: image.generate.artifact-hash
+intent: image.generate
+inputs:
+  prompt:
+    type: string
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: package://workflows/demo.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+"""
+    package_dir = _write_package(
+        tmp_path,
+        manifest,
+        {
+            "objects/workflow.yml": workflow_manifest,
+            "workflows/demo.json": '{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "one"}}}',
+        },
+    )
+    before = review_local_directory_package(package_dir)
+
+    (package_dir / "workflows" / "demo.json").write_text(
+        '{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "two"}}}',
+        encoding="utf-8",
+    )
+    after = review_local_directory_package(package_dir)
+
+    assert before["ok"] is True
+    assert after["ok"] is True
+    assert before["package_hash"] != after["package_hash"]
+
+
 def test_invalid_capability_and_workflow_objects_return_validation_errors(
     tmp_path: Path,
 ) -> None:
@@ -438,6 +588,120 @@ objects: {}
     assert review["resolved_source"]["type"] == "git"
     assert review["resolved_source"]["resolved_ref"] == commit
     assert str(install_root) in review["resolved_source"]["path"]
+
+
+def test_validate_extension_package_source_imports_git_subdir_package(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    package_dir = _write_package_at(
+        repo_dir / "packages" / "demo",
+        """
+schema_version: 1
+kind: extension_package
+id: git-subdir-package
+version: 0.1.0
+objects:
+  services:
+    - objects/service.yml
+""",
+        {
+            "objects/service.yml": """
+id: git-subdir-service
+name: Git Subdir Service
+config:
+  base_url: http://localhost:9999
+""",
+        },
+    )
+    commit = _commit_package_repo(repo_dir)
+    install_root = tmp_path / "installed"
+
+    review = validate_extension_package_source(
+        {
+            "type": "git",
+            "url": str(repo_dir),
+            "ref": commit,
+            "subdir": "packages/demo",
+        },
+        install_root=install_root,
+    )
+
+    assert review["ok"] is True
+    assert review["package"]["id"] == "git-subdir-package"
+    assert review["services"][0]["id"] == "git-subdir-service"
+    assert review["resolved_source"]["subdir"] == "packages/demo"
+    assert Path(review["resolved_source"]["path"]).name == package_dir.name
+
+
+def test_validate_extension_package_source_rejects_git_subdir_traversal(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    _write_package_at(
+        repo_dir / "package",
+        """
+schema_version: 1
+kind: extension_package
+id: traversal-package
+version: 0.1.0
+objects: {}
+""",
+    )
+    commit = _commit_package_repo(repo_dir)
+
+    review = validate_extension_package_source(
+        {
+            "type": "git",
+            "url": str(repo_dir),
+            "ref": commit,
+            "subdir": "../package",
+        },
+        install_root=tmp_path / "installed",
+    )
+
+    assert review["ok"] is False
+    assert review["errors"] == [
+        "git extension package subdir cannot traverse outside repo"
+    ]
+
+
+def test_git_repo_shorthand_normalizes_to_github_url() -> None:
+    assert (
+        _git_source_url({"type": "git", "repo": "owner/name"})
+        == "https://github.com/owner/name.git"
+    )
+
+
+def test_validate_extension_package_source_records_resolved_commit_for_branch(
+    tmp_path: Path,
+) -> None:
+    repo_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: git-branch-package
+version: 0.1.0
+objects: {}
+""",
+    )
+    commit = _commit_package_repo(repo_dir)
+    branch = subprocess.check_output(
+        ["git", "branch", "--show-current"],
+        cwd=repo_dir,
+        text=True,
+    ).strip()
+    assert branch
+
+    review = validate_extension_package_source(
+        {"type": "git", "url": str(repo_dir), "branch": branch},
+        install_root=tmp_path / "installed",
+    )
+
+    assert review["ok"] is True
+    assert review["resolved_source"]["ref"] == branch
+    assert review["resolved_source"]["resolved_ref"] == commit
 
 
 def test_extension_package_index_helpers_are_stable() -> None:

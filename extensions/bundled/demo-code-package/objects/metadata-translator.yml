@@ -1,0 +1,10 @@
+kind: translator
+id: test-demo-metadata-translator
+name: Test Demo Metadata Translator
+mode: metadata-only
+language: python
+interfaces:
+  - protocol.documentation
+permissions: {}
+trust_tier: untrusted
+description: Fixture metadata-only translator declaration; it is reviewed but never executable.

@@ -1,0 +1,9 @@
+kind: protocol_frontend
+id: test-demo-image-protocol
+name: Test Demo Image Protocol
+protocol: test-demo-image
+source: builtin
+routes:
+  - /test-demo/v1/images
+intents:
+  - image.generate

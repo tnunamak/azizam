@@ -340,6 +340,71 @@ def _format_key_value_summary(value: Any) -> str:
     return str(value)
 
 
+def _as_iterable_items(value: Any) -> list[Any]:
+    if value in (None, "", [], {}, ()):
+        return []
+    if isinstance(value, Mapping):
+        items: list[Any] = []
+        for key, item in value.items():
+            if item in (None, "", [], {}, ()):
+                continue
+            if isinstance(item, (list, tuple, set, frozenset)):
+                for nested in item:
+                    if isinstance(nested, Mapping):
+                        items.append({"kind": key, **nested})
+                    elif nested not in (None, "", [], {}, ()):
+                        items.append({"kind": key, "value": nested})
+            elif isinstance(item, Mapping):
+                items.append({"kind": key, **item})
+            else:
+                items.append({"kind": key, "value": item})
+        return items
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [item for item in value if item not in (None, "", [], {}, ())]
+    return [value]
+
+
+def _format_code_object(item: Any) -> str:
+    if isinstance(item, Mapping):
+        kind = item.get("kind") or item.get("type") or item.get("object_kind") or item.get("role")
+        identifier = (
+            item.get("id")
+            or item.get("name")
+            or item.get("module")
+            or item.get("entrypoint")
+            or item.get("path")
+            or item.get("value")
+        )
+        if kind and identifier:
+            return f"{kind}: {identifier}"
+        if identifier:
+            return str(identifier)
+        return _format_key_value_summary(item)
+    return str(item)
+
+
+def _extension_code_objects(record: Mapping[str, Any]) -> list[str]:
+    candidates: list[Any] = []
+    for key in ("code_objects", "staged_code_objects", "staged_code", "code"):
+        candidates.extend(_as_iterable_items(record.get(key)))
+    for parent_key in ("review", "validation", "staged"):
+        parent = record.get(parent_key)
+        if not isinstance(parent, Mapping):
+            continue
+        for key in ("code_objects", "staged_code_objects", "staged_code", "code"):
+            candidates.extend(_as_iterable_items(parent.get(key)))
+
+    formatted: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        label = _format_code_object(item).strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        formatted.append(label)
+    return formatted
+
+
 _SECRET_MARKERS = ("secret", "token", "key", "password", "credential")
 
 
@@ -1378,15 +1443,23 @@ def _extension_package_row(record: Mapping[str, Any]) -> str:
     workflows = _format_optional_list(record.get("workflows"))
     capabilities = _format_optional_list(record.get("capabilities"))
     warnings = _format_optional_list(record.get("warnings"))
+    code_objects = _format_optional_list(_extension_code_objects(record))
+    code_notice = (
+        "code staged for admin review; enable records data, not arbitrary GitHub execution"
+        if code_objects != "—"
+        else ""
+    )
     details = "; ".join(
         part
         for part in (
             f"objects: {counts}" if counts else "",
-            f"services: {services}" if services else "",
-            f"frontends: {frontends}" if frontends else "",
-            f"workflows: {workflows}" if workflows else "",
-            f"capabilities: {capabilities}" if capabilities else "",
-            f"warnings: {warnings}" if warnings else "",
+            f"services: {services}" if services != "—" else "",
+            f"frontends: {frontends}" if frontends != "—" else "",
+            f"workflows: {workflows}" if workflows != "—" else "",
+            f"capabilities: {capabilities}" if capabilities != "—" else "",
+            f"staged code: {code_objects}" if code_objects != "—" else "",
+            code_notice,
+            f"warnings: {warnings}" if warnings != "—" else "",
         )
         if part
     )
@@ -1417,7 +1490,8 @@ def _extension_package_panel(index: Mapping[str, Any] | None) -> str:
         '<form class="flow" method="post" action="/admin/api/extensions/validate" '
         'data-extension-package data-enable-action="/admin/api/extensions/enable">'
         "<label>Validate or enable extension package</label>"
-        '<p class="form-note">Data-only packages can add services, protocol frontends, workflows, and capabilities. Use a local directory or a Git/GitHub URL.</p>'
+        '<p class="form-note">Local directories and Git/GitHub URLs are staged for review. '
+        "Data-only packages can be live-enabled into registry records; packages with code-bearing adapters or translators show staged code and require an explicit trust review before any loader uses that code.</p>"
         '<div class="row">'
         '<select name="source_type" aria-label="Extension package source type">'
         '<option value="local_directory">Local directory</option>'
@@ -2227,7 +2301,7 @@ def render_admin_dashboard(
         + _subsection(
             "Extension Packages",
             extension_package_panel,
-            intro="Validate local data-only packages and enable the services or protocol frontends they import.",
+            intro="Validate local or Git/GitHub packages, enable data-owned registry records, and review staged code objects when present.",
         )
     )
     apps_keys_html = (
@@ -2365,7 +2439,8 @@ def render_admin_dashboard(
         "if(extensionForm){const f=extensionForm,fd=new FormData(f),type=String(fd.get('source_type')||'local_directory').trim();const source={type};"
         "['path','url','ref','subdir'].forEach(k=>{const v=String(fd.get(k)||'').trim();if(v)source[k]=v});"
         "const enable=e.submitter&&e.submitter.dataset.enableExtensionPackage!==undefined;const url=enable?f.dataset.enableAction:f.action;"
-        "try{const data=await json(url,{source});if(enable)await refreshMain();show(data)}catch(err){showError(err)}return}"
+        "try{let payload={source};if(enable){const reviewData=await json(f.action,{source});payload.review=reviewData.review}"
+        "const data=await json(url,payload);if(enable)await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(appForm){const f=appForm,fd=new FormData(f);const body={name:fd.get('name'),kind:fd.get('kind')||'service'};"
         "if(fd.get('owner_user_id')) body.owner_user_id=fd.get('owner_user_id');"
         "if(fd.get('profile_id')) body.profile_id=fd.get('profile_id');"

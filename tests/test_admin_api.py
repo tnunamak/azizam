@@ -6,6 +6,7 @@ import sys
 import unittest
 from pathlib import Path
 from typing import Any, Mapping
+from unittest.mock import patch
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -1310,6 +1311,86 @@ execution: job
 
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"]["code"], "invalid_extension_package")
+
+    def test_extension_enable_pins_reviewed_resolved_git_ref(self) -> None:
+        client, store = _make_client()
+        calls: list[dict[str, Any]] = []
+
+        def fake_review(source: Mapping[str, Any], **_: Any) -> dict[str, Any]:
+            calls.append(dict(source))
+            return {
+                "package": {
+                    "schema_version": 1,
+                    "kind": "extension_package",
+                    "id": "git-reviewed-package",
+                    "version": "0.1.0",
+                },
+                "package_hash": "a" * 64,
+                "services": [],
+                "protocol_frontends": [],
+                "capabilities": [],
+                "workflows": [],
+                "adapters": [],
+                "translators": [],
+                "code_objects": [],
+                "requires_code_trust": False,
+                "warnings": [],
+                "errors": [],
+                "ok": True,
+                "schema_version": 1,
+                "kind": "extension_package",
+                "id": "git-reviewed-package",
+                "version": "0.1.0",
+                "object_counts": {
+                    "services": 0,
+                    "protocol_frontends": 0,
+                    "capabilities": 0,
+                    "workflows": 0,
+                },
+                "resolved_source": {
+                    "type": "git",
+                    "url": "/tmp/repo",
+                    "ref": "main",
+                    "resolved_ref": source.get("resolved_ref") or "newer-commit",
+                },
+            }
+
+        with patch.object(
+            extension_packages,
+            "validate_extension_package_source",
+            side_effect=fake_review,
+        ):
+            resp = client.post(
+                "/admin/api/extensions/enable",
+                json={
+                    "source": {"type": "git", "url": "/tmp/repo", "ref": "main"},
+                    "review": {
+                        "resolved_source": {
+                            "type": "git",
+                            "url": "/tmp/repo",
+                            "ref": "main",
+                            "resolved_ref": "reviewed-commit",
+                        }
+                    },
+                },
+                headers=_auth(),
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(calls, [
+            {
+                "type": "git",
+                "url": "/tmp/repo",
+                "ref": "main",
+                "resolved_ref": "reviewed-commit",
+            }
+        ])
+        self.assertEqual(
+            store.extension_package_index["packages"]["git-reviewed-package"]["source"][
+                "resolved_ref"
+            ],
+            "reviewed-commit",
+        )
 
     def test_operator_override_write_requires_admin(self) -> None:
         client, _ = _make_client()

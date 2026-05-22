@@ -1,0 +1,9 @@
+kind: service
+id: test-demo-comfy-service
+name: Test Demo Comfy Service
+source: provisioned
+capabilities:
+  - image.generate
+config:
+  base_url: http://127.0.0.1:8188
+  queue_name: test-demo-image

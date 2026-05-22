@@ -119,18 +119,28 @@ objects:
     - protocol_frontends/example.yml
   services:
     - services/example.yml
-  targets:
-    - targets/example-model.yml
   workflows:
     - workflows/example-image.yml
-  credentials:
-    - credentials/example-api-key.yml
-  tests:
-    - tests/health.yml
-adapters:
-  - id: generic.http-json
-    module: gateway.adapters.http_json:HttpJsonAdapter
-    interfaces: [health, invoke, inventory]
+  capabilities:
+    - capabilities/example-image.yml
+  adapters:
+    - adapters/http-json.yml
+  translators:
+    - translators/example-api.yml
+```
+
+Code objects are referenced exactly like data objects, but their declarations
+live in separate files so package validation can hash the reviewed code
+artifacts and keep permissions explicit:
+
+```yaml
+kind: adapter
+id: generic.http-json
+mode: sidecar
+language: python
+interfaces: [health, invoke, inventory]
+entrypoint: code.http_json:HttpJsonAdapter
+package_path: code
 permissions:
   network:
     outbound:
@@ -139,6 +149,7 @@ permissions:
     read:
       - package://workflows/**
     write: []
+trust_tier: local
 ```
 
 ## UI Flow
@@ -147,7 +158,8 @@ The admin UI is the normal extension surface:
 
 1. **Import** package, directory, URL, or bundled extension.
 2. **Review** publisher, version, signature/trust, object counts, permissions,
-   adapters/translators, required secrets, and affected Profiles.
+   adapters/translators, staged code objects, required secrets, and affected
+   Profiles.
 3. **Validate** schemas, unique IDs, adapter presence, route collisions, binding
    targets, dependency declarations, and policy impact.
 4. **Configure** service URLs, secret refs, ownership mode, and which records to
@@ -160,6 +172,12 @@ The admin UI is the normal extension surface:
 
 The UI should render forms from schemas. It should not contain
 provider-specific wizards in core code.
+
+Rows for installed or staged packages should distinguish data objects from code
+objects. Services, protocol frontends, workflows, and capabilities are registry
+data. Adapter or translator modules are code objects: the UI may list them as
+staged/reviewed artifacts, but must not imply that a GitHub URL or local
+directory is executed just because it was imported or validated.
 
 ## Install Sources
 
@@ -179,6 +197,19 @@ Git URLs are convenient input, not authority. Enabled DB records store source
 URL, resolved ref, package hash, enabled objects, ownership mode, config
 overrides, and audit history. A Git-backed update is a new staged candidate
 that must pass validation before replacing the enabled package.
+
+Local directories follow the same model. The path is an install source for
+staging and hashing package content; enablement writes immutable imported
+registry records and provenance, not a live pointer that executes whatever the
+directory later contains.
+
+Data-only packages can be live-enabled after validation because their effect is
+limited to registry records and policy-gated capabilities. Code-bearing packages
+are different: adapter and translator modules are staged as review artifacts
+with declared permissions, hashes, trust tier/signature information, and the
+records that would reference them. They become runnable only after an explicit
+operator trust decision and loader support for the approved code path. Importing
+from GitHub is never itself permission to execute arbitrary repository code.
 
 ComfyUI custom-node dependencies follow the same rule. Workflow packages may
 declare GitHub URLs or install hints for missing nodes, but the gateway does
@@ -261,7 +292,9 @@ studio API should be an extension import plus installed translator, not a
 
 - Installing extensions is admin-only.
 - Data-only packages are preferred.
-- Code plugins must declare permissions and trust tier.
+- Code plugins must declare permissions, trust tier, and reviewable code
+  objects. Import and validation stage those objects; execution requires an
+  explicit trust decision and a loader path that supports the approved code.
 - Community/heavy code should run as isolated sidecar workers where practical.
 - Packages never contain secret values; they reference secrets by `secret://`,
   `env://`, `docker-secret://`, or external secret-store refs.
@@ -279,7 +312,7 @@ only when necessary, a named adapter/translator implementation.
 The implemented installer covers the essential data-owned path:
 
 - local directory and Git/GitHub sources,
-- data-only packages only,
+- data-only packages can be enabled live,
 - `services`, `protocol_frontends`, `workflows`, and `capabilities`,
 - validate/review before enable,
 - enable by merging normalized records into the DB service registry,
@@ -288,9 +321,12 @@ The implemented installer covers the essential data-owned path:
   content hash, and resolved source commit when installed from Git.
 
 This gives operators the Home Assistant / ComfyUI Manager style flow without
-making core code provider-specific. Code plugins, archive uploads, signed
-catalog indexes, dependency repair, uninstall, and rollback are still separate
-lifecycle features, not prerequisites for data-only packages.
+making core code provider-specific. Code-bearing packages extend the same
+staging/review model by showing adapter or translator modules as staged code
+objects with trust warnings. They are not treated as arbitrary GitHub code to
+execute. Archive uploads, signed catalog indexes, dependency repair, uninstall,
+and rollback are still separate lifecycle features, not prerequisites for
+data-only packages.
 
 The API shape should be:
 

@@ -1,0 +1,37 @@
+schema_version: 1
+version: 0.1.0
+id: image.generate.test-demo-package
+display_name: Test Demo Package Image
+description: Declarative fixture workflow for bundled extension package tests.
+intent: image.generate
+source: package
+trusted: false
+exposure: opt_in
+trust_tier: experimental
+resource_tier: batch
+tags:
+  - test
+  - demo
+inputs:
+  prompt:
+    type: string
+    required: true
+    description: Text prompt to render.
+  seed:
+    type: integer
+    required: false
+    default: 12345
+outputs:
+  image:
+    media_type: image/png
+    description: Generated image.
+bindings:
+  comfyui:
+    workflow: package://workflows/test-demo-image.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      seed:
+        - node: "3"
+          input: seed

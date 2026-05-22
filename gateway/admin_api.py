@@ -532,8 +532,7 @@ def _validate_extension_package_source(payload: Mapping[str, Any]) -> dict[str, 
             "invalid_extension_package_source",
             "extension package source must be an object",
         )
-    review = extension_packages.validate_extension_package_source(source)
-    return {"source": dict(source), "review": review}
+    return {"source": dict(source)}
 
 
 _USER_ACCESS_DEFAULT_FIELDS = frozenset(
@@ -1302,8 +1301,19 @@ def create_admin_router(
         try:
             body = await _read_json_body(request)
             validated = _validate_extension_package_source(body)
+            source = dict(validated["source"])
+            reviewed = body.get("review") if isinstance(body, Mapping) else None
+            resolved_source = (
+                reviewed.get("resolved_source")
+                if isinstance(reviewed, Mapping)
+                else body.get("resolved_source")
+            )
+            if isinstance(resolved_source, Mapping):
+                resolved_ref = resolved_source.get("resolved_ref")
+                if resolved_ref:
+                    source["resolved_ref"] = str(resolved_ref)
             result = store.enable_extension_package(
-                source=validated["source"],
+                source=source,
                 actor=ctx,
             )
             review = result.get("review") if isinstance(result, Mapping) else None
