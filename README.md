@@ -169,7 +169,10 @@ The normal first-run path is web-first:
 
 App keys (`opk_...`) are for runtime clients and SDKs. Admin keys (`oak_...`) are for the control plane and can also bootstrap a browser admin session through `/setup/claim`. See [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md) for the full first-run contract.
 
-App API keys are stored as sha256 hashes in `proxy_api_keys.yml` (gitignored). The yaml only ever holds the hash; dashboard-minted keys live in `admin.db` instead. The bearer key apps present is `Authorization: Bearer opk_...`.
+New App API keys created from `/setup` or `/admin` are stored as sha256
+hashes in `admin.db`. `proxy_api_keys.yml` is a legacy compatibility registry
+for existing CLI-generated runtime keys; the yaml only ever holds hashes. The
+bearer key apps present is `Authorization: Bearer opk_...`.
 
 Per-key downstream overrides are supported — any one App API key can map to different upstream credentials per provider (TabbyAPI key, TTS auth header, etc.). See [`proxy_api_keys.example.yml`](proxy_api_keys.example.yml) for the structure.
 
@@ -189,7 +192,11 @@ The shortest "share my gateway with another human" flow:
 
 1. **OIDC User.** The family member signs in once so the admin store has their **User** row. They do not need a global admin role.
 2. **Personal App.** The account portal lets them create one or more self-service **Personal Apps**. An App is the access boundary for a tool, workflow, or script; it is not the person.
-3. **Inherited Profile.** The App inherits the user's default Profile, controlled by `admin.user_defaults` and any admin-set Profile mappings. Admins can still attach an explicit App/Profile override when a narrower or broader boundary is needed.
+3. **Inherited Profile.** The App inherits the user's effective Profile from
+   dashboard-managed identity/Profile mappings. `admin.user_defaults` can seed
+   those mappings on first startup, but ongoing changes belong in `/admin`.
+   Admins can still attach an explicit App/Profile override when a narrower or
+   broader boundary is needed.
 4. **App API key.** The user creates their own `opk_...` key from the account portal and can delete it later. They can also inspect any key they own, or paste an external key locally in the browser, to confirm the base URL, SDK settings, and effective capabilities before configuring their chat app.
 
 Rotation is per-App, not per-human: delete the old Credential and create a new key while preserving the App's Profile and downstream mapping. Dashboard-minted keys inherit the App's current Profile unless an explicit per-key override is requested.
@@ -202,9 +209,9 @@ See [`AUTH_GUIDE.md`](AUTH_GUIDE.md) for the full key-generation and rotation wo
 proxy.py                       # Main FastAPI app: routing, auth, ComfyUI orchestration
 status_endpoint.py             # /v1/status — admin-only backend health, GPU/disk/queue rollup
 firehose_metrics.py            # /v1/metrics firehose — recent renders, jobs, events
-proxy_config.yml               # All backend wiring, video aliases, cache config, role mappings
+proxy_config.yml               # Bootstrap wiring, provider config, optional one-time defaults
 proxy_api_keys.example.yml     # Hash-only key store template (commit)
-proxy_api_keys.yml             # Real keys — gitignored
+proxy_api_keys.yml             # Legacy CLI runtime keys — gitignored
 openai_model_aliases.generated.yml   # OpenAI-name → local-model rewrite table
 requirements.txt               # Python deps (FastAPI, httpx, PyYAML, ...)
 start.sh                       # Service starter (systemd ExecStart)
@@ -299,7 +306,7 @@ The CLI commands are still supported for headless automation and recovery (broke
 # Recovery / headless admin key. Initializes the admin store if needed.
 ./venv/bin/python proxy.py generate-admin-key owner-cli
 
-# Single-user / legacy App key path. Rewrites proxy_api_keys.yml.
+# Legacy App key path for recovery/headless rotation. Rewrites proxy_api_keys.yml.
 cp proxy_api_keys.example.yml proxy_api_keys.yml
 ./venv/bin/python proxy.py generate-key first-app
 ```

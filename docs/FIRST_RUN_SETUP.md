@@ -18,8 +18,13 @@ Before opening the page, the service needs only the things required to start saf
 - `admin.session_signing_key` or `AI_GATEWAY_ADMIN_SESSION_KEY`,
 - optional `admin.oidc` issuer/client/trust configuration,
 - backend base URLs, model directories, and provider secrets.
+- optional `admin.user_defaults` or user-access env flags as a one-time
+  bootstrap seed for self-service defaults and identity/Profile mappings.
 
-Everything that can change after boot belongs in `admin.db` and the dashboard. See [CONFIG_SOURCE_OF_TRUTH.md](CONFIG_SOURCE_OF_TRUTH.md).
+Everything that can change after boot belongs in `admin.db` and the dashboard.
+On startup, bootstrap user defaults are imported into `admin.db`; after that,
+dashboard/API state is authoritative. See
+[CONFIG_SOURCE_OF_TRUTH.md](CONFIG_SOURCE_OF_TRUTH.md).
 
 ## Setup States
 
@@ -48,7 +53,8 @@ An `opk_...` key is a runtime App key and is rejected with a clear error. It sho
 - links to the account portal, admin dashboard, and operator status;
 - a compact "Connect a client" card that creates or reuses the signed-in user's Personal App and mints an `opk_...` key shown once;
 - the OpenAI-compatible base URL for new clients: `/openai/v1`;
-- a small setup doctor for owner/admin state, browser session, runtime key presence, gateway health, and backend reachability.
+- a small setup doctor for owner/admin state, browser session, runtime key
+  presence, config source-of-truth, gateway health, and backend reachability.
 
 If self-service Apps are deliberately disabled, the setup key action falls back to creating an admin-owned service App/key instead of bypassing that policy.
 

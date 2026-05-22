@@ -78,10 +78,11 @@ environment. Do not put the printed key in source files, logs, or prompts.
 
 ## Quick Start For Apps (CLI, recovery / legacy)
 
-The CLI path is still supported. It is the only option for single-user
-installs that have never enabled OIDC, for scripted rotation, and for
-recovery when the dashboard is unavailable. Run this from the gateway
-directory:
+The CLI path is still supported for legacy installs, scripted rotation, and
+recovery when the dashboard is unavailable. New installs should use `/setup`
+to create the first browser admin session and mint the first App key into
+`admin.db`. Run this from the gateway directory when you intentionally need
+the legacy key file:
 
 ```bash
 cd /home/tnunamak/applications/openai-proxy
@@ -220,10 +221,11 @@ The first allowed OIDC login becomes `owner` if no owner exists yet. Later
 allowed logins get the configured role or no admin role until an owner grants
 one.
 
-`admin.user_defaults` is the self-service policy boundary. Users can create
-Personal Apps and keys, but those Apps inherit only the Profile selected by the
-operator's default/profile mappings. Omit `default_profile_id` to use the
-gateway's built-in `default-local` profile.
+`admin.user_defaults` and the legacy user-access env flags are bootstrap seeds
+for self-service defaults and identity/Profile mappings. On startup, those
+defaults are imported into `admin.db`; after that, `/admin` identity mappings
+and operator settings are the runtime policy boundary. Omit
+`default_profile_id` to use the gateway's built-in `default-local` profile.
 
 ## Give A Family Member Access
 
@@ -236,8 +238,9 @@ flow:
    self-service Personal Apps. One human can own several Apps; one App is the
    access boundary for one client, tool, workflow, or script.
 3. **Inherited Profile.** By default, the Personal App inherits the user's
-   effective Profile. Admins control that default with `admin.user_defaults`
-   mappings, and can still attach an explicit App/Profile override when needed.
+   effective Profile. Admins control that default with `/admin` identity
+   mappings, which may be seeded once from `admin.user_defaults`, and can still
+   attach an explicit App/Profile override when needed.
    For a typical chat-only setup:
    ```yaml
    profile:
@@ -349,8 +352,8 @@ configured for the gateway:
 - Tabby admin key: `TABBY_ADMIN_KEY` or Tabby's `api_tokens.yml`
 - TTS, STT, ComfyUI, Kobold: no extra auth unless configured per key
 
-Per-App overrides can be added in `proxy_api_keys.yml` when an App needs
-different downstream credentials:
+For legacy key-file Apps, per-App overrides can be added in
+`proxy_api_keys.yml` when an App needs different downstream credentials:
 
 ```yaml
 keys:
@@ -393,9 +396,9 @@ headers:
     prefix: Bearer
 ```
 
-The gateway reloads `proxy_api_keys.yml` when it changes, so adding, rotating,
-or deleting an App API key does not require a service restart. Profile blocks
-(see below) reload alongside the entries they live on.
+The gateway reloads `proxy_api_keys.yml` when it changes, so legacy key-file
+Apps do not require a service restart when rotated or removed. Dashboard Apps
+and keys live in `admin.db` and apply live through the admin store.
 
 ## Policy Profiles
 
@@ -584,6 +587,11 @@ Then update that App to use the newly printed `opk_...` value.
 
 Delete an App's API key:
 
+For dashboard-created keys, delete the Credential from `/` or `/admin`; it is
+revoked immediately in `admin.db`.
+
+For legacy key-file Apps:
+
 1. Remove that App's entry from `proxy_api_keys.yml`.
 2. Save the file.
 3. The gateway will reject that key on subsequent `/v1` requests.
@@ -597,7 +605,8 @@ The request reached an authenticated endpoint without
 
 `401 Invalid API key.`
 
-The presented App API key does not match any hash in `proxy_api_keys.yml`.
+The presented App API key does not match any active dashboard credential or
+legacy key-file hash.
 
 `503 Proxy auth is enabled, but no proxy API keys are configured.`
 

@@ -451,6 +451,15 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         client = self._client(admin_key)
 
+        access_resp = client.put(
+            "/admin/api/operator/user-access-defaults",
+            json={"self_service_apps": False},
+        )
+        self.assertEqual(access_resp.status_code, 200, access_resp.text)
+        reopened = AdminSQLiteStore(self.db)
+        overrides = reopened.operator_overrides()
+        self.assertFalse(overrides["user_access_defaults"]["self_service_apps"])
+
         resp = client.put(
             "/admin/api/operator/service-availability",
             json={
@@ -463,7 +472,6 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 200, resp.text)
 
-        reopened = AdminSQLiteStore(self.db)
         overrides = reopened.operator_overrides()
         self.assertEqual(
             overrides["service_availability"]["openai"]["state"],
@@ -483,6 +491,7 @@ class AdminRuntimeTests(unittest.TestCase):
             ["gpu"],
         )
         actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
+        self.assertIn("operator.user_access_defaults.update", actions)
         self.assertIn("operator.service_availability.update", actions)
         self.assertIn("operator.media_job_admission.update", actions)
 

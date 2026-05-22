@@ -40,6 +40,22 @@ ADMIN_CONTROL_ROLES = frozenset({"owner", "admin", "superadmin"})
 ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
 SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
 MEDIA_JOB_ADMISSION_OVERRIDES_KEY = "media_job_admission_overrides"
+USER_ACCESS_DEFAULTS_SETTING_KEY = "user_access_defaults"
+
+
+def _bool_setting(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return default
 
 
 def generate_app_api_key() -> str:
@@ -407,6 +423,7 @@ class AdminSQLiteStore:
             path=self.path,
         )
         return {
+            "user_access_defaults": self.user_access_defaults(),
             "service_availability": (
                 service_setting["value"] if service_setting is not None else {}
             ),
@@ -414,6 +431,47 @@ class AdminSQLiteStore:
                 media_setting["value"] if media_setting is not None else {}
             ),
         }
+
+    def user_access_defaults(self) -> dict[str, bool]:
+        setting = admin_store.get_operator_setting(
+            USER_ACCESS_DEFAULTS_SETTING_KEY,
+            path=self.path,
+        )
+        value = setting["value"] if setting is not None else {}
+        if not isinstance(value, Mapping):
+            value = {}
+        self_service = _bool_setting(value.get("self_service_apps"), True)
+        return {
+            "self_service_apps": self_service,
+            "auto_create_personal_app": _bool_setting(
+                value.get("auto_create_personal_app"),
+                self_service,
+            ),
+        }
+
+    def update_user_access_defaults(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, bool]:
+        value = self.user_access_defaults()
+        for key in ("self_service_apps", "auto_create_personal_app"):
+            if key in data:
+                value[key] = _bool_setting(data[key], value[key])
+        record = admin_store.put_operator_setting(
+            USER_ACCESS_DEFAULTS_SETTING_KEY,
+            value,
+            updated_by=actor.subject,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            "operator.user_access_defaults.update",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="operator_setting",
+            target_id=USER_ACCESS_DEFAULTS_SETTING_KEY,
+            metadata={"fields": sorted(data.keys())},
+            path=self.path,
+        )
+        return record["value"]
 
     def update_service_availability_overrides(
         self, *, data: Mapping[str, Any], actor: AdminContext
@@ -799,4 +857,5 @@ __all__ = [
     "create_admin_service_account_key",
     "generate_admin_api_key",
     "generate_app_api_key",
+    "USER_ACCESS_DEFAULTS_SETTING_KEY",
 ]

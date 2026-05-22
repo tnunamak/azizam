@@ -151,6 +151,10 @@ class AdminStore(Protocol):
 
     def operator_overrides(self) -> dict[str, Any]: ...
 
+    def update_user_access_defaults(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
     def update_service_availability_overrides(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
@@ -483,6 +487,44 @@ def _validate_media_job_admission_overrides(
             payload.get("retry_after_seconds"),
             field="retry_after_seconds",
         ),
+    }
+
+
+_USER_ACCESS_DEFAULT_FIELDS = frozenset(
+    {"self_service_apps", "auto_create_personal_app"}
+)
+
+
+def _validate_bool_field(value: Any, *, field: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if text in {"0", "false", "no", "off", "disabled"}:
+            return False
+    raise _RouteError(
+        status.HTTP_400_BAD_REQUEST,
+        "invalid_operator_override",
+        f"{field} must be true or false",
+    )
+
+
+def _validate_user_access_defaults(payload: Mapping[str, Any]) -> dict[str, bool]:
+    unknown = set(payload.keys()) - _USER_ACCESS_DEFAULT_FIELDS
+    if unknown:
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_operator_override",
+            f"unknown user access fields: {sorted(unknown)}",
+        )
+    return {
+        field: _validate_bool_field(payload[field], field=field)
+        for field in sorted(_USER_ACCESS_DEFAULT_FIELDS)
+        if field in payload
     }
 
 
@@ -987,6 +1029,28 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"overrides": store.operator_overrides()},
+        )
+
+    @router.put("/operator/user-access-defaults")
+    async def update_user_access_defaults(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            defaults = _validate_user_access_defaults(body)
+            record = store.update_user_access_defaults(data=defaults, actor=ctx)
+        except _RouteError as exc:
+            return exc.as_response()
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_operator_override",
+                str(exc),
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"user_access_defaults": record},
         )
 
     @router.put("/operator/service-availability")

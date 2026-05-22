@@ -41,6 +41,10 @@ class FakeAdminStore:
         self.runtime_mappings: dict[str, dict[str, Any]] = {}
         self.service_availability: dict[str, Any] = {}
         self.media_job_admission: dict[str, Any] = {}
+        self.user_access_defaults: dict[str, bool] = {
+            "self_service_apps": True,
+            "auto_create_personal_app": True,
+        }
         self.audit: list[dict[str, Any]] = []
         self._next_id = 1
 
@@ -290,9 +294,24 @@ class FakeAdminStore:
 
     def operator_overrides(self) -> dict[str, Any]:
         return {
+            "user_access_defaults": dict(self.user_access_defaults),
             "service_availability": dict(self.service_availability),
             "media_job_admission": dict(self.media_job_admission),
         }
+
+    def update_user_access_defaults(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        self.user_access_defaults.update(data)
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "operator.user_access_defaults.update",
+                "target": "user_access_defaults",
+            }
+        )
+        return dict(self.user_access_defaults)
 
     def update_service_availability_overrides(
         self, *, data: Mapping[str, Any], actor: AdminContext
@@ -928,6 +947,11 @@ class AdminAuditTests(unittest.TestCase):
 class AdminOperatorOverrideTests(unittest.TestCase):
     def test_admin_can_write_and_read_operator_overrides(self) -> None:
         client, store = _make_client()
+        access_resp = client.put(
+            "/admin/api/operator/user-access-defaults",
+            json={"self_service_apps": False},
+            headers=_auth(),
+        )
         service_resp = client.put(
             "/admin/api/operator/service-availability",
             json={
@@ -956,8 +980,10 @@ class AdminOperatorOverrideTests(unittest.TestCase):
 
         self.assertEqual(service_resp.status_code, 200, service_resp.text)
         self.assertEqual(media_resp.status_code, 200, media_resp.text)
+        self.assertEqual(access_resp.status_code, 200, access_resp.text)
         self.assertEqual(list_resp.status_code, 200, list_resp.text)
         overrides = list_resp.json()["overrides"]
+        self.assertFalse(overrides["user_access_defaults"]["self_service_apps"])
         self.assertEqual(
             overrides["service_availability"]["openai"]["state"],
             "degraded",
@@ -967,8 +993,9 @@ class AdminOperatorOverrideTests(unittest.TestCase):
             ["video.generate"],
         )
         self.assertEqual(
-            [event["action"] for event in store.audit[-2:]],
+            [event["action"] for event in store.audit[-3:]],
             [
+                "operator.user_access_defaults.update",
                 "operator.service_availability.update",
                 "operator.media_job_admission.update",
             ],
@@ -1025,6 +1052,11 @@ class AdminOperatorOverrideTests(unittest.TestCase):
 
     def test_operator_override_validation_rejects_bad_values(self) -> None:
         client, _ = _make_client()
+        access_resp = client.put(
+            "/admin/api/operator/user-access-defaults",
+            json={"self_service_apps": "maybe"},
+            headers=_auth(),
+        )
         service_resp = client.put(
             "/admin/api/operator/service-availability",
             json={"openai": {"state": "paused"}},
@@ -1036,6 +1068,11 @@ class AdminOperatorOverrideTests(unittest.TestCase):
             headers=_auth(),
         )
 
+        self.assertEqual(access_resp.status_code, 400)
+        self.assertEqual(
+            access_resp.json()["error"]["code"],
+            "invalid_operator_override",
+        )
         self.assertEqual(service_resp.status_code, 400)
         self.assertEqual(
             service_resp.json()["error"]["code"],

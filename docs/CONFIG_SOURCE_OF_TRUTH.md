@@ -18,12 +18,16 @@ For the operator-facing first-run story this split implies, see
 [`FIRST_RUN_SETUP.md`](FIRST_RUN_SETUP.md). In short: bootstrap once via
 `proxy_config.yml` + env, then drive everything else from `/admin`.
 
-> **Implementation honesty.** Not every dashboard-plane domain is fully
-> editable in the UI yet. The inventory in `gateway/config_sources.py` and
-> the table below define the *target* ownership; some domains still require
-> editing `admin.db` directly or going through `/admin/api/*`. The dashboard
-> should never *write* a bootstrap-plane field; if a UI control appears to,
-> that is a bug.
+> **Implementation honesty.** The first-run access path is now DB-backed:
+> `/setup` and `/admin` create Apps, App keys, Profiles, identity/Profile
+> mappings, and user access defaults in `admin.db`. `admin.user_defaults` in
+> `proxy_config.yml` is a bootstrap seed only; after startup, dashboard/API
+> state is authoritative. The legacy `AI_GATEWAY_USER_SELF_SERVICE` and
+> `AI_GATEWAY_AUTO_CREATE_PERSONAL_APP` env vars are also bootstrap seed
+> inputs, not live overrides after the setting exists in `admin.db`. Some
+> dashboard-plane controls are still exposed through `/admin/api/*` before
+> they have polished UI, but the dashboard must never *write* a
+> bootstrap-plane field.
 
 ## Ownership planes
 
@@ -38,10 +42,11 @@ Concretely:
    these values.
 2. **Dashboard plane** — `admin.db`, edited through `/admin` (and the
    `/admin/api/*` JSON surface). Runtime access policy: the admin user list,
-   role grants, Profiles, Apps, App API keys, role→model bindings, admission
-   caps, throttles, runtime routing overrides — anything an operator should
-   legitimately be able to change after boot without touching a file. Audited,
-   applies live unless the apply_mode says otherwise.
+   role grants, Profiles, Apps, App API keys, user access defaults,
+   identity/Profile mappings, role→model bindings, admission caps, throttles,
+   runtime routing overrides — anything an operator should legitimately be
+   able to change after boot without touching a file. Audited, applies live
+   unless the apply_mode says otherwise.
 3. **Provisioned plane** — workflow manifests and catalog files committed in
    the repo (`workflows/`, the model compatibility table). The operator's
    change path is editing the file in version control. The dashboard surfaces
@@ -68,7 +73,7 @@ pins the mapping; if you change one side you must change the other.
 | `resource admission` | dashboard   | caps, throttles, reserved tokens                | nothing                                          |
 | `workflow manifests` | provisioned | nothing                                         | the manifest files themselves                    |
 | `model compatibility`| bootstrap   | nothing                                         | the compatibility table file                     |
-| `auth/admin`         | split       | admin user list, admin runtime policy           | session keys, OIDC client secret, trust roots    |
+| `auth/admin`         | split       | admin user list, roles, Profiles, Apps, App keys, user access defaults, identity/Profile mappings | session keys, OIDC client secret, trust roots, legacy key file |
 
 Implications:
 
@@ -77,6 +82,14 @@ Implications:
   and restart" — surfaced in `change_path` and `apply_mode`.
 - The dashboard never writes a secret. Secrets are `secret_bootstrap` in the
   inventory and excluded from provisioning bundles by construction.
+- `admin.user_defaults` and the user-access env flags are bootstrap seeds, not
+  ongoing runtime policy. On startup, the gateway imports self-service defaults
+  and identity Profile mappings into `admin.db` when they are not already
+  present. Disabled dashboard mappings are not re-enabled by the bootstrap
+  seed.
+- `proxy_api_keys.yml` is a legacy compatibility key registry for existing
+  installs and headless rotation. New first-run and dashboard keys live in
+  `admin.db`.
 - Split domains keep two rows of mental model: a YAML row for the bootstrap
   half, an `admin.db`-backed row for the runtime half. The inventory's
   `authored_via` and `stored_in` strings spell this out so neither half
@@ -97,9 +110,9 @@ Rows tagged `bootstrap_only`, `secret_bootstrap`, `source_manifest`, or
 under version control where the operator wants it; the runtime half is
 recreated from the bundle.
 
-This is the contract the next tranche of code should target. No new tables,
-no new abstractions — just a serializer that walks `admin.db` and filters
-by inventory provisioning class.
+This is the contract a future export/import feature should target. No new
+configuration plane is needed — just a serializer that walks `admin.db` and
+filters by inventory provisioning class.
 
 ## Things to deliberately *not* build yet
 

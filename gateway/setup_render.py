@@ -368,8 +368,9 @@ def _recovery_details() -> str:
         '<details class="recovery">'
         "<summary>Headless or recovery setup (advanced)</summary>"
         "<p>If you cannot run OIDC, you can mint a service-account admin "
-        "key from the command line. This is only meant for recovery and "
-        "headless automation, not the normal first-run path.</p>"
+        "key from the command line. This is the no-OIDC claim path and the "
+        "recovery/headless automation path; OIDC deployments should normally "
+        "claim owner by signing in.</p>"
         "<pre>python proxy.py generate-admin-key &lt;service-account-name&gt; "
         "[role]</pre>"
         '<p class="meta">The printed <code>oak_</code> key is an admin key, '

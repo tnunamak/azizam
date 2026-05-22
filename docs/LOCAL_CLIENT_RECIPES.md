@@ -16,7 +16,9 @@ Public base host:  https://ai.vivid.fish         # optional, when exposed
 Client API key:    opk_...                       # never commit, never log
 ```
 
-Generate a key once per agent or app, as documented in `AUTH_GUIDE.md`:
+For new installs, create a key from `/setup` or the account portal (`/`) so it
+is stored in `admin.db`, as documented in `AUTH_GUIDE.md`. The legacy CLI path
+is still available for headless recovery or existing key-file installs:
 
 ```bash
 ./venv/bin/python proxy.py generate-key <agent-or-app-name>
@@ -792,10 +794,11 @@ Agents debugging a "why did this fail?" should:
 
 ## Migrating to Profile-Scoped Keys
 
-Generated `opk_...` keys map to downstream credentials and may carry a live
-`profile:` block (see `AUTH_GUIDE.md` § "Downstream Credential Mapping"). The
-`AppProfile` concept (`gateway/profiles.py`, `gateway/policy.py`) layers a
-named policy bundle on top of each client key:
+Dashboard-generated `opk_...` keys inherit the App's stored Profile from
+`admin.db`. Legacy key-file entries may also carry a live `profile:` block
+(see `AUTH_GUIDE.md` § "Downstream Credential Mapping"). The `AppProfile`
+concept (`gateway/profiles.py`, `gateway/policy.py`) layers a named policy
+bundle on top of each client key:
 
 - which protocols a client can use
 - which model aliases it sees
@@ -804,7 +807,7 @@ named policy bundle on top of each client key:
 - how much status and diagnostics it may see
 - which native passthrough lanes are allowed
 
-The migration path is:
+The legacy key-file migration path is:
 
 1. **Do not rotate keys preemptively.** The existing `opk_...` values keep
    working; profile binding is additive in `proxy_api_keys.yml`.
@@ -832,8 +835,9 @@ docs and commit history.
 
 - `/health` is the only unauthenticated endpoint. Use it for liveness in
   Docker/systemd; do not use authenticated endpoints for health checks.
-- The proxy reloads `proxy_api_keys.yml` on change. Adding, rotating, or
-  revoking a key does not require a restart.
+- The proxy reloads `proxy_api_keys.yml` on change for legacy key-file Apps.
+  Dashboard Apps and keys live in `admin.db` and apply live through the admin
+  store.
 - Streaming clients must respect server-side idle timeouts on
   `/v1/chat/completions` and `/v1/completions`. A long stall in an
   intermediate proxy/CDN will surface as a dropped stream to the SDK.

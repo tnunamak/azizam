@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import os
 import tempfile
 import unittest
 import re
@@ -35,6 +36,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.old_auth_enabled = proxy.AUTH_ENABLED
         self.old_auth_registry = proxy.AUTH_REGISTRY
         self.old_refresh_auth_registry = proxy.refresh_auth_registry
+        self.env_patcher = patch.dict(os.environ, {}, clear=False)
+        self.env_patcher.start()
+        os.environ.pop("AI_GATEWAY_USER_SELF_SERVICE", None)
+        os.environ.pop("AI_GATEWAY_AUTO_CREATE_PERSONAL_APP", None)
         proxy.ADMIN_STORE.path = self.db
         proxy.ADMIN_OIDC_STATES.clear()
         proxy.AUTH_ENABLED = True
@@ -54,6 +59,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.AUTH_ENABLED = self.old_auth_enabled
         proxy.AUTH_REGISTRY = self.old_auth_registry
         proxy.refresh_auth_registry = self.old_refresh_auth_registry
+        self.env_patcher.stop()
         proxy.ADMIN_OIDC_STATES.clear()
         self.tmp.cleanup()
 
@@ -149,6 +155,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertIn("const policyCatalog=", response.text)
         self.assertIn("profile-workflow-options", response.text)
         self.assertIn("image.generate.flux2-klein-4b", response.text)
+        self.assertIn("User-owned Apps and keys", response.text)
         self.assertIn(">Workflows</h3>", response.text)
         self.assertNotIn("Mint runtime key", response.text)
 
@@ -1066,6 +1073,161 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 ),
                 profile["id"],
             )
+
+    def test_bootstrap_user_defaults_seed_admin_db_runtime_policy_once(self) -> None:
+        family = admin_store.create_profile(
+            "Family",
+            {"id": "family", "protocols": ["openai.chat"]},
+            path=self.db,
+        )
+        admin = admin_store.create_profile(
+            "Admin",
+            {"id": "admin-runtime", "protocols": ["openai"]},
+            path=self.db,
+        )
+
+        with patch.object(
+            proxy,
+            "user_defaults_cfg",
+            {
+                "self_service_apps": False,
+                "auto_create_personal_app": False,
+                "default_profile_id": family["id"],
+                "role_profile_ids": {"admin": admin["id"]},
+                "domain_profile_ids": {"example.com": family["id"]},
+            },
+        ):
+            seeded = proxy._seed_user_defaults_from_bootstrap_config()
+            self.assertEqual(seeded, {"settings": 1, "mappings": 3})
+
+            setting = admin_store.get_operator_setting(
+                proxy.USER_ACCESS_DEFAULTS_SETTING_KEY,
+                path=self.db,
+            )
+            self.assertIsNotNone(setting)
+            self.assertFalse(setting["value"]["self_service_apps"])  # type: ignore[index]
+            self.assertFalse(
+                proxy._runtime_user_access_defaults()["self_service_apps"]
+            )
+
+            mappings = admin_store.list_runtime_profile_mappings(path=self.db)
+            observed = {
+                (
+                    row["source_kind"],
+                    row["source_value"],
+                    row["profile_id"],
+                )
+                for row in mappings
+            }
+            self.assertIn(("all_users", "*", family["id"]), observed)
+            self.assertIn(("gateway_role", "admin", admin["id"]), observed)
+            self.assertIn(("domain", "example.com", family["id"]), observed)
+
+            seeded_again = proxy._seed_user_defaults_from_bootstrap_config()
+            self.assertEqual(seeded_again, {"settings": 0, "mappings": 0})
+
+        actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
+        self.assertIn("operator.user_access_defaults.seed", actions)
+        self.assertIn("runtime_profile_mapping.seed", actions)
+
+    def test_env_user_defaults_seed_admin_db_without_remaining_runtime_override(self) -> None:
+        with patch.object(proxy, "user_defaults_cfg", {}), patch.dict(
+            os.environ,
+            {
+                "AI_GATEWAY_USER_SELF_SERVICE": "false",
+                "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP": "false",
+            },
+            clear=False,
+        ):
+            seeded = proxy._seed_user_defaults_from_bootstrap_config()
+            self.assertEqual(seeded, {"settings": 1, "mappings": 0})
+
+        setting = admin_store.get_operator_setting(
+            proxy.USER_ACCESS_DEFAULTS_SETTING_KEY,
+            path=self.db,
+        )
+        self.assertIsNotNone(setting)
+        self.assertFalse(setting["value"]["self_service_apps"])  # type: ignore[index]
+
+        with patch.dict(
+            os.environ,
+            {"AI_GATEWAY_USER_SELF_SERVICE": "true"},
+            clear=False,
+        ):
+            self.assertFalse(proxy._user_self_service_enabled())
+
+    def test_partial_bootstrap_seed_recovers_missing_runtime_mappings(self) -> None:
+        family = admin_store.create_profile(
+            "Family",
+            {"id": "family", "protocols": ["openai.chat"]},
+            path=self.db,
+        )
+        admin_store.put_operator_setting(
+            proxy.USER_ACCESS_DEFAULTS_SETTING_KEY,
+            {"self_service_apps": True, "auto_create_personal_app": True},
+            updated_by="test",
+            path=self.db,
+        )
+
+        with patch.object(
+            proxy,
+            "user_defaults_cfg",
+            {"domain_profile_ids": {"example.com": family["id"]}},
+        ):
+            seeded = proxy._seed_user_defaults_from_bootstrap_config()
+            resolved = proxy._default_profile_id_for_user(
+                email="person@example.com",
+                role="none",
+            )
+
+        self.assertEqual(seeded, {"settings": 0, "mappings": 1})
+        self.assertEqual(resolved, family["id"])
+
+    def test_runtime_user_access_defaults_db_wins_over_bootstrap_config(self) -> None:
+        admin_store.put_operator_setting(
+            proxy.USER_ACCESS_DEFAULTS_SETTING_KEY,
+            {"self_service_apps": False, "auto_create_personal_app": False},
+            updated_by="test",
+            path=self.db,
+        )
+
+        with patch.object(
+            proxy,
+            "user_defaults_cfg",
+            {"self_service_apps": True, "auto_create_personal_app": True},
+        ):
+            self.assertFalse(proxy._user_self_service_enabled())
+            self.assertFalse(proxy._auto_create_personal_app_enabled())
+
+    def test_disabled_seeded_mapping_is_not_reenabled_by_bootstrap_defaults(self) -> None:
+        profile = admin_store.create_profile(
+            "Family",
+            {"id": "family", "protocols": ["openai.chat"]},
+            path=self.db,
+        )
+        mapping = admin_store.create_runtime_profile_mapping(
+            source_kind="domain",
+            source_value="example.com",
+            profile_id=profile["id"],
+            path=self.db,
+        )
+        admin_store.disable_runtime_profile_mapping(mapping["id"], path=self.db)
+
+        with patch.object(
+            proxy,
+            "user_defaults_cfg",
+            {"domain_profile_ids": {"example.com": profile["id"]}},
+        ):
+            seeded = proxy._seed_user_defaults_from_bootstrap_config()
+            resolved = proxy._default_profile_id_for_user(
+                email="person@example.com",
+                role="none",
+            )
+
+        self.assertEqual(seeded, {"settings": 1, "mappings": 0})
+        self.assertIsNone(resolved)
+        active = admin_store.list_runtime_profile_mappings(path=self.db)
+        self.assertEqual(active, [])
 
 
 class SetupRouteIntegrationTests(unittest.TestCase):

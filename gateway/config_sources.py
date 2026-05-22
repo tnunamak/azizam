@@ -84,11 +84,14 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
     ConfigSpec(("auth",), "Auth settings", "auth/admin", MIXED, RESTART, "UI may own policy; env/files own trust roots and secrets."),
     ConfigSpec(("oidc",), "OIDC settings", "auth/admin", MIXED, RESTART, "Keep OIDC secrets in env; expose non-secret status read-only."),
     ConfigSpec(("admin",), "Admin settings", "auth/admin", MIXED, RUNTIME, "UI should own admin runtime policy backed by admin.db."),
-    ConfigSpec(("user_defaults",), "User defaults", "auth/admin", UI, RUNTIME, "UI should own default user experience policy."),
-    ConfigSpec(("api_keys",), "API keys", "auth/admin", ENV, RESTART, "Store secrets outside UI; show redacted presence only.", True, "proxy_api_keys.yml/env"),
+    ConfigSpec(("admin", "user_defaults"), "User access defaults", "auth/admin", UI, RUNTIME, "Bootstrap defaults seed admin.db; manage ongoing identity/Profile mappings in the dashboard."),
+    ConfigSpec(("auth", "keys_file"), "Legacy runtime keys file", "auth/admin", FILE, ADVANCED, "Legacy compatibility only; create new runtime keys from setup or the dashboard so they live in admin.db."),
+    ConfigSpec(("auth", "keys"), "Legacy inline runtime keys", "auth/admin", FILE, ADVANCED, "Legacy compatibility only; prefer dashboard App keys stored in admin.db.", True),
 )
 
 ENV_RECOMMENDATIONS: Mapping[str, tuple[str, str, str]] = {
+    "AI_GATEWAY_USER_SELF_SERVICE": ("User access bootstrap environment", "auth/admin", "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."),
+    "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP": ("User access bootstrap environment", "auth/admin", "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."),
     "OIDC": ("OIDC environment", "auth/admin", "Keep OIDC secrets and issuer bootstrap in env."),
     "OPENAI": ("OpenAI provider environment", "backends", "Keep provider credentials in env."),
     "ANTHROPIC": ("Anthropic provider environment", "backends", "Keep provider credentials in env."),
@@ -101,7 +104,9 @@ KNOWN_ENV_SOURCE_NAMES: tuple[str, ...] = (
     "AI_GATEWAY_ADMIN_DB",
     "AI_GATEWAY_ADMIN_SESSION_KEY",
     "AI_GATEWAY_ADMIN_OIDC_ADMIN_GROUPS",
+    "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP",
     "AI_GATEWAY_OIDC_CLIENT_SECRET",
+    "AI_GATEWAY_USER_SELF_SERVICE",
     "COMFY_ENABLED",
     "COMFY_HOST",
     "COMFY_TIMEOUT",

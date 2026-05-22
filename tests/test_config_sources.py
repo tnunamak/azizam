@@ -7,7 +7,7 @@ from gateway.config_sources import CONFIG_SPECS, inventory_config_sources
 def test_secrets_are_redacted_for_config_and_env():
     rows = inventory_config_sources(
         {
-            "api_keys": {"primary": "sk-live-secret"},
+            "auth": {"keys": [{"name": "legacy", "key": "sk-live-secret"}]},
             "oidc": {"client_secret": "oidc-secret", "issuer": "https://issuer.example"},
         },
         env={"OPENAI_API_KEY": "sk-env-secret", "OIDC_CLIENT_ID": "client-id"},
@@ -16,8 +16,8 @@ def test_secrets_are_redacted_for_config_and_env():
 
     by_id = {row["id"]: row for row in rows}
 
-    assert by_id["config:api_keys"]["secret"] is True
-    assert by_id["config:api_keys"]["current_value_summary"] == "<redacted>"
+    assert by_id["config:auth.keys"]["secret"] is True
+    assert by_id["config:auth.keys"]["current_value_summary"] == "<redacted>"
     assert by_id["env:OPENAI_API_KEY"]["secret"] is True
     assert by_id["env:OPENAI_API_KEY"]["current_value_summary"] == "<redacted>"
     assert by_id["env:OIDC_CLIENT_ID"]["secret"] is False
@@ -31,9 +31,15 @@ def test_env_overrides_are_represented_without_reading_process_env():
         {"proxy": {"host": "127.0.0.1", "port": 8080}},
         env={
             "DATABASE_URL": "sqlite:///admin.db",
+            "AI_GATEWAY_USER_SELF_SERVICE": "false",
             "REPORTING_DSN": "postgres://reporter:secret@example.test/db",
         },
-        env_names=["DATABASE_URL", "ANTHROPIC_API_KEY", "REPORTING_DSN"],
+        env_names=[
+            "DATABASE_URL",
+            "AI_GATEWAY_USER_SELF_SERVICE",
+            "ANTHROPIC_API_KEY",
+            "REPORTING_DSN",
+        ],
     )
 
     by_id = {row["id"]: row for row in rows}
@@ -63,6 +69,10 @@ def test_env_overrides_are_represented_without_reading_process_env():
     assert by_id["env:REPORTING_DSN"]["current_value_summary"] == "<redacted>"
     assert by_id["env:ANTHROPIC_API_KEY"]["current_value_summary"] == "<not set>"
     assert by_id["env:ANTHROPIC_API_KEY"]["secret"] is True
+    assert by_id["env:AI_GATEWAY_USER_SELF_SERVICE"]["domain"] == "auth/admin"
+    assert by_id["env:AI_GATEWAY_USER_SELF_SERVICE"]["recommendation"] == (
+        "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."
+    )
 
 
 def test_ui_file_env_and_manifest_categories_are_sane():
@@ -77,7 +87,7 @@ def test_ui_file_env_and_manifest_categories_are_sane():
             "resource_admission": {"max_concurrent": 4},
             "model_compatibility": {"gpt-image-1": ["image"]},
             "auth": {"mode": "oidc"},
-            "user_defaults": {"model": "gpt-4.1-mini"},
+            "admin": {"user_defaults": {"default_profile_id": "family"}},
             "workflows": {"video": {"manifest": "workflows/video.yml"}},
         },
         env={"OIDC_CLIENT_SECRET": "secret"},

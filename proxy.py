@@ -91,6 +91,7 @@ from gateway.setup_render import render_setup_page
 from gateway.admin_runtime import (
     AdminAuthenticator,
     AdminSQLiteStore,
+    USER_ACCESS_DEFAULTS_SETTING_KEY,
     create_admin_service_account_key,
     runtime_identity_for_app_credential_hash,
 )
@@ -1212,23 +1213,198 @@ def _profile_ref_to_store_id(ref: Any) -> str | None:
 
 
 def _user_self_service_enabled() -> bool:
-    return bool_from_config(
-        os.environ.get(
-            "AI_GATEWAY_USER_SELF_SERVICE",
-            user_defaults_cfg.get("self_service_apps"),
-        ),
-        True,
-    )
+    defaults = _runtime_user_access_defaults()
+    return bool_from_config(defaults.get("self_service_apps"), True)
 
 
 def _auto_create_personal_app_enabled() -> bool:
+    defaults = _runtime_user_access_defaults()
     return bool_from_config(
-        os.environ.get(
-            "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP",
-            user_defaults_cfg.get("auto_create_personal_app"),
-        ),
+        defaults.get("auto_create_personal_app"),
         _user_self_service_enabled(),
     )
+
+
+def _bootstrap_user_access_defaults() -> dict[str, Any]:
+    defaults = dict(user_defaults_cfg) if isinstance(user_defaults_cfg, Mapping) else {}
+    env_self_service = os.environ.get("AI_GATEWAY_USER_SELF_SERVICE")
+    if env_self_service is not None:
+        defaults["self_service_apps"] = bool_from_config(env_self_service, True)
+    env_auto_create = os.environ.get("AI_GATEWAY_AUTO_CREATE_PERSONAL_APP")
+    if env_auto_create is not None:
+        defaults["auto_create_personal_app"] = bool_from_config(
+            env_auto_create,
+            bool_from_config(defaults.get("self_service_apps"), True),
+        )
+    return defaults
+
+
+def _has_bootstrap_user_access_defaults() -> bool:
+    return bool(_bootstrap_user_access_defaults())
+
+
+def _runtime_user_access_defaults() -> dict[str, Any]:
+    try:
+        setting = admin_store.get_operator_setting(
+            USER_ACCESS_DEFAULTS_SETTING_KEY,
+            path=ADMIN_STORE.path,
+        )
+    except Exception:  # noqa: BLE001
+        return _bootstrap_user_access_defaults()
+    value = setting.get("value") if isinstance(setting, Mapping) else None
+    if isinstance(value, Mapping):
+        self_service = bool_from_config(value.get("self_service_apps"), True)
+        return {
+            "self_service_apps": self_service,
+            "auto_create_personal_app": bool_from_config(
+                value.get("auto_create_personal_app"),
+                self_service,
+            ),
+        }
+    return _bootstrap_user_access_defaults()
+
+
+def _user_defaults_seeded_in_admin_db() -> bool:
+    try:
+        return (
+            admin_store.get_operator_setting(
+                USER_ACCESS_DEFAULTS_SETTING_KEY,
+                path=ADMIN_STORE.path,
+            )
+            is not None
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _mapping_profile_id(ref: Any) -> str | None:
+    if str(ref or "").strip() == "default-local":
+        return "default-local"
+    return _profile_ref_to_store_id(ref)
+
+
+def _seed_runtime_mapping_from_bootstrap(
+    *,
+    source_kind: str,
+    source_value: str | None,
+    profile_id: str,
+) -> bool:
+    # Avoid re-enabling a mapping an operator deliberately disabled.
+    kind = str(source_kind or "").strip().lower()
+    if kind == "all_users":
+        value = "*"
+    else:
+        value = " ".join(str(source_value or "").strip().lower().strip("/").split())
+    if not kind or (kind != "all_users" and not value):
+        return False
+    for row in admin_store.list_runtime_profile_mappings(
+        include_disabled=True,
+        path=ADMIN_STORE.path,
+    ):
+        if (
+            str(row.get("source_kind") or "") == kind
+            and str(row.get("source_value") or "") == value
+            and str(row.get("profile_id") or "") == profile_id
+        ):
+            return False
+    admin_store.create_runtime_profile_mapping(
+        source_kind=source_kind,
+        source_value=source_value,
+        profile_id=profile_id,
+        created_by="bootstrap-config",
+        path=ADMIN_STORE.path,
+    )
+    return True
+
+
+def _seed_user_defaults_from_bootstrap_config() -> dict[str, int]:
+    """Import first-run mutable defaults into admin.db once.
+
+    ``admin.user_defaults`` remains a bootstrap convenience so a fresh host can
+    start, but runtime policy must become admin.db-owned after boot. This
+    seeding path is intentionally idempotent and never re-enables mappings an
+    operator has disabled in the dashboard.
+    """
+    bootstrap_defaults = _bootstrap_user_access_defaults()
+    if not bootstrap_defaults:
+        return {"settings": 0, "mappings": 0}
+
+    seeded_settings = 0
+    setting = admin_store.get_operator_setting(
+        USER_ACCESS_DEFAULTS_SETTING_KEY,
+        path=ADMIN_STORE.path,
+    )
+    if setting is None:
+        defaults = {
+            "self_service_apps": bool_from_config(
+                bootstrap_defaults.get("self_service_apps"),
+                True,
+            ),
+            "auto_create_personal_app": bool_from_config(
+                bootstrap_defaults.get("auto_create_personal_app"),
+                bool_from_config(bootstrap_defaults.get("self_service_apps"), True),
+            ),
+        }
+        admin_store.put_operator_setting(
+            USER_ACCESS_DEFAULTS_SETTING_KEY,
+            defaults,
+            updated_by="bootstrap-config",
+            path=ADMIN_STORE.path,
+        )
+        admin_store.record_audit(
+            "operator.user_access_defaults.seed",
+            actor_kind="system",
+            actor_id="startup",
+            target_kind="operator_setting",
+            target_id=USER_ACCESS_DEFAULTS_SETTING_KEY,
+            metadata={"fields": sorted(defaults)},
+            path=ADMIN_STORE.path,
+        )
+        seeded_settings = 1
+
+    seeded_mappings = 0
+    default_profile_id = _mapping_profile_id(bootstrap_defaults.get("default_profile_id"))
+    if default_profile_id:
+        seeded_mappings += int(
+            _seed_runtime_mapping_from_bootstrap(
+                source_kind="all_users",
+                source_value=None,
+                profile_id=default_profile_id,
+            )
+        )
+
+    for mapping_name, source_kind in (
+        ("role_profile_ids", "gateway_role"),
+        ("domain_profile_ids", "domain"),
+        ("email_profile_ids", "email"),
+    ):
+        mapping = bootstrap_defaults.get(mapping_name)
+        if not isinstance(mapping, Mapping):
+            continue
+        for source_value, profile_ref in mapping.items():
+            profile_id = _mapping_profile_id(profile_ref)
+            if not profile_id:
+                continue
+            seeded_mappings += int(
+                _seed_runtime_mapping_from_bootstrap(
+                    source_kind=source_kind,
+                    source_value=str(source_value),
+                    profile_id=profile_id,
+                )
+            )
+
+    if seeded_mappings:
+        admin_store.record_audit(
+            "runtime_profile_mapping.seed",
+            actor_kind="system",
+            actor_id="startup",
+            target_kind="runtime_profile_mapping",
+            target_id="bootstrap-user-defaults",
+            metadata={"count": seeded_mappings},
+            path=ADMIN_STORE.path,
+        )
+
+    return {"settings": seeded_settings, "mappings": seeded_mappings}
 
 
 def _profile_from_map(mapping_name: str, key: str) -> str | None:
@@ -1270,6 +1446,9 @@ def _default_profile_id_for_user(
     )
     if mapped_profile:
         return _profile_ref_to_store_id(mapped_profile)
+
+    if _user_defaults_seeded_in_admin_db():
+        return None
 
     if normalized_email:
         profile_id = _profile_from_map("email_profile_ids", normalized_email)
@@ -7449,6 +7628,14 @@ async def lifespan(app: FastAPI):
     try:
         ADMIN_STORE.init_db()
         print(f"[proxy] Admin store initialized (db={ADMIN_DB_PATH})", flush=True)
+        seeded_defaults = _seed_user_defaults_from_bootstrap_config()
+        if seeded_defaults["settings"] or seeded_defaults["mappings"]:
+            print(
+                "[proxy] Seeded admin.user_defaults into admin.db: "
+                f"settings={seeded_defaults['settings']} "
+                f"mappings={seeded_defaults['mappings']}",
+                flush=True,
+            )
         provisioned = _provision_existing_user_personal_apps()
         if provisioned:
             print(
@@ -8760,6 +8947,46 @@ def _admin_media_job_admission_controls() -> list[dict[str, Any]]:
     ]
 
 
+def _admin_user_access_controls() -> list[dict[str, Any]]:
+    defaults = _runtime_user_access_defaults()
+    rows: list[dict[str, Any]] = []
+    for key, label, summary in (
+        (
+            "self_service_apps",
+            "User-owned Apps and keys",
+            "Allows signed-in users to create their own Personal Apps and opk_ keys.",
+        ),
+        (
+            "auto_create_personal_app",
+            "Auto-create Personal App",
+            "Creates a first Personal App automatically when a signed-in user needs one.",
+        ),
+    ):
+        enabled = bool_from_config(defaults.get(key), True)
+        rows.append(
+            {
+                "key": key,
+                "label": label,
+                "action_url": "/admin/api/operator/user-access-defaults",
+                "method": "PUT",
+                "field": key,
+                "current": "true" if enabled else "false",
+                "scope": "signed-in user access",
+                "source": (
+                    "admin.db user access defaults"
+                    if _user_defaults_seeded_in_admin_db()
+                    else "bootstrap default pending seed"
+                ),
+                "summary": summary,
+                "supported_values": [
+                    {"value": "true", "label": "Enabled"},
+                    {"value": "false", "label": "Disabled"},
+                ],
+            }
+        )
+    return rows
+
+
 def _format_admin_value(value: Any) -> str:
     if isinstance(value, (list, tuple, set, frozenset)):
         return ", ".join(str(item) for item in value)
@@ -8912,9 +9139,12 @@ def _admin_identity_mappings() -> list[dict[str, Any]]:
         "gateway_role": "gateway admin role",
         "all_users": "all signed-in users",
     }
+    active_mapping_keys: set[tuple[str, str, str]] = set()
     for mapping in admin_store.list_runtime_profile_mappings(path=ADMIN_STORE.path):
         source_kind = str(mapping.get("source_kind") or "")
         source_value = str(mapping.get("source_value") or "")
+        profile_id = _profile_ref_to_store_id(mapping.get("profile_id")) or "default-local"
+        active_mapping_keys.add((source_kind, source_value, profile_id))
         label = source_labels.get(source_kind, source_kind or "identity")
         source = label if source_kind == "all_users" else f"{label}: {source_value}"
         rows.append(
@@ -8922,37 +9152,50 @@ def _admin_identity_mappings() -> list[dict[str, Any]]:
                 "id": mapping.get("id"),
                 "source": source,
                 "scope": "runtime Profile mapping",
-                "profile_id": _profile_ref_to_store_id(mapping.get("profile_id"))
-                or "default-local",
+                "profile_id": profile_id,
                 "note": "Managed here. This does not grant admin access.",
             }
         )
 
-    def add_mapping(scope: str, mapping_name: str) -> None:
+    bootstrap_defaults_seeded = _user_defaults_seeded_in_admin_db()
+
+    def add_mapping(scope: str, source_kind: str, mapping_name: str) -> None:
+        if bootstrap_defaults_seeded:
+            return
         mapping = user_defaults_cfg.get(mapping_name)
         if not isinstance(mapping, Mapping):
             return
         for source, profile in sorted(mapping.items()):
+            profile_id = _mapping_profile_id(profile)
+            if not profile_id:
+                continue
+            source_value = " ".join(str(source or "").strip().lower().strip("/").split())
+            if (source_kind, source_value, profile_id) in active_mapping_keys:
+                continue
             rows.append(
                 {
                     "source": f"{scope}: {source}",
-                    "scope": "runtime default",
-                    "profile_id": _profile_ref_to_store_id(profile) or "default-local",
-                    "note": "Applied when a signed-in user creates a personal App.",
+                    "scope": "bootstrap fallback",
+                    "profile_id": profile_id,
+                    "note": "Imported into admin.db on startup when no matching runtime mapping exists.",
                 }
             )
 
-    add_mapping("gateway role", "role_profile_ids")
-    add_mapping("email domain", "domain_profile_ids")
-    add_mapping("email", "email_profile_ids")
-    default_profile = _profile_ref_to_store_id(user_defaults_cfg.get("default_profile_id"))
-    if default_profile:
+    add_mapping("gateway role", "gateway_role", "role_profile_ids")
+    add_mapping("email domain", "domain", "domain_profile_ids")
+    add_mapping("email", "email", "email_profile_ids")
+    default_profile = _mapping_profile_id(user_defaults_cfg.get("default_profile_id"))
+    if (
+        default_profile
+        and not bootstrap_defaults_seeded
+        and ("all_users", "*", default_profile) not in active_mapping_keys
+    ):
         rows.append(
             {
                 "source": "all signed-in users",
-                "scope": "runtime default",
+                "scope": "bootstrap fallback",
                 "profile_id": default_profile,
-                "note": "Fallback when no role, domain, or email mapping matches.",
+                "note": "Imported into admin.db on startup when no all-users runtime mapping exists.",
             }
         )
     if not rows:
@@ -9004,6 +9247,7 @@ async def admin_dashboard(request: Request):
         workflow_inventory=workflow_inventory,
     )
     snapshot["service_overrides"] = _admin_service_override_controls(status_payload)
+    snapshot["operator_overrides"] = _admin_user_access_controls()
     snapshot["resource_overrides"] = _admin_media_job_admission_controls()
     snapshot["profile_inventory"] = _admin_profile_inventory(
         status_payload,
@@ -9146,6 +9390,7 @@ def _setup_doctor_items(
                 else "Create a first App key before connecting SDKs or clients."
             ),
         },
+        _setup_config_source_item(),
     ]
     if not status_payload:
         items.append(
@@ -9182,6 +9427,42 @@ def _setup_doctor_items(
             }
         )
     return items
+
+
+def _setup_config_source_item() -> dict[str, str]:
+    try:
+        access_defaults = admin_store.get_operator_setting(
+            USER_ACCESS_DEFAULTS_SETTING_KEY,
+            path=ADMIN_STORE.path,
+        )
+    except Exception:  # noqa: BLE001
+        access_defaults = None
+    has_bootstrap_defaults = _has_bootstrap_user_access_defaults()
+    legacy_key_count = len(AUTH_REGISTRY)
+    if access_defaults is not None:
+        state = "ok" if not legacy_key_count else "warn"
+        detail = (
+            "Runtime Apps, keys, Profiles, and identity defaults are admin.db-backed."
+        )
+    elif has_bootstrap_defaults:
+        state = "warn"
+        detail = (
+            "Bootstrap user defaults have not been seeded into admin.db yet; restart "
+            "or check the admin store."
+        )
+    else:
+        state = "ok"
+        detail = "No bootstrap runtime defaults are pending migration."
+    if legacy_key_count:
+        detail += (
+            f" {legacy_key_count} legacy proxy_api_keys.yml key(s) are still loaded; "
+            "new setup/dashboard keys live in admin.db."
+        )
+    return {
+        "label": "Config source of truth",
+        "state": state,
+        "detail": detail,
+    }
 
 
 def _setup_admin_context(request: Request) -> AdminContext | None:
