@@ -1,0 +1,34 @@
+# Version control
+.git/
+
+# Claude Code / worktree tooling
+.claude/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Runtime state — mounted as a volume at runtime
+data/
+
+# Caches and temp
+.cache/
+cache/
+tmp/
+*.log
+logs/
+
+# Dev/test artifacts
+tests/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor
+.vscode/
+.idea/
+*.swp
