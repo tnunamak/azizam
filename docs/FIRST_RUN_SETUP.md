@@ -28,6 +28,9 @@ mint a runtime key.
 
 Persistent state (SQLite databases, session keys) is stored in the
 `gateway-data` Docker volume, which maps to `/app/data` inside the container.
+The individual store paths can be overridden with env vars:
+`AI_GATEWAY_ADMIN_DB`, `AI_GATEWAY_RESPONSES_DB`, `AI_GATEWAY_METRICS_DB`,
+`AI_GATEWAY_RECEIPTS_DB`, `AI_GATEWAY_MEDIA_JOBS_DB` (see `.env.example`).
 To use a host directory instead, replace the volume entry in
 `docker-compose.yml`:
 
