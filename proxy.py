@@ -8216,12 +8216,22 @@ async def _gateway_auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+def _gateway_resource_lister(*, audience: str) -> list:
+    try:
+        reg = ADMIN_STORE.get_service_registry()
+    except Exception:  # noqa: BLE001
+        return []
+    return service_registry.list_resource_summaries(reg, audience=audience)
+
+
 app.include_router(
     create_gateway_router(
         GATEWAY_WORKFLOW_REGISTRY,
         audience_resolver=_gateway_audience_resolver,
         capabilities_provider=_gateway_capabilities_provider,
         receipt_store_path=receipt_store.DB_PATH,
+        resource_lister=_gateway_resource_lister,
+        asset_url_ttl_s=IMAGE_SIGNED_URL_TTL,
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
     )
