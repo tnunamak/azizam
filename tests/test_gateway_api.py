@@ -824,45 +824,5 @@ class GatewayMediaJobAssetTTLTests(unittest.TestCase):
         self.assertEqual(response.json()["asset_url_ttl_s"], 7200)
 
 
-class GatewayMediaJobContentRouteTests(unittest.TestCase):
-    def _make_client_with_job(self, job: dict[str, Any] | None) -> TestClient:
-        def getter(job_id, *, audience):
-            return job
-
-        return _make_media_jobs_client(media_job_getter=getter)
-
-    def test_missing_job_returns_404(self) -> None:
-        client = self._make_client_with_job(None)
-        response = client.get("/gateway/v1/media/jobs/mj_missing/content", follow_redirects=False)
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["error"]["code"], "media_job_not_found")
-
-    def test_job_with_no_assets_returns_404(self) -> None:
-        client = self._make_client_with_job(
-            {"job_id": "mj_1", "intent": "image.generate", "status": "running", "assets": []}
-        )
-        response = client.get("/gateway/v1/media/jobs/mj_1/content", follow_redirects=False)
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["error"]["code"], "media_job_no_content")
-
-    def test_asset_without_content_url_returns_404(self) -> None:
-        client = self._make_client_with_job(
-            {"job_id": "mj_2", "intent": "image.generate", "status": "succeeded",
-             "assets": [{"asset_id": "a1", "media_type": "image/png"}]}
-        )
-        response = client.get("/gateway/v1/media/jobs/mj_2/content", follow_redirects=False)
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["error"]["code"], "media_job_no_content_url")
-
-    def test_redirect_to_first_asset_content_url(self) -> None:
-        client = self._make_client_with_job(
-            {"job_id": "mj_3", "intent": "image.generate", "status": "succeeded",
-             "assets": [{"asset_id": "a1", "content_url": "https://cdn.example.com/output.png"}]}
-        )
-        response = client.get("/gateway/v1/media/jobs/mj_3/content", follow_redirects=False)
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.headers["location"], "https://cdn.example.com/output.png")
-
-
 if __name__ == "__main__":
     unittest.main(verbosity=2)

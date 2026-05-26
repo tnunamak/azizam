@@ -27,7 +27,6 @@ Endpoints
 * ``GET /gateway/v1/media/jobs/{job_id}/events`` — list job events
 * ``POST /gateway/v1/media/jobs/{job_id}/events`` — append a job event
 * ``POST /gateway/v1/media/jobs/{job_id}/cancel`` — cancel a non-terminal job
-* ``GET /gateway/v1/media/jobs/{job_id}/content`` — redirect to first asset content URL
 
 Capability, receipt, and media-job endpoints return empty results (or a
 protocol-shaped 404) when their optional providers are not wired. Mounting the
@@ -42,7 +41,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from fastapi import APIRouter, Body, Query, Request, status
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.discovery import VALID_AUDIENCES, WorkflowRegistry
@@ -751,44 +750,5 @@ def create_gateway_router(
                 ),
             )
         return JSONResponse(status_code=status.HTTP_200_OK, content=updated)
-
-    @router.get("/media/jobs/{job_id}/content", response_model=None)
-    def get_media_job_content(job_id: str, request: Request):
-        audience = _resolve_request_audience(resolve_audience, request)
-        try:
-            row = (
-                None
-                if media_job_getter is None
-                else media_job_getter(job_id, audience=audience)
-            )
-        except Exception as exc:  # noqa: BLE001
-            return _internal_error(audience, exc)
-        if row is None:
-            return JSONResponse(
-                status_code=status.HTTP_404_NOT_FOUND,
-                content=_error_payload(
-                    "media_job_not_found",
-                    f"media job {job_id!r} not found",
-                ),
-            )
-        assets = row.get("assets") if isinstance(row, dict) else None
-        if not assets:
-            return JSONResponse(
-                status_code=status.HTTP_404_NOT_FOUND,
-                content=_error_payload(
-                    "media_job_no_content",
-                    f"media job {job_id!r} has no assets yet; poll assets[] from the job record",
-                ),
-            )
-        content_url = assets[0].get("content_url") if isinstance(assets[0], dict) else None
-        if not content_url:
-            return JSONResponse(
-                status_code=status.HTTP_404_NOT_FOUND,
-                content=_error_payload(
-                    "media_job_no_content_url",
-                    "first asset has no content_url; use assets[] from the job record",
-                ),
-            )
-        return RedirectResponse(url=content_url, status_code=status.HTTP_302_FOUND)
 
     return router
