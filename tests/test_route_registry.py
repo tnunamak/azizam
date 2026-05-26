@@ -3,6 +3,58 @@ from __future__ import annotations
 from gateway import route_registry, service_registry
 
 
+def _registry_with_frontend(enabled: bool) -> dict:
+    """Build a minimal registry with one protocol frontend."""
+    return service_registry.normalize_service_registry(
+        {
+            "services": {},
+            "protocol_frontends": {
+                "custom": {
+                    "id": "custom",
+                    "name": "Custom API",
+                    "protocol": "custom",
+                    "enabled": enabled,
+                    "routes": ["/custom/v1"],
+                    "registered_routes": [
+                        {
+                            "methods": ["POST"],
+                            "canonical": "/v1/custom/run",
+                            "alias": "/custom/v1/run",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+
+def test_disabled_frontend_routes_excluded_from_registered_routes() -> None:
+    registry = _registry_with_frontend(enabled=False)
+    routes = route_registry.registered_route_records(registry=registry)
+    canonicals = [r.get("canonical") for r in routes]
+    assert "/v1/custom/run" not in canonicals, (
+        "disabled frontend routes must not appear in registered_route_records"
+    )
+
+
+def test_disabled_frontend_routes_excluded_from_aliases() -> None:
+    registry = _registry_with_frontend(enabled=False)
+    aliases = route_registry.canonical_protocol_route_aliases(registry=registry)
+    alias_canonicals = [entry["canonical"] for entry in aliases]
+    assert "/v1/custom/run" not in alias_canonicals, (
+        "disabled frontend routes must not appear in canonical_protocol_route_aliases"
+    )
+
+
+def test_enabled_frontend_routes_present_in_registered_routes() -> None:
+    registry = _registry_with_frontend(enabled=True)
+    routes = route_registry.registered_route_records(registry=registry)
+    canonicals = [r.get("canonical") for r in routes]
+    assert "/v1/custom/run" in canonicals, (
+        "enabled frontend routes must appear in registered_route_records"
+    )
+
+
 def test_route_aliases_and_policies_are_projected_from_catalog() -> None:
     registry = service_registry.build_service_registry_seed({"backends": {}})
 

@@ -249,6 +249,70 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertEqual([p["id"] for p in metadata["protocols"]], ["custom"])
         self.assertEqual(metadata["protocols"][0]["base_path"], "/custom/v1")
 
+    def test_disabled_frontend_excluded_from_public_protocols(self) -> None:
+        metadata = build_gateway_discovery_metadata(
+            base_url="http://gw",
+            registry={
+                "protocol_frontends": {
+                    "disabled-api": {
+                        "id": "disabled-api",
+                        "enabled": False,
+                        "routes": ["/disabled/v1"],
+                        "public_discovery": {
+                            "compatibility": "disabled-compatible",
+                            "default": False,
+                            "base_url_recipe": "{base_url}/disabled/v1",
+                            "streaming": {"events": False},
+                            "endpoints": ["/disabled/v1/run"],
+                        },
+                    }
+                }
+            },
+        )
+
+        protocol_ids = [p["id"] for p in metadata["protocols"]]
+        self.assertNotIn(
+            "disabled-api",
+            protocol_ids,
+            "disabled protocol frontend must not appear in public discovery protocols",
+        )
+
+    def test_disabled_frontend_excluded_from_public_recipes(self) -> None:
+        recipes = build_public_recipes(
+            root="http://gw",
+            protocol_frontends=(
+                {
+                    "id": "enabled-api",
+                    "enabled": True,
+                    "public_discovery": {
+                        "recipe": {
+                            "canonical_base_url": "/enabled/v1",
+                            "root_url": "/",
+                            "auth": "Authorization: Bearer $TOKEN",
+                        },
+                    },
+                },
+                {
+                    "id": "disabled-api",
+                    "enabled": False,
+                    "public_discovery": {
+                        "recipe": {
+                            "canonical_base_url": "/disabled/v1",
+                            "root_url": "/",
+                            "auth": "Authorization: Bearer $TOKEN",
+                        },
+                    },
+                },
+            ),
+        )
+
+        self.assertIn("enabled_api", recipes)
+        self.assertNotIn(
+            "disabled_api",
+            recipes,
+            "disabled protocol frontend must not appear in public recipes",
+        )
+
     def test_service_block_advertises_canonical_host_and_alias(self) -> None:
         metadata = build_gateway_discovery_metadata(base_url="http://gw")
         service = metadata["service"]
