@@ -38,7 +38,6 @@ catalog rather than a crash.
 from __future__ import annotations
 
 import inspect
-import os
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -66,15 +65,6 @@ MediaJobCanceler = Callable[..., dict[str, Any] | None]
 MediaJobSubmitter = Callable[..., Any]
 
 DEFAULT_AUDIENCE = "client"
-
-def _asset_url_ttl_s() -> int | None:
-    raw = os.environ.get("AI_GATEWAY_ASSET_URL_TTL_S")
-    if raw:
-        try:
-            return max(0, int(raw))
-        except ValueError:
-            pass
-    return None
 
 # Cap recent-receipt listings to keep the response small and predictable.
 RECEIPTS_DEFAULT_LIMIT = 50
@@ -288,6 +278,7 @@ def create_gateway_router(
     receipt_lister: ReceiptLister | None = None,
     receipt_store_path: str | Path | None = None,
     resource_lister: ResourceLister | None = None,
+    asset_url_ttl_s: int | None = None,
     media_job_creator: MediaJobCreator | None = None,
     media_job_getter: MediaJobGetter | None = None,
     media_job_lister: MediaJobLister | None = None,
@@ -567,7 +558,7 @@ def create_gateway_router(
             content={
                 "schema_version": 1,
                 "audience": audience,
-                "asset_url_ttl_s": _asset_url_ttl_s(),
+                "asset_url_ttl_s": asset_url_ttl_s,
                 "jobs": rows,
             },
         )
@@ -593,7 +584,7 @@ def create_gateway_router(
             )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={**row, "asset_url_ttl_s": _asset_url_ttl_s()},
+            content={**row, "asset_url_ttl_s": asset_url_ttl_s},
         )
 
     @router.get("/media/jobs/{job_id}/events")

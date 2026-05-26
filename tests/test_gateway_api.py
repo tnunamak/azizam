@@ -775,6 +775,7 @@ def _make_media_jobs_client(
     media_job_lister=None,
     media_job_creator=None,
     media_job_store_path=None,
+    asset_url_ttl_s: int | None = None,
 ) -> TestClient:
     registry = _build_registry()
     resolver = None
@@ -789,16 +790,14 @@ def _make_media_jobs_client(
             media_job_lister=media_job_lister,
             media_job_creator=media_job_creator,
             media_job_store_path=media_job_store_path,
+            asset_url_ttl_s=asset_url_ttl_s,
         )
     )
     return TestClient(app)
 
 
 class GatewayMediaJobAssetTTLTests(unittest.TestCase):
-    def test_list_jobs_includes_null_ttl_when_env_unset(self) -> None:
-        import os
-        os.environ.pop("AI_GATEWAY_ASSET_URL_TTL_S", None)
-
+    def test_list_jobs_includes_null_ttl_when_not_configured(self) -> None:
         client = _make_media_jobs_client(media_job_lister=lambda **_: [])
         response = client.get("/gateway/v1/media/jobs")
         self.assertEqual(response.status_code, 200)
@@ -806,30 +805,23 @@ class GatewayMediaJobAssetTTLTests(unittest.TestCase):
         self.assertIn("asset_url_ttl_s", body)
         self.assertIsNone(body["asset_url_ttl_s"])
 
-    def test_list_jobs_includes_ttl_from_env(self) -> None:
-        import os
-        os.environ["AI_GATEWAY_ASSET_URL_TTL_S"] = "3600"
-        try:
-            client = _make_media_jobs_client(media_job_lister=lambda **_: [])
-            response = client.get("/gateway/v1/media/jobs")
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json()["asset_url_ttl_s"], 3600)
-        finally:
-            os.environ.pop("AI_GATEWAY_ASSET_URL_TTL_S", None)
+    def test_list_jobs_includes_configured_ttl(self) -> None:
+        client = _make_media_jobs_client(
+            media_job_lister=lambda **_: [],
+            asset_url_ttl_s=3600,
+        )
+        response = client.get("/gateway/v1/media/jobs")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["asset_url_ttl_s"], 3600)
 
     def test_get_job_includes_ttl(self) -> None:
-        import os
-        os.environ["AI_GATEWAY_ASSET_URL_TTL_S"] = "7200"
-        try:
-            def getter(job_id, *, audience):
-                return {"job_id": job_id, "intent": "image.generate", "status": "succeeded", "assets": []}
+        def getter(job_id, *, audience):
+            return {"job_id": job_id, "intent": "image.generate", "status": "succeeded", "assets": []}
 
-            client = _make_media_jobs_client(media_job_getter=getter)
-            response = client.get("/gateway/v1/media/jobs/mj_abc123")
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json()["asset_url_ttl_s"], 7200)
-        finally:
-            os.environ.pop("AI_GATEWAY_ASSET_URL_TTL_S", None)
+        client = _make_media_jobs_client(media_job_getter=getter, asset_url_ttl_s=7200)
+        response = client.get("/gateway/v1/media/jobs/mj_abc123")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["asset_url_ttl_s"], 7200)
 
 
 class GatewayMediaJobContentRouteTests(unittest.TestCase):
