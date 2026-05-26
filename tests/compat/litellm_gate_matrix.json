@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "purpose": "Decide whether LiteLLM can replace the gateway commodity LLM layer without regressing client-facing protocol surfaces.",
+  "gates": [
+    {
+      "id": "openai.chat",
+      "label": "OpenAI chat completions",
+      "protocol": "openai",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "model_env": "LITELLM_OPENAI_CHAT_MODEL",
+      "default_model": "gpt-4o-mini",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Reply with exactly: pong"
+          }
+        ],
+        "max_tokens": 16,
+        "temperature": 0
+      },
+      "expect": {
+        "status": 200,
+        "json_path_exists": [
+          "choices.0.message.content"
+        ]
+      }
+    },
+    {
+      "id": "openai.chat.streaming",
+      "label": "OpenAI streaming chat completions",
+      "protocol": "openai",
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "model_env": "LITELLM_OPENAI_CHAT_MODEL",
+      "default_model": "gpt-4o-mini",
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Reply with exactly: pong"
+          }
+        ],
+        "max_tokens": 16,
+        "temperature": 0,
+        "stream": true
+      },
+      "expect": {
+        "status": 200,
+        "stream_has_data": true,
+        "stream_has_done": true
+      }
+    },
+    {
+      "id": "openai.embeddings",
+      "label": "OpenAI embeddings",
+      "protocol": "openai",
+      "method": "POST",
+      "path": "/v1/embeddings",
+      "model_env": "LITELLM_EMBEDDINGS_MODEL",
+      "default_model": "text-embedding-3-small",
+      "request": {
+        "input": "compatibility probe"
+      },
+      "expect": {
+        "status": 200,
+        "json_path_exists": [
+          "data.0.embedding"
+        ]
+      }
+    },
+    {
+      "id": "anthropic.messages",
+      "label": "Anthropic messages",
+      "protocol": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "model_env": "LITELLM_ANTHROPIC_MODEL",
+      "default_model": "claude-3-5-haiku-latest",
+      "headers": {
+        "anthropic-version": "2023-06-01"
+      },
+      "request": {
+        "max_tokens": 16,
+        "messages": [
+          {
+            "role": "user",
+            "content": "Reply with exactly: pong"
+          }
+        ]
+      },
+      "expect": {
+        "status": 200,
+        "json_path_exists": [
+          "content.0.text"
+        ]
+      }
+    },
+    {
+      "id": "openai.responses",
+      "label": "OpenAI Responses API",
+      "protocol": "openai",
+      "method": "POST",
+      "path": "/v1/responses",
+      "model_env": "LITELLM_RESPONSES_MODEL",
+      "default_model": "gpt-4o-mini",
+      "request": {
+        "input": "Reply with exactly: pong",
+        "max_output_tokens": 16
+      },
+      "expect": {
+        "status": 200,
+        "json_path_exists_any": [
+          "output_text",
+          "output.0.content.0.text"
+        ]
+      }
+    },
+    {
+      "id": "ollama.client_caveats",
+      "label": "Ollama client-facing caveats",
+      "protocol": "ollama",
+      "method": "GET",
+      "path": "/api/tags",
+      "expect": {
+        "status": 200,
+        "json_path_exists": [
+          "models"
+        ]
+      },
+      "caveats": [
+        "LiteLLM is OpenAI-compatible first; native Ollama endpoints such as /api/chat, /api/generate, /api/embed, /api/show, /api/ps, model pull/push/delete, and NDJSON streaming may need this gateway to remain as a protocol frontend.",
+        "Treat this gate as a client inventory decision, not proof that Ollama-native clients can point directly at LiteLLM."
+      ]
+    }
+  ]
+}
