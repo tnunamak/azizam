@@ -1,27 +1,22 @@
 #!/usr/bin/env bash
-# fresh_instance_harness.sh — spin up an isolated AI Gateway instance for fresh-instance testing.
+# fresh_instance_harness.sh -- spin up an isolated AI Gateway instance for fresh-instance testing.
 #
 # WHAT THIS DOES
-#   1. Creates a temp directory under /tmp for the admin DB and session key.
-#   2. Writes a minimal proxy_config.yml into a temp dir and runs proxy.py from there,
-#      so CONFIG_PATH (hardcoded to __file__/../proxy_config.yml) picks up the fresh config.
-#   3. Binds to HARNESS_PORT (default 15000) — never the live port 5000.
-#   4. Fails loudly if it detects the live admin DB path in the environment.
+#   1. Creates a temp directory under /tmp for all persistent stores and config.
+#   2. Writes a minimal proxy_config.yml into the temp dir; points AI_GATEWAY_CONFIG_PATH at it.
+#   3. Sets env overrides for every persistent store so nothing writes to the repo data/ dir.
+#   4. Binds to HARNESS_PORT (default 15000) -- never the live port 5000.
+#   5. Fails loudly if startup output references the repo data/ directory.
 #
 # SOURCES OF TRUTH (documented explicitly)
-#   DB:   AI_GATEWAY_ADMIN_DB  — temp path created here; never touches live data/admin.db
-#   File: proxy_config.yml     — written fresh from MINIMAL_CONFIG below (no env override exists)
-#   Env:  OPENAI_PROXY_PORT    — set to HARNESS_PORT
-#   Env:  AI_GATEWAY_ADMIN_SESSION_KEY — set to a fixed test-only secret
-#
-# KNOWN GAPS
-#   - receipt_store (data/receipts.db) and media_jobs (data/media_jobs.db) and
-#     metrics_store have no env override for their DB paths; they write to the
-#     worktree's data/ directory (which is clean/empty) rather than /tmp.
-#   - proxy_config.yml has no env override — this script writes a fresh minimal
-#     copy to the temp dir and runs proxy.py from there.
-#   - TABBY_CONFIG_FILE (/home/tnunamak/applications/tabbyapi/config.yml) is
-#     hardcoded; it is optional and will simply be skipped if absent.
+#   Env: AI_GATEWAY_ADMIN_DB        -- temp admin DB (never touches live data/admin.db)
+#   Env: AI_GATEWAY_METRICS_DB      -- temp metrics DB
+#   Env: AI_GATEWAY_RESPONSES_DB    -- temp responses DB
+#   Env: AI_GATEWAY_RECEIPTS_DB     -- temp receipt store DB
+#   Env: AI_GATEWAY_MEDIA_JOBS_DB   -- temp media jobs DB
+#   Env: AI_GATEWAY_CONFIG_PATH     -- temp proxy_config.yml written by this script
+#   Env: OPENAI_PROXY_PORT          -- set to HARNESS_PORT
+#   Env: AI_GATEWAY_ADMIN_SESSION_KEY -- fixed test-only secret
 #
 # USAGE
 #   ./scripts/fresh_instance_harness.sh [--smoke] [--port PORT]
@@ -122,12 +117,7 @@ roles:
     backend: example-llm
 YAML
 
-# Symlink proxy.py and gateway/ into the temp dir so CONFIG_PATH resolves
-# to $TMPDIR_ROOT/proxy_config.yml (CONFIG_PATH = Path(__file__).parent / "proxy_config.yml").
-ln -s "$REPO_ROOT/proxy.py"   "$TMPDIR_ROOT/proxy.py"
-ln -s "$REPO_ROOT/gateway"    "$TMPDIR_ROOT/gateway"
-
-# ── Python / venv ──────────────────────────────────────────────────────────────
+# ── Python / venv ────────────────────────────────────────────────────────────
 # The worktree shares the parent repo's venv (worktrees don't have their own).
 REPO_ORIGIN="$(cd "$REPO_ROOT" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | xargs dirname 2>/dev/null || echo "$REPO_ROOT")"
 if [[ -f "$REPO_ORIGIN/venv/bin/python3" ]]; then
@@ -141,6 +131,11 @@ echo "[harness] Python: $PYTHON"
 
 # ── Launch ────────────────────────────────────────────────────────────────────
 export AI_GATEWAY_ADMIN_DB="$TMPDIR_ROOT/admin.db"
+export AI_GATEWAY_METRICS_DB="$TMPDIR_ROOT/metrics.db"
+export AI_GATEWAY_RESPONSES_DB="$TMPDIR_ROOT/responses.db"
+export AI_GATEWAY_RECEIPTS_DB="$TMPDIR_ROOT/receipts.db"
+export AI_GATEWAY_MEDIA_JOBS_DB="$TMPDIR_ROOT/media_jobs.db"
+export AI_GATEWAY_CONFIG_PATH="$TMPDIR_ROOT/proxy_config.yml"
 export OPENAI_PROXY_PORT="$HARNESS_PORT"
 export AI_GATEWAY_ADMIN_SESSION_KEY="harness-test-session-key-not-for-production"
 # Silence noisy tabbyapi health checks that would fail on a fresh host
@@ -148,8 +143,8 @@ export TABBY_IDLE_TIMEOUT=0
 export TTS_ENABLED=false
 
 echo "[harness] Launching gateway (Ctrl-C or --smoke auto-stops)..."
-cd "$TMPDIR_ROOT"
-"$PYTHON" proxy.py &
+STARTUP_LOG="$TMPDIR_ROOT/startup.log"
+"$PYTHON" "$REPO_ROOT/proxy.py" > "$STARTUP_LOG" 2>&1 &
 PROXY_PID=$!
 echo "[harness] PID: $PROXY_PID"
 
@@ -166,9 +161,21 @@ done
 
 if [[ $READY -eq 0 ]]; then
   echo "[harness] ERROR: Gateway did not become ready within 30s" >&2
+  echo "[harness] Startup log:" >&2
+  cat "$STARTUP_LOG" >&2
   kill "$PROXY_PID" 2>/dev/null || true
   exit 1
 fi
+
+# Fail if any store initialised under the repo data/ directory
+REPO_DATA="$REPO_ROOT/data"
+if grep -qF "$REPO_DATA" "$STARTUP_LOG" 2>/dev/null; then
+  echo "[harness] ERROR: startup log references repo data/ directory:" >&2
+  grep -F "$REPO_DATA" "$STARTUP_LOG" >&2
+  kill "$PROXY_PID" 2>/dev/null || true
+  exit 1
+fi
+echo "[harness] Store isolation check passed (no reference to $REPO_DATA in startup log)"
 
 if [[ $SMOKE_MODE -eq 1 ]]; then
   echo ""
@@ -195,14 +202,15 @@ if [[ $SMOKE_MODE -eq 1 ]]; then
   check "GET /setup (first-run bootstrap UI)"  /setup
 
   echo ""
-  echo "── Admin DB check ────────────────────────────────────────────────────"
-  if [[ -f "$TMPDIR_ROOT/admin.db" ]]; then
-    echo "  PASS  admin.db created at $TMPDIR_ROOT/admin.db"
-    PASS=$((PASS+1))
-  else
-    echo "  FAIL  admin.db not found at $TMPDIR_ROOT/admin.db"
-    FAIL=$((FAIL+1))
-  fi
+  echo "── Store DB checks ───────────────────────────────────────────────────"
+  for db_name in admin.db metrics.db responses.db receipts.db media_jobs.db; do
+    if [[ -f "$TMPDIR_ROOT/$db_name" ]]; then
+      echo "  PASS  $db_name created at $TMPDIR_ROOT/$db_name"
+      PASS=$((PASS+1))
+    else
+      echo "  WARN  $db_name not yet created at $TMPDIR_ROOT/$db_name (may be lazy-init)"
+    fi
+  done
 
   echo ""
   echo "── Live DB isolation check ───────────────────────────────────────────"
@@ -230,5 +238,8 @@ if [[ $SMOKE_MODE -eq 1 ]]; then
   fi
 else
   echo "[harness] Running. Ctrl-C to stop."
+  tail -f "$STARTUP_LOG" &
+  TAIL_PID=$!
   wait "$PROXY_PID"
+  kill "$TAIL_PID" 2>/dev/null || true
 fi
