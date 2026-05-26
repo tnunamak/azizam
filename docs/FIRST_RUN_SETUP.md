@@ -19,28 +19,32 @@ client?"
 The fastest path for a self-hosted deployment:
 
 ```bash
-cp .env.example .env          # review and adjust if needed
 docker compose up -d
 ```
 
 Then open `http://127.0.0.1:5000/setup` to claim the first owner account and
-mint a runtime key.
+mint a runtime key. No `.env` file is required.
+
+To override the port, store paths, or session key, copy `.env.example` to
+`.env` and uncomment the relevant lines before starting:
+
+```bash
+cp .env.example .env   # then edit as needed
+docker compose up -d
+```
 
 Persistent state (SQLite databases, session keys) is stored in the
 `gateway-data` Docker volume, which maps to `/app/data` inside the container.
-The individual store paths can be overridden with env vars:
-`AI_GATEWAY_ADMIN_DB`, `AI_GATEWAY_RESPONSES_DB`, `AI_GATEWAY_METRICS_DB`,
-`AI_GATEWAY_RECEIPTS_DB`, `AI_GATEWAY_MEDIA_JOBS_DB` (see `.env.example`).
-To use a host directory instead, replace the volume entry in
+Store paths can be overridden via env vars (`AI_GATEWAY_ADMIN_DB`,
+`AI_GATEWAY_RESPONSES_DB`, `AI_GATEWAY_METRICS_DB`, `AI_GATEWAY_RECEIPTS_DB`,
+`AI_GATEWAY_MEDIA_JOBS_DB`) — see `.env.example` for the full list.
+To use a host directory instead of a named volume, replace the volume entry in
 `docker-compose.yml`:
 
 ```yaml
 volumes:
   - ./data:/app/data
 ```
-
-No env vars are required to start. Add `AI_GATEWAY_ADMIN_SESSION_KEY` to `.env`
-if you want a stable browser session secret across container restarts.
 
 ## Short Path
 
