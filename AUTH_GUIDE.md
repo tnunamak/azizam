@@ -512,3 +512,26 @@ and update the consuming app.
 
 The App API key was accepted, but the selected downstream provider was
 unavailable or rejected its own backend credentials.
+
+## Disabling Auth (`auth.enabled=false`)
+
+Setting `auth.enabled=false` (or `OPENAI_PROXY_AUTH_ENABLED=false`) removes
+the App-key check on all runtime endpoints. Use only in controlled environments:
+
+- **Safe:** gateway bound to `127.0.0.1` (loopback), local dev only.
+- **Requires extra controls:** gateway bound to `0.0.0.0` or any LAN/public
+  address — every host that can reach the port has unauthenticated API access.
+
+If the gateway starts with auth disabled and `proxy.host` is not loopback, it
+prints a prominent startup warning to stdout/journal:
+
+```
+[proxy] WARNING: auth is disabled and the gateway is bound to '0.0.0.0'
+(non-loopback). Any client that can reach this host:port has unauthenticated
+access to all API endpoints and the admin UI. ...
+```
+
+To silence this legitimately (e.g. when auth is handled by the reverse proxy):
+bind to `127.0.0.1` and put auth enforcement in the reverse proxy layer.
+See [`docs/REVERSE_PROXY.md`](docs/REVERSE_PROXY.md) for recommended Nginx/Caddy
+configuration including TLS and authentication headers.

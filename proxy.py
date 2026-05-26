@@ -7483,6 +7483,15 @@ async def lifespan(app: FastAPI):
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
     print(f"[proxy] ComfyUI backend: {COMFY_HOST} (enabled: {COMFY_ENABLED})", flush=True)
     print(f"[proxy] Proxy auth: {'enabled' if AUTH_ENABLED else 'disabled'}", flush=True)
+    if not AUTH_ENABLED and PROXY_HOST not in ("127.0.0.1", "::1", "localhost"):
+        print(
+            f"[proxy] WARNING: auth is disabled and the gateway is bound to "
+            f"{PROXY_HOST!r} (non-loopback). Any client that can reach this "
+            f"host:port has unauthenticated access to all API endpoints and the "
+            f"admin UI. Set auth.enabled=true or bind to 127.0.0.1 unless this "
+            f"is intentional and the network is trusted.",
+            flush=True,
+        )
     print(f"[proxy] Model compatibility: {'enabled' if MODEL_COMPAT_ENABLED else 'disabled'}", flush=True)
 
     # Replay persisted firehose metrics so per-key counters and the recent-event
@@ -8202,6 +8211,41 @@ async def _gateway_media_job_submitter(
         payload=payload,
         audience=audience,
     )
+
+
+_HTML_CONTENT_TYPES = ("text/html",)
+_BROWSER_UI_PREFIXES = ("/admin", "/setup", "/login", "/me", "/status-page")
+
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "SAMEORIGIN",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    # Inline styles/scripts are used in the admin UI, so unsafe-inline is
+    # required. eval is not used. This is a hardening baseline, not a full
+    # CSP lockdown; see docs/REVERSE_PROXY.md for tightening guidance.
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "frame-ancestors 'none'"
+    ),
+}
+
+
+@app.middleware("http")
+async def _security_headers_middleware(request: Request, call_next):
+    """Inject browser security headers on HTML/admin/portal responses."""
+    response = await call_next(request)
+    ct = response.headers.get("content-type", "")
+    path = request.url.path
+    is_html = any(ct.startswith(t) for t in _HTML_CONTENT_TYPES)
+    is_ui_path = any(path == p or path.startswith(p + "/") or path.startswith(p + "?")
+                     for p in _BROWSER_UI_PREFIXES)
+    if is_html or is_ui_path:
+        for name, value in _SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+    return response
 
 
 @app.middleware("http")
@@ -10376,6 +10420,18 @@ async def _firehose_request_counter(request: Request, call_next):
                         )
             except Exception:
                 pass
+
+
+@app.head("/", include_in_schema=False)
+async def head_root():
+    """HEAD / — for reverse-proxy health checks that probe the root path."""
+    return Response(status_code=200)
+
+
+@app.head("/admin", include_in_schema=False)
+async def head_admin():
+    """HEAD /admin — for reverse-proxy health checks that probe the admin path."""
+    return Response(status_code=200)
 
 
 @app.get("/health")
