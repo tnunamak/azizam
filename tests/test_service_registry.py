@@ -349,3 +349,97 @@ def test_merge_imported_records_includes_workflows_and_capabilities() -> None:
 
     assert "image.generate.demo" in registry["workflows"]
     assert "demo-capability" in registry["capabilities"]
+
+
+# ---------------------------------------------------------------------------
+# resource_summary / list_resource_summaries
+# ---------------------------------------------------------------------------
+
+_SAMPLE_SERVICE = {
+    "id": "comfyui-local",
+    "name": "ComfyUI Local",
+    "kind": "comfyui",
+    "source": "provisioned",
+    "enabled": True,
+    "priority": 50,
+    "role": "required",
+    "capabilities": ["image.generate", "image.edit"],
+}
+
+
+def test_resource_summary_client_hides_admin_fields() -> None:
+    s = service_registry.resource_summary(_SAMPLE_SERVICE, audience="client")
+    assert s["id"] == "comfyui-local"
+    assert s["name"] == "ComfyUI Local"
+    assert s["kind"] == "comfyui"
+    assert s["enabled"] is True
+    assert "source" not in s
+    assert "priority" not in s
+    assert "role" not in s
+
+
+def test_resource_summary_admin_includes_extra_fields() -> None:
+    s = service_registry.resource_summary(_SAMPLE_SERVICE, audience="admin")
+    assert s["source"] == "provisioned"
+    assert s["priority"] == 50
+    assert s["role"] == "required"
+
+
+def test_resource_summary_includes_runtime_facts() -> None:
+    s = service_registry.resource_summary(
+        _SAMPLE_SERVICE,
+        audience="client",
+        status="degraded",
+        queue_depth=3,
+        max_queue_depth=10,
+    )
+    assert s["status"] == "degraded"
+    assert s["queue_depth"] == 3
+    assert s["max_queue_depth"] == 10
+
+
+def test_resource_summary_omits_none_runtime_facts() -> None:
+    s = service_registry.resource_summary(_SAMPLE_SERVICE, audience="client")
+    assert "status" not in s
+    assert "queue_depth" not in s
+    assert "max_queue_depth" not in s
+
+
+def test_list_resource_summaries_skips_disabled() -> None:
+    registry = {
+        "services": {
+            "active": {**_SAMPLE_SERVICE, "id": "active", "enabled": True},
+            "disabled": {**_SAMPLE_SERVICE, "id": "disabled", "enabled": False},
+        }
+    }
+    results = service_registry.list_resource_summaries(registry, audience="client")
+    ids = [r["id"] for r in results]
+    assert "active" in ids
+    assert "disabled" not in ids
+
+
+def test_list_resource_summaries_applies_runtime_facts() -> None:
+    registry = {
+        "services": {
+            "svc-a": {**_SAMPLE_SERVICE, "id": "svc-a"},
+        }
+    }
+    results = service_registry.list_resource_summaries(
+        registry,
+        audience="client",
+        runtime_facts={"svc-a": {"status": "available", "queue_depth": 5, "max_queue_depth": 20}},
+    )
+    assert results[0]["status"] == "available"
+    assert results[0]["queue_depth"] == 5
+
+
+def test_list_resource_summaries_sorted_by_priority() -> None:
+    registry = {
+        "services": {
+            "low": {**_SAMPLE_SERVICE, "id": "low", "priority": 200},
+            "high": {**_SAMPLE_SERVICE, "id": "high", "priority": 10},
+        }
+    }
+    results = service_registry.list_resource_summaries(registry, audience="admin")
+    ids = [r["id"] for r in results]
+    assert ids.index("high") < ids.index("low")

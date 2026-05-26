@@ -20,12 +20,14 @@ Endpoints
 * ``GET /gateway/v1/models/{model}/capabilities`` — model capability view
 * ``GET /gateway/v1/receipts``                — recent route receipts
 * ``GET /gateway/v1/receipts/{request_id}``   — one route receipt
+* ``GET /gateway/v1/resources``               — client-visible backend resource/queue status
 * ``POST /gateway/v1/media/jobs``             — create/attach or delegate executable media job submit
 * ``GET /gateway/v1/media/jobs``              — recent media jobs
 * ``GET /gateway/v1/media/jobs/{job_id}``     — single media job
 * ``GET /gateway/v1/media/jobs/{job_id}/events`` — list job events
 * ``POST /gateway/v1/media/jobs/{job_id}/events`` — append a job event
 * ``POST /gateway/v1/media/jobs/{job_id}/cancel`` — cancel a non-terminal job
+* ``GET /gateway/v1/media/jobs/{job_id}/content`` — redirect to first asset content URL
 
 Capability, receipt, and media-job endpoints return empty results (or a
 protocol-shaped 404) when their optional providers are not wired. Mounting the
@@ -36,11 +38,12 @@ catalog rather than a crash.
 from __future__ import annotations
 
 import inspect
+import os
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from fastapi import APIRouter, Body, Query, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.discovery import VALID_AUDIENCES, WorkflowRegistry
@@ -53,6 +56,7 @@ AudienceResolver = Callable[[Request], str]
 CapabilitiesProvider = Callable[[Request], Sequence[Capability] | Iterable[Capability]]
 ReceiptGetter = Callable[..., dict[str, Any] | None]
 ReceiptLister = Callable[..., list[dict[str, Any]]]
+ResourceLister = Callable[..., list[dict[str, Any]]]
 MediaJobCreator = Callable[..., dict[str, Any]]
 MediaJobGetter = Callable[..., dict[str, Any] | None]
 MediaJobLister = Callable[..., list[dict[str, Any]]]
@@ -62,6 +66,15 @@ MediaJobCanceler = Callable[..., dict[str, Any] | None]
 MediaJobSubmitter = Callable[..., Any]
 
 DEFAULT_AUDIENCE = "client"
+
+def _asset_url_ttl_s() -> int | None:
+    raw = os.environ.get("AI_GATEWAY_ASSET_URL_TTL_S")
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return None
 
 # Cap recent-receipt listings to keep the response small and predictable.
 RECEIPTS_DEFAULT_LIMIT = 50
@@ -274,6 +287,7 @@ def create_gateway_router(
     receipt_getter: ReceiptGetter | None = None,
     receipt_lister: ReceiptLister | None = None,
     receipt_store_path: str | Path | None = None,
+    resource_lister: ResourceLister | None = None,
     media_job_creator: MediaJobCreator | None = None,
     media_job_getter: MediaJobGetter | None = None,
     media_job_lister: MediaJobLister | None = None,
@@ -446,6 +460,25 @@ def create_gateway_router(
             )
         return JSONResponse(status_code=status.HTTP_200_OK, content=row)
 
+    @router.get("/resources")
+    def list_resources(request: Request) -> JSONResponse:
+        audience = _resolve_request_audience(resolve_audience, request)
+        try:
+            if resource_lister is None:
+                resources: list[dict[str, Any]] = []
+            else:
+                resources = list(resource_lister(audience=audience))
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "schema_version": 1,
+                "audience": audience,
+                "resources": resources,
+            },
+        )
+
     @router.post("/media/jobs")
     async def create_media_job(
         request: Request,
@@ -534,6 +567,7 @@ def create_gateway_router(
             content={
                 "schema_version": 1,
                 "audience": audience,
+                "asset_url_ttl_s": _asset_url_ttl_s(),
                 "jobs": rows,
             },
         )
@@ -557,7 +591,10 @@ def create_gateway_router(
                     f"media job {job_id!r} not found",
                 ),
             )
-        return JSONResponse(status_code=status.HTTP_200_OK, content=row)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={**row, "asset_url_ttl_s": _asset_url_ttl_s()},
+        )
 
     @router.get("/media/jobs/{job_id}/events")
     def list_media_job_events(
@@ -723,5 +760,44 @@ def create_gateway_router(
                 ),
             )
         return JSONResponse(status_code=status.HTTP_200_OK, content=updated)
+
+    @router.get("/media/jobs/{job_id}/content", response_model=None)
+    def get_media_job_content(job_id: str, request: Request):
+        audience = _resolve_request_audience(resolve_audience, request)
+        try:
+            row = (
+                None
+                if media_job_getter is None
+                else media_job_getter(job_id, audience=audience)
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        if row is None:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content=_error_payload(
+                    "media_job_not_found",
+                    f"media job {job_id!r} not found",
+                ),
+            )
+        assets = row.get("assets") if isinstance(row, dict) else None
+        if not assets:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content=_error_payload(
+                    "media_job_no_content",
+                    f"media job {job_id!r} has no assets yet; poll assets[] from the job record",
+                ),
+            )
+        content_url = assets[0].get("content_url") if isinstance(assets[0], dict) else None
+        if not content_url:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content=_error_payload(
+                    "media_job_no_content_url",
+                    "first asset has no content_url; use assets[] from the job record",
+                ),
+            )
+        return RedirectResponse(url=content_url, status_code=status.HTTP_302_FOUND)
 
     return router

@@ -759,3 +759,64 @@ def bool_from_config(value: Any, default: bool) -> bool:
 def stable_hash(value: Any) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# Client-visible fields from a normalized service record.
+_RESOURCE_CLIENT_FIELDS = frozenset({"id", "name", "kind", "enabled", "capabilities"})
+_RESOURCE_ADMIN_FIELDS = frozenset({"id", "name", "kind", "enabled", "capabilities", "source", "priority", "role"})
+
+
+def resource_summary(
+    service: Mapping[str, Any],
+    *,
+    audience: str = "client",
+    status: str | None = None,
+    queue_depth: int | None = None,
+    max_queue_depth: int | None = None,
+) -> dict[str, Any]:
+    """Project a normalized service record into a client-visible resource summary.
+
+    ``status`` is a caller-supplied reachability hint (e.g. ``"available"``,
+    ``"degraded"``, ``"unavailable"``). ``queue_depth`` / ``max_queue_depth``
+    are optional runtime facts; include them when the caller has live counters.
+    """
+    fields = _RESOURCE_ADMIN_FIELDS if audience in ("admin", "internal") else _RESOURCE_CLIENT_FIELDS
+    out: dict[str, Any] = {k: service[k] for k in fields if k in service}
+    if status is not None:
+        out["status"] = status
+    if queue_depth is not None:
+        out["queue_depth"] = queue_depth
+    if max_queue_depth is not None:
+        out["max_queue_depth"] = max_queue_depth
+    return out
+
+
+def list_resource_summaries(
+    registry: Mapping[str, Any],
+    *,
+    audience: str = "client",
+    runtime_facts: Mapping[str, Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Return a list of resource summaries for all enabled services.
+
+    ``runtime_facts`` is an optional dict keyed by service_id with keys
+    ``status``, ``queue_depth``, and ``max_queue_depth``.
+    """
+    services = registry.get("services") or {}
+    facts = runtime_facts or {}
+    out = []
+    for service_id, service in services.items():
+        if not isinstance(service, Mapping):
+            continue
+        if not bool_from_config(service.get("enabled"), True):
+            continue
+        svc_facts = facts.get(service_id) or {}
+        out.append(resource_summary(
+            service,
+            audience=audience,
+            status=svc_facts.get("status"),
+            queue_depth=svc_facts.get("queue_depth"),
+            max_queue_depth=svc_facts.get("max_queue_depth"),
+        ))
+    out.sort(key=lambda s: (int(s.get("priority", 100)) if "priority" in s else 100, s.get("id", "")))
+    return out
