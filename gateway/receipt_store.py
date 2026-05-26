@@ -27,6 +27,7 @@ the requested audience.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import time
@@ -37,7 +38,8 @@ from typing import Any, Mapping
 from gateway.receipts import CLIENT_VISIBLE_FIELDS, RouteReceipt
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "receipts.db"
+_default_db = Path(__file__).resolve().parent.parent / "data" / "receipts.db"
+DB_PATH = Path(os.environ["AI_GATEWAY_RECEIPTS_DB"]) if os.environ.get("AI_GATEWAY_RECEIPTS_DB") else _default_db
 
 # Retention: 14 days. Receipts are diagnostics, not audit logs; the cap keeps
 # the database bounded on a long-running gateway.

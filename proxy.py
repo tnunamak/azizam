@@ -198,7 +198,8 @@ from gateway.protocols import ollama as ollama_protocol
 # Configuration
 # =============================================================================
 
-CONFIG_PATH = Path(__file__).parent / "proxy_config.yml"
+_default_config = Path(__file__).parent / "proxy_config.yml"
+CONFIG_PATH = Path(os.environ["AI_GATEWAY_CONFIG_PATH"]) if os.environ.get("AI_GATEWAY_CONFIG_PATH") else _default_config
 
 
 def load_config() -> dict:

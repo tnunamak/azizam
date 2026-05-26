@@ -28,6 +28,7 @@ see the workstream note for suggested integration points.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import time
@@ -42,7 +43,8 @@ from gateway.redaction import (
     assert_safe_mapping as _shared_assert_safe_mapping,
 )
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "media_jobs.db"
+_default_db = Path(__file__).resolve().parent.parent / "data" / "media_jobs.db"
+DB_PATH = Path(os.environ["AI_GATEWAY_MEDIA_JOBS_DB"]) if os.environ.get("AI_GATEWAY_MEDIA_JOBS_DB") else _default_db
 
 # Retention: 14 days. Match the receipt store; media jobs reference durable
 # assets but the job record itself is a coordination surface, not the archive.

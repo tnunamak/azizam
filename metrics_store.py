@@ -24,7 +24,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-DB_PATH = Path(__file__).parent / "data" / "metrics.db"
+_default_db = Path(__file__).parent / "data" / "metrics.db"
+DB_PATH = Path(os.environ["AI_GATEWAY_METRICS_DB"]) if os.environ.get("AI_GATEWAY_METRICS_DB") else _default_db
 
 # Retention windows (seconds).
 RAW_RETAIN_S = 7 * 24 * 3600
