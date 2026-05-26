@@ -1193,6 +1193,28 @@ def create_admin_router(
             status_code=status.HTTP_201_CREATED, content={"credential": record}
         )
 
+    @router.delete("/credentials/{credential_id}")
+    def delete_credential(
+        credential_id: str, request: Request
+    ) -> JSONResponse:
+        """DELETE alias for POST …/revoke — idiomatic REST revocation."""
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = store.revoke_credential(
+            credential_id=credential_id, actor=ctx
+        )
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "credential_not_found",
+                f"credential {credential_id!r} not found",
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"credential": _scrub_credential(record)},
+        )
+
     @router.post("/credentials/{credential_id}/revoke")
     def revoke_credential(
         credential_id: str, request: Request
@@ -1471,6 +1493,11 @@ def create_admin_router(
             status_code=status.HTTP_200_OK,
             content={"audit": list(entries), "limit": limit},
         )
+
+    @router.get("/audit-events")
+    def audit_events(request: Request) -> JSONResponse:
+        """Canonical noun-based alias for GET /audit."""
+        return audit(request)
 
     @router.post("/policy/simulate")
     async def simulate(request: Request) -> JSONResponse:

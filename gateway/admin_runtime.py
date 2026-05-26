@@ -222,11 +222,28 @@ class AdminSQLiteStore:
             user.setdefault("name", user.get("display_name"))
         return users
 
+    def _enrich_app(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Annotate an app record with resolved effective profile fields."""
+        pid = record.get("default_profile_id")
+        if pid:
+            profile = admin_store.get_profile(str(pid), path=self.path)
+            record["effective_profile_id"] = str(pid)
+            record["effective_profile_name"] = (
+                str(profile.get("name") or "") if profile else None
+            )
+            record["effective_profile_source"] = "app_default"
+        else:
+            record["effective_profile_id"] = "default-local"
+            record["effective_profile_name"] = "default-local"
+            record["effective_profile_source"] = "fallback"
+        return record
+
     def list_apps(self) -> list[dict[str, Any]]:
-        return admin_store.list_apps(path=self.path)
+        return [self._enrich_app(r) for r in admin_store.list_apps(path=self.path)]
 
     def get_app(self, app_id: str) -> dict[str, Any] | None:
-        return admin_store.get_app(app_id, path=self.path)
+        record = admin_store.get_app(app_id, path=self.path)
+        return self._enrich_app(record) if record is not None else None
 
     def create_app(
         self, *, data: Mapping[str, Any], actor: AdminContext
@@ -272,7 +289,7 @@ class AdminSQLiteStore:
             metadata={"name": name, "kind": record.get("kind")},
             path=self.path,
         )
-        return record
+        return self._enrich_app(record)
 
     def update_app(
         self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
@@ -309,7 +326,7 @@ class AdminSQLiteStore:
             metadata={"name": name, "default_profile_id": profile_id},
             path=self.path,
         )
-        return record
+        return self._enrich_app(record) if record is not None else None
 
     def disable_app(
         self, *, app_id: str, actor: AdminContext
@@ -327,7 +344,7 @@ class AdminSQLiteStore:
             metadata={"name": before.get("name")},
             path=self.path,
         )
-        return record
+        return self._enrich_app(record) if record is not None else None
 
     def list_profiles(self) -> list[dict[str, Any]]:
         return [

@@ -1720,5 +1720,179 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self.assertIn('href="/logout"', response.text)
 
 
+class AdminEffectiveProfileTests(unittest.TestCase):
+    """effective_profile_* fields on admin app responses."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "admin.db"
+        self.old_path = proxy.ADMIN_STORE.path
+        proxy.ADMIN_STORE.path = self.db
+        admin_store.init_db(self.db)
+        self.admin_key, _, _ = create_admin_service_account_key(
+            "test-owner", path=self.db
+        )
+        self.client = TestClient(proxy.app)
+
+    def tearDown(self) -> None:
+        proxy.ADMIN_STORE.path = self.old_path
+        self.tmp.cleanup()
+
+    def _auth(self):
+        return {"Authorization": f"Bearer {self.admin_key}"}
+
+    def test_app_without_profile_gets_fallback_effective_profile(self) -> None:
+        created = self.client.post(
+            "/admin/api/apps",
+            json={"name": "No Profile App"},
+            headers=self._auth(),
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        app = created.json()["app"]
+        self.assertIsNone(app.get("default_profile_id"))
+        self.assertEqual(app["effective_profile_id"], "default-local")
+        self.assertEqual(app["effective_profile_source"], "fallback")
+
+        listed = self.client.get("/admin/api/apps", headers=self._auth())
+        self.assertEqual(listed.status_code, 200)
+        match = next(a for a in listed.json()["apps"] if a["id"] == app["id"])
+        self.assertEqual(match["effective_profile_id"], "default-local")
+        self.assertEqual(match["effective_profile_source"], "fallback")
+
+    def test_app_with_explicit_profile_gets_app_default_effective_profile(self) -> None:
+        profile = admin_store.create_profile(
+            "Test Profile",
+            {"id": "test-profile", "protocols": ["openai.chat"]},
+            path=self.db,
+        )
+        created = self.client.post(
+            "/admin/api/apps",
+            json={"name": "Profiled App", "profile_id": profile["id"]},
+            headers=self._auth(),
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        app = created.json()["app"]
+        self.assertEqual(app["effective_profile_id"], profile["id"])
+        self.assertEqual(app["effective_profile_name"], "Test Profile")
+        self.assertEqual(app["effective_profile_source"], "app_default")
+
+
+class AdminCredentialDeleteAliasTests(unittest.TestCase):
+    """DELETE /admin/api/credentials/{id} as alias for revoke."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "admin.db"
+        self.old_path = proxy.ADMIN_STORE.path
+        proxy.ADMIN_STORE.path = self.db
+        admin_store.init_db(self.db)
+        self.admin_key, _, _ = create_admin_service_account_key(
+            "test-owner", path=self.db
+        )
+        self.client = TestClient(proxy.app)
+
+    def tearDown(self) -> None:
+        proxy.ADMIN_STORE.path = self.old_path
+        self.tmp.cleanup()
+
+    def _auth(self):
+        return {"Authorization": f"Bearer {self.admin_key}"}
+
+    def test_delete_credential_revokes_it(self) -> None:
+        app = self.client.post(
+            "/admin/api/apps", json={"name": "App"}, headers=self._auth()
+        ).json()["app"]
+        cred = self.client.post(
+            f"/admin/api/apps/{app['id']}/keys",
+            json={"display_name": "key1"},
+            headers=self._auth(),
+        ).json()["credential"]
+
+        resp = self.client.delete(
+            f"/admin/api/credentials/{cred['id']}",
+            headers=self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIsNotNone(resp.json()["credential"].get("revoked_at"))
+
+    def test_delete_credential_404_for_missing(self) -> None:
+        resp = self.client.delete(
+            "/admin/api/credentials/cred-does-not-exist",
+            headers=self._auth(),
+        )
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json()["error"]["code"], "credential_not_found")
+
+    def test_post_revoke_still_works(self) -> None:
+        app = self.client.post(
+            "/admin/api/apps", json={"name": "App2"}, headers=self._auth()
+        ).json()["app"]
+        cred = self.client.post(
+            f"/admin/api/apps/{app['id']}/keys",
+            json={"display_name": "key2"},
+            headers=self._auth(),
+        ).json()["credential"]
+
+        resp = self.client.post(
+            f"/admin/api/credentials/{cred['id']}/revoke",
+            headers=self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIsNotNone(resp.json()["credential"].get("revoked_at"))
+
+
+class AdminAuditEventsEndpointTests(unittest.TestCase):
+    """GET /admin/api/audit-events as queryable audit log."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "admin.db"
+        self.old_path = proxy.ADMIN_STORE.path
+        proxy.ADMIN_STORE.path = self.db
+        admin_store.init_db(self.db)
+        self.admin_key, _, _ = create_admin_service_account_key(
+            "test-owner", path=self.db
+        )
+        self.client = TestClient(proxy.app)
+
+    def tearDown(self) -> None:
+        proxy.ADMIN_STORE.path = self.old_path
+        self.tmp.cleanup()
+
+    def _auth(self):
+        return {"Authorization": f"Bearer {self.admin_key}"}
+
+    def test_audit_events_returns_recent_events(self) -> None:
+        self.client.post(
+            "/admin/api/apps", json={"name": "Audit App"}, headers=self._auth()
+        )
+        resp = self.client.get("/admin/api/audit-events", headers=self._auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertIn("audit", body)
+        self.assertIn("limit", body)
+        actions = [e["action"] for e in body["audit"]]
+        self.assertIn("app.create", actions)
+
+    def test_audit_events_matches_audit_endpoint(self) -> None:
+        r1 = self.client.get("/admin/api/audit", headers=self._auth())
+        r2 = self.client.get("/admin/api/audit-events", headers=self._auth())
+        self.assertEqual(r1.status_code, 200)
+        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(r1.json()["audit"], r2.json()["audit"])
+
+    def test_audit_events_limit_param(self) -> None:
+        for i in range(5):
+            self.client.post(
+                "/admin/api/apps", json={"name": f"App {i}"}, headers=self._auth()
+            )
+        resp = self.client.get(
+            "/admin/api/audit-events?limit=2", headers=self._auth()
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["limit"], 2)
+        self.assertLessEqual(len(resp.json()["audit"]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
