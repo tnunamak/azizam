@@ -108,16 +108,11 @@ class TestConfigPathEnvOverride(unittest.TestCase):
             code = (
                 f"import sys; sys.path.insert(0, '{ROOT}');"
                 f"import os; os.environ['AI_GATEWAY_CONFIG_PATH'] = '{override}';"
-                # Import just the config path constant without starting the server.
-                # We do this by grabbing the source up to CONFIG_PATH assignment.
-                f"import importlib.util, types;"
-                f"spec = importlib.util.spec_from_file_location('proxy', '{ROOT}/proxy.py');"
-                # Only need to check the constant; use ast to extract it safely.
-                f"import ast, pathlib;"
-                f"src = pathlib.Path('{ROOT}/proxy.py').read_text();"
-                f"tree = ast.parse(src);"
-                # Find the CONFIG_PATH assignment and eval the env var branch.
-                f"print(os.environ.get('AI_GATEWAY_CONFIG_PATH', 'default'))"
+                f"import importlib.util;"
+                f"spec = importlib.util.spec_from_file_location('proxy_under_test', '{ROOT}/proxy.py');"
+                f"module = importlib.util.module_from_spec(spec);"
+                f"spec.loader.exec_module(module);"
+                f"print(module.CONFIG_PATH)"
             )
             result = subprocess.run(
                 [sys.executable, "-c", code],

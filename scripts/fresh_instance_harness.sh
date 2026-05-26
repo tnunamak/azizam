@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ── Safety guard ──────────────────────────────────────────────────────────────
+# -- Safety guard --------------------------------------------------------------
 LIVE_DB="$REPO_ROOT/data/admin.db"
 if [[ "${AI_GATEWAY_ADMIN_DB:-}" == "$LIVE_DB" ]]; then
   echo "ERROR: AI_GATEWAY_ADMIN_DB is set to the live DB path. Aborting." >&2
@@ -55,7 +55,7 @@ if [[ "${OPENAI_PROXY_PORT:-}" == "5000" || "${HARNESS_PORT}" == "5000" ]]; then
   exit 1
 fi
 
-# ── Temp workspace ─────────────────────────────────────────────────────────────
+# -- Temp workspace -------------------------------------------------------------
 TMPDIR_ROOT=$(mktemp -d /tmp/agw-fresh-XXXXXX)
 trap 'echo "[harness] Cleaning up $TMPDIR_ROOT"; rm -rf "$TMPDIR_ROOT"' EXIT
 
@@ -63,8 +63,8 @@ echo "[harness] Temp workspace: $TMPDIR_ROOT"
 echo "[harness] Port:           $HARNESS_PORT"
 echo "[harness] Admin DB:       $TMPDIR_ROOT/admin.db"
 
-# ── Minimal proxy_config.yml ──────────────────────────────────────────────────
-# Generic backends pointing at localhost ports that won't be up — the gateway
+# -- Minimal proxy_config.yml --------------------------------------------------
+# Generic backends pointing at localhost ports that won't be up -- the gateway
 # starts fine and reports them as unreachable. This exercises the bootstrap
 # path without any Tim-specific service details.
 cat > "$TMPDIR_ROOT/proxy_config.yml" <<'YAML'
@@ -86,7 +86,7 @@ backends:
   # when the key is absent). The host/port are placeholders; the backend will
   # be unreachable but the gateway starts and serves all non-LLM routes.
   tabby:
-    name: TabbyAPI (harness placeholder — not started)
+    name: TabbyAPI (harness placeholder -- not started)
     native_passthrough: true
     host: 127.0.0.1
     port: 5050
@@ -117,7 +117,7 @@ roles:
     backend: example-llm
 YAML
 
-# ── Python / venv ────────────────────────────────────────────────────────────
+# -- Python / venv ------------------------------------------------------------
 # The worktree shares the parent repo's venv (worktrees don't have their own).
 REPO_ORIGIN="$(cd "$REPO_ROOT" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | xargs dirname 2>/dev/null || echo "$REPO_ROOT")"
 if [[ -f "$REPO_ORIGIN/venv/bin/python3" ]]; then
@@ -129,7 +129,7 @@ else
 fi
 echo "[harness] Python: $PYTHON"
 
-# ── Launch ────────────────────────────────────────────────────────────────────
+# -- Launch --------------------------------------------------------------------
 export AI_GATEWAY_ADMIN_DB="$TMPDIR_ROOT/admin.db"
 export AI_GATEWAY_METRICS_DB="$TMPDIR_ROOT/metrics.db"
 export AI_GATEWAY_RESPONSES_DB="$TMPDIR_ROOT/responses.db"
@@ -179,7 +179,7 @@ echo "[harness] Store isolation check passed (no reference to $REPO_DATA in star
 
 if [[ $SMOKE_MODE -eq 1 ]]; then
   echo ""
-  echo "── Smoke checks ──────────────────────────────────────────────────────"
+  echo "-- Smoke checks ------------------------------------------------------"
 
   PASS=0; FAIL=0
 
@@ -202,7 +202,7 @@ if [[ $SMOKE_MODE -eq 1 ]]; then
   check "GET /setup (first-run bootstrap UI)"  /setup
 
   echo ""
-  echo "── Store DB checks ───────────────────────────────────────────────────"
+  echo "-- Store DB checks ---------------------------------------------------"
   for db_name in admin.db metrics.db responses.db receipts.db media_jobs.db; do
     if [[ -f "$TMPDIR_ROOT/$db_name" ]]; then
       echo "  PASS  $db_name created at $TMPDIR_ROOT/$db_name"
@@ -213,7 +213,7 @@ if [[ $SMOKE_MODE -eq 1 ]]; then
   done
 
   echo ""
-  echo "── Live DB isolation check ───────────────────────────────────────────"
+  echo "-- Live DB isolation check -------------------------------------------"
   if [[ ! -f "$LIVE_DB" ]] || ! sqlite3 "$LIVE_DB" "select count(*) from sqlite_master;" >/dev/null 2>&1; then
     echo "  SKIP  Live DB not present (good for CI)"
   else

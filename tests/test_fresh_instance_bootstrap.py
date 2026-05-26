@@ -5,7 +5,7 @@ These tests exercise the pieces that matter for a new self-hoster:
   2. default_profiles.seed_default_profiles() populates profiles into a blank DB.
   3. service_registry.ensure_service_registry() accepts a minimal config without
      touching any live data.
-  4. AI_GATEWAY_ADMIN_DB env override is honoured — we never touch data/admin.db.
+  4. AI_GATEWAY_ADMIN_DB env override is honoured -- we never touch data/admin.db.
 
 All tests use a TemporaryDirectory so they are hermetic and leave no state.
 """
@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT))
 
 LIVE_DB = ROOT / "data" / "admin.db"
 
-# Minimal proxy_config.yml content for a fresh self-hoster — no Tim-specific paths.
+# Minimal proxy_config.yml content for a fresh self-hoster -- no Tim-specific paths.
 MINIMAL_CONFIG: dict = {
     "proxy": {"host": "127.0.0.1", "port": 15000},
     "auth": {"enabled": False},
@@ -58,7 +58,7 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    # ── 1. admin_store init ───────────────────────────────────────────────────
+    # -- 1. admin_store init ---------------------------------------------------
 
     def test_init_db_creates_schema_on_blank_path(self) -> None:
         from gateway import admin_store
@@ -76,7 +76,7 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
         admin_store.init_db(self.db)
         self.assertEqual(admin_store.schema_version(self.db), admin_store.SCHEMA_VERSION)
 
-    # ── 2. default profiles seeded ───────────────────────────────────────────
+    # -- 2. default profiles seeded -------------------------------------------
 
     def test_seed_default_profiles_populates_blank_db(self) -> None:
         from gateway import admin_store, default_profiles
@@ -103,7 +103,7 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
         count_after_second = len(admin_store.list_profiles(path=self.db))
         self.assertEqual(count_after_first, count_after_second)
 
-    # ── 3. service_registry with minimal config ───────────────────────────────
+    # -- 3. service_registry with minimal config -------------------------------
 
     def test_ensure_service_registry_with_minimal_config(self) -> None:
         from gateway import admin_store, service_registry
@@ -116,7 +116,7 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
         )
         self.assertIsNotNone(registry)
 
-    # ── 4. env override guard ─────────────────────────────────────────────────
+    # -- 4. env override guard -------------------------------------------------
 
     def test_ai_gateway_admin_db_env_is_respected(self) -> None:
         """Verify the module honours AI_GATEWAY_ADMIN_DB when set."""
@@ -137,7 +137,7 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
             else:
                 os.environ["AI_GATEWAY_ADMIN_DB"] = saved
 
-    # ── 5. live DB isolation ──────────────────────────────────────────────────
+    # -- 5. live DB isolation --------------------------------------------------
 
     def test_harness_db_is_not_live_db(self) -> None:
         """Belt-and-suspenders: confirm temp DB inode != live DB inode."""
