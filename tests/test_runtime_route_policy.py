@@ -910,6 +910,34 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                 self.assertIn(canonical_path, body["error"])
                 self.assertIn("does not mutate local model files", body["error"])
 
+    def test_ollama_discovery_routes_require_auth_by_default(self) -> None:
+        for path in ("/api/tags", "/ollama/api/tags", "/api/version", "/ollama/api/version"):
+            with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+                proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", False
+            ):
+                response = self.client.get(path)
+            self.assertEqual(response.status_code, 401, f"{path} should require auth by default")
+
+    def test_ollama_discovery_routes_public_when_compat_mode_enabled(self) -> None:
+        for path in ("/api/tags", "/ollama/api/tags", "/api/version", "/ollama/api/version"):
+            with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+                proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", True
+            ), patch.object(
+                proxy, "_ollama_model_catalog_summaries", AsyncMock(return_value=[])
+            ):
+                response = self.client.get(path)
+            self.assertNotEqual(
+                response.status_code, 401, f"{path} should be public with compat mode enabled"
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+
+    def test_ollama_mutation_routes_still_require_auth_when_compat_mode_enabled(self) -> None:
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
+            proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", True
+        ):
+            response = self.client.post("/api/pull", json={"name": "llama3"})
+        self.assertEqual(response.status_code, 401, response.text)
+
     def test_provider_native_tabby_requires_native_passthrough_policy(self) -> None:
         profile = AppProfile(
             id="native-disabled",

@@ -286,5 +286,12 @@ auth:
     - /health
   api_key_env: TABBY_API_KEY
   admin_key_env: TABBY_ADMIN_KEY
+  # Set to true to allow unauthenticated access to Ollama read-only discovery
+  # routes (/api/tags, /api/version and their /ollama/api/* aliases).
+  # Matches how a local Ollama daemon behaves so Open WebUI / LM Studio can
+  # auto-discover models without bearer token wiring.
+  # Default: false — keep off on internet-facing gateways.
+  # Env override: OLLAMA_COMPAT_DISCOVERY=true
+  ollama_compat_discovery: false
 admin:
   db_path: data/admin.db

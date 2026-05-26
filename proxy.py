@@ -1675,6 +1675,26 @@ AUTH_ENABLED = bool_from_config(
     True,
 )
 
+# When enabled, Ollama read-only discovery routes (/api/tags, /api/version and
+# their /ollama/api/* aliases) are served without a bearer token.  This matches
+# how a local Ollama daemon behaves and lets Open WebUI and similar clients
+# auto-discover models without needing explicit token wiring.
+#
+# Safe default is False because this gateway is typically internet-facing.
+# Set auth.ollama_compat_discovery: true in proxy_config.yml or export
+# OLLAMA_COMPAT_DISCOVERY=true to opt in.
+OLLAMA_COMPAT_DISCOVERY_ENABLED = bool_from_config(
+    os.environ.get("OLLAMA_COMPAT_DISCOVERY", auth_cfg.get("ollama_compat_discovery")),
+    False,
+)
+
+_OLLAMA_DISCOVERY_PUBLIC_PATHS = frozenset({
+    "/api/tags",
+    "/ollama/api/tags",
+    "/api/version",
+    "/ollama/api/version",
+})
+
 
 def active_app_credential_count() -> int:
     try:
@@ -1689,8 +1709,11 @@ def active_app_credential_count() -> int:
 
 
 def is_public_path(path: str) -> bool:
-    """Allow health checks without client auth."""
-    for public_path in AUTH_PUBLIC_PATHS:
+    """Allow health checks (and optionally Ollama discovery) without client auth."""
+    candidates = list(AUTH_PUBLIC_PATHS)
+    if OLLAMA_COMPAT_DISCOVERY_ENABLED:
+        candidates.extend(_OLLAMA_DISCOVERY_PUBLIC_PATHS)
+    for public_path in candidates:
         public_path = str(public_path)
         if public_path.endswith("*") and path.startswith(public_path[:-1]):
             return True
