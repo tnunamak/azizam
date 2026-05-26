@@ -14,12 +14,36 @@ create policy abstractions. It only answers: "Can this browser administer the
 gateway, and does this operator have one working `opk_...` key to test a
 client?"
 
+## Docker Compose Quick Start
+
+The fastest path for a self-hosted deployment:
+
+```bash
+cp .env.example .env          # review and adjust if needed
+docker compose up -d
+```
+
+Then open `http://127.0.0.1:5000/setup` to claim the first owner account and
+mint a runtime key.
+
+Persistent state (SQLite databases, session keys) is stored in the
+`gateway-data` Docker volume, which maps to `/app/data` inside the container.
+To use a host directory instead, replace the volume entry in
+`docker-compose.yml`:
+
+```yaml
+volumes:
+  - ./data:/app/data
+```
+
+No env vars are required to start. Add `AI_GATEWAY_ADMIN_SESSION_KEY` to `.env`
+if you want a stable browser session secret across container restarts.
+
 ## Short Path
 
 If you just want a working gateway, in order:
 
-1. Start the service (`./start.sh`, the systemd unit, or `docker compose up`
-   once a compose file is provided for your deployment).
+1. Start the service (`./start.sh`, `docker compose up -d`, or the systemd unit).
 2. Open `http://127.0.0.1:5000/setup`.
 3. Claim or create the first owner (see [Setup States](#setup-states)).
 4. Mint the first `opk_...` runtime key from the same page and configure your
