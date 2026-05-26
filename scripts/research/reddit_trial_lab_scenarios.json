@@ -1,0 +1,216 @@
+[
+  {
+    "id": "selfhosted_first_run_ops",
+    "label": "Self-hosted first-run operator",
+    "subreddit": "selfhosted",
+    "persona": "Docker/OIDC/reverse-proxy operator evaluating whether this is boring enough to run for family and trusted friends.",
+    "task": "Install, discover, and understand the admin entry point without reading source code.",
+    "why_it_matters": "r/selfhosted users punish vague setup and secret-storage stories faster than they punish missing model demos.",
+    "steps": [
+      {"id": "docker_assets", "type": "local_exists", "required": true, "paths": ["Dockerfile", "docker-compose.yml"], "note": "compose-first packaging evidence"},
+      {"id": "first_run_docs", "type": "local_exists", "required": true, "paths": ["docs/FIRST_RUN_SETUP.md", "docs/REVERSE_PROXY.md"], "note": "operator setup docs"},
+      {"id": "health", "type": "http", "method": "GET", "path": "/health", "auth": "none", "expect_status": [200], "required": true},
+      {"id": "discovery", "type": "http", "method": "GET", "path": "/.well-known/ai-gateway", "auth": "none", "expect_status": [200], "required": true},
+      {"id": "setup_page", "type": "http", "method": "GET", "path": "/setup", "auth": "none", "expect_status": [200, 302], "required": true},
+      {"id": "admin_login", "type": "http", "method": "GET", "path": "/admin/login", "auth": "none", "expect_status": [200, 302, 501], "required": true},
+      {"id": "admin_overview", "type": "http", "method": "GET", "path": "/admin/api/overview", "auth": "admin", "expect_status": [200], "required": false}
+    ],
+    "reddit_angles": [
+      "Compose and reverse-proxy docs are table stakes.",
+      "Public discovery is excellent if it stays generated from the real registry.",
+      "Admin evidence is incomplete without a real admin session or oak_ key."
+    ]
+  },
+  {
+    "id": "friend_runtime_user",
+    "label": "Friend runtime-user journey",
+    "subreddit": "selfhosted",
+    "persona": "A non-admin invited user who just wants an API key, base URLs, and a truthful list of what they can use.",
+    "task": "Use the gateway as an invited user without learning Profiles, services, or admin internals.",
+    "why_it_matters": "The product is not just for the operator; normal users should not need Tim-level context to use a key.",
+    "steps": [
+      {"id": "home", "type": "http", "method": "GET", "path": "/", "auth": "none", "expect_status": [200, 302, 401], "required": true},
+      {"id": "discovery", "type": "http", "method": "GET", "path": "/.well-known/ai-gateway", "auth": "none", "expect_status": [200], "required": true},
+      {"id": "models", "type": "http", "method": "GET", "path": "/openai/v1/models", "auth": "runtime", "expect_status": [200], "required": true},
+      {"id": "capabilities", "type": "http", "method": "GET", "path": "/gateway/v1/capabilities", "auth": "runtime", "expect_status": [200], "required": true},
+      {"id": "runtime_key_cannot_admin", "type": "http", "method": "GET", "path": "/admin/api/overview", "auth": "runtime", "expect_status": [403], "required": true}
+    ],
+    "reddit_angles": [
+      "Apps, keys, base URLs, and allowed things should be enough.",
+      "Admin concepts leaking into normal-user pages are product debt.",
+      "Runtime keys must never be admin keys."
+    ]
+  },
+  {
+    "id": "openai_drop_in_client",
+    "label": "OpenAI-compatible client",
+    "subreddit": "LocalLLaMA",
+    "persona": "LocalLLaMA user pointing OpenAI SDK, LibreChat, LangChain, or Open WebUI OpenAI mode at the gateway.",
+    "task": "List models, complete one minimal chat, and exercise streaming through the OpenAI-shaped API.",
+    "why_it_matters": "Model-list success is not enough; real clients care about request shape, streaming, error shape, and latency.",
+    "steps": [
+      {"id": "models", "type": "http", "method": "GET", "path": "/openai/v1/models", "auth": "runtime", "expect_status": [200], "required": true},
+      {
+        "id": "chat_minimal",
+        "type": "http",
+        "method": "POST",
+        "path": "/openai/v1/chat/completions",
+        "auth": "runtime",
+        "expect_status": [200],
+        "required": true,
+        "costly": true,
+        "json": {
+          "model": "default",
+          "messages": [{"role": "user", "content": "Reply with exactly: gateway-ok"}],
+          "max_tokens": 24,
+          "reasoning_effort": "minimal"
+        }
+      },
+      {
+        "id": "chat_stream",
+        "type": "http",
+        "method": "POST",
+        "path": "/openai/v1/chat/completions",
+        "auth": "runtime",
+        "expect_status": [200],
+        "required": false,
+        "costly": true,
+        "json": {
+          "model": "default",
+          "messages": [{"role": "user", "content": "Reply with exactly: stream-ok"}],
+          "max_tokens": 24,
+          "stream": true,
+          "reasoning_effort": "minimal"
+        }
+      }
+    ],
+    "reddit_angles": [
+      "A 20s+ minimal response is compatible, but client timeout guidance matters.",
+      "Streaming proof is more persuasive than non-streaming curl.",
+      "If this works in SDKs, publish the exact snippets."
+    ]
+  },
+  {
+    "id": "anthropic_agent_client",
+    "label": "Anthropic-compatible agent client",
+    "subreddit": "LocalLLaMA",
+    "persona": "Agent-framework user who wants Anthropic Messages without running a separate Anthropic-shaped backend.",
+    "task": "List models, send one Messages request, and confirm token counting is honest.",
+    "why_it_matters": "Agent clients often depend on Anthropic shapes, content arrays, usage fields, and token counting semantics.",
+    "steps": [
+      {"id": "models", "type": "http", "method": "GET", "path": "/anthropic/v1/models", "auth": "runtime", "expect_status": [200], "required": true},
+      {
+        "id": "message_minimal",
+        "type": "http",
+        "method": "POST",
+        "path": "/anthropic/v1/messages",
+        "auth": "runtime",
+        "expect_status": [200],
+        "required": true,
+        "costly": true,
+        "json": {
+          "model": "default",
+          "messages": [{"role": "user", "content": "Reply with exactly: anthropic-ok"}],
+          "max_tokens": 24
+        }
+      },
+      {
+        "id": "count_tokens",
+        "type": "http",
+        "method": "POST",
+        "path": "/anthropic/v1/messages/count_tokens",
+        "auth": "runtime",
+        "expect_status": [200],
+        "required": false,
+        "json": {
+          "model": "default",
+          "messages": [{"role": "user", "content": "Count this short request."}]
+        }
+      }
+    ],
+    "reddit_angles": [
+      "Approximate token counting must be labeled as approximate.",
+      "Anthropic shape is valuable only if content, stop_reason, and usage are correct.",
+      "Agent clients need exact compatibility claims, not vibes."
+    ]
+  },
+  {
+    "id": "ollama_compat_client",
+    "label": "Ollama-compatible client",
+    "subreddit": "LocalLLaMA",
+    "persona": "Open WebUI/Ollama-style user expecting tags, running-model visibility, chat, and clear unsupported mutation behavior.",
+    "task": "Exercise Ollama-shaped discovery and chat without pretending model-management mutations are supported.",
+    "why_it_matters": "Ollama compatibility is easy to overclaim because real clients use more than /api/tags.",
+    "steps": [
+      {"id": "tags", "type": "http", "method": "GET", "path": "/ollama/api/tags", "auth": "runtime", "expect_status": [200], "required": true},
+      {"id": "version", "type": "http", "method": "GET", "path": "/ollama/api/version", "auth": "runtime", "expect_status": [200], "required": true},
+      {"id": "running_models", "type": "http", "method": "GET", "path": "/ollama/api/ps", "auth": "runtime", "expect_status": [200], "required": false},
+      {
+        "id": "chat",
+        "type": "http",
+        "method": "POST",
+        "path": "/ollama/api/chat",
+        "auth": "runtime",
+        "expect_status": [200],
+        "required": true,
+        "costly": true,
+        "json": {
+          "model": "default",
+          "messages": [{"role": "user", "content": "Reply with exactly: ollama-ok"}],
+          "stream": false,
+          "options": {"num_predict": 24}
+        }
+      },
+      {"id": "pull_unsupported", "type": "http", "method": "POST", "path": "/ollama/api/pull", "auth": "runtime", "expect_status": [400, 403, 501], "required": false, "json": {"name": "llama3.2"}}
+    ],
+    "reddit_angles": [
+      "Unsupported mutation routes are acceptable only if they fail quickly and clearly.",
+      "Open WebUI compatibility needs to be tested as a client, not inferred from curl.",
+      "Running-model visibility matters on VRAM-constrained rigs."
+    ]
+  },
+  {
+    "id": "media_workflow_power_user",
+    "label": "ComfyUI/media workflow power user",
+    "subreddit": "comfyui",
+    "persona": "ComfyUI user with image edit, inpaint, tile, audio, and video workflows who wants stable programmable controls.",
+    "task": "Discover workflows, controls, resources, durable jobs, and receipts without flattening everything into a toy image API.",
+    "why_it_matters": "Media users will only accept a proxy if workflow-native controls and failures are visible.",
+    "steps": [
+      {"id": "capabilities", "type": "http", "method": "GET", "path": "/gateway/v1/capabilities", "auth": "runtime", "expect_status": [200], "required": true},
+      {"id": "workflows", "type": "http", "method": "GET", "path": "/gateway/v1/workflows", "auth": "runtime", "expect_status": [200], "required": true},
+      {"id": "extensions", "type": "http", "method": "GET", "path": "/gateway/v1/extensions", "auth": "runtime", "expect_status": [200], "required": true},
+      {"id": "resources", "type": "http", "method": "GET", "path": "/gateway/v1/resources", "auth": "runtime", "expect_status": [200], "required": true},
+      {"id": "receipts", "type": "http", "method": "GET", "path": "/gateway/v1/receipts", "auth": "runtime", "expect_status": [200], "required": false},
+      {"id": "jobs", "type": "http", "method": "GET", "path": "/gateway/v1/media/jobs", "auth": "runtime", "expect_status": [200], "required": true},
+      {"id": "flux_edit_capabilities", "type": "http", "method": "GET", "path": "/gateway/v1/models/flux2-klein-4b-edit/capabilities", "auth": "runtime", "expect_status": [200], "required": true}
+    ],
+    "reddit_angles": [
+      "Workflow metadata is the right abstraction for ComfyUI.",
+      "Queue/resources/receipts make or break durable media jobs.",
+      "Do not advertise ControlNet/IP-Adapter unless readiness is machine-checkable."
+    ]
+  },
+  {
+    "id": "admin_observability",
+    "label": "Admin observability and policy",
+    "subreddit": "selfhosted",
+    "persona": "Operator who gave keys to family/friends and needs to know who used what, revoke access, and debug failures.",
+    "task": "Inspect admin inventory, audit events, users/apps/profiles, OIDC config, and service registry.",
+    "why_it_matters": "Sharing local AI is scary without attribution, revocation, and service-state visibility.",
+    "steps": [
+      {"id": "overview", "type": "http", "method": "GET", "path": "/admin/api/overview", "auth": "admin", "expect_status": [200], "required": true},
+      {"id": "users", "type": "http", "method": "GET", "path": "/admin/api/users", "auth": "admin", "expect_status": [200], "required": false},
+      {"id": "apps", "type": "http", "method": "GET", "path": "/admin/api/apps", "auth": "admin", "expect_status": [200], "required": false},
+      {"id": "profiles", "type": "http", "method": "GET", "path": "/admin/api/profiles", "auth": "admin", "expect_status": [200], "required": false},
+      {"id": "audit", "type": "http", "method": "GET", "path": "/admin/api/audit", "auth": "admin", "expect_status": [200], "required": false},
+      {"id": "service_registry", "type": "http", "method": "GET", "path": "/admin/api/operator/service-registry", "auth": "admin", "expect_status": [200], "required": false},
+      {"id": "oidc_config", "type": "http", "method": "GET", "path": "/admin/api/oidc-config", "auth": "admin", "expect_status": [200], "required": false}
+    ],
+    "reddit_angles": [
+      "If no admin key/session is available, admin claims are not proven.",
+      "Audit, app inventory, and service registry should be first-class.",
+      "OIDC and recovery need to be visible without YAML spelunking."
+    ]
+  }
+]

@@ -1,0 +1,126 @@
+[
+  {
+    "id": "selfhosted_operator",
+    "label": "r/selfhosted operator",
+    "subreddit": "selfhosted",
+    "archetype": "Runs a small homelab and wants to share local AI with trusted people without handing out raw backend access.",
+    "borrowed_environment": "Docker/Traefik/Keycloak-style setup using the installed Vivid Fish AI Gateway and its connected local services as the operator's own stack.",
+    "goals": [
+      "Can I start from a browser-first setup story?",
+      "Can I discover what is running without reading source code?",
+      "Can I understand the admin/user boundary?",
+      "Can I see enough service/provider status to decide whether to trust it?"
+    ],
+    "probes": [
+      {"id": "public_health", "method": "GET", "path": "/health", "auth": "none", "expect_status": [200]},
+      {"id": "public_discovery", "method": "GET", "path": "/.well-known/ai-gateway", "auth": "none", "expect_status": [200]},
+      {"id": "setup_page", "method": "GET", "path": "/setup", "auth": "none", "expect_status": [200, 302]},
+      {"id": "admin_login", "method": "GET", "path": "/admin/login", "auth": "none", "expect_status": [200, 302, 501]},
+      {"id": "admin_overview", "method": "GET", "path": "/admin/api/overview", "auth": "admin", "expect_status": [200]}
+    ],
+    "comment_angles": [
+      "I care less about model demos and more about whether setup, ownership, OIDC, and recovery are understandable.",
+      "If the dashboard shows service state and access policy clearly, this is more interesting than another chat UI.",
+      "If I still need to edit YAML for normal admin work, r/selfhosted will call that out immediately."
+    ]
+  },
+  {
+    "id": "localllama_protocol_user",
+    "label": "r/LocalLLaMA protocol user",
+    "subreddit": "LocalLLaMA",
+    "archetype": "Runs multiple local LLM backends and wants OpenAI/Ollama/Anthropic clients to work without losing backend-specific power.",
+    "borrowed_environment": "Installed gateway fronting the user's local LLM backends, embeddings backend, and provider-compatible routes.",
+    "goals": [
+      "Can OpenAI-compatible clients list models?",
+      "Can Ollama-compatible clients discover tags?",
+      "Can Anthropic Messages be used without a separate backend?",
+      "Are unsupported or missing routes honest rather than silent?"
+    ],
+    "probes": [
+      {"id": "openai_models", "method": "GET", "path": "/openai/v1/models", "auth": "runtime", "expect_status": [200]},
+      {"id": "ollama_tags", "method": "GET", "path": "/ollama/api/tags", "auth": "runtime", "expect_status": [200]},
+      {"id": "gateway_providers", "method": "GET", "path": "/gateway/v1/providers", "auth": "runtime", "expect_status": [200]},
+      {
+        "id": "chat_minimal",
+        "method": "POST",
+        "path": "/openai/v1/chat/completions",
+        "auth": "runtime",
+        "expect_status": [200],
+        "costly": true,
+        "json": {
+          "model": "default",
+          "messages": [{"role": "user", "content": "Reply with exactly: gateway-ok"}],
+          "max_tokens": 24,
+          "reasoning_effort": "minimal"
+        }
+      },
+      {
+        "id": "anthropic_minimal",
+        "method": "POST",
+        "path": "/anthropic/v1/messages",
+        "auth": "runtime",
+        "expect_status": [200],
+        "costly": true,
+        "json": {
+          "model": "default",
+          "messages": [{"role": "user", "content": "Reply with exactly: anthropic-ok"}],
+          "max_tokens": 24
+        }
+      }
+    ],
+    "comment_angles": [
+      "The interesting part is protocol compatibility: model list, streaming, tool calls, and error shape.",
+      "I will compare it to LiteLLM, Open WebUI, llama.cpp server, Ollama, and Bifrost.",
+      "A gateway that adds latency or hides model-specific behavior has to prove why it exists."
+    ]
+  },
+  {
+    "id": "comfyui_media_user",
+    "label": "r/comfyui media workflow user",
+    "subreddit": "comfyui",
+    "archetype": "Runs ComfyUI workflows and wants programmable media jobs without losing masks, denoise, ControlNet, custom-node, or workflow-level controls.",
+    "borrowed_environment": "Installed gateway connected to ComfyUI image/audio/video workflows as if those workflows lived in this user's own rig.",
+    "goals": [
+      "Can I discover workflows and extensions before guessing parameters?",
+      "Can I tell which advanced controls are exposed?",
+      "Can I use durable jobs instead of fragile long HTTP requests?",
+      "Does the gateway respect ComfyUI's workflow reality instead of pretending everything is a tiny OpenAI image API?"
+    ],
+    "probes": [
+      {"id": "gateway_capabilities", "method": "GET", "path": "/gateway/v1/capabilities", "auth": "runtime", "expect_status": [200]},
+      {"id": "gateway_workflows", "method": "GET", "path": "/gateway/v1/workflows", "auth": "runtime", "expect_status": [200]},
+      {"id": "gateway_extensions", "method": "GET", "path": "/gateway/v1/extensions", "auth": "runtime", "expect_status": [200]},
+      {"id": "flux_edit_capabilities", "method": "GET", "path": "/gateway/v1/models/flux2-klein-4b-edit/capabilities", "auth": "runtime", "expect_status": [200]},
+      {"id": "recent_media_jobs", "method": "GET", "path": "/gateway/v1/media/jobs", "auth": "runtime", "expect_status": [200]}
+    ],
+    "comment_angles": [
+      "I do not want a service-specific wizard; I want workflow metadata and honest controls.",
+      "The gateway becomes interesting if it makes headless ComfyUI jobs, receipts, and workflow discovery less painful.",
+      "If custom nodes and model paths still break silently, ComfyUI users will bounce."
+    ]
+  },
+  {
+    "id": "friend_runtime_user",
+    "label": "friend / non-admin runtime user",
+    "subreddit": "selfhosted",
+    "archetype": "Has an account on someone else's gateway and wants to get an API key and understand what it can do without becoming an admin.",
+    "borrowed_environment": "The installed gateway's account portal and runtime routes, treated as the friend's invited instance.",
+    "goals": [
+      "Can I tell whether I am signed in?",
+      "Can I find or create an App/key without admin handholding?",
+      "Can I see what my key can use?",
+      "Can I avoid confusing admin concepts like Profiles unless I need them?"
+    ],
+    "probes": [
+      {"id": "account_home", "method": "GET", "path": "/", "auth": "none", "expect_status": [200, 302, 401]},
+      {"id": "public_discovery", "method": "GET", "path": "/.well-known/ai-gateway", "auth": "none", "expect_status": [200]},
+      {"id": "runtime_models", "method": "GET", "path": "/openai/v1/models", "auth": "runtime", "expect_status": [200]},
+      {"id": "runtime_capabilities", "method": "GET", "path": "/gateway/v1/capabilities", "auth": "runtime", "expect_status": [200]}
+    ],
+    "comment_angles": [
+      "Normal users should mostly see Apps, keys, base URLs, and what they can use.",
+      "Profiles and service wiring should not leak into the invited-user experience.",
+      "A copy button and clear key deletion matter more than marketing copy."
+    ]
+  }
+]

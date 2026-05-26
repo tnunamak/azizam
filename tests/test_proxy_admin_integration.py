@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import sys
+import io
 import os
+import sys
 import tempfile
 import unittest
 import re
@@ -90,6 +91,20 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(forbidden.status_code, 403)
         self.assertEqual(forbidden.json()["error"]["code"], "admin_forbidden")
+
+    def test_generate_admin_key_help_does_not_create_credential(self) -> None:
+        before = len(admin_store.list_credentials(path=self.db))
+        with (
+            patch.object(proxy, "ADMIN_DB_PATH", self.db),
+            patch.object(sys, "argv", ["proxy.py", "generate-admin-key", "--help"]),
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                proxy.handle_cli_command()
+
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("Usage: python3 proxy.py generate-admin-key", stdout.getvalue())
+        self.assertEqual(len(admin_store.list_credentials(path=self.db)), before)
 
     def test_admin_created_app_key_authenticates_runtime_with_profile(self) -> None:
         profile = self.client.post(

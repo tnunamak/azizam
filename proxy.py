@@ -1867,6 +1867,9 @@ def handle_cli_command() -> bool:
         sys.exit(asyncio.run(refresh_openai_model_aliases()))
 
     if sys.argv[1] == "generate-admin-key":
+        if len(sys.argv) == 3 and sys.argv[2] in {"-h", "--help", "help"}:
+            print("Usage: python3 proxy.py generate-admin-key <service-account-name> [role]")
+            sys.exit(0)
         if len(sys.argv) not in (3, 4):
             print(
                 "Usage: python3 proxy.py generate-admin-key <service-account-name> [role]",
