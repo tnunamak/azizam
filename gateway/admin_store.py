@@ -622,16 +622,19 @@ def create_profile(
     ts = _now() if now is None else int(now)
     prof_id = _gen_id("prof")
     payload = json.dumps(dict(profile_doc), ensure_ascii=False, sort_keys=True)
-    with _conn(path) as conn:
-        conn.execute(
-            "INSERT INTO profiles(id, name, description, profile_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (prof_id, name, description, payload, ts),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM profiles WHERE id = ?", (prof_id,)
-        ).fetchone()
+    try:
+        with _conn(path) as conn:
+            conn.execute(
+                "INSERT INTO profiles(id, name, description, profile_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (prof_id, name, description, payload, ts),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM profiles WHERE id = ?", (prof_id,)
+            ).fetchone()
+    except sqlite3.IntegrityError as exc:
+        raise ValueError(f"profile name {name!r} is already in use") from exc
     return _profile_row_to_dict(row)
 
 
@@ -670,17 +673,20 @@ def update_profile(
         return get_profile(profile_id, path=path)
 
     params.append(profile_id)
-    with _conn(path) as conn:
-        cur = conn.execute(
-            f"UPDATE profiles SET {', '.join(assignments)} WHERE id = ?",
-            params,
-        )
-        if cur.rowcount == 0:
-            return None
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM profiles WHERE id = ?", (profile_id,)
-        ).fetchone()
+    try:
+        with _conn(path) as conn:
+            cur = conn.execute(
+                f"UPDATE profiles SET {', '.join(assignments)} WHERE id = ?",
+                params,
+            )
+            if cur.rowcount == 0:
+                return None
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM profiles WHERE id = ?", (profile_id,)
+            ).fetchone()
+    except sqlite3.IntegrityError as exc:
+        raise ValueError(f"profile name is already in use") from exc
     return _profile_row_to_dict(row) if row else None
 
 
@@ -690,6 +696,43 @@ def list_profiles(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
             "SELECT * FROM profiles ORDER BY created_at ASC"
         ).fetchall()
     return [_profile_row_to_dict(r) for r in rows]
+
+
+def delete_profile(
+    profile_id: str, *, path: Path = DB_PATH
+) -> dict[str, Any] | None:
+    """Delete a profile row. Returns the deleted record or None if not found.
+
+    Raises ValueError if any app or runtime-profile-mapping still references
+    this profile, to prevent dangling foreign-key references.
+    """
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM profiles WHERE id = ?", (profile_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        app_count = conn.execute(
+            "SELECT COUNT(*) FROM apps WHERE default_profile_id = ?", (profile_id,)
+        ).fetchone()[0]
+        if app_count:
+            raise ValueError(
+                f"profile {profile_id!r} is assigned to {app_count} app(s); "
+                "reassign or clear those apps before deleting"
+            )
+        mapping_count = conn.execute(
+            "SELECT COUNT(*) FROM runtime_profile_mappings "
+            "WHERE profile_id = ? AND disabled_at IS NULL",
+            (profile_id,),
+        ).fetchone()[0]
+        if mapping_count:
+            raise ValueError(
+                f"profile {profile_id!r} is used by {mapping_count} active runtime "
+                "mapping(s); disable those mappings before deleting"
+            )
+        conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+        conn.commit()
+    return _profile_row_to_dict(row)
 
 
 def _profile_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:

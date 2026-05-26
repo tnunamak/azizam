@@ -126,6 +126,10 @@ class AdminStore(Protocol):
         self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
+    def delete_profile(
+        self, *, profile_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None: ...
+
     def list_credentials(self) -> list[dict[str, Any]]: ...
 
     def create_credential(
@@ -959,14 +963,35 @@ def create_admin_router(
         try:
             record = store.create_profile(data=body, actor=ctx)
         except ValueError as exc:
+            msg = str(exc)
+            if "already in use" in msg:
+                return _RouteError(
+                    status.HTTP_409_CONFLICT,
+                    "profile_name_conflict",
+                    msg,
+                ).as_response()
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
                 "invalid_profile",
-                str(exc),
+                msg,
             ).as_response()
         return JSONResponse(
             status_code=status.HTTP_201_CREATED, content={"profile": record}
         )
+
+    @router.get("/profiles/{profile_id}")
+    def get_profile(profile_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = store.get_profile(profile_id)
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "profile_not_found",
+                f"profile {profile_id!r} not found",
+            ).as_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"profile": record})
 
     @router.patch("/profiles/{profile_id}")
     async def update_profile(profile_id: str, request: Request) -> JSONResponse:
@@ -991,10 +1016,17 @@ def create_admin_router(
                 profile_id=profile_id, data=body, actor=ctx
             )
         except ValueError as exc:
+            msg = str(exc)
+            if "already in use" in msg:
+                return _RouteError(
+                    status.HTTP_409_CONFLICT,
+                    "profile_name_conflict",
+                    msg,
+                ).as_response()
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
                 "invalid_profile",
-                str(exc),
+                msg,
             ).as_response()
         if record is None:
             return _RouteError(
@@ -1005,6 +1037,27 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK, content={"profile": record}
         )
+
+    @router.delete("/profiles/{profile_id}")
+    def delete_profile(profile_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            record = store.delete_profile(profile_id=profile_id, actor=ctx)
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_409_CONFLICT,
+                "profile_in_use",
+                str(exc),
+            ).as_response()
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "profile_not_found",
+                f"profile {profile_id!r} not found",
+            ).as_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"profile": record})
 
     @router.get("/runtime-profile-mappings")
     def list_runtime_profile_mappings(request: Request) -> JSONResponse:

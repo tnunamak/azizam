@@ -147,9 +147,15 @@ class FakeAdminStore:
     def create_profile(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
+        name = data.get("name") or data.get("label") or data.get("id") or "unnamed"
+        if any(
+            p.get("name") == name or p.get("label") == name for p in self.profiles
+        ):
+            raise ValueError(f"profile name {name!r} is already in use")
         record = {
             "id": data.get("id") or self._id("prof"),
-            "label": data.get("label") or data.get("id") or "unnamed",
+            "name": name,
+            "label": name,
         }
         self.profiles.append(record)
         return dict(record)
@@ -160,6 +166,12 @@ class FakeAdminStore:
         record = self.get_profile(profile_id)
         if record is None:
             return None
+        new_name = data.get("name") or data.get("label")
+        if new_name and any(
+            p["id"] != profile_id and p.get("name") == new_name
+            for p in self.profiles
+        ):
+            raise ValueError(f"profile name {new_name!r} is already in use")
         if "name" in data:
             record["name"] = data["name"]
         if "label" in data:
@@ -173,6 +185,23 @@ class FakeAdminStore:
                 "at": "2026-05-17T01:00:00Z",
                 "actor": actor.subject,
                 "action": "profile.update",
+                "target": profile_id,
+            }
+        )
+        return dict(record)
+
+    def delete_profile(
+        self, *, profile_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None:
+        record = self.get_profile(profile_id)
+        if record is None:
+            return None
+        self.profiles = [p for p in self.profiles if p["id"] != profile_id]
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "profile.delete",
                 "target": profile_id,
             }
         )
@@ -846,6 +875,65 @@ class AdminProfileTests(unittest.TestCase):
             [p["id"] for p in resp.json()["profiles"]],
             [p["id"] for p in store.profiles],
         )
+
+    def test_get_profile_by_id(self) -> None:
+        client, store = _make_client()
+        profile_id = store.profiles[0]["id"]
+        resp = client.get(f"/admin/api/profiles/{profile_id}", headers=_auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["profile"]["id"], profile_id)
+
+    def test_get_profile_by_id_not_found(self) -> None:
+        client, _ = _make_client()
+        resp = client.get("/admin/api/profiles/no-such-profile", headers=_auth())
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json()["error"]["code"], "profile_not_found")
+
+    def test_delete_profile(self) -> None:
+        client, store = _make_client()
+        profile_id = store.profiles[0]["id"]
+        resp = client.delete(f"/admin/api/profiles/{profile_id}", headers=_auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["profile"]["id"], profile_id)
+        self.assertIsNone(store.get_profile(profile_id))
+
+    def test_delete_profile_not_found(self) -> None:
+        client, _ = _make_client()
+        resp = client.delete("/admin/api/profiles/no-such-profile", headers=_auth())
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json()["error"]["code"], "profile_not_found")
+
+    def test_create_profile_name_conflict_returns_409(self) -> None:
+        client, store = _make_client()
+        existing_name = store.profiles[0].get("name") or store.profiles[0].get("label")
+        resp = client.post(
+            "/admin/api/profiles",
+            json={
+                "name": existing_name,
+                "profile": {
+                    "id": "conflict-test",
+                    "protocols": ["openai"],
+                    "status_visibility": {"level": "basic"},
+                },
+            },
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["error"]["code"], "profile_name_conflict")
+
+    def test_update_profile_name_conflict_returns_409(self) -> None:
+        client, store = _make_client()
+        if len(store.profiles) < 2:
+            self.skipTest("need at least 2 profiles in fixture")
+        target_id = store.profiles[0]["id"]
+        taken_name = store.profiles[1].get("name") or store.profiles[1].get("label")
+        resp = client.patch(
+            f"/admin/api/profiles/{target_id}",
+            json={"name": taken_name},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["error"]["code"], "profile_name_conflict")
 
 
 class AdminRuntimeProfileMappingTests(unittest.TestCase):

@@ -410,6 +410,23 @@ class AdminSQLiteStore:
         )
         return _profile_summary(record) if record is not None else None
 
+    def delete_profile(
+        self, *, profile_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None:
+        record = admin_store.delete_profile(profile_id, path=self.path)
+        if record is None:
+            return None
+        admin_store.record_audit(
+            "profile.delete",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="profile",
+            target_id=profile_id,
+            metadata={"name": record.get("name")},
+            path=self.path,
+        )
+        return _profile_summary(record)
+
     def list_credentials(self) -> list[dict[str, Any]]:
         return [
             _sanitize_credential(record)

@@ -203,7 +203,7 @@ class TestPublicSurfaces(unittest.TestCase):
         if r.status == 404:
             record_gap(
                 "llms_txt_missing",
-                "GET /llms.txt returned 404 — discovery surface not served",
+                "GET /llms.txt returned 404 -- discovery surface not served",
             )
 
     def test_well_known_skills(self) -> None:
@@ -250,7 +250,7 @@ class TestPublicSurfaces(unittest.TestCase):
 @unittest.skipIf(_SKIP_NO_BASE, "OPENAI_PROXY_BASE_URL not set")
 @unittest.skipIf(_SKIP_NO_ADMIN, "OPENAI_PROXY_ADMIN_KEY not set")
 class TestAdminPlane(unittest.TestCase):
-    """Admin API probes — these read and write through the oak_ key."""
+    """Admin API probes -- these read and write through the oak_ key."""
 
     gw: GatewayClient
     admin_key: str
@@ -288,9 +288,10 @@ class TestAdminPlane(unittest.TestCase):
                 pass
         if cls._profile_id:
             try:
-                # Profiles don't have a delete endpoint currently;
-                # record as a gap if we can't clean up.
-                pass
+                cls.gw.delete(
+                    f"/admin/api/profiles/{cls._profile_id}",
+                    bearer=cls.admin_key,
+                )
             except Exception:
                 pass
 
@@ -376,39 +377,24 @@ class TestAdminPlane(unittest.TestCase):
             f"/admin/api/profiles/{TestAdminPlane._profile_id}",
             bearer=self._auth(),
         )
-        if r.status == 404:
-            record_gap(
-                "profile_get_by_id_missing",
-                "GET /admin/api/profiles/{id} returned 404 — no per-profile read endpoint",
-                {"profile_id": TestAdminPlane._profile_id},
-            )
-            self.skipTest("GET /admin/api/profiles/{id} not implemented")
         self.assertEqual(r.status, 200, r.text()[:300])
+        data = r.json()
+        self.assertIn("profile", data)
+        self.assertEqual(data["profile"]["id"], TestAdminPlane._profile_id)
 
     def test_admin_update_profile(self) -> None:
         if not TestAdminPlane._profile_id:
             self.skipTest("profile not created yet")
         import time as _time
-        # Use a highly-unique name to avoid UNIQUE constraint collision with
-        # prior run leftovers (profile name uniqueness violation yields 500
-        # instead of 409 — recorded as a gap if hit).
         new_name = f"gauntlet-upd-{int(_time.time() * 1000)}"
         r = self.gw.patch(
             f"/admin/api/profiles/{TestAdminPlane._profile_id}",
             bearer=self._auth(),
             body={"name": new_name},
         )
-        if r.status == 500:
-            record_gap(
-                "profile_update_500_on_name_collision",
-                "PATCH /admin/api/profiles/{id} returned 500 — likely unique-name constraint "
-                "violation not converted to 409; server should return 409 Conflict",
-                {"profile_id": TestAdminPlane._profile_id, "name": new_name, "status": 500},
-            )
-        self.assertIn(r.status, (200, 409), r.text()[:300])
-        if r.status == 200:
-            data = r.json()
-            self.assertIn("profile", data)
+        self.assertEqual(r.status, 200, r.text()[:300])
+        data = r.json()
+        self.assertIn("profile", data)
 
     # -- app CRUD --
 
@@ -460,7 +446,7 @@ class TestAdminPlane(unittest.TestCase):
         TestAdminPlane._app_api_key = raw_key
 
     def test_admin_revoke_app_key(self) -> None:
-        """Create a throwaway key, then revoke it — main _app_api_key is untouched."""
+        """Create a throwaway key, then revoke it -- main _app_api_key is untouched."""
         if not TestAdminPlane._app_id:
             self.skipTest("app not created yet")
         # Mint a throwaway key just for the revoke probe
@@ -612,7 +598,7 @@ class TestRuntimePlane(unittest.TestCase):
     # -- OpenAI-compatible chat completions (non-streaming, fast) --
 
     def test_chat_completion_default_model(self) -> None:
-        """Chat via default model — may 503 if backends down; that's OK."""
+        """Chat via default model -- may 503 if backends down; that's OK."""
         r = self.gw.post(
             "/v1/chat/completions",
             bearer=self._key(),
@@ -630,7 +616,7 @@ class TestRuntimePlane(unittest.TestCase):
         elif r.status in (503, 502):
             record_gap(
                 "chat_backend_down",
-                f"POST /v1/chat/completions returned {r.status} — no chat backend available",
+                f"POST /v1/chat/completions returned {r.status} -- no chat backend available",
                 {"status": r.status},
             )
         else:
@@ -669,7 +655,7 @@ class TestRuntimePlane(unittest.TestCase):
         key = self._key()
         # If the gauntlet app was created with a chat-only profile, images should be denied.
         # If not, we just document whatever we get.
-        # Use a short timeout — image backend may be slow or offline.
+        # Use a short timeout -- image backend may be slow or offline.
         gw_short = GatewayClient(_BASE_URL, timeout_s=8.0)
         try:
             r = gw_short.post(
@@ -698,7 +684,7 @@ class TestRuntimePlane(unittest.TestCase):
         elif r.status in (503, 502):
             record_gap(
                 "image_backend_down",
-                f"POST /v1/images/generations returned {r.status} — image backend unavailable",
+                f"POST /v1/images/generations returned {r.status} -- image backend unavailable",
             )
         elif r.status == 200:
             record_gap(
@@ -708,7 +694,7 @@ class TestRuntimePlane(unittest.TestCase):
         elif r.status == 408:
             record_gap(
                 "image_request_timeout",
-                "POST /v1/images/generations timed out — image backend may be slow or down",
+                "POST /v1/images/generations timed out -- image backend may be slow or down",
             )
         # All outcomes documented; not a hard failure since profile may vary.
 
@@ -763,7 +749,7 @@ class TestRuntimePlane(unittest.TestCase):
     # -- Anthropic-compatible surface --
 
     def test_anthropic_messages_route_exists(self) -> None:
-        """POST /anthropic/v1/messages with bad payload → 422 or 400, not 404."""
+        """POST /anthropic/v1/messages with bad payload -> 422 or 400, not 404."""
         r = self.gw.post(
             "/anthropic/v1/messages",
             bearer=self._key(),
@@ -775,7 +761,7 @@ class TestRuntimePlane(unittest.TestCase):
     # -- Provider-native discovery --
 
     def test_provider_native_route_requires_policy(self) -> None:
-        """Accessing a provider-native path without native_passthrough profile → 403 or 404."""
+        """Accessing a provider-native path without native_passthrough profile -> 403 or 404."""
         r = self.gw.get(
             "/gateway/v1/providers/tabbyapi/v1/models",
             bearer=self._key(),
@@ -792,7 +778,7 @@ class TestRuntimePlane(unittest.TestCase):
         elif r.status == 404:
             record_gap(
                 "provider_native_not_found",
-                "GET /gateway/v1/providers/tabbyapi/v1/models → 404 (tabbyapi provider may not exist)",
+                "GET /gateway/v1/providers/tabbyapi/v1/models -> 404 (tabbyapi provider may not exist)",
                 {"status": r.status},
             )
 
@@ -820,9 +806,9 @@ class TestBootstrapDetect(unittest.TestCase):
         self.assertIsNone(oak_leak, f"/setup must not leak oak_ admin keys in HTML: {oak_leak}")
 
         if "Setup complete" in body:
-            pass  # Instance is claimed — checks above are sufficient
+            pass  # Instance is claimed -- checks above are sufficient
         elif "Claim this gateway" in body or "Create the local owner" in body:
-            pass  # Fresh instance — first-run flow
+            pass  # Fresh instance -- first-run flow
         else:
             record_gap(
                 "setup_state_unrecognized",
