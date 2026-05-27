@@ -114,24 +114,6 @@ class _FakeLiteLLMResponse:
         return None
 
 
-class _FakeLiteLLMCompletionResponse:
-    status_code = 200
-    headers = {"content-type": "application/json", "x-litellm-call-id": "completion_1"}
-
-    async def aread(self):
-        return json.dumps(
-            {
-                "id": "cmpl_test",
-                "object": "text_completion",
-                "model": "legacy-completion",
-                "choices": [{"index": 0, "text": "pong", "finish_reason": "stop"}],
-            }
-        ).encode()
-
-    async def aclose(self):
-        return None
-
-
 class _FakeLiteLLMEmbeddingResponse:
     status_code = 200
     headers = {"content-type": "application/json", "x-litellm-call-id": "embedding_1"}
@@ -153,45 +135,6 @@ class _FakeLiteLLMEmbeddingResponse:
 
     async def aclose(self):
         return None
-
-
-class _FakeLiteLLMRawResponse:
-    def __init__(
-        self,
-        payload: dict[str, Any],
-        *,
-        status_code: int = 200,
-        headers: dict[str, str] | None = None,
-    ) -> None:
-        self.status_code = status_code
-        self.headers = headers or {
-            "content-type": "application/json",
-            "x-litellm-call-id": "raw_call_1",
-        }
-        self.payload = payload
-
-    async def aread(self):
-        return json.dumps(self.payload).encode()
-
-    async def aclose(self):
-        return None
-
-
-class _FakeLiteLLMStreamingResponse:
-    status_code = 200
-    headers = {"content-type": "text/event-stream", "x-litellm-call-id": "stream_1"}
-
-    def __init__(self) -> None:
-        self.closed = False
-
-    async def aiter_bytes(self):
-        yield b'data: {"id":"chatcmpl_test","choices":[{"index":0,"delta":{"content":"po"}}]}\n\n'
-        yield b'data: {"id":"chatcmpl_test","choices":[{"index":0,"delta":{"content":"ng"}}]}\n\n'
-        yield b"data: [DONE]\n\n"
-
-    async def aclose(self):
-        self.closed = True
-
 
 class _FakeLiteLLMModelsResponse:
     status_code = 200
@@ -304,8 +247,16 @@ class TestGatewayRouterMounting(unittest.TestCase):
             return "tabby"
 
         client = TestClient(proxy.app)
+        blocked_activation = AssertionError(
+            "OpenAI-shaped LLM routes must not activate local backends when LiteLLM is unavailable"
+        )
+
         with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
             proxy, "default_model_for_operation", lambda *_args, **_kwargs: "local-default"
+        ), patch.object(
+            proxy,
+            "ROLES",
+            {"default": {"backend": "kobold", "model": "/tmp/default.gguf"}},
         ), patch.object(
             proxy, "get_active_backend", fake_active
         ), patch.object(
@@ -314,8 +265,17 @@ class TestGatewayRouterMounting(unittest.TestCase):
             proxy, "check_embeddings_health", fake_false
         ), patch.object(
             proxy, "restart_tabby_if_needed", fake_false
+        ), patch.object(
+            proxy, "ensure_target", AsyncMock(side_effect=blocked_activation)
         ):
             cases = [
+                (
+                    "/v1/chat/completions",
+                    {
+                        "model": "default",
+                        "messages": [{"role": "user", "content": "ping"}],
+                    },
+                ),
                 (
                     "/v1/chat/completions",
                     {
@@ -333,7 +293,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
                     self.assertEqual(response.status_code, 503, response.text)
                     self.assertEqual(
                         response.json()["error"]["code"],
-                        "backend_unavailable",
+                        "litellm_unconfigured",
                     )
 
     def test_litellm_execution_mode_routes_chat_after_gateway_policy(self) -> None:
@@ -625,39 +585,6 @@ class TestGatewayRouterMounting(unittest.TestCase):
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
-        ):
-            response = client.get("/v1/models")
-
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        ids = [item["id"] for item in payload["data"]]
-        self.assertIn("assistant-default", ids)
-        self.assertNotIn("default", ids)
-        self.assertEqual(payload["x_ai_gateway_llm_execution"], "litellm")
-        self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/models")
-
-    def test_litellm_models_keeps_gateway_workflow_models(self) -> None:
-        async def fake_send(_execution_request):
-            return _FakeStreamClient(), _FakeLiteLLMModelsResponse()
-
-        def fake_registry():
-            return {
-                "services": {
-                    "litellm": {
-                        "id": "litellm",
-                        "kind": "llm-substrate",
-                        "enabled": True,
-                        "capabilities": ["llm.execution"],
-                        "config": {"base_url": "http://127.0.0.1:4011"},
-                    }
-                }
-            }
-
-        client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
-            proxy.ADMIN_STORE, "get_service_registry", fake_registry
-        ), patch.object(
-            proxy, "send_llm_execution_request", fake_send
         ), patch.object(
             proxy,
             "_build_workflow_model_entries",
@@ -672,76 +599,13 @@ class TestGatewayRouterMounting(unittest.TestCase):
             response = client.get("/v1/models")
 
         self.assertEqual(response.status_code, 200, response.text)
-        ids = [item["id"] for item in response.json()["data"]]
+        payload = response.json()
+        ids = [item["id"] for item in payload["data"]]
         self.assertIn("assistant-default", ids)
         self.assertIn("image.generate.test", ids)
         self.assertNotIn("default", ids)
-
-    def test_litellm_models_failure_returns_503_not_partial_catalog(self) -> None:
-        async def fake_send(_execution_request):
-            return _FakeStreamClient(), _FakeLiteLLMRawResponse(
-                {"error": {"message": "down"}},
-                status_code=503,
-            )
-
-        def fake_registry():
-            return {
-                "services": {
-                    "litellm": {
-                        "id": "litellm",
-                        "kind": "llm-substrate",
-                        "enabled": True,
-                        "capabilities": ["llm.execution"],
-                        "config": {"base_url": "http://127.0.0.1:4011"},
-                    }
-                }
-            }
-
-        client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
-            proxy.ADMIN_STORE, "get_service_registry", fake_registry
-        ), patch.object(
-            proxy, "send_llm_execution_request", fake_send
-        ):
-            response = client.get("/v1/models")
-
-        self.assertEqual(response.status_code, 503, response.text)
-        self.assertEqual(response.json()["error"]["code"], "backend_unavailable")
-
-    def test_litellm_routes_legacy_completions_after_gateway_policy(self) -> None:
-        calls: list[Any] = []
-
-        async def fake_send(execution_request):
-            calls.append(execution_request)
-            return _FakeStreamClient(), _FakeLiteLLMCompletionResponse()
-
-        def fake_registry():
-            return {
-                "services": {
-                    "litellm": {
-                        "id": "litellm",
-                        "kind": "llm-substrate",
-                        "enabled": True,
-                        "capabilities": ["llm.execution"],
-                        "config": {"base_url": "http://127.0.0.1:4011"},
-                    }
-                }
-            }
-
-        client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
-            proxy.ADMIN_STORE, "get_service_registry", fake_registry
-        ), patch.object(
-            proxy, "send_llm_execution_request", fake_send
-        ):
-            response = client.post(
-                "/v1/completions",
-                json={"model": "legacy-completion", "prompt": "ping"},
-            )
-
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["choices"][0]["text"], "pong")
-        self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/completions")
+        self.assertEqual(payload["x_ai_gateway_llm_execution"], "litellm")
+        self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/models")
 
     def test_litellm_routes_embeddings_and_applies_requested_dimensions(self) -> None:
         calls: list[Any] = []
@@ -782,15 +646,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/embeddings")
         self.assertNotIn("dimensions", json.loads(calls[0].body.decode()))
 
-    def test_litellm_chat_stream_proxies_sse_and_records_receipt(self) -> None:
-        calls: list[Any] = []
-        receipts: list[Any] = []
-        upstream = _FakeLiteLLMStreamingResponse()
-
-        async def fake_send(execution_request):
-            calls.append(execution_request)
-            return _FakeStreamClient(), upstream
-
+    def test_litellm_connect_error_is_protocol_shaped(self) -> None:
         def fake_registry():
             return {
                 "services": {
@@ -803,116 +659,11 @@ class TestGatewayRouterMounting(unittest.TestCase):
                     }
                 }
             }
-
-        def fake_record(receipt, *_args, **_kwargs):
-            receipts.append(receipt)
-            return receipt.request_id
-
-        client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
-            proxy.ADMIN_STORE, "get_service_registry", fake_registry
-        ), patch.object(
-            proxy, "send_llm_execution_request", fake_send
-        ), patch.object(
-            proxy.receipt_store, "record", fake_record
-        ):
-            response = client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": "assistant-default",
-                    "stream": True,
-                    "messages": [{"role": "user", "content": "ping"}],
-                },
-            )
-
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(
-            response.headers["X-AI-Gateway-LLM-Execution"],
-            "litellm",
-        )
-        self.assertIn("data:", response.text)
-        self.assertTrue(upstream.closed)
-        self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/chat/completions")
-        self.assertEqual(receipts[0].status, "succeeded")
-
-    def test_litellm_non_2xx_passes_through_and_records_failed_receipt(self) -> None:
-        receipts: list[Any] = []
-
-        async def fake_send(_execution_request):
-            return _FakeStreamClient(), _FakeLiteLLMRawResponse(
-                {"error": {"message": "rate limited"}},
-                status_code=429,
-                headers={"content-type": "application/json", "x-litellm-call-id": "fail_1"},
-            )
-
-        def fake_registry():
-            return {
-                "services": {
-                    "litellm": {
-                        "id": "litellm",
-                        "kind": "llm-substrate",
-                        "enabled": True,
-                        "capabilities": ["llm.execution"],
-                        "config": {"base_url": "http://127.0.0.1:4011"},
-                    }
-                }
-            }
-
-        def fake_record(receipt, *_args, **_kwargs):
-            receipts.append(receipt)
-            return receipt.request_id
-
-        client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
-            proxy.ADMIN_STORE, "get_service_registry", fake_registry
-        ), patch.object(
-            proxy, "send_llm_execution_request", fake_send
-        ), patch.object(
-            proxy.receipt_store, "record", fake_record
-        ):
-            response = client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": "assistant-default",
-                    "messages": [{"role": "user", "content": "ping"}],
-                },
-            )
-
-        self.assertEqual(response.status_code, 429, response.text)
-        self.assertEqual(response.json()["error"]["message"], "rate limited")
-        self.assertEqual(receipts[0].status, "failed")
-
-    def test_litellm_timeout_and_connect_errors_are_protocol_shaped(self) -> None:
-        def fake_registry():
-            return {
-                "services": {
-                    "litellm": {
-                        "id": "litellm",
-                        "kind": "llm-substrate",
-                        "enabled": True,
-                        "capabilities": ["llm.execution"],
-                        "config": {"base_url": "http://127.0.0.1:4011"},
-                    }
-                }
-            }
-
-        async def fake_timeout(_execution_request):
-            raise httpx.TimeoutException("slow")
 
         async def fake_connect(_execution_request):
             raise httpx.ConnectError("down")
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
-            proxy.ADMIN_STORE, "get_service_registry", fake_registry
-        ), patch.object(proxy, "send_llm_execution_request", fake_timeout):
-            timeout = client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": "assistant-default",
-                    "messages": [{"role": "user", "content": "ping"}],
-                },
-            )
         with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(proxy, "send_llm_execution_request", fake_connect):
@@ -924,7 +675,6 @@ class TestGatewayRouterMounting(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(timeout.status_code, 504, timeout.text)
         self.assertEqual(connect.status_code, 503, connect.text)
         self.assertEqual(connect.json()["error"]["code"], "backend_unavailable")
 

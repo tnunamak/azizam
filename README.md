@@ -87,16 +87,16 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 | `GET  /admin` | proxy | Admin dashboard; browser sessions redirect through `/login` |
 | `GET  /status` | proxy | Operator status dashboard; requires admin OIDC session or `oak_...` admin key |
 | `GET  /health` | proxy | Liveness; public, no auth |
-| `GET  /v1/models` | active LLM lane | List models; augments with currently loaded GGUF |
+| `GET  /v1/models` | LiteLLM + gateway catalog | List LiteLLM LLM model groups plus gateway-native workflow model IDs |
 | `POST /anthropic/v1/messages` | chat pipeline | Anthropic Messages-compatible request/response and SSE streaming; `/v1/messages` remains a convenience route |
 | `GET  /ollama/api/tags` | proxy catalog | Ollama-compatible model list; `/api/tags` remains a convenience route |
 | `POST /ollama/api/chat`, `POST /ollama/api/generate` | chat pipeline | Ollama-compatible chat/generate with NDJSON streaming; `/api/chat` and `/api/generate` remain convenience routes |
 | `POST /ollama/api/embed`, `POST /ollama/api/embeddings` | selected embeddings provider | Ollama-compatible current and legacy embeddings; `/api/embed`, `/api/embeddings` remain convenience routes |
 | `POST /ollama/api/show`, `GET /ollama/api/ps`, `GET /ollama/api/version` | proxy catalog/status | Ollama-compatible read-only model metadata/status; `/api/show`, `/api/ps`, `/api/version` remain convenience routes |
 | `GET  /v1/voices`, `GET /v1/audio/voices` | proxy (static) | List TTS voices |
-| `POST /v1/chat/completions` | Profile-selected chat provider | Chat completion; vision requests require a vision-capable lane |
-| `POST /v1/completions` | Profile-selected text provider | Text completion |
-| `POST /v1/embeddings` | Profile-selected embeddings provider | OpenAI-compatible embeddings; no GPU budget claim |
+| `POST /v1/chat/completions` | LiteLLM execution substrate | Chat completion; gateway activates local vision targets before execution when needed |
+| `POST /v1/completions` | LiteLLM execution substrate | Text completion |
+| `POST /v1/embeddings` | LiteLLM execution substrate | OpenAI-compatible embeddings; no GPU budget claim |
 | `POST /v1/audio/speech` | Profile-selected TTS provider | OpenAI-compatible TTS, voice-mapped; `response_format` supports `wav` and `mp3` |
 | `POST /v1/audio/transcriptions` | Profile-selected STT provider | Multipart audio → transcript |
 | `POST /v1/audio/translations` | Profile-selected STT provider | OpenAI-compatible route; returns `unsupported_audio_translation` unless the selected STT provider declares translation support |
@@ -119,7 +119,7 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 
 Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [`MODEL_COMPATIBILITY.md`](MODEL_COMPATIBILITY.md), and [`OPENCLAW_SETUP.md`](OPENCLAW_SETUP.md):
 
-- **Vision routing** — chat-completions requests carrying `image_url` / `input_image` content blocks auto-switch to the configured `roles.vision` backend; text-only backends with no vision role return HTTP 400 (`code: vision_unsupported`) rather than silently dropping image content. Every chat-completions response carries an `X-Vision-Routed` header for observability.
+- **Vision routing** — chat-completions requests carrying `image_url` / `input_image` content blocks activate the configured `roles.vision` target before LiteLLM execution; text-only backends with no vision role return HTTP 400 (`code: vision_unsupported`) rather than silently dropping image content.
 - **Honest `n` for images** — adaptive ComfyUI batching backs the request, returning all `n` images. If even one image won't fit in free VRAM, the proxy returns HTTP 503 with `Retry-After: 30` rather than silently truncating.
 - **Durable image jobs** — long/batch image work can use `POST /gateway/v1/media/jobs` with `intent: "image.generate"` and an OpenAI image request under `request`. The proxy queues the work server-side, retries transient VRAM/ComfyUI/tile-composition failures, persists redacted job state, and returns reusable asset handles via polling/content endpoints. The private request payload is kept on disk only while the job is pending/running so the proxy can recover from client disconnects and restarts.
 - **Generated asset handles** — generated image/audio/video outputs can be inspected at `GET /gateway/v1/assets/{asset_id}` with the minting API key and fetched through signed bearerless content URLs until expiry. Asset handles and input reuse remain scoped to the API key that minted them.

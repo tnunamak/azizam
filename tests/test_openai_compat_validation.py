@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import struct
 import sys
 import tempfile
@@ -58,59 +57,10 @@ class _FakeTTSAsyncClient:
         )
 
 
-class _FakeEmbeddingsResponse:
-    status_code = 200
-    headers = {"content-type": "application/json"}
-
-    async def aread(self):
-        return json.dumps(
-            {
-                "object": "list",
-                "model": "nomic-embed-text-v1.5",
-                "data": [
-                    {
-                        "object": "embedding",
-                        "index": 7,
-                        "embedding": [3.0, 4.0, 12.0],
-                    }
-                ],
-                "usage": {"prompt_tokens": 2, "total_tokens": 2},
-            }
-        ).encode()
-
-    async def aclose(self):
-        return None
-
-
-class _FakeEmbeddingsAsyncClient:
-    requests: list[dict[str, object]] = []
-
-    def __init__(self, *args, **kwargs) -> None:
-        pass
-
-    def build_request(self, method, url, headers, content):
-        self.__class__.requests.append(
-            {
-                "method": method,
-                "url": str(url),
-                "headers": dict(headers or {}),
-                "content": content,
-            }
-        )
-        return object()
-
-    async def send(self, *args, **kwargs):
-        return _FakeEmbeddingsResponse()
-
-    async def aclose(self):
-        return None
-
-
 class OpenAICompatValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
         _FakeTTSAsyncClient.requests = []
-        _FakeEmbeddingsAsyncClient.requests = []
         self.patches = [
             patch.object(proxy, "AUTH_ENABLED", False),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
@@ -147,78 +97,16 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(body["error"]["param"], "model")
         self.assertEqual(body["error"]["code"], "missing_required_parameter")
 
-    def test_unknown_model_returns_model_not_found(self) -> None:
+    def test_embeddings_dimensions_invalid_value_returns_openai_400(self) -> None:
         resp = self.client.post(
-            "/v1/chat/completions",
-            json={
-                "model": "nope-doesnt-exist",
-                "messages": [{"role": "user", "content": "hi"}],
-            },
+            "/openai/v1/embeddings",
+            json={"model": "text-embedding-3-small", "input": "ping", "dimensions": 0},
         )
 
-        self.assertEqual(resp.status_code, 404)
-        body = resp.json()
-        self.assertEqual(body["error"]["type"], "invalid_request_error")
-        self.assertEqual(body["error"]["param"], "model")
-        self.assertEqual(body["error"]["code"], "model_not_found")
-
-    def test_embeddings_dimensions_truncates_and_normalizes_backend_vectors(self) -> None:
-        with patch.object(proxy, "EMBEDDINGS_ENABLED", True), patch.object(
-            proxy,
-            "check_embeddings_health",
-            return_value=True,
-        ), patch.object(proxy.httpx, "AsyncClient", _FakeEmbeddingsAsyncClient):
-            resp = self.client.post(
-                "/openai/v1/embeddings",
-                json={"model": "text-embedding-3-small", "input": "ping", "dimensions": 2},
-            )
-
-        self.assertEqual(resp.status_code, 200, resp.text)
-        body = resp.json()
-        self.assertEqual(body["object"], "list")
-        self.assertEqual(body["model"], "text-embedding-3-small")
-        self.assertEqual(body["data"][0]["object"], "embedding")
-        self.assertEqual(body["data"][0]["index"], 7)
-        self.assertEqual(body["usage"], {"prompt_tokens": 2, "total_tokens": 2})
-        embedding = body["data"][0]["embedding"]
-        self.assertEqual(len(embedding), 2)
-        self.assertTrue(math.isclose(embedding[0], 0.6))
-        self.assertTrue(math.isclose(embedding[1], 0.8))
-        self.assertTrue(math.isclose(math.sqrt(sum(value * value for value in embedding)), 1.0))
-
-    def test_embeddings_dimensions_invalid_value_returns_openai_400(self) -> None:
-        with patch.object(proxy, "EMBEDDINGS_ENABLED", True), patch.object(
-            proxy.httpx,
-            "AsyncClient",
-            _FakeEmbeddingsAsyncClient,
-        ):
-            resp = self.client.post(
-                "/openai/v1/embeddings",
-                json={"model": "text-embedding-3-small", "input": "ping", "dimensions": 0},
-            )
-
         self.assertEqual(resp.status_code, 400)
         body = resp.json()
         self.assertEqual(body["error"]["type"], "invalid_request_error")
         self.assertEqual(body["error"]["param"], "dimensions")
-        self.assertEqual(_FakeEmbeddingsAsyncClient.requests, [])
-
-    def test_embeddings_dimensions_larger_than_backend_vector_returns_openai_400(self) -> None:
-        with patch.object(proxy, "EMBEDDINGS_ENABLED", True), patch.object(
-            proxy,
-            "check_embeddings_health",
-            return_value=True,
-        ), patch.object(proxy.httpx, "AsyncClient", _FakeEmbeddingsAsyncClient):
-            resp = self.client.post(
-                "/v1/embeddings",
-                json={"model": "text-embedding-3-small", "input": "ping", "dimensions": 4},
-            )
-
-        self.assertEqual(resp.status_code, 400)
-        body = resp.json()
-        self.assertEqual(body["error"]["type"], "invalid_request_error")
-        self.assertEqual(body["error"]["param"], "dimensions")
-        self.assertEqual(len(_FakeEmbeddingsAsyncClient.requests), 1)
 
     def test_transcription_without_file_uses_openai_error_object(self) -> None:
         resp = self.client.post("/v1/audio/transcriptions", data={"model": "whisper-1"})

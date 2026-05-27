@@ -2594,6 +2594,17 @@ async def _prepare_litellm_local_llm_request(
             else None
         )
         active = await get_active_backend()
+        active_can_serve_vision = (
+            active == "tabby"
+            and profile_allows_backend(auth_context, "tabby")
+            and backend_supports("tabby", "vision")
+        ) or (
+            active == "kobold"
+            and profile_allows_backend(auth_context, "kobold")
+            and kobold_has_mmproj() is True
+        )
+        if active_can_serve_vision:
+            return None, body
         target_backend = choose_configured_llm_backend(
             auth_context,
             capability="vision",
@@ -15383,13 +15394,10 @@ async def anthropic_models(request: Request):
 @app.get("/v1/models")
 async def list_models(request: Request):
     """OpenAI-compatible model list. Returns:
-      1. One entry per role in proxy_config.yml's roles: block (id = role name)
-      2. One entry per alias in the optional models: catalog (id = alias)
-      3. One entry per directly invocable image workflow manifest
-      4. The active backend's own /v1/models response (Tabby's catalog, kobold's
-         currently-loaded GGUF metadata)
-      5. The currently-loaded kobold GGUF (filename form only — full-path
-         duplicate dropped; clients should select via role/alias names)
+      1. LiteLLM's OpenAI-shaped LLM model catalog when the substrate is enabled
+      2. Gateway-native media workflow model IDs
+      3. Legacy role/alias/active-backend model entries only when LiteLLM is not
+         configured yet
     """
     auth_context = authenticate_request(request, "/v1/models")
     if isinstance(auth_context, Response):
@@ -17293,17 +17301,6 @@ async def _forward_litellm_proxy_request(
     validate_chat_extensions: bool = True,
     requested_embedding_dimensions: int | None = None,
 ) -> Response:
-    runtime = runtime_config or _litellm_runtime_config()
-    if not runtime.enabled:
-        return _litellm_unconfigured_response()
-
-    service_response = _service_availability_response(
-        runtime.service_id or "litellm",
-        service_label="LiteLLM",
-    )
-    if service_response is not None:
-        return service_response
-
     model_name = body_json.get("model")
     if not isinstance(model_name, str) or not model_name:
         return openai_error_response(
@@ -17320,6 +17317,17 @@ async def _forward_litellm_proxy_request(
         )
         if current_loaded_decision is not None and current_loaded_decision.denied:
             return _policy_denied_response(current_loaded_decision)
+
+    runtime = runtime_config or _litellm_runtime_config()
+    if not runtime.enabled:
+        return _litellm_unconfigured_response()
+
+    service_response = _service_availability_response(
+        runtime.service_id or "litellm",
+        service_label="LiteLLM",
+    )
+    if service_response is not None:
+        return service_response
 
     receipt = _start_litellm_route_receipt(
         request_path=request_path,
@@ -17471,21 +17479,21 @@ async def _forward_litellm_proxy_request(
 @app.post("/openai/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 @app.post("/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def chat_completions(request: Request):
-    """OpenAI-compatible chat completions proxied to the active LLM backend."""
+    """OpenAI-compatible chat completions executed through LiteLLM."""
     return await proxy_request(request, "v1/chat/completions", mapped_route=True)
 
 
 @app.post("/openai/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 @app.post("/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def completions(request: Request):
-    """OpenAI-compatible text completions proxied to the active LLM backend."""
+    """OpenAI-compatible text completions executed through LiteLLM."""
     return await proxy_request(request, "v1/completions", mapped_route=True)
 
 
 @app.post("/openai/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 @app.post("/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def embeddings(request: Request):
-    """OpenAI-compatible embeddings proxied to the configured embedding backend."""
+    """OpenAI-compatible embeddings executed through LiteLLM."""
     return await proxy_request(request, "v1/embeddings", mapped_route=True)
 
 
@@ -18046,19 +18054,6 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
     if is_activity:
         state.update_activity()
 
-    # Determine target backend based on request shape, configured capabilities,
-    # and the authenticated profile. Chat/completions start with no backend so
-    # generic chat never has a hidden Tabby dependency. Embeddings are a
-    # dedicated provider, not a Tabby/Kobold fallback. Backend-native catch-all
-    # keeps the historic Tabby default because those surfaces are not
-    # interchangeable with Kobold.
-    llm_chat_path = request_path in ("/v1/chat/completions", "/v1/completions")
-    if llm_chat_path:
-        target_host: Optional[str] = None
-    elif request_path == "/v1/embeddings":
-        target_host = EMBEDDINGS_HOST if EMBEDDINGS_ENABLED else None
-    else:
-        target_host = TABBY_HOST
     body_peek = await request.body()
     parsed_openai_body: dict[str, Any] | None = None
     if request_path in _OPENAI_PROXY_POLICY:
@@ -18080,19 +18075,26 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
     if policy_decision is not None and policy_decision.denied:
         return _policy_denied_response(policy_decision)
 
-    litellm_runtime = _litellm_runtime_config()
-    if litellm_runtime.enabled and request_path in LITELLM_BODY_EXECUTION_PATHS:
+    if request_path in LITELLM_BODY_EXECUTION_PATHS:
         if parsed_openai_body is None:
             parsed_openai_body, parse_error = parse_openai_json_body(body_peek)
             if parse_error is not None:
                 return parse_error
-        activation_error, litellm_body = await _prepare_litellm_local_llm_request(
-            auth_context,
-            request_path=request_path,
-            body_json=parsed_openai_body,
-        )
-        if activation_error is not None:
-            return activation_error
+        litellm_runtime = _litellm_runtime_config()
+        litellm_body: Mapping[str, Any] = parsed_openai_body
+        if litellm_runtime.enabled:
+            litellm_service_response = _service_availability_response(
+                litellm_runtime.service_id or "litellm",
+                service_label="LiteLLM",
+            )
+            if litellm_service_response is None:
+                activation_error, litellm_body = await _prepare_litellm_local_llm_request(
+                    auth_context,
+                    request_path=request_path,
+                    body_json=parsed_openai_body,
+                )
+                if activation_error is not None:
+                    return activation_error
         return await _forward_litellm_proxy_request(
             request,
             request_path=request_path,
@@ -18103,282 +18105,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             requested_embedding_dimensions=requested_embedding_dimensions,
         )
 
-    model_resolution: Optional[ModelResolution] = None
-    # Fix 3: vision pre-flight + routing flag. Values: "not-needed", "true",
-    # "false". Stamped on the response as X-Vision-Routed.
-    vision_routed_state: str = "not-needed"
-
-    if request_path in ["/v1/chat/completions", "/v1/completions"]:
-        try:
-            body_json = parsed_openai_body if parsed_openai_body is not None else json.loads(body_peek)
-            if request_path == "/v1/chat/completions":
-                try:
-                    extension_result = validate_chat_completions_extensions(body_json)
-                except ExtensionError as e:
-                    return _extension_validation_error_response({"extensions": str(e)})
-                if not extension_result.ok:
-                    return _extension_validation_error_response(extension_result.rejected)
-                body_json = extension_result.request
-                body_peek = json.dumps(body_json).encode()
-            model_name = body_json.get("model", "")
-            operation = "chat" if request_path == "/v1/chat/completions" else "completions"
-            if not isinstance(model_name, str) or not model_name:
-                return openai_error_response(
-                    "Missing required parameter: 'model'.",
-                    status_code=400,
-                    param="model",
-                    code="missing_required_parameter",
-                )
-            if isinstance(model_name, str) and model_name:
-                current_loaded_decision = await _current_loaded_model_policy_decision(
-                    auth_context,
-                    requested_model=model_name,
-                )
-                if current_loaded_decision is not None and current_loaded_decision.denied:
-                    return _policy_denied_response(current_loaded_decision)
-            # Fix 3: scan for image content blocks BEFORE routing. We need this
-            # decision early because soft-path routing (OpenAI alias on a hot
-            # text-only backend) would otherwise drop the images silently.
-            vision_needed = has_vision_content(body_json.get("messages")) if request_path == "/v1/chat/completions" else False
-            if model_name:
-                # Resolution priority:
-                #   1. Literal absolute path to a .gguf file -> kobold-pinned ad-hoc model
-                #   2. Role name ("default", "vision", "rp", ...)
-                #   3. OpenAI-style alias / filename match
-                role_res = None
-                if is_literal_gguf_path(model_name):
-                    role_res = ModelResolution(
-                        requested_model=model_name,
-                        effective_model=model_name,
-                        operation=operation,
-                        category="literal_gguf",
-                        is_openai_alias=True,
-                        role_backend="kobold",
-                        role_model_path=model_name,
-                    )
-                else:
-                    role_res = resolve_role_for_operation(operation, model_name)
-
-                if role_res:
-                    model_resolution = role_res
-                else:
-                    if not is_openai_model_alias(model_name) and not detect_model_backend(model_name):
-                        return unknown_model_error(model_name)
-                    try:
-                        model_resolution = resolve_model_for_operation(operation, model_name)
-                    except ModelCompatibilityError as e:
-                        return model_compatibility_error(str(e))
-
-                if model_resolution.is_openai_alias:
-                    preferred = model_resolution.role_backend
-                    pinned_model = model_resolution.role_model_path
-                    pinned_mmproj = model_resolution.role_mmproj_path
-
-                    if preferred and pinned_model:
-                        if not profile_allows_backend(auth_context, preferred):
-                            return _policy_denied_response(PolicyDecision(
-                                decision=DENIED,
-                                reasons=(f"backend {preferred!r} not permitted by profile",),
-                            ))
-                        # Hard contract: backend MUST be `preferred` and the loaded
-                        # model+mmproj MUST match `pinned_model`/`pinned_mmproj`.
-                        # Cold-start + swap as needed. Any failure -> 503 (no silent fallback).
-                        ok = await ensure_target(preferred, pinned_model, pinned_mmproj)
-                        if not ok:
-                            # Diagnose: was this a Conflicts=-blocked switch? If
-                            # the OTHER LLM backend is currently hot, switching
-                            # would have stopped it. Surface that explicitly.
-                            active_now = await get_active_backend()
-                            other = "tabby" if preferred == "kobold" else "kobold"
-                            if active_now == other:
-                                msg = (
-                                    f"Cannot satisfy request for '{model_resolution.requested_model}': "
-                                    f"required backend '{preferred}' is not running, and starting it "
-                                    f"would stop the active '{other}' backend (systemd Conflicts=). "
-                                    f"Either request a model served by '{other}', or run "
-                                    f"'llm-switch {preferred}' to swap backends explicitly."
-                                )
-                            else:
-                                msg = (
-                                    f"Failed to satisfy request for model "
-                                    f"'{model_resolution.requested_model}': could not start "
-                                    f"backend '{preferred}' or load model '{pinned_model}'."
-                                )
-                            return Response(
-                                content=json.dumps({
-                                    "error": {
-                                        "message": msg,
-                                        "type": "service_unavailable",
-                                    }
-                                }),
-                                status_code=503,
-                                media_type="application/json",
-                            )
-                        target_host = TABBY_HOST if preferred == "tabby" else KOBOLD_HOST
-                    else:
-                        # Soft path: role with no pinned model or a plain OpenAI
-                        # alias. Pick a configured, profile-allowed backend with
-                        # the requested capability, preferring the role backend
-                        # and currently active backend before static defaults.
-                        active = await get_active_backend()
-                        chosen = choose_configured_llm_backend(
-                            auth_context,
-                            capability=operation,
-                            preferred=preferred,
-                            active=active,
-                        )
-                        target_host = host_for_backend(chosen)
-                else:
-                    backend_host = await ensure_backend_for_model(model_name)
-                    if backend_host:
-                        target_host = backend_host
-                    else:
-                        return Response(
-                            content=json.dumps({"detail": f"No backend available for model '{model_name}'"}),
-                            status_code=503,
-                            media_type="application/json"
-                        )
-            # Fix 3: vision routing decision. If the request carries images,
-            # ensure the chosen backend can actually serve them. Order:
-            #   - chosen backend advertises vision and is ready -> vision="true"
-            #   - else, attempt a configured/profile-permitted vision backend
-            #   - else, 400 — better than a silent drop.
-            if vision_needed:
-                target_backend = backend_for_host(target_host) if target_host else None
-                target_capable = (
-                    (target_backend == "tabby" and backend_supports("tabby", "vision"))
-                    or (target_backend == "kobold" and kobold_has_mmproj() is True)
-                )
-                if target_capable:
-                    vision_routed_state = "true"
-                else:
-                    vision_role = ROLES.get("vision") if isinstance(ROLES, dict) else None
-                    vision_backend = (vision_role or {}).get("backend") if isinstance(vision_role, dict) else None
-                    vision_model = (vision_role or {}).get("model") if isinstance(vision_role, dict) else None
-                    vision_mmproj = (vision_role or {}).get("mmproj") if isinstance(vision_role, dict) else None
-                    active = await get_active_backend()
-                    chosen_vision_backend = None
-                    if (
-                        vision_backend in LLM_BACKEND_HOSTS
-                        and profile_allows_backend(auth_context, vision_backend)
-                    ):
-                        chosen_vision_backend = vision_backend
-                    if chosen_vision_backend is None:
-                        chosen_vision_backend = choose_configured_llm_backend(
-                            auth_context,
-                            capability="vision",
-                            active=active,
-                        )
-                    if chosen_vision_backend == "tabby":
-                        ok = await ensure_target("tabby", vision_model)
-                        if ok:
-                            target_host = TABBY_HOST
-                            vision_routed_state = "true"
-                        else:
-                            return Response(
-                                content=json.dumps({
-                                    "error": {
-                                        "message": (
-                                            "Request includes images but the selected vision-capable "
-                                            "backend could not be started."
-                                        ),
-                                        "type": "service_unavailable",
-                                        "code": "vision_backend_unavailable",
-                                    }
-                                }),
-                                status_code=503,
-                                media_type="application/json",
-                                headers={"Retry-After": "10", "X-Vision-Routed": "false"},
-                            )
-                    elif chosen_vision_backend == "kobold" and vision_model:
-                        ok = await ensure_target("kobold", vision_model, vision_mmproj)
-                        if ok and (kobold_has_mmproj() is True):
-                            target_host = KOBOLD_HOST
-                            vision_routed_state = "true"
-                        else:
-                            return Response(
-                                content=json.dumps({
-                                    "error": {
-                                        "message": (
-                                            "Request includes images but the kobold backend is not "
-                                            "vision-capable (no --mmproj loaded)."
-                                        ),
-                                        "type": "invalid_request_error",
-                                        "code": "vision_unsupported",
-                                    }
-                                }),
-                                status_code=400,
-                                media_type="application/json",
-                                headers={"X-Vision-Routed": "false"},
-                            )
-                    else:
-                        return Response(
-                            content=json.dumps({
-                                "error": {
-                                    "message": (
-                                        "Request includes images but no vision-capable backend is "
-                                        "configured or permitted by this profile. Set a vision "
-                                        "capability on an LLM backend and configure roles.vision, "
-                                        "or load an mmproj for the kobold backend."
-                                    ),
-                                    "type": "invalid_request_error",
-                                    "code": "vision_unsupported",
-                                }
-                            }),
-                            status_code=400,
-                            media_type="application/json",
-                            headers={"X-Vision-Routed": "false"},
-                        )
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass
-    elif request_path == "/v1/embeddings":
-        try:
-            body_json = parsed_openai_body if parsed_openai_body is not None else json.loads(body_peek)
-            model_name = body_json.get("model", "")
-            if not isinstance(model_name, str) or not model_name:
-                return openai_error_response(
-                    "Missing required parameter: 'model'.",
-                    status_code=400,
-                    param="model",
-                    code="missing_required_parameter",
-                )
-            if model_name:
-                if isinstance(model_name, str):
-                    current_loaded_decision = await _current_loaded_model_policy_decision(
-                        auth_context,
-                        requested_model=model_name,
-                    )
-                    if (
-                        current_loaded_decision is not None
-                        and current_loaded_decision.denied
-                    ):
-                        return _policy_denied_response(current_loaded_decision)
-                if not is_openai_model_alias(model_name) and not detect_model_backend(model_name):
-                    return unknown_model_error(model_name)
-                try:
-                    model_resolution = resolve_model_for_operation("embeddings", model_name)
-                except ModelCompatibilityError as e:
-                    return model_compatibility_error(str(e))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass
-
-    # For non-completions requests, check if any backend is healthy.
-    # IMPORTANT: Do NOT silently fall through from tabby to kobold.
-    # Backend-native paths are not interchangeable between services. Public
-    # provider-native access should live under explicit `/gateway/v1/providers/*`
-    # routes, not this catch-all.
-    if target_host is None:
-        return Response(
-            content=json.dumps({
-                "error": {
-                    "message": f"No configured backend is available for {request_path}.",
-                    "type": "service_unavailable",
-                    "code": "backend_unavailable",
-                }
-            }),
-            status_code=503,
-            media_type="application/json",
-        )
+    target_host = TABBY_HOST
 
     target_service_for_admission = backend_for_host(target_host)
     if target_service_for_admission:
@@ -18391,72 +18118,19 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 
     if target_host == TABBY_HOST:
         if not await check_tabby_health():
-            allow_fallback = False
-            if body_peek:
-                try:
-                    bj = json.loads(body_peek)
-                    allow_fallback = bool(bj.get("allow_backend_fallback", False)) if isinstance(bj, dict) else False
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    allow_fallback = False
-
-            active = await get_active_backend()
-            # The chat-completions path above already chose tabby explicitly
-            # (e.g. vision role, ensure_target). Honor that contract: if tabby
-            # is dead and the route requires it, surface 503 instead of a flip.
-            is_completion_path = request_path in ("/v1/chat/completions", "/v1/completions", "/v1/embeddings")
-
-            if is_completion_path:
-                # Completions-shaped routes: opt-in fallback only.
-                if allow_fallback and active == "kobold":
-                    target_host = KOBOLD_HOST
-                elif not await restart_tabby_if_needed():
-                    return Response(
-                        content=json.dumps({
-                            "error": {
-                                "message": (
-                                    f"Configured backend 'tabby' is unavailable for {request_path}. "
-                                    "Retry after Retry-After. To allow automatic fallback to kobold "
-                                    "when applicable, pass `allow_backend_fallback: true` in the body."
-                                ),
-                                "type": "service_unavailable",
-                                "code": "backend_unavailable",
-                            }
-                        }),
-                        status_code=503,
-                        media_type="application/json",
-                        headers={"Retry-After": "10"},
-                    )
-            else:
-                # Non-completion catch-all: never flip silently; these paths
-                # are backend-specific. 503 with retry.
-                if not await restart_tabby_if_needed():
-                    return Response(
-                        content=json.dumps({
-                            "error": {
-                                "message": (
-                                    "Configured backend 'tabby' is unavailable for this catch-all route. "
-                                    "Retry after Retry-After."
-                                ),
-                                "type": "service_unavailable",
-                                "code": "backend_unavailable",
-                            }
-                        }),
-                        status_code=503,
-                        media_type="application/json",
-                        headers={"Retry-After": "10"},
-                    )
-
-    if target_host == EMBEDDINGS_HOST:
-        if not await check_embeddings_health():
-            return Response(
-                content=json.dumps({
-                    "error": {
-                        "message": (
-                            "Configured backend 'embeddings' is unavailable for "
-                            f"{request_path}. Retry after Retry-After."
-                        ),
-                        "type": "service_unavailable",
-                        "code": "backend_unavailable",
+            # Backend-native catch-all paths are service-specific. They never
+            # fall through to Kobold because native Tabby/Kobold surfaces are
+            # not interchangeable.
+            if not await restart_tabby_if_needed():
+                return Response(
+                    content=json.dumps({
+                        "error": {
+                            "message": (
+                                "Configured backend 'tabby' is unavailable for this catch-all route. "
+                                "Retry after Retry-After."
+                            ),
+                            "type": "service_unavailable",
+                            "code": "backend_unavailable",
                     }
                 }),
                 status_code=503,
@@ -18480,7 +18154,6 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         url += f"?{request.url.query}"
 
     body = body_peek  # Already read above for model detection
-    effective_request_model = None
     target_service = backend_for_host(target_host) or "kobold"
     headers = prepare_downstream_headers(
         request.headers,
@@ -18488,57 +18161,6 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         target_service,
         request_path,
     )
-
-    # Rewrite OpenAI model aliases to the active local model and inject Tabby vision hints.
-    if request_path in ["/v1/chat/completions", "/v1/completions"] and body:
-        try:
-            body_json = json.loads(body)
-            model_name = body_json.get("model", "")
-            if model_resolution and model_resolution.is_openai_alias:
-                effective_model = await effective_llm_model_for_host(target_host)
-                if not effective_model:
-                    effective_model = model_resolution.effective_model
-                if effective_model:
-                    effective_request_model = effective_model
-                    body_json["model"] = effective_model
-                    if model_resolution.requested_model:
-                        print(f"[proxy] Model alias {model_resolution.requested_model} -> {effective_model} for {request_path}", flush=True)
-                    else:
-                        print(f"[proxy] Missing model -> {effective_model} for {request_path}", flush=True)
-            if target_host == TABBY_HOST and body_json.get("model") and "vision" not in body_json:
-                # Inject Tabby's `vision` hint. If we routed *because* the
-                # request carries images, vision must be true regardless of
-                # the model's name. Otherwise fall back to name pattern.
-                effective_name = body_json.get("model", model_name)
-                body_json["vision"] = vision_routed_state == "true" or is_vision_model(effective_name)
-                print(f"[proxy] Auto-detected vision={body_json['vision']} for model {effective_name}", flush=True)
-            # Translate OpenAI's `reasoning_effort` parameter into local-backend
-            # signals. /v1/chat/completions only; /v1/completions doesn't accept it
-            # per the OpenAI spec, but we treat both the same way (passive strip)
-            # since llama-server's /v1/completions wouldn't recognize the field
-            # either. Invalid values produce a 400 in OpenAI's error shape.
-            err = apply_chat_completions_reasoning_effort(body_json)
-            if err:
-                return Response(
-                    content=json.dumps({"error": {
-                        "message": err,
-                        "type": "invalid_request_error",
-                        "param": "reasoning_effort",
-                        "code": "invalid_value",
-                    }}),
-                    status_code=400,
-                    media_type="application/json",
-                )
-            body = json.dumps(body_json).encode()
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass  # Not JSON or can't parse, forward as-is
-    elif request_path == "/v1/embeddings" and model_resolution and model_resolution.is_openai_alias:
-        try:
-            body_json = json.loads(body)
-            body_json["model"] = model_resolution.effective_model
-            body = json.dumps(body_json).encode()
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass
 
     try:
         # connect tight (local backend should accept instantly), read generous
@@ -18557,16 +18179,10 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         content_type = resp.headers.get("content-type", "") or "application/json"
         excluded = ('content-length', 'transfer-encoding', 'content-type')
         response_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
-        # Fix 3: stamp the routing decision on every chat-completion response.
-        if request_path == "/v1/chat/completions":
-            response_headers["X-Vision-Routed"] = vision_routed_state
-
         if "text/event-stream" in content_type:
             async def stream_response():
                 try:
                     async for chunk in resp.aiter_bytes():
-                        if request_path == "/v1/chat/completions":
-                            chunk = _normalize_chat_completion_sse_chunk(chunk)
                         yield chunk
                 except:
                     pass
@@ -18584,31 +18200,6 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         content = await resp.aread()
         await resp.aclose()
         await client.aclose()
-        if 200 <= resp.status_code < 300 and "application/json" in content_type:
-            try:
-                response_json = json.loads(content)
-                if isinstance(response_json, dict):
-                    if request_path == "/v1/chat/completions":
-                        _normalize_chat_completion_visible_content(response_json)
-                    if request_path == "/v1/embeddings" and requested_embedding_dimensions is not None:
-                        dimensions_error = _apply_embedding_dimensions(
-                            response_json,
-                            requested_embedding_dimensions,
-                        )
-                        if dimensions_error is not None:
-                            return dimensions_error
-                    # Surface the actually-loaded model in the response (matching
-                    # OpenAI's own behavior — "gpt-4o-mini" requests get back the
-                    # specific dated model that served them). Both role aliases
-                    # ("default", "vision") and OpenAI aliases ("gpt-4o-mini") use
-                    # this rule. Useful for observability and debugging.
-                    if model_resolution and model_resolution.is_openai_alias:
-                        response_model = effective_request_model or model_resolution.requested_model or model_resolution.effective_model
-                        if response_model:
-                            response_json["model"] = response_model
-                    content = json.dumps(response_json).encode()
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
         return Response(
             content=content,
             status_code=resp.status_code,

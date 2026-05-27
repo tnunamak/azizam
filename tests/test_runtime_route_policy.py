@@ -752,36 +752,28 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.status_code, 403, response.text)
         self.assertEqual(response.json()["error"]["code"], "policy_denied")
 
-    def test_chat_alias_routes_to_configured_kobold_without_tabby(self) -> None:
-        chat_profile = AppProfile(
-            id="chat-kobold",
-            protocols=frozenset({"openai.chat"}),
-            backends=frozenset({"kobold"}),
-        )
-
-        with authenticated_profile(chat_profile), patch.object(
-            proxy, "get_active_backend", AsyncMock(return_value="kobold")
-        ), patch.object(
-            proxy, "effective_llm_model_for_host", AsyncMock(return_value="kobold-local")
-        ), patch.object(proxy.httpx, "AsyncClient", _CaptureForwardClient):
-            response = self.client.post(
-                "/v1/chat/completions",
-                headers=AUTH_HEADERS,
-                json={
-                    "model": "gpt-4o-mini",
-                    "messages": [{"role": "user", "content": "hello"}],
-                },
-            )
-
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(_CaptureForwardClient.urls, [f"{proxy.KOBOLD_HOST}/v1/chat/completions"])
-
     def test_vision_chat_can_use_loaded_kobold_mmproj_without_static_vision_capability(self) -> None:
         chat_profile = AppProfile(
             id="vision-kobold",
             protocols=frozenset({"openai.chat"}),
             backends=frozenset({"kobold"}),
         )
+        async def fake_send(_execution_request):
+            return _CaptureForwardClient(), _ForwardResponse()
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
         roles = {
             **(proxy.ROLES if isinstance(proxy.ROLES, dict) else {}),
             "vision": {
@@ -805,8 +797,10 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "ensure_target", AsyncMock(return_value=True)
         ) as ensure_target, patch.object(
-            proxy, "effective_llm_model_for_host", AsyncMock(return_value="kobold-vision")
-        ), patch.object(proxy.httpx, "AsyncClient", _CaptureForwardClient):
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ):
             response = self.client.post(
                 "/v1/chat/completions",
                 headers=AUTH_HEADERS,
@@ -830,7 +824,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(_CaptureForwardClient.urls, [f"{proxy.KOBOLD_HOST}/v1/chat/completions"])
+        self.assertEqual(response.json()["choices"][0]["message"]["content"], "ok")
         ensure_target.assert_not_called()
 
     def test_backend_native_v1_model_passthrough_is_not_public(self) -> None:

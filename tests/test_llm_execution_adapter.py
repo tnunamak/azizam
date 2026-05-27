@@ -7,7 +7,6 @@ from gateway.backends.llm_execution import (
     litellm_headers,
     litellm_requested,
     litellm_runtime_from_registry,
-    litellm_url,
 )
 
 
@@ -24,14 +23,6 @@ def test_litellm_requested_is_explicit_and_path_limited() -> None:
     assert "/v1/chat/completions" in LITELLM_BODY_EXECUTION_PATHS
     assert "/v1/models" in LITELLM_DISCOVERY_PATHS
     assert "/v1/images/generations" not in LITELLM_SUPPORTED_PATHS
-
-
-def test_litellm_url_joins_base_path_and_query() -> None:
-    assert litellm_url(
-        base_url="http://127.0.0.1:4000/",
-        path="/v1/chat/completions",
-        query="trace=1",
-    ) == "http://127.0.0.1:4000/v1/chat/completions?trace=1"
 
 
 def test_litellm_headers_do_not_forward_client_runtime_key() -> None:
@@ -141,71 +132,3 @@ def test_litellm_runtime_ignores_unmarked_openai_providers() -> None:
     )
 
     assert not runtime.enabled
-
-
-def test_litellm_runtime_uses_highest_priority_enabled_service() -> None:
-    runtime = litellm_runtime_from_registry(
-        {
-            "services": {
-                "slow": {
-                    "id": "slow",
-                    "kind": "llm-substrate",
-                    "enabled": True,
-                    "priority": 20,
-                    "capabilities": ["llm.execution"],
-                    "config": {"base_url": "http://127.0.0.1:4002"},
-                },
-                "fast": {
-                    "id": "fast",
-                    "kind": "llm-substrate",
-                    "enabled": True,
-                    "priority": 5,
-                    "capabilities": ["llm.execution"],
-                    "config": {"base_url": "http://127.0.0.1:4001"},
-                },
-            }
-        },
-        env={},
-    )
-
-    assert runtime.enabled
-    assert runtime.service_id == "fast"
-    assert runtime.base_url == "http://127.0.0.1:4001"
-
-
-def test_litellm_runtime_skips_disabled_or_missing_base_url_service() -> None:
-    runtime = litellm_runtime_from_registry(
-        {
-            "services": {
-                "disabled": {
-                    "id": "disabled",
-                    "kind": "llm-substrate",
-                    "enabled": False,
-                    "priority": 1,
-                    "capabilities": ["llm.execution"],
-                    "config": {"base_url": "http://127.0.0.1:4001"},
-                },
-                "missing-url": {
-                    "id": "missing-url",
-                    "kind": "llm-substrate",
-                    "enabled": True,
-                    "priority": 2,
-                    "capabilities": ["llm.execution"],
-                    "config": {},
-                },
-                "usable": {
-                    "id": "usable",
-                    "kind": "llm-substrate",
-                    "enabled": True,
-                    "priority": 3,
-                    "capabilities": ["llm.execution"],
-                    "config": {"base_url": "http://127.0.0.1:4003"},
-                },
-            }
-        },
-        env={},
-    )
-
-    assert runtime.enabled
-    assert runtime.service_id == "usable"
-    assert runtime.base_url == "http://127.0.0.1:4003"

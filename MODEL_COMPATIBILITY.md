@@ -1,20 +1,25 @@
 # Model Compatibility Guide
 
-The proxy accepts OpenAI-compatible model names from clients and translates them
-to local backend models for the requested operation. This lets agents keep using
-ordinary OpenAI presets such as `gpt-4o`, `tts-1`, `whisper-1`, or `dall-e-3`
-without knowing the private Tabby, Kobold, TTS, STT, or ComfyUI model names.
+The proxy accepts OpenAI-compatible model names from clients and resolves them
+at the protocol boundary. Commodity LLM execution (`chat`, `completions`, and
+`embeddings`) is delegated to LiteLLM model groups. Gateway-native media
+operations still map OpenAI presets such as `tts-1`, `whisper-1`, or `dall-e-3`
+to local TTS, STT, or ComfyUI workflows.
 
 ## Runtime Contract
 
-The endpoint defines the operation. The `model` field is treated as a public
-compatibility hint.
+The endpoint defines the operation. For LLM-shaped OpenAI routes, `model` is a
+required LiteLLM model group or gateway-declared local role. The gateway may
+activate a configured local target before calling LiteLLM, but it does not
+forward these routes directly to Tabby, Kobold, or an embeddings server.
 
 Examples:
 
 ```text
-POST /v1/chat/completions      model omitted      -> active/default local LLM
-POST /v1/chat/completions      model=gpt-4o       -> active/default local LLM
+POST /v1/chat/completions      model omitted      -> 400 missing_required_parameter
+POST /v1/chat/completions      model=default      -> LiteLLM model group, with optional local target activation
+POST /v1/completions           model=default      -> LiteLLM model group, with optional local target activation
+POST /v1/embeddings            model=embed-default -> LiteLLM embedding model group
 POST /v1/audio/speech          model=tts-1        -> local TTS model
 POST /v1/audio/transcriptions  model=whisper-1    -> local STT model
 POST /v1/images/generations    model=dall-e-3     -> local image model
@@ -34,9 +39,11 @@ POST /v1/chat/completions model=dall-e-3 -> 400 invalid_request_error
 POST /v1/audio/speech     model=gpt-4o   -> 400 invalid_request_error
 ```
 
-Local model names still pass through. If a client asks for a model that is not
-recognized as an OpenAI model alias, the proxy treats it as a local/backend model
-name and keeps the existing routing behavior.
+Local LLM model names do not bypass LiteLLM. Operators should expose them as
+LiteLLM model groups or gateway local roles. Unknown LLM model names are left to
+LiteLLM so non-local LiteLLM providers can still work; unknown media model names
+continue to be resolved by the gateway workflow catalog for the relevant media
+endpoint.
 
 ## Defaults
 
@@ -53,10 +60,11 @@ model_compatibility:
     image_edits: flux2-klein-4b-edit
 ```
 
-For chat and completions, OpenAI aliases use the currently active LLM backend
-when one is healthy. The proxy then rewrites the request to that backend's loaded
-model ID. If no LLM backend is active, the normal default Tabby startup/load path
-is used.
+For chat, completions, and embeddings, LiteLLM is the execution substrate and
+its catalog is the source of truth for provider/model-group execution. Gateway
+roles may still declare local targets for VRAM-aware activation before LiteLLM
+is called, but startup/load is never a hidden fallback after LiteLLM is
+unconfigured or disabled.
 
 ## Dynamic OpenAI Model Discovery
 
@@ -127,10 +135,10 @@ wrong endpoint are rejected.
 
 ## Embeddings
 
-OpenAI embedding model aliases are recognized and mapped to the configured
-local embedding default. The current default is `nomic-embed-text-v1.5`,
-served by a dedicated CPU-only llama.cpp embedding backend so it does not claim
-GPU VRAM from the LLM, TTS, or ComfyUI budgets.
+OpenAI embedding model aliases are served through LiteLLM model groups. The
+current local default group points at `nomic-embed-text-v1.5`, served by a
+dedicated CPU-only llama.cpp embedding backend so it does not claim GPU VRAM
+from the LLM, TTS, or ComfyUI budgets.
 
 Use `/v1/embeddings` or `/openai/v1/embeddings` for OpenAI-compatible clients.
 Ollama-compatible clients may use `/api/embed`, `/ollama/api/embed`,
@@ -138,12 +146,13 @@ Ollama-compatible clients may use `/api/embed`, `/ollama/api/embed`,
 
 ## Logs And Responses
 
-When the proxy rewrites a model alias, it logs the mapping:
+When the gateway activates a local target before LiteLLM execution, it logs the
+requested model and target information:
 
 ```text
-[proxy] Model alias gpt-4o -> Qwen3.6-27B for /v1/chat/completions
+[proxy] LiteLLM local target activation default -> kobold /models/default.gguf
 ```
 
-For non-streaming JSON chat responses, the proxy returns the client-requested
-OpenAI model name in the `model` field for client compatibility while the logs
-show the effective local model.
+For non-streaming JSON chat responses, LiteLLM owns the returned `model` field.
+The gateway adds route receipts and response headers for execution observability
+without re-implementing provider-specific response semantics.
