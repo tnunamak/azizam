@@ -13,6 +13,8 @@ from typing import Any, Mapping
 
 import httpx
 
+from gateway.service_registry import is_litellm_service_record
+
 LITELLM_BODY_EXECUTION_PATHS = frozenset(
     {
         "/v1/chat/completions",
@@ -98,33 +100,9 @@ def _litellm_service_candidates(
             continue
         service = dict(raw)
         service.setdefault("id", service_id)
-        if _is_litellm_service(service):
+        if is_litellm_service_record(service_id, service):
             candidates.append(service)
     return sorted(candidates, key=lambda item: int(item.get("priority") or 100))
-
-
-def _is_litellm_service(service: Mapping[str, Any]) -> bool:
-    service_id = str(service.get("id") or "").strip().lower()
-    kind = str(service.get("kind") or "").strip().lower()
-    capabilities = {
-        str(item).strip().lower()
-        for item in service.get("capabilities", ())
-        if str(item).strip()
-    }
-    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
-    markers = {
-        str(config.get("execution") or "").strip().lower(),
-        str(config.get("execution_mode") or "").strip().lower(),
-        str(config.get("execution_substrate") or "").strip().lower(),
-        str(config.get("provider") or "").strip().lower(),
-        str(config.get("protocol") or "").strip().lower(),
-    }
-    return (
-        service_id == "litellm"
-        or kind in {"litellm", "llm-execution", "llm-substrate"}
-        or "llm.execution" in capabilities
-        or "litellm" in markers
-    )
 
 
 def _api_key_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> str:

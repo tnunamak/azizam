@@ -27,7 +27,11 @@ from urllib.parse import urlparse
 import yaml
 
 from gateway.policy import AppProfile
-from gateway.service_registry import normalize_service_record, normalize_string_list
+from gateway.service_registry import (
+    is_litellm_service_record,
+    normalize_service_record,
+    normalize_string_list,
+)
 
 OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", "openai-compatible"})
 SECRET_PLACEHOLDER = "<external-secret>"
@@ -157,36 +161,11 @@ def _litellm_service_record(registry: Mapping[str, Any]) -> Mapping[str, Any]:
         service
         for raw_id, service in services.items()
         if isinstance(service, Mapping)
-        and _is_litellm_service(raw_id, service)
+        and is_litellm_service_record(raw_id, service)
     ]
     if not candidates:
         return {}
     return sorted(candidates, key=lambda item: int(item.get("priority") or 100))[0]
-
-
-def _is_litellm_service(raw_id: Any, service: Mapping[str, Any]) -> bool:
-    service_id = str(service.get("id") or raw_id or "").strip().lower()
-    kind = str(service.get("kind") or "").strip().lower()
-    capabilities = {
-        str(item).strip().lower()
-        for item in service.get("capabilities", ())
-        if str(item).strip()
-    }
-    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
-    markers = {
-        str(config.get("execution") or "").strip().lower(),
-        str(config.get("execution_mode") or "").strip().lower(),
-        str(config.get("execution_substrate") or "").strip().lower(),
-        str(config.get("provider") or "").strip().lower(),
-        str(config.get("protocol") or "").strip().lower(),
-    }
-    return (
-        service_id == "litellm"
-        or kind in {"litellm", "llm-execution", "llm-substrate"}
-        or "llm.execution" in capabilities
-        or "litellm" in markers
-    )
-
 
 def _normalize_services(
     services: Mapping[str, Any] | Iterable[Mapping[str, Any]],
