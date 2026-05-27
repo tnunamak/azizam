@@ -114,6 +114,26 @@ class _ForwardResponse:
         return None
 
 
+class _ForwardModelsResponse:
+    status_code = 200
+    headers = {"content-type": "application/json"}
+
+    def __init__(self, model_ids: list[str]):
+        self._model_ids = model_ids
+
+    async def aread(self):
+        return json.dumps({
+            "object": "list",
+            "data": [
+                {"id": model_id, "object": "model", "owned_by": "litellm"}
+                for model_id in self._model_ids
+            ],
+        }).encode()
+
+    async def aclose(self):
+        return None
+
+
 class _CaptureForwardClient:
     urls: list[str] = []
     bodies: list[bytes] = []
@@ -154,6 +174,20 @@ class _CaptureLoopbackClient:
 
 class _HeaderOnlyRequest:
     headers = AUTH_HEADERS
+
+
+def litellm_registry():
+    return {
+        "services": {
+            "litellm": {
+                "id": "litellm",
+                "kind": "llm-substrate",
+                "enabled": True,
+                "capabilities": ["llm.execution"],
+                "config": {"base_url": "http://127.0.0.1:4011"},
+            }
+        }
+    }
 
 
 class _NativePassthroughResponse:
@@ -589,11 +623,13 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             protocols=frozenset({"openai"}),
             models=frozenset({"default"}),
         )
+        async def fake_send(_execution_request):
+            return _CaptureForwardClient(), _ForwardModelsResponse(["default", "rp"])
 
         with authenticated_profile(model_locked), patch.object(
-            proxy, "get_active_backend", AsyncMock(return_value="kobold")
-        ), patch.object(proxy.httpx, "AsyncClient", _FakeAsyncClient), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: None
+            proxy.ADMIN_STORE, "get_service_registry", litellm_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
@@ -613,10 +649,16 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             protocols=frozenset({"openai"}),
             model_access=ModelAccessPolicy(mode="current_loaded"),
         )
+        async def fake_send(_execution_request):
+            return _CaptureForwardClient(), _ForwardModelsResponse(["default", "rp"])
 
         with authenticated_profile(current_loaded), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", litellm_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
-        ), patch.object(proxy.httpx, "AsyncClient", _FakeAsyncClient), patch.object(
+        ), patch.object(
             proxy, "currently_loaded_kobold_model", lambda: loaded_path
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)

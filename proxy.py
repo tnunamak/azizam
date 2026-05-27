@@ -15396,8 +15396,6 @@ async def list_models(request: Request):
     """OpenAI-compatible model list. Returns:
       1. LiteLLM's OpenAI-shaped LLM model catalog when the substrate is enabled
       2. Gateway-native media workflow model IDs
-      3. Legacy role/alias/active-backend model entries only when LiteLLM is not
-         configured yet
     """
     auth_context = authenticate_request(request, "/v1/models")
     if isinstance(auth_context, Response):
@@ -15438,30 +15436,6 @@ async def list_models(request: Request):
                 error_type="service_unavailable",
                 code="backend_unavailable",
             )
-    else:
-        # Forward to whichever backend is active so OpenAI-style aliases stay intact.
-        active = await get_active_backend()
-        target_host = TABBY_HOST if active == "tabby" else KOBOLD_HOST
-        target_service = "tabby" if active == "tabby" else "kobold"
-        headers = prepare_downstream_headers(
-            request.headers,
-            auth_context,
-            target_service,
-            "/v1/models",
-        )
-
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5)) as client:
-                resp = await client.get(f"{target_host}/v1/models", headers=headers)
-                if resp.status_code == 200:
-                    try:
-                        payload = resp.json()
-                        if isinstance(payload, dict):
-                            upstream_payload = payload
-                    except Exception:
-                        pass
-        except Exception as e:
-            print(f"[proxy] /v1/models upstream fetch failed: {e}", flush=True)
 
     data = upstream_payload.get("data")
     if not isinstance(data, list):
@@ -15481,31 +15455,12 @@ async def list_models(request: Request):
         )
     ]
 
-    # Prepend local role/catalog entries only for the legacy executor. LiteLLM
-    # owns commodity LLM model groups when enabled; media workflow entries stay
-    # gateway-native.
-    role_entries = [] if litellm_runtime.enabled else _build_role_catalog_entries()
     workflow_entries = _build_workflow_model_entries()
     existing_ids = {item.get("id") for item in data if isinstance(item, dict)}
-    for entry in role_entries + workflow_entries:
+    for entry in workflow_entries:
         if entry["id"] not in existing_ids:
             data.insert(0, entry)
             existing_ids.add(entry["id"])
-
-    # Surface the currently-loaded GGUF only for the legacy executor. LiteLLM
-    # mode should expose model groups from the LiteLLM model list instead.
-    loaded_gguf = None if litellm_runtime.enabled else currently_loaded_kobold_model()
-    if loaded_gguf:
-        loaded_name = os.path.basename(loaded_gguf)
-        if loaded_name and loaded_name not in existing_ids:
-            data.append({
-                "id": loaded_name,
-                "object": "model",
-                "owned_by": "kobold",
-                "created": _entry_created_ts(loaded_gguf),
-                "vivid_fish_loaded": True,
-                "vivid_fish_model_path": loaded_gguf,
-            })
 
     data, policy_metadata = await _filter_model_list_for_profile(data, auth_context)
     upstream_payload.update(policy_metadata)
