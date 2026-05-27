@@ -7,9 +7,10 @@ Question: why not LiteLLM?
 
 Short answer: use LiteLLM where it is already trying to be the commodity LLM
 gateway, but do not let it become the product boundary for the AI Gateway.
-LiteLLM can own generic provider execution, routing, model aliases, virtual
-keys, budgets, rate limits, logging hooks, guardrails, and cost tracking for
-standard LLM calls. The AI Gateway should retain the local
+LiteLLM can own generic OpenAI-shaped LLM execution, routing, model aliases,
+virtual keys, budgets, rate limits, logging hooks, guardrails, and cost tracking
+for the narrow standard LLM calls it fronts. The AI Gateway should retain the
+Anthropic and Responses protocol frontends plus the local
 media/resource/workflow/admin UX that makes this gateway useful for
 self-hosters.
 
@@ -61,11 +62,12 @@ coverage, and more compatibility work than the local-first product needs.
 
 LiteLLM should own the commodity LLM plane:
 
-- upstream hosted LLM provider adapters for OpenAI, Anthropic, Gemini/Vertex,
-  Azure OpenAI, OpenRouter-style providers, and similar text/embedding
-  providers;
-- standard OpenAI-compatible chat/completions/responses/embeddings execution
-  when no gateway-native workflow or local lifecycle decision is needed;
+- upstream hosted LLM provider adapters for OpenAI, Gemini/Vertex, Azure
+  OpenAI, OpenRouter-style providers, and similar text/embedding providers
+  exposed through OpenAI-shaped execution;
+- standard OpenAI-compatible `/v1/chat/completions`, `/v1/completions`, and
+  `/v1/embeddings` execution when no gateway-native workflow or local lifecycle
+  decision is needed;
 - provider request translation, exception normalization, streaming behavior,
   retries, fallbacks, cooldowns, and load balancing;
 - model aliases and deployment groups for standard LLM routes;
@@ -88,6 +90,8 @@ The gateway should retain the product plane:
 - App/Profile policy as the front-door authority boundary;
 - route receipts that describe the gateway policy decision, accepted/rejected
   inputs, resolved workflow/provider, and client/admin/internal visibility;
+- Anthropic Messages and OpenAI Responses translation/state, including stored
+  Responses retrieve/delete/cancel behavior;
 - `/gateway/v1/*` discovery, receipts, capabilities, workflows, media jobs,
   assets, and provider-native passthrough;
 - local ComfyUI image/video/audio workflow manifests, typed workflow extension
@@ -109,8 +113,10 @@ The gateway should retain the product plane:
 If LiteLLM becomes the LLM substrate, the AI Gateway should deliberately stop
 competing on these features for commodity LLM routes:
 
-- broad hosted-provider adapter coverage;
-- custom retry/fallback/router implementation for standard LLM calls;
+- broad hosted-provider adapter coverage for OpenAI-shaped text and embedding
+  calls;
+- custom retry/fallback/router implementation for those standard LLM execution
+  calls;
 - separate spend and token-cost calculation for those calls, except for
   aggregating LiteLLM facts into gateway Activity/Receipts;
 - first-party key-level LLM rate limits and budgets that duplicate LiteLLM's
@@ -151,6 +157,10 @@ Rules:
   LiteLLM metadata or internal virtual keys.
 - Gateway media and provider-native routes should not proxy through LiteLLM
   unless LiteLLM has a materially better implementation for that exact backend.
+- Gateway-owned protocol frontends, including Anthropic Messages and Responses,
+  should translate and manage state inside the gateway. Their final chat
+  execution hop may use LiteLLM only after the gateway has normalized the
+  request to `/v1/chat/completions`.
 
 ## Risks
 
@@ -225,13 +235,49 @@ external App keys and gateway Receipts. Compare SDK compatibility, streaming,
 usage/cost accounting, error shapes, and operator debugging against the current
 path.
 
+Implementation checkpoint (2026-05-27):
+
+- An enabled LiteLLM service in the gateway service registry now routes
+  OpenAI-compatible `/v1/chat/completions`, `/v1/completions`, and
+  `/v1/embeddings` through a narrow LiteLLM execution transport. Bootstrap env
+  variables remain only as a fallback for early migration.
+- The expected service record is `services.litellm` with
+  `kind: llm-substrate`, `capabilities: [llm.execution]`, `config.base_url`,
+  and optionally `config.api_key_env`.
+- The seam is intentionally not a pluggable product framework. Gateway auth,
+  Profile policy, malformed JSON handling, extension validation, current-loaded
+  target policy, local service availability, and response normalization remain
+  outside LiteLLM.
+- Responses and Anthropic Messages remain gateway-owned protocol frontends.
+  They translate to Chat Completions, and that final chat execution hop uses
+  LiteLLM when the LiteLLM substrate is enabled. A live check showed direct
+  LiteLLM Anthropic/Responses endpoints completed but did not populate
+  client-visible text correctly for the local OpenAI-compatible backend; keeping
+  the gateway translators is the simpler, working boundary.
+- `/v1/models` reads commodity LLM model groups from LiteLLM when the LiteLLM
+  service is enabled. Gateway-native media workflow model IDs are still merged
+  into the OpenAI-shaped model list.
+- Client `opk_...` keys are not forwarded to LiteLLM. The gateway sends an
+  internal LiteLLM bearer key when configured and attaches redaction-safe
+  gateway metadata for callbacks/receipts.
+- The runtime source of truth is the DB-owned service registry; generated
+  LiteLLM config remains a derived artifact, not a second editable policy file.
+  The local sidecar supervisor watches this generated file and restarts LiteLLM
+  when it changes, so DB/UI service edits are not stranded behind a manual
+  process restart.
+- Operators can inspect the derived sidecar config at
+  `GET /admin/api/operator/litellm-config`; it is generated from service
+  records and Profiles and should not be edited independently.
+
 ### Phase 3: Delegate Commodity LLM Governance
 
-Move hosted text/embedding provider routing, fallback, budgets, and generic
-guardrails to LiteLLM for opted-in Profiles. The AI Gateway stores the product
-policy and imports LiteLLM execution facts into Activity/Receipts. Gateway
-admin screens should show the effective LiteLLM-backed state without exposing
-two competing policy editors.
+Move hosted OpenAI-shaped text/embedding provider routing, fallback, budgets,
+and generic guardrails to LiteLLM for opted-in Profiles. The AI Gateway stores
+the product policy and imports LiteLLM execution facts into Activity/Receipts.
+Gateway admin screens should show the effective LiteLLM-backed state without
+exposing two competing policy editors. Anthropic and Responses compatibility
+remain gateway protocol/state concerns even when their translated chat
+execution hop uses LiteLLM.
 
 ### Phase 4: Retire Duplicate Gateway Code
 
@@ -243,7 +289,6 @@ better. Keep local backend-native management and media/workflow code.
 
 Consider deeper integration only after the simple substrate works:
 
-- generate LiteLLM config from AI Gateway service/provider records;
 - create internal LiteLLM virtual keys per App/Profile;
 - ingest LiteLLM callback events into gateway Activity;
 - expose a read-only LiteLLM execution panel inside `/admin`;
@@ -270,18 +315,16 @@ Observed results:
 
 - LiteLLM booted cleanly and exposed both configured model groups at
   `/v1/models`.
-- OpenAI-compatible embeddings passed through LiteLLM successfully.
-- OpenAI chat, streaming chat, Anthropic Messages, and Responses did not pass
-  in this run because the upstream gateway could not satisfy `model: default`;
-  direct gateway chat also timed out, and LiteLLM logs showed upstream
-  `503 service_unavailable` / model-load failures for the Kobold-backed
-  default model. This is not evidence against the LiteLLM substrate by itself;
-  it is evidence that the live gate must run against a healthy chat lane.
+- OpenAI-compatible embeddings passed through LiteLLM successfully, including
+  gateway-owned `dimensions` trimming.
+- OpenAI chat passed through LiteLLM successfully after the gateway activated
+  the local `default` model first. Gateway-owned Anthropic Messages and
+  Responses translations also returned visible text over the same chat
+  execution path.
 - LiteLLM returned `404` for Ollama-native `/api/tags`, supporting the
   recommendation that the AI Gateway keep Ollama client-facing protocol routes
   unless a future LiteLLM version explicitly covers that surface.
 
-Next proof step: rerun `scripts/compat/litellm_replacement_gate.py` against a
-healthy chat-capable LiteLLM upstream and require OpenAI chat, streaming chat,
-embeddings, Anthropic Messages, and Responses to pass before delegating the
-commodity LLM path.
+Next proof step: keep the compatibility gate focused on the product boundary:
+LiteLLM owns commodity OpenAI-shaped LLM execution; the gateway owns protocol
+frontends, Profiles, local activation, media, resource admission, and receipts.

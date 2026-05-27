@@ -42,6 +42,11 @@ data/admin_session_key
 data/admin_session_key.tmp
 data/migration-backups/
 
+# LiteLLM sidecar config is generated from the DB-owned service registry.
+# It is runtime state, not an editable source of truth.
+data/litellm.config.yaml
+data/litellm.pid
+
 # GPU incident snapshots — ephemeral diagnostic captures written by
 # ~/.local/bin/gpu-incident-watcher
 data/incidents/

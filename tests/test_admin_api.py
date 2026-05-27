@@ -1280,6 +1280,70 @@ class AdminOperatorOverrideTests(unittest.TestCase):
             [event["action"] for event in store.audit],
         )
 
+    def test_admin_can_get_generated_litellm_config(self) -> None:
+        client, store = _make_client()
+        store.service_registry = {
+            "schema_version": 1,
+            "services": {
+                "litellm": {
+                    "id": "litellm",
+                    "name": "LiteLLM",
+                    "kind": "llm-substrate",
+                    "enabled": True,
+                    "capabilities": ["llm.execution"],
+                    "config": {
+                        "base_url": "http://127.0.0.1:4011",
+                        "execution_substrate": "litellm",
+                    },
+                },
+                "local-llama": {
+                    "id": "local-llama",
+                    "name": "Local llama.cpp",
+                    "kind": "provider",
+                    "enabled": True,
+                    "capabilities": ["openai"],
+                    "config": {
+                        "protocol": "openai-compatible",
+                        "base_url": "http://127.0.0.1:8081/v1",
+                        "api_key_env": "LOCAL_LLM_KEY",
+                        "models": [
+                            {
+                                "id": "assistant-default",
+                                "upstream_model": "qwen-27b",
+                            }
+                        ],
+                    },
+                }
+            },
+            "protocol_frontends": {},
+            "workflows": {},
+            "capabilities": {},
+        }
+        store.profiles = [
+            {
+                "id": "family",
+                "profile": {"id": "family", "protocols": ["openai.chat"]},
+            }
+        ]
+
+        resp = client.get(
+            "/admin/api/operator/litellm-config",
+            headers=_auth(),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        config = resp.json()["litellm_config"]
+        self.assertEqual(config["model_list"][0]["model_name"], "assistant-default")
+        self.assertEqual(
+            config["model_list"][0]["litellm_params"]["api_base"],
+            "http://127.0.0.1:8081/v1",
+        )
+        self.assertEqual(
+            config["model_list"][0]["litellm_params"]["api_key"],
+            "os.environ/LOCAL_LLM_KEY",
+        )
+        self.assertEqual(config["metadata"]["gateway"]["profiles"][0]["id"], "family")
+
     def test_admin_can_list_validate_and_enable_extension_package(self) -> None:
         client, store = _make_client()
         import tempfile

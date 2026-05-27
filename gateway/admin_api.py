@@ -36,6 +36,7 @@ from gateway.policy import (
     PolicyRequest,
     evaluate,
 )
+from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway import extension_packages, service_registry
 
@@ -526,6 +527,22 @@ def _validate_service_registry(payload: Mapping[str, Any]) -> dict[str, Any]:
             "invalid_service_registry",
             f"invalid service registry: {exc}",
         ) from exc
+
+
+def _profile_docs_for_litellm_config(
+    records: Iterable[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    profiles: list[dict[str, Any]] = []
+    for row in records:
+        if not isinstance(row, Mapping):
+            continue
+        doc = row.get("profile")
+        if not isinstance(doc, Mapping):
+            continue
+        profile = dict(doc)
+        profile.setdefault("id", row.get("id"))
+        profiles.append(profile)
+    return profiles
 
 
 def _validate_extension_package_source(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -1337,6 +1354,25 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"service_registry": record},
+        )
+
+    @router.get("/operator/litellm-config")
+    def get_litellm_config(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        registry = store.get_service_registry()
+        compiled = compile_litellm_substrate_config(
+            (registry.get("services") or {}),
+            profiles=_profile_docs_for_litellm_config(store.list_profiles()),
+            policy_metadata={
+                "source": "admin.db",
+                "generated_by": "ai-gateway",
+            },
+        )
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"litellm_config": compiled},
         )
 
     @router.get("/extensions")

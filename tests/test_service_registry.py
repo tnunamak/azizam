@@ -31,6 +31,29 @@ records:
     assert registry["protocol_frontends"]["test-api"]["routes"] == ["/test/v1"]
 
 
+def test_litellm_substrate_service_is_seed_data() -> None:
+    registry = service_registry.build_service_registry_seed({"backends": {}})
+
+    service = registry["services"]["litellm"]
+    assert service["kind"] == "llm-substrate"
+    assert service["capabilities"] == ["llm.execution"]
+    assert service["config"]["execution_substrate"] == "litellm"
+    assert service["config"]["base_url_env"] == "AI_GATEWAY_LITELLM_BASE_URL"
+    assert service["config"]["default_base_url"] == "http://127.0.0.1:4011"
+
+
+def test_litellm_substrate_service_backfills_existing_registries() -> None:
+    registry = service_registry.backfill_seed_catalog_metadata(
+        {
+            "services": {"comfyui": {"id": "comfyui", "name": "ComfyUI"}},
+            "protocol_frontends": {},
+        }
+    )
+
+    assert "comfyui" in registry["services"]
+    assert registry["services"]["litellm"]["kind"] == "llm-substrate"
+
+
 def test_protocol_frontend_metadata_is_preserved_for_discovery() -> None:
     registry = service_registry.build_service_registry_seed(
         {

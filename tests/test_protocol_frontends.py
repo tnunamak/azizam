@@ -35,6 +35,18 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
         self.assertEqual(out["max_tokens"], 64)
         self.assertEqual(out["messages"], [{"role": "user", "content": "hello"}])
         self.assertFalse(out["stream"])
+        self.assertEqual(out["reasoning_effort"], "minimal")
+
+    def test_top_level_thinking_is_rejected(self) -> None:
+        body = {
+            "model": "claude-3-haiku",
+            "max_tokens": 64,
+            "thinking": {"type": "enabled", "budget_tokens": 1024},
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        with self.assertRaises(anthro.AnthropicTranslationError) as ctx:
+            anthro.messages_request_to_canonical(body)
+        self.assertIn("thinking", str(ctx.exception))
 
     def test_system_prompt_string_is_prepended(self) -> None:
         body = {
@@ -392,6 +404,104 @@ class AnthropicResponseTranslationTests(unittest.TestCase):
         }
         out = anthro.canonical_response_to_messages(canonical)
         self.assertEqual(out["content"], [{"type": "text", "text": "visible reply"}])
+
+    def test_reasoning_content_pure_think_tags_are_suppressed(self) -> None:
+        canonical = {
+            "id": "chatcmpl-1",
+            "model": "claude-3-haiku",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning_content": "<think>private reasoning</think>",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        out = anthro.canonical_response_to_messages(canonical)
+        self.assertEqual(out["content"], [])
+
+    def test_content_think_tags_use_final_text(self) -> None:
+        canonical = {
+            "id": "chatcmpl-1",
+            "model": "claude-3-haiku",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "<think>private reasoning</think>\nvisible reply",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        out = anthro.canonical_response_to_messages(canonical)
+        self.assertEqual(out["content"], [{"type": "text", "text": "visible reply"}])
+
+    def test_stream_reasoning_content_pure_think_tags_are_suppressed(self) -> None:
+        chunks = [
+            {
+                "id": "chatcmpl-1",
+                "model": "claude-3-haiku",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "reasoning_content": "<think>private reasoning</think>"
+                        },
+                    }
+                ],
+            },
+            {
+                "id": "chatcmpl-1",
+                "model": "claude-3-haiku",
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            },
+        ]
+
+        events = self._parse_sse_frames(anthro.canonical_stream_to_messages_sse(chunks))
+
+        self.assertEqual(
+            [event for event, _ in events],
+            ["message_start", "message_delta", "message_stop"],
+        )
+
+    def test_stream_content_split_think_tags_are_suppressed(self) -> None:
+        chunks = [
+            {
+                "id": "chatcmpl-1",
+                "model": "claude-3-haiku",
+                "choices": [{"index": 0, "delta": {"content": "<thi"}}],
+            },
+            {
+                "id": "chatcmpl-1",
+                "model": "claude-3-haiku",
+                "choices": [{"index": 0, "delta": {"content": "nk>priv"}}],
+            },
+            {
+                "id": "chatcmpl-1",
+                "model": "claude-3-haiku",
+                "choices": [{"index": 0, "delta": {"content": "ate</think>\npong"}}],
+            },
+            {
+                "id": "chatcmpl-1",
+                "model": "claude-3-haiku",
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            },
+        ]
+
+        events = self._parse_sse_frames(anthro.canonical_stream_to_messages_sse(chunks))
+
+        deltas = [
+            payload["delta"]["text"]
+            for event, payload in events
+            if event == "content_block_delta"
+        ]
+        self.assertEqual(deltas, ["\npong"])
 
     def test_tool_calls_produce_tool_use_blocks(self) -> None:
         canonical = {

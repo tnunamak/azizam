@@ -6,6 +6,9 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      AI_GATEWAY_LITELLM_BASE_URL: ${AI_GATEWAY_LITELLM_BASE_URL:-http://litellm:4000}
+      AI_GATEWAY_LITELLM_API_KEY: ${AI_GATEWAY_LITELLM_API_KEY:-sk-local-litellm}
     volumes:
       - gateway-data:/app/data
     restart: unless-stopped
@@ -15,6 +18,31 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        pid="";
+        last="";
+        trap 'if [ -n "$$pid" ]; then kill "$$pid" 2>/dev/null || true; fi; exit 0' TERM INT EXIT;
+        while true; do
+          while [ ! -s /app/data/litellm.config.yaml ]; do sleep 1; done;
+          next="$$(sha256sum /app/data/litellm.config.yaml | awk '{print $$1}')";
+          if [ "$$next" != "$$last" ] || ! kill -0 "$${pid:-0}" 2>/dev/null; then
+            if [ -n "$$pid" ]; then kill "$$pid" 2>/dev/null || true; wait "$$pid" 2>/dev/null || true; fi;
+            litellm --config /app/data/litellm.config.yaml --host 0.0.0.0 --port 4000 & pid="$$!";
+            last="$$next";
+          fi;
+          sleep 2;
+        done
+    environment:
+      LITELLM_MASTER_KEY: ${AI_GATEWAY_LITELLM_API_KEY:-sk-local-litellm}
+    volumes:
+      - gateway-data:/app/data
+    restart: unless-stopped
 
 volumes:
   gateway-data:

@@ -15,6 +15,9 @@ backends:
   tabby:
     name: TabbyAPI (Qwen3-VL)
     native_passthrough: true
+    protocol: openai-compatible
+    base_path: /v1
+    api_key_env: TABBY_API_KEY
     host: 127.0.0.1
     port: 5050
     model_id: qwen3-vl-30b
@@ -31,11 +34,30 @@ backends:
   kobold:
     name: llama-turbo / kobold (LLM)
     native_passthrough: true
+    protocol: openai-compatible
+    base_path: /v1
     host: 127.0.0.1
     port: 5051
     health_endpoint: /v1/models
+    models:
+      - id: default
+        model_group: default
+        upstream_model: Qwen3.6-27B-UD-Q4_K_XL.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
+      - id: coder
+        model_group: coder
+        upstream_model: Qwen3.6-27B-UD-Q4_K_XL.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
+      - id: rp
+        model_group: rp
+        upstream_model: Qwen3.6-27B-Uncensored-HauhauCS-Balanced-Q4_K_P.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-Uncensored-HauhauCS-Balanced-Q4_K_P.gguf
+        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     role: required
     capabilities:
+      - openai
       - chat
       - completions
     managed: false
@@ -66,14 +88,21 @@ backends:
   embeddings:
     name: nomic-embed-text-v1.5 CPU
     native_passthrough: true
+    protocol: openai-compatible
+    base_path: /v1
     host: 127.0.0.1
     port: 5061
     model_id: nomic-embed-text-v1.5
+    models:
+      - id: nomic-embed-text-v1.5
+        model_group: nomic-embed-text-v1.5
+        upstream_model: nomic-embed-text-v1.5.f16.gguf
     health_endpoint: /health
     timeout: 120
     role: required
     note: "CPU-only llama-server embedding backend; no GPU budget claim."
     capabilities:
+      - openai
       - embeddings
     resources:
       gpu_required: false

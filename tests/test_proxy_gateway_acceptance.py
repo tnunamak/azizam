@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from unittest.mock import AsyncMock, patch
 
+import httpx
 from fastapi import Response
 from fastapi.testclient import TestClient
 
@@ -85,6 +86,131 @@ class _FakeStreamResponse:
 
 
 class _FakeStreamClient:
+    async def aclose(self):
+        return None
+
+
+class _FakeLiteLLMResponse:
+    status_code = 200
+    headers = {"content-type": "application/json", "x-litellm-call-id": "call_1"}
+
+    async def aread(self):
+        return json.dumps(
+            {
+                "id": "chatcmpl_test",
+                "object": "chat.completion",
+                "model": "assistant-default",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "pong"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        ).encode()
+
+    async def aclose(self):
+        return None
+
+
+class _FakeLiteLLMCompletionResponse:
+    status_code = 200
+    headers = {"content-type": "application/json", "x-litellm-call-id": "completion_1"}
+
+    async def aread(self):
+        return json.dumps(
+            {
+                "id": "cmpl_test",
+                "object": "text_completion",
+                "model": "legacy-completion",
+                "choices": [{"index": 0, "text": "pong", "finish_reason": "stop"}],
+            }
+        ).encode()
+
+    async def aclose(self):
+        return None
+
+
+class _FakeLiteLLMEmbeddingResponse:
+    status_code = 200
+    headers = {"content-type": "application/json", "x-litellm-call-id": "embedding_1"}
+
+    async def aread(self):
+        return json.dumps(
+            {
+                "object": "list",
+                "model": "embed-default",
+                "data": [
+                    {
+                        "object": "embedding",
+                        "index": 0,
+                        "embedding": [3.0, 4.0, 0.0],
+                    }
+                ],
+            }
+        ).encode()
+
+    async def aclose(self):
+        return None
+
+
+class _FakeLiteLLMRawResponse:
+    def __init__(
+        self,
+        payload: dict[str, Any],
+        *,
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.headers = headers or {
+            "content-type": "application/json",
+            "x-litellm-call-id": "raw_call_1",
+        }
+        self.payload = payload
+
+    async def aread(self):
+        return json.dumps(self.payload).encode()
+
+    async def aclose(self):
+        return None
+
+
+class _FakeLiteLLMStreamingResponse:
+    status_code = 200
+    headers = {"content-type": "text/event-stream", "x-litellm-call-id": "stream_1"}
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def aiter_bytes(self):
+        yield b'data: {"id":"chatcmpl_test","choices":[{"index":0,"delta":{"content":"po"}}]}\n\n'
+        yield b'data: {"id":"chatcmpl_test","choices":[{"index":0,"delta":{"content":"ng"}}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    async def aclose(self):
+        self.closed = True
+
+
+class _FakeLiteLLMModelsResponse:
+    status_code = 200
+    headers = {"content-type": "application/json"}
+
+    async def aread(self):
+        return json.dumps(
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "id": "assistant-default",
+                        "object": "model",
+                        "owned_by": "litellm",
+                    }
+                ],
+            }
+        ).encode()
+
     async def aclose(self):
         return None
 
@@ -209,6 +335,671 @@ class TestGatewayRouterMounting(unittest.TestCase):
                         response.json()["error"]["code"],
                         "backend_unavailable",
                     )
+
+    def test_litellm_execution_mode_routes_chat_after_gateway_policy(self) -> None:
+        calls: list[Any] = []
+        receipts: list[Any] = []
+
+        async def fake_send(execution_request):
+            calls.append(execution_request)
+            return _FakeStreamClient(), _FakeLiteLLMResponse()
+
+        async def fake_policy_ok(*_args, **_kwargs):
+            return None
+
+        def fake_record(receipt, *_args, **_kwargs):
+            receipts.append(receipt)
+            return receipt.request_id
+
+        def fake_registry():
+            return {
+                "schema_version": 1,
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {
+                            "base_url": "http://127.0.0.1:4011",
+                            "api_key_env": "TEST_LITELLM_KEY",
+                        },
+                    }
+                },
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.dict(
+            proxy.os.environ, {"TEST_LITELLM_KEY": "sk-litellm-internal"}
+        ), patch.object(
+            proxy, "_current_loaded_model_policy_decision", fake_policy_ok
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ), patch.object(
+            proxy.receipt_store, "record", fake_record
+        ):
+            response = client.post(
+                "/v1/chat/completions?trace=1",
+                headers={"Authorization": "Bearer opk_client"},
+                json={
+                    "model": "assistant-default",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["choices"][0]["message"]["content"], "pong")
+        self.assertEqual(response.headers["X-AI-Gateway-LLM-Execution"], "litellm")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0].url,
+            "http://127.0.0.1:4011/v1/chat/completions?trace=1",
+        )
+        self.assertEqual(calls[0].headers["authorization"], "Bearer sk-litellm-internal")
+        self.assertEqual(calls[0].headers["x-ai-gateway-execution"], "litellm")
+        self.assertEqual(calls[0].headers["x-ai-gateway-runtime-source"], "service_registry")
+        self.assertNotIn("opk_client", repr(calls[0]))
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0].backend, "litellm")
+        self.assertEqual(receipts[0].requested_model, "assistant-default")
+        self.assertEqual(receipts[0].status, "succeeded")
+        self.assertEqual(receipts[0].metadata["execution_backend"], "litellm")
+        self.assertEqual(receipts[0].metadata["litellm"]["call_id"], "call_1")
+
+    def test_litellm_activates_gateway_owned_local_role_before_forwarding(self) -> None:
+        calls: list[Any] = []
+        activations: list[tuple[str, str | None, str | None]] = []
+
+        async def fake_send(execution_request):
+            calls.append(execution_request)
+            return _FakeStreamClient(), _FakeLiteLLMResponse()
+
+        async def fake_ensure_target(backend, model, mmproj=None):
+            activations.append((backend, model, mmproj))
+            return True
+
+        def fake_registry():
+            return {
+                "schema_version": 1,
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                },
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "ensure_target", fake_ensure_target
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "default",
+                    "reasoning_effort": "minimal",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(activations), 1)
+        backend, model, mmproj = activations[0]
+        self.assertEqual(backend, "kobold")
+        self.assertTrue(model and model.endswith("Qwen3.6-27B-UD-Q4_K_XL.gguf"))
+        self.assertTrue(mmproj and mmproj.endswith("Qwen3.6-27B-mmproj-BF16.gguf"))
+        forwarded = json.loads(calls[0].body.decode())
+        self.assertEqual(forwarded["model"], "default")
+        self.assertNotIn("reasoning_effort", forwarded)
+        self.assertEqual(forwarded["messages"][0]["role"], "system")
+        self.assertIn("/no_think", forwarded["messages"][0]["content"])
+
+    def test_litellm_mode_keeps_gateway_anthropic_and_responses_translation(self) -> None:
+        chat_calls: list[dict[str, Any]] = []
+
+        async def fake_chat_forward(_request, _auth_context, cc_body, *, stream):
+            chat_calls.append(cc_body)
+            return httpx.Response(
+                200,
+                json=_make_canonical_chat_response("pong"),
+                request=httpx.Request("POST", "http://test/v1/chat/completions"),
+            )
+
+        async def forbidden_litellm_direct(*_args, **_kwargs):
+            raise AssertionError("protocol frontends should use chat execution, not direct LiteLLM protocol endpoints")
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "_forward_chat_completions", fake_chat_forward
+        ), patch.object(
+            proxy, "send_llm_execution_request", forbidden_litellm_direct
+        ):
+            anthropic = client.post(
+                "/anthropic/v1/messages",
+                json={
+                    "model": "default",
+                    "max_tokens": 8,
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+            responses = client.post(
+                "/v1/responses",
+                json={"model": "default", "input": "ping", "store": False},
+            )
+
+        self.assertEqual(anthropic.status_code, 200, anthropic.text)
+        self.assertEqual(responses.status_code, 200, responses.text)
+        self.assertEqual(anthropic.json()["content"][0]["text"], "pong")
+        self.assertEqual(responses.json()["output_text"], "pong")
+        self.assertEqual([call["model"] for call in chat_calls], ["default", "default"])
+        self.assertEqual(chat_calls[0]["reasoning_effort"], "minimal")
+
+    def test_litellm_mode_suppresses_anthropic_local_reasoning_chatter(self) -> None:
+        chat_calls: list[dict[str, Any]] = []
+
+        async def fake_chat_forward(_request, _auth_context, cc_body, *, stream):
+            chat_calls.append(cc_body)
+            return httpx.Response(
+                200,
+                json=_make_canonical_chat_response(
+                    "<think>private local reasoning</think>\npong"
+                ),
+                request=httpx.Request("POST", "http://test/v1/chat/completions"),
+            )
+
+        async def forbidden_litellm_direct(*_args, **_kwargs):
+            raise AssertionError("Anthropic should translate through chat execution")
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "_forward_chat_completions", fake_chat_forward
+        ), patch.object(
+            proxy, "send_llm_execution_request", forbidden_litellm_direct
+        ):
+            response = client.post(
+                "/anthropic/v1/messages",
+                json={
+                    "model": "default",
+                    "max_tokens": 8,
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["content"], [{"type": "text", "text": "pong"}])
+        self.assertEqual([call["model"] for call in chat_calls], ["default"])
+
+    def test_litellm_execution_mode_still_rejects_malformed_json_before_executor(self) -> None:
+        async def fake_send(_execution_request):
+            raise AssertionError("executor should not run for malformed JSON")
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                content=b"{not-json",
+                headers={"Content-Type": "application/json"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "invalid_json")
+
+    def test_litellm_service_owns_openai_model_list_for_llm_models(self) -> None:
+        calls: list[Any] = []
+
+        async def fake_send(execution_request):
+            calls.append(execution_request)
+            return _FakeStreamClient(), _FakeLiteLLMModelsResponse()
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ):
+            response = client.get("/v1/models")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        ids = [item["id"] for item in payload["data"]]
+        self.assertIn("assistant-default", ids)
+        self.assertNotIn("default", ids)
+        self.assertEqual(payload["x_ai_gateway_llm_execution"], "litellm")
+        self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/models")
+
+    def test_litellm_models_keeps_gateway_workflow_models(self) -> None:
+        async def fake_send(_execution_request):
+            return _FakeStreamClient(), _FakeLiteLLMModelsResponse()
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ), patch.object(
+            proxy,
+            "_build_workflow_model_entries",
+            lambda: [
+                {
+                    "id": "image.generate.test",
+                    "object": "model",
+                    "owned_by": "workflow",
+                }
+            ],
+        ):
+            response = client.get("/v1/models")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        ids = [item["id"] for item in response.json()["data"]]
+        self.assertIn("assistant-default", ids)
+        self.assertIn("image.generate.test", ids)
+        self.assertNotIn("default", ids)
+
+    def test_litellm_models_failure_returns_503_not_partial_catalog(self) -> None:
+        async def fake_send(_execution_request):
+            return _FakeStreamClient(), _FakeLiteLLMRawResponse(
+                {"error": {"message": "down"}},
+                status_code=503,
+            )
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ):
+            response = client.get("/v1/models")
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "backend_unavailable")
+
+    def test_litellm_routes_legacy_completions_after_gateway_policy(self) -> None:
+        calls: list[Any] = []
+
+        async def fake_send(execution_request):
+            calls.append(execution_request)
+            return _FakeStreamClient(), _FakeLiteLLMCompletionResponse()
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ):
+            response = client.post(
+                "/v1/completions",
+                json={"model": "legacy-completion", "prompt": "ping"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["choices"][0]["text"], "pong")
+        self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/completions")
+
+    def test_litellm_routes_embeddings_and_applies_requested_dimensions(self) -> None:
+        calls: list[Any] = []
+
+        async def fake_send(execution_request):
+            calls.append(execution_request)
+            return _FakeStreamClient(), _FakeLiteLLMEmbeddingResponse()
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ):
+            response = client.post(
+                "/v1/embeddings",
+                json={"model": "embed-default", "input": "ping", "dimensions": 2},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.json()["data"][0]["embedding"],
+            [0.6, 0.8],
+        )
+        self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/embeddings")
+        self.assertNotIn("dimensions", json.loads(calls[0].body.decode()))
+
+    def test_litellm_chat_stream_proxies_sse_and_records_receipt(self) -> None:
+        calls: list[Any] = []
+        receipts: list[Any] = []
+        upstream = _FakeLiteLLMStreamingResponse()
+
+        async def fake_send(execution_request):
+            calls.append(execution_request)
+            return _FakeStreamClient(), upstream
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        def fake_record(receipt, *_args, **_kwargs):
+            receipts.append(receipt)
+            return receipt.request_id
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ), patch.object(
+            proxy.receipt_store, "record", fake_record
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "assistant-default",
+                    "stream": True,
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.headers["X-AI-Gateway-LLM-Execution"],
+            "litellm",
+        )
+        self.assertIn("data:", response.text)
+        self.assertTrue(upstream.closed)
+        self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/chat/completions")
+        self.assertEqual(receipts[0].status, "succeeded")
+
+    def test_litellm_non_2xx_passes_through_and_records_failed_receipt(self) -> None:
+        receipts: list[Any] = []
+
+        async def fake_send(_execution_request):
+            return _FakeStreamClient(), _FakeLiteLLMRawResponse(
+                {"error": {"message": "rate limited"}},
+                status_code=429,
+                headers={"content-type": "application/json", "x-litellm-call-id": "fail_1"},
+            )
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        def fake_record(receipt, *_args, **_kwargs):
+            receipts.append(receipt)
+            return receipt.request_id
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ), patch.object(
+            proxy.receipt_store, "record", fake_record
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "assistant-default",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 429, response.text)
+        self.assertEqual(response.json()["error"]["message"], "rate limited")
+        self.assertEqual(receipts[0].status, "failed")
+
+    def test_litellm_timeout_and_connect_errors_are_protocol_shaped(self) -> None:
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        async def fake_timeout(_execution_request):
+            raise httpx.TimeoutException("slow")
+
+        async def fake_connect(_execution_request):
+            raise httpx.ConnectError("down")
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(proxy, "send_llm_execution_request", fake_timeout):
+            timeout = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "assistant-default",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(proxy, "send_llm_execution_request", fake_connect):
+            connect = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "assistant-default",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(timeout.status_code, 504, timeout.text)
+        self.assertEqual(connect.status_code, 503, connect.text)
+        self.assertEqual(connect.json()["error"]["code"], "backend_unavailable")
+
+    def test_litellm_mode_keeps_gateway_responses_store_for_retrieve_delete_cancel(self) -> None:
+        async def forbidden_litellm_direct(*_args, **_kwargs):
+            raise AssertionError("Responses retrieve/delete/cancel should use the gateway store")
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", forbidden_litellm_direct
+        ), patch.object(
+            proxy.responses_store,
+            "get",
+            return_value={"response_json": {"id": "resp_123", "status": "completed"}},
+        ), patch.object(
+            proxy.responses_store, "delete", return_value=True
+        ):
+            retrieved = client.get("/v1/responses/resp_123")
+            deleted = client.delete("/v1/responses/resp_123")
+            cancelled = client.post("/v1/responses/resp_123/cancel", json={})
+
+        self.assertEqual(retrieved.status_code, 200, retrieved.text)
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(cancelled.status_code, 400, cancelled.text)
+        self.assertEqual(retrieved.json()["status"], "completed")
+        self.assertTrue(deleted.json()["deleted"])
+        self.assertEqual(cancelled.json()["error"]["code"], "unsupported_operation")
+
+    def test_litellm_mode_projects_ollama_tags_from_litellm_models(self) -> None:
+        async def fake_send(_execution_request):
+            return _FakeStreamClient(), _FakeLiteLLMModelsResponse()
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ), patch.object(
+            proxy, "_build_role_catalog_entries", lambda: [{"id": "default"}]
+        ):
+            tags = client.get("/api/tags")
+            ps = client.get("/api/ps")
+
+        self.assertEqual(tags.status_code, 200, tags.text)
+        self.assertEqual([m["name"] for m in tags.json()["models"]], ["assistant-default"])
+        self.assertEqual(ps.status_code, 200, ps.text)
+        self.assertEqual(ps.json(), {"models": []})
 
 
 # ---------------------------------------------------------------------------

@@ -1128,8 +1128,10 @@ Passthrough requirements:
 - redacts credentials
 - clearly labeled as native/non-portable
 
-The existing catch-all behavior is valuable for local power use, but it should
-not become the public security boundary.
+Provider-native power use belongs under explicit provider-native routes, not a
+root catch-all. Unknown public routes should 404; native passthrough remains
+available only behind `/gateway/v1/providers/{provider}/{path...}` with profile
+policy, receipts, and clear non-portable labeling.
 
 Unknown public-protocol parameters must not be silently accepted when they do
 nothing. A protocol frontend should accept protocol fields and documented gateway

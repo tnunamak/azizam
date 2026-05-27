@@ -86,7 +86,7 @@ def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any]
     record = admin_store.get_operator_setting(SERVICE_REGISTRY_SETTING_KEY, path=path)
     if record is None or not isinstance(record.get("value"), Mapping):
         return None
-    return backfill_seed_catalog_metadata(record["value"])
+    return normalize_service_registry(record["value"])
 
 
 def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, Any]:
@@ -186,12 +186,25 @@ def backfill_seed_catalog_metadata(
 
     out = normalize_service_registry(registry)
     catalogs = load_seed_catalogs(proxy_config or {})
+    _backfill_missing_records(
+        out["services"],
+        catalogs.get("services") or {},
+    )
     _backfill_collection_metadata(
         out["protocol_frontends"],
         catalogs.get("protocol_frontends") or {},
         keys=("registered_routes", "asset_content_policies", "public_discovery"),
     )
     return out
+
+
+def _backfill_missing_records(
+    records: dict[str, dict[str, Any]],
+    seeds: Mapping[str, Any],
+) -> None:
+    for record_id, seed in seeds.items():
+        if record_id not in records and isinstance(seed, Mapping):
+            records[record_id] = copy.deepcopy(dict(seed))
 
 
 def _backfill_collection_metadata(

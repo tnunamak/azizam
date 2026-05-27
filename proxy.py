@@ -121,6 +121,16 @@ from gateway.audio_extensions import (
 )
 from gateway.backends.chat import build_chat_loopback_request
 from gateway.backends.embeddings import build_embeddings_loopback_request
+from gateway.backends.llm_execution import (
+    LITELLM_BODY_EXECUTION_PATHS,
+    LITELLM_DISCOVERY_PATHS,
+    LlmExecutionRequest,
+    litellm_headers,
+    litellm_requested,
+    litellm_runtime_from_registry,
+    litellm_url,
+    send_llm_execution_request,
+)
 from gateway.capabilities import (
     Capability,
     ResourceEstimate,
@@ -156,6 +166,7 @@ from gateway.image_extensions import (
     detect_unknown_top_level_fields,
     record_image_extension_binding,
 )
+from gateway.litellm_substrate import write_litellm_config_artifact
 from gateway.manifests import (
     ManifestError,
     bind_backend_request,
@@ -246,6 +257,7 @@ def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, A
             path=ADMIN_DB_PATH,
             actor="startup",
         )
+        _write_litellm_config_artifact(registry)
         return service_registry.apply_service_registry_to_config(raw_config, registry)
     except Exception as e:  # noqa: BLE001
         print(
@@ -254,6 +266,25 @@ def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, A
             flush=True,
         )
         return copy.deepcopy(dict(raw_config))
+
+
+def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
+    try:
+        profiles = [
+            row.get("profile")
+            for row in admin_store.list_profiles(path=ADMIN_DB_PATH)
+            if isinstance(row.get("profile"), Mapping)
+        ]
+        path = write_litellm_config_artifact(
+            registry,
+            profiles=profiles,
+            base_dir=Path(__file__).parent,
+            policy_metadata={"source": "admin.db", "generated_by": "ai-gateway"},
+        )
+        if __name__ == "__main__":
+            print(f"[proxy] LiteLLM config generated at {path}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] WARNING: LiteLLM config generation failed: {e}", flush=True)
 
 
 config = _load_effective_runtime_config(config)
@@ -452,6 +483,20 @@ EMBEDDINGS_HOST = f"http://{embeddings_cfg.get('host', '127.0.0.1')}:{embeddings
 EMBEDDINGS_HEALTH_ENDPOINT = embeddings_cfg.get("health_endpoint", "/health")
 EMBEDDINGS_TIMEOUT = int(os.environ.get("EMBEDDINGS_TIMEOUT", embeddings_cfg.get("timeout", 120)))
 EMBEDDINGS_BACKEND_MODEL = embeddings_cfg.get("model_id", "nomic-embed-text-v1.5")
+
+# Temporary migration seam. Values other than an explicit LiteLLM mode keep the
+# historical local executor. This must not become a user-facing product choice.
+LLM_EXECUTION_MODE_BOOTSTRAP = os.environ.get("AI_GATEWAY_LLM_EXECUTION", "legacy")
+LITELLM_BASE_URL_BOOTSTRAP = (
+    os.environ.get("AI_GATEWAY_LITELLM_BASE_URL")
+    or os.environ.get("LITELLM_BASE_URL")
+    or ""
+).rstrip("/")
+LITELLM_API_KEY_BOOTSTRAP = (
+    os.environ.get("AI_GATEWAY_LITELLM_API_KEY")
+    or os.environ.get("LITELLM_API_KEY")
+    or ""
+)
 
 # ComfyUI backend
 comfy_cfg = config.get("backends", {}).get("comfyui", {})
@@ -2348,6 +2393,265 @@ def unknown_model_error(model_name: str) -> Response:
         param="model",
         code="model_not_found",
     )
+
+
+def _service_model_records(service_cfg: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    raw_models = service_cfg.get("models")
+    if isinstance(raw_models, Mapping):
+        return [
+            {"id": model_id, **dict(raw)}
+            if isinstance(raw, Mapping)
+            else {"id": model_id, "upstream_model": raw}
+            for model_id, raw in raw_models.items()
+        ]
+    if isinstance(raw_models, list):
+        return [raw for raw in raw_models if isinstance(raw, Mapping)]
+    return []
+
+
+def _backend_default_model_to_load(backend: str) -> Optional[str]:
+    backend_cfg = (config.get("backends") or {}).get(backend, {})
+    if not isinstance(backend_cfg, Mapping):
+        return DEFAULT_MODEL if backend == "tabby" else None
+    configured = str(
+        backend_cfg.get("activation_model")
+        or backend_cfg.get("model_id")
+        or backend_cfg.get("default_model")
+        or ""
+    ).strip()
+    if configured:
+        return configured
+    return DEFAULT_MODEL if backend == "tabby" else None
+
+
+def _configured_litellm_local_model_target(
+    requested_model: str,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Return the local backend activation target for a LiteLLM model group.
+
+    LiteLLM owns execution, but the gateway still owns local service readiness.
+    This helper recognizes model groups generated from local service data and
+    returns the backend/model/mmproj that must be hot before forwarding.
+    Unknown model groups are left for LiteLLM to handle.
+    """
+    normalized = normalize_model_id(requested_model)
+    backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
+
+    for backend in LLM_BACKEND_HOSTS:
+        service_cfg = backends.get(backend, {})
+        if not isinstance(service_cfg, Mapping):
+            continue
+
+        service_model = str(service_cfg.get("model_id") or "").strip()
+        if service_model and normalize_model_id(service_model) == normalized:
+            return backend, _backend_default_model_to_load(backend), None
+
+        for item in _service_model_records(service_cfg):
+            public_names = {
+                normalize_model_id(str(item.get("id") or "")),
+                normalize_model_id(str(item.get("model_group") or "")),
+                normalize_model_id(str(item.get("public_name") or "")),
+                normalize_model_id(str(item.get("upstream_model") or "")),
+            }
+            if normalized not in public_names:
+                continue
+
+            activation_model = str(
+                item.get("activation_model")
+                or item.get("model_path")
+                or item.get("path")
+                or ""
+            ).strip()
+            activation_mmproj = str(
+                item.get("activation_mmproj")
+                or item.get("mmproj")
+                or ""
+            ).strip()
+            if backend == "tabby" and not activation_model:
+                activation_model = str(item.get("upstream_model") or item.get("id") or "").strip()
+            if backend == "kobold" and activation_model and not os.path.isabs(activation_model):
+                activation_model = ""
+            return backend, activation_model or None, activation_mmproj or None
+
+    detected = detect_model_backend(requested_model)
+    if detected == "tabby":
+        return detected, requested_model, None
+    if detected == "kobold":
+        return detected, None, None
+    return None, None, None
+
+
+def _litellm_activation_failure_response(
+    *,
+    requested_model: str,
+    backend: str,
+    target_model: Optional[str],
+) -> Response:
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": (
+                    f"Failed to satisfy request for model '{requested_model}': "
+                    f"could not start backend '{backend}'"
+                    + (f" or load model '{target_model}'." if target_model else ".")
+                ),
+                "type": "service_unavailable",
+                "code": "backend_unavailable",
+            }
+        }),
+        status_code=503,
+        media_type="application/json",
+        headers={"Retry-After": "10"},
+    )
+
+
+async def _ensure_litellm_local_backend_target(
+    auth_context: AuthContext,
+    *,
+    requested_model: str,
+    backend: Optional[str],
+    target_model: Optional[str],
+    target_mmproj: Optional[str] = None,
+) -> Response | None:
+    if not backend:
+        return None
+    if not profile_allows_backend(auth_context, backend):
+        return _policy_denied_response(PolicyDecision(
+            decision=DENIED,
+            reasons=(f"backend {backend!r} not permitted by profile",),
+        ))
+    availability = _service_availability_response(backend, service_label=backend)
+    if availability is not None:
+        return availability
+    if await ensure_target(backend, target_model, target_mmproj):
+        return None
+    return _litellm_activation_failure_response(
+        requested_model=requested_model,
+        backend=backend,
+        target_model=target_model,
+    )
+
+
+async def _prepare_litellm_local_llm_request(
+    auth_context: AuthContext,
+    *,
+    request_path: str,
+    body_json: Mapping[str, Any],
+) -> tuple[Response | None, Mapping[str, Any]]:
+    """Apply gateway-owned local readiness before LiteLLM execution.
+
+    Unknown model names are intentionally not rejected here: they may be model
+    groups supplied by a non-local LiteLLM provider. Only gateway-declared local
+    targets are activated.
+    """
+    body = copy.deepcopy(dict(body_json))
+    if request_path not in {"/v1/chat/completions", "/v1/completions"}:
+        return None, body
+
+    model_name = body.get("model", "")
+    if not isinstance(model_name, str) or not model_name:
+        return openai_error_response(
+            "Missing required parameter: 'model'.",
+            status_code=400,
+            param="model",
+            code="missing_required_parameter",
+        ), body
+
+    if _profile_target_activation(auth_context) == "existing_only":
+        return None, body
+
+    operation = "completions" if request_path == "/v1/completions" else "chat"
+    target_backend: Optional[str] = None
+    target_model: Optional[str] = None
+    target_mmproj: Optional[str] = None
+
+    if is_literal_gguf_path(model_name):
+        target_backend = "kobold"
+        target_model = model_name
+    else:
+        role_resolution = resolve_role_for_operation(operation, model_name)
+        if role_resolution is not None:
+            target_backend = role_resolution.role_backend
+            target_model = (
+                role_resolution.role_model_path
+                or _backend_default_model_to_load(target_backend or "")
+            )
+            target_mmproj = role_resolution.role_mmproj_path
+        else:
+            target_backend, target_model, target_mmproj = (
+                _configured_litellm_local_model_target(model_name)
+            )
+
+    vision_needed = (
+        request_path == "/v1/chat/completions"
+        and has_vision_content(body.get("messages"))
+    )
+    if vision_needed and not target_backend:
+        vision_role = ROLES.get("vision") if isinstance(ROLES, dict) else None
+        preferred = (
+            vision_role.get("backend")
+            if isinstance(vision_role, Mapping)
+            else None
+        )
+        active = await get_active_backend()
+        target_backend = choose_configured_llm_backend(
+            auth_context,
+            capability="vision",
+            preferred=preferred,
+            active=active,
+        )
+        target_model = (
+            str(vision_role.get("model") or "").strip()
+            if isinstance(vision_role, Mapping)
+            else None
+        ) or _backend_default_model_to_load(target_backend or "")
+        target_mmproj = (
+            str(vision_role.get("mmproj") or "").strip()
+            if isinstance(vision_role, Mapping)
+            else None
+        ) or None
+        if not target_backend:
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": (
+                            "Request includes images but no vision-capable backend "
+                            "is configured or permitted by this profile."
+                        ),
+                        "type": "invalid_request_error",
+                        "code": "vision_unsupported",
+                    }
+                }),
+                status_code=400,
+                media_type="application/json",
+                headers={"X-Vision-Routed": "false"},
+            ), body
+
+    if not target_backend:
+        return None, body
+
+    if request_path == "/v1/chat/completions":
+        reasoning_error = apply_chat_completions_reasoning_effort(body)
+        if reasoning_error:
+            return Response(
+                content=json.dumps({"error": {
+                    "message": reasoning_error,
+                    "type": "invalid_request_error",
+                    "param": "reasoning_effort",
+                    "code": "invalid_value",
+                }}),
+                status_code=400,
+                media_type="application/json",
+            ), body
+
+    response = await _ensure_litellm_local_backend_target(
+        auth_context,
+        requested_model=model_name,
+        backend=target_backend,
+        target_model=target_model,
+        target_mmproj=target_mmproj,
+    )
+    return response, body
 
 
 async def get_tabby_loaded_model_id() -> str:
@@ -14973,6 +15277,75 @@ async def _anthropic_model_info_list(
     return models, metadata
 
 
+async def _litellm_models_payload(
+    request: Request,
+    auth_context: AuthContext,
+    *,
+    runtime_config,
+) -> dict[str, Any] | None:
+    execution_request = LlmExecutionRequest(
+        method="GET",
+        url=litellm_url(base_url=runtime_config.base_url, path="v1/models"),
+        headers=litellm_headers(
+            request.headers,
+            api_key=runtime_config.api_key,
+            gateway_metadata=_litellm_gateway_metadata(
+                auth_context,
+                request_path="/v1/models",
+                runtime_source=runtime_config.source,
+                service_id=runtime_config.service_id,
+            ),
+        ),
+        body=b"",
+        read_timeout=10.0,
+    )
+    client, resp = await send_llm_execution_request(execution_request)
+    try:
+        if resp.status_code != 200:
+            return None
+        content = await resp.aread()
+        payload = json.loads(content.decode("utf-8") or "{}")
+        if isinstance(payload, dict):
+            payload["x_ai_gateway_llm_execution"] = "litellm"
+            return payload
+        return None
+    finally:
+        await resp.aclose()
+        await client.aclose()
+
+
+def _litellm_model_summaries_from_payload(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, Mapping):
+            continue
+        model_id = item.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        created = item.get("created")
+        modified_at = None
+        if isinstance(created, (int, float)):
+            modified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created))
+        summaries.append(
+            {
+                "id": model_id,
+                "object": str(item.get("object") or "model"),
+                "owned_by": str(item.get("owned_by") or "litellm"),
+                "modified_at": modified_at,
+                "format": str(item.get("format") or ""),
+                "family": str(item.get("family") or ""),
+                "parameter_size": str(item.get("parameter_size") or ""),
+                "quantization_level": str(item.get("quantization_level") or ""),
+                "capabilities": item.get("capabilities") or ["completion"],
+                "model_info": item.get("model_info") if isinstance(item.get("model_info"), Mapping) else {},
+            }
+        )
+    return summaries
+
+
 @app.get("/anthropic/v1/models")
 async def anthropic_models(request: Request):
     """Anthropic-compatible model list projected from the gateway catalog."""
@@ -15001,7 +15374,9 @@ async def anthropic_models(request: Request):
         "last_id": data[-1]["id"] if data else None,
     }
     payload.update(metadata)
-    return _json_error_response(payload, status_code=200)
+    response = _json_error_response(payload, status_code=200)
+    response.headers["X-AI-Gateway-Token-Counting"] = "estimated"
+    return response
 
 
 @app.get("/openai/v1/models")
@@ -15023,30 +15398,62 @@ async def list_models(request: Request):
     if policy_response is not None:
         return policy_response
 
-    # Forward to whichever backend is active so OpenAI-style aliases stay intact.
-    active = await get_active_backend()
-    target_host = TABBY_HOST if active == "tabby" else KOBOLD_HOST
-    target_service = "tabby" if active == "tabby" else "kobold"
-    headers = prepare_downstream_headers(
-        request.headers,
-        auth_context,
-        target_service,
-        "/v1/models",
-    )
-
     upstream_payload: dict = {"object": "list", "data": []}
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5)) as client:
-            resp = await client.get(f"{target_host}/v1/models", headers=headers)
-            if resp.status_code == 200:
-                try:
-                    payload = resp.json()
-                    if isinstance(payload, dict):
-                        upstream_payload = payload
-                except Exception:
-                    pass
-    except Exception as e:
-        print(f"[proxy] /v1/models upstream fetch failed: {e}", flush=True)
+    litellm_runtime = _litellm_runtime_config()
+    if litellm_runtime.enabled and "/v1/models" in LITELLM_DISCOVERY_PATHS:
+        service_response = _service_availability_response(
+            litellm_runtime.service_id or "litellm",
+            service_label="LiteLLM",
+        )
+        if service_response is not None:
+            return service_response
+        try:
+            payload = await _litellm_models_payload(
+                request,
+                auth_context,
+                runtime_config=litellm_runtime,
+            )
+            if isinstance(payload, dict):
+                upstream_payload = payload
+            else:
+                return openai_error_response(
+                    "LiteLLM model discovery is unavailable.",
+                    status_code=503,
+                    error_type="service_unavailable",
+                    code="backend_unavailable",
+                )
+        except Exception as e:  # noqa: BLE001
+            print(f"[proxy] /v1/models LiteLLM fetch failed: {e}", flush=True)
+            return openai_error_response(
+                "LiteLLM model discovery is unavailable.",
+                status_code=503,
+                error_type="service_unavailable",
+                code="backend_unavailable",
+            )
+    else:
+        # Forward to whichever backend is active so OpenAI-style aliases stay intact.
+        active = await get_active_backend()
+        target_host = TABBY_HOST if active == "tabby" else KOBOLD_HOST
+        target_service = "tabby" if active == "tabby" else "kobold"
+        headers = prepare_downstream_headers(
+            request.headers,
+            auth_context,
+            target_service,
+            "/v1/models",
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5)) as client:
+                resp = await client.get(f"{target_host}/v1/models", headers=headers)
+                if resp.status_code == 200:
+                    try:
+                        payload = resp.json()
+                        if isinstance(payload, dict):
+                            upstream_payload = payload
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[proxy] /v1/models upstream fetch failed: {e}", flush=True)
 
     data = upstream_payload.get("data")
     if not isinstance(data, list):
@@ -15066,10 +15473,10 @@ async def list_models(request: Request):
         )
     ]
 
-    # Prepend role/catalog and workflow entries so they appear at the top of
-    # the list. Workflow entries let OpenAI-shaped image clients discover ids
-    # such as `sdxl-seamless-tile` without knowing the gateway manifest API.
-    role_entries = _build_role_catalog_entries()
+    # Prepend local role/catalog entries only for the legacy executor. LiteLLM
+    # owns commodity LLM model groups when enabled; media workflow entries stay
+    # gateway-native.
+    role_entries = [] if litellm_runtime.enabled else _build_role_catalog_entries()
     workflow_entries = _build_workflow_model_entries()
     existing_ids = {item.get("id") for item in data if isinstance(item, dict)}
     for entry in role_entries + workflow_entries:
@@ -15077,9 +15484,9 @@ async def list_models(request: Request):
             data.insert(0, entry)
             existing_ids.add(entry["id"])
 
-    # Surface the currently-loaded GGUF (filename form only) so clients can see
-    # what's actually hot. Skipped if some upstream entry already has it.
-    loaded_gguf = currently_loaded_kobold_model()
+    # Surface the currently-loaded GGUF only for the legacy executor. LiteLLM
+    # mode should expose model groups from the LiteLLM model list instead.
+    loaded_gguf = None if litellm_runtime.enabled else currently_loaded_kobold_model()
     if loaded_gguf:
         loaded_name = os.path.basename(loaded_gguf)
         if loaded_name and loaded_name not in existing_ids:
@@ -15918,8 +16325,24 @@ async def _ollama_forward_embeddings(
 
 
 async def _ollama_model_catalog_summaries(
+    request: Request | None,
     auth_context: AuthContext,
 ) -> list[dict[str, Any]]:
+    litellm_runtime = _litellm_runtime_config()
+    if litellm_runtime.enabled and request is not None:
+        payload = await _litellm_models_payload(
+            request,
+            auth_context,
+            runtime_config=litellm_runtime,
+        )
+        if not isinstance(payload, Mapping):
+            return []
+        filtered, _ = await _filter_model_list_for_profile(
+            _litellm_model_summaries_from_payload(payload),
+            auth_context,
+        )
+        return filtered
+
     summaries = _build_role_catalog_entries()
     filtered, _ = await _filter_model_list_for_profile(summaries, auth_context)
     return filtered
@@ -15946,6 +16369,9 @@ def _ollama_summary_matches_model(summary: Mapping[str, Any], model: str) -> boo
 async def _ollama_loaded_model_summaries(
     auth_context: AuthContext,
 ) -> list[dict[str, Any]]:
+    if _litellm_runtime_config().enabled:
+        return []
+
     try:
         active = await get_active_backend()
     except Exception:
@@ -15955,7 +16381,10 @@ async def _ollama_loaded_model_summaries(
 
     summaries: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for entry in await _ollama_model_catalog_summaries(auth_context):
+    for entry in await _ollama_model_catalog_summaries(
+        request=None,
+        auth_context=auth_context,
+    ):
         entry_id = str(entry.get("id") or "")
         if normalize_model_id(entry_id) not in loaded_norm:
             continue
@@ -16189,7 +16618,7 @@ async def ollama_tags(request: Request):
 
     return _json_error_response(
         ollama_protocol.tags_response_from_model_summaries(
-            await _ollama_model_catalog_summaries(auth_context)
+            await _ollama_model_catalog_summaries(request, auth_context)
         ),
         status_code=200,
     )
@@ -16218,7 +16647,7 @@ async def ollama_show(request: Request):
     if policy_error is not None:
         return policy_error
 
-    for summary in await _ollama_model_catalog_summaries(auth_context):
+    for summary in await _ollama_model_catalog_summaries(request, auth_context):
         if _ollama_summary_matches_model(summary, model):
             return _json_error_response(
                 ollama_protocol.show_response_from_model_summary(summary),
@@ -16576,6 +17005,26 @@ async def retrieve_response(response_id: str, request: Request):
     )
 
 
+@app.post("/openai/v1/responses/{response_id}/cancel")
+@app.post("/v1/responses/{response_id}/cancel")
+async def cancel_response(response_id: str, request: Request):
+    auth_context = authenticate_request(request, "/v1/responses")
+    if isinstance(auth_context, Response):
+        return auth_context
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol="openai.chat",
+        intent="chat.responses",
+    )
+    if decision.denied:
+        return _policy_denied_response(decision)
+    return _responses_error(
+        "Response cancellation is not supported for locally translated Responses.",
+        code="unsupported_operation",
+        status=400,
+    )
+
+
 @app.delete("/openai/v1/responses/{response_id}")
 @app.delete("/v1/responses/{response_id}")
 async def delete_response(response_id: str, request: Request):
@@ -16691,6 +17140,332 @@ def _openai_proxy_policy_decision(
             capability_resource_tier="interactive",
         ),
     )
+
+
+def _litellm_unconfigured_response() -> Response:
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": (
+                    "LiteLLM execution is enabled, but the gateway service "
+                    "registry has no enabled LiteLLM service with a base URL."
+                ),
+                "type": "service_unavailable",
+                "code": "litellm_unconfigured",
+            }
+        }),
+        status_code=503,
+        media_type="application/json",
+    )
+
+
+def _litellm_runtime_config():
+    try:
+        registry = ADMIN_STORE.get_service_registry()
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] LiteLLM registry lookup failed: {e}", flush=True)
+        registry = None
+    return litellm_runtime_from_registry(
+        registry,
+        env=os.environ,
+        fallback_mode=LLM_EXECUTION_MODE_BOOTSTRAP,
+        fallback_base_url=LITELLM_BASE_URL_BOOTSTRAP,
+        fallback_api_key=LITELLM_API_KEY_BOOTSTRAP,
+    )
+
+
+def _litellm_gateway_metadata(
+    auth_context: AuthContext,
+    *,
+    request_path: str,
+    runtime_source: str = "",
+    service_id: str = "",
+) -> dict[str, str]:
+    metadata = {
+        "execution": "litellm",
+        "request-path": request_path,
+        "profile": _profile_source_id(auth_context),
+    }
+    if runtime_source:
+        metadata["runtime-source"] = runtime_source
+    if service_id:
+        metadata["service-id"] = service_id
+    identity = auth_context.identity
+    if identity is not None:
+        metadata["app"] = str(identity.name)
+        metadata["key-prefix"] = str(identity.key_hash or "")[:18]
+    return metadata
+
+
+def _body_with_litellm_metadata(
+    body_json: Mapping[str, Any],
+    *,
+    auth_context: AuthContext,
+    request_path: str,
+    runtime_source: str = "",
+    service_id: str = "",
+) -> bytes:
+    body = copy.deepcopy(dict(body_json))
+    metadata = body.get("metadata")
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    else:
+        metadata = dict(metadata)
+    metadata["ai_gateway"] = _litellm_gateway_metadata(
+        auth_context,
+        request_path=request_path,
+        runtime_source=runtime_source,
+        service_id=service_id,
+    )
+    body["metadata"] = metadata
+    return json.dumps(body).encode()
+
+
+def _start_litellm_route_receipt(
+    *,
+    request_path: str,
+    auth_context: AuthContext,
+    requested_model: str,
+    protocol: str | None = None,
+    intent: str | None = None,
+) -> RouteReceipt:
+    if protocol is None or intent is None:
+        protocol, intent = _OPENAI_PROXY_POLICY.get(
+            request_path,
+            ("openai.chat", "chat.generate"),
+        )
+    profile = _profile_for_auth_context(auth_context)
+    receipt = RouteReceipt(
+        protocol=protocol,
+        path=request_path,
+        intent=intent,
+        backend="litellm",
+        requested_model=requested_model,
+        app_profile=profile.id,
+        api_key_name=auth_context.identity.name if auth_context.identity else None,
+        visibility=profile.status_visibility.level,
+    )
+    receipt.set_policy_decision("allowed", source="gateway:profile")
+    receipt.metadata.update({"execution_backend": "litellm"})
+    return receipt
+
+
+def _attach_litellm_response_metadata(
+    receipt: RouteReceipt,
+    headers: Mapping[str, str],
+) -> None:
+    keys = (
+        "x-litellm-call-id",
+        "x-litellm-model-id",
+        "x-litellm-model-group",
+        "x-litellm-model-api-base",
+        "x-litellm-response-cost",
+        "x-litellm-response-duration-ms",
+        "x-litellm-attempted-retries",
+        "x-litellm-attempted-fallbacks",
+    )
+    facts: dict[str, str] = {}
+    lowered = {key.lower(): value for key, value in headers.items()}
+    for key in keys:
+        value = lowered.get(key)
+        if value:
+            facts[key.removeprefix("x-litellm-").replace("-", "_")] = value
+    if facts:
+        receipt.metadata["litellm"] = facts
+
+
+def _record_litellm_route_receipt(receipt: RouteReceipt) -> None:
+    try:
+        receipt_store.record(receipt)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Could not record LiteLLM route receipt: {e}", flush=True)
+
+
+async def _forward_litellm_proxy_request(
+    request: Request,
+    *,
+    request_path: str,
+    path: str,
+    auth_context: AuthContext,
+    body_json: Mapping[str, Any],
+    runtime_config=None,
+    attach_body_metadata: bool = True,
+    validate_chat_extensions: bool = True,
+    requested_embedding_dimensions: int | None = None,
+) -> Response:
+    runtime = runtime_config or _litellm_runtime_config()
+    if not runtime.enabled:
+        return _litellm_unconfigured_response()
+
+    service_response = _service_availability_response(
+        runtime.service_id or "litellm",
+        service_label="LiteLLM",
+    )
+    if service_response is not None:
+        return service_response
+
+    model_name = body_json.get("model")
+    if not isinstance(model_name, str) or not model_name:
+        return openai_error_response(
+            "Missing required parameter: 'model'.",
+            status_code=400,
+            param="model",
+            code="missing_required_parameter",
+        )
+
+    if _profile_target_activation(auth_context) == "existing_only":
+        current_loaded_decision = await _current_loaded_model_policy_decision(
+            auth_context,
+            requested_model=model_name,
+        )
+        if current_loaded_decision is not None and current_loaded_decision.denied:
+            return _policy_denied_response(current_loaded_decision)
+
+    receipt = _start_litellm_route_receipt(
+        request_path=request_path,
+        auth_context=auth_context,
+        requested_model=model_name,
+    )
+    body_for_litellm = body_json
+    if validate_chat_extensions and request_path == "/v1/chat/completions":
+        try:
+            extension_result = validate_chat_completions_extensions(body_json)
+        except ExtensionError as e:
+            return _extension_validation_error_response({"extensions": str(e)})
+        if not extension_result.ok:
+            return _extension_validation_error_response(extension_result.rejected)
+        body_for_litellm = extension_result.request
+    if (
+        request_path == "/v1/embeddings"
+        and requested_embedding_dimensions is not None
+    ):
+        body_for_litellm = dict(body_for_litellm)
+        body_for_litellm.pop("dimensions", None)
+
+    if attach_body_metadata:
+        body = _body_with_litellm_metadata(
+            body_for_litellm,
+            auth_context=auth_context,
+            request_path=request_path,
+            runtime_source=runtime.source,
+            service_id=runtime.service_id,
+        )
+    else:
+        body = json.dumps(dict(body_for_litellm)).encode()
+    gateway_metadata = _litellm_gateway_metadata(
+        auth_context,
+        request_path=request_path,
+        runtime_source=runtime.source,
+        service_id=runtime.service_id,
+    )
+    read_timeout = (
+        EMBEDDINGS_TIMEOUT
+        if request_path == "/v1/embeddings"
+        else UPSTREAM_READ_TIMEOUT
+    )
+    execution_request = LlmExecutionRequest(
+        method=request.method,
+        url=litellm_url(
+            base_url=runtime.base_url,
+            path=path,
+            query=request.url.query,
+        ),
+        headers=litellm_headers(
+            request.headers,
+            api_key=runtime.api_key,
+            gateway_metadata=gateway_metadata,
+        ),
+        body=body,
+        read_timeout=read_timeout,
+    )
+
+    try:
+        client, resp = await send_llm_execution_request(execution_request)
+        content_type = resp.headers.get("content-type", "") or "application/json"
+        excluded = ("content-length", "transfer-encoding", "content-type")
+        response_headers = {
+            k: v for k, v in resp.headers.items() if k.lower() not in excluded
+        }
+        response_headers["X-AI-Gateway-LLM-Execution"] = "litellm"
+        _attach_litellm_response_metadata(receipt, resp.headers)
+
+        if "text/event-stream" in content_type:
+            async def stream_response():
+                try:
+                    async for chunk in resp.aiter_bytes():
+                        if request_path == "/v1/chat/completions":
+                            chunk = _normalize_chat_completion_sse_chunk(chunk)
+                        yield chunk
+                finally:
+                    receipt.finish(
+                        "succeeded" if 200 <= resp.status_code < 400 else "failed"
+                    )
+                    _record_litellm_route_receipt(receipt)
+                    await resp.aclose()
+                    await client.aclose()
+
+            return StreamingResponse(
+                stream_response(),
+                status_code=resp.status_code,
+                headers=response_headers,
+                media_type=content_type,
+            )
+
+        content = await resp.aread()
+        await resp.aclose()
+        await client.aclose()
+        if 200 <= resp.status_code < 300 and "application/json" in content_type:
+            try:
+                response_json = json.loads(content)
+                if isinstance(response_json, dict):
+                    if request_path == "/v1/chat/completions":
+                        _normalize_chat_completion_visible_content(response_json)
+                    if (
+                        request_path == "/v1/embeddings"
+                        and requested_embedding_dimensions is not None
+                    ):
+                        dimensions_error = _apply_embedding_dimensions(
+                            response_json,
+                            requested_embedding_dimensions,
+                        )
+                        if dimensions_error is not None:
+                            return dimensions_error
+                    content = json.dumps(response_json).encode()
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+        receipt.finish("succeeded" if 200 <= resp.status_code < 400 else "failed")
+        _record_litellm_route_receipt(receipt)
+        return Response(
+            content=content,
+            status_code=resp.status_code,
+            headers=response_headers,
+            media_type=content_type,
+        )
+    except httpx.TimeoutException:
+        receipt.finish("failed")
+        receipt.add_warning("LiteLLM execution timed out")
+        _record_litellm_route_receipt(receipt)
+        return Response(
+            content=json.dumps({"detail": "Request timeout"}),
+            status_code=504,
+            media_type="application/json",
+        )
+    except httpx.ConnectError:
+        receipt.finish("failed")
+        receipt.add_warning("LiteLLM execution backend is unavailable")
+        _record_litellm_route_receipt(receipt)
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "LiteLLM execution backend is unavailable.",
+                    "type": "service_unavailable",
+                    "code": "backend_unavailable",
+                }
+            }),
+            status_code=503,
+            media_type="application/json",
+            headers={"Retry-After": "10"},
+        )
 
 
 @app.post("/openai/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
@@ -17304,6 +18079,29 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         )
     if policy_decision is not None and policy_decision.denied:
         return _policy_denied_response(policy_decision)
+
+    litellm_runtime = _litellm_runtime_config()
+    if litellm_runtime.enabled and request_path in LITELLM_BODY_EXECUTION_PATHS:
+        if parsed_openai_body is None:
+            parsed_openai_body, parse_error = parse_openai_json_body(body_peek)
+            if parse_error is not None:
+                return parse_error
+        activation_error, litellm_body = await _prepare_litellm_local_llm_request(
+            auth_context,
+            request_path=request_path,
+            body_json=parsed_openai_body,
+        )
+        if activation_error is not None:
+            return activation_error
+        return await _forward_litellm_proxy_request(
+            request,
+            request_path=request_path,
+            path=path,
+            auth_context=auth_context,
+            body_json=litellm_body,
+            runtime_config=litellm_runtime,
+            requested_embedding_dimensions=requested_embedding_dimensions,
+        )
 
     model_resolution: Optional[ModelResolution] = None
     # Fix 3: vision pre-flight + routing flag. Values: "not-needed", "true",

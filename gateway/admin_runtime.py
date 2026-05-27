@@ -31,6 +31,7 @@ from gateway.admin_oidc import (
 )
 from gateway.policy import DEFAULT_PROFILE
 from gateway.profiles import ProfileLoadError, load_profile
+from gateway.litellm_substrate import write_litellm_config_artifact
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key
 
 APP_KEY_PREFIX = "opk_"
@@ -650,6 +651,20 @@ class AdminSQLiteStore:
             }
         return registry
 
+    def write_litellm_config(self, registry: Mapping[str, Any] | None = None) -> Path:
+        registry = registry or self.get_service_registry()
+        profiles = [
+            row.get("profile")
+            for row in admin_store.list_profiles(path=self.path)
+            if isinstance(row.get("profile"), Mapping)
+        ]
+        return write_litellm_config_artifact(
+            registry,
+            profiles=profiles,
+            base_dir=Path(__file__).resolve().parent.parent,
+            policy_metadata={"source": "admin.db", "generated_by": "ai-gateway"},
+        )
+
     def update_service_registry(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
@@ -674,6 +689,7 @@ class AdminSQLiteStore:
             },
             path=self.path,
         )
+        self.write_litellm_config(record["value"])
         return record["value"]
 
     def get_extension_package_index(self) -> dict[str, Any]:

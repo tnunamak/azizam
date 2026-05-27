@@ -90,6 +90,7 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
 ENV_RECOMMENDATIONS: Mapping[str, tuple[str, str, str]] = {
     "AI_GATEWAY_USER_SELF_SERVICE": ("User access bootstrap environment", "auth/admin", "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."),
     "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP": ("User access bootstrap environment", "auth/admin", "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."),
+    "AI_GATEWAY_LITELLM": ("LiteLLM substrate environment", "services/providers", "Bootstrap sidecar URL and internal secret references; service records live in admin.db."),
     "OIDC": ("OIDC environment", "auth/admin", "Keep OIDC secrets and issuer bootstrap in env."),
     "OPENAI": ("OpenAI provider environment", "services/providers", "Keep provider credentials in env or secret stores."),
     "ANTHROPIC": ("Anthropic provider environment", "services/providers", "Keep provider credentials in env or secret stores."),
@@ -103,6 +104,8 @@ KNOWN_ENV_SOURCE_NAMES: tuple[str, ...] = (
     "AI_GATEWAY_ADMIN_SESSION_KEY",
     "AI_GATEWAY_ADMIN_OIDC_ADMIN_GROUPS",
     "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP",
+    "AI_GATEWAY_LITELLM_API_KEY",
+    "AI_GATEWAY_LITELLM_BASE_URL",
     "AI_GATEWAY_OIDC_CLIENT_SECRET",
     "AI_GATEWAY_USER_SELF_SERVICE",
     "COMFY_ENABLED",

@@ -17,15 +17,21 @@ Explicit limitations:
 from __future__ import annotations
 
 import copy
+import os
+from pathlib import Path
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, is_dataclass
 from typing import Any
+from urllib.parse import urlparse
+
+import yaml
 
 from gateway.policy import AppProfile
 from gateway.service_registry import normalize_service_record, normalize_string_list
 
 OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", "openai-compatible"})
 SECRET_PLACEHOLDER = "<external-secret>"
+DEFAULT_LITELLM_CONFIG_PATH = Path("data/litellm.config.yaml")
 
 
 def compile_litellm_substrate_config(
@@ -88,10 +94,98 @@ def compile_litellm_substrate_config(
             "drop_params": True,
         },
         "router_settings": {
-            "routing_strategy": "usage-based-routing-v2",
+            "routing_strategy": "simple-shuffle",
         },
         "metadata": metadata,
     }
+
+
+def compile_litellm_config_from_registry(
+    registry: Mapping[str, Any],
+    *,
+    profiles: Mapping[str, Any] | Iterable[Any] | None = None,
+    policy_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    services = registry.get("services") if isinstance(registry, Mapping) else {}
+    return compile_litellm_substrate_config(
+        services if isinstance(services, Mapping) else {},
+        profiles=profiles,
+        policy_metadata=policy_metadata,
+    )
+
+
+def litellm_config_path_from_registry(
+    registry: Mapping[str, Any],
+    *,
+    base_dir: Path,
+) -> Path:
+    service = _litellm_service_record(registry)
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    raw_path = str(config.get("config_path") or DEFAULT_LITELLM_CONFIG_PATH).strip()
+    path = Path(raw_path)
+    return path if path.is_absolute() else base_dir / path
+
+
+def write_litellm_config_artifact(
+    registry: Mapping[str, Any],
+    *,
+    profiles: Mapping[str, Any] | Iterable[Any] | None = None,
+    base_dir: Path,
+    policy_metadata: Mapping[str, Any] | None = None,
+) -> Path:
+    path = litellm_config_path_from_registry(registry, base_dir=base_dir)
+    compiled = compile_litellm_config_from_registry(
+        registry,
+        profiles=profiles,
+        policy_metadata=policy_metadata,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(
+        yaml.safe_dump(compiled, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+    return path
+
+
+def _litellm_service_record(registry: Mapping[str, Any]) -> Mapping[str, Any]:
+    services = registry.get("services") if isinstance(registry, Mapping) else {}
+    if not isinstance(services, Mapping):
+        return {}
+    candidates = [
+        service
+        for raw_id, service in services.items()
+        if isinstance(service, Mapping)
+        and _is_litellm_service(raw_id, service)
+    ]
+    if not candidates:
+        return {}
+    return sorted(candidates, key=lambda item: int(item.get("priority") or 100))[0]
+
+
+def _is_litellm_service(raw_id: Any, service: Mapping[str, Any]) -> bool:
+    service_id = str(service.get("id") or raw_id or "").strip().lower()
+    kind = str(service.get("kind") or "").strip().lower()
+    capabilities = {
+        str(item).strip().lower()
+        for item in service.get("capabilities", ())
+        if str(item).strip()
+    }
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    markers = {
+        str(config.get("execution") or "").strip().lower(),
+        str(config.get("execution_mode") or "").strip().lower(),
+        str(config.get("execution_substrate") or "").strip().lower(),
+        str(config.get("provider") or "").strip().lower(),
+        str(config.get("protocol") or "").strip().lower(),
+    }
+    return (
+        service_id == "litellm"
+        or kind in {"litellm", "llm-execution", "llm-substrate"}
+        or "llm.execution" in capabilities
+        or "litellm" in markers
+    )
 
 
 def _normalize_services(
@@ -162,7 +256,11 @@ def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
     elif isinstance(raw_models, Iterable) and not isinstance(raw_models, (str, bytes)):
         iterable = list(raw_models)
     else:
-        fallback = config.get("model") or config.get("default_model")
+        fallback = (
+            config.get("model")
+            or config.get("model_id")
+            or config.get("default_model")
+        )
         iterable = [fallback] if fallback else []
 
     out: list[dict[str, Any]] = []
@@ -209,7 +307,7 @@ def _model_list_entries(
     secret_refs = (
         service.get("secret_refs") if isinstance(service.get("secret_refs"), Mapping) else {}
     )
-    base_url = str(config.get("base_url") or config.get("api_base") or "").rstrip("/")
+    base_url = _service_base_url(config)
     api_key_ref = _api_key_ref(config, secret_refs)
 
     out: list[dict[str, Any]] = []
@@ -221,6 +319,8 @@ def _model_list_entries(
             litellm_params["api_base"] = base_url
         if api_key_ref:
             litellm_params["api_key"] = api_key_ref
+        elif _is_loopback_url(base_url):
+            litellm_params["api_key"] = "sk-local"
 
         out.append(
             {
@@ -246,6 +346,32 @@ def _litellm_model_name(upstream_model: str) -> str:
     if "/" in upstream_model:
         return upstream_model
     return f"openai/{upstream_model}"
+
+
+def _service_base_url(config: Mapping[str, Any]) -> str:
+    raw = str(
+        config.get("base_url")
+        or config.get("api_base")
+        or config.get("default_base_url")
+        or ""
+    ).strip()
+    if raw:
+        return raw.rstrip("/")
+    host = str(config.get("host") or "").strip()
+    port = config.get("port")
+    if not host or port is None:
+        return ""
+    scheme = str(config.get("scheme") or "http").strip() or "http"
+    base_path = str(config.get("base_path") or "/v1").strip() or "/v1"
+    return f"{scheme}://{host}:{port}/{base_path.strip('/')}".rstrip("/")
+
+
+def _is_loopback_url(raw_url: str) -> bool:
+    if not raw_url:
+        return False
+    parsed = urlparse(raw_url)
+    hostname = (parsed.hostname or "").lower()
+    return hostname in {"127.0.0.1", "localhost", "::1"}
 
 
 def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any]) -> str:

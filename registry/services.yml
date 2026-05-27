@@ -1,0 +1,22 @@
+records:
+  - id: litellm
+    name: LiteLLM
+    kind: llm-substrate
+    source: builtin
+    editable: false
+    enabled: true
+    priority: 10
+    role: required
+    capabilities:
+      - llm.execution
+    config:
+      execution_substrate: litellm
+      protocol: litellm
+      base_url_env: AI_GATEWAY_LITELLM_BASE_URL
+      default_base_url: http://127.0.0.1:4011
+      api_key_env: AI_GATEWAY_LITELLM_API_KEY
+      config_path: data/litellm.config.yaml
+    lifecycle:
+      type: external
+      managed: false
+      service_name: litellm

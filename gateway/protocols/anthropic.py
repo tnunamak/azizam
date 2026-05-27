@@ -21,6 +21,7 @@ the gateway already speaks internally::
       "top_p": float | None,
       "stop": list[str] | None,
       "stream": bool,
+      "reasoning_effort": "minimal",
       "tools": list[...] | None,
       "tool_choice": ... | None,
       "metadata": dict | None,
@@ -161,6 +162,10 @@ def messages_request_to_canonical(body: dict[str, Any]) -> dict[str, Any]:
         raise AnthropicTranslationError(
             "'max_tokens' must be a positive integer"
         )
+    if body.get("thinking") is not None:
+        raise AnthropicTranslationError(
+            "unsupported Anthropic feature: thinking",
+        )
 
     canonical_messages: list[dict[str, Any]] = []
 
@@ -180,6 +185,10 @@ def messages_request_to_canonical(body: dict[str, Any]) -> dict[str, Any]:
         "messages": canonical_messages,
         "max_tokens": max_tokens,
         "stream": bool(body.get("stream", False)),
+        # Anthropic Messages does not expose local chain-of-thought by default.
+        # Ask the gateway chat path to suppress local reasoning-model chatter
+        # before it reaches the response translator.
+        "reasoning_effort": "minimal",
     }
 
     if "temperature" in body:
@@ -230,9 +239,11 @@ def canonical_response_to_messages(
     message = first.get("message") or {}
 
     content_blocks: list[dict[str, Any]] = []
-    text = message.get("content")
-    if (text is None or text == "") and isinstance(message.get("reasoning_content"), str):
-        text = _visible_text_from_reasoning_content(message.get("reasoning_content"))
+    text = _visible_text_from_local_reasoning(message.get("content"))
+    if (text is None or text == "") and isinstance(
+        message.get("reasoning_content"), str
+    ):
+        text = _visible_text_from_local_reasoning(message.get("reasoning_content"))
     if isinstance(text, str) and text:
         content_blocks.append({"type": "text", "text": text})
 
@@ -301,6 +312,8 @@ class MessagesStreamTranslator:
         self.model = request_model or ""
         self.content_started = False
         self.finished = False
+        self.suppressing_local_reasoning = False
+        self.local_reasoning_prefix_buffer = ""
 
     def feed(self, raw_event: Any) -> list[str]:
         if self.finished:
@@ -337,11 +350,11 @@ class MessagesStreamTranslator:
         first = choices[0] if choices else {}
         delta = first.get("delta") or {}
 
-        text = delta.get("content")
+        text = self._visible_text_delta(delta.get("content"))
         if (text is None or text == "") and isinstance(
             delta.get("reasoning_content"), str
         ):
-            text = _visible_text_from_reasoning_content(delta.get("reasoning_content"))
+            text = self._visible_text_delta(delta.get("reasoning_content"))
         if isinstance(text, str) and text:
             if not self.content_started:
                 self.content_started = True
@@ -417,6 +430,43 @@ class MessagesStreamTranslator:
         frames.append(_anthropic_sse_frame("message_stop", {"type": "message_stop"}))
         return frames
 
+    def _visible_text_delta(self, text: Any) -> str | None:
+        if not isinstance(text, str):
+            return None
+
+        visible_parts: list[str] = []
+        remaining = f"{self.local_reasoning_prefix_buffer}{text}"
+        self.local_reasoning_prefix_buffer = ""
+        while remaining:
+            lower = remaining.lower()
+            if self.suppressing_local_reasoning:
+                close = lower.find("</think>")
+                if close < 0:
+                    return "".join(visible_parts)
+                remaining = remaining[close + len("</think>") :]
+                self.suppressing_local_reasoning = False
+                continue
+
+            open_tag = lower.find("<think")
+            if open_tag < 0:
+                partial = _think_open_prefix_suffix_length(lower)
+                if partial:
+                    visible_parts.append(remaining[:-partial])
+                    self.local_reasoning_prefix_buffer = remaining[-partial:]
+                    break
+                visible_parts.append(remaining)
+                break
+
+            visible_parts.append(remaining[:open_tag])
+            tag_end = lower.find(">", open_tag)
+            if tag_end < 0:
+                self.suppressing_local_reasoning = True
+                break
+            remaining = remaining[tag_end + 1 :]
+            self.suppressing_local_reasoning = True
+
+        return "".join(visible_parts)
+
 
 def _coerce_openai_stream_chunk(raw_event: Any) -> dict[str, Any] | None:
     if isinstance(raw_event, dict):
@@ -451,13 +501,27 @@ def _anthropic_sse_frame(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
 
 
-def _visible_text_from_reasoning_content(text: str) -> str:
+def _think_open_prefix_suffix_length(text: str) -> int:
+    marker = "<think"
+    max_length = min(len(marker) - 1, len(text))
+    for length in range(max_length, 0, -1):
+        if marker.startswith(text[-length:]):
+            return length
+    return 0
+
+
+def _visible_text_from_local_reasoning(text: Any) -> str | None:
+    if not isinstance(text, str):
+        return None
     lower = text.lower()
+    has_think_marker = "<think" in lower or "</think>" in lower
     close = lower.rfind("</think>")
     if close >= 0:
         visible = text[close + len("</think>") :].strip()
         if visible:
             return visible
+    if has_think_marker:
+        return ""
     return text
 
 
