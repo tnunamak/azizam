@@ -416,24 +416,12 @@ def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
     """Return whether a service record declares the LiteLLM execution substrate."""
     service_id = str(service.get("id") or raw_id or "").strip().lower()
     kind = str(service.get("kind") or "").strip().lower()
-    capabilities = {
-        str(item).strip().lower()
-        for item in service.get("capabilities", ())
-        if str(item).strip()
-    }
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
-    markers = {
-        str(config.get("execution") or "").strip().lower(),
-        str(config.get("execution_mode") or "").strip().lower(),
-        str(config.get("execution_substrate") or "").strip().lower(),
-        str(config.get("provider") or "").strip().lower(),
-        str(config.get("protocol") or "").strip().lower(),
-    }
+    execution_substrate = str(config.get("execution_substrate") or "").strip().lower()
     return (
         service_id == "litellm"
-        or kind in {"litellm", "llm-execution", "llm-substrate"}
-        or "llm.execution" in capabilities
-        or "litellm" in markers
+        or kind in {"litellm", "llm-substrate"}
+        or execution_substrate == "litellm"
     )
 
 

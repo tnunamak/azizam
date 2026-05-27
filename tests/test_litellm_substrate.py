@@ -6,7 +6,6 @@ from gateway.litellm_substrate import (
     litellm_config_path_from_registry,
     write_litellm_config_artifact,
 )
-from gateway.policy import AppProfile, FallbackPolicy, StatusVisibilityPolicy
 
 
 def test_compiles_openai_compatible_local_service() -> None:
@@ -46,9 +45,7 @@ def test_compiles_openai_compatible_local_service() -> None:
             },
         }
     ]
-    assert compiled["metadata"]["source_of_truth"] == (
-        "gateway service registry and app profiles"
-    )
+    assert compiled["metadata"]["source_of_truth"] == "gateway service registry"
 
 
 def test_multiple_deployments_can_share_one_model_group() -> None:
@@ -140,7 +137,7 @@ def test_uses_simple_router_strategy_for_local_compatibility() -> None:
     assert compiled["router_settings"]["routing_strategy"] == "simple-shuffle"
 
 
-def test_preserves_gateway_policy_metadata_without_exposing_secrets() -> None:
+def test_references_external_secrets_without_exposing_secret_values() -> None:
     compiled = compile_litellm_substrate_config(
         {
             "cloud-openai": {
@@ -156,61 +153,15 @@ def test_preserves_gateway_policy_metadata_without_exposing_secrets() -> None:
                 "secret_refs": {"api_key": "<external-secret>"},
             }
         },
-        profiles=[
-            AppProfile(
-                id="family",
-                models=frozenset({"gpt-4.1-mini"}),
-                fallback=FallbackPolicy(cloud_allowed=True),
-                status_visibility=StatusVisibilityPolicy(level="standard"),
-            )
-        ],
-        policy_metadata={
-            "profile_source": "admin.db",
-            "credential": "opk_should_not_leak",
-            "fallback": {"cloud_allowed": True},
-        },
     )
 
     rendered = repr(compiled)
     assert "sk-should-not-leak" not in rendered
-    assert "opk_should_not_leak" not in rendered
     assert compiled["model_list"][0]["litellm_params"]["api_key"] == (
         "os.environ/AI_GATEWAY_DOWNSTREAM_API_KEY"
     )
-    assert compiled["metadata"]["gateway"]["profiles"] == [
-        {
-            "id": "family",
-            "protocols": None,
-            "workflows": None,
-            "models": ["gpt-4.1-mini"],
-            "backends": None,
-            "allow": {
-                "intents": None,
-                "exposure": None,
-                "trust_tiers": None,
-                "resource_tiers": None,
-                "tags": None,
-            },
-            "fallback": {"cloud_allowed": True},
-            "native_passthrough": {
-                "enabled": False,
-                "allowed_backends": [],
-                "allowed_operations": [],
-                "audit": True,
-            },
-            "status_visibility": {"level": "standard"},
-            "target_policy": {
-                "visibility": "catalog",
-                "activation": "may_activate",
-            },
-            "model_access": {"mode": "catalog"},
-        }
-    ]
-    assert compiled["metadata"]["gateway"]["policy"] == {
-        "profile_source": "admin.db",
-        "credential": "<redacted>",
-        "fallback": {"cloud_allowed": True},
-    }
+    assert "profiles" not in compiled["metadata"]["gateway"]
+    assert "policy" not in compiled["metadata"]["gateway"]
 
 
 def test_compiles_from_registry_and_writes_litellm_config_artifact(tmp_path) -> None:

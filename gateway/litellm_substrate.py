@@ -1,4 +1,4 @@
-"""Compile Gateway service/profile data into a LiteLLM substrate fragment.
+"""Compile Gateway service data into a LiteLLM substrate fragment.
 
 This module is intentionally pure and data-oriented. It does not import
 ``proxy.py``, read environment variables, or contact LiteLLM. The Gateway
@@ -9,9 +9,8 @@ Explicit limitations:
 
 * Only OpenAI-compatible chat-style services are represented.
 * Secrets are emitted as external references, never resolved values.
-* Gateway policy/profile metadata is preserved for audit/debugging, but this
-  compiler does not translate Gateway policy semantics into LiteLLM auth rules.
-* Non-LLM workflow/media/capability routing is out of scope for this spike.
+* Gateway policy/Profile enforcement stays in the gateway.
+* Non-LLM workflow/media/capability routing stays in the gateway.
 """
 
 from __future__ import annotations
@@ -20,13 +19,11 @@ import copy
 import os
 from pathlib import Path
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, is_dataclass
 from typing import Any
 from urllib.parse import urlparse
 
 import yaml
 
-from gateway.policy import AppProfile
 from gateway.service_registry import (
     is_litellm_service_record,
     normalize_service_record,
@@ -40,14 +37,10 @@ DEFAULT_LITELLM_CONFIG_PATH = Path("data/litellm.config.yaml")
 
 def compile_litellm_substrate_config(
     services: Mapping[str, Any] | Iterable[Mapping[str, Any]],
-    *,
-    profiles: Mapping[str, Any] | Iterable[Any] | None = None,
-    policy_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a LiteLLM-compatible config fragment from Gateway-owned data."""
 
     service_records = _normalize_services(services)
-    profile_records = _normalize_profiles(profiles)
     entries: list[dict[str, Any]] = []
     omitted: list[dict[str, str]] = []
 
@@ -77,17 +70,14 @@ def compile_litellm_substrate_config(
 
     metadata = {
         "source": "ai-gateway",
-        "source_of_truth": "gateway service registry and app profiles",
+        "source_of_truth": "gateway service registry",
         "limitations": [
             "OpenAI-compatible LLM deployments only",
             "Secrets are referenced but not resolved",
-            "Gateway policies are metadata, not LiteLLM enforcement rules",
             "Media workflows and non-chat capabilities are not compiled",
         ],
         "gateway": {
             "services": [_service_metadata(row) for row in service_records],
-            "profiles": profile_records,
-            "policy": _redact(policy_metadata or {}),
             "omitted_services": omitted,
         },
     }
@@ -106,16 +96,9 @@ def compile_litellm_substrate_config(
 
 def compile_litellm_config_from_registry(
     registry: Mapping[str, Any],
-    *,
-    profiles: Mapping[str, Any] | Iterable[Any] | None = None,
-    policy_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     services = registry.get("services") if isinstance(registry, Mapping) else {}
-    return compile_litellm_substrate_config(
-        services if isinstance(services, Mapping) else {},
-        profiles=profiles,
-        policy_metadata=policy_metadata,
-    )
+    return compile_litellm_substrate_config(services if isinstance(services, Mapping) else {})
 
 
 def litellm_config_path_from_registry(
@@ -133,16 +116,10 @@ def litellm_config_path_from_registry(
 def write_litellm_config_artifact(
     registry: Mapping[str, Any],
     *,
-    profiles: Mapping[str, Any] | Iterable[Any] | None = None,
     base_dir: Path,
-    policy_metadata: Mapping[str, Any] | None = None,
 ) -> Path:
     path = litellm_config_path_from_registry(registry, base_dir=base_dir)
-    compiled = compile_litellm_config_from_registry(
-        registry,
-        profiles=profiles,
-        policy_metadata=policy_metadata,
-    )
+    compiled = compile_litellm_config_from_registry(registry)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp.write_text(
@@ -182,33 +159,6 @@ def _normalize_services(
         service_id = str(raw.get("id") or raw_id or "").strip()
         if service_id:
             out.append(normalize_service_record(service_id, raw))
-    return out
-
-
-def _normalize_profiles(
-    profiles: Mapping[str, Any] | Iterable[Any] | None,
-) -> list[dict[str, Any]]:
-    if profiles is None:
-        return []
-    if isinstance(profiles, Mapping):
-        rows = profiles.items()
-    else:
-        rows = ((getattr(row, "id", None), row) for row in profiles)
-
-    out: list[dict[str, Any]] = []
-    for raw_id, raw in rows:
-        if isinstance(raw, AppProfile):
-            profile = _dataclass_to_plain_dict(raw)
-        elif is_dataclass(raw):
-            profile = _dataclass_to_plain_dict(raw)
-        elif isinstance(raw, Mapping):
-            profile = copy.deepcopy(dict(raw))
-        else:
-            continue
-        profile_id = str(profile.get("id") or raw_id or "").strip()
-        if profile_id:
-            profile["id"] = profile_id
-        out.append(_redact(profile))
     return out
 
 
@@ -372,10 +322,6 @@ def _service_metadata(service: Mapping[str, Any]) -> dict[str, Any]:
         "capabilities": list(service.get("capabilities") or []),
         "has_secret_refs": bool(service.get("secret_refs")),
     }
-
-
-def _dataclass_to_plain_dict(value: Any) -> dict[str, Any]:
-    return copy.deepcopy(asdict(value))
 
 
 def _redact(value: Any) -> Any:

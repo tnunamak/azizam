@@ -653,16 +653,9 @@ class AdminSQLiteStore:
 
     def write_litellm_config(self, registry: Mapping[str, Any] | None = None) -> Path:
         registry = registry or self.get_service_registry()
-        profiles = [
-            row.get("profile")
-            for row in admin_store.list_profiles(path=self.path)
-            if isinstance(row.get("profile"), Mapping)
-        ]
         return write_litellm_config_artifact(
             registry,
-            profiles=profiles,
             base_dir=Path(__file__).resolve().parent.parent,
-            policy_metadata={"source": "admin.db", "generated_by": "ai-gateway"},
         )
 
     def update_service_registry(

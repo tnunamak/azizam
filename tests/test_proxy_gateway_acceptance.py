@@ -246,6 +246,9 @@ class TestGatewayRouterMounting(unittest.TestCase):
         async def fake_active(*_args, **_kwargs):
             return "tabby"
 
+        def no_litellm_registry():
+            return {"services": {}, "protocol_frontends": {}, "workflows": {}, "capabilities": {}}
+
         client = TestClient(proxy.app)
         blocked_activation = AssertionError(
             "OpenAI-shaped LLM routes must not activate local backends when LiteLLM is unavailable"
@@ -253,10 +256,6 @@ class TestGatewayRouterMounting(unittest.TestCase):
 
         with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
             proxy, "default_model_for_operation", lambda *_args, **_kwargs: "local-default"
-        ), patch.object(
-            proxy,
-            "ROLES",
-            {"default": {"backend": "kobold", "model": "/tmp/default.gguf"}},
         ), patch.object(
             proxy, "get_active_backend", fake_active
         ), patch.object(
@@ -267,6 +266,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
             proxy, "restart_tabby_if_needed", fake_false
         ), patch.object(
             proxy, "ensure_target", AsyncMock(side_effect=blocked_activation)
+        ), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", no_litellm_registry
         ):
             cases = [
                 (
@@ -296,7 +297,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
                         "litellm_unconfigured",
                     )
 
-    def test_litellm_execution_mode_routes_chat_after_gateway_policy(self) -> None:
+    def test_chat_routes_through_litellm_after_gateway_policy(self) -> None:
         calls: list[Any] = []
         receipts: list[Any] = []
 
@@ -423,7 +424,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(forwarded["messages"][0]["role"], "system")
         self.assertIn("/no_think", forwarded["messages"][0]["content"])
 
-    def test_litellm_mode_keeps_gateway_anthropic_and_responses_translation(self) -> None:
+    def test_litellm_substrate_keeps_gateway_anthropic_and_responses_translation(self) -> None:
         chat_calls: list[dict[str, Any]] = []
 
         async def fake_chat_forward(_request, _auth_context, cc_body, *, stream):
@@ -478,7 +479,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual([call["model"] for call in chat_calls], ["default", "default"])
         self.assertEqual(chat_calls[0]["reasoning_effort"], "minimal")
 
-    def test_litellm_mode_suppresses_anthropic_local_reasoning_chatter(self) -> None:
+    def test_litellm_substrate_suppresses_anthropic_local_reasoning_chatter(self) -> None:
         chat_calls: list[dict[str, Any]] = []
 
         async def fake_chat_forward(_request, _auth_context, cc_body, *, stream):
@@ -528,7 +529,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(response.json()["content"], [{"type": "text", "text": "pong"}])
         self.assertEqual([call["model"] for call in chat_calls], ["default"])
 
-    def test_litellm_execution_mode_still_rejects_malformed_json_before_executor(self) -> None:
+    def test_litellm_route_rejects_malformed_json_before_executor(self) -> None:
         async def fake_send(_execution_request):
             raise AssertionError("executor should not run for malformed JSON")
 
@@ -678,7 +679,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(connect.status_code, 503, connect.text)
         self.assertEqual(connect.json()["error"]["code"], "backend_unavailable")
 
-    def test_litellm_mode_keeps_gateway_responses_store_for_retrieve_delete_cancel(self) -> None:
+    def test_litellm_substrate_keeps_gateway_responses_store_for_retrieve_delete_cancel(self) -> None:
         async def forbidden_litellm_direct(*_args, **_kwargs):
             raise AssertionError("Responses retrieve/delete/cancel should use the gateway store")
 
@@ -718,7 +719,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertTrue(deleted.json()["deleted"])
         self.assertEqual(cancelled.json()["error"]["code"], "unsupported_operation")
 
-    def test_litellm_mode_projects_ollama_tags_from_litellm_models(self) -> None:
+    def test_ollama_tags_project_litellm_model_catalog(self) -> None:
         async def fake_send(_execution_request):
             return _FakeStreamClient(), _FakeLiteLLMModelsResponse()
 
@@ -740,8 +741,6 @@ class TestGatewayRouterMounting(unittest.TestCase):
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
-        ), patch.object(
-            proxy, "_build_role_catalog_entries", lambda: [{"id": "default"}]
         ):
             tags = client.get("/api/tags")
             ps = client.get("/api/ps")

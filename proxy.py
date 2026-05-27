@@ -123,10 +123,8 @@ from gateway.backends.chat import build_chat_loopback_request
 from gateway.backends.embeddings import build_embeddings_loopback_request
 from gateway.backends.llm_execution import (
     LITELLM_BODY_EXECUTION_PATHS,
-    LITELLM_DISCOVERY_PATHS,
     LlmExecutionRequest,
     litellm_headers,
-    litellm_requested,
     litellm_runtime_from_registry,
     litellm_url,
     send_llm_execution_request,
@@ -270,16 +268,9 @@ def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, A
 
 def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
     try:
-        profiles = [
-            row.get("profile")
-            for row in admin_store.list_profiles(path=ADMIN_DB_PATH)
-            if isinstance(row.get("profile"), Mapping)
-        ]
         path = write_litellm_config_artifact(
             registry,
-            profiles=profiles,
             base_dir=Path(__file__).parent,
-            policy_metadata={"source": "admin.db", "generated_by": "ai-gateway"},
         )
         if __name__ == "__main__":
             print(f"[proxy] LiteLLM config generated at {path}", flush=True)
@@ -355,54 +346,12 @@ def profile_allows_backend(auth_context: "AuthContext", backend: str) -> bool:
     return allowed is None or backend in allowed
 
 
-def host_for_backend(backend: str | None) -> Optional[str]:
-    if backend is None:
-        return None
-    return LLM_BACKEND_HOSTS.get(backend)
-
-
 def backend_for_host(host: str) -> Optional[str]:
     for backend, backend_host in LLM_BACKEND_HOSTS.items():
         if host == backend_host:
             return backend
     if EMBEDDINGS_ENABLED and host == EMBEDDINGS_HOST:
         return "embeddings"
-    return None
-
-
-def configured_default_llm_backend() -> Optional[str]:
-    backend = (config.get("routing") or {}).get("default_backend")
-    return backend if backend in LLM_BACKEND_HOSTS else None
-
-
-def candidate_llm_backends(
-    *,
-    capability: str,
-    preferred: str | None = None,
-    active: str | None = None,
-) -> list[str]:
-    candidates: list[str] = []
-    for backend in (preferred, active, configured_default_llm_backend(), *LLM_BACKEND_HOSTS):
-        if backend in LLM_BACKEND_HOSTS and backend_supports(backend, capability):
-            if backend not in candidates:
-                candidates.append(backend)
-    return candidates
-
-
-def choose_configured_llm_backend(
-    auth_context: "AuthContext",
-    *,
-    capability: str,
-    preferred: str | None = None,
-    active: str | None = None,
-) -> Optional[str]:
-    for backend in candidate_llm_backends(
-        capability=capability,
-        preferred=preferred,
-        active=active,
-    ):
-        if profile_allows_backend(auth_context, backend):
-            return backend
     return None
 
 # Model routing - auto-detect backend from filesystem
@@ -483,20 +432,6 @@ EMBEDDINGS_HOST = f"http://{embeddings_cfg.get('host', '127.0.0.1')}:{embeddings
 EMBEDDINGS_HEALTH_ENDPOINT = embeddings_cfg.get("health_endpoint", "/health")
 EMBEDDINGS_TIMEOUT = int(os.environ.get("EMBEDDINGS_TIMEOUT", embeddings_cfg.get("timeout", 120)))
 EMBEDDINGS_BACKEND_MODEL = embeddings_cfg.get("model_id", "nomic-embed-text-v1.5")
-
-# Temporary migration seam. Values other than an explicit LiteLLM mode keep the
-# historical local executor. This must not become a user-facing product choice.
-LLM_EXECUTION_MODE_BOOTSTRAP = os.environ.get("AI_GATEWAY_LLM_EXECUTION", "legacy")
-LITELLM_BASE_URL_BOOTSTRAP = (
-    os.environ.get("AI_GATEWAY_LITELLM_BASE_URL")
-    or os.environ.get("LITELLM_BASE_URL")
-    or ""
-).rstrip("/")
-LITELLM_API_KEY_BOOTSTRAP = (
-    os.environ.get("AI_GATEWAY_LITELLM_API_KEY")
-    or os.environ.get("LITELLM_API_KEY")
-    or ""
-)
 
 # ComfyUI backend
 comfy_cfg = config.get("backends", {}).get("comfyui", {})
@@ -1117,9 +1052,8 @@ async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str
     if model:
         if backend == "kobold":
             if not is_literal_gguf_path(model):
-                # role_model_path is supposed to be an absolute path. If the file
-                # is missing, fail loudly rather than restart llama-turbo into a
-                # broken state.
+                # Local activation targets must be absolute paths. If the file is
+                # missing, fail loudly rather than restart llama-turbo broken.
                 if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
                     print(f"[proxy] {label} failed: GGUF not found at {model}", flush=True)
                     return False
@@ -2125,64 +2059,10 @@ class ModelResolution:
     operation: str
     category: Optional[str] = None
     is_openai_alias: bool = False
-    # If set, the resolved role's preferred backend ("kobold" or "tabby"). The
-    # request will route there if that backend is hot, otherwise fall back to
-    # whichever backend is hot (same graceful behavior as OpenAI-alias routing).
-    role_backend: Optional[str] = None
-    # If set, the role pinned a specific GGUF path. The request handler will swap
-    # llama-turbo to this model (if needed) before forwarding.
-    role_model_path: Optional[str] = None
-    # If set, the role/catalog entry pinned an mmproj path that should be paired
-    # with role_model_path on swap. None means the model is text-only — the proxy
-    # will write an empty LLAMA_TURBO_MMPROJ so start_service.sh omits --mmproj.
-    role_mmproj_path: Optional[str] = None
 
 
 def normalize_model_id(model_name: str) -> str:
     return (model_name or "").strip().lower()
-
-
-def resolve_role_for_operation(operation: str, requested_model: str) -> Optional[ModelResolution]:
-    """Recognize a logical role alias (e.g. "default", "vision", "rp") and return a
-    ModelResolution that hints which backend should serve it. Returns None if the
-    requested name isn't a defined role.
-
-    Roles are checked BEFORE OpenAI-style alias resolution so that "default" is
-    treated as a role even if some future OpenAI model happens to share the name.
-    """
-    if not requested_model:
-        return None
-    normalized = normalize_model_id(requested_model)
-    role_def = ROLES.get(normalized) if isinstance(ROLES, dict) else None
-    if isinstance(role_def, dict):
-        backend = role_def.get("backend")
-        role_model = role_def.get("model")
-        role_mmproj = role_def.get("mmproj")
-    else:
-        # Fall through to the optional models: catalog. Same shape but uses `path`
-        # instead of `model` and is keyed by id rather than position.
-        cat_entry = MODELS_CATALOG.get(normalized)
-        if not isinstance(cat_entry, dict):
-            return None
-        backend = cat_entry.get("backend")
-        role_model = cat_entry.get("path")
-        role_mmproj = cat_entry.get("mmproj")
-    if backend not in ("kobold", "tabby"):
-        return None
-    role_model_path = str(role_model).strip() if role_model else None
-    role_mmproj_path = str(role_mmproj).strip() if role_mmproj else None
-    # Reuse is_openai_alias=True for the downstream rewrite path that swaps the
-    # `model` field to the backend's actually-loaded model id.
-    return ModelResolution(
-        requested_model=requested_model,
-        effective_model=requested_model,
-        operation=operation,
-        category="role",
-        is_openai_alias=True,
-        role_backend=backend,
-        role_model_path=role_model_path or None,
-        role_mmproj_path=role_mmproj_path or None,
-    )
 
 
 def load_generated_openai_model_aliases() -> dict[str, str]:
@@ -2385,16 +2265,6 @@ def parse_openai_json_body(body: bytes) -> tuple[dict[str, Any] | None, Response
     return body_json, None
 
 
-def unknown_model_error(model_name: str) -> Response:
-    return openai_error_response(
-        f"The model '{model_name}' does not exist or is not available.",
-        status_code=404,
-        error_type="invalid_request_error",
-        param="model",
-        code="model_not_found",
-    )
-
-
 def _service_model_records(service_cfg: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     raw_models = service_cfg.get("models")
     if isinstance(raw_models, Mapping):
@@ -2473,11 +2343,6 @@ def _configured_litellm_local_model_target(
                 activation_model = ""
             return backend, activation_model or None, activation_mmproj or None
 
-    detected = detect_model_backend(requested_model)
-    if detected == "tabby":
-        return detected, requested_model, None
-    if detected == "kobold":
-        return detected, None, None
     return None, None, None
 
 
@@ -2560,39 +2425,15 @@ async def _prepare_litellm_local_llm_request(
     if _profile_target_activation(auth_context) == "existing_only":
         return None, body
 
-    operation = "completions" if request_path == "/v1/completions" else "chat"
-    target_backend: Optional[str] = None
-    target_model: Optional[str] = None
-    target_mmproj: Optional[str] = None
-
-    if is_literal_gguf_path(model_name):
-        target_backend = "kobold"
-        target_model = model_name
-    else:
-        role_resolution = resolve_role_for_operation(operation, model_name)
-        if role_resolution is not None:
-            target_backend = role_resolution.role_backend
-            target_model = (
-                role_resolution.role_model_path
-                or _backend_default_model_to_load(target_backend or "")
-            )
-            target_mmproj = role_resolution.role_mmproj_path
-        else:
-            target_backend, target_model, target_mmproj = (
-                _configured_litellm_local_model_target(model_name)
-            )
+    target_backend, target_model, target_mmproj = (
+        _configured_litellm_local_model_target(model_name)
+    )
 
     vision_needed = (
         request_path == "/v1/chat/completions"
         and has_vision_content(body.get("messages"))
     )
     if vision_needed and not target_backend:
-        vision_role = ROLES.get("vision") if isinstance(ROLES, dict) else None
-        preferred = (
-            vision_role.get("backend")
-            if isinstance(vision_role, Mapping)
-            else None
-        )
         active = await get_active_backend()
         active_can_serve_vision = (
             active == "tabby"
@@ -2605,29 +2446,22 @@ async def _prepare_litellm_local_llm_request(
         )
         if active_can_serve_vision:
             return None, body
-        target_backend = choose_configured_llm_backend(
-            auth_context,
-            capability="vision",
-            preferred=preferred,
-            active=active,
+
+    if vision_needed and target_backend:
+        target_can_serve_vision = (
+            target_backend == "tabby"
+            and backend_supports("tabby", "vision")
+        ) or (
+            target_backend == "kobold"
+            and bool(target_mmproj)
         )
-        target_model = (
-            str(vision_role.get("model") or "").strip()
-            if isinstance(vision_role, Mapping)
-            else None
-        ) or _backend_default_model_to_load(target_backend or "")
-        target_mmproj = (
-            str(vision_role.get("mmproj") or "").strip()
-            if isinstance(vision_role, Mapping)
-            else None
-        ) or None
-        if not target_backend:
+        if not target_can_serve_vision:
             return Response(
                 content=json.dumps({
                     "error": {
                         "message": (
-                            "Request includes images but no vision-capable backend "
-                            "is configured or permitted by this profile."
+                            "Request includes images but the selected local model "
+                            "group is not configured with a vision-capable target."
                         ),
                         "type": "invalid_request_error",
                         "code": "vision_unsupported",
@@ -9940,7 +9774,7 @@ def _setup_config_source_item() -> dict[str, str]:
         )
     else:
         state = "ok"
-        detail = "No bootstrap runtime defaults are pending migration."
+        detail = "Runtime defaults are admin.db-backed."
     return {
         "label": "Config source of truth",
         "state": state,
@@ -15108,15 +14942,7 @@ def _entry_created_ts(path: Optional[str]) -> int:
 
 
 def _build_role_catalog_entries() -> list[dict]:
-    """Construct OpenAI-shaped /v1/models entries for each configured role and
-    each entry in the optional models: catalog. `id` is the role/alias name so
-    clients can send `model: "<id>"` and resolve_role_for_operation will route
-    them through ensure_target() (cold-swap on first use).
-
-    `vivid_fish_*` extension fields are advisory — unknown keys are ignored by
-    OpenAI-shaped clients. Model paths are exposed only in the extension field;
-    no client should need them to invoke the model.
-    """
+    """Return configured local LLM handles for admin inventory and policy checks."""
     entries: list[dict] = []
 
     if isinstance(ROLES, dict):
@@ -15257,21 +15083,19 @@ def _anthropic_model_info(entry: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 async def _anthropic_model_info_list(
+    request: Request,
     auth_context: AuthContext,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    entries = _build_role_catalog_entries() + _build_workflow_model_entries()
-    loaded_gguf = currently_loaded_kobold_model()
-    if loaded_gguf:
-        loaded_name = os.path.basename(loaded_gguf)
-        if loaded_name:
-            entries.append({
-                "id": loaded_name,
-                "object": "model",
-                "owned_by": "kobold",
-                "created": _entry_created_ts(loaded_gguf),
-                "vivid_fish_loaded": True,
-                "vivid_fish_model_path": loaded_gguf,
-            })
+    entries: list[dict[str, Any]] = []
+    litellm_runtime = _litellm_runtime_config()
+    if litellm_runtime.enabled:
+        payload = await _litellm_models_payload(
+            request,
+            auth_context,
+            runtime_config=litellm_runtime,
+        )
+        if isinstance(payload, Mapping):
+            entries.extend(_litellm_model_summaries_from_payload(payload))
 
     filtered, metadata = await _filter_model_list_for_profile(entries, auth_context)
     seen: set[str] = set()
@@ -15376,7 +15200,7 @@ async def anthropic_models(request: Request):
             error_type="permission_error",
         )
 
-    data, metadata = await _anthropic_model_info_list(auth_context)
+    data, metadata = await _anthropic_model_info_list(request, auth_context)
     payload = {
         "object": "list",
         "data": data,
@@ -15406,7 +15230,7 @@ async def list_models(request: Request):
 
     upstream_payload: dict = {"object": "list", "data": []}
     litellm_runtime = _litellm_runtime_config()
-    if litellm_runtime.enabled and "/v1/models" in LITELLM_DISCOVERY_PATHS:
+    if litellm_runtime.enabled:
         service_response = _service_availability_response(
             litellm_runtime.service_id or "litellm",
             service_label="LiteLLM",
@@ -16306,9 +16130,7 @@ async def _ollama_model_catalog_summaries(
         )
         return filtered
 
-    summaries = _build_role_catalog_entries()
-    filtered, _ = await _filter_model_list_for_profile(summaries, auth_context)
-    return filtered
+    return []
 
 
 def _ollama_summary_matches_model(summary: Mapping[str, Any], model: str) -> bool:
@@ -17131,9 +16953,6 @@ def _litellm_runtime_config():
     return litellm_runtime_from_registry(
         registry,
         env=os.environ,
-        fallback_mode=LLM_EXECUTION_MODE_BOOTSTRAP,
-        fallback_base_url=LITELLM_BASE_URL_BOOTSTRAP,
-        fallback_api_key=LITELLM_API_KEY_BOOTSTRAP,
     )
 
 

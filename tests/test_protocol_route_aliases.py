@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from collections import defaultdict
@@ -169,20 +170,51 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
 
     def test_anthropic_models_has_anthropic_shape_without_v1_models_collision(self) -> None:
         client = TestClient(proxy.app)
-        with patch.object(
-            proxy,
-            "ROLES",
-            {
-                "claude-local": {
-                    "backend": "kobold",
-                    "model": "/tmp/claude-local.gguf",
-                    "description": "Claude Local",
+
+        class _Client:
+            async def aclose(self):
+                return None
+
+        class _Response:
+            status_code = 200
+            headers = {}
+
+            async def aread(self):
+                return json.dumps({
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": "claude-local",
+                            "object": "model",
+                            "owned_by": "litellm",
+                            "created": 1,
+                        }
+                    ],
+                }).encode()
+
+            async def aclose(self):
+                return None
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
                 }
-            },
-        ), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
-            proxy, "MODELS_CATALOG", {}
+            }
+
+        async def fake_send(_execution_request):
+            return _Client(), _Response()
+
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: None
+            proxy, "send_llm_execution_request", fake_send
         ):
             response = client.get("/anthropic/v1/models")
 

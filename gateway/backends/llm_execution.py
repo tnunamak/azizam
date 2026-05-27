@@ -2,7 +2,7 @@
 
 The gateway owns auth, Profiles, local resource policy, and receipts. This
 module owns only the final HTTP hop to a selected LLM execution substrate.
-Keep it narrow so the LiteLLM migration seam does not become a second router.
+Keep it narrow so the substrate boundary does not become a second router.
 """
 
 from __future__ import annotations
@@ -22,8 +22,6 @@ LITELLM_BODY_EXECUTION_PATHS = frozenset(
         "/v1/embeddings",
     }
 )
-LITELLM_DISCOVERY_PATHS = frozenset({"/v1/models"})
-LITELLM_SUPPORTED_PATHS = LITELLM_BODY_EXECUTION_PATHS
 
 
 @dataclass(frozen=True)
@@ -44,20 +42,10 @@ class LiteLlmRuntimeConfig:
     source: str = "none"
 
 
-def litellm_requested(*, mode: str, request_path: str) -> bool:
-    normalized = str(mode or "").strip().lower()
-    return normalized in {"litellm", "litellm-only", "on", "enabled"} and (
-        request_path in LITELLM_SUPPORTED_PATHS
-    )
-
-
 def litellm_runtime_from_registry(
     registry: Mapping[str, Any] | None,
     *,
     env: Mapping[str, str] | None = None,
-    fallback_mode: str = "",
-    fallback_base_url: str = "",
-    fallback_api_key: str = "",
 ) -> LiteLlmRuntimeConfig:
     env = os.environ if env is None else env
     for service in _litellm_service_candidates(registry):
@@ -73,15 +61,6 @@ def litellm_runtime_from_registry(
             api_key=_api_key_from_config(config, env),
             service_id=str(service.get("id") or "litellm"),
             source="service_registry",
-        )
-
-    if litellm_requested(mode=fallback_mode, request_path="/v1/chat/completions"):
-        return LiteLlmRuntimeConfig(
-            enabled=bool(str(fallback_base_url or "").strip()),
-            base_url=str(fallback_base_url or "").rstrip("/"),
-            api_key=str(fallback_api_key or ""),
-            service_id="litellm",
-            source="env",
         )
     return LiteLlmRuntimeConfig()
 
@@ -115,7 +94,9 @@ def _api_key_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> s
 def _base_url_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> str:
     env_name = str(config.get("base_url_env") or config.get("api_base_env") or "").strip()
     if env_name:
-        return str(env.get(env_name) or "").rstrip("/")
+        env_value = str(env.get(env_name) or "").strip()
+        if env_value:
+            return env_value.rstrip("/")
     return str(
         config.get("base_url")
         or config.get("api_base")

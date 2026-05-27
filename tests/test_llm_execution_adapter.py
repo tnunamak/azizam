@@ -2,27 +2,16 @@ from __future__ import annotations
 
 from gateway.backends.llm_execution import (
     LITELLM_BODY_EXECUTION_PATHS,
-    LITELLM_DISCOVERY_PATHS,
-    LITELLM_SUPPORTED_PATHS,
     litellm_headers,
-    litellm_requested,
     litellm_runtime_from_registry,
 )
 
 
-def test_litellm_requested_is_explicit_and_path_limited() -> None:
-    assert litellm_requested(
-        mode="litellm",
-        request_path="/v1/chat/completions",
-    )
-    assert litellm_requested(mode="enabled", request_path="/v1/embeddings")
-    assert not litellm_requested(mode="enabled", request_path="/v1/responses")
-    assert not litellm_requested(mode="enabled", request_path="/v1/messages")
-    assert not litellm_requested(mode="legacy", request_path="/v1/chat/completions")
-    assert not litellm_requested(mode="litellm", request_path="/v1/images/generations")
+def test_litellm_body_execution_paths_are_explicit_and_limited() -> None:
     assert "/v1/chat/completions" in LITELLM_BODY_EXECUTION_PATHS
-    assert "/v1/models" in LITELLM_DISCOVERY_PATHS
-    assert "/v1/images/generations" not in LITELLM_SUPPORTED_PATHS
+    assert "/v1/completions" in LITELLM_BODY_EXECUTION_PATHS
+    assert "/v1/embeddings" in LITELLM_BODY_EXECUTION_PATHS
+    assert "/v1/images/generations" not in LITELLM_BODY_EXECUTION_PATHS
 
 
 def test_litellm_headers_do_not_forward_client_runtime_key() -> None:
@@ -67,8 +56,6 @@ def test_litellm_runtime_prefers_gateway_service_registry() -> None:
             }
         },
         env={"INTERNAL_LITELLM_KEY": "sk-internal"},
-        fallback_mode="legacy",
-        fallback_base_url="",
     )
 
     assert runtime.enabled
@@ -78,22 +65,33 @@ def test_litellm_runtime_prefers_gateway_service_registry() -> None:
     assert runtime.source == "service_registry"
 
 
-def test_litellm_runtime_env_is_only_bootstrap_fallback() -> None:
+def test_litellm_runtime_uses_registry_default_when_env_override_is_absent() -> None:
     runtime = litellm_runtime_from_registry(
-        None,
+        {
+            "services": {
+                "litellm": {
+                    "id": "litellm",
+                    "kind": "llm-substrate",
+                    "enabled": True,
+                    "capabilities": ["llm.execution"],
+                    "config": {
+                        "base_url_env": "AI_GATEWAY_LITELLM_BASE_URL",
+                        "default_base_url": "http://127.0.0.1:4011/",
+                        "api_key_env": "AI_GATEWAY_LITELLM_API_KEY",
+                    },
+                }
+            }
+        },
         env={},
-        fallback_mode="litellm",
-        fallback_base_url="http://127.0.0.1:4011/",
-        fallback_api_key="sk-env",
     )
 
     assert runtime.enabled
     assert runtime.base_url == "http://127.0.0.1:4011"
-    assert runtime.api_key == "sk-env"
-    assert runtime.source == "env"
+    assert runtime.api_key == ""
+    assert runtime.source == "service_registry"
 
 
-def test_litellm_runtime_requires_base_url_env_when_declared() -> None:
+def test_litellm_runtime_env_override_wins_over_registry_default() -> None:
     runtime = litellm_runtime_from_registry(
         {
             "services": {
@@ -109,10 +107,11 @@ def test_litellm_runtime_requires_base_url_env_when_declared() -> None:
                 }
             }
         },
-        env={},
+        env={"AI_GATEWAY_LITELLM_BASE_URL": "http://127.0.0.1:4999/"},
     )
 
-    assert not runtime.enabled
+    assert runtime.enabled
+    assert runtime.base_url == "http://127.0.0.1:4999"
 
 
 def test_litellm_runtime_ignores_unmarked_openai_providers() -> None:

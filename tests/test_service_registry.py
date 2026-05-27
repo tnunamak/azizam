@@ -42,6 +42,27 @@ def test_litellm_substrate_service_is_seed_data() -> None:
     assert service["config"]["default_base_url"] == "http://127.0.0.1:4011"
 
 
+def test_litellm_detection_does_not_treat_every_llm_execution_provider_as_substrate() -> None:
+    assert not service_registry.is_litellm_service_record(
+        "local-openai",
+        {
+            "id": "local-openai",
+            "kind": "provider",
+            "capabilities": ["llm.execution"],
+            "config": {"protocol": "openai-compatible"},
+        },
+    )
+    assert service_registry.is_litellm_service_record(
+        "local-substrate",
+        {
+            "id": "local-substrate",
+            "kind": "provider",
+            "capabilities": ["llm.execution"],
+            "config": {"execution_substrate": "litellm"},
+        },
+    )
+
+
 def test_litellm_substrate_service_backfills_existing_registries() -> None:
     registry = service_registry.backfill_seed_catalog_metadata(
         {

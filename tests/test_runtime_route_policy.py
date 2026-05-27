@@ -336,12 +336,13 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "messages": [{"role": "user", "content": "hello"}],
         }
 
+        async def fake_send(_execution_request):
+            return _CaptureForwardClient(), _ForwardModelsResponse(["claude-local"])
+
         with authenticated_profile(anthropic_only), patch.object(
-            proxy,
-            "ROLES",
-            {"claude-local": {"backend": "kobold", "model": "/tmp/claude.gguf"}},
-        ), patch.object(proxy, "MODELS_CATALOG", {}), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: None
+            proxy.ADMIN_STORE, "get_service_registry", litellm_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
         ):
             models_response = self.client.get(
                 "/anthropic/v1/models",
@@ -606,11 +607,13 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             id="full-openai",
             protocols=frozenset({"openai"}),
         )
+        async def fake_send(_execution_request):
+            return _CaptureForwardClient(), _ForwardModelsResponse(["default"])
 
         with authenticated_profile(full_profile), patch.object(
-            proxy, "get_active_backend", AsyncMock(return_value="kobold")
-        ), patch.object(proxy.httpx, "AsyncClient", _FakeAsyncClient), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: None
+            proxy.ADMIN_STORE, "get_service_registry", litellm_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
