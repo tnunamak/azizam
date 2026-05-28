@@ -217,7 +217,8 @@ Env vars:
   `/api/embed`, and `/api/embeddings` round-trips. Default off.
 - `OPENAI_PROXY_SMOKE_TIMEOUT` (seconds, default `10`)
 - `OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL`, `OPENAI_PROXY_SMOKE_OLLAMA_MODEL`
-  to override the default probe models.
+  to override the default probe model (`default`, the gateway logical model
+  group).
 - `OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL` to override the default embedding
   probe model.
 

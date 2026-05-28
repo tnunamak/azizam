@@ -114,6 +114,30 @@ class _FakeLiteLLMResponse:
         return None
 
 
+class _FakeLiteLLMUnknownModelResponse:
+    status_code = 400
+    headers = {"content-type": "application/json"}
+
+    async def aread(self):
+        return json.dumps(
+            {
+                "error": {
+                    "message": (
+                        "/chat/completions: Invalid model name passed in "
+                        "model=nope-doesnt-exist. Call `/v1/models` to view "
+                        "available models for your key."
+                    ),
+                    "type": "None",
+                    "param": "None",
+                    "code": "400",
+                }
+            }
+        ).encode()
+
+    async def aclose(self):
+        return None
+
+
 class _FakeLiteLLMEmbeddingResponse:
     status_code = 200
     headers = {"content-type": "application/json", "x-litellm-call-id": "embedding_1"}
@@ -419,12 +443,72 @@ class TestGatewayRouterMounting(unittest.TestCase):
         backend, model, mmproj = activations[0]
         self.assertEqual(backend, "kobold")
         self.assertTrue(model and model.endswith("Qwen3.6-27B-UD-Q4_K_XL.gguf"))
-        self.assertTrue(mmproj and mmproj.endswith("Qwen3.6-27B-mmproj-BF16.gguf"))
+        self.assertIsNone(mmproj)
         forwarded = json.loads(calls[0].body.decode())
         self.assertEqual(forwarded["model"], "default")
         self.assertNotIn("reasoning_effort", forwarded)
         self.assertEqual(forwarded["messages"][0]["role"], "system")
         self.assertIn("/no_think", forwarded["messages"][0]["content"])
+
+    def test_litellm_activates_mmproj_only_for_vision_requests(self) -> None:
+        activations: list[tuple[str, str | None, str | None]] = []
+
+        async def fake_send(_execution_request):
+            return _FakeStreamClient(), _FakeLiteLLMResponse()
+
+        async def fake_ensure_target(backend, model, mmproj=None):
+            activations.append((backend, model, mmproj))
+            return True
+
+        def fake_registry():
+            return {
+                "schema_version": 1,
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                },
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "ensure_target", fake_ensure_target
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "default",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "describe this"},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/png;base64,iVBORw0KGgo="
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(activations), 1)
+        self.assertTrue(
+            activations[0][2]
+            and activations[0][2].endswith("Qwen3.6-27B-mmproj-BF16.gguf")
+        )
 
     def test_litellm_substrate_keeps_gateway_anthropic_and_responses_translation(self) -> None:
         chat_calls: list[dict[str, Any]] = []
@@ -562,6 +646,43 @@ class TestGatewayRouterMounting(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "invalid_json")
+
+    def test_litellm_unknown_model_error_is_openai_shaped(self) -> None:
+        async def fake_send(_execution_request):
+            return _FakeStreamClient(), _FakeLiteLLMUnknownModelResponse()
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "nope-doesnt-exist",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        error = response.json()["error"]
+        self.assertEqual(error["type"], "invalid_request_error")
+        self.assertEqual(error["param"], "model")
+        self.assertEqual(error["code"], "model_not_found")
 
     def test_litellm_service_owns_openai_model_list_for_llm_models(self) -> None:
         calls: list[Any] = []

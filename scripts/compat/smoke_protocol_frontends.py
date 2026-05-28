@@ -38,8 +38,8 @@ from dataclasses import dataclass
 from typing import Callable, List, Mapping, Optional, Tuple
 
 DEFAULT_TIMEOUT_S = 10
-DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
-DEFAULT_OLLAMA_MODEL = "llama3.2:1b"
+DEFAULT_ANTHROPIC_MODEL = "default"
+DEFAULT_OLLAMA_MODEL = "default"
 DEFAULT_EMBEDDINGS_MODEL = "nomic-embed-text-v1.5"
 TINY_PROMPT = "ping"  # fixed non-secret string
 

@@ -1,0 +1,123 @@
+[
+  {
+    "gateway_version": "local",
+    "notes": {},
+    "protocol": "openai",
+    "results": {
+      "anthropic.messages.text_content": "pass",
+      "audio.speech.unsupported_response_format": "pass",
+      "audio.transcriptions.error_shape": "pass",
+      "audio.translations.unsupported_error_shape": "pass",
+      "chat.malformed_json_400": "pass",
+      "chat.missing_model_rejected": "pass",
+      "chat.streaming_content_delta": "pass",
+      "chat.unknown_model_rejected": "pass",
+      "chat.validation_error_envelope": "pass",
+      "chat.visible_content": "pass",
+      "responses.hosted_tool_rejected": "pass"
+    },
+    "sdk": "raw-http",
+    "sdk_version": "n/a"
+  },
+  {
+    "gateway_version": "local",
+    "notes": {
+      "chat.completions.image_input_block": "OPENAI_PROXY_SMOKE_LIVE_VISION=1 not set; vision probe disabled (text-only backends would 4xx the image block)"
+    },
+    "protocol": "openai",
+    "results": {
+      "chat.completions.create": "pass",
+      "chat.completions.image_input_block": "skipped",
+      "chat.completions.json_response_format": "pass",
+      "chat.completions.streaming": "pass",
+      "chat.completions.tool_call_envelope": "pass",
+      "client.construct": "pass",
+      "embeddings.create": "pass",
+      "models.list": "pass"
+    },
+    "sdk": "openai-python",
+    "sdk_version": "2.37.0"
+  },
+  {
+    "gateway_version": "local",
+    "notes": {},
+    "protocol": "openai",
+    "results": {
+      "audio.resource": "pass",
+      "images.resource": "pass",
+      "responses.resource": "pass",
+      "videos.resource": "pass"
+    },
+    "sdk": "openai-python-responses-media",
+    "sdk_version": "2.37.0"
+  },
+  {
+    "gateway_version": "local",
+    "notes": {
+      "audio.speech.create": "OPENAI_PROXY_SMOKE_AUDIO_SPEECH=1 not set; live probe disabled",
+      "audio.transcriptions.create": "OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION=1 not set; live probe disabled",
+      "audio.translations.create": "OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION=1 not set; live probe disabled",
+      "images.generate": "OPENAI_PROXY_SMOKE_IMAGES=1 not set; live probe disabled",
+      "responses.create": "OPENAI_PROXY_SMOKE_RESPONSES=1 not set; live probe disabled",
+      "videos.create": "OPENAI_PROXY_SMOKE_VIDEO=1 not set; live probe disabled"
+    },
+    "protocol": "openai",
+    "results": {
+      "audio.speech.create": "skipped",
+      "audio.transcriptions.create": "skipped",
+      "audio.translations.create": "skipped",
+      "images.generate": "skipped",
+      "responses.create": "skipped",
+      "videos.create": "skipped"
+    },
+    "sdk": "openai-python-responses-media-live",
+    "sdk_version": "2.37.0"
+  },
+  {
+    "gateway_version": "local",
+    "notes": {
+      "messages.create.image_block": "OPENAI_PROXY_SMOKE_LIVE_VISION not set; live vision probe disabled",
+      "messages.create.tool_use": "OPENAI_PROXY_SMOKE_LIVE_TOOLS not set; live tools probe disabled"
+    },
+    "protocol": "anthropic",
+    "results": {
+      "client.construct": "pass",
+      "messages.count_tokens": "pass",
+      "messages.count_tokens.image_block": "pass",
+      "messages.create": "pass",
+      "messages.create.image_block": "skipped",
+      "messages.create.max_tokens_validation": "pass",
+      "messages.create.system_prompt": "pass",
+      "messages.create.thinking_unsupported": "pass",
+      "messages.create.tool_use": "skipped",
+      "messages.create.unknown_model": "pass",
+      "messages.streaming": "pass",
+      "messages.streaming.event_names": "pass",
+      "models.list": "pass"
+    },
+    "sdk": "anthropic-python",
+    "sdk_version": "0.103.1"
+  },
+  {
+    "gateway_version": "local",
+    "notes": {},
+    "protocol": "ollama",
+    "results": {
+      "chat.non_streaming": "pass",
+      "chat.streaming": "pass",
+      "client.construct": "pass",
+      "delete.unsupported": "pass",
+      "embed.current": "pass",
+      "embeddings.legacy": "pass",
+      "generate.non_streaming": "pass",
+      "generate.streaming": "pass",
+      "ps.list": "pass",
+      "pull.unsupported": "pass",
+      "push.unsupported": "pass",
+      "show.model": "pass",
+      "tags.list": "pass"
+    },
+    "sdk": "ollama-python",
+    "sdk_version": "unknown"
+  }
+]

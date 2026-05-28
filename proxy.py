@@ -2491,7 +2491,7 @@ async def _prepare_litellm_local_llm_request(
         requested_model=model_name,
         backend=target_backend,
         target_model=target_model,
-        target_mmproj=target_mmproj,
+        target_mmproj=target_mmproj if vision_needed else None,
     )
     return response, body
 
@@ -17010,6 +17010,34 @@ def _attach_litellm_response_metadata(
         receipt.metadata["litellm"] = facts
 
 
+def _normalize_litellm_error_envelope(
+    payload: dict[str, Any],
+    *,
+    status_code: int,
+) -> None:
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return
+
+    def is_empty(value: Any) -> bool:
+        return value is None or value == "" or value == "None"
+
+    message = str(error.get("message") or "")
+    if "Invalid model name passed" in message:
+        if is_empty(error.get("type")):
+            error["type"] = "invalid_request_error"
+        if is_empty(error.get("param")):
+            error["param"] = "model"
+        if is_empty(error.get("code")) or str(error.get("code")).isdigit():
+            error["code"] = "model_not_found"
+        return
+
+    if is_empty(error.get("type")):
+        error["type"] = "invalid_request_error" if 400 <= status_code < 500 else "api_error"
+    if is_empty(error.get("param")):
+        error["param"] = None
+
+
 def _record_litellm_route_receipt(receipt: RouteReceipt) -> None:
     try:
         receipt_store.record(receipt)
@@ -17130,22 +17158,28 @@ async def _forward_litellm_proxy_request(
         content = await resp.aread()
         await resp.aclose()
         await client.aclose()
-        if 200 <= resp.status_code < 300 and "application/json" in content_type:
+        if "application/json" in content_type:
             try:
                 response_json = json.loads(content)
                 if isinstance(response_json, dict):
-                    if request_path == "/v1/chat/completions":
-                        _normalize_chat_completion_visible_content(response_json)
-                    if (
-                        request_path == "/v1/embeddings"
-                        and requested_embedding_dimensions is not None
-                    ):
-                        dimensions_error = _apply_embedding_dimensions(
+                    if 200 <= resp.status_code < 300:
+                        if request_path == "/v1/chat/completions":
+                            _normalize_chat_completion_visible_content(response_json)
+                        if (
+                            request_path == "/v1/embeddings"
+                            and requested_embedding_dimensions is not None
+                        ):
+                            dimensions_error = _apply_embedding_dimensions(
+                                response_json,
+                                requested_embedding_dimensions,
+                            )
+                            if dimensions_error is not None:
+                                return dimensions_error
+                    else:
+                        _normalize_litellm_error_envelope(
                             response_json,
-                            requested_embedding_dimensions,
+                            status_code=resp.status_code,
                         )
-                        if dimensions_error is not None:
-                            return dimensions_error
                     content = json.dumps(response_json).encode()
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
