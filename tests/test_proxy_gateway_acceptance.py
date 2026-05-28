@@ -610,6 +610,43 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(payload["x_ai_gateway_llm_execution"], "litellm")
         self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/models")
 
+    def test_litellm_model_catalog_failures_are_protocol_shaped(self) -> None:
+        async def fake_send(_execution_request):
+            raise httpx.ConnectError("litellm unavailable")
+
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(
+            proxy, "send_llm_execution_request", fake_send
+        ):
+            openai_models = client.get("/v1/models")
+            anthropic_models = client.get("/anthropic/v1/models")
+            ollama_tags = client.get("/api/tags")
+
+        self.assertEqual(openai_models.status_code, 503, openai_models.text)
+        self.assertEqual(
+            openai_models.json()["error"]["code"],
+            "backend_unavailable",
+        )
+        self.assertEqual(anthropic_models.status_code, 200, anthropic_models.text)
+        self.assertEqual(anthropic_models.json()["data"], [])
+        self.assertEqual(ollama_tags.status_code, 200, ollama_tags.text)
+        self.assertEqual(ollama_tags.json(), {"models": []})
+
     def test_litellm_routes_embeddings_and_applies_requested_dimensions(self) -> None:
         calls: list[Any] = []
 

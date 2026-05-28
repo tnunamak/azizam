@@ -15130,8 +15130,10 @@ async def _litellm_models_payload(
         body=b"",
         read_timeout=10.0,
     )
-    client, resp = await send_llm_execution_request(execution_request)
+    client = None
+    resp = None
     try:
+        client, resp = await send_llm_execution_request(execution_request)
         if resp.status_code != 200:
             return None
         content = await resp.aread()
@@ -15140,9 +15142,14 @@ async def _litellm_models_payload(
             payload["x_ai_gateway_llm_execution"] = "litellm"
             return payload
         return None
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] LiteLLM model catalog fetch failed: {e}", flush=True)
+        return None
     finally:
-        await resp.aclose()
-        await client.aclose()
+        if resp is not None:
+            await resp.aclose()
+        if client is not None:
+            await client.aclose()
 
 
 def _litellm_model_summaries_from_payload(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -15233,23 +15240,14 @@ async def list_models(request: Request):
         )
         if service_response is not None:
             return service_response
-        try:
-            payload = await _litellm_models_payload(
-                request,
-                auth_context,
-                runtime_config=litellm_runtime,
-            )
-            if isinstance(payload, dict):
-                upstream_payload = payload
-            else:
-                return openai_error_response(
-                    "LiteLLM model discovery is unavailable.",
-                    status_code=503,
-                    error_type="service_unavailable",
-                    code="backend_unavailable",
-                )
-        except Exception as e:  # noqa: BLE001
-            print(f"[proxy] /v1/models LiteLLM fetch failed: {e}", flush=True)
+        payload = await _litellm_models_payload(
+            request,
+            auth_context,
+            runtime_config=litellm_runtime,
+        )
+        if isinstance(payload, dict):
+            upstream_payload = payload
+        else:
             return openai_error_response(
                 "LiteLLM model discovery is unavailable.",
                 status_code=503,
@@ -17186,25 +17184,87 @@ async def _forward_litellm_proxy_request(
         )
 
 
+async def _handle_openai_litellm_request(
+    request: Request,
+    request_path: str,
+) -> Response:
+    auth_context = authenticate_request(request, request_path)
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    if not any(request_path.startswith(p) for p in NO_ACTIVITY_PATHS):
+        state.update_activity()
+
+    body_peek = await request.body()
+    parsed_body, parse_error = parse_openai_json_body(body_peek)
+    if parse_error is not None:
+        return parse_error
+
+    requested_embedding_dimensions: int | None = None
+    if request_path == "/v1/embeddings":
+        requested_embedding_dimensions, dimensions_error = (
+            _requested_embedding_dimensions(parsed_body)
+        )
+        if dimensions_error is not None:
+            return dimensions_error
+
+    if not _is_internal_protocol_forward(request):
+        policy_decision = _openai_proxy_policy_decision(
+            auth_context,
+            request_path,
+            body_peek,
+        )
+        if policy_decision is not None and policy_decision.denied:
+            return _policy_denied_response(policy_decision)
+
+    litellm_runtime = _litellm_runtime_config()
+    litellm_body: Mapping[str, Any] = parsed_body
+    if litellm_runtime.enabled:
+        litellm_service_response = _service_availability_response(
+            litellm_runtime.service_id or "litellm",
+            service_label="LiteLLM",
+        )
+        if litellm_service_response is None and request_path in {
+            "/v1/chat/completions",
+            "/v1/completions",
+        }:
+            activation_error, litellm_body = await _prepare_litellm_local_llm_request(
+                auth_context,
+                request_path=request_path,
+                body_json=parsed_body,
+            )
+            if activation_error is not None:
+                return activation_error
+
+    return await _forward_litellm_proxy_request(
+        request,
+        request_path=request_path,
+        auth_context=auth_context,
+        body_json=litellm_body,
+        runtime_config=litellm_runtime,
+        requested_embedding_dimensions=requested_embedding_dimensions,
+    )
+
+
 @app.post("/openai/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 @app.post("/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def chat_completions(request: Request):
     """OpenAI-compatible chat completions executed through LiteLLM."""
-    return await proxy_request(request, "v1/chat/completions", mapped_route=True)
+    return await _handle_openai_litellm_request(request, "/v1/chat/completions")
 
 
 @app.post("/openai/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 @app.post("/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def completions(request: Request):
     """OpenAI-compatible text completions executed through LiteLLM."""
-    return await proxy_request(request, "v1/completions", mapped_route=True)
+    return await _handle_openai_litellm_request(request, "/v1/completions")
 
 
 @app.post("/openai/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 @app.post("/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def embeddings(request: Request):
     """OpenAI-compatible embeddings executed through LiteLLM."""
-    return await proxy_request(request, "v1/embeddings", mapped_route=True)
+    return await _handle_openai_litellm_request(request, "/v1/embeddings")
 
 
 def _openai_unsupported_api_response(api_name: str) -> Response:
@@ -17755,6 +17815,9 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             media_type="application/json",
         )
 
+    if request_path in LITELLM_BODY_EXECUTION_PATHS:
+        return await _handle_openai_litellm_request(request, request_path)
+
     auth_context = authenticate_request(request, request_path)
     if isinstance(auth_context, Response):
         return auth_context
@@ -17765,55 +17828,6 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         state.update_activity()
 
     body_peek = await request.body()
-    parsed_openai_body: dict[str, Any] | None = None
-    if request_path in _OPENAI_PROXY_POLICY:
-        parsed_openai_body, parse_error = parse_openai_json_body(body_peek)
-        if parse_error is not None:
-            return parse_error
-    requested_embedding_dimensions: int | None = None
-    if request_path == "/v1/embeddings":
-        requested_embedding_dimensions, dimensions_error = _requested_embedding_dimensions(parsed_openai_body)
-        if dimensions_error is not None:
-            return dimensions_error
-    policy_decision = None
-    if not _is_internal_protocol_forward(request):
-        policy_decision = _openai_proxy_policy_decision(
-            auth_context,
-            request_path,
-            body_peek,
-        )
-    if policy_decision is not None and policy_decision.denied:
-        return _policy_denied_response(policy_decision)
-
-    if request_path in LITELLM_BODY_EXECUTION_PATHS:
-        if parsed_openai_body is None:
-            parsed_openai_body, parse_error = parse_openai_json_body(body_peek)
-            if parse_error is not None:
-                return parse_error
-        litellm_runtime = _litellm_runtime_config()
-        litellm_body: Mapping[str, Any] = parsed_openai_body
-        if litellm_runtime.enabled:
-            litellm_service_response = _service_availability_response(
-                litellm_runtime.service_id or "litellm",
-                service_label="LiteLLM",
-            )
-            if litellm_service_response is None:
-                if request_path in {"/v1/chat/completions", "/v1/completions"}:
-                    activation_error, litellm_body = await _prepare_litellm_local_llm_request(
-                        auth_context,
-                        request_path=request_path,
-                        body_json=parsed_openai_body,
-                    )
-                    if activation_error is not None:
-                        return activation_error
-        return await _forward_litellm_proxy_request(
-            request,
-            request_path=request_path,
-            auth_context=auth_context,
-            body_json=litellm_body,
-            runtime_config=litellm_runtime,
-            requested_embedding_dimensions=requested_embedding_dimensions,
-        )
 
     target_host = TABBY_HOST
 
