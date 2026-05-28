@@ -164,10 +164,11 @@ A first pass of this harness lives under `tests/compat/` and
   embeddings. Chat/generate probes require
   `OPENAI_PROXY_SMOKE_LIVE_LLM=1`; embedding probes require the normal
   harness env plus a reachable embeddings backend.
-- `tests/compat/node/` is an isolated Node project for JS SDK probes —
-  it does not touch the Python install.
-- `scripts/compat/run_matrix.py` aggregates whatever probes are
-  available and emits a JSON document matching
+- `tests/compat/node/` is an isolated Node project for JS SDK probes
+  (OpenAI Node, Anthropic Node, Ollama JS, Vercel AI SDK) — it does not
+  touch the Python install.
+- `scripts/compat/run_matrix.py` aggregates registered
+  Python/unittest probes and emits a JSON document matching
   `tests/compat/matrix/compatibility.schema.json`.
 
 Quick commands:
@@ -179,7 +180,7 @@ PROXY_PIP=${PROXY_PIP:-venv/bin/pip}
 # Core unit tests (no SDKs, no network):
 $PROXY_PYTHON -m unittest discover -s tests -p 'test_*.py' -v
 
-# Compatibility matrix dry-run:
+# Compatibility matrix dry-run (Python/unittest probes only):
 $PROXY_PYTHON scripts/compat/run_matrix.py --dry-run
 
 # Optional SDK probe (Python):
@@ -187,6 +188,16 @@ $PROXY_PIP install -r tests/compat/python/requirements-openai.txt
 export OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080
 export OPENAI_PROXY_API_KEY=sk-your-proxy-key
 $PROXY_PYTHON -m unittest tests.compat.python.probe_openai -v
+```
+
+Node SDK probes run separately through `tests/compat/node`:
+
+```bash
+cd tests/compat/node
+npm install
+OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080 \
+OPENAI_PROXY_API_KEY=sk-your-proxy-key \
+npm run probe:all
 ```
 
 Full setup, env vars, and instructions for adding new probes live in

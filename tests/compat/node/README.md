@@ -1,7 +1,7 @@
 # Node-side compatibility probes
 
-Stub directory for SDK probes that must run under Node (OpenAI Node,
-Anthropic TS, Ollama JS, Vercel AI SDK).
+Isolated SDK probes that must run under Node (OpenAI Node, Anthropic TS,
+Ollama JS, Vercel AI SDK).
 
 These are intentionally isolated from the Python repo's install path:
 the core `requirements.txt` and the unittest discovery in
@@ -14,16 +14,22 @@ cd tests/compat/node
 npm install
 ```
 
-This produces a local `node_modules/` and `package-lock.json` scoped to
-this directory only. Neither is committed.
+This produces a local `node_modules/` scoped to this directory only.
+`package-lock.json` is committed so the optional SDK probes remain
+reproducible.
 
 ## Run
 
 ```bash
 export OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080
 export OPENAI_PROXY_API_KEY=sk-your-proxy-key
-npm run probe:openai
+npm run probe:all
 ```
+
+Set `OPENAI_PROXY_SMOKE_LIVE_LLM=1` to run chat/generation round-trips
+and `OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS=1` to run embedding round-trips.
+Without those flags, live-cost probes skip while cheap discovery/envelope
+checks still run.
 
 ## Adding new probes
 

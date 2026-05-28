@@ -119,11 +119,12 @@ cd tests/compat/node
 npm install
 OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080 \
 OPENAI_PROXY_API_KEY=sk-your-proxy-key \
-npm run probe:openai
+npm run probe:all
 ```
 
 Node deps stay inside `tests/compat/node/` and are not part of the
-Python repo install.
+Python repo install. The Node lockfile is committed so SDK compatibility
+checks are reproducible; `node_modules/` remains ignored.
 
 ## Emitting the compatibility matrix
 
@@ -149,11 +150,14 @@ The output is validated against
    Node test under `tests/compat/node/<sdk>.test.mjs`.
 3. Auto-skip when the SDK is not installed and when
    `OPENAI_PROXY_BASE_URL` is unset.
-4. Have the probe emit `ProbeResult` values for each case in the
+4. For Python probes, emit `ProbeResult` values for each case in the
    relevant per-protocol case grid (see
-   `docs/SDK_COMPATIBILITY_HARNESS.md`).
-5. Register the probe in `scripts/compat/run_matrix.py` so the matrix
-   reflects the new cases.
+   `docs/SDK_COMPATIBILITY_HARNESS.md`) and register the probe in
+   `scripts/compat/run_matrix.py`.
+5. For Node probes, add or update the isolated `npm run probe:all`
+   suite. Node probes intentionally do not feed `run_matrix.py`; that
+   runner is Python/unittest-shaped. Add a dedicated Node JSON reporter
+   before merging Node results into the matrix.
 
 For long-tail apps (Open WebUI, LibreChat, SillyTavern, Continue,
 Cline, Claude Code, n8n, Home Assistant) the right primitive is a

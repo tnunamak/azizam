@@ -79,14 +79,17 @@ A future worker should be able to follow this path with no extra
 research:
 
 1. Pick a row by `id`. Read the `client_config` and `endpoints` fields.
-2. Drop a new module at `tests/compat/python/probe_<id>.py` (or under
-   `tests/compat/node/` for JS-only targets).
+2. Drop a new module at `tests/compat/python/probe_<id>.py` (or a
+   `node:test` file under `tests/compat/node/` for JS SDK targets).
 3. Use the `smoke_cases` array as the probe's case-grid keys — each
-   case becomes a `test_<case>` method or a `ProbeResult` emission.
+   Python case becomes a `test_<case>` method or a `ProbeResult`
+   emission; Node cases become `node:test` tests.
 4. Honour `known_quirks` when constructing requests — those are bugs
    we've already paid for.
-5. Register the probe in `scripts/compat/run_matrix.py` so the new
-   cases show up in the matrix output.
+5. Register Python/unittest probes in `scripts/compat/run_matrix.py` so
+   the cases show up in the matrix output. Node probes intentionally run
+   as an isolated npm suite (`tests/compat/node`, `npm run probe:all`);
+   add a dedicated Node JSON reporter before merging them into the matrix.
 
 The probe should auto-skip when its driving client/SDK is missing,
 matching the convention in `tests/compat/README.md`.

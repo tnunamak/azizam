@@ -84,6 +84,10 @@ status-page/out/
 status-page/next-env.d.ts
 status-page/*.tsbuildinfo
 
+# Optional Node SDK compatibility probes. The lockfile is committed; the
+# installed dependency tree is local runtime state.
+tests/compat/node/node_modules/
+
 # =============================================================================
 # Editor / OS
 # =============================================================================
