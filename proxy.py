@@ -16158,22 +16158,9 @@ async def _ollama_loaded_model_summaries(
     except Exception:
         active = None
     loaded_ids = await _current_loaded_llm_model_ids(active)
-    loaded_norm = {normalize_model_id(item) for item in loaded_ids}
 
     summaries: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for entry in await _ollama_model_catalog_summaries(
-        request=None,
-        auth_context=auth_context,
-    ):
-        entry_id = str(entry.get("id") or "")
-        if normalize_model_id(entry_id) not in loaded_norm:
-            continue
-        out = copy.deepcopy(entry)
-        out["vivid_fish_loaded"] = True
-        summaries.append(out)
-        seen.add(normalize_model_id(entry_id))
-
     for loaded_id in sorted(loaded_ids):
         name = os.path.basename(loaded_id) if loaded_id.startswith("/") else loaded_id
         if not name or normalize_model_id(name) in seen:
@@ -16972,28 +16959,6 @@ def _litellm_gateway_metadata(
     return metadata
 
 
-def _body_with_litellm_metadata(
-    body_json: Mapping[str, Any],
-    *,
-    auth_context: AuthContext,
-    request_path: str,
-    service_id: str = "",
-) -> bytes:
-    body = copy.deepcopy(dict(body_json))
-    metadata = body.get("metadata")
-    if not isinstance(metadata, Mapping):
-        metadata = {}
-    else:
-        metadata = dict(metadata)
-    metadata["ai_gateway"] = _litellm_gateway_metadata(
-        auth_context,
-        request_path=request_path,
-        service_id=service_id,
-    )
-    body["metadata"] = metadata
-    return json.dumps(body).encode()
-
-
 def _start_litellm_route_receipt(
     *,
     request_path: str,
@@ -17058,7 +17023,6 @@ async def _forward_litellm_proxy_request(
     request: Request,
     *,
     request_path: str,
-    path: str,
     auth_context: AuthContext,
     body_json: Mapping[str, Any],
     runtime_config,
@@ -17106,12 +17070,7 @@ async def _forward_litellm_proxy_request(
         body_for_litellm = dict(body_for_litellm)
         body_for_litellm.pop("dimensions", None)
 
-    body = _body_with_litellm_metadata(
-        body_for_litellm,
-        auth_context=auth_context,
-        request_path=request_path,
-        service_id=runtime.service_id,
-    )
+    body = json.dumps(dict(body_for_litellm)).encode()
     gateway_metadata = _litellm_gateway_metadata(
         auth_context,
         request_path=request_path,
@@ -17126,7 +17085,7 @@ async def _forward_litellm_proxy_request(
         method=request.method,
         url=litellm_url(
             base_url=runtime.base_url,
-            path=path,
+            path=request_path,
             query=request.url.query,
         ),
         headers=litellm_headers(
@@ -17850,7 +17809,6 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         return await _forward_litellm_proxy_request(
             request,
             request_path=request_path,
-            path=path,
             auth_context=auth_context,
             body_json=litellm_body,
             runtime_config=litellm_runtime,

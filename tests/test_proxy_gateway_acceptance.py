@@ -347,6 +347,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
                 json={
                     "model": "assistant-default",
                     "messages": [{"role": "user", "content": "ping"}],
+                    "metadata": {"client": "kept"},
                 },
             )
 
@@ -361,6 +362,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(calls[0].headers["authorization"], "Bearer sk-litellm-internal")
         self.assertEqual(calls[0].headers["x-ai-gateway-execution"], "litellm")
         self.assertEqual(calls[0].headers["x-ai-gateway-service-id"], "litellm")
+        self.assertEqual(json.loads(calls[0].body)["metadata"], {"client": "kept"})
         self.assertNotIn("opk_client", repr(calls[0]))
         self.assertEqual(len(receipts), 1)
         self.assertEqual(receipts[0].backend, "litellm")

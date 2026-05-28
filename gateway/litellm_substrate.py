@@ -125,10 +125,8 @@ def _normalize_services(services: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def _is_openai_compatible(service: Mapping[str, Any]) -> bool:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
-    protocol = str(config.get("protocol") or config.get("compatibility") or "").lower()
+    protocol = str(config.get("protocol") or "").lower()
     if protocol in OPENAI_COMPATIBLE_PROTOCOLS:
-        return True
-    if bool(config.get("openai_compatible")):
         return True
     return "openai" in normalize_string_list(service.get("capabilities"))
 

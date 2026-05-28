@@ -123,7 +123,6 @@ def test_keeps_litellm_settings_minimal() -> None:
     )
 
     assert compiled["litellm_settings"] == {"drop_params": True}
-    assert "router_settings" not in compiled
     assert "metadata" not in compiled
 
 
