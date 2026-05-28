@@ -66,6 +66,27 @@ roles may still declare local targets for VRAM-aware activation before LiteLLM
 is called, but startup/load is never a hidden fallback after LiteLLM is
 unconfigured or disabled.
 
+These routes are mounted as explicit Gateway handlers:
+
+```text
+POST /openai/v1/chat/completions
+POST /openai/v1/completions
+POST /openai/v1/embeddings
+POST /v1/chat/completions
+POST /v1/completions
+POST /v1/embeddings
+```
+
+They do not depend on the generic backend-native catch-all. If LiteLLM is not
+configured, disabled, or unavailable, they return a protocol-shaped error rather
+than falling through to Tabby, Kobold, or the embedding server.
+
+`GET /v1/models` is intentionally stricter than secondary discovery projections:
+if the LiteLLM model catalog cannot be reached, `/v1/models` returns `503
+backend_unavailable`. Anthropic and Ollama model-list projections return valid
+empty protocol-shaped lists in that situation so client discovery does not crash
+the gateway.
+
 ## Dynamic OpenAI Model Discovery
 
 OpenAI's official `GET /v1/models` endpoint returns currently available model

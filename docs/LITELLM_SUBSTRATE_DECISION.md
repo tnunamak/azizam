@@ -28,9 +28,24 @@ The boundary is deliberately strict:
 3. LiteLLM executes the commodity LLM request.
 4. Gateway records receipts and returns the provider-compatible response.
 
+OpenAI-shaped LLM routes are explicit Gateway handlers that call the LiteLLM
+substrate. They do not flow through the generic backend-native catch-all. The
+catch-all is reserved for explicit compatibility/native paths that are mounted
+before it or policy-gated elsewhere.
+
 There is no legacy local executor fallback for OpenAI-shaped LLM routes. If the
 LiteLLM substrate is not configured or unavailable, those routes fail clearly
 instead of silently routing to Tabby, Kobold, or an embeddings server.
+
+Model discovery follows the same ownership:
+
+- `/v1/models` returns LiteLLM's LLM catalog plus Gateway-native workflow model
+  entries. If LiteLLM catalog discovery is unavailable, `/v1/models` returns a
+  protocol-shaped `503 backend_unavailable`.
+- `/anthropic/v1/models` and Ollama `/api/tags` project the LiteLLM catalog
+  into their protocol shapes. If LiteLLM catalog discovery is unavailable, those
+  discovery endpoints return valid empty lists rather than raising accidental
+  gateway errors.
 
 LiteLLM configuration is a generated artifact from the gateway service registry.
 The service registry remains the source of truth; generated LiteLLM YAML must not
