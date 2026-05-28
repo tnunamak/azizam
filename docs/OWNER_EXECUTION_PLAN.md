@@ -38,13 +38,17 @@ The status of each build-order item below reflects what currently lives on
 - [x] Live image workflow extension binding for supported manifest controls
 - [x] Runtime App key auth is admin-db backed; imported legacy key hashes no longer require the YAML registry
 - [x] SDK compatibility harness with executable registered probes (`scripts/compat/`, `tests/compat/`, `docs/SDK_COMPATIBILITY_HARNESS.md`)
+- [x] Live Node SDK probes for OpenAI, Anthropic, Ollama JS, and Vercel AI SDK (`tests/compat/node/`)
 
-In-progress / next integration targets:
+Active known work now lives in [`docs/KNOWN_WORK.md`](KNOWN_WORK.md). Treat
+this file as build history and architecture sequencing, not the live backlog.
+The current highest-leverage open items are:
 
 - Expand the live capability inventory beyond the initial hand-built catalog.
-- Expand SDK compatibility probes for OpenAI SDK chat/streaming, OpenAI media
-  routes, and Node Anthropic/Ollama clients.
 - Backend adapter contract extracted from `proxy.py`.
+- Close long-tail app/client verification from the compatibility matrix.
+- Finish the resource/admission/admin visibility slice for real self-hosted
+  operations.
 
 ## North Star
 
@@ -282,12 +286,17 @@ compatibility claims are explicitly published.
 
 Start with smoke tests, not full integration complexity.
 
-Initial targets:
+Current live probe families:
 
-- OpenAI Python against `/v1/chat/completions`
-- OpenAI Python against `/v1/images/edits`
-- Anthropic Python against `/v1/messages`
-- Ollama clients against `/api/chat`, `/api/generate`, `/api/embed`, and `/api/tags`
+- OpenAI Python and Node SDKs.
+- Anthropic Python and Node SDKs.
+- Ollama Python and JavaScript clients.
+- Vercel AI SDK.
+- Raw HTTP gateway-contract probes for audit-critical response shapes.
+
+The remaining compatibility work is tracked in
+[`docs/KNOWN_WORK.md`](KNOWN_WORK.md) and
+[`docs/COMPATIBILITY_TARGET_MATRIX.md`](COMPATIBILITY_TARGET_MATRIX.md).
 
 ## Guardrails
 
@@ -321,7 +330,7 @@ Local extension -> shared feature only when at least two are true:
 
 ## Deferred
 
-- full plugin loading
+- full plugin marketplace/signing infrastructure
 - multi-worker event storage
 - hosted provider marketplace behavior
 - full Gemini-native protocol

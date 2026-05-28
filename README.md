@@ -250,6 +250,12 @@ Both API-format (`*.json`) and UI-format (`*.ui.json`) workflows live in this re
 
 `scripts/check_workflow_drift.py` is the invariant: it walks every `.ui.json`, extracts the API-format graph, and compares against the committed `.json` sibling. Run it whenever a workflow changes.
 
+## Known work
+
+Current owner-facing outstanding work is tracked in
+[`docs/KNOWN_WORK.md`](docs/KNOWN_WORK.md). Scratch worker notes and
+`tmp/workstreams/*` are evidence, not the backlog.
+
 ## Setup
 
 The full first-run story lives in [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md). The short version:
