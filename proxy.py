@@ -2410,9 +2410,6 @@ async def _prepare_litellm_local_llm_request(
     targets are activated.
     """
     body = copy.deepcopy(dict(body_json))
-    if request_path not in {"/v1/chat/completions", "/v1/completions"}:
-        return None, body
-
     model_name = body.get("model", "")
     if not isinstance(model_name, str) or not model_name:
         return openai_error_response(
@@ -15127,7 +15124,6 @@ async def _litellm_models_payload(
             gateway_metadata=_litellm_gateway_metadata(
                 auth_context,
                 request_path="/v1/models",
-                runtime_source=runtime_config.source,
                 service_id=runtime_config.service_id,
             ),
         ),
@@ -16960,7 +16956,6 @@ def _litellm_gateway_metadata(
     auth_context: AuthContext,
     *,
     request_path: str,
-    runtime_source: str = "",
     service_id: str = "",
 ) -> dict[str, str]:
     metadata = {
@@ -16968,8 +16963,6 @@ def _litellm_gateway_metadata(
         "request-path": request_path,
         "profile": _profile_source_id(auth_context),
     }
-    if runtime_source:
-        metadata["runtime-source"] = runtime_source
     if service_id:
         metadata["service-id"] = service_id
     identity = auth_context.identity
@@ -16984,7 +16977,6 @@ def _body_with_litellm_metadata(
     *,
     auth_context: AuthContext,
     request_path: str,
-    runtime_source: str = "",
     service_id: str = "",
 ) -> bytes:
     body = copy.deepcopy(dict(body_json))
@@ -16996,7 +16988,6 @@ def _body_with_litellm_metadata(
     metadata["ai_gateway"] = _litellm_gateway_metadata(
         auth_context,
         request_path=request_path,
-        runtime_source=runtime_source,
         service_id=service_id,
     )
     body["metadata"] = metadata
@@ -17070,9 +17061,7 @@ async def _forward_litellm_proxy_request(
     path: str,
     auth_context: AuthContext,
     body_json: Mapping[str, Any],
-    runtime_config=None,
-    attach_body_metadata: bool = True,
-    validate_chat_extensions: bool = True,
+    runtime_config,
     requested_embedding_dimensions: int | None = None,
 ) -> Response:
     model_name = body_json.get("model")
@@ -17092,16 +17081,9 @@ async def _forward_litellm_proxy_request(
         if current_loaded_decision is not None and current_loaded_decision.denied:
             return _policy_denied_response(current_loaded_decision)
 
-    runtime = runtime_config or _litellm_runtime_config()
+    runtime = runtime_config
     if not runtime.enabled:
         return _litellm_unconfigured_response()
-
-    service_response = _service_availability_response(
-        runtime.service_id or "litellm",
-        service_label="LiteLLM",
-    )
-    if service_response is not None:
-        return service_response
 
     receipt = _start_litellm_route_receipt(
         request_path=request_path,
@@ -17109,7 +17091,7 @@ async def _forward_litellm_proxy_request(
         requested_model=model_name,
     )
     body_for_litellm = body_json
-    if validate_chat_extensions and request_path == "/v1/chat/completions":
+    if request_path == "/v1/chat/completions":
         try:
             extension_result = validate_chat_completions_extensions(body_json)
         except ExtensionError as e:
@@ -17124,20 +17106,15 @@ async def _forward_litellm_proxy_request(
         body_for_litellm = dict(body_for_litellm)
         body_for_litellm.pop("dimensions", None)
 
-    if attach_body_metadata:
-        body = _body_with_litellm_metadata(
-            body_for_litellm,
-            auth_context=auth_context,
-            request_path=request_path,
-            runtime_source=runtime.source,
-            service_id=runtime.service_id,
-        )
-    else:
-        body = json.dumps(dict(body_for_litellm)).encode()
+    body = _body_with_litellm_metadata(
+        body_for_litellm,
+        auth_context=auth_context,
+        request_path=request_path,
+        service_id=runtime.service_id,
+    )
     gateway_metadata = _litellm_gateway_metadata(
         auth_context,
         request_path=request_path,
-        runtime_source=runtime.source,
         service_id=runtime.service_id,
     )
     read_timeout = (
@@ -17862,13 +17839,14 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                 service_label="LiteLLM",
             )
             if litellm_service_response is None:
-                activation_error, litellm_body = await _prepare_litellm_local_llm_request(
-                    auth_context,
-                    request_path=request_path,
-                    body_json=parsed_openai_body,
-                )
-                if activation_error is not None:
-                    return activation_error
+                if request_path in {"/v1/chat/completions", "/v1/completions"}:
+                    activation_error, litellm_body = await _prepare_litellm_local_llm_request(
+                        auth_context,
+                        request_path=request_path,
+                        body_json=parsed_openai_body,
+                    )
+                    if activation_error is not None:
+                        return activation_error
         return await _forward_litellm_proxy_request(
             request,
             request_path=request_path,

@@ -15,7 +15,6 @@ Explicit limitations:
 
 from __future__ import annotations
 
-import copy
 import os
 from pathlib import Path
 from collections.abc import Iterable, Mapping
@@ -36,61 +35,29 @@ DEFAULT_LITELLM_CONFIG_PATH = Path("data/litellm.config.yaml")
 
 
 def compile_litellm_substrate_config(
-    services: Mapping[str, Any] | Iterable[Mapping[str, Any]],
+    services: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Return a LiteLLM-compatible config fragment from Gateway-owned data."""
 
     service_records = _normalize_services(services)
     entries: list[dict[str, Any]] = []
-    omitted: list[dict[str, str]] = []
 
     for service in sorted(service_records, key=lambda row: (row["priority"], row["id"])):
         if not service.get("enabled", True):
-            omitted.append({"service_id": service["id"], "reason": "service disabled"})
             continue
         if not _is_openai_compatible(service):
-            omitted.append(
-                {
-                    "service_id": service["id"],
-                    "reason": "not openai-compatible",
-                }
-            )
             continue
 
         deployments = _deployment_records(service)
         if not deployments:
-            omitted.append(
-                {
-                    "service_id": service["id"],
-                    "reason": "no compilable models",
-                }
-            )
             continue
         entries.extend(_model_list_entries(service, deployments))
-
-    metadata = {
-        "source": "ai-gateway",
-        "source_of_truth": "gateway service registry",
-        "limitations": [
-            "OpenAI-compatible LLM deployments only",
-            "Secrets are referenced but not resolved",
-            "Media workflows and non-chat capabilities are not compiled",
-        ],
-        "gateway": {
-            "services": [_service_metadata(row) for row in service_records],
-            "omitted_services": omitted,
-        },
-    }
 
     return {
         "model_list": entries,
         "litellm_settings": {
             "drop_params": True,
         },
-        "router_settings": {
-            "routing_strategy": "simple-shuffle",
-        },
-        "metadata": metadata,
     }
 
 
@@ -144,16 +111,10 @@ def _litellm_service_record(registry: Mapping[str, Any]) -> Mapping[str, Any]:
         return {}
     return sorted(candidates, key=lambda item: int(item.get("priority") or 100))[0]
 
-def _normalize_services(
-    services: Mapping[str, Any] | Iterable[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    if isinstance(services, Mapping):
-        rows = services.items()
-    else:
-        rows = ((row.get("id"), row) for row in services if isinstance(row, Mapping))
 
+def _normalize_services(services: Mapping[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for raw_id, raw in rows:
+    for raw_id, raw in services.items():
         if not isinstance(raw, Mapping):
             continue
         service_id = str(raw.get("id") or raw_id or "").strip()
@@ -195,7 +156,7 @@ def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for index, raw in enumerate(iterable):
         if isinstance(raw, Mapping):
-            item = copy.deepcopy(dict(raw))
+            item = dict(raw)
         elif isinstance(raw, str):
             item = {"id": raw, "upstream_model": raw}
         else:
@@ -212,8 +173,6 @@ def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
             continue
         model_group = str(
             item.get("model_group")
-            or item.get("group")
-            or item.get("public_name")
             or item.get("id")
             or upstream_model
         ).strip()
@@ -222,7 +181,6 @@ def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "id": str(item.get("id") or f"{service['id']}:{index}"),
                 "model_group": model_group,
                 "upstream_model": upstream_model,
-                "metadata": _redact(item.get("metadata") or {}),
             }
         )
     return out
@@ -255,17 +213,6 @@ def _model_list_entries(
             {
                 "model_name": str(deployment["model_group"]),
                 "litellm_params": litellm_params,
-                "model_info": {
-                    "id": f"{service['id']}:{deployment['id']}",
-                    "base_model": str(deployment["upstream_model"]),
-                    "metadata": {
-                        "gateway_service_id": service["id"],
-                        "gateway_service_name": service["name"],
-                        "gateway_source": service["source"],
-                        "gateway_priority": service["priority"],
-                        "gateway_model_metadata": deployment["metadata"],
-                    },
-                },
             }
         )
     return out
@@ -310,46 +257,3 @@ def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any]) -> s
     if secret_refs.get("api_key") == SECRET_PLACEHOLDER:
         return "os.environ/AI_GATEWAY_DOWNSTREAM_API_KEY"
     return ""
-
-
-def _service_metadata(service: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "id": service["id"],
-        "name": service["name"],
-        "source": service["source"],
-        "enabled": service["enabled"],
-        "priority": service["priority"],
-        "capabilities": list(service.get("capabilities") or []),
-        "has_secret_refs": bool(service.get("secret_refs")),
-    }
-
-
-def _redact(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        out: dict[str, Any] = {}
-        for key, item in value.items():
-            key_str = str(key)
-            if _is_secret_key(key_str):
-                out[key_str] = "<redacted>"
-            else:
-                out[key_str] = _redact(item)
-        return out
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [_redact(item) for item in value]
-    return copy.deepcopy(value)
-
-
-def _is_secret_key(key: str) -> bool:
-    lowered = key.lower()
-    return any(
-        hint in lowered
-        for hint in (
-            "api_key",
-            "authorization",
-            "client_secret",
-            "credential",
-            "password",
-            "secret",
-            "token",
-        )
-    )

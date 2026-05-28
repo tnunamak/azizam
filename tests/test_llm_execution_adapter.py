@@ -62,7 +62,6 @@ def test_litellm_runtime_prefers_gateway_service_registry() -> None:
     assert runtime.base_url == "http://127.0.0.1:4011"
     assert runtime.api_key == "sk-internal"
     assert runtime.service_id == "litellm"
-    assert runtime.source == "service_registry"
 
 
 def test_litellm_runtime_uses_registry_default_when_env_override_is_absent() -> None:
@@ -88,7 +87,6 @@ def test_litellm_runtime_uses_registry_default_when_env_override_is_absent() -> 
     assert runtime.enabled
     assert runtime.base_url == "http://127.0.0.1:4011"
     assert runtime.api_key == ""
-    assert runtime.source == "service_registry"
 
 
 def test_litellm_runtime_env_override_wins_over_registry_default() -> None:

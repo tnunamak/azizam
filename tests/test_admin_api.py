@@ -1342,7 +1342,7 @@ class AdminOperatorOverrideTests(unittest.TestCase):
             config["model_list"][0]["litellm_params"]["api_key"],
             "os.environ/LOCAL_LLM_KEY",
         )
-        self.assertNotIn("profiles", config["metadata"]["gateway"])
+        self.assertNotIn("metadata", config)
 
     def test_admin_can_list_validate_and_enable_extension_package(self) -> None:
         client, store = _make_client()

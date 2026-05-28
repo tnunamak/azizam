@@ -39,7 +39,6 @@ class LiteLlmRuntimeConfig:
     base_url: str = ""
     api_key: str = ""
     service_id: str = ""
-    source: str = "none"
 
 
 def litellm_runtime_from_registry(
@@ -60,7 +59,6 @@ def litellm_runtime_from_registry(
             base_url=base_url,
             api_key=_api_key_from_config(config, env),
             service_id=str(service.get("id") or "litellm"),
-            source="service_registry",
         )
     return LiteLlmRuntimeConfig()
 

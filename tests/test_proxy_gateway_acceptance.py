@@ -360,7 +360,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         )
         self.assertEqual(calls[0].headers["authorization"], "Bearer sk-litellm-internal")
         self.assertEqual(calls[0].headers["x-ai-gateway-execution"], "litellm")
-        self.assertEqual(calls[0].headers["x-ai-gateway-runtime-source"], "service_registry")
+        self.assertEqual(calls[0].headers["x-ai-gateway-service-id"], "litellm")
         self.assertNotIn("opk_client", repr(calls[0]))
         self.assertEqual(len(receipts), 1)
         self.assertEqual(receipts[0].backend, "litellm")

@@ -32,20 +32,8 @@ def test_compiles_openai_compatible_local_service() -> None:
                 "api_base": "http://127.0.0.1:8081/v1",
                 "api_key": "os.environ/LOCAL_LLM_API_KEY",
             },
-            "model_info": {
-                "id": "local-llama:llama3:8b",
-                "base_model": "llama3:8b",
-                "metadata": {
-                    "gateway_service_id": "local-llama",
-                    "gateway_service_name": "Local llama.cpp",
-                    "gateway_source": "ui",
-                    "gateway_priority": 100,
-                    "gateway_model_metadata": {},
-                },
-            },
         }
     ]
-    assert compiled["metadata"]["source_of_truth"] == "gateway service registry"
 
 
 def test_multiple_deployments_can_share_one_model_group() -> None:
@@ -92,9 +80,9 @@ def test_multiple_deployments_can_share_one_model_group() -> None:
         "http://127.0.0.1:8001/v1",
         "http://127.0.0.1:8002/v1",
     ]
-    assert [entry["model_info"]["base_model"] for entry in compiled["model_list"]] == [
-        "llama3:8b-q4",
-        "llama3:70b-q4",
+    assert [entry["litellm_params"]["model"] for entry in compiled["model_list"]] == [
+        "openai/llama3:8b-q4",
+        "openai/llama3:70b-q4",
     ]
 
 
@@ -120,7 +108,7 @@ def test_openai_compatible_host_port_and_model_id_compile() -> None:
     assert compiled["model_list"][0]["litellm_params"]["api_key"] == "sk-local"
 
 
-def test_uses_simple_router_strategy_for_local_compatibility() -> None:
+def test_keeps_litellm_settings_minimal() -> None:
     compiled = compile_litellm_substrate_config(
         {
             "embeddings": {
@@ -134,7 +122,9 @@ def test_uses_simple_router_strategy_for_local_compatibility() -> None:
         }
     )
 
-    assert compiled["router_settings"]["routing_strategy"] == "simple-shuffle"
+    assert compiled["litellm_settings"] == {"drop_params": True}
+    assert "router_settings" not in compiled
+    assert "metadata" not in compiled
 
 
 def test_references_external_secrets_without_exposing_secret_values() -> None:
@@ -160,8 +150,7 @@ def test_references_external_secrets_without_exposing_secret_values() -> None:
     assert compiled["model_list"][0]["litellm_params"]["api_key"] == (
         "os.environ/AI_GATEWAY_DOWNSTREAM_API_KEY"
     )
-    assert "profiles" not in compiled["metadata"]["gateway"]
-    assert "policy" not in compiled["metadata"]["gateway"]
+    assert "metadata" not in compiled
 
 
 def test_compiles_from_registry_and_writes_litellm_config_artifact(tmp_path) -> None:
