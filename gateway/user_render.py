@@ -64,7 +64,7 @@ _PAGE_CSS = """
     margin: 0;
     text-transform: uppercase;
   }
-  .card, .app-card, .app-create, .base-card {
+  .card, .app-create, .base-card {
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -74,8 +74,8 @@ _PAGE_CSS = """
     align-content: start;
     min-width: 0;
   }
-  .card h3, .app-card h3, .app-create h3 { margin: 0; font-size: 1rem; }
-  .card p, .app-card p, .app-create p { margin: 0; color: var(--muted); line-height: 1.5; }
+  .card h3, .app-create h3 { margin: 0; font-size: 1rem; }
+  .card p, .app-create p { margin: 0; color: var(--muted); line-height: 1.5; }
   .actions {
     display: flex;
     flex-wrap: wrap;
@@ -344,17 +344,40 @@ _PAGE_CSS = """
   .app-create-disclosure summary { cursor: pointer; color: var(--muted); }
   .app-create-disclosure[open] summary { color: var(--text); margin-bottom: var(--space-3); }
   .app-create-disclosure .app-create-form { margin-top: 0; }
-  .app-card-header {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--space-3);
-    align-items: start;
+  /* App card (design 03): a calm .vf-card whose summary is the app row —
+     glyph · name · masked key/count · chevron. Tapping expands the keys and
+     management controls in place. The card owns no padding; the summary and
+     body set their own so the closed row reads as a single tappable line. */
+  .app-card {
+    padding: 0;
   }
-  .app-card-title {
+  /* Keep the summary at its default (block) display: giving a <summary>
+     display:flex silently breaks the native click-to-toggle in Chromium. The
+     inner .vf-row does the horizontal layout instead. */
+  .app-card > .app-card-summary {
+    list-style: none;
+    cursor: pointer;
+    padding: var(--space-4);
+  }
+  .app-card > .app-card-summary::-webkit-details-marker { display: none; }
+  .app-card > .app-card-summary .vf-row { width: 100%; justify-content: space-between; }
+  .app-card-chevron {
+    color: var(--soft);
+    flex: 0 0 auto;
+    display: inline-flex;
+    transition: transform 0.18s ease;
+  }
+  .app-card[open] > .app-card-summary .app-card-chevron { transform: rotate(180deg); }
+  @media (prefers-reduced-motion: reduce) { .app-card-chevron { transition: none; } }
+  .app-card-body {
+    padding: 0 var(--space-4) var(--space-4);
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-3);
     min-width: 0;
   }
+  .app-detail-line { margin: 0; color: var(--muted); font-size: 0.86rem; line-height: 1.5; }
+  /* The masked-key sub-line in the closed row reuses the row-sub mono style. */
+  .app-card .vf-row-sub code { color: inherit; font-size: inherit; font-family: inherit; }
   .badge {
     display: inline-flex;
     align-items: center;
@@ -471,35 +494,21 @@ _PAGE_CSS = """
     text-align: center;
   }
   .access-list { display: grid; gap: var(--space-2); }
-  /* Recent-activity feed — calm rows: dot · app/endpoint · status · latency. */
-  .recent-card { padding: 0; }
+  /* Recent-activity feed — the design's divided-row feed (brand .vf-feed /
+     .vf-feed-row). The rows are buttons (they open the receipt sheet), so this
+     adds the button reset + hover on top of the brand row layout. */
   .recent-card .empty { margin: 0; padding: var(--space-4); border: 0; }
   .activity-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
     width: 100%;
-    padding: 0.7rem 0.875rem;
     background: transparent;
     color: var(--text);
     text-align: left;
     cursor: pointer;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
   }
-  .activity-row + .activity-row { border-top: 1px solid var(--line); }
   .activity-row:hover { background: var(--panel-2); }
-  .activity-main { flex: 1; min-width: 0; display: grid; gap: 0.1rem; }
-  .activity-app {
-    font-size: 0.9rem; font-weight: 500; color: var(--text);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .activity-endpoint {
-    font-family: var(--font-mono); font-size: 0.76rem; color: var(--soft);
-  }
-  .activity-meta { text-align: right; flex: 0 0 auto; display: grid; gap: 0.1rem; }
-  .activity-status { font-family: var(--font-mono); font-size: 0.82rem; color: var(--muted); }
-  .activity-status.bad { color: var(--bad); }
-  .activity-status.warn { color: var(--warn); }
-  .activity-latency { font-family: var(--font-mono); font-size: 0.72rem; color: var(--soft); }
   /* Receipt detail — labelled fact rows + a "why" block for failures. */
   .receipt-summary {
     margin: 0 0 var(--space-4);
@@ -687,7 +696,7 @@ _PAGE_CSS = """
   @media (max-width: 720px) {
     .hero h2 { font-size: 2.6rem; }
     .section-head h2 { font-size: 1.7rem; }
-    .row, .key-form, .app-card-header, .base-card { grid-template-columns: 1fr; }
+    .row, .key-form, .base-card { grid-template-columns: 1fr; }
     .actions button { width: 100%; }
     .base-card button { width: 100%; }
   }
@@ -742,6 +751,15 @@ def _client_account(account: Mapping[str, Any] | None, *, show_permission_detail
         },
         "apps": apps,
     }
+
+
+def _active_credentials(app: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Active credentials for an App (the ones that still grant access)."""
+    return [
+        c
+        for c in app.get("credentials", [])
+        if isinstance(c, Mapping) and c.get("active", True)
+    ]
 
 
 def _sanitize_client_credential(credential: Mapping[str, Any]) -> dict[str, Any]:
@@ -813,11 +831,7 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
         elif not inherited:
             permission_text = "custom account permissions"
             permission_badge = _badge("custom permissions")
-    credentials = [
-        c
-        for c in app.get("credentials", [])
-        if isinstance(c, Mapping) and c.get("active", True)
-    ]
+    credentials = _active_credentials(app)
     credential_html = (
         "".join(_credential_html(c) for c in credentials)
         if credentials
@@ -861,33 +875,54 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
         + "</button>"
         "</details>"
     )
-    # No per-card "use this for one tool/workflow/script" sentence: the create
-    # form already taught that, and the App name + permission badge + key list
-    # carry the meaning. Only admins, who asked for permission detail, get a
-    # terse line naming the actual Profile (real info, not a tutorial).
+    # The card's calm face is the design's app row (design 03): a glyph tile, the
+    # App name, and a single quiet sub-line — the masked key when there's exactly
+    # one, a count otherwise. No "last used" time: per-key activity isn't tracked
+    # yet, and inventing one would be dishonest. The whole row taps to expand the
+    # keys + management controls in place (progressive disclosure), so the
+    # surface stays calm while every flow is one tap away.
+    active_count = len(credentials)
+    if active_count == 1:
+        prefix = esc(credentials[0].get("prefix") or "key")
+        sub_html = f'<code>{prefix}</code>···'
+    elif active_count == 0:
+        sub_html = "No keys yet"
+    else:
+        sub_html = f"{active_count} keys"
+    # Admins who asked for permission detail get the Profile name in the sub-line
+    # area as a quiet badge inside the expanded body; the calm face stays minimal.
     detail_line = (
-        f"<p>Keys use {esc(permission_text)}.</p>"
+        f'<p class="app-detail-line">Keys use {esc(permission_text)}.</p>'
         if show_permission_details
         else ""
     )
     return (
-        '<article class="app-card" data-app-card="' + app_id + '">'
-        '<div class="app-card-header">'
-        '<div class="app-card-title">'
-        f"<h3>{name}</h3>"
+        '<details class="vf-card app-card" data-app-card="' + app_id + '">'
+        '<summary class="app-card-summary">'
+        '<span class="vf-row">'
+        '<span class="vf-row-main">'
+        '<span class="vf-glyph" aria-hidden="true">' + _app_glyph() + "</span>"
+        '<span class="vf-row-id">'
+        f'<span class="vf-row-name">{name}</span>'
+        f'<span class="vf-row-sub">{sub_html}</span>'
+        "</span>"
+        "</span>"
+        '<span class="app-card-chevron" aria-hidden="true">' + _chevron_svg() + "</span>"
+        "</span>"
+        "</summary>"
+        '<div class="app-card-body">'
         + detail_line
         + '<div class="meta">'
         + permission_badge
-        + _badge(f"{app.get('active_credentials') or 0} active keys", "good")
+        + _badge(f"{active_count} active keys", "good")
         + "</div>"
-        "</div>"
-        "</div>"
         + '<div class="key-list" data-key-list="' + app_id + '">'
         + credential_html
         + "</div>"
         + mint_html
         + remove_html
-        + "</article>"
+        + "</div>"
+        + "</details>"
     )
 
 
@@ -1050,8 +1085,12 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
         )
         section_action = ""
     else:
+        # The create form stays out of sight until "+ New" calls for it — the
+        # calm default surface is just the app list. "+ New" in the section
+        # header reveals this disclosure (design: the create affordance lives in
+        # the header, not as a standing row above the apps).
         connect_block = (
-            '<details class="app-create-disclosure">'
+            '<details class="app-create-disclosure" hidden>'
             "<summary>Create another App</summary>"
             + create_form_fields
             + "</details>"
@@ -1072,16 +1111,26 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
         if admin_hint
         else f'<p class="hint">Signed in as {user_label}.</p>'
     )
+    # Design 03 order: a reachability card leads, then the "YOUR APPS" section
+    # (kicker = key count + title + "+ New"), then the apps, then the activity
+    # feed. The apps section header uses the brand .vf-section pattern (mono
+    # kicker over an uppercase title) for one calm, consistent grouping voice.
+    key_count = sum(len(_active_credentials(a)) for a in apps)
+    apps_kicker = (
+        f"{key_count} key" + ("" if key_count == 1 else "s")
+    ) if key_count else "no keys yet"
     return (
         '<section aria-labelledby="apps-heading">'
-        '<div class="section-head vf-section-head">'
+        + _health_card(gateway_line)
+        + hint_html
+        + '<div class="vf-section">'
+        '<div class="vf-section-head">'
         "<div>"
-        '<h2 id="apps-heading">Your Apps</h2>'
+        f'<p class="vf-section-label">{esc(apps_kicker)}</p>'
+        '<h2 id="apps-heading" class="vf-section-title">Your apps</h2>'
         "</div>"
         + section_action
         + "</div>"
-        + hint_html
-        + _health_card(gateway_line)
         + '<div id="account-result" class="message"></div>'
         + '<div id="account-toast" class="toast" role="status" aria-live="polite"></div>'
         + _key_reveal_sheet()
@@ -1089,6 +1138,7 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
         + _receipt_detail_sheet()
         + connect_block
         + apps_html
+        + "</div>"  # /.vf-section
         + _recent_activity_section()
         + _base_url_card()
         + "</section>"
@@ -1105,9 +1155,12 @@ def _recent_activity_section() -> str:
     return (
         '<section class="vf-section recent-section" aria-labelledby="recent-heading">'
         '<div class="vf-section-head">'
+        "<div>"
+        '<p class="vf-section-label">your calls</p>'
         '<h2 id="recent-heading" class="vf-section-title">Recent</h2>'
         "</div>"
-        '<div class="vf-card recent-card" id="recent-activity">'
+        "</div>"
+        '<div class="vf-card vf-feed recent-card" id="recent-activity">'
         '<p class="empty" id="recent-empty">Loading recent activity…</p>'
         "</div>"
         "</section>"
@@ -1203,6 +1256,29 @@ def _key_glyph() -> str:
         'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" '
         'width="18" height="18" aria-hidden="true">'
         '<circle cx="8" cy="12" r="3"/><path d="M11 12h10v3M16 12v3"/></svg>'
+    )
+
+
+def _app_glyph() -> str:
+    # A neutral "application" mark for the app-row glyph tile. Real Apps don't
+    # carry an icon type, so one calm grid glyph stands in for all of them
+    # (the design's per-app bot/edit/chat icons are prototype flavor).
+    return (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" '
+        'width="18" height="18" aria-hidden="true">'
+        '<rect x="3" y="3" width="7" height="7" rx="1.5"/>'
+        '<rect x="14" y="3" width="7" height="7" rx="1.5"/>'
+        '<rect x="3" y="14" width="7" height="7" rx="1.5"/>'
+        '<rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'
+    )
+
+
+def _chevron_svg() -> str:
+    return (
+        '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        'stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>'
     )
 
 
@@ -1687,6 +1763,10 @@ def render_user_portal(
   // client re-render after create/delete matches the initial HTML exactly.
   const KEY_GLYPH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" aria-hidden="true"><circle cx="8" cy="12" r="3"/><path d="M11 12h10v3M16 12v3"/></svg>';
   const CHEVRON_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  // App-row glyph + the down-chevron for the app card summary — byte-identical
+  // to the server's _app_glyph()/_chevron_svg() so a client re-render matches.
+  const APP_GLYPH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
+  const APP_CHEVRON_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
 
   function renderCredential(credential) {{
     // A calm, tappable row: glyph · label · masked prefix · chevron. Tapping
@@ -1730,26 +1810,60 @@ def render_user_portal(
     const appId = text(app.id);
     const credentials = activeCredentials(app);
     const permission = permissionInfo(app);
-    const article = document.createElement("article");
-    article.className = "app-card";
+    const appName = text(app.name, appId || "App");
+    // A calm .vf-card whose summary is the design's app row; tapping expands the
+    // keys + management controls in place. Mirrors the server's _app_html.
+    const article = document.createElement("details");
+    article.className = "vf-card app-card";
     article.dataset.appCard = appId;
 
-    const header = document.createElement("div");
-    header.className = "app-card-header";
-    const titleWrap = document.createElement("div");
-    titleWrap.className = "app-card-title";
-    const title = document.createElement("h3");
-    title.textContent = text(app.name, appId || "App");
-    // No per-card help sentence (see _app_html): the name + permission badge +
-    // key list carry the meaning; the tutorial copy was repeated cost.
+    const summary = document.createElement("summary");
+    summary.className = "app-card-summary";
+    const row = document.createElement("span");
+    row.className = "vf-row";
+    const main = document.createElement("span");
+    main.className = "vf-row-main";
+    const glyph = document.createElement("span");
+    glyph.className = "vf-glyph";
+    glyph.setAttribute("aria-hidden", "true");
+    glyph.innerHTML = APP_GLYPH_SVG;
+    const idBlock = document.createElement("span");
+    idBlock.className = "vf-row-id";
+    const name = document.createElement("span");
+    name.className = "vf-row-name";
+    name.textContent = appName;
+    const sub = document.createElement("span");
+    sub.className = "vf-row-sub";
+    // One quiet sub-line: the masked key when there's exactly one, else a count.
+    // No "last used" — per-key activity isn't tracked; inventing it is dishonest.
+    if (credentials.length === 1) {{
+      const code = document.createElement("code");
+      code.textContent = text(credentials[0].prefix, "key");
+      sub.append(code, "···");
+    }} else if (credentials.length === 0) {{
+      sub.textContent = "No keys yet";
+    }} else {{
+      sub.textContent = credentials.length + " keys";
+    }}
+    idBlock.append(name, sub);
+    main.append(glyph, idBlock);
+    const chevron = document.createElement("span");
+    chevron.className = "app-card-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.innerHTML = APP_CHEVRON_SVG;
+    row.append(main, chevron);
+    summary.append(row);
+
+    const body = document.createElement("div");
+    body.className = "app-card-body";
+    const title = {{ textContent: appName }};  // kept for delete-button labels below
+
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.append(
       badge(permission.badge, permission.cls),
       badge(credentials.length + " active keys", "good")
     );
-    titleWrap.append(title, meta);
-    header.append(titleWrap);
 
     const list = document.createElement("div");
     list.className = "key-list";
@@ -1816,9 +1930,10 @@ def render_user_portal(
       remove.append(summary, warn, deleteApp);
     }}
 
-    article.append(header, list);
-    if (create) article.append(create);
-    if (remove) article.append(remove);
+    body.append(meta, list);
+    if (create) body.append(create);
+    if (remove) body.append(remove);
+    article.append(summary, body);
     return article;
   }}
 
@@ -2084,9 +2199,11 @@ def render_user_portal(
   }}
 
   function renderActivityRow(r) {{
+    // Design 03 feed row (brand .vf-feed-row): status dot · app/endpoint · a
+    // right-aligned status-code-over-latency column. Non-2xx codes go amber/red.
     const row = document.createElement("button");
     row.type = "button";
-    row.className = "activity-row";
+    row.className = "vf-feed-row activity-row";
     row.dataset.openReceipt = text(r.request_id);
     const tone = statusTone(r.status);
 
@@ -2095,29 +2212,29 @@ def render_user_portal(
     dot.setAttribute("aria-hidden", "true");
 
     const main = document.createElement("span");
-    main.className = "activity-main";
+    main.className = "vf-row-id";
     const app = document.createElement("span");
-    app.className = "activity-app";
+    app.className = "vf-row-name";
     app.textContent = activityAppLabel(r);
     const ep = document.createElement("span");
-    ep.className = "activity-endpoint";
+    ep.className = "vf-row-sub";
     ep.textContent = endpointLabel(r);
     main.append(app, ep);
 
-    const meta = document.createElement("span");
-    meta.className = "activity-meta";
+    const stat = document.createElement("span");
+    stat.className = "vf-row-stat" + (tone === "bad" ? " is-bad" : tone === "warn" ? " is-warn" : "");
     const st = document.createElement("span");
-    st.className = "activity-status" + (tone ? " " + tone : "");
+    st.className = "vf-row-stat-top";
     st.textContent = text(r.status, "—");
-    meta.append(st);
+    stat.append(st);
     if (r.latency_ms != null) {{
       const lat = document.createElement("span");
-      lat.className = "activity-latency";
+      lat.className = "vf-row-stat-sub";
       lat.textContent = Math.round(Number(r.latency_ms)) + "ms";
-      meta.append(lat);
+      stat.append(lat);
     }}
 
-    row.append(dot, main, meta);
+    row.append(dot, main, stat);
     return row;
   }}
 
@@ -2317,9 +2434,23 @@ def render_user_portal(
     const trigger = event.target.closest("[data-focus-create-app]");
     if (!trigger) return;
     const disclosure = document.querySelector(".app-create-disclosure");
-    if (disclosure) disclosure.open = true;
+    if (disclosure) {{ disclosure.hidden = false; disclosure.open = true; }}
     const input = document.querySelector("[data-create-owned-app] [name=name]");
     if (input) input.focus();
+  }});
+
+  // App-card expand/collapse. The card is a native <details>, but we own the
+  // toggle explicitly (preventDefault on the summary's default action) so the
+  // behavior is deterministic regardless of how the summary's flex content is
+  // laid out — and so a click on an inner control (a key row, "+ New key")
+  // inside the OPEN body never accidentally collapses the card.
+  document.addEventListener("click", (event) => {{
+    const summary = event.target.closest(".app-card-summary");
+    if (!summary) return;
+    const card = summary.closest(".app-card");
+    if (!card) return;
+    event.preventDefault();
+    card.open = !card.open;
   }});
 
   document.addEventListener("submit", async (event) => {{

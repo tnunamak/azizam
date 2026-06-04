@@ -494,7 +494,9 @@ class UserPortalRenderTests(unittest.TestCase):
                 "apps": [],
             },
         )
-        self.assertIn("Your Apps", html)
+        # The apps section heading ("Your apps" — uppercased by the brand
+        # .vf-section-title) anchors the surface; the kicker counts keys.
+        self.assertIn("Your apps", html)
         self.assertIn("Create one App for each tool or script", html)
         self.assertIn("Base URL", html)
         # The surface stays thin — no how-to narration, no operator jargon.

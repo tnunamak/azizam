@@ -5,7 +5,7 @@ single source of truth for the gateway's visual language. To change tokens or
 component classes, edit ``~/code/vivid-fish-brand`` and re-run the script.
 
     source:  @vivid-fish/brand v0.2.0
-    commit:  f0f2b6bd589676ee43ff82a9c50f8c991dcc201d
+    commit:  a9762ec8f91a819ec51047d80096e7205aa38603
     repo:    github.com/Vivid-Fish/vivid-fish-brand
 
 ``BRAND_TOKENS_CSS`` is ``src/tokens.css`` verbatim (the ``:root`` custom
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 __all__ = ["BRAND_TOKENS_CSS", "BRAND_COMPONENTS_CSS", "BRAND_SOURCE_COMMIT"]
 
-BRAND_SOURCE_COMMIT = "f0f2b6bd589676ee43ff82a9c50f8c991dcc201d"
+BRAND_SOURCE_COMMIT = "a9762ec8f91a819ec51047d80096e7205aa38603"
 
 BRAND_TOKENS_CSS = r"""
 :root {
@@ -798,6 +798,9 @@ BRAND_COMPONENTS_CSS = r"""
 }
 
 .vf-row-id {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   min-width: 0;
 }
 
@@ -843,6 +846,7 @@ BRAND_COMPONENTS_CSS = r"""
 }
 
 .vf-row-stat > .vf-row-stat-top {
+  display: block;
   color: var(--vf-text-muted);
   font-size: 12px;
   line-height: 1.3;
@@ -857,6 +861,7 @@ BRAND_COMPONENTS_CSS = r"""
 }
 
 .vf-row-stat > .vf-row-stat-sub {
+  display: block;
   color: var(--vf-text-subtle);
   font-size: 10.5px;
   line-height: 1.3;
