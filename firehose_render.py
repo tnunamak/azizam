@@ -263,7 +263,7 @@ def render_html(
     # Use str.replace, not .format — the template contains CSS braces that
     # would otherwise need to be doubled.
     parts.append(_HTML_HEAD_TEMPLATE.replace(
-        "__TITLE__", _esc(f"{display_host} · firehose"),
+        "__TITLE__", _esc(f"{display_host} · status"),
     ).replace(
         "__SHELL_CSS__", SHELL_CSS,
     ))
@@ -512,7 +512,7 @@ __SHELL_CSS__
 
 _HTML_FOOT_TEMPLATE = """
 <footer>
-  Auto-refreshing every 10s via &lt;meta http-equiv="refresh"&gt;. For programmatic access,
+  Auto-refreshing every 10s. For programmatic access,
   poll <a href="/v1/status">/v1/status</a> directly (bearer token required).
   · <a href="https://github.com/Vivid-Fish/openai-proxy" target="_blank" rel="noopener">github.com/Vivid-Fish/openai-proxy</a>
   __VERSION_HTML__
@@ -533,11 +533,6 @@ def _render_banner(p: dict, *, host: Optional[str] = None) -> str:
         "bad": "API Issue Detected",
     }[cls]
     gen = p.get("generated_at")
-    cache_age = p.get("cache_age_s")
-    try:
-        cache_age_str = f"{float(cache_age):.1f}s"
-    except Exception:
-        cache_age_str = "—"
     abs_gen = _abs_utc(gen) or "—"
     display_host = (host or "ai.vivid.fish").strip() or "ai.vivid.fish"
     reasons = p.get("banner_reasons") or []
@@ -559,14 +554,16 @@ def _render_banner(p: dict, *, host: Optional[str] = None) -> str:
     commit_html = (
         f' · version <code>{_esc(commit)}</code>' if commit else ""
     )
-    refresh_html = ' · auto-refresh 10s'
+    # One freshness signal, not three: "generated N ago" with the absolute UTC
+    # in the tooltip. Sub-second cache age and a duplicate "auto-refresh 10s"
+    # (the footer already states the refresh) are dropped from the banner.
     return (
         f'<div class="banner {cls}">'
         f'<h1>{_esc(title)}</h1>'
         f'<div class="muted small">'
         f'served at <code>{_esc(display_host)}</code>'
-        f' · generated <span title="{_esc(abs_gen)}">{_ago(gen)}</span> '
-        f'({_esc(abs_gen)}) · cache age {_esc(cache_age_str)}{commit_html}{refresh_html}'
+        f' · generated <span title="{_esc(abs_gen)}">{_ago(gen)}</span>'
+        f'{commit_html}'
         f'</div>'
         f'{reasons_html}'
         f'{sh_html}'

@@ -28,8 +28,11 @@ class SetupRenderTests(unittest.TestCase):
         self.assertIn("first allowed OIDC login", html)
         # No "Setup complete" copy yet.
         self.assertNotIn("Setup complete", html)
-        # OIDC has a small recovery hatch so a broken IdP is not a dead end.
-        self.assertIn("oak_ admin key", html)
+        # OIDC has a small recovery hatch so a broken IdP is not a dead end —
+        # phrased without the internal oak_ prefix jargon.
+        self.assertIn("OIDC not working?", html)
+        self.assertIn("admin key", html)
+        self.assertNotIn("oak_ admin key", html)
 
     def test_oidc_enabled_can_show_admin_key_recovery_form(self) -> None:
         html = render_setup_page(
@@ -111,8 +114,9 @@ class SetupRenderTests(unittest.TestCase):
             owner_or_admin_exists=True,
             oidc_enabled=True,
         )
-        self.assertIn("Setup complete", html)
         self.assertIn("This gateway has an owner", html)
+        # No decorative "Setup complete" eyebrow above the heading.
+        self.assertNotIn("Setup complete", html)
         self.assertIn('href="/"', html)
         self.assertIn('href="/admin"', html)
         # The claim CTA isn't shown anymore.
@@ -135,7 +139,7 @@ class SetupRenderTests(unittest.TestCase):
             owner_or_admin_exists=True,
             oidc_enabled=False,
         )
-        self.assertIn("Setup complete", html)
+        self.assertIn("This gateway has an owner", html)
         # Returning operators sign in with the same credentials they set on
         # first run, not with an oak_ admin key.
         self.assertIn('action="/setup/local-login"', html)
@@ -186,10 +190,11 @@ class SetupRenderTests(unittest.TestCase):
         self.assertIn('href="/logout"', html)
         # Admin nav surfaces /admin link in shared chrome.
         self.assertIn('href="/admin"', html)
-        self.assertIn("Connect a client", html)
+        # Operator tools on the signed-in setup console.
+        self.assertIn("Mint a key from the console", html)
         self.assertIn('action="/setup/first-app"', html)
         self.assertIn('value="csrf-token"', html)
-        self.assertIn("Gateway checks", html)
+        self.assertIn("Is the gateway wired up?", html)
         self.assertIn("Runtime App key", html)
 
     def test_one_time_app_key_renders_only_when_supplied(self) -> None:
@@ -202,8 +207,20 @@ class SetupRenderTests(unittest.TestCase):
             public_base_url="https://ai.example",
         )
         self.assertIn("opk_test_secret", html)
-        self.assertIn('export OPENAI_BASE_URL="https://ai.example/openai/v1"', html)
-        self.assertIn("This value is shown once", html)
+        # Reveal-once + a runnable Bearer curl + a copy button, matching the
+        # user portal's key reveal. Base path is the conventional /v1.
+        # (Quotes are HTML-escaped to &quot; in the rendered page.)
+        self.assertIn(
+            "export OPENAI_BASE_URL=&quot;https://ai.example/v1&quot;", html
+        )
+        self.assertIn(
+            "curl https://ai.example/v1/models -H &quot;Authorization: "
+            "Bearer opk_test_secret&quot;",
+            html,
+        )
+        self.assertIn("shown once and cannot be retrieved", html)
+        self.assertIn('class="setup-copy-btn"', html)
+        self.assertIn('data-copy="opk_test_secret"', html)
 
     def test_unauthenticated_view_omits_sign_out(self) -> None:
         html = render_setup_page(

@@ -228,6 +228,48 @@ _PAGE_CSS = """
     padding: var(--space-3);
     font: 0.85rem/1.5 var(--font-mono);
   }
+  .setup-secret-warn { margin: 0; color: var(--good); line-height: 1.5; }
+  .setup-secret-sub {
+    margin: var(--space-1) 0 0;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .setup-copy-block {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--bg) 62%, transparent);
+    overflow: hidden;
+  }
+  .setup-copy-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--line);
+  }
+  .setup-copy-label { color: var(--muted); font-size: 0.78rem; font-weight: 600; }
+  .setup-copy-btn {
+    min-height: 1.9rem;
+    padding: 0.2rem 0.7rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--accent);
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+  .setup-copy-code {
+    margin: 0;
+    padding: var(--space-3);
+    font: 0.82rem/1.55 var(--font-mono);
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
   .doctor-list {
     display: grid;
     gap: var(--space-2);
@@ -283,15 +325,15 @@ def _local_owner_create_form(
     return (
         error_html
         + '<form class="setup-form" method="post" action="/setup/local-owner">'
-        '<label><span>Owner email</span>'
-        f'<input name="email" type="email" autocomplete="username" '
+        "<label><span>Email or username</span>"
+        f'<input name="email" type="text" autocomplete="username" '
         f'spellcheck="false" required value="{email_value}"></label>'
-        '<label><span>Password (min 12 characters)</span>'
+        "<label><span>Password</span>"
         '<input name="password" type="password" autocomplete="new-password" '
-        'minlength="12" required></label>'
+        "required></label>"
         '<label><span>Confirm password</span>'
         '<input name="password_confirm" type="password" '
-        'autocomplete="new-password" minlength="12" required></label>'
+        'autocomplete="new-password" required></label>'
         '<button type="submit">Create owner and continue</button>'
         "</form>"
     )
@@ -311,8 +353,8 @@ def _local_owner_signin_form(
     return (
         error_html
         + '<form class="setup-form" method="post" action="/setup/local-login">'
-        '<label><span>Owner email</span>'
-        f'<input name="email" type="email" autocomplete="username" '
+        "<label><span>Email or username</span>"
+        f'<input name="email" type="text" autocomplete="username" '
         f'spellcheck="false" required value="{email_value}"></label>'
         '<label><span>Password</span>'
         '<input name="password" type="password" '
@@ -354,15 +396,16 @@ def _recovery_admin_key_details(
     *,
     claim_error: str | None,
     can_claim_with_admin_key: bool,
-    summary: str = "Recovery: paste an oak_ admin key",
+    summary: str = "Recovery: paste an admin key",
 ) -> str:
     open_attr = " open" if claim_error else ""
     return (
         f'<details class="recovery"{open_attr}>'
         f"<summary>{esc(summary)}</summary>"
-        "<p>For SSH or headless recovery only. Mint a one-shot admin key "
-        "on the host, paste it here, and the browser receives an owner "
-        "session. The web flow above is the normal way in.</p>"
+        "<p>Advanced recovery for SSH or headless hosts — most people never "
+        "need this. The sign-in above is the normal way in. If you are locked "
+        "out at the console, run this on the host to mint a one-time admin key "
+        "and paste it here:</p>"
         "<pre>./venv/bin/python proxy.py generate-admin-key owner-cli</pre>"
         + _admin_key_claim_form(
             claim_error=claim_error,
@@ -385,7 +428,6 @@ def _claim_card_oidc(
 ) -> str:
     return (
         '<section class="setup-card hero" aria-labelledby="claim-heading">'
-        '<p class="eyebrow">First-run setup</p>'
         '<h2 id="claim-heading">Claim this gateway</h2>'
         "<p>No owner has signed in yet. The <strong>first allowed OIDC login "
         "becomes the owner</strong> of this gateway and can invite others, "
@@ -397,7 +439,7 @@ def _claim_card_oidc(
         + _recovery_admin_key_details(
             claim_error=claim_error,
             can_claim_with_admin_key=can_claim_with_admin_key,
-            summary="OIDC not working? Use an oak_ admin key",
+            summary="OIDC not working? Use an admin key",
         )
         + "</section>"
     )
@@ -412,16 +454,16 @@ def _claim_card_local_owner(
 ) -> str:
     return (
         '<section class="setup-card hero" aria-labelledby="claim-heading">'
-        '<p class="eyebrow">First-run setup</p>'
         '<h2 id="claim-heading">Create the local owner account</h2>'
-        "<p>No owner has signed in yet, and OIDC is not configured. Pick "
-        "an email and password to claim this gateway. You can configure "
-        "OIDC later from the admin dashboard.</p>"
+        "<p>No owner has signed in yet, and OIDC is not configured. Pick a "
+        "sign-in name (an email or any username) and a password to claim this "
+        "gateway. You can configure OIDC later from the admin dashboard.</p>"
         '<ul class="checklist" aria-label="Setup checklist">'
         '<li class="todo"><span class="mark" aria-hidden="true">○</span>'
         "<span>Create the local owner account below.</span></li>"
         '<li class="todo"><span class="mark" aria-hidden="true">○</span>'
-        "<span>Use the setup page to mint a first runtime App key.</span></li>"
+        "<span>Land in your portal with a working API key, minted for "
+        "you.</span></li>"
         '<li class="todo"><span class="mark" aria-hidden="true">○</span>'
         "<span>Open the admin dashboard to configure OIDC, Profiles, and "
         "shared Apps.</span></li>"
@@ -453,17 +495,21 @@ def _complete_card(
     login_error: str | None,
     login_email: str | None,
 ) -> str:
-    if is_admin_signed_in and actor_label:
-        signed_in_line = (
-            f"<p>Signed in as <strong>{esc(actor_label)}</strong>.</p>"
-        )
-    elif oidc_enabled:
+    # A signed-in owner who LANDS on /setup is redirected to the portal (see the
+    # GET /setup handler), so this branch is only reached mid-operation — a POST
+    # re-render (e.g. a first-app error) or direct recovery. In that context the
+    # user is already doing operator work, so there's no hero to greet them: a
+    # marketing "you own this gateway" card would be pure cognitive overhead.
+    # Emit nothing here and let the operator tool cards stand on their own.
+    if is_admin_signed_in:
+        return ""
+    if oidc_enabled:
         signed_in_line = (
             "<p>Sign in with your OIDC account to manage Apps and Profiles.</p>"
             + _recovery_admin_key_details(
                 claim_error=claim_error,
                 can_claim_with_admin_key=can_claim_with_admin_key,
-                summary="OIDC not working? Use an oak_ admin key",
+                summary="OIDC not working? Use an admin key",
             )
         )
     else:
@@ -481,11 +527,9 @@ def _complete_card(
         )
     return (
         '<section class="setup-card hero" aria-labelledby="complete-heading">'
-        '<p class="eyebrow">Setup complete</p>'
         '<h2 id="complete-heading">This gateway has an owner</h2>'
-        "<p>An owner or admin already claimed this gateway. Use the user "
-        "portal to mint App keys, or the admin dashboard to manage shared "
-        "Apps, Profiles, and access policy.</p>"
+        # No paragraph narrating the two buttons below it — the heading + the
+        # labeled buttons + the sign-in line carry it.
         + signed_in_line
         + '<div class="actions">'
         '<a class="pill primary" href="/">Open user portal</a>'
@@ -519,13 +563,56 @@ def _setup_doctor_card(
         )
     return (
         '<section class="setup-card" aria-labelledby="doctor-heading">'
-        '<p class="eyebrow">Setup doctor</p>'
-        '<h2 id="doctor-heading">Gateway checks</h2>'
+        '<p class="eyebrow">Operator checks</p>'
+        '<h2 id="doctor-heading">Is the gateway wired up?</h2>'
+        '<p class="meta">Backends and config — for diagnosing a gateway that '
+        "isn't responding.</p>"
         '<ul class="doctor-list">'
         + "".join(rows)
         + "</ul>"
         "</section>"
     )
+
+
+def _setup_copy_block(label: str, value: str) -> str:
+    """A titled code block with its own Copy button (server-rendered).
+
+    The raw value is carried in a data attribute so a tiny inline copy script
+    can put it on the clipboard without re-reading the (wrapped) text node.
+    """
+    return (
+        '<div class="setup-copy-block">'
+        '<div class="setup-copy-head">'
+        f'<span class="setup-copy-label">{esc(label)}</span>'
+        '<button type="button" class="setup-copy-btn" '
+        f'data-copy="{esc(value)}">Copy</button>'
+        "</div>"
+        f'<pre class="setup-copy-code">{esc(value)}</pre>'
+        "</div>"
+    )
+
+
+# Minimal clipboard helper. The setup page is otherwise script-free; this only
+# wires the Copy buttons in the one-time key reveal.
+_SETUP_COPY_SCRIPT = """
+<script>
+(() => {
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".setup-copy-btn");
+    if (!btn) return;
+    const value = btn.getAttribute("data-copy") || "";
+    const original = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(value);
+      btn.textContent = "Copied";
+    } catch (_) {
+      btn.textContent = "Copy failed";
+    }
+    window.setTimeout(() => { btn.textContent = original; }, 1300);
+  });
+})();
+</script>
+"""
 
 
 def _first_app_card(
@@ -543,16 +630,25 @@ def _first_app_card(
     if one_time_key:
         key = esc(one_time_key.get("api_key") or "")
         app_name = esc(one_time_key.get("app_name") or "Setup App")
-        base = esc(public_base_url.rstrip("/") + "/openai/v1")
+        base = public_base_url.rstrip("/") + "/v1"
+        base_esc = esc(base)
+        curl_cmd = f'curl {base_esc}/models -H "Authorization: Bearer {key}"'
+        env_block = (
+            f'export OPENAI_BASE_URL="{base_esc}"\n'
+            f'export OPENAI_API_KEY="{key}"'
+        )
         secret_html = (
             '<div class="setup-secret" role="status">'
-            f"<p><strong>{app_name}</strong> has a new runtime key. This value is shown once.</p>"
-            f"<code>{key}</code>"
-            '<div class="setup-snippet">'
-            f'export OPENAI_BASE_URL="{base}"<br>'
-            f'export OPENAI_API_KEY="{key}"'
-            "</div>"
-            "</div>"
+            f"<p class=\"setup-secret-warn\"><strong>{app_name}</strong> has a new "
+            "key. Copy it now — it is shown once and cannot be retrieved "
+            "again. If you lose it, mint a new one.</p>"
+            + _setup_copy_block("Your API key", key)
+            + '<p class="setup-secret-sub">Prove it works:</p>'
+            + _setup_copy_block("Run this", curl_cmd)
+            + _setup_copy_block(
+                "Or set env for OpenAI-compatible SDKs", env_block
+            )
+            + "</div>"
         )
     error_html = (
         f'<p class="setup-error" role="alert">{esc(app_error)}</p>'
@@ -587,8 +683,8 @@ def _first_app_card(
     button = "Mint another key" if target_count else "Mint first App key"
     return (
         '<section class="setup-card" aria-labelledby="first-app-heading">'
-        '<p class="eyebrow">First useful key</p>'
-        '<h2 id="first-app-heading">Connect a client</h2>'
+        '<p class="eyebrow">Operator key</p>'
+        '<h2 id="first-app-heading">Mint a key from the console</h2>'
         f"<p>{esc(lead)}</p>"
         f"<p class=\"meta\">{esc(count_line)}</p>"
         + secret_html
@@ -601,12 +697,15 @@ def _first_app_card(
         + f"<button type=\"submit\">{esc(button)}</button>"
         "</form>"
         "</section>"
+        + (_SETUP_COPY_SCRIPT if one_time_key else "")
     )
 
 
 def render_setup_page(
     *,
     title: str = "AI Gateway setup",
+    brand: str = "AI Gateway",
+    wordmark: tuple[str, str] | None = None,
     owner_or_admin_exists: bool,
     oidc_enabled: bool,
     login_url: str = "/login?return_to=/setup",
@@ -689,6 +788,8 @@ def render_setup_page(
 
     header_html = render_shell_header(
         title=title,
+        brand=brand,
+        wordmark=wordmark,
         current="",
         show_account=is_admin_signed_in,
         show_admin=is_admin_signed_in,
