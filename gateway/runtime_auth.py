@@ -94,6 +94,11 @@ class RuntimeIdentity:
     key_hash: str
     downstream: Mapping[str, object] = field(default_factory=dict)
     profile: AppProfile = DEFAULT_PROFILE
+    # The id of the owning App, when this identity is an App credential from the
+    # admin store. None for legacy config-file keys and manifest identities,
+    # which have no owning App. Used to scope the user activity feed to one
+    # user's own receipts (see receipt_store.recent's ``app_ids`` filter).
+    app_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

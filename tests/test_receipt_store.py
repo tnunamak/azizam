@@ -58,6 +58,37 @@ class TestReceiptStore(unittest.TestCase):
         receipt_store.init_db(self.db)
         self.assertEqual(receipt_store.schema_version(self.db), receipt_store.SCHEMA_VERSION)
 
+    def test_upgrade_from_v1_recreates_table(self) -> None:
+        # A pre-v2 receipts DB (no app_id column) is recreated, not migrated:
+        # receipts are short-lived diagnostics and old rows have no owning-App
+        # id, so they're discarded rather than unsafely attributed. The upgrade
+        # must succeed (not raise) and leave a clean v2 schema with app_id.
+        import sqlite3
+
+        legacy = Path(self.tmp.name) / "legacy.db"
+        con = sqlite3.connect(str(legacy))
+        con.executescript(
+            "CREATE TABLE receipts (request_id TEXT PRIMARY KEY, created_at "
+            "INTEGER NOT NULL, app_profile TEXT, receipt_json TEXT NOT NULL);"
+            "CREATE TABLE schema_version (version INTEGER NOT NULL);"
+            "INSERT INTO schema_version(version) VALUES (1);"
+            "INSERT INTO receipts VALUES ('req_old', 1, 'p', '{}');"
+        )
+        con.commit()
+        con.close()
+
+        receipt_store.init_db(legacy)  # must not raise
+
+        self.assertEqual(receipt_store.schema_version(legacy), receipt_store.SCHEMA_VERSION)
+        con = sqlite3.connect(str(legacy))
+        try:
+            cols = [r[1] for r in con.execute("PRAGMA table_info(receipts)")]
+            self.assertIn("app_id", cols)
+            # Old un-attributable rows were dropped.
+            self.assertEqual(receipt_store.count(legacy), 0)
+        finally:
+            con.close()
+
     # ---- record / get ----
 
     def test_record_and_get_round_trip(self) -> None:
@@ -196,6 +227,61 @@ class TestReceiptStore(unittest.TestCase):
 
         rows = receipt_store.recent(limit=10, app_profile="alpha", path=self.db)
         self.assertEqual({row["request_id"] for row in rows}, {a.request_id, c.request_id})
+
+    def test_recent_app_ids_is_an_owner_scope_allowlist(self) -> None:
+        # The user activity feed scopes receipts to the caller's owned Apps by
+        # app_id. This is a *positive* membership filter — it only narrows.
+        now = int(time.time())
+        a1 = _make_receipt(app_id="app_alice")
+        a2 = _make_receipt(app_id="app_alice")
+        b = _make_receipt(app_id="app_bob")
+        receipt_store.record(a1, created_at=now, path=self.db)
+        receipt_store.record(a2, created_at=now + 1, path=self.db)
+        receipt_store.record(b, created_at=now + 2, path=self.db)
+
+        rows = receipt_store.recent(limit=10, app_ids=["app_alice"], path=self.db)
+        self.assertEqual(
+            {row["request_id"] for row in rows}, {a1.request_id, a2.request_id}
+        )
+        # Multiple owned apps union.
+        rows_both = receipt_store.recent(
+            limit=10, app_ids=["app_alice", "app_bob"], path=self.db
+        )
+        self.assertEqual(len(rows_both), 3)
+
+    def test_recent_app_ids_excludes_null_app_id(self) -> None:
+        # Receipts with no owning App (unauthenticated / legacy keys) must NEVER
+        # appear in an owner-scoped feed — NULL is not IN any allow-list.
+        unattributed = _make_receipt(app_id=None)
+        owned = _make_receipt(app_id="app_alice")
+        receipt_store.record(unattributed, path=self.db)
+        receipt_store.record(owned, path=self.db)
+        rows = receipt_store.recent(limit=10, app_ids=["app_alice"], path=self.db)
+        self.assertEqual([r["request_id"] for r in rows], [owned.request_id])
+
+    def test_recent_empty_app_ids_returns_no_rows_never_leaks(self) -> None:
+        # A caller who owns no Apps gets an empty feed — it must NOT fall through
+        # to an unfiltered query that would return everyone's receipts.
+        receipt_store.record(_make_receipt(app_id="app_alice"), path=self.db)
+        receipt_store.record(_make_receipt(app_id="app_bob"), path=self.db)
+        self.assertEqual(receipt_store.recent(limit=10, app_ids=[], path=self.db), [])
+
+    def test_record_persists_app_id_column(self) -> None:
+        # app_id is stored as its own indexed column (not just inside the JSON),
+        # so the owner-scope filter can use it.
+        import sqlite3
+
+        receipt_store.record(_make_receipt(app_id="app_x"), path=self.db)
+        con = sqlite3.connect(str(self.db))
+        try:
+            cols = [r[1] for r in con.execute("PRAGMA table_info(receipts)")]
+            self.assertIn("app_id", cols)
+            stored = con.execute(
+                "SELECT app_id FROM receipts WHERE app_id = ?", ("app_x",)
+            ).fetchone()
+            self.assertEqual(stored[0], "app_x")
+        finally:
+            con.close()
 
     def test_recent_since_window(self) -> None:
         now = int(time.time())

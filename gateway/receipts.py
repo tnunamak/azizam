@@ -42,6 +42,13 @@ class RouteReceipt:
     path: str = ""
     request_id: str = field(default_factory=new_request_id)
     app_profile: str | None = None
+    # ``app_id`` is the durable id of the owning App (when the request was
+    # authenticated by an App credential). It is the safe owner key for the
+    # user-facing activity feed: ``app_profile`` is a shared permission-profile
+    # id and ``api_key_name`` is a non-unique App name, so neither can scope a
+    # feed to one user. None when there is no owning App (unauthenticated,
+    # legacy config keys, or provider-native passthrough without identity).
+    app_id: str | None = None
     api_key_name: str | None = None
     requested_model: str | None = None
     resolved_model: str | None = None
@@ -133,6 +140,7 @@ class RouteReceipt:
             "path": self.path,
             "intent": self.intent,
             "app_profile": self.app_profile,
+            "app_id": self.app_id,
             "api_key_name": self.api_key_name,
             "requested_model": self.requested_model,
             "resolved_model": self.resolved_model,

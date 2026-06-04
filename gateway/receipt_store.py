@@ -45,7 +45,13 @@ DB_PATH = Path(os.environ["AI_GATEWAY_RECEIPTS_DB"]) if os.environ.get("AI_GATEW
 # the database bounded on a long-running gateway.
 RETAIN_S = 14 * 24 * 3600
 
-SCHEMA_VERSION = 1
+# v2 adds the ``app_id`` column: the durable id of the owning App, so a user
+# can be shown ONLY their own receipts. ``app_profile`` (a shared permission
+# profile id) and ``api_key_name`` (a non-unique App name) are NOT safe owner
+# keys; ``app_id`` is. Receipts are 14-day diagnostics, not audit logs, so the
+# v1→v2 upgrade recreates the table rather than preserving old (unattributed)
+# rows — see ``_exec_schema``.
+SCHEMA_VERSION = 2
 
 _AUDIENCES = ("internal", "admin", "client")
 
@@ -57,6 +63,7 @@ CREATE TABLE IF NOT EXISTS receipts (
   intent TEXT,
   path TEXT,
   app_profile TEXT,
+  app_id TEXT,
   api_key_name TEXT,
   status TEXT,
   job_id TEXT,
@@ -65,6 +72,7 @@ CREATE TABLE IF NOT EXISTS receipts (
 );
 CREATE INDEX IF NOT EXISTS receipts_created_at ON receipts(created_at);
 CREATE INDEX IF NOT EXISTS receipts_app_profile ON receipts(app_profile);
+CREATE INDEX IF NOT EXISTS receipts_app_id ON receipts(app_id);
 CREATE INDEX IF NOT EXISTS receipts_job_id ON receipts(job_id);
 CREATE INDEX IF NOT EXISTS receipts_parent ON receipts(parent_request_id);
 
@@ -80,16 +88,43 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 
 
 def _exec_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(_SCHEMA)
+    # Read the on-disk version BEFORE running the full schema. The schema's
+    # ``CREATE INDEX ... ON receipts(app_id)`` would fail against a pre-v2 table
+    # that lacks the column, so an older table must be dropped first.
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);")
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-    if row is None:
-        conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
-    elif int(row[0]) != SCHEMA_VERSION:
-        # Future migrations would branch here. For v1, refuse to silently
-        # accept a foreign version — callers will see a clear error.
-        raise sqlite3.DatabaseError(
-            f"receipt_store schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
+    db_version = int(row[0]) if row is not None else None
+
+    if db_version is not None and db_version != SCHEMA_VERSION:
+        if db_version > SCHEMA_VERSION:
+            # A newer on-disk version than the code understands: refuse rather
+            # than risk writing a shape we don't know how to read back.
+            raise sqlite3.DatabaseError(
+                f"receipt_store schema version mismatch: db={db_version} "
+                f"code={SCHEMA_VERSION} (downgrade not supported)"
+            )
+        # Older schema: recreate, don't migrate. Receipts are short-lived
+        # diagnostics (14-day retention), not an audit log, and pre-v2 rows have
+        # no owning-App id — they cannot be safely attributed to a user.
+        # Backfilling from the non-unique ``api_key_name`` would risk
+        # attributing one user's calls to another, the exact leak ``app_id``
+        # exists to prevent. So old rows are discarded deliberately.
+        print(
+            f"[receipt_store] upgrading schema {db_version}->{SCHEMA_VERSION}; "
+            "recreating receipts table (old diagnostics discarded)",
+            flush=True,
         )
+        conn.executescript("DROP TABLE IF EXISTS receipts;\nDELETE FROM schema_version;\n")
+        db_version = None
+
+    conn.executescript(_SCHEMA)
+    if db_version is None:
+        # Fresh DB or just-recreated: stamp the current version (the schema's
+        # CREATE TABLE IF NOT EXISTS leaves schema_version empty).
+        if conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone() is None:
+            conn.execute(
+                "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
+            )
     conn.commit()
 
 
@@ -194,8 +229,9 @@ def record(
         conn.execute(
             "INSERT OR REPLACE INTO receipts "
             "(request_id, created_at, protocol, intent, path, app_profile, "
-            " api_key_name, status, job_id, parent_request_id, receipt_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " app_id, api_key_name, status, job_id, parent_request_id, "
+            " receipt_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 data["request_id"],
                 ts,
@@ -203,6 +239,7 @@ def record(
                 data.get("intent"),
                 data.get("path"),
                 data.get("app_profile"),
+                data.get("app_id"),
                 data.get("api_key_name"),
                 data.get("status"),
                 data.get("job_id"),
@@ -241,21 +278,38 @@ def recent(
     *,
     audience: str = "internal",
     app_profile: str | None = None,
+    app_ids: list[str] | None = None,
     since_s: int | None = None,
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
     """Return up to ``limit`` most-recent receipts, newest first.
 
-    Optional filters: ``app_profile`` (exact match) and ``since_s`` (only
-    receipts written within the last N seconds).
+    Optional filters: ``app_profile`` (exact match), ``app_ids`` (owner-scope:
+    return only receipts whose ``app_id`` is in this allow-list), and
+    ``since_s`` (only receipts written within the last N seconds).
+
+    ``app_ids`` is a *positive* membership filter — it can only ever narrow the
+    result to the given ids, never widen it. An empty list returns no rows
+    (the caller owns nothing), and because ``app_id IN (...)`` never matches
+    NULL, receipts with no owning App (unauthenticated, legacy keys) are
+    excluded. This is the privacy boundary for the user-facing activity feed:
+    pass the signed-in user's owned app_ids and they can see only their own.
     """
     if limit <= 0:
+        return []
+    if app_ids is not None and not app_ids:
+        # The caller explicitly owns no Apps — never fall through to an
+        # unfiltered query (that would leak everyone's receipts).
         return []
     clauses: list[str] = []
     params: list[Any] = []
     if app_profile is not None:
         clauses.append("app_profile = ?")
         params.append(app_profile)
+    if app_ids is not None:
+        placeholders = ", ".join("?" for _ in app_ids)
+        clauses.append(f"app_id IN ({placeholders})")
+        params.extend(app_ids)
     if since_s is not None:
         clauses.append("created_at >= ?")
         params.append(int(time.time()) - int(since_s))
