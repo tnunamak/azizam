@@ -50,3 +50,28 @@ Model discovery follows the same ownership:
 LiteLLM configuration is a generated artifact from the gateway service registry.
 The service registry remains the source of truth; generated LiteLLM YAML must not
 be edited as product configuration.
+
+## Deployment shape: sidecar (current); library mode is an open question
+
+LiteLLM currently runs as a separate server process (the `litellm[proxy]` CLI
+on :4011); the gateway forwards OpenAI-shaped execution to it over HTTP. Running
+LiteLLM in-process as a library (`litellm.Router` / `litellm.acompletion`) is a
+possible alternative. **This is not decided.** The sidecar stays for now; the
+deployment shape is deliberately left open to revisit.
+
+Context for whoever revisits it:
+
+- `litellm[proxy]` is already a gateway dependency (importable in the venv), so
+  the choice is about process topology, not dependency footprint.
+- The gateway owns its entire control plane (keys, Profiles, policy, admin UI,
+  receipts) and uses LiteLLM for raw execution + `v1/models` only — none of the
+  proxy server's key/budget/guardrail/UI features.
+- A 2026-06-03 incident was a config-sync staleness bug (the generated YAML the
+  sidecar reads went stale vs. the service registry), not an inherent flaw of
+  either mode. Hardening that reconciliation is tracked as Known Work #9 and is
+  worth doing regardless of which mode is chosen.
+
+Trade-offs to weigh when revisiting: process/config-sync simplicity (favors
+library) vs. crash isolation, noting an "AI gateway" largely fate-shares with
+its LLM execution layer (weakens the isolation argument). Decide based on
+whether the sidecar causes recurring operational pain, not in the abstract.

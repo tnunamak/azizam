@@ -31,7 +31,10 @@ from gateway.service_registry import (
 
 OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", "openai-compatible"})
 SECRET_PLACEHOLDER = "<external-secret>"
-DEFAULT_LITELLM_CONFIG_PATH = Path("data/litellm.config.yaml")
+# Bare filename: the artifact lives in the caller-provided ``base_dir`` (the
+# gateway's state dir — next to ``admin.db``), so it follows the same isolation
+# as every other store instead of being pinned to the repo ``data/`` directory.
+DEFAULT_LITELLM_CONFIG_PATH = Path("litellm.config.yaml")
 
 
 def compile_litellm_substrate_config(

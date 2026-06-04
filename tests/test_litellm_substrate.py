@@ -189,6 +189,9 @@ def test_compiles_from_registry_and_writes_litellm_config_artifact(tmp_path) -> 
 
 
 def test_litellm_config_path_defaults_under_base_dir(tmp_path) -> None:
+    # The default artifact lives directly in the caller-provided base_dir (the
+    # gateway's state dir, next to admin.db) so it honors store isolation
+    # instead of being pinned to a repo-relative data/ directory.
     path = litellm_config_path_from_registry({"services": {}}, base_dir=tmp_path)
 
-    assert path == tmp_path / "data" / "litellm.config.yaml"
+    assert path == tmp_path / "litellm.config.yaml"

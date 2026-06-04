@@ -162,6 +162,56 @@ Done means:
 
 Primary reference: `docs/CONFIG_SOURCE_OF_TRUTH.md`.
 
+### 8. Declared, Visible Model Aliases For LLM Routing
+
+A client that sends a well-known model name it doesn't have locally (e.g.
+`claude-sonnet-4-6`, `gpt-4o-mini`) gets a 400 "Invalid model name" because the
+LLM request path (`_prepare_litellm_local_llm_request`) does an exact-match
+lookup and the LiteLLM substrate rejects unknown names. Aliasing already exists
+for video (`videos.aliases`) and as a metadata/category map
+(`MODEL_COMPAT_ALIASES`), and `config_sources.py` already declares the intent
+("UI-managed targets and aliases live in admin.db") — but the operator-defined
+name→name alias layer for text LLMs is unbuilt and not surfaced in the UI.
+
+This must NOT become silent aliasing: routing `claude-sonnet-4-6` to a local
+Qwen without telling the client violates the no-fake-compatibility principle.
+The SLVP shape is a **declared, visible** alias: data in the registry/admin.db,
+editable in the UI like everything else, applied in the LLM request path, and
+recorded in the receipt so "you asked for X, served by local Y" is inspectable.
+
+Done means:
+
+- Operator-defined model aliases live in admin.db (data, not code), editable
+  from `/admin`, seedable from `proxy_config.yml`.
+- The OpenAI/Anthropic/Ollama LLM paths resolve aliases before LiteLLM, so an
+  aliased name routes instead of 400-ing.
+- The applied alias is surfaced (receipt + response metadata), never silent.
+- Unknown, unaliased models still fail explicitly (no silent default).
+
+Primary references: `docs/CONFIG_SOURCE_OF_TRUTH.md`,
+`docs/LITELLM_SUBSTRATE_DECISION.md`.
+
+### 9. LiteLLM Sidecar Config Sync And Visibility
+
+The LiteLLM substrate runs as a sidecar (`start.sh` launches `litellm --config
+data/litellm.config.yaml` on :4011); the gateway proxies LLM execution to it.
+The gateway compiles the config from the service registry, but nothing
+regenerates the file and reloads the sidecar when the registry changes. A live
+incident (2026-06-03): the sidecar was running with a stale `model_list: []`,
+so every chat/Anthropic/Ollama call 400'd "Invalid model name" while local
+kobold/tabby models were registered and healthy. The failure was silent — an
+empty model list with no breadcrumb pointing at the sidecar.
+
+Done means:
+
+- The gateway regenerates the LiteLLM config and reloads/restarts the sidecar
+  on service-registry change (or at least reconciles on startup).
+- `/admin` surfaces the sidecar's live model count so an empty list is visible.
+- A stale or empty sidecar produces a diagnosable error, not a generic 400.
+
+Primary references: `docs/LITELLM_SUBSTRATE_DECISION.md`, `start.sh`,
+`gateway/litellm_substrate.py`.
+
 ## Deliberately Deferred
 
 These are not MVP blockers unless a real target client or local deployment
