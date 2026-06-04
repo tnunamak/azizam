@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from gateway import admin_store
+from gateway import receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import generate_app_api_key
 from gateway.runtime_auth import hash_api_key
@@ -274,6 +275,113 @@ def build_user_portal_snapshot(
         },
         "apps": apps,
     }
+
+
+# Activity feed default page size. Small on purpose: the user portal asks "did
+# my recent calls work?", not "give me a filterable log". Larger pages are an
+# admin concern.
+USER_ACTIVITY_DEFAULT_LIMIT = 20
+USER_ACTIVITY_MAX_LIMIT = 100
+
+
+def _owned_app_ids(user_id: str, *, path: Path) -> list[str]:
+    """Return the ids of every App owned by ``user_id`` (the receipt scope).
+
+    This is the privacy boundary for the activity feed: only receipts whose
+    ``app_id`` is in this server-derived set are ever shown to the user. The
+    set is computed from ownership in the admin store — never from a
+    client-supplied filter.
+    """
+    return [
+        str(app["id"])
+        for app in admin_store.list_apps_for_user(user_id, path=path)
+        if app.get("id")
+    ]
+
+
+def build_user_activity_snapshot(
+    session: AdminSession | None,
+    *,
+    limit: int = USER_ACTIVITY_DEFAULT_LIMIT,
+    path: Path = admin_store.DB_PATH,
+    receipts_path: Path = receipt_store.DB_PATH,
+) -> dict[str, Any]:
+    """Return the signed-in user's own recent API-call receipts.
+
+    Scoped server-side to the user's owned Apps (``app_id`` allow-list). An
+    unauthenticated session, or a user who owns no Apps, yields an empty feed
+    — never a fall-through to everyone's receipts. The ``client`` audience is
+    used so no admin-only fields (policy internals, key names, metadata) leak.
+    """
+    if session is None:
+        return {"authenticated": False, "receipts": []}
+    try:
+        user = _user_from_session(session, path=path)
+    except UserPortalError as exc:
+        return {
+            "authenticated": False,
+            "receipts": [],
+            "error": {"code": exc.code, "message": exc.message},
+        }
+
+    safe_limit = max(1, min(int(limit or USER_ACTIVITY_DEFAULT_LIMIT), USER_ACTIVITY_MAX_LIMIT))
+    owned = _owned_app_ids(str(user["id"]), path=path)
+    receipts = receipt_store.recent(
+        limit=safe_limit,
+        audience="client",
+        app_ids=owned,
+        path=receipts_path,
+    )
+    return {
+        "authenticated": True,
+        # No fabricated rows: an empty list means the user has made no
+        # attributable calls yet (or none in the retention window).
+        "receipts": receipts,
+        "scoped_app_count": len(owned),
+    }
+
+
+def get_user_receipt(
+    session: AdminSession | None,
+    request_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+    receipts_path: Path = receipt_store.DB_PATH,
+) -> dict[str, Any]:
+    """Return one receipt IF it belongs to the signed-in user, else 404.
+
+    Loads the receipt at the ``internal`` audience only to read its ``app_id``
+    for the ownership check, then returns the ``client``-filtered shape. A
+    receipt the caller doesn't own — or one with no owning App — is reported as
+    not found (404), never 403, so the existence of other users' receipts is
+    not disclosed.
+    """
+    if session is None:
+        raise UserPortalError(
+            "not_authenticated", "Sign in to view this receipt", status_code=401
+        )
+    user = _user_from_session(session, path=path)
+
+    owner_check = receipt_store.get(
+        request_id, audience="internal", path=receipts_path
+    )
+    not_found = UserPortalError(
+        "receipt_not_found", "Receipt not found for this account", status_code=404
+    )
+    if owner_check is None:
+        raise not_found
+    receipt_app_id = owner_check.get("app_id")
+    if not receipt_app_id or receipt_app_id not in set(
+        _owned_app_ids(str(user["id"]), path=path)
+    ):
+        raise not_found
+
+    detail = receipt_store.get(
+        request_id, audience="client", path=receipts_path
+    )
+    if detail is None:
+        raise not_found
+    return detail
 
 
 def mint_user_app_key(
