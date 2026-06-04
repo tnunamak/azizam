@@ -132,7 +132,7 @@ _PAGE_CSS = """
     align-items: center;
     background: var(--vf-surface-1);
   }
-  .base-card > div, .shell-main > section, .section-head {
+  .base-card > div, .shell-main > section, .vf-section-head > div {
     min-width: 0;
   }
   .base-card h2 {
@@ -291,24 +291,9 @@ _PAGE_CSS = """
     display: grid;
     gap: var(--space-4);
   }
-  .section-head {
-    display: grid;
-    gap: var(--space-1);
-  }
-  /* Section header can carry a trailing action (e.g. "+ New"). */
-  .section-head.vf-section-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-  }
-  .section-head.vf-section-head > div { display: grid; gap: var(--space-1); }
-  .section-head h2 {
-    margin: 0;
-    font-size: 2.1rem;
-    letter-spacing: 0;
-    text-transform: none;
-  }
+  /* The apps + recent sections use the brand .vf-section / .vf-section-head /
+     .vf-section-title pattern (kicker over an uppercase title, optional action);
+     no gateway-local section-head styles are needed. */
   /* Empty-state hero CTA: a calm gradient card that leads to the first key. */
   .app-create {
     background:
@@ -695,7 +680,6 @@ _PAGE_CSS = """
   }
   @media (max-width: 720px) {
     .hero h2 { font-size: 2.6rem; }
-    .section-head h2 { font-size: 1.7rem; }
     .row, .key-form, .base-card { grid-template-columns: 1fr; }
     .actions button { width: 100%; }
     .base-card button { width: 100%; }

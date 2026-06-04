@@ -195,7 +195,9 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertNotIn('curl "$OPENAI_BASE_URL/models"', html)
         self.assertNotIn("Connection settings", html)
         self.assertIn("min-width: 6.25rem;", html)
-        self.assertIn(".base-card > div, .shell-main > section, .section-head", html)
+        # The base-card content column carries the overflow guard so a long
+        # base URL can't push the card wider than its grid track.
+        self.assertIn(".base-card > div, .shell-main > section", html)
         self.assertIn("min-width: 0;", html)
         self.assertIn("white-space: nowrap;", html)
         self.assertIn('button.textContent = "Copied";', html)
