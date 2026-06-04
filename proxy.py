@@ -65,7 +65,12 @@ from gateway import (
     video_media_job_http,
     video_media_jobs,
 )
-from gateway.admin_api import AdminAuthError, AdminContext, create_admin_router
+from gateway.admin_api import (
+    AdminAuthError,
+    AdminContext,
+    create_admin_router,
+    derive_admin_attention,
+)
 from gateway.admin_catalog import admin_api_surfaces, profile_policy_catalog
 from gateway.config_sources import KNOWN_ENV_SOURCE_NAMES, inventory_config_sources
 from gateway.admin_oidc import (
@@ -107,10 +112,12 @@ from gateway.api import create_gateway_router
 from gateway.user_render import render_user_portal
 from gateway.user_runtime import (
     UserPortalError,
+    build_user_activity_snapshot,
     build_user_portal_snapshot,
     create_user_app,
     delete_user_app,
     get_user_app_credential,
+    get_user_receipt,
     mint_user_app_key,
     request_user_access,
     revoke_user_app_key,
@@ -270,7 +277,10 @@ def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
     try:
         path = write_litellm_config_artifact(
             registry,
-            base_dir=Path(__file__).parent,
+            # Anchor the artifact to the gateway's state dir (next to admin.db)
+            # so it honors AI_GATEWAY_ADMIN_DB isolation instead of always
+            # landing in the repo data/ directory.
+            base_dir=ADMIN_DB_PATH.parent,
         )
         if __name__ == "__main__":
             print(f"[proxy] LiteLLM config generated at {path}", flush=True)
@@ -1610,6 +1620,53 @@ def _provision_existing_user_personal_apps() -> int:
         )
         created += 1
     return created
+
+
+def _ensure_personal_app_for_owner(
+    user: Mapping[str, Any],
+    *,
+    role: str,
+    via: str = "setup_local_owner",
+) -> Mapping[str, Any] | None:
+    """Ensure a just-claimed local owner has a personal App.
+
+    Parity with the OIDC login path, so the user portal can hand the new owner
+    a working key without a separate "create App" step. No-op (returns None)
+    when self-service or auto-create is disabled.
+    """
+    if not (_user_self_service_enabled() and _auto_create_personal_app_enabled()):
+        return None
+    user_id = str(user.get("id") or "")
+    if not user_id:
+        return None
+    label = user.get("email") or user.get("display_name") or user_id
+    oidc_access = _stored_oidc_access_names_for_user(user_id)
+    default_profile_id = _default_profile_id_for_user(
+        email=str(user.get("email") or ""),
+        role=role,
+        oidc_groups=oidc_access["oidc_group"],
+        oidc_roles=oidc_access["oidc_role"],
+    )
+    app = admin_store.ensure_personal_app_for_user(
+        user_id,
+        name=f"{label} personal access",
+        default_profile_id=default_profile_id,
+        path=ADMIN_STORE.path,
+    )
+    admin_store.record_audit(
+        "app.self_create",
+        actor_kind="user",
+        actor_id=user_id,
+        target_kind="app",
+        target_id=str(app["id"]),
+        metadata={
+            "email": user.get("email"),
+            "via": via,
+            "effective_profile_id": default_profile_id or "default-local",
+        },
+        path=ADMIN_STORE.path,
+    )
+    return app
 
 
 AuthIdentity = RuntimeIdentity
@@ -8726,11 +8783,15 @@ def _render_user_portal_response(request: Request, *, login_return_to: str) -> R
         ),
         path=ADMIN_STORE.path,
     )
+    brand_label, brand_wordmark = _brand_settings()
     body = render_user_portal(
         title="AI Gateway",
+        brand=brand_label,
+        wordmark=brand_wordmark,
         public_base_url=_public_base_url(request) or "https://ai.vivid.fish",
         account=account,
         oidc_enabled=_effective_admin_oidc_config().enabled,
+        owner_exists=_owner_or_admin_exists(),
         login_url=_login_url(return_to=login_return_to),
         csrf_token=_csrf_token_for_oidc_session(session) if session else "",
     )
@@ -8759,6 +8820,58 @@ async def user_portal_session(request: Request):
             ),
             path=ADMIN_STORE.path,
         ),
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.get("/me/api/activity", include_in_schema=False)
+async def user_portal_activity(request: Request):
+    """The signed-in user's own recent API-call receipts (owner-scoped).
+
+    Read-only, so no user-action/CSRF header is required — but a session IS
+    required, and the feed is scoped server-side to the user's owned Apps. An
+    unauthenticated request returns an empty (unauthenticated) snapshot rather
+    than leaking anyone's activity.
+    """
+    session = _oidc_session_from_request(request)
+    try:
+        limit = int(request.query_params.get("limit") or 0) or None
+    except (TypeError, ValueError):
+        limit = None
+    snapshot = build_user_activity_snapshot(
+        session,
+        limit=limit if limit else 20,
+        path=ADMIN_STORE.path,
+        receipts_path=receipt_store.DB_PATH,
+    )
+    return JSONResponse(
+        status_code=200,
+        content=snapshot,
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.get("/me/api/receipts/{request_id}", include_in_schema=False)
+async def user_portal_receipt_detail(request_id: str, request: Request):
+    """One receipt, IF it belongs to the signed-in user (else 404).
+
+    Backs the addressable receipt-detail view (``/r/{id}``): a shareable
+    "why did this call fail" URL. Ownership is verified server-side; a receipt
+    the caller doesn't own is reported as not found, never 403.
+    """
+    session = _oidc_session_from_request(request)
+    try:
+        receipt = get_user_receipt(
+            session,
+            request_id,
+            path=ADMIN_STORE.path,
+            receipts_path=receipt_store.DB_PATH,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
+        content=receipt,
         headers={"cache-control": "no-store"},
     )
 
@@ -9530,12 +9643,20 @@ async def admin_dashboard(request: Request):
     try:
         actor = ADMIN_AUTH(request)
     except AdminAuthError as exc:
-        if (
-            exc.status_code == 401
-            and _effective_admin_oidc_config().enabled
-            and not request.headers.get("authorization")
-        ):
-            return RedirectResponse(_login_url(return_to="/admin"), status_code=302)
+        # A BROWSER (no Authorization header) should never see a raw JSON 401/403
+        # dead end on /admin. Only genuine API callers (presenting a Bearer
+        # token) get the JSON error.
+        is_browser = not request.headers.get("authorization")
+        if is_browser and exc.status_code == 401:
+            # Not signed in -> send to the right sign-in entry for the auth mode.
+            if _effective_admin_oidc_config().enabled:
+                return RedirectResponse(
+                    _login_url(return_to="/admin"), status_code=302
+                )
+            return RedirectResponse("/setup", status_code=302)
+        if is_browser and exc.status_code == 403:
+            # Signed in but not an admin -> their home is the portal, not /admin.
+            return RedirectResponse("/", status_code=302)
         return Response(
             content=json.dumps({
                 "error": {
@@ -9576,9 +9697,15 @@ async def admin_dashboard(request: Request):
     except Exception as exc:  # noqa: BLE001
         print(f"[proxy] admin OIDC setting read failed: {exc}", flush=True)
         snapshot["oidc_config"] = None
+    # "Things that want a look" — derived from the same data the tables show
+    # (now including live service health). This is the operator's landing list.
+    snapshot["attention"] = derive_admin_attention(snapshot)
+    brand_label, brand_wordmark = _brand_settings()
     body = render_admin_dashboard(
         snapshot,
         title="AI Gateway Admin",
+        brand=brand_label,
+        wordmark=brand_wordmark,
     )
     return Response(
         content=body,
@@ -9820,7 +9947,10 @@ async def _setup_page_response(
         except Exception as e:  # noqa: BLE001
             print(f"[proxy] setup status enrichment failed: {e}", flush=True)
             status_payload = None
+    brand_label, brand_wordmark = _brand_settings()
     body = render_setup_page(
+        brand=brand_label,
+        wordmark=brand_wordmark,
         owner_or_admin_exists=_owner_or_admin_exists(),
         oidc_enabled=_effective_admin_oidc_config().enabled,
         login_url=_login_url(return_to="/setup"),
@@ -9860,6 +9990,30 @@ async def _setup_page_response(
 
 @app.get("/setup", include_in_schema=False)
 async def setup_page(request: Request):
+    # A signed-in owner/admin has no reason to LAND on the setup console — setup
+    # is done. Send them to their portal instead of an "operator setup" card
+    # that only costs attention to dismiss. The console's tools (mint a key from
+    # the console, gateway doctor) stay reachable deliberately via ?operator=1
+    # — for headless/recovery use — but they're never the default landing.
+    session = _oidc_session_from_request(request)
+    wants_operator_console = request.query_params.get("operator") == "1"
+    # Only redirect when the cookie resolves to a REAL, still-existing user.
+    # A stale/orphaned cookie (e.g. from a prior instance whose DB was reset)
+    # passes the signature check but its user is gone — redirecting it to "/"
+    # would loop (/ can't resolve the user → shows the door → click sign-in →
+    # /setup → redirect → …). Falling through to the sign-in form breaks the
+    # loop and lets them sign in fresh.
+    session_user_exists = bool(
+        session is not None
+        and admin_store.get_user(session.subject, path=ADMIN_STORE.path)
+    )
+    if (
+        session is not None
+        and session.role in {"owner", "admin", "superadmin"}
+        and session_user_exists
+        and not wants_operator_console
+    ):
+        return RedirectResponse("/", status_code=303)
     return await _setup_page_response(request)
 
 
@@ -9993,7 +10147,6 @@ async def setup_claim_admin_key(request: Request):
 
 
 _LOCAL_OWNER_ISSUER = "local"
-_LOCAL_OWNER_MIN_PASSWORD = 12
 
 
 def _normalize_local_email(value: str) -> str:
@@ -10079,20 +10232,17 @@ async def setup_create_local_owner(request: Request):
     password = values.get("password", "")
     confirm = values.get("password_confirm", "")
 
-    if not email or "@" not in email:
+    if not email:
         return await _setup_page_response(
             request,
-            create_error="Enter the email address that should own this gateway.",
+            create_error="Enter an email or username for the owner account.",
             create_email=email or None,
             status_code=400,
         )
-    if len(password) < _LOCAL_OWNER_MIN_PASSWORD:
+    if not password:
         return await _setup_page_response(
             request,
-            create_error=(
-                f"Password must be at least {_LOCAL_OWNER_MIN_PASSWORD} "
-                "characters."
-            ),
+            create_error="Enter a password for the owner account.",
             create_email=email,
             status_code=400,
         )
@@ -10142,11 +10292,19 @@ async def setup_create_local_owner(request: Request):
         metadata={"email": email, "via": "setup_page"},
         path=ADMIN_STORE.path,
     )
+    # Parity with OIDC login: give the new owner a personal App up front so the
+    # portal can hand them a working key without a separate "create App" step.
+    _ensure_personal_app_for_owner(user, role="owner")
+    # Setup is done — hand the new owner to the portal, where their key is
+    # auto-minted and revealed once. Landing back on /setup would greet them
+    # with the operator "this gateway has an owner" recovery card (third-person,
+    # plus a redundant second key-mint flow). The portal is the real home.
     return _issue_browser_admin_session(
         user_id=str(user["id"]),
         email=email,
         role="owner",
         signing_key=signing_key,
+        redirect_to="/",
     )
 
 
@@ -10167,7 +10325,9 @@ async def setup_local_login(request: Request):
     values = await _setup_form_values(request)
     email = _normalize_local_email(values.get("email", ""))
     password = values.get("password", "")
-    generic_error = "Email or password did not match a local owner account."
+    generic_error = (
+        "Sign-in name or password did not match a local owner account."
+    )
 
     if not email or not password:
         return await _setup_page_response(
@@ -10228,11 +10388,14 @@ async def setup_local_login(request: Request):
         metadata={"email": email, "via": "setup_page"},
         path=ADMIN_STORE.path,
     )
+    # A returning owner/admin signing in from /setup lands on the portal, their
+    # home — not back on the operator setup console.
     return _issue_browser_admin_session(
         user_id=str(user["id"]),
         email=email,
         role=role,
         signing_key=signing_key,
+        redirect_to="/",
     )
 
 
@@ -10643,6 +10806,42 @@ def _public_base_url(request: Request) -> str | None:
     return f"{scheme}://{host}"
 
 
+def _brand_settings() -> tuple[str, tuple[str, str] | None]:
+    """Return ``(product_label, wordmark)`` for the shared header chrome.
+
+    The deployment brand is data, not baked into product code. Operators set
+    it via ``admin.brand`` (or ``AI_GATEWAY_BRAND`` / ``AI_GATEWAY_WORDMARK``):
+
+      admin:
+        brand:
+          product: "AI Gateway"      # neutral product label (default)
+          wordmark: "vivid.fish"     # optional deployment mark, "name.tld"
+
+    A generic install with no wordmark shows only the neutral product mark, so
+    nothing says "vivid.fish" unless this deployment opts in.
+    """
+    brand_cfg = admin_cfg.get("brand") if isinstance(admin_cfg, Mapping) else {}
+    brand_cfg = brand_cfg if isinstance(brand_cfg, Mapping) else {}
+    product = (
+        os.environ.get("AI_GATEWAY_BRAND")
+        or brand_cfg.get("product")
+        or "AI Gateway"
+    )
+    raw_wordmark = (
+        os.environ.get("AI_GATEWAY_WORDMARK")
+        or brand_cfg.get("wordmark")
+        or ""
+    )
+    wordmark: tuple[str, str] | None = None
+    raw_wordmark = str(raw_wordmark).strip()
+    if raw_wordmark and "." in raw_wordmark:
+        name, _, tld = raw_wordmark.partition(".")
+        name, tld = name.strip(), tld.strip()
+        if name and tld:
+            wordmark = (name, tld)
+    return str(product), wordmark
+
+
 @app.get("/.well-known/ai-gateway", include_in_schema=False)
 async def well_known_ai_gateway(request: Request):
     """Unauthenticated agent-client discovery for this AI gateway."""
@@ -10790,6 +10989,7 @@ def start_image_route_receipt(
     """
     intent = _IMAGE_ROUTE_INTENTS.get(path, "image.generate")
     key_name = auth_context.identity.name if auth_context.identity else None
+    app_id = auth_context.identity.app_id if auth_context.identity else None
     profile = _profile_for_auth_context(auth_context)
     receipt = RouteReceipt(
         protocol="openai.images",
@@ -10797,6 +10997,7 @@ def start_image_route_receipt(
         intent=intent,
         backend="comfyui",
         api_key_name=key_name,
+        app_id=app_id,
         app_profile=profile.id,
         visibility=profile.status_visibility.level,
     )
@@ -15248,8 +15449,15 @@ async def list_models(request: Request):
         if isinstance(payload, dict):
             upstream_payload = payload
         else:
+            # This is what a user hits on a gateway with no model backend wired
+            # yet (e.g. the LiteLLM sidecar isn't running). Their key IS valid —
+            # say so plainly, and point the operator at the fix, instead of
+            # leaking the internal "LiteLLM model discovery" jargon.
             return openai_error_response(
-                "LiteLLM model discovery is unavailable.",
+                "Your key is valid, but this gateway has no model backend "
+                "connected yet, so there are no models to list. Add a model "
+                "backend in Admin (or start the model service), then this call "
+                "returns your models.",
                 status_code=503,
                 error_type="service_unavailable",
                 code="backend_unavailable",
@@ -15409,6 +15617,17 @@ async def _render_status_html(request: Request) -> Response:
 @app.get("/", include_in_schema=False)
 async def root_browser_entrypoint(request: Request):
     return _render_user_portal_response(request, login_return_to="/")
+
+
+@app.get("/r/{request_id}", include_in_schema=False)
+async def receipt_deep_link(request_id: str, request: Request):
+    # Addressable receipt detail: a shareable "why did this fail" URL. It serves
+    # the same portal page; the page's JS reads /r/:id from the path and opens
+    # the receipt sheet (fetching the owner-scoped /me/api/receipts/:id). The id
+    # is not used server-side here — ownership is enforced by that JSON endpoint.
+    return _render_user_portal_response(
+        request, login_return_to=f"/r/{request_id}"
+    )
 
 
 @app.get("/status", include_in_schema=False)
@@ -16978,6 +17197,7 @@ def _start_litellm_route_receipt(
         backend="litellm",
         requested_model=requested_model,
         app_profile=profile.id,
+        app_id=auth_context.identity.app_id if auth_context.identity else None,
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         visibility=profile.status_visibility.level,
     )
@@ -17551,6 +17771,7 @@ def _native_passthrough_receipt(
     )
     if auth_context.identity is not None:
         receipt.app_profile = auth_context.identity.profile.id
+        receipt.app_id = auth_context.identity.app_id
         receipt.api_key_name = auth_context.identity.name
     receipt.metadata.update({
         "provider": provider,

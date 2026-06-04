@@ -79,6 +79,13 @@ auth:
 
 admin:
   session_signing_key: harness-test-session-key-not-for-production
+  oidc:
+    # The harness binds plain http://127.0.0.1, but the session cookie defaults
+    # to Secure — and browsers refuse to store Secure cookies on insecure
+    # origins, so sign-in would "just reset the page". Turn Secure off for local
+    # http testing. (Real deployments serve https and keep the secure default.)
+    cookie:
+      secure: false
 
 backends:
   # tabby entry must be present with managed: false to prevent the gateway

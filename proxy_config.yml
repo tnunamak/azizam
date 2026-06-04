@@ -324,3 +324,8 @@ auth:
   ollama_compat_discovery: false
 admin:
   db_path: data/admin.db
+  # Deployment brand (data, not product code). A generic install shows only the
+  # neutral product label; this deployment opts into the vivid.fish wordmark.
+  brand:
+    product: AI Gateway
+    wordmark: vivid.fish

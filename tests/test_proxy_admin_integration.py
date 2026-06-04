@@ -169,9 +169,15 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertNotIn("Mint runtime key", response.text)
 
     def test_admin_dashboard_requires_admin_auth(self) -> None:
-        response = self.client.get("/admin")
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json()["error"]["code"], "admin_unauthenticated")
+        # A signed-out BROWSER is sent to sign in, not shown a raw JSON 401. With
+        # OIDC off, local-owner sign-in lives on /setup.
+        response = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["location"], "/setup")
+        # An API caller (Bearer token) still gets the JSON 401.
+        api = self.client.get("/admin", headers={"Authorization": "Bearer nope"})
+        self.assertEqual(api.status_code, 401)
+        self.assertEqual(api.json()["error"]["code"], "admin_unauthenticated")
 
     def test_admin_dashboard_redirects_browser_to_login_when_oidc_enabled(self) -> None:
         cfg = OIDCConfig(
@@ -699,7 +705,11 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(callback.status_code, 302, callback.text)
         self.assertEqual(callback.headers["location"], "/")
-        self.assertEqual(self.client.get("/admin").status_code, 403)
+        # A signed-in NON-admin browser hitting /admin is sent to their home
+        # (the portal), not shown a raw JSON 403.
+        admin = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(admin.status_code, 302)
+        self.assertEqual(admin.headers["location"], "/")
         self.assertEqual(
             self.client.get("/me/login", follow_redirects=False).headers["location"],
             "/login?return_to=%2F",
@@ -817,6 +827,188 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         logout = self.client.get("/me/logout", follow_redirects=False)
         self.assertEqual(logout.status_code, 302)
         self.assertEqual(logout.headers["location"], "/")
+
+    def test_user_activity_feed_is_owner_scoped_and_receipts_dont_leak(self) -> None:
+        # The activity feed and receipt-detail endpoint must show a user ONLY
+        # their own Apps' receipts — never another user's. This is the privacy
+        # boundary for Phase 2.
+        from gateway import receipt_store
+        from gateway.receipts import RouteReceipt
+
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset(),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        # Isolate the receipts store to a temp DB for this test.
+        receipts_db = Path(self.tmp.name) / "receipts.db"
+        old_receipts_path = receipt_store.DB_PATH
+        receipt_store.DB_PATH = receipts_db
+        try:
+            receipt_store.init_db(receipts_db)
+
+            alice = admin_store.upsert_oidc_user(
+                cfg.issuer, "alice-sub", email="alice@example.com", path=self.db
+            )
+            bob = admin_store.upsert_oidc_user(
+                cfg.issuer, "bob-sub", email="bob@example.com", path=self.db
+            )
+            app_a = admin_store.create_app(
+                "Alice App", kind="personal", owner_user_id=alice["id"], path=self.db
+            )
+            app_b = admin_store.create_app(
+                "Bob App", kind="personal", owner_user_id=bob["id"], path=self.db
+            )
+
+            # Two receipts for Alice, one for Bob, one unattributed.
+            a1 = receipt_store.record(
+                RouteReceipt(protocol="openai.chat", intent="chat.generate",
+                             app_id=app_a["id"], status="200"),
+                path=receipts_db,
+            )
+            receipt_store.record(
+                RouteReceipt(protocol="openai.chat", intent="chat.generate",
+                             app_id=app_a["id"], status="500"),
+                path=receipts_db,
+            )
+            b1 = receipt_store.record(
+                RouteReceipt(protocol="openai.chat", intent="chat.generate",
+                             app_id=app_b["id"], status="200"),
+                path=receipts_db,
+            )
+
+            def sign_in(user, email):
+                session = session_from_claims(
+                    {"sub": user["id"], "email": email},
+                    role="none",
+                    cookie=cfg.cookie,
+                )
+                self.client.cookies.set(
+                    cfg.cookie.name,
+                    encode_session_cookie(session, signing_key=cfg.signing_key),
+                )
+
+            # Alice sees exactly her 2 receipts.
+            sign_in(alice, "alice@example.com")
+            feed = self.client.get("/me/api/activity")
+            self.assertEqual(feed.status_code, 200, feed.text)
+            self.assertEqual(len(feed.json()["receipts"]), 2)
+            # And can open her own receipt detail.
+            own = self.client.get(f"/me/api/receipts/{a1}")
+            self.assertEqual(own.status_code, 200, own.text)
+            self.assertEqual(own.json()["request_id"], a1)
+            # But NOT Bob's — reported as not found, never 403.
+            cross = self.client.get(f"/me/api/receipts/{b1}")
+            self.assertEqual(cross.status_code, 404, cross.text)
+            # Client audience: no admin-only fields leak into the detail.
+            self.assertNotIn("api_key_name", own.json())
+            self.assertNotIn("app_id", own.json())
+            self.assertNotIn("metadata", own.json())
+
+            # Bob sees exactly his 1 receipt, and can't read Alice's.
+            sign_in(bob, "bob@example.com")
+            bob_feed = self.client.get("/me/api/activity")
+            self.assertEqual(len(bob_feed.json()["receipts"]), 1)
+            self.assertEqual(
+                self.client.get(f"/me/api/receipts/{a1}").status_code, 404
+            )
+
+            # Signed-out: empty feed, no leak.
+            self.client.cookies.clear()
+            anon = self.client.get("/me/api/activity")
+            self.assertEqual(anon.status_code, 200)
+            self.assertFalse(anon.json()["authenticated"])
+            self.assertEqual(anon.json()["receipts"], [])
+        finally:
+            receipt_store.DB_PATH = old_receipts_path
+
+    def test_receipt_deep_link_route_and_detail_for_owner(self) -> None:
+        # /r/:id serves the portal page (the JS opens the receipt sheet from the
+        # path); /me/api/receipts/:id returns the owner-scoped detail with the
+        # "why" fields for a failed call.
+        from gateway import receipt_store
+        from gateway.receipts import RouteReceipt
+
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset(),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+        receipts_db = Path(self.tmp.name) / "receipts.db"
+        old = receipt_store.DB_PATH
+        receipt_store.DB_PATH = receipts_db
+        try:
+            receipt_store.init_db(receipts_db)
+            user = admin_store.upsert_oidc_user(
+                cfg.issuer, "ada-sub", email="ada@example.com", path=self.db
+            )
+            app = admin_store.create_app(
+                "Ada App", kind="personal", owner_user_id=user["id"], path=self.db
+            )
+            rcpt = RouteReceipt(
+                protocol="openai.chat", intent="chat.completions",
+                path="/v1/chat/completions", app_id=app["id"],
+                requested_model="gpt-4", status="429",
+            )
+            rcpt.reject_input("temperature", "not in manifest")
+            rcpt.add_fallback_reason("primary backend rate-limited")
+            rid = receipt_store.record(rcpt, path=receipts_db)
+
+            session = session_from_claims(
+                {"sub": user["id"], "email": "ada@example.com"},
+                role="none", cookie=cfg.cookie,
+            )
+            self.client.cookies.set(
+                cfg.cookie.name,
+                encode_session_cookie(session, signing_key=cfg.signing_key),
+            )
+            try:
+                # The deep-link route serves the portal HTML (200), not a 404.
+                page = self.client.get(f"/r/{rid}")
+                self.assertEqual(page.status_code, 200, page.text)
+                self.assertIn("openReceiptSheet", page.text)
+
+                # The owner-scoped detail carries the why-fields.
+                detail = self.client.get(f"/me/api/receipts/{rid}")
+                self.assertEqual(detail.status_code, 200, detail.text)
+                body = detail.json()
+                self.assertEqual(body["status"], "429")
+                self.assertEqual(body["rejected_inputs"]["temperature"], "not in manifest")
+                self.assertIn("primary backend rate-limited", body["fallback_reasons"])
+                # Client audience: no admin-only fields leak.
+                self.assertNotIn("api_key_name", body)
+                self.assertNotIn("app_id", body)
+            finally:
+                self.client.cookies.clear()
+        finally:
+            receipt_store.DB_PATH = old
 
     def test_user_portal_self_creates_personal_app_and_mints_key(self) -> None:
         cfg = OIDCConfig(
@@ -1328,7 +1520,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         create_admin_service_account_key("real-owner", path=self.db)
         response = self.client.get("/setup")
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertIn("Setup complete", response.text)
+        self.assertNotIn("Setup complete", response.text)
         self.assertIn("This gateway has an owner", response.text)
         self.assertIn('href="/"', response.text)
         self.assertIn('href="/admin"', response.text)
@@ -1433,12 +1625,16 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 303, response.text)
-        self.assertEqual(response.headers["location"], "/setup")
         self.assertIn(proxy.ADMIN_AUTH.cookie.name, response.headers.get("set-cookie", ""))
-        setup = self.client.get("/setup")
-        self.assertEqual(setup.status_code, 200, setup.text)
-        self.assertIn("Setup complete", setup.text)
-        self.assertIn("local-admin", setup.text)
+        # A signed-in admin landing on /setup is bounced to the portal — the
+        # console isn't a place you accidentally land.
+        bounced = self.client.get("/setup", follow_redirects=False)
+        self.assertEqual(bounced.status_code, 303)
+        self.assertEqual(bounced.headers["location"], "/")
+        # The operator console is still reachable deliberately for recovery.
+        console = self.client.get("/setup?operator=1")
+        self.assertEqual(console.status_code, 200, console.text)
+        self.assertIn("Mint a key from the console", console.text)
         admin = self.client.get("/admin")
         self.assertEqual(admin.status_code, 200, admin.text)
 
@@ -1458,10 +1654,12 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             return {"backends": [{"name": "loopback", "status": "up"}]}
 
         with patch.object(proxy.status_endpoint, "get_cached_status", fake_status):
-            setup = self.client.get("/setup")
+            # The operator console (mint-a-key, doctor) is reached deliberately
+            # via ?operator=1 — a plain GET /setup bounces signed-in admins home.
+            setup = self.client.get("/setup?operator=1")
             self.assertEqual(setup.status_code, 200, setup.text)
-            self.assertIn("Connect a client", setup.text)
-            self.assertIn("Gateway checks", setup.text)
+            self.assertIn("Mint a key from the console", setup.text)
+            self.assertIn("Is the gateway wired up?", setup.text)
             match = re.search(r'name="csrf_token" value="([^"]+)"', setup.text)
             self.assertIsNotNone(match, setup.text)
 
@@ -1478,8 +1676,12 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             key_match = re.search(r"opk_[A-Za-z0-9_-]+", created.text)
             self.assertIsNotNone(key_match, created.text)
             api_key = key_match.group(0)
-            self.assertIn("This value is shown once", created.text)
-            self.assertIn("/openai/v1", created.text)
+            # Reveal-once copy + a runnable Bearer curl + copy buttons,
+            # matching the user portal reveal. Base path is the conventional /v1.
+            self.assertIn("shown once and cannot be retrieved", created.text)
+            self.assertIn("/v1", created.text)
+            self.assertIn("Authorization: Bearer", created.text)
+            self.assertIn("setup-copy-btn", created.text)
 
             apps = admin_store.list_apps(path=self.db)
             self.assertEqual(len(apps), 1)
@@ -1496,7 +1698,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             ]
             self.assertIn("setup.first_app_key", audit_actions)
 
-            refreshed = self.client.get("/setup")
+            refreshed = self.client.get("/setup?operator=1")
             self.assertEqual(refreshed.status_code, 200, refreshed.text)
             self.assertNotIn(api_key, refreshed.text)
             self.assertIn("Personal App keys: 1", refreshed.text)
@@ -1531,7 +1733,9 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 303, response.text)
-        self.assertEqual(response.headers["location"], "/setup")
+        # Setup is done — the new owner is handed to the portal (where their key
+        # is auto-minted), NOT back to the operator /setup page.
+        self.assertEqual(response.headers["location"], "/")
         self.assertIn(
             proxy.ADMIN_AUTH.cookie.name, response.headers.get("set-cookie", "")
         )
@@ -1555,14 +1759,66 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         # The persisted verifier is never the plaintext password.
         self.assertNotIn("correct-horse-battery", str(verifier))
 
-        setup = self.client.get("/setup")
-        self.assertIn("Setup complete", setup.text)
-        # The signed-in landing shows the connect-a-client card.
-        self.assertIn("Connect a client", setup.text)
+        # The freshly-created owner, now signed in, is bounced from /setup to
+        # their portal — no "operator setup" card to dismiss.
+        setup = self.client.get("/setup", follow_redirects=False)
+        self.assertEqual(setup.status_code, 303)
+        self.assertEqual(setup.headers["location"], "/")
         try:
             self.client.cookies.clear()
         except Exception:
             pass
+
+    def test_setup_local_owner_accepts_plain_username_without_at_sign(self) -> None:
+        # A self-hoster shouldn't have to invent an email for a break-glass
+        # owner. A plain username (no "@") creates and signs back in.
+        create = self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "owner",
+                "password": "correct-horse-battery",
+                "password_confirm": "correct-horse-battery",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(create.status_code, 303, create.text)
+
+        users = admin_store.list_users(path=self.db)
+        self.assertEqual(len(users), 1)
+        self.assertEqual(users[0]["email"], "owner")
+
+        # Sign back in with the same username after clearing the session.
+        try:
+            self.client.cookies.clear()
+        except Exception:
+            pass
+        login = self.client.post(
+            "/setup/local-login",
+            data={"email": "owner", "password": "correct-horse-battery"},
+            follow_redirects=False,
+        )
+        self.assertEqual(login.status_code, 303, login.text)
+        self.assertIn(
+            proxy.ADMIN_AUTH.cookie.name, login.headers.get("set-cookie", "")
+        )
+        try:
+            self.client.cookies.clear()
+        except Exception:
+            pass
+
+    def test_setup_local_owner_create_rejects_empty_identifier(self) -> None:
+        response = self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "",
+                "password": "correct-horse-battery",
+                "password_confirm": "correct-horse-battery",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("email or username", response.text)
+        self.assertEqual(admin_store.list_users(path=self.db), [])
 
     def test_setup_local_owner_create_rejects_mismatched_passwords(self) -> None:
         response = self.client.post(
@@ -1580,7 +1836,9 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self.assertIn("owner@example.com", response.text)
         self.assertEqual(admin_store.list_users(path=self.db), [])
 
-    def test_setup_local_owner_create_rejects_short_passwords(self) -> None:
+    def test_setup_local_owner_create_allows_short_passwords(self) -> None:
+        # No password-length policy: the operator picks their own password for
+        # their own break-glass account. A short one is accepted.
         response = self.client.post(
             "/setup/local-owner",
             data={
@@ -1590,8 +1848,13 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             },
             follow_redirects=False,
         )
-        self.assertEqual(response.status_code, 400, response.text)
-        self.assertIn("at least", response.text)
+        self.assertEqual(response.status_code, 303, response.text)
+        users = admin_store.list_users(path=self.db)
+        self.assertEqual(len(users), 1)
+        try:
+            self.client.cookies.clear()
+        except Exception:
+            pass
 
     def test_setup_local_owner_create_blocked_once_owner_exists(self) -> None:
         create_admin_service_account_key("real-owner", path=self.db)
@@ -1641,12 +1904,15 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(signin.status_code, 303, signin.text)
+        # A returning owner lands on the portal, their home — not /setup.
+        self.assertEqual(signin.headers["location"], "/")
         self.assertIn(
             proxy.ADMIN_AUTH.cookie.name, signin.headers.get("set-cookie", "")
         )
-        landed = self.client.get("/setup")
-        self.assertIn("Setup complete", landed.text)
-        self.assertIn("Signed in as", landed.text)
+        # And a revisit to /setup bounces them to the portal (not a card).
+        landed = self.client.get("/setup", follow_redirects=False)
+        self.assertEqual(landed.status_code, 303)
+        self.assertEqual(landed.headers["location"], "/")
         self.client.cookies.clear()
 
     def test_setup_local_login_rejects_wrong_password(self) -> None:
@@ -1712,27 +1978,57 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             # patched _admin_db_path, but make the test independent anyway.
             self.assertEqual(old_db_path, proxy.ADMIN_DB_PATH)
 
-    def test_signed_in_admin_sees_actor_label_and_sign_out_on_setup(self) -> None:
-        # Stand up a real owner + sign-in cookie, then verify /setup shows
-        # actor label and the Sign out link.
+    def test_signed_in_admin_sees_actor_label_and_sign_out_on_operator_console(self) -> None:
+        # A plain GET /setup bounces a signed-in admin (real user) to the portal;
+        # the operator console (?operator=1) still carries their label + Sign out.
         cfg = self._enable_oidc()
-        create_admin_service_account_key("real-owner", path=self.db)
+        user = admin_store.upsert_oidc_user(
+            cfg.issuer, "owner-sub", email="owner@example.com", path=self.db
+        )
         session = session_from_claims(
-            {"sub": "owner-sub", "email": "owner@example.com"},
+            {"sub": user["id"], "email": "owner@example.com"},
             role="owner",
             cookie=cfg.cookie,
         )
         cookie_value = encode_session_cookie(session, signing_key=cfg.signing_key)
         self.client.cookies.set(cfg.cookie.name, cookie_value)
         try:
-            response = self.client.get("/setup")
+            bounced = self.client.get("/setup", follow_redirects=False)
+            self.assertEqual(bounced.status_code, 303)
+            self.assertEqual(bounced.headers["location"], "/")
+            response = self.client.get("/setup?operator=1")
         finally:
             self.client.cookies.clear()
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertIn("Setup complete", response.text)
+        # The operator console carries the actor label + a working Sign out, but
+        # no "you own this gateway" hero — just the tools.
+        self.assertNotIn("You own this gateway", response.text)
         self.assertIn("owner@example.com", response.text)
         self.assertIn("Sign out", response.text)
         self.assertIn('href="/logout"', response.text)
+
+    def test_stale_cookie_for_missing_user_does_not_loop_on_setup(self) -> None:
+        # Regression: a cookie that's signed + has an admin role but whose user
+        # no longer exists (e.g. a prior instance's DB was reset) must NOT
+        # redirect /setup -> / (that loops, since / can't resolve the user and
+        # shows the door). It falls through to the sign-in form so the operator
+        # can sign in fresh.
+        cfg = self._enable_oidc()
+        session = session_from_claims(
+            {"sub": "ghost-user-id-not-in-store", "email": "ghost@example.com"},
+            role="owner",
+            cookie=cfg.cookie,
+        )
+        self.client.cookies.set(
+            cfg.cookie.name,
+            encode_session_cookie(session, signing_key=cfg.signing_key),
+        )
+        try:
+            resp = self.client.get("/setup", follow_redirects=False)
+        finally:
+            self.client.cookies.clear()
+        # No redirect — the page renders so the loop can't happen.
+        self.assertEqual(resp.status_code, 200, resp.text)
 
 
 class AdminEffectiveProfileTests(unittest.TestCase):
