@@ -133,6 +133,28 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("</html>", html)
         self.assertIn("AI Gateway Admin", html)
 
+    def test_attention_panel_all_clear_when_no_items(self) -> None:
+        # No attention items -> a single calm "all clear" line, not a stat grid.
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn("Everything looks healthy.", html)
+        self.assertNotIn("things want a look", html)
+
+    def test_attention_panel_lists_items_and_links_to_sections(self) -> None:
+        snap = _snapshot()
+        snap["attention"] = [
+            {"kind": "service", "severity": "problem", "section": "services",
+             "title": "ComfyUI is down", "detail": "Requests will fail."},
+            {"kind": "app", "severity": "attention", "section": "apps-keys",
+             "title": "kitchen-tablet has no active key", "detail": "Mint a key."},
+        ]
+        html = render_admin_dashboard(snap)
+        self.assertIn("ComfyUI is down", html)
+        self.assertIn("kitchen-tablet has no active key", html)
+        # Rows route to the fixing section via the admin nav mechanism.
+        self.assertIn('data-admin-jump="services"', html)
+        self.assertIn('data-admin-jump="apps-keys"', html)
+        self.assertNotIn("Everything looks healthy.", html)
+
     def test_uses_App_terminology_not_Client(self) -> None:
         html = render_admin_dashboard(_snapshot())
         # Data plane noun is "App". The dashboard must mention it.
@@ -151,7 +173,9 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertNotIn("Create runtime key", html)
         self.assertNotIn('aria-label="App for runtime key"', html)
         self.assertIn("Create admin automation key", html)
-        self.assertIn("oak_", html)
+        # The form is self-labeling ("admin automation key"); no opk_/oak_ prefix
+        # jargon needed in the copy.
+        self.assertNotIn("oak_</code>", html)
         self.assertIn("/admin/api/admin-keys", html)
         self.assertIn('action="/admin/api/apps"', html)
         self.assertIn("x-ai-gateway-admin-action", html)
@@ -179,7 +203,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_includes_oidc_provider_settings_flow(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        identity_section = html[html.index('id="identity"') : html.index('id="policy-test"')]
+        identity_section = html[html.index('id="identity"') : html.index('id="services"')]
         self.assertIn("OIDC login", identity_section)
         self.assertIn("OIDC browser login", identity_section)
         self.assertIn('action="/admin/api/oidc-config"', identity_section)
@@ -204,7 +228,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
             "admin_groups": ["trusted-users"],
         }
         html = render_admin_dashboard(snapshot)
-        identity_section = html[html.index('id="identity"') : html.index('id="policy-test"')]
+        identity_section = html[html.index('id="identity"') : html.index('id="services"')]
 
         self.assertIn('name="enabled" checked', identity_section)
         self.assertIn('value="https://idp.example.com"', identity_section)
@@ -257,7 +281,8 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn('name="backends"', html)
         self.assertIn("Available now", html)
         self.assertIn("Existing only", html)
-        self.assertIn("Current loaded LLM: <code>qwen.gguf</code>", html)
+        # The "Current loaded LLM" echo is gone — status, not a form input.
+        self.assertNotIn("Current loaded LLM:", html)
         self.assertIn("Profile preview", html)
         self.assertIn("APIs: OpenAI-compatible", html)
         self.assertIn("Work: chat", html)
@@ -265,7 +290,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("Targets: allowed catalog; may activate", html)
         self.assertIn("Guardrails: local only; provider-native passthrough off; admin blocked", html)
         self.assertIn("min-width: 0;", html)
-        self.assertIn(".shell-main section", html)
+        self.assertIn(".admin-content section", html)
         self.assertIn("minmax(min(14rem, 100%), 1fr)", html)
         self.assertIn(".choice-grid, .permission-grid { grid-template-columns: 1fr; }", html)
         self.assertIn("buildProfileFromForm", html)
@@ -346,8 +371,11 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         app_index = html.index('id="create-app"')
         profile_index = html.index('data-create-profile><label>Create Profile')
         key_index = html.index('data-mint-key><label>Create key')
-        self.assertLess(profile_index, app_index)
+        # App and key creation live together in the Apps & Keys section (App
+        # first, then key); Profiles is its own separate section that now
+        # follows it in the nav order.
         self.assertLess(app_index, key_index)
+        self.assertLess(app_index, profile_index)
         self.assertIn("Create key for existing App", html)
         self.assertNotIn('name="app_name"', html)
         self.assertIn('placeholder="App name, e.g. LibreChat"', html)
@@ -375,7 +403,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("Create admin automation key", html)
         self.assertIn("data-create-admin-key", html)
         self.assertIn('action="/admin/api/admin-keys"', html)
-        self.assertIn("It is not an OpenAI-compatible runtime key.", html)
+        self.assertIn("not for runtime model calls", html)
         self.assertIn("Admin automation", html)
         branch = html[html.index("if(adminKeyForm)") : html.index("if(profileForm)")]
         self.assertIn("body={name:fd.get('name'),role:fd.get('role')||'admin'}", branch)
@@ -467,34 +495,59 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_admin_dashboard_uses_operator_design_contract(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn(">Gateway access workspace</h1>", html)
-        self.assertIn('id="decision-path"', html)
-        self.assertIn(">Decision Path</h2>", html)
-        self.assertLess(html.index('id="profiles"'), html.index('id="apps-keys"'))
-        self.assertLess(html.index('id="apps-keys"'), html.index('id="identity"'))
-        self.assertIn('id="apis"', html)
+        # One short landmark heading, no decorative title or eyebrow.
+        self.assertIn('<h1 id="operator-title">Admin</h1>', html)
+        self.assertNotIn("Gateway access workspace", html)
+        # The internal key-prefix legend ("Key types: opk_/oak_") is gone — the
+        # prefixes are implementation detail, not operator vocabulary.
+        self.assertNotIn("Key types", html)
+        self.assertNotIn(">opk_</code>", html)
+        # Real sidebar navigation, one section visible at a time — not a single
+        # anchor-linked scroll. The old "Decision Path" prose lecture is gone.
+        self.assertIn('class="admin-sidebar"', html)
+        self.assertIn('data-admin-nav="apps-keys"', html)
+        self.assertNotIn("Decision Path", html)
+        self.assertNotIn("access-node", html)
+        # Everyday tasks first: Apps & Keys precedes Profiles in the nav order.
+        self.assertLess(
+            html.index('data-admin-nav="apps-keys"'),
+            html.index('data-admin-nav="profiles"'),
+        )
+        # All real sections still render as switchable panels. Policy Test is no
+        # longer a top-level section — the simulator moved into Profiles (a
+        # rarely-used debug tool shouldn't own a permanent sidebar slot).
+        for sid in (
+            "apps-keys",
+            "profiles",
+            "identity",
+            "services",
+            "apis",
+            "admin-keys",
+        ):
+            self.assertIn(f'data-admin-section="{sid}"', html)
+        self.assertNotIn('data-admin-section="policy-test"', html)
+        self.assertNotIn('data-admin-nav="policy-test"', html)
         self.assertIn(">APIs</h2>", html)
         self.assertIn("OpenAI-compatible", html)
-        self.assertIn('id="services"', html)
         self.assertIn(">Services</h2>", html)
         self.assertIn("llama-turbo / kobold", html)
         self.assertIn("LLM model visibility", html)
-        self.assertIn('id="apps-keys"', html)
         self.assertIn(">Apps &amp; Keys</h2>", html)
-        self.assertIn('id="profiles"', html)
-        self.assertIn('id="admin-keys"', html)
-        self.assertIn('id="identity"', html)
-        self.assertIn('id="policy-test"', html)
-        self.assertIn(">Policy Test</h2>", html)
+        self.assertNotIn(">Policy Test</h2>", html)
         self.assertIn("Runtime Profile mappings", html)
         self.assertIn("data-create-runtime-mapping", html)
         self.assertIn("/admin/api/runtime-profile-mappings", html)
         self.assertIn("This does not grant admin access", html)
         self.assertIn("exact email, OIDC group, OIDC role, email domain", html)
-        self.assertIn("Apps hold opk_ keys", html)
+        # Explanation is on demand (progressive disclosure), not a preamble.
+        self.assertIn('class="section-help"', html)
+        self.assertIn("What", html)  # "What's this?" disclosure
         self.assertIn("users do not hand-edit policy", html)
-        self.assertIn("opk_</code>&nbsp;runtime App keys", html)
-        self.assertIn("oak_</code>&nbsp;admin automation", html)
+        # The internal opk_/oak_ key-prefix legend is gone entirely — prefixes
+        # are implementation detail, not operator vocabulary.
+        self.assertNotIn('class="admin-legend"', html)
+        self.assertNotIn("opk_</code>", html)
+        self.assertNotIn("oak_</code>", html)
 
     def test_admin_dashboard_renders_dynamic_workflow_inventory(self) -> None:
         snapshot = _snapshot()
@@ -597,14 +650,16 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(snapshot)
         services_section = html[html.index('id="services"') : html.index('id="apis"')]
         self.assertIn(">Sources of Truth</h3>", services_section)
-        self.assertIn("Source of truth", services_section)
+        # Three actionable columns; the "Source of truth" provenance taxonomy is
+        # dropped (forensic detail the operator rarely acts on).
         self.assertIn("Loaded value", services_section)
-        self.assertIn("Change path", services_section)
+        self.assertIn("How to change it", services_section)
+        self.assertNotIn("Source of truth", services_section)
         self.assertIn("Runtime policy ownership", services_section)
         self.assertIn("OPENAI_API_KEY", services_section)
-        self.assertIn("Managed here", services_section)
-        self.assertIn("Bootstrap config", services_section)
+        # The actionable apply-mode survives.
         self.assertIn("Restart required", services_section)
+        # Security: secrets and long raw paths must still never render verbatim.
         self.assertIn("redacted", services_section)
         self.assertNotIn("sk-secret-should-never-render", services_section)
         self.assertNotIn("/very/long/bootstrap/path/that/should/not", services_section)
@@ -743,37 +798,28 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         ]
         html = render_admin_dashboard(snapshot)
         services_section = html[html.index('id="services"') : html.index('id="apis"')]
-        # Header still reads as before.
         self.assertIn(">Sources of Truth</h3>", services_section)
 
-        # Dashboard-owned row: authored Dashboard/API, stored in admin.db/defaults, applies live,
-        # writable dashboard+API, candidate for the provisioning bundle.
-        self.assertIn("authored Dashboard/API", services_section)
-        self.assertIn("stored admin.db", services_section)
+        # The ACTIONABLE apply-mode survives per row — it answers "can I change
+        # this here, or edit files + restart?".
         self.assertIn("Applies live", services_section)
-        self.assertIn("UI/API writable: dashboard+API", services_section)
-        self.assertIn("in provisioning bundle", services_section)
-
-        # File-owned bootstrap: authored proxy_config.yml only, bootstrap-only, restart.
-        self.assertIn("authored proxy_config.yml", services_section)
-        self.assertIn("bootstrap-only", services_section)
         self.assertIn("Restart required", services_section)
-
-        # Env-owned secret: marked secret_bootstrap, still redacted.
-        self.assertIn("bootstrap-only (secret)", services_section)
-        self.assertIn("redacted", services_section)
-
-        # Mixed: apply_mode split rendered as "Live + restart (split)" and split provisioning.
         self.assertIn("Live + restart (split)", services_section)
-        self.assertIn("split provisioning", services_section)
-        self.assertIn("authored Dashboard plus proxy_config.yml", services_section)
-
-        # Manifest-owned: read-only with source manifest label.
         self.assertIn("Read-only here", services_section)
-        self.assertIn("source manifest", services_section)
-        self.assertIn("authored Workflow manifest", services_section)
 
-        # Negative checks: no secret leaks, no env/source values bleeding through.
+        # The forensic provenance taxonomy is GONE from the default view: no
+        # authored/stored sub-lines, no provisioning labels, no "Source of truth"
+        # badge column.
+        self.assertNotIn("authored Dashboard/API", services_section)
+        self.assertNotIn("stored admin.db", services_section)
+        self.assertNotIn("in provisioning bundle", services_section)
+        self.assertNotIn("bootstrap-only", services_section)
+        self.assertNotIn("source manifest", services_section)
+        self.assertNotIn("UI/API writable", services_section)
+        self.assertNotIn("Source of truth", services_section)
+
+        # Security is unchanged: secrets stay redacted, nothing leaks.
+        self.assertIn("redacted", services_section)
         self.assertNotIn("sk-", services_section)
         self.assertNotIn("super-secret", services_section)
 
@@ -816,9 +862,12 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("Resource override", services_section)
         self.assertIn("operatorForm", html)
 
-    def test_apps_show_effective_profile_and_patch_affordance(self) -> None:
+    def test_apps_show_profile_and_patch_affordance(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertIn("Effective Profile: protocols openai", html)
+        # The Apps list shows the Profile name + a change affordance, but no
+        # per-row "Effective Profile: …" policy echo (that lives once in the
+        # Profiles table — repeating it per app was cost without action).
+        self.assertNotIn("Effective Profile:", html)
         self.assertIn('data-update-app-profile', html)
         self.assertIn('data-disable-app="app_1"', html)
         self.assertIn('action="/admin/api/apps/app_1"', html)
@@ -835,22 +884,26 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertNotIn("cred_1", html)
         self.assertIn("kitchen-tablet", html)
 
-    def test_policy_test_uses_selects_and_discloses_advanced_fields(self) -> None:
+    def test_policy_simulator_lives_in_profiles_with_selects_and_advanced(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        policy_section = html[html.index('id="policy-test"') : html.index('id="services"')]
-        self.assertIn('<select name="profile"', policy_section)
-        self.assertIn('<select name="protocol"', policy_section)
-        self.assertIn('<select name="intent"', policy_section)
-        self.assertIn('<summary>Advanced request fields</summary>', policy_section)
-        self.assertIn('name="workflow"', policy_section)
-        self.assertNotIn('placeholder="protocol: openai.images"', policy_section)
+        # The simulator moved out of its own sidebar section into Profiles
+        # (under "Test a decision"), where a denial investigation starts.
+        self.assertIn("Test a decision", html)
+        profiles_section = html[
+            html.index('id="profiles"') : html.index('id="identity"')
+        ]
+        self.assertIn('<select name="profile"', profiles_section)
+        self.assertIn('<select name="protocol"', profiles_section)
+        self.assertIn('<select name="intent"', profiles_section)
+        self.assertIn('<summary>Advanced request fields</summary>', profiles_section)
+        self.assertIn('name="workflow"', profiles_section)
 
     def test_empty_runtime_inventory_sections_are_hidden(self) -> None:
         html = render_admin_dashboard({})
         self.assertNotIn('id="apis"', html)
         self.assertNotIn('id="services"', html)
         self.assertNotIn('id="activity"', html)
-        self.assertIn('id="decision-path"', html)
+        # Core operator sections still render even with an empty snapshot.
         self.assertIn('id="profiles"', html)
         self.assertIn('id="apps-keys"', html)
 
@@ -906,15 +959,33 @@ class AdminRenderHappyPathTests(unittest.TestCase):
             profile_section.index("<summary>Advanced constraints</summary>"),
         )
 
+    def test_admin_is_mobile_safe_tables_become_cards_nav_taps(self) -> None:
+        # On mobile, wide tables stack each ROW as a card (no sideways scroll,
+        # no clipped columns, no page overflow), and the section nav meets 44px.
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn("@media (max-width: 760px)", html)
+        # The header row is hidden and each tr becomes a bordered card block.
+        self.assertIn(".admin-content thead { position: absolute;", html)
+        self.assertIn(".admin-content tbody tr {", html)
+        self.assertIn(".admin-content tbody td {", html)
+        # No reliance on horizontal table scroll anymore.
+        self.assertNotIn("thead, tbody { display: table; width: max-content;", html)
+        # Section nav links get a 44px touch floor on mobile.
+        self.assertIn(
+            ".admin-nav-link { min-height: 2.75rem; display: flex;", html
+        )
+
     def test_admin_chrome_marks_admin_as_active_and_offers_sign_out(self) -> None:
         html = render_admin_dashboard(_snapshot())
         # The admin link must be visible in the shared header and marked active.
         self.assertRegex(html, r'<a [^>]*href="/admin"[^>]*aria-current="page"')
         # A visible Sign out affordance is required on every admin page.
         self.assertIn('href="/me/logout">Sign out</a>', html)
-        # Header shares the same brand chrome as the user portal.
+        # Header shares the same brand chrome as the user portal. Admin extends
+        # the shared shell with its own wider layout (shell-main admin-shell).
         self.assertIn('class="shell-header"', html)
-        self.assertIn('class="shell-main"', html)
+        self.assertRegex(html, r'<main class="[^"]*shell-main')
+        self.assertIn("admin-shell", html)
         self.assertIn('aria-label="AI Gateway home"', html)
         self.assertIn(">AI Gateway</span>", html)
         # The signed-in actor is still surfaced in the header.

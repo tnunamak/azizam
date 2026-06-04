@@ -45,6 +45,7 @@ __all__ = [
     "AdminContext",
     "AdminStore",
     "access_model_summary",
+    "derive_admin_attention",
     "create_admin_router",
 ]
 
@@ -215,6 +216,97 @@ _MEDIA_ADMISSION_FIELDS = frozenset(
         "retry_after_seconds",
     }
 )
+
+
+def _attention_app_profile_id(record: Mapping[str, Any]) -> str:
+    """Resolve an App's effective profile id (mirrors admin_render._app_profile_id)."""
+    profile_id = (
+        record.get("default_profile_id")
+        or record.get("profile_id")
+        or record.get("profile")
+    )
+    return str(profile_id) if profile_id else "default-local"
+
+
+def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return "things that want a look" — the operator's actual landing screen.
+
+    Pure function over a dashboard snapshot, so the same list backs both the
+    admin HTML overview and the ``/admin/api/overview`` JSON (the migration-safe
+    seam). Each item is ``{kind, severity, title, detail, section}`` where
+    ``severity`` is ``"problem"`` (broken — needs fixing) or ``"attention"``
+    (works but incomplete). An EMPTY list means everything's healthy — and the
+    overview says so, rather than padding the screen with green stat cards.
+
+    Signals mirror the per-row statuses the detail tables already show, so the
+    overview never disagrees with the sections:
+      * Apps: disabled, no profile, profile missing, or no active key.
+      * Services: ``down`` (problem) or ``degraded`` (attention).
+    """
+    items: list[dict[str, Any]] = []
+
+    apps = [a for a in snapshot.get("apps", []) if isinstance(a, Mapping)]
+    profiles = [p for p in snapshot.get("profiles", []) if isinstance(p, Mapping)]
+    profile_ids = {str(p.get("id")) for p in profiles if p.get("id")}
+    credentials = [c for c in snapshot.get("credentials", []) if isinstance(c, Mapping)]
+    active_keys_by_app: dict[str, int] = {}
+    for cred in credentials:
+        if cred.get("revoked_at"):
+            continue
+        app_ref = str(cred.get("app_id") or cred.get("subject_id") or "")
+        if app_ref:
+            active_keys_by_app[app_ref] = active_keys_by_app.get(app_ref, 0) + 1
+
+    for app in apps:
+        app_id = str(app.get("id") or "")
+        name = str(app.get("name") or app_id or "App")
+        profile_id = _attention_app_profile_id(app)
+        if app.get("disabled_at"):
+            items.append({
+                "kind": "app", "severity": "problem", "section": "apps-keys",
+                "title": f"{name} is disabled",
+                "detail": "Re-enable it or remove it.",
+            })
+        elif not profile_id:
+            items.append({
+                "kind": "app", "severity": "problem", "section": "apps-keys",
+                "title": f"{name} has no permission profile",
+                "detail": "Assign a profile so its keys can be used.",
+            })
+        elif profile_id != "default-local" and profile_id not in profile_ids:
+            items.append({
+                "kind": "app", "severity": "problem", "section": "apps-keys",
+                "title": f"{name}'s profile is missing",
+                "detail": "Its profile was deleted; assign a new one.",
+            })
+        elif active_keys_by_app.get(app_id, 0) < 1:
+            items.append({
+                "kind": "app", "severity": "attention", "section": "apps-keys",
+                "title": f"{name} has no active key",
+                "detail": "Mint a key so it can reach the gateway.",
+            })
+
+    for svc in snapshot.get("services", []):
+        if not isinstance(svc, Mapping):
+            continue
+        state = str(svc.get("status") or "").lower()
+        label = str(svc.get("name") or svc.get("key") or "A service")
+        if state == "down":
+            items.append({
+                "kind": "service", "severity": "problem", "section": "services",
+                "title": f"{label} is down",
+                "detail": "Requests that need it will fail until it's back.",
+            })
+        elif state == "degraded":
+            items.append({
+                "kind": "service", "severity": "attention", "section": "services",
+                "title": f"{label} is degraded",
+                "detail": "It's reachable but not fully healthy.",
+            })
+
+    order = {"problem": 0, "attention": 1}
+    items.sort(key=lambda i: order.get(str(i["severity"]), 2))
+    return items
 
 
 def access_model_summary() -> dict[str, Any]:
@@ -803,6 +895,15 @@ def create_admin_router(
         active_credentials = [
             c for c in credentials if not c.get("revoked_at")
         ]
+        # "Things that want a look" — the operator's real landing list, derived
+        # from the same data the detail tables show. Service health needs a live
+        # status fetch this read-only endpoint doesn't do, so the JSON exposes
+        # the App-level signals; the HTML overview adds service signals on top.
+        attention = derive_admin_attention({
+            "apps": apps,
+            "profiles": profiles,
+            "credentials": credentials,
+        })
         payload = {
             "actor": {
                 "subject": ctx.subject,
@@ -818,6 +919,7 @@ def create_admin_router(
                 "credentials": len(credentials),
                 "active_credentials": len(active_credentials),
             },
+            "attention": attention,
             "runtime_profile_mappings": runtime_mappings,
         }
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)

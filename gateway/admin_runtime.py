@@ -1124,6 +1124,7 @@ def runtime_identity_for_app_credential_hash(
         key_hash=key_hash,
         downstream={},
         profile=profile,
+        app_id=app_id,
     )
 
 

@@ -35,46 +35,110 @@ __all__ = ["render_admin_dashboard"]
 
 
 _PAGE_CSS = """
-  .shell-main section,
-  .shell-main section > div,
-  .operator-hero,
-  .operator-strip,
+  .admin-content section,
+  .admin-content section > div,
   .runtime-settings,
-  .access-map,
   details.panel,
   form.flow {
     min-width: 0;
     max-width: 100%;
   }
-  .operator-hero {
+  /* Admin shell: a real left sidebar + a content area that shows one section
+     at a time. Wider than the default shell since admin tables need room. */
+  .admin-shell {
+    width: min(1280px, 100%);
+    margin: 0 auto;
+    padding: var(--space-5) var(--gutter) var(--space-12);
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: var(--space-6);
+    align-items: start;
+  }
+  .admin-sidebar {
+    position: sticky;
+    top: calc(3.5rem + var(--space-4));
     display: grid;
     gap: var(--space-3);
-    padding: clamp(1rem, 4vw, 1.5rem);
-    background:
-      linear-gradient(135deg, oklch(18% 0.04 205), oklch(14% 0.025 250) 52%, oklch(18% 0.035 170));
-    border: 1px solid color-mix(in oklch, var(--line), oklch(72% 0.11 190) 35%);
-    border-radius: var(--radius);
-  }
-  .operator-hero h1 { margin: 0; font-size: 2.6rem; line-height: 1; }
-  .operator-hero p { margin: 0; max-width: 62rem; color: var(--muted); line-height: 1.55; }
-  .operator-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .operator-strip a, .operator-strip span {
     min-width: 0;
-    min-height: 2.25rem;
-    display: inline-flex;
-    align-items: center;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 0.35rem 0.7rem;
-    background: oklch(16% 0.022 230);
-    color: var(--text);
-    white-space: normal;
   }
-  .operator-strip a:hover { text-decoration: none; filter: brightness(1.06); }
-  .section-intro { margin: -0.25rem 0 var(--space-3); color: var(--muted); line-height: 1.5; max-width: 58rem; }
+  .admin-sidebar-head { display: grid; gap: 0.2rem; }
+  .admin-sidebar-head h1 { margin: 0; font-size: 1.15rem; line-height: 1.2; color: var(--text); }
+  .admin-nav { display: grid; gap: 0.15rem; }
+  .admin-nav-link {
+    display: block;
+    padding: 0.5rem 0.7rem;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    border: 1px solid transparent;
+    font-size: 0.92rem;
+  }
+  .admin-nav-link:hover { color: var(--text); text-decoration: none; background: var(--panel); }
+  .admin-nav-link.is-active {
+    color: var(--text);
+    background: var(--panel-2);
+    border-color: var(--line-strong);
+    font-weight: 600;
+  }
+  .admin-legend { color: var(--muted); font-size: 0.82rem; }
+  .admin-legend summary { cursor: pointer; }
+  .admin-content { display: grid; gap: var(--space-6); min-width: 0; }
+  /* Only the active section is shown; the sidebar switches between them. */
+  .admin-section { display: none; }
+  .admin-section.is-active { display: grid; gap: var(--space-3); }
+  /* Explanation on demand, not a preamble. */
+  .section-help { color: var(--muted); font-size: 0.85rem; margin: -0.15rem 0 var(--space-2); }
+  /* "Things that want a look" — the operator's landing list. */
+  .attention-panel {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    overflow: hidden;
+  }
+  .attention-panel.clear {
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-4);
+  }
+  .attention-panel.clear strong { color: var(--text); }
+  .attention-panel.clear p { margin: 0.1rem 0 0; color: var(--muted); font-size: 0.86rem; }
+  .attention-heading {
+    margin: 0; padding: var(--space-3) var(--space-4);
+    font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--line);
+  }
+  .attention-row {
+    display: flex; align-items: flex-start; gap: var(--space-3);
+    padding: 0.75rem var(--space-4);
+    color: var(--text); text-decoration: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .attention-row:last-child { border-bottom: 0; }
+  .attention-row:hover { background: var(--panel-2); }
+  .attention-row .vf-dot { margin-top: 0.35rem; flex: 0 0 auto; }
+  .attention-text { display: grid; gap: 0.1rem; min-width: 0; }
+  .attention-text strong { color: var(--text); font-weight: 600; font-size: 0.92rem; }
+  .attention-detail { color: var(--muted); font-size: 0.83rem; }
+  .section-help summary { cursor: pointer; color: var(--soft); }
+  .section-help p { margin: var(--space-1) 0 0; line-height: 1.5; max-width: 58rem; }
   .subsection { display: grid; gap: var(--space-2); min-width: 0; }
   .subsection h3 { margin: 0; font-size: 0.95rem; color: var(--text); }
-  .subsection .section-intro { margin: 0; }
+  @media (max-width: 860px) {
+    /* min-width:0 on the grid chain lets the horizontal nav scroller actually
+       CLIP+scroll instead of leaking its content width into the page (the
+       classic CSS-grid overflow gotcha). */
+    .admin-shell { grid-template-columns: 1fr; }
+    .admin-shell > * { min-width: 0; }
+    .admin-sidebar { position: static; min-width: 0; max-width: 100%; }
+    .admin-nav {
+      grid-auto-flow: column;
+      grid-auto-columns: max-content;
+      overflow-x: auto;
+      gap: var(--space-1);
+      min-width: 0;
+      max-width: 100%;
+    }
+    .admin-nav-link { white-space: nowrap; }
+  }
   .summary { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--muted); }
   .summary strong { color: var(--text); }
   .summary span { background: var(--panel); border: 1px solid var(--line);
@@ -96,11 +160,6 @@ _PAGE_CSS = """
   tr:last-child td { border-bottom: none; }
   .cell-main { font-weight: 650; color: var(--text); }
   .cell-sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.2rem; }
-  .access-map { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); }
-  .access-node { display: grid; gap: 0.35rem; background: var(--panel); border: 1px solid var(--line);
-                 border-radius: var(--radius); padding: var(--space-3); }
-  .access-node strong { color: var(--text); }
-  .access-node span { color: var(--muted); line-height: 1.45; }
   .source-plane-list { display: grid; gap: var(--space-3); }
   .source-plane { display: grid; gap: var(--space-2); }
   .source-plane h4 { margin: 0; color: var(--text); font-size: 0.9rem; }
@@ -307,11 +366,56 @@ _PAGE_CSS = """
   .permission-grid .check em { color: var(--muted); font-size: 0.78rem; font-style: normal; line-height: 1.35; }
   .inline-options { display: flex; flex-wrap: wrap; gap: 0.55rem 1rem; }
   @media (max-width: 760px) {
-    .operator-hero h1 { font-size: 2.05rem; }
-    table { display: block; overflow-x: auto; }
+    /* Tables were the #1 mobile-overflow culprit (a 7-column table is ~1200px
+       wide — horizontal scroll OR it pushes the page sideways). On mobile we
+       drop the table grid entirely and stack each ROW as a card: the header
+       row is hidden and every cell becomes a full-width line. No sideways
+       scroll, no clipped columns. The rows already carry self-describing
+       context (.cell-main / .cell-sub / <code> ids), so losing the column
+       headers costs little. */
+    .admin-content table { display: block; width: 100%; max-width: 100%; border: 0; }
+    .admin-content thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .admin-content tbody { display: block; width: 100%; }
+    .admin-content tbody tr {
+      display: block;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: var(--space-2) var(--space-3);
+      margin-bottom: var(--space-3);
+    }
+    .admin-content tbody td {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      border: 0;
+      padding: 0.3rem 0;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+    .admin-content tbody td:not(:last-child) { border-bottom: 1px solid var(--line); }
+    /* Long ids / tokens and form controls inside cards must never force width. */
+    .admin-content tbody td code,
+    .admin-content tbody td .cell-sub { overflow-wrap: anywhere; word-break: break-word; max-width: 100%; }
+    .admin-content tbody td input,
+    .admin-content tbody td select,
+    .admin-content tbody td button,
+    .admin-content tbody td form { max-width: 100%; box-sizing: border-box; }
+    .admin-content tbody td form { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .admin-content section,
+    .admin-content section > div { min-width: 0; max-width: 100%; }
+    /* Belt-and-braces: clip the content column so no stray wide descendant
+       (a hidden section's table, a long token) can scroll the whole PAGE
+       sideways. The card layout means nothing legitimately needs to. */
+    .admin-content { overflow-x: hidden; }
+    .admin-shell, main.admin-shell { overflow-x: hidden; max-width: 100%; }
     form.flow .row { grid-template-columns: 1fr; }
     .choice-grid, .permission-grid { grid-template-columns: 1fr; }
     .facts div { grid-template-columns: 1fr; gap: 0.1rem; }
+    /* Touch-target floor for the section nav on mobile. */
+    .admin-nav-link { min-height: 2.75rem; display: flex; align-items: center; }
+    /* The attention panel reads fine as-is on mobile (it's already a stack). */
   }
 """
 
@@ -850,11 +954,8 @@ def _app_row(
     elif active_keys < 1:
         status_class = "attention"
         status_text = "needs key"
-    access = (
-        _profile_access_summary(profile)
-        if profile_id != "default-local" or profile is not None
-        else "inherited built-in default"
-    )
+    # The full resolved-policy summary isn't echoed per app row (it lives once
+    # in the Profiles table) — the Apps list shows the Profile name + status.
     profile_label = profile_id or "default-local"
     profile_controls = (
         '<form class="inline-form" method="post" action="'
@@ -882,7 +983,7 @@ def _app_row(
         "<tr>"
         f'<td><div class="cell-main">{name}</div><div class="cell-sub"><code>{app_id}</code></div></td>'
         f"<td>{owner}</td>"
-        f'<td><div><code>{_esc(profile_label)}</code></div><div class="cell-sub">Effective Profile: {_esc(access)}</div>{profile_controls}</td>'
+        f'<td><div><code>{_esc(profile_label)}</code></div>{profile_controls}</td>'
         f"<td>{_esc(active_keys)} active</td>"
         f'<td><span class="badge {status_class}">{status_text}</span></td>'
         f"<td>{created}</td>"
@@ -1050,13 +1151,6 @@ def _service_row(record: Mapping[str, Any]) -> str:
 def _config_source_row(record: Mapping[str, Any]) -> str:
     label = _esc(_safe_config_text(record.get("label") or record.get("name") or record.get("key")))
     domain = _esc(_safe_config_text(record.get("domain") or record.get("scope")))
-    plane = _config_source_plane(record)
-    plane_label = _esc(_config_plane_label(record, plane))
-    badge_class = _source_badge_class(plane)
-    source_value = _safe_config_text(record.get("source") or record.get("kind") or "unknown")
-    source_ref = _safe_config_text(record.get("source_ref") or record.get("path") or record.get("key") or "")
-    provisioned = _esc(source_value if not source_ref or source_ref == "—" else f"{source_value}: {source_ref}")
-    authored_stored = _esc(_authored_stored_summary(record))
     live_state = _esc(
         _safe_config_text(
             record.get("current_value_summary")
@@ -1068,37 +1162,23 @@ def _config_source_row(record: Mapping[str, Any]) -> str:
     )
     change_path = _esc(_config_change_path(record))
     apply_label = _esc(_apply_mode_label(record))
-    lifecycle_meta = _esc(_lifecycle_meta_summary(record))
     recommendation = _esc(
         _safe_config_text(
             record.get("recommendation") or record.get("note") or record.get("description"),
             record=record,
         )
     )
-    source_sub = provisioned
-    if authored_stored:
-        source_sub = f"{provisioned} | {authored_stored}" if provisioned and provisioned != "—" else authored_stored
-    change_sub = recommendation
-    if lifecycle_meta:
-        change_sub = f"{lifecycle_meta} | {recommendation}" if recommendation and recommendation != "—" else lifecycle_meta
+    # Three columns the operator can act on: the setting, what loaded, and how to
+    # change it (apply-mode + path). The provenance taxonomy (source-of-truth
+    # badge, authored/stored, "in provisioning bundle") is forensic detail an
+    # operator rarely acts on — dropped from the default view.
     return (
         "<tr>"
         f'<td><div class="cell-main">{label}</div><div class="cell-sub">{domain}</div></td>'
-        f'<td><span class="badge {badge_class}">{plane_label}</span><div class="cell-sub">{source_sub}</div></td>'
         f'<td><div class="cell-main">{live_state}</div><div class="cell-sub">{apply_label}</div></td>'
-        f'<td><div class="cell-main">{change_path}</div><div class="cell-sub">{change_sub}</div></td>'
+        f'<td><div class="cell-main">{change_path}</div><div class="cell-sub">{recommendation}</div></td>'
         "</tr>"
     )
-
-
-def _authored_stored_summary(record: Mapping[str, Any]) -> str:
-    authored = _safe_config_text(record.get("authored_via") or "")
-    stored = _safe_config_text(record.get("stored_in") or "")
-    if not authored and not stored:
-        return ""
-    if authored and stored and authored != stored:
-        return f"authored {authored}; stored {stored}"
-    return f"authored {authored or stored}"
 
 
 def _apply_mode_label(record: Mapping[str, Any]) -> str:
@@ -1116,31 +1196,6 @@ def _apply_mode_label(record: Mapping[str, Any]) -> str:
     if bool(record.get("restart_required")):
         return "Restart required"
     return _editability_label(record)
-
-
-def _lifecycle_meta_summary(record: Mapping[str, Any]) -> str:
-    parts: list[str] = []
-    writable = record.get("writable")
-    if isinstance(writable, Mapping) and (writable.get("dashboard") or writable.get("api")):
-        targets = []
-        if writable.get("dashboard"):
-            targets.append("dashboard")
-        if writable.get("api"):
-            targets.append("API")
-        parts.append("UI/API writable: " + "+".join(targets))
-    elif isinstance(writable, Mapping):
-        parts.append("UI/API writable: no")
-    provisioning = str(record.get("provisioning") or "").strip().lower()
-    provisioning_label = {
-        "bundle_candidate": "in provisioning bundle",
-        "bootstrap_only": "bootstrap-only",
-        "secret_bootstrap": "bootstrap-only (secret)",
-        "source_manifest": "source manifest",
-        "split": "split provisioning",
-    }.get(provisioning, "")
-    if provisioning_label:
-        parts.append(provisioning_label)
-    return " | ".join(parts)
 
 
 def _config_source_plane(record: Mapping[str, Any]) -> str:
@@ -1241,7 +1296,7 @@ def _config_sources_panel(records: Iterable[Mapping[str, Any]]) -> str:
             continue
         title = _config_plane_label(rows[0], plane)
         table = _table(
-            ["Setting", "Source of truth", "Loaded value", "Change path"],
+            ["Setting", "Loaded value", "How to change it"],
             (_config_source_row(row) for row in rows),
         )
         sections.append(
@@ -1253,7 +1308,7 @@ def _config_sources_panel(records: Iterable[Mapping[str, Any]]) -> str:
         )
     for plane, rows in sorted(grouped.items()):
         table = _table(
-            ["Setting", "Source of truth", "Loaded value", "Change path"],
+            ["Setting", "Loaded value", "How to change it"],
             (_config_source_row(row) for row in rows),
         )
         sections.append(
@@ -1566,36 +1621,119 @@ def _model_visibility_panel(model_visibility: Mapping[str, Any] | None) -> str:
     )
 
 
-def _operator_intro() -> str:
-    return (
-        '<section class="operator-hero" aria-labelledby="operator-title">'
-        '<div class="cell-sub">admin · ai.vivid.fish</div>'
-        '<h1 id="operator-title">Gateway access workspace</h1>'
-        "<p>Start with the thing making requests. Apps hold opk_ keys, Profiles "
-        "describe what those keys can do, Identity mappings choose defaults, and "
-        "Services show what capabilities exist right now.</p>"
-        '<nav class="operator-strip" aria-label="Admin sections">'
-        '<a href="#decision-path">Decision Path</a>'
-        '<a href="#profiles">Profiles</a>'
-        '<a href="#apps-keys">Apps &amp; Keys</a>'
-        '<a href="#identity">Identity</a>'
-        '<a href="#policy-test">Policy Test</a>'
-        '<a href="#services">Services</a>'
-        '<a href="#apis">APIs</a>'
-        '<a href="#admin-keys">Admin Keys</a>'
-        '<span><code>opk_</code>&nbsp;runtime App keys</span>'
-        '<span><code>oak_</code>&nbsp;admin automation</span>'
-        "</nav>"
-        "</section>"
+# Ordered admin sections: (section_id, sidebar label). The sidebar shows one
+# section at a time (research-backed: a left sidebar of grouped destinations
+# scans faster and scales better than one long anchor-linked page).
+ADMIN_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("apps-keys", "Apps & Keys"),
+    ("profiles", "Profiles"),
+    ("identity", "Identity"),
+    ("services", "Services"),
+    ("apis", "APIs"),
+    ("admin-keys", "Admin Keys"),
+    ("activity", "Activity"),
+)
+
+
+def _admin_sidebar(brand_noun: str = "AI Gateway") -> str:
+    """A real left sidebar of admin sections, one visible at a time.
+
+    Replaces the old single-page scroll + anchor-link strip. The first section
+    is active on load; a small script switches sections and persists the
+    choice. The `opk_`/`oak_` legend moves to an on-demand hint, not chrome.
+    """
+    links = "".join(
+        f'<a class="admin-nav-link" data-admin-nav="{_esc(sid)}" '
+        f'href="#{_esc(sid)}">{_esc(label)}</a>'
+        for sid, label in ADMIN_SECTIONS
     )
+    return (
+        '<aside class="admin-sidebar" aria-label="Admin sections">'
+        '<div class="admin-sidebar-head">'
+        # One landmark heading, no decorative eyebrow or vibe title — the global
+        # header already shows the brand and that you're in admin.
+        '<h1 id="operator-title">Admin</h1>'
+        "</div>"
+        f'<nav class="admin-nav">{links}</nav>'
+        # No "Key types" legend: operators act via buttons and the key is shown
+        # once at creation — the internal opk_/oak_ prefixes were chrome that
+        # only taught two tokens nobody types.
+        "</aside>"
+    )
+
+
+# Sidebar nav: show one section at a time, persist the choice, honor #hash
+# deep-links. Kept tiny and dependency-free; the admin page already ships inline
+# script for its flows.
+_ADMIN_NAV_SCRIPT = """
+<script>
+// Exposed as window.__adminNavInit so the admin's refreshMain (which replaces
+// <main> after each action) can re-wire the sidebar without a full reload.
+window.__adminNavInit = function () {
+  const KEY = "vivid_fish_admin_section";
+  const links = Array.from(document.querySelectorAll("[data-admin-nav]"));
+  const sections = Array.from(document.querySelectorAll("[data-admin-section]"));
+  if (!links.length || !sections.length) return;
+  const ids = sections.map((s) => s.getAttribute("data-admin-section"));
+
+  function show(id) {
+    if (!ids.includes(id)) id = ids[0];
+    sections.forEach((s) => {
+      s.classList.toggle("is-active", s.getAttribute("data-admin-section") === id);
+    });
+    links.forEach((a) => {
+      const on = a.getAttribute("data-admin-nav") === id;
+      a.classList.toggle("is-active", on);
+      if (on) a.setAttribute("aria-current", "true");
+      else a.removeAttribute("aria-current");
+    });
+    try { localStorage.setItem(KEY, id); } catch (_) {}
+  }
+
+  links.forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      show(a.getAttribute("data-admin-nav"));
+    });
+  });
+
+  // Attention-list rows jump to the section that fixes the issue.
+  Array.from(document.querySelectorAll("[data-admin-jump]")).forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const target = a.getAttribute("data-admin-jump");
+      if (ids.includes(target)) show(target);
+    });
+  });
+
+  const hash = (location.hash || "").replace(/^#/, "");
+  let stored = null;
+  try { stored = localStorage.getItem(KEY); } catch (_) {}
+  show(ids.includes(hash) ? hash : (stored || ids[0]));
+};
+window.__adminNavInit();
+</script>
+"""
 
 
 def _section(title: str, body: str, *, section_id: str = "", intro: str = "") -> str:
     if not body.strip():
         return ""
     id_attr = f' id="{_esc(section_id)}"' if section_id else ""
-    intro_html = f'<p class="section-intro">{_esc(intro)}</p>' if intro else ""
-    return f"<section{id_attr}><h2>{_esc(title)}</h2>{intro_html}{body}</section>"
+    # Explanation is on demand, not a mandatory preamble: the section leads with
+    # its data/actions, and "What's this?" reveals the intro for anyone who
+    # wants it (progressive disclosure).
+    intro_html = (
+        '<details class="section-help"><summary>What’s this?</summary>'
+        f"<p>{_esc(intro)}</p></details>"
+        if intro
+        else ""
+    )
+    return (
+        f'<section class="admin-section"{id_attr} data-admin-section="'
+        f'{_esc(section_id)}">'
+        f"<h2>{_esc(title)}</h2>{intro_html}{body}</section>"
+    )
 
 
 def _subsection(title: str, body: str, *, intro: str = "") -> str:
@@ -1613,6 +1751,47 @@ def _table(headers: Iterable[str], rows: Iterable[str]) -> str:
         return ""
     body_html = "".join(rows_list)
     return f"<table><thead><tr>{header_html}</tr></thead><tbody>{body_html}</tbody></table>"
+
+
+def _attention_panel(items: list[Mapping[str, Any]]) -> str:
+    """The operator's landing list: "things that want a look".
+
+    Replaces a stat-grid (which costs attention on every visit to say "all is
+    well"). When everything's healthy this is a single calm "all clear" line;
+    otherwise it's a short, ranked list of what's actually broken or incomplete,
+    each linking to the section that fixes it.
+    """
+    if not items:
+        return (
+            '<div class="attention-panel clear">'
+            '<span class="vf-dot ok" aria-hidden="true"></span>'
+            "<div><strong>Everything looks healthy.</strong>"
+            "<p>No Apps or services need attention right now.</p></div>"
+            "</div>"
+        )
+    rows = []
+    for item in items:
+        severity = str(item.get("severity") or "attention")
+        dot = "bad" if severity == "problem" else "warn"
+        section = str(item.get("section") or "apps-keys")
+        title = _esc(item.get("title") or "Needs a look")
+        detail = _esc(item.get("detail") or "")
+        rows.append(
+            f'<a class="attention-row" href="#{_esc(section)}" '
+            f'data-admin-jump="{_esc(section)}">'
+            f'<span class="vf-dot {dot}" aria-hidden="true"></span>'
+            f"<span class=\"attention-text\"><strong>{title}</strong>"
+            f"<span class=\"attention-detail\">{detail}</span></span>"
+            "</a>"
+        )
+    count = len(items)
+    heading = f"{count} thing{'s' if count != 1 else ''} want{'s' if count == 1 else ''} a look"
+    return (
+        '<div class="attention-panel">'
+        f'<p class="attention-heading">{heading}</p>'
+        + "".join(rows)
+        + "</div>"
+    )
 
 
 def _start_card(apps: list[Mapping[str, Any]]) -> str:
@@ -1705,8 +1884,8 @@ def _admin_key_form(*, create_admin_key_action: str, can_mint_owner: bool) -> st
         + _esc(create_admin_key_action)
         + '" data-create-admin-key>'
         "<label>Create admin automation key</label>"
-        '<p class="hint">Creates an <code>oak_</code> key for scripts that manage Apps, Profiles, keys, status, and audit data. '
-        'It is not an OpenAI-compatible runtime key.</p>'
+        '<p class="hint">A key for scripts that manage Apps, Profiles, keys, status, and audit data — '
+        "not for runtime model calls.</p>"
         '<div class="stack">'
         '<input type="text" name="name" placeholder="Automation name, e.g. key-rotation-script" aria-label="Admin automation name" required>'
         '<select name="role" aria-label="Admin automation role">'
@@ -1715,7 +1894,7 @@ def _admin_key_form(*, create_admin_key_action: str, can_mint_owner: bool) -> st
         + "</select>"
         "</div>"
         '<div class="row">'
-        '<span class="hint">The key is shown once. Do not paste it into chat apps, SDK tools, browser code, prompts, logs, or issue trackers.</span>'
+        '<span class="hint">Shown once at creation. Keep it out of chat apps, prompts, logs, and shared code.</span>'
         '<button type="submit">Create admin key</button>'
         "</div>"
         "</form>"
@@ -1763,9 +1942,6 @@ def _profile_form(
     policy_catalog: Mapping[str, list[Mapping[str, Any]]] | None = None,
     profile_inventory: Mapping[str, Any] | None = None,
 ) -> str:
-    loaded_model = _esc(
-        (model_visibility or {}).get("loaded_model") or "unknown"
-    )
     catalog = policy_catalog or profile_policy_catalog()
     inventory = profile_inventory or {}
     protocol_grid = _option_grid(
@@ -1834,7 +2010,7 @@ def _profile_form(
         + _esc(create_profile_action)
         + '" data-create-profile>'
         + "<label>Create Profile</label>"
-        + '<p class="form-note">Profiles are reusable runtime policies. Name the policy, choose what it can use, then assign it to Apps.</p>'
+        + '<p class="form-note">Name the policy, choose what it can use, then assign it to Apps.</p>'
         + '<div class="stack">'
         + '<input type="text" name="label" placeholder="Profile name, e.g. Daisy full runtime" aria-label="Profile name" required>'
         + "</div>"
@@ -1846,17 +2022,20 @@ def _profile_form(
         + '<p class="form-note">Select the capabilities this Profile can use. Admin access is never granted here.</p>'
         + intent_grid
         + "</div>"
+        # Cost/release gates and target policy have sensible defaults — most
+        # profiles accept them. Tuck them behind a disclosure so the common
+        # case is name + APIs + Allowed work, not four mandatory-looking groups.
+        # (The "Current loaded LLM" echo is dropped — it's status, not an input.)
+        + '<details class="panel"><summary>Cost &amp; release gates and target policy</summary>'
         + '<div class="form-section"><strong>Cost and release gates</strong>'
         + cost_grid
         + "</div>"
         + '<div class="form-section"><strong>Target policy</strong>'
-        + '<p class="form-note">Choose whether clients see the allowed catalog or only currently available targets, and whether requests may activate cold targets. LLMs use loaded-model state; media workflows use installed workflow and service availability state.</p>'
+        + '<p class="form-note">Choose whether clients see the allowed catalog or only currently available targets, and whether requests may activate cold targets.</p>'
         + target_visibility_grid
         + target_activation_grid
         + "</div>"
-        + '<p class="form-note">Current loaded LLM: <code>'
-        + loaded_model
-        + "</code></p>"
+        + "</details>"
         + '<div class="policy-preview" id="profile-policy-preview" aria-live="polite">'
         + "<strong>Profile preview</strong>"
         + '<span data-profile-preview-apis>APIs: '
@@ -2086,6 +2265,8 @@ def render_admin_dashboard(
     snapshot: Mapping[str, Any],
     *,
     title: str = "AI Gateway Admin",
+    brand: str = "AI Gateway",
+    wordmark: tuple[str, str] | None = None,
     base_url: str = "https://ai.vivid.fish/openai/v1",
     create_app_action: str = "/admin/api/apps",
     create_profile_action: str = "/admin/api/profiles",
@@ -2111,6 +2292,7 @@ def render_admin_dashboard(
         for app in list(snapshot.get("apps") or [])
         if not (isinstance(app, Mapping) and app.get("disabled_at"))
     ]
+    attention = [a for a in list(snapshot.get("attention") or []) if isinstance(a, Mapping)]
     users = list(snapshot.get("users") or [])
     profiles = list(snapshot.get("profiles") or [])
     credentials = [
@@ -2269,14 +2451,6 @@ def render_admin_dashboard(
         '<pre class="result" id="admin-flow-result"></pre>'
         "</details>"
     )
-    access_map_html = (
-        '<div class="access-map">'
-        '<div class="access-node"><strong>Profile</strong><span>Plain-language policy: allowed APIs, blocked costs, model behavior, and guardrails.</span></div>'
-        '<div class="access-node"><strong>App</strong><span>The thing making requests. Each App has an effective Profile and active opk_ keys.</span></div>'
-        '<div class="access-node"><strong>Identity</strong><span>OIDC groups, roles, email, domain, gateway role, or all users can choose a default Profile for new runtime access.</span></div>'
-        '<div class="access-node"><strong>Services</strong><span>Current capabilities available behind the gateway. They are visible here, not enabled here.</span></div>'
-        "</div>"
-    )
     api_surfaces_html = api_surfaces_table
     services_html = (
         _model_visibility_panel(
@@ -2305,24 +2479,35 @@ def render_admin_dashboard(
         )
     )
     apps_keys_html = (
-        _start_card(apps)
+        _attention_panel(attention)
+        + _start_card(apps)
         + result_html
         + flow_html
         + _subsection(
             "Current Apps",
             apps_table,
-            intro="Shared and personal Apps with their assigned Profile and active opk_ keys.",
+            intro="Shared and personal Apps with their assigned Profile and active keys.",
         )
         + _subsection(
             "Keys",
             credentials_table,
-            intro="Revoke opk_ runtime keys here. oak_ admin automation keys stay separate.",
+            intro="Revoke App keys here. Admin automation keys are managed separately.",
         )
     )
-    profiles_html = profile_form_html + _subsection(
-        "Current Profiles",
-        profiles_table,
-        intro="Reusable runtime policies that Apps can share.",
+    profiles_html = (
+        profile_form_html
+        + _subsection(
+            "Current Profiles",
+            profiles_table,
+            intro="Reusable runtime policies that Apps can share.",
+        )
+        # The policy simulator lives here (where a denial investigation starts),
+        # not as its own permanent sidebar slot for a rarely-used debug tool.
+        + _subsection(
+            "Test a decision",
+            policy_simulator_html,
+            intro="Check whether a Profile would allow a request — for debugging a denial.",
+        )
     )
     identity_html = (
         _subsection(
@@ -2349,6 +2534,8 @@ def render_admin_dashboard(
 
     header_html = render_shell_header(
         title=title,
+        brand=brand,
+        wordmark=wordmark,
         current="admin",
         show_account=True,
         show_admin=True,
@@ -2403,14 +2590,14 @@ def render_admin_dashboard(
         "const refreshMain=async()=>{const r=await fetch('/admin',{credentials:'same-origin',cache:'no-store'});"
         "if(!r.ok)return;const html=await r.text();const doc=new DOMParser().parseFromString(html,'text/html');"
         "const next=doc.querySelector('main.shell-main'),main=document.querySelector('main.shell-main');"
-        "if(next&&main){main.replaceWith(next);initProfileForm()}};"
+        "if(next&&main){main.replaceWith(next);initProfileForm();if(window.__adminNavInit)window.__adminNavInit()}};"
         "const json=async(url,body,method='POST')=>{const r=await fetch(url,{method,credentials:'same-origin',headers:{'content-type':'application/json','x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken},body:JSON.stringify(body)});"
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
         "document.addEventListener('submit',async e=>{"
         "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]'),operatorForm=e.target.closest('[data-operator-control]'),oidcForm=e.target.closest('[data-oidc-config]'),extensionForm=e.target.closest('[data-extension-package]');"
         "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm&&!operatorForm&&!oidcForm&&!extensionForm)return;e.preventDefault();"
-        "if(adminKeyForm){const f=adminKeyForm,fd=new FormData(f);const body={name:fd.get('name'),role:fd.get('role')||'admin'};try{const data=await json(f.action,body);f.reset();await refreshMain();showSecret(data,'Admin automation key created. Copy it now; it will not be shown again.','Use this oak_ key only for /admin/api and /status. Never paste it into chat apps, SDK tools, browser code, prompts, logs, or issue trackers.')}catch(err){showError(err)}return}"
+        "if(adminKeyForm){const f=adminKeyForm,fd=new FormData(f);const body={name:fd.get('name'),role:fd.get('role')||'admin'};try{const data=await json(f.action,body);f.reset();await refreshMain();showSecret(data,'Admin automation key created. Copy it now; it will not be shown again.','Use this admin key only for /admin/api and /status. Never paste it into chat apps, SDK tools, browser code, prompts, logs, or issue trackers.')}catch(err){showError(err)}return}"
         "if(oidcForm){const f=oidcForm,fd=new FormData(f);const body={enabled:fd.get('enabled')==='on'};"
         "['issuer','client_id','redirect_uri','authorization_endpoint','token_endpoint','jwks_uri'].forEach(k=>{body[k]=String(fd.get(k)||'').trim()});"
         "const secret=String(fd.get('client_secret')||'').trim();if(secret)body.client_secret=secret;"
@@ -2448,7 +2635,7 @@ def render_admin_dashboard(
         "if(keyForm){const f=keyForm,fd=new FormData(f),appId=fd.get('app_id');"
         "const body={};const label=String(fd.get('label')||'').trim();if(label)body.label=label;"
         "const url=f.dataset.actionTemplate.replace('{app_id}',encodeURIComponent(appId));"
-        "try{const data=await json(url,body);f.reset();await refreshMain();showSecret(data,'App API key created. Copy it now; it will not be shown again.','Use this opk_ key only in runtime Apps and SDK tools.','OpenAI-compatible setup: Base URL '+runtimeBaseUrl+' · API key {key}')}catch(err){showError(err)}}});"
+        "try{const data=await json(url,body);f.reset();await refreshMain();showSecret(data,'App API key created. Copy it now; it will not be shown again.','Use this key only in runtime Apps and SDK tools.','OpenAI-compatible setup: Base URL '+runtimeBaseUrl+' · API key {key}')}catch(err){showError(err)}}});"
         "document.addEventListener('click',async e=>{const revoke=e.target.closest('[data-revoke-credential]'),disable=e.target.closest('[data-disable-runtime-mapping]'),appDisable=e.target.closest('[data-disable-app]');"
         "if(!revoke&&!disable&&!appDisable)return;"
         "if(revoke){const id=revoke.dataset.revokeCredential;try{const data=await json('/admin/api/credentials/'+encodeURIComponent(id)+'/revoke',{});await refreshMain();show(data)}catch(err){showError(err)}return}"
@@ -2458,13 +2645,16 @@ def render_admin_dashboard(
         "</script>"
         "</head><body>"
         + header_html
-        + '<main class="shell-main">'
-        + _operator_intro()
+        + '<main class="shell-main admin-shell">'
+        + _admin_sidebar(
+            f"{wordmark[0]}.{wordmark[1]}" if wordmark else brand
+        )
+        + '<div class="admin-content">'
         + _section(
-            "Decision Path",
-            access_map_html,
-            section_id="decision-path",
-            intro="The workspace follows the runtime decision path: Profile, App, key, Identity default, then service capability.",
+            "Apps & Keys",
+            apps_keys_html,
+            section_id="apps-keys",
+            intro="Create the App identity first, then mint one or more keys under it.",
         )
         + _section(
             "Profiles",
@@ -2473,40 +2663,31 @@ def render_admin_dashboard(
             intro="Profiles are reusable runtime policies. Assign them to Apps; users do not hand-edit policy.",
         )
         + _section(
-            "Apps & Keys",
-            apps_keys_html,
-            section_id="apps-keys",
-            intro="Create the App identity first, then mint one or more opk_ runtime keys under it.",
-        )
-        + _section(
             "Identity",
             identity_html,
             section_id="identity",
-        )
-        + _section(
-            "Policy Test",
-            policy_simulator_html,
-            section_id="policy-test",
-            intro="Check a Profile decision before changing runtime policy or while investigating a denial.",
+            intro="Map OIDC groups, roles, email, domain, or gateway role to a default Profile for new runtime access.",
         )
         + _section(
             "Services",
             services_html,
             section_id="services",
-            intro="Configured backend services and capabilities behind the gateway. This is visibility first; runtime access still flows through Profiles.",
+            intro="Backend services and capabilities. Visibility only — runtime access still flows through Profiles.",
         )
         + _section(
             "APIs",
             api_surfaces_html,
             section_id="apis",
-            intro="Compatible client-facing surfaces on the front of the gateway. Profiles decide which Apps can use each surface.",
+            intro="Client-facing API surfaces. Profiles decide which Apps can use each one.",
         )
         + _section(
             "Admin Keys",
             admin_key_html,
             section_id="admin-keys",
-            intro="oak_ keys are for scripts that call admin endpoints. Keep them separate from opk_ runtime App keys.",
+            intro="Admin automation keys are for scripts that call admin endpoints. Keep them separate from App keys.",
         )
         + _section("Activity", activity_html, section_id="activity")
+        + "</div>"
+        + _ADMIN_NAV_SCRIPT
         + "</main></body></html>"
     )

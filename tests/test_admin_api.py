@@ -19,8 +19,51 @@ from gateway.admin_api import (  # noqa: E402
     AdminAuthError,
     AdminContext,
     create_admin_router,
+    derive_admin_attention,
 )
 from gateway.policy import AppProfile  # noqa: E402
+
+
+class DeriveAdminAttentionTests(unittest.TestCase):
+    def test_healthy_snapshot_yields_no_attention(self) -> None:
+        snap = {
+            "apps": [{"id": "a1", "name": "Good", "default_profile_id": "p1"}],
+            "profiles": [{"id": "p1"}],
+            "credentials": [{"app_id": "a1", "revoked_at": None}],
+        }
+        self.assertEqual(derive_admin_attention(snap), [])
+
+    def test_flags_app_and_service_problems_sorted_by_severity(self) -> None:
+        snap = {
+            "apps": [
+                {"id": "a1", "name": "Disabled", "disabled_at": 1, "default_profile_id": "p1"},
+                {"id": "a2", "name": "MissingProf", "default_profile_id": "p_gone"},
+                {"id": "a3", "name": "NoKey", "default_profile_id": "p1"},
+                {"id": "a4", "name": "Healthy", "default_profile_id": "p1"},
+            ],
+            "profiles": [{"id": "p1"}],
+            "credentials": [{"app_id": "a4", "revoked_at": None}],
+            "services": [
+                {"key": "comfy", "name": "ComfyUI", "status": "down"},
+                {"key": "tabby", "name": "TabbyAPI", "status": "degraded"},
+                {"key": "ok", "name": "Fine", "status": "up"},
+            ],
+        }
+        items = derive_admin_attention(snap)
+        # Problems sort before attention; healthy app + up service produce nothing.
+        severities = [i["severity"] for i in items]
+        self.assertEqual(severities, sorted(severities, key=lambda s: 0 if s == "problem" else 1))
+        titles = " | ".join(i["title"] for i in items)
+        self.assertIn("Disabled is disabled", titles)
+        self.assertIn("MissingProf's profile is missing", titles)
+        self.assertIn("NoKey has no active key", titles)
+        self.assertIn("ComfyUI is down", titles)
+        self.assertIn("TabbyAPI is degraded", titles)
+        self.assertNotIn("Healthy", titles)
+        self.assertNotIn("Fine", titles)
+        # Each item routes to the section that fixes it.
+        sections = {i["section"] for i in items}
+        self.assertEqual(sections, {"apps-keys", "services"})
 
 
 class FakeAdminStore:
@@ -548,6 +591,10 @@ class AdminAuthTests(unittest.TestCase):
             "separately",
             body["access_model"]["admin_roles"]["relationship"],
         )
+        # The seam exposes the "attention" list (things that want a look) so a
+        # future Next.js admin overview can consume it. Empty here = all healthy.
+        self.assertIn("attention", body)
+        self.assertIsInstance(body["attention"], list)
 
     def test_owner_role_is_admin_capable(self) -> None:
         def owner_auth(_request: Request) -> AdminContext:
