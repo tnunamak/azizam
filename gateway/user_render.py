@@ -28,19 +28,10 @@ __all__ = ["render_user_portal"]
 
 
 _PAGE_CSS = """
-  :root {
-    --vf-bg: #0A1620;
-    --vf-panel: #0E1E2C;
-    --vf-panel-2: #142A3D;
-    --vf-panel-3: #1C3850;
-    --vf-text: #E8E2D3;
-    --vf-muted: #8FA8BD;
-    --vf-subtle: #5C7589;
-    --vf-accent: #7BC4C8;
-    --vf-accent-2: #D49AA6;
-    --vf-line: rgba(95,145,210,0.14);
-    --vf-line-strong: rgba(125,180,230,0.26);
-  }
+  /* Page-specific styles for the user portal. The --vf-* palette and the vf-*
+     component classes come from the vendored brand package via SHELL_CSS; this
+     block only adds portal layout (hero, cards, key rows, activity feed) on top
+     of those tokens. */
   body {
     background:
       radial-gradient(circle at 18% -10%, rgba(123,196,200,0.14), transparent 30rem),
@@ -66,7 +57,7 @@ _PAGE_CSS = """
   }
   .lead { color: var(--muted); margin: 0; line-height: 1.55; }
   .eyebrow {
-    color: var(--vf-subtle);
+    color: var(--vf-text-subtle);
     font-size: 0.74rem;
     font-weight: 750;
     letter-spacing: 0.16em;
@@ -97,7 +88,7 @@ _PAGE_CSS = """
     background:
       linear-gradient(180deg, rgba(123,196,200,0.07), rgba(123,196,200,0.015)),
       var(--panel);
-    border: 1px solid var(--vf-line-strong);
+    border: 1px solid var(--vf-border-strong);
     border-radius: calc(var(--radius) + 6px);
     padding: clamp(var(--space-4), 4vw, var(--space-6));
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 18px 60px rgba(0,0,0,0.18);
@@ -124,7 +115,7 @@ _PAGE_CSS = """
   .hero-top .eyebrow { margin: 0; }
   .hero-headline { max-width: 16ch; }
   .hero-actions { display: grid; gap: var(--space-3); max-width: 26rem; }
-  .hero-actions .vf-btn { width: 100%; }
+  .hero-actions .vf-button { width: 100%; }
   .hero-or {
     display: flex;
     align-items: center;
@@ -139,14 +130,14 @@ _PAGE_CSS = """
   .base-card {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    background: var(--vf-panel);
+    background: var(--vf-surface-1);
   }
   .base-card > div, .shell-main > section, .section-head {
     min-width: 0;
   }
   .base-card h2 {
     margin: 0;
-    color: var(--vf-subtle);
+    color: var(--vf-text-subtle);
     font-size: 0.74rem;
     font-weight: 750;
     letter-spacing: 0.16em;
@@ -323,7 +314,7 @@ _PAGE_CSS = """
     background:
       linear-gradient(180deg, rgba(123,196,200,0.06), transparent),
       var(--panel);
-    border: 1px solid var(--vf-line-strong);
+    border: 1px solid var(--vf-border-strong);
     border-radius: 14px;
     padding: var(--space-4);
     display: grid;
@@ -655,7 +646,7 @@ _PAGE_CSS = """
     list-style: none;
   }
   .health-card > .health-summary::-webkit-details-marker { display: none; }
-  .health-card .vf-dot { width: 0.625rem; height: 0.625rem; flex: 0 0 auto; }
+  .health-card .vf-status-dot { width: 0.625rem; height: 0.625rem; flex: 0 0 auto; }
   .health-text { min-width: 0; flex: 1; }
   .health-line {
     font-weight: 600;
@@ -845,7 +836,7 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
         '<label class="field"><span>What is this key for?</span>'
         '<input type="text" name="label" placeholder="MacBook, Open WebUI, deploy script" '
         'aria-label="API key label"></label>'
-        '<button class="vf-btn primary" type="submit">Create key</button>'
+        '<button class="vf-button" type="submit">Create key</button>'
         "</form>"
         "</details>"
         if can_mint
@@ -861,7 +852,7 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
         "<summary>Remove this App</summary>"
         '<p class="app-remove-warn">Deleting this App revokes all of its keys '
         "immediately. Apps using them lose access.</p>"
-        '<button class="vf-btn danger" type="button" data-delete-owned-app="'
+        '<button class="vf-button vf-button-danger" type="button" data-delete-owned-app="'
         + app_id
         + '" data-app-name="'
         + name
@@ -934,23 +925,26 @@ def _signed_out_hero(
     actions: list[str] = []
     if oidc_enabled:
         actions.append(
-            f'<a class="vf-btn primary lg" href="{esc(login_url)}">'
+            f'<a class="vf-button vf-button-lg" href="{esc(login_url)}">'
             f"Continue with {esc(brand_noun)} ID</a>"
         )
         # OIDC is the happy path; setup stays available as a quiet fallback
         # for operators who need the local-owner or admin-key route.
         setup_label = "Set up this gateway" if not owner_exists else "Operator setup"
         actions.append(
-            f'<a class="vf-btn secondary lg" href="/setup">{setup_label}</a>'
+            '<a class="vf-button vf-button-secondary vf-button-lg" '
+            f'href="/setup">{setup_label}</a>'
         )
     elif not owner_exists:
         # Fresh gateway, no OIDC: the only real action is to claim it on /setup.
         actions.append(
-            '<a class="vf-btn primary lg" href="/setup">Set up this gateway</a>'
+            '<a class="vf-button vf-button-lg" href="/setup">Set up this gateway</a>'
         )
     else:
         # Owner exists but no OIDC: local owner sign-in lives on /setup.
-        actions.append('<a class="vf-btn primary lg" href="/setup">Sign in</a>')
+        actions.append(
+            '<a class="vf-button vf-button-lg" href="/setup">Sign in</a>'
+        )
 
     # Helper copy only when it tells the user something the button doesn't. When
     # an owner already exists (OIDC off), the "Sign in" button is self-evident —
@@ -982,7 +976,7 @@ def _signed_out_hero(
         '<div class="hero hero-door">'
         '<div class="hero-top">'
         f'<p class="eyebrow">{eyebrow}</p>'
-        '<span class="vf-pill accent">invite only</span>'
+        '<span class="vf-pill vf-pill-accent">invite only</span>'
         "</div>"
         '<h2 id="hero-heading" class="hero-headline">'
         "Sign in to use the gateway.</h2>"
@@ -1063,7 +1057,7 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
             + "</details>"
         )
         section_action = (
-            '<button class="vf-btn ghost sm" type="button" '
+            '<button class="vf-button vf-button-ghost vf-button-sm" type="button" '
             'data-focus-create-app aria-label="Create another App">+ New</button>'
         )
 
@@ -1137,10 +1131,10 @@ def _key_detail_sheet() -> str:
         '<span class="vf-sheet-grip" aria-hidden="true"></span>'
         '<div class="key-reveal-head">'
         '<div>'
-        '<p class="vf-kicker" id="key-detail-mask"></p>'
+        '<p class="vf-section-label" id="key-detail-mask"></p>'
         '<h2 id="key-detail-title">What this key can do</h2>'
         "</div>"
-        '<button type="button" class="vf-btn ghost sm" '
+        '<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
         'data-close-key-detail>Done</button>'
         "</div>"
         '<div id="key-detail-body"></div>'
@@ -1164,10 +1158,10 @@ def _receipt_detail_sheet() -> str:
         '<span class="vf-sheet-grip" aria-hidden="true"></span>'
         '<div class="key-reveal-head">'
         '<div>'
-        '<p class="vf-kicker" id="receipt-kicker">request</p>'
+        '<p class="vf-section-label" id="receipt-kicker">request</p>'
         '<h2 id="receipt-title">Request detail</h2>'
         "</div>"
-        '<button type="button" class="vf-btn ghost sm" '
+        '<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
         'data-close-receipt>Done</button>'
         "</div>"
         '<div id="receipt-body"></div>'
@@ -1191,10 +1185,10 @@ def _key_reveal_sheet() -> str:
         '<span class="vf-sheet-grip" aria-hidden="true"></span>'
         '<div class="key-reveal-head">'
         '<div>'
-        '<p class="vf-kicker">new key</p>'
+        '<p class="vf-section-label">new key</p>'
         '<h2 id="key-reveal-title">Save this key</h2>'
         "</div>"
-        '<button type="button" class="vf-btn ghost sm" '
+        '<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
         'data-close-key-reveal>Done</button>'
         "</div>"
         '<div id="key-reveal-body"></div>'
@@ -1225,7 +1219,7 @@ def _health_card(gateway_line: str) -> str:
     return (
         '<details class="vf-card health-card" id="gateway-health">'
         '<summary class="health-summary">'
-        '<span class="vf-dot ok" id="health-dot" aria-hidden="true"></span>'
+        '<span class="vf-status-dot" id="health-dot" aria-hidden="true"></span>'
         '<div class="health-text">'
         f'<div class="health-line" id="health-line">{esc(gateway_line)}</div>'
         '<div class="health-detail" id="health-detail">Checking reachability…</div>'
@@ -1381,12 +1375,12 @@ def render_user_portal(
     try {{
       const res = await fetch("/health", {{ cache: "no-store" }});
       const ok = res.ok;
-      healthDot.className = "vf-dot " + (ok ? "ok" : "bad");
+      healthDot.className = "vf-status-dot" + (ok ? "" : " vf-status-dot-bad");
       healthDetail.textContent = ok
         ? "Reachable · checked just now"
         : "Unreachable · gateway returned " + res.status;
     }} catch (_) {{
-      healthDot.className = "vf-dot bad";
+      healthDot.className = "vf-status-dot vf-status-dot-bad";
       healthDetail.textContent = "Unreachable · no response";
     }}
   }}
@@ -1560,7 +1554,7 @@ def render_user_portal(
 
     const copyKey = document.createElement("button");
     copyKey.type = "button";
-    copyKey.className = "vf-btn primary";
+    copyKey.className = "vf-button";
     copyKey.textContent = "Copy key";
     copyKey.addEventListener("click", () => copyText(key, copyKey));
 
@@ -1579,7 +1573,7 @@ def render_user_portal(
     // explained, not a mystery the user discovers by pasting the curl.
     const status = document.createElement("div");
     status.className = "reveal-status";
-    status.innerHTML = '<span class="vf-dot" aria-hidden="true"></span><span class="reveal-status-text">Checking your key against the gateway\\u2026</span>';
+    status.innerHTML = '<span class="vf-status-dot vf-status-dot-neutral" aria-hidden="true"></span><span class="reveal-status-text">Checking your key against the gateway\\u2026</span>';
 
     wrap.append(
       text,
@@ -1596,9 +1590,12 @@ def render_user_portal(
   }}
 
   async function probeMintedKey(key, statusEl) {{
-    const dot = statusEl.querySelector(".vf-dot");
+    const dot = statusEl.querySelector(".vf-status-dot");
     const label = statusEl.querySelector(".reveal-status-text");
-    const set = (tone, msg) => {{ dot.className = "vf-dot " + tone; label.textContent = msg; }};
+    const set = (tone, msg) => {{
+      dot.className = "vf-status-dot" + (tone === "ok" ? "" : " vf-status-dot-" + tone);
+      label.textContent = msg;
+    }};
     try {{
       const res = await fetch(baseUrl + "/v1/models", {{
         headers: {{ "Authorization": "Bearer " + key }},
@@ -1794,7 +1791,7 @@ def render_user_portal(
       label.append(labelText, input);
       const createKey = document.createElement("button");
       createKey.type = "submit";
-      createKey.className = "vf-btn primary";
+      createKey.className = "vf-button";
       createKey.textContent = "Create key";
       form.append(label, createKey);
       create.append(summary, form);
@@ -1812,7 +1809,7 @@ def render_user_portal(
       warn.textContent = "Deleting this App revokes all of its keys immediately. Apps using them lose access.";
       const deleteApp = document.createElement("button");
       deleteApp.type = "button";
-      deleteApp.className = "vf-btn danger";
+      deleteApp.className = "vf-button vf-button-danger";
       deleteApp.dataset.deleteOwnedApp = appId;
       deleteApp.dataset.appName = title.textContent;
       deleteApp.textContent = "Delete " + title.textContent;
@@ -2007,7 +2004,7 @@ def render_user_portal(
         pills.className = "key-detail-pills";
         groups.forEach((g) => {{
           const pill = document.createElement("span");
-          pill.className = "vf-pill accent";
+          pill.className = "vf-pill vf-pill-accent";
           pill.textContent = g.count > 1 ? g.label + " ×" + g.count : g.label;
           pills.append(pill);
         }});
@@ -2042,7 +2039,7 @@ def render_user_portal(
       // Revoke this key.
       const revoke = document.createElement("button");
       revoke.type = "button";
-      revoke.className = "vf-btn danger full";
+      revoke.className = "vf-button vf-button-danger vf-button-full";
       revoke.textContent = "Revoke this key";
       revoke.addEventListener("click", async () => {{
         if (!confirm("Revoke this API key? Apps using it lose access immediately.")) return;
@@ -2094,7 +2091,7 @@ def render_user_portal(
     const tone = statusTone(r.status);
 
     const dot = document.createElement("span");
-    dot.className = "vf-dot " + (tone === "bad" ? "bad" : tone === "warn" ? "warn" : "ok");
+    dot.className = "vf-status-dot" + (tone === "bad" ? " vf-status-dot-bad" : tone === "warn" ? " vf-status-dot-warn" : "");
     dot.setAttribute("aria-hidden", "true");
 
     const main = document.createElement("span");

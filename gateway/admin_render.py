@@ -114,7 +114,7 @@ _PAGE_CSS = """
   }
   .attention-row:last-child { border-bottom: 0; }
   .attention-row:hover { background: var(--panel-2); }
-  .attention-row .vf-dot { margin-top: 0.35rem; flex: 0 0 auto; }
+  .attention-row .vf-status-dot { margin-top: 0.35rem; flex: 0 0 auto; }
   .attention-text { display: grid; gap: 0.1rem; min-width: 0; }
   .attention-text strong { color: var(--text); font-weight: 600; font-size: 0.92rem; }
   .attention-detail { color: var(--muted); font-size: 0.83rem; }
@@ -1764,7 +1764,7 @@ def _attention_panel(items: list[Mapping[str, Any]]) -> str:
     if not items:
         return (
             '<div class="attention-panel clear">'
-            '<span class="vf-dot ok" aria-hidden="true"></span>'
+            '<span class="vf-status-dot" aria-hidden="true"></span>'
             "<div><strong>Everything looks healthy.</strong>"
             "<p>No Apps or services need attention right now.</p></div>"
             "</div>"
@@ -1772,14 +1772,16 @@ def _attention_panel(items: list[Mapping[str, Any]]) -> str:
     rows = []
     for item in items:
         severity = str(item.get("severity") or "attention")
-        dot = "bad" if severity == "problem" else "warn"
+        dot = (
+            "vf-status-dot-bad" if severity == "problem" else "vf-status-dot-warn"
+        )
         section = str(item.get("section") or "apps-keys")
         title = _esc(item.get("title") or "Needs a look")
         detail = _esc(item.get("detail") or "")
         rows.append(
             f'<a class="attention-row" href="#{_esc(section)}" '
             f'data-admin-jump="{_esc(section)}">'
-            f'<span class="vf-dot {dot}" aria-hidden="true"></span>'
+            f'<span class="vf-status-dot {dot}" aria-hidden="true"></span>'
             f"<span class=\"attention-text\"><strong>{title}</strong>"
             f"<span class=\"attention-detail\">{detail}</span></span>"
             "</a>"

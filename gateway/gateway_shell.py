@@ -17,6 +17,8 @@ import html
 import json
 from typing import Any, Iterable, Mapping
 
+from .brand_css import BRAND_COMPONENTS_CSS, BRAND_TOKENS_CSS
+
 __all__ = [
     "SHELL_CSS",
     "esc",
@@ -29,24 +31,23 @@ __all__ = [
 
 
 # Single design language for the whole site. Both portals import this.
-SHELL_CSS = """
+# The gateway's design language is the @vivid-fish/brand package, vendored into
+# gateway/brand_css.py (see scripts/vendor_brand_css.py). SHELL_CSS layers, in
+# cascade order: (1) brand tokens — the canonical --vf-* palette/type/radii;
+# (2) the gateway's alias + layout :root, mapping the gateway's older --bg /
+# --panel / --text names onto --vf-* so existing chrome and per-page CSS keep
+# working; (3) brand component classes (.vf-card, .vf-button, .vf-status-dot,
+# .vf-section, .vf-row, .vf-feed, …) — the shared visual vocabulary; (4) the
+# gateway's own chrome (header, nav, tab bar, sheets, page background) and the
+# few primitives the brand package doesn't own (.vf-sentence). New screens
+# should reach for the brand classes first; only add to _GATEWAY_CHROME_CSS
+# when the package genuinely lacks a primitive (and prefer pushing it upstream).
+
+# (2) Gateway alias + layout root. The brand package owns the --vf-* tokens; the
+# gateway keeps a thin compatibility layer of shorter aliases plus the layout
+# tokens (spacing scale, shell width, gutter) the package doesn't define.
+_GATEWAY_ROOT_CSS = """
   :root {
-    color-scheme: dark;
-    --vf-bg: #0A1620;
-    --vf-surface-1: #0E1E2C;
-    --vf-surface-2: #142A3D;
-    --vf-surface-3: #1C3850;
-    --vf-border: rgba(95, 145, 210, 0.14);
-    --vf-border-strong: rgba(125, 180, 230, 0.26);
-    --vf-text: #E8E2D3;
-    --vf-muted: #8FA8BD;
-    --vf-subtle: #5C7589;
-    --vf-accent: #7BC4C8;
-    --vf-accent-ink: #07151D;
-    --vf-ok: #6FB89A;
-    --vf-warn: #D9B86A;
-    --vf-bad: #D88370;
-    --vf-info: #7FB4C7;
     --bg: var(--vf-bg);
     --panel: var(--vf-surface-1);
     --panel-2: var(--vf-surface-2);
@@ -54,8 +55,8 @@ SHELL_CSS = """
     --line: var(--vf-border);
     --line-strong: var(--vf-border-strong);
     --text: var(--vf-text);
-    --muted: var(--vf-muted);
-    --soft: var(--vf-subtle);
+    --muted: var(--vf-text-muted);
+    --soft: var(--vf-text-subtle);
     --accent: var(--vf-accent);
     --accent-ink: var(--vf-accent-ink);
     --link: var(--vf-accent);
@@ -65,10 +66,11 @@ SHELL_CSS = """
     --bad-bg: color-mix(in srgb, var(--vf-bad) 12%, transparent);
     --good: var(--vf-ok);
     --good-bg: color-mix(in srgb, var(--vf-ok) 12%, transparent);
+    --info: var(--vf-info);
     --focus: var(--vf-accent);
-    --radius: 12px;
-    --radius-sm: 8px;
-    --radius-pill: 999px;
+    --radius: var(--vf-radius-md);
+    --radius-sm: var(--vf-radius-sm);
+    --radius-pill: var(--vf-radius-pill);
     --space-1: 0.25rem;
     --space-2: 0.5rem;
     --space-3: 0.75rem;
@@ -79,10 +81,17 @@ SHELL_CSS = """
     --space-12: 3rem;
     --shell-max: 1080px;
     --gutter: clamp(1.25rem, 4vw, 2rem);
-    --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    --font-serif: 'Newsreader', ui-serif, Georgia, serif;
-    --font-mono: 'JetBrains Mono', 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --font-sans: var(--vf-font-sans);
+    --font-serif: var(--vf-font-serif);
+    --font-mono: var(--vf-font-mono);
   }
+"""
+
+# (4) Gateway chrome — page background, header, nav, main column, tab bar,
+# sheets, mobile rules, and the gateway-only .vf-sentence voice. Everything
+# here references the alias variables above. Anything that is a reusable visual
+# primitive belongs in the brand package, not here.
+_GATEWAY_CHROME_CSS = """
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   /* The base color lives on html so a page taller than the viewport never
@@ -252,40 +261,12 @@ SHELL_CSS = """
   }
 
   /* ============================================================
-     Design primitives — ported from the Vivid Fish design handoff
-     (docs/design/vivid-fish-handoff/gateway/atoms.jsx). Shared by the
-     user portal and admin so screens read as one calm, branded app.
+     Gateway-only primitive: the serif "human sentence" voice for
+     plain-language access copy. The rest of the visual vocabulary
+     (.vf-card, .vf-button, .vf-status-dot, .vf-pill, .vf-section,
+     .vf-row, .vf-feed, .vf-glyph, …) comes from the vendored brand
+     package above — do not redefine those here.
      ============================================================ */
-
-  /* Status dot — a small reachability/health indicator. */
-  .vf-dot {
-    display: inline-block;
-    width: 0.5rem; height: 0.5rem;
-    border-radius: var(--radius-pill);
-    background: var(--soft);
-    flex: 0 0 auto;
-  }
-  .vf-dot.ok   { background: var(--good); }
-  .vf-dot.warn { background: var(--warn); }
-  .vf-dot.bad  { background: var(--bad); }
-  .vf-dot.info { background: var(--info); }
-  .vf-dot.pulse { animation: vf-pulse 2.2s ease-in-out infinite; }
-  @keyframes vf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-  @media (prefers-reduced-motion: reduce) {
-    .vf-dot.pulse { animation: none; }
-  }
-
-  /* Eyebrow / kicker — mono, uppercase, tracked. */
-  .vf-kicker {
-    font-family: var(--font-mono);
-    font-size: 0.65rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--soft);
-    margin: 0;
-  }
-
-  /* Serif sentence — the "human sentence" voice for plain-language access. */
   .vf-sentence {
     margin: 0;
     font-family: var(--font-serif);
@@ -296,87 +277,6 @@ SHELL_CSS = """
   }
   .vf-sentence.plain { font-style: normal; }
   .vf-sentence strong { color: var(--accent); font-weight: 600; font-style: normal; }
-
-  /* Pill — mono, uppercase, tinted tone backgrounds. */
-  .vf-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    height: 1.375rem;
-    padding: 0 0.6rem;
-    border-radius: var(--radius-pill);
-    background: var(--panel-3);
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 0.66rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    white-space: nowrap;
-  }
-  .vf-pill.accent  { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
-  .vf-pill.ok      { background: var(--good-bg); color: var(--good); }
-  .vf-pill.warn    { background: var(--warn-bg); color: var(--warn); }
-  .vf-pill.bad     { background: var(--bad-bg); color: var(--bad); }
-  .vf-pill.info    { background: color-mix(in srgb, var(--info) 14%, transparent); color: var(--info); }
-
-  /* Card — calm raised surface with the design's 14px radius. */
-  .vf-card {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: var(--space-4);
-  }
-  .vf-card.raised { background: var(--panel-2); }
-  a.vf-card, button.vf-card, .vf-card[role="button"] { cursor: pointer; text-align: left; width: 100%; }
-  a.vf-card:hover { text-decoration: none; border-color: var(--line-strong); }
-
-  /* Button — pill-shaped, four variants matching the design's Btn. */
-  .vf-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    height: 2.75rem;
-    padding: 0 1.125rem;
-    border-radius: var(--radius-pill);
-    border: 1px solid transparent;
-    font-family: var(--font-sans);
-    font-size: 0.875rem;
-    font-weight: 600;
-    letter-spacing: -0.005em;
-    cursor: pointer;
-  }
-  .vf-btn.full { width: 100%; }
-  .vf-btn.lg { height: 3.25rem; font-size: 0.97rem; padding: 0 1.375rem; }
-  .vf-btn.sm { height: 2rem; font-size: 0.78rem; padding: 0 0.875rem; font-weight: 500; }
-  .vf-btn.primary {
-    background: var(--accent);
-    color: var(--accent-ink);
-    box-shadow: 0 1px 0 rgba(255,255,255,0.12) inset, 0 4px 14px rgba(0,0,0,0.18);
-  }
-  .vf-btn.secondary { background: var(--panel-2); color: var(--text); border-color: var(--line-strong); font-weight: 500; }
-  .vf-btn.ghost { background: transparent; color: var(--muted); font-weight: 500; }
-  .vf-btn.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
-  .vf-btn:hover { filter: brightness(1.06); text-decoration: none; }
-  .vf-btn:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
-
-  /* Section — kicker + uppercase title with an optional trailing action. */
-  .vf-section { display: grid; gap: 0.625rem; }
-  .vf-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
-  .vf-section-head .vf-section-title {
-    margin: 0;
-    font-family: var(--font-sans);
-    font-weight: 600;
-    font-size: 0.8rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--muted);
-  }
-
-  /* Stacked rows inside a single card (padding: 0 card + divided rows). */
-  .vf-rows { display: grid; }
-  .vf-rows > .vf-row { display: flex; align-items: center; gap: 0.625rem; padding: 0.75rem 0.875rem; }
-  .vf-rows > .vf-row + .vf-row { border-top: 1px solid var(--line); }
 
   /* ============================================================
      Mobile foundation — bottom-tab nav (design's native-app shell).
@@ -424,9 +324,11 @@ SHELL_CSS = """
     body.has-tabbar { padding-bottom: 0; }
   }
 
-  /* Touch-target floor on mobile: every interactive control >= 44px. */
+  /* Touch-target floor on mobile: every interactive control >= 44px. The
+     brand .vf-button is already 44px; this lifts the 36px .vf-button-sm to
+     the touch floor on small screens too. */
   @media (max-width: 720px) {
-    .vf-btn, .vf-btn.sm { min-height: 2.75rem; }
+    .vf-button, .vf-button-sm { min-height: 2.75rem; }
     button, .pill, summary { min-height: 2.75rem; }
     input, select, textarea { min-height: 2.75rem; }
   }
@@ -464,6 +366,17 @@ SHELL_CSS = """
     .vf-sheet-grip { display: none; }
   }
 """
+
+
+# Single design language for the whole site, assembled in cascade order:
+# brand tokens, the gateway's alias/layout root, the brand component classes,
+# then the gateway's own chrome. Both portals (and /setup, /status) import this.
+SHELL_CSS = (
+    BRAND_TOKENS_CSS
+    + _GATEWAY_ROOT_CSS
+    + BRAND_COMPONENTS_CSS
+    + _GATEWAY_CHROME_CSS
+)
 
 
 def esc(value: Any) -> str:

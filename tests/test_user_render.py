@@ -368,7 +368,9 @@ class UserPortalRenderTests(unittest.TestCase):
             oidc_enabled=True, owner_exists=True, wordmark=("vivid", "fish")
         )
         self.assertIn('class="hero hero-door"', branded)
-        self.assertIn('<span class="vf-pill accent">invite only</span>', branded)
+        self.assertIn(
+            '<span class="vf-pill vf-pill-accent">invite only</span>', branded
+        )
         self.assertIn('<div class="hero-or">', branded)
         self.assertIn("Continue with vivid.fish ID", branded)
 
