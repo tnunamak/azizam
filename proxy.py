@@ -2771,14 +2771,22 @@ async def probe_backend(
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, timeout=HEALTH_CHECK_TIMEOUT)
+        body: Any = None
+        try:
+            ct = resp.headers.get("content-type", "")
+            if "json" in ct:
+                body = resp.json()
+        except Exception:  # noqa: BLE001 — non-JSON body is fine; body stays None
+            pass
         return {
             "ok": resp.status_code < 500,
             "status": resp.status_code,
             "error": "" if resp.status_code < 500 else f"HTTP {resp.status_code}",
             "url": url,
+            "body": body,
         }
     except Exception as exc:  # noqa: BLE001 — surface the real transport error
-        return {"ok": False, "status": None, "error": str(exc) or type(exc).__name__, "url": url}
+        return {"ok": False, "status": None, "error": str(exc) or type(exc).__name__, "url": url, "body": None}
 
 
 async def check_tabby_health() -> bool:

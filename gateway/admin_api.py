@@ -1609,6 +1609,79 @@ def create_admin_router(
         result = await service_probe(host, port, path)
         return JSONResponse(status_code=status.HTTP_200_OK, content={"probe": dict(result)})
 
+    @router.post("/operator/services/detect-models")
+    async def detect_service_models(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if service_probe is None:
+            return _RouteError(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "probe_unavailable",
+                "model detection is not available in this process",
+            ).as_response()
+        try:
+            body = await _read_json_body(request)
+        except _RouteError as exc:
+            return exc.as_response()
+        raw = service_registry.service_form_to_raw({**body, "name": body.get("name") or "probe"})
+        host = str(raw.get("host") or "").strip()
+        if not host:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_service", "a host or base URL is required"
+            ).as_response()
+        port = raw.get("port")
+        base = str(raw.get("base_path") or "/v1").rstrip("/")
+        models_path = base + "/models"
+        try:
+            result = await service_probe(host, port, models_path)
+            if not result.get("ok"):
+                return JSONResponse(
+                    status_code=status.HTTP_200_OK,
+                    content={
+                        "detected": {
+                            "models": [],
+                            "ok": False,
+                            "error": result.get("error") or f"HTTP {result.get('status')}",
+                        }
+                    },
+                )
+            resp_body = result.get("body")
+            models: list[str] = []
+            if isinstance(resp_body, dict):
+                data = resp_body.get("data") or resp_body.get("models") or []
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict):
+                            mid = item.get("id")
+                            if isinstance(mid, str):
+                                models.append(mid)
+                        elif isinstance(item, str):
+                            models.append(item)
+            elif isinstance(resp_body, list):
+                for item in resp_body:
+                    if isinstance(item, dict):
+                        mid = item.get("id")
+                        if isinstance(mid, str):
+                            models.append(mid)
+                    elif isinstance(item, str):
+                        models.append(item)
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={"detected": {"models": models, "ok": True, "error": ""}},
+            )
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "detected": {
+                        "models": [],
+                        "ok": False,
+                        "error": str(exc) or type(exc).__name__,
+                    }
+                },
+            )
+
     @router.get("/operator/litellm-config")
     def get_litellm_config(request: Request) -> JSONResponse:
         ctx = _guard(request)

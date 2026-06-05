@@ -394,6 +394,13 @@ _PAGE_CSS = """
   .service-test-result { font-size: 0.84rem; min-height: 1.1rem; }
   .service-test-result.good { color: var(--good); }
   .service-test-result.bad { color: var(--bad); }
+  .service-models-section { display: grid; gap: var(--space-2); }
+  .service-models-section > .field-hint { font-size: 0.78rem; color: var(--soft); }
+  .service-model-rows { display: grid; gap: 0.4rem; }
+  .service-model-row { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+  .service-model-row input { flex: 1 1 10rem; min-width: 0; background: oklch(15.5% 0.016 250);
+    border: 1px solid var(--line); color: var(--text); min-height: 2.35rem;
+    padding: 0.35rem 0.55rem; border-radius: 6px; font-size: 0.88rem; }
   @media (max-width: 760px) {
     /* Tables were the #1 mobile-overflow culprit (a 7-column table is ~1200px
        wide — horizontal scroll OR it pushes the page sideways). On mobile we
@@ -1246,6 +1253,59 @@ def _service_form(record: Mapping[str, Any] | None = None) -> str:
         managed = bool(lifecycle.get("managed"))
     caps = set(_normalize_caps(rec.get("capabilities")))
 
+    # Build server-rendered model rows from config.models (list shape preferred).
+    # Each stored entry has {model_group: <public>, upstream_model: <upstream>}.
+    raw_models = config.get("models")
+    model_rows_html = ""
+    if isinstance(raw_models, (list, tuple)) and raw_models:
+        for m in raw_models:
+            if isinstance(m, Mapping):
+                pub = _esc(m.get("model_group") or "")
+                ups = _esc(m.get("upstream_model") or "")
+            else:
+                pub = _esc(str(m))
+                ups = ""
+            model_rows_html += (
+                '<div class="service-model-row">'
+                f'<input type="text" name="model_public" placeholder="Public name" '
+                f'aria-label="Public model name" value="{pub}">'
+                f'<input type="text" name="model_upstream" placeholder="Upstream model" '
+                f'aria-label="Upstream model name" value="{ups}">'
+                '<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
+                'data-service-model-remove aria-label="Remove row">&minus;</button>'
+                "</div>"
+            )
+    elif isinstance(raw_models, Mapping) and raw_models:
+        for _mid, m in raw_models.items():
+            if isinstance(m, Mapping):
+                pub = _esc(m.get("model_group") or "")
+                ups = _esc(m.get("upstream_model") or "")
+            else:
+                pub = ""
+                ups = ""
+            model_rows_html += (
+                '<div class="service-model-row">'
+                f'<input type="text" name="model_public" placeholder="Public name" '
+                f'aria-label="Public model name" value="{pub}">'
+                f'<input type="text" name="model_upstream" placeholder="Upstream model" '
+                f'aria-label="Upstream model name" value="{ups}">'
+                '<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
+                'data-service-model-remove aria-label="Remove row">&minus;</button>'
+                "</div>"
+            )
+    if not model_rows_html:
+        # One blank row so the form works without JS.
+        model_rows_html = (
+            '<div class="service-model-row">'
+            '<input type="text" name="model_public" placeholder="Public name" '
+            'aria-label="Public model name" value="">'
+            '<input type="text" name="model_upstream" placeholder="Upstream model" '
+            'aria-label="Upstream model name" value="">'
+            '<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
+            'data-service-model-remove aria-label="Remove row">&minus;</button>'
+            "</div>"
+        )
+
     preset_options = "".join(
         f'<option value="{_esc(p["id"])}">{_esc(p["label"])}</option>'
         for p in service_registry.PROVIDER_PRESETS
@@ -1300,6 +1360,17 @@ def _service_form(record: Mapping[str, Any] | None = None) -> str:
         + '<label class="check"><input type="checkbox" name="enabled" '
         + ("checked" if enabled else "")
         + "> Enabled</label>"
+        + '<div class="service-models-section" data-service-models>'
+        + '<label class="field-label">Models'
+        + '</label>'
+        + '<span class="field-hint">The model names clients can request, and the upstream model '
+        + "each maps to. Use <code>*</code> as the upstream to expose everything this backend serves.</span>"
+        + '<div class="service-model-rows">'
+        + model_rows_html
+        + "</div>"
+        + '<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
+        + 'data-service-model-add>+ Add model</button>'
+        + "</div>"
         + '<details class="service-form-advanced"><summary>Advanced</summary>'
         + '<fieldset class="field-group"><legend>Role</legend>'
         + role_radios
@@ -1386,6 +1457,18 @@ _SERVICE_CRUD_JS = (
     "if(rec){fillServiceForm(f,rec)}f.hidden=false;const n=f.querySelector('[name=name]');if(n)n.focus()}"
     "function hideServiceForm(){const f=serviceForm();if(f)f.hidden=true}"
     "function showRestartBanner(){const b=document.getElementById('service-restart-banner');if(b)b.hidden=false}"
+    "function addModelRow(container,pub,ups){"
+    "const row=document.createElement('div');row.className='service-model-row';"
+    "const pi=document.createElement('input');pi.type='text';pi.name='model_public';"
+    "pi.placeholder='Public name';pi.setAttribute('aria-label','Public model name');pi.value=pub||'';"
+    "const ui=document.createElement('input');ui.type='text';ui.name='model_upstream';"
+    "ui.placeholder='Upstream model';ui.setAttribute('aria-label','Upstream model name');ui.value=ups||'';"
+    "const btn=document.createElement('button');btn.type='button';"
+    "btn.className='vf-button vf-button-ghost vf-button-sm';"
+    "btn.setAttribute('data-service-model-remove','');btn.setAttribute('aria-label','Remove row');"
+    "btn.textContent='−';"
+    "row.appendChild(pi);row.appendChild(ui);row.appendChild(btn);"
+    "container.appendChild(row)}"
     "function fillServiceForm(f,rec){const c=(rec&&rec.config)||{};"
     "const set=(k,v)=>{const el=f.querySelector('[name='+k+']');if(el)el.value=v==null?'':v};"
     "set('name',rec.name||c.name||'');"
@@ -1394,7 +1477,15 @@ _SERVICE_CRUD_JS = (
     "const caps=(rec.capabilities||[]);f.querySelectorAll('[name=capabilities]').forEach(cb=>{cb.checked=caps.indexOf(cb.value)!==-1});"
     "f.querySelectorAll('[name=role]').forEach(rb=>{rb.checked=rb.value===(rec.role||'required')});"
     "const en=f.querySelector('[name=enabled]');if(en)en.checked=rec.enabled!==false;"
-    "const mg=f.querySelector('[name=managed]');if(mg)mg.checked=!!(rec.lifecycle&&rec.lifecycle.managed)}"
+    "const mg=f.querySelector('[name=managed]');if(mg)mg.checked=!!(rec.lifecycle&&rec.lifecycle.managed);"
+    "const mc=f.querySelector('[data-service-models] .service-model-rows');if(mc){"
+    "mc.innerHTML='';"
+    "const models=(c.models||[]);"
+    "if(Array.isArray(models)&&models.length){"
+    "models.forEach(function(m){addModelRow(mc,m.model_group||'',m.upstream_model||'')})"
+    "}else if(models&&typeof models==='object'&&!Array.isArray(models)){"
+    "Object.values(models).forEach(function(m){if(m&&typeof m==='object'){addModelRow(mc,m.model_group||'',m.upstream_model||'')}})"
+    "}else{addModelRow(mc,'','')}}}"
     "function applyServicePreset(id){const p=SERVICE_PRESETS[id];const f=serviceForm();if(!p||!f)return;"
     "const u=f.querySelector('[name=base_url]');if(u&&!u.value){u.value='http://127.0.0.1'+(p.default_port?(':'+p.default_port):'')+(p.base_path||'')}"
     "if(p.capabilities){f.querySelectorAll('[name=capabilities]').forEach(cb=>{cb.checked=p.capabilities.indexOf(cb.value)!==-1})}}"
@@ -1405,7 +1496,10 @@ _SERVICE_CRUD_JS = (
     "const note=String(fd.get('note')||'').trim();if(note)body.note=note;"
     "const pr=String(fd.get('priority')||'').trim();if(pr)body.priority=Number(pr);"
     "body.capabilities=fd.getAll('capabilities');body.role=fd.get('role')||'required';"
-    "body.enabled=fd.get('enabled')!=null;body.managed=fd.get('managed')!=null;return body}"
+    "body.enabled=fd.get('enabled')!=null;body.managed=fd.get('managed')!=null;"
+    "const pubs=fd.getAll('model_public');const upss=fd.getAll('model_upstream');"
+    "body.models=pubs.map(function(p,i){return{public:p.trim(),upstream:(upss[i]||'').trim()}})"
+    ".filter(function(m){return m.public||m.upstream});return body}"
     "async function editService(id){try{const r=await fetch('/admin/api/operator/service-registry',{credentials:'same-origin',cache:'no-store',headers:{'x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken}});const data=await r.json();"
     "const reg=data.service_registry||data;const rec=(reg.services||{})[id];if(!rec){showError({error:{message:'service not found'}});return}"
     "showServiceForm(null);const f=serviceForm();if(!f)return;f.dataset.serviceForm='edit';f.dataset.serviceId=id;"
@@ -2919,6 +3013,9 @@ def render_admin_dashboard(
         "try{await json(url,body,editing?'PATCH':'POST');await refreshMain();showRestartBanner()}catch(err){showError(err)}return}});"
         "document.addEventListener('click',async e=>{const revoke=e.target.closest('[data-revoke-credential]'),disable=e.target.closest('[data-disable-runtime-mapping]'),appDisable=e.target.closest('[data-disable-app]');"
         "const svcAdd=e.target.closest('[data-service-add]'),svcEdit=e.target.closest('[data-service-edit]'),svcDelete=e.target.closest('[data-service-delete]'),svcToggle=e.target.closest('[data-service-toggle]'),svcTest=e.target.closest('[data-service-test]'),svcCancel=e.target.closest('[data-service-form-cancel]');"
+        "const svcModelAdd=e.target.closest('[data-service-model-add]'),svcModelRemove=e.target.closest('[data-service-model-remove]');"
+        "if(svcModelAdd){e.preventDefault();const mc=svcModelAdd.closest('[data-service-models]').querySelector('.service-model-rows');if(mc)addModelRow(mc,'','');return}"
+        "if(svcModelRemove){e.preventDefault();const row=svcModelRemove.closest('.service-model-row');if(row)row.remove();return}"
         "if(svcAdd){e.preventDefault();showServiceForm(null);return}"
         "if(svcCancel){e.preventDefault();hideServiceForm();return}"
         "if(svcTest){e.preventDefault();await testServiceConnection();return}"

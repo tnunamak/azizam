@@ -605,3 +605,98 @@ def test_provider_presets_have_a_custom_escape_hatch() -> None:
     assert "openai-compatible" in ids
     assert service_registry.provider_preset("vllm")["default_port"] == 8000
     assert service_registry.provider_preset("nope") is None
+
+
+# ---------------------------------------------------------------------------
+# Model/deployment mapping: an OpenAI-compatible service added via the form
+# must produce a routable LiteLLM model_list entry (the SLVP gap fix).
+# ---------------------------------------------------------------------------
+
+
+def test_openai_compatible_preset_sets_routing_protocol() -> None:
+    raw = service_registry.service_form_to_raw(
+        {"name": "tgw", "preset": "openai-compatible", "base_url": "http://h:7860/v1"}
+    )
+    assert raw["protocol"] == "openai-compatible"
+
+
+def test_form_models_become_deployment_records() -> None:
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "tgw",
+            "preset": "openai-compatible",
+            "base_url": "http://h:7860/v1",
+            "models": [{"public": "my-llama", "upstream": "TheBloke_Llama"}],
+        }
+    )
+    assert raw["models"] == [
+        {"model_group": "my-llama", "upstream_model": "TheBloke_Llama"}
+    ]
+
+
+def test_form_model_row_defaults_public_to_upstream() -> None:
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "tgw",
+            "preset": "openai-compatible",
+            "base_url": "http://h:7860/v1",
+            "models": [{"upstream": "only-upstream"}, {"public": "only-public"}],
+        }
+    )
+    assert raw["models"] == [
+        {"model_group": "only-upstream", "upstream_model": "only-upstream"},
+        {"model_group": "only-public", "upstream_model": "only-public"},
+    ]
+
+
+def test_added_openai_service_with_model_is_routable() -> None:
+    # The end-to-end data proof: form -> service record -> a real LiteLLM
+    # model_list entry. (Before the fix this list was empty -> inert service.)
+    from gateway import litellm_substrate
+
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "text-generation-webui",
+            "preset": "openai-compatible",
+            "base_url": "http://127.0.0.1:7860/v1",
+            "capabilities": ["chat", "completions"],
+            "models": [{"public": "my-llama", "upstream": "TheBloke_Llama-3-8B"}],
+        }
+    )
+    svc = service_registry.service_from_backend_config(
+        "text-generation-webui", raw, source="ui"
+    )
+    registry = {
+        "schema_version": 1,
+        "services": {"text-generation-webui": svc},
+        "protocol_frontends": {},
+        "workflows": {},
+        "capabilities": {},
+    }
+    compiled = litellm_substrate.compile_litellm_config_from_registry(registry)
+    model_list = compiled["model_list"]
+    assert len(model_list) == 1
+    entry = model_list[0]
+    assert entry["model_name"] == "my-llama"
+    assert entry["litellm_params"]["model"] == "openai/TheBloke_Llama-3-8B"
+    assert entry["litellm_params"]["api_base"] == "http://127.0.0.1:7860/v1"
+
+
+def test_added_service_without_models_is_inert() -> None:
+    # Documents the boundary: no model mapping -> no routable model. (This is
+    # the gap the form's Models section fixes; an operator must add a mapping.)
+    from gateway import litellm_substrate
+
+    raw = service_registry.service_form_to_raw(
+        {"name": "bare", "preset": "openai-compatible", "base_url": "http://h:7860/v1"}
+    )
+    svc = service_registry.service_from_backend_config("bare", raw, source="ui")
+    registry = {
+        "schema_version": 1,
+        "services": {"bare": svc},
+        "protocol_frontends": {},
+        "workflows": {},
+        "capabilities": {},
+    }
+    compiled = litellm_substrate.compile_litellm_config_from_registry(registry)
+    assert compiled["model_list"] == []

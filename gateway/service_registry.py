@@ -487,12 +487,16 @@ def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
 # fields for a common upstream; "openai-compatible" is the custom escape hatch.
 # Kept here (not in the renderer) so the form and any API consumer share one
 # source of truth. base_path/default_port are hints; the operator can override.
+# ``protocol: "openai-compatible"`` is what marks a service as routable through
+# the LiteLLM substrate (litellm_substrate._is_openai_compatible). Every LLM
+# preset sets it; ComfyUI (image) does not.
 PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
     {
         "id": "openai-compatible",
         "label": "OpenAI-compatible (custom)",
         "base_path": "/v1",
         "default_port": None,
+        "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
     },
@@ -501,6 +505,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "label": "vLLM",
         "base_path": "/v1",
         "default_port": 8000,
+        "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
     },
@@ -509,6 +514,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "label": "Ollama",
         "base_path": "/v1",
         "default_port": 11434,
+        "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
     },
@@ -517,6 +523,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "label": "TabbyAPI",
         "base_path": "/v1",
         "default_port": 5000,
+        "protocol": "openai-compatible",
         "capabilities": ["chat", "completions", "vision"],
         "native_passthrough": True,
     },
@@ -525,6 +532,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "label": "LM Studio",
         "base_path": "/v1",
         "default_port": 1234,
+        "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
     },
@@ -533,6 +541,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "label": "ComfyUI",
         "base_path": "",
         "default_port": 8188,
+        "protocol": None,
         "capabilities": ["image"],
         "native_passthrough": False,
     },
@@ -664,6 +673,11 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
         if preset.get("default_port") and "port" not in raw:
             raw["port"] = int(preset["default_port"])
         raw.setdefault("native_passthrough", preset["native_passthrough"])
+        # The preset's protocol is what makes the service routable through the
+        # LiteLLM substrate (openai-compatible). It's a config default the
+        # operator rarely needs to see; an explicit form `protocol` overrides it.
+        if preset.get("protocol"):
+            raw.setdefault("protocol", preset["protocol"])
         if not normalize_string_list(form.get("capabilities")):
             raw["capabilities"] = list(preset["capabilities"])
 
@@ -687,9 +701,46 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     if "native_passthrough" in form:
         raw["native_passthrough"] = bool_from_config(form.get("native_passthrough"), False)
 
+    # The model/deployment mapping: what makes an OpenAI-compatible service
+    # actually routable. The form sends `models` as a list of {public, upstream}
+    # pairs (or {model_group/id, upstream_model}); store as the list shape
+    # litellm_substrate._deployment_records consumes. A `*` upstream means
+    # "expose everything this backend serves" (model-listing backends).
+    models = _form_models_to_config(form.get("models"))
+    if models:
+        raw["models"] = models
+
     # base_path defaults to /v1 for an OpenAI-style backend when nothing set it.
     raw.setdefault("base_path", "/v1")
     return {key: value for key, value in raw.items() if value not in (None, "")}
+
+
+def _form_models_to_config(value: Any) -> list[dict[str, str]]:
+    """Normalize the form's model rows into config.models deployment records.
+
+    Accepts a list of mappings with public/upstream (or model_group/id +
+    upstream_model) keys. Each becomes ``{model_group, upstream_model}`` —
+    the minimal deployment shape. Rows missing both names are dropped.
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: list[dict[str, str]] = []
+    for row in value:
+        if not isinstance(row, Mapping):
+            continue
+        public = str(
+            row.get("public") or row.get("model_group") or row.get("id") or ""
+        ).strip()
+        upstream = str(
+            row.get("upstream") or row.get("upstream_model") or row.get("model") or ""
+        ).strip()
+        if not public and not upstream:
+            continue
+        # A public name defaults to the upstream name and vice versa.
+        public = public or upstream
+        upstream = upstream or public
+        out.append({"model_group": public, "upstream_model": upstream})
+    return out
 
 
 def normalize_protocol_frontend(frontend_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:

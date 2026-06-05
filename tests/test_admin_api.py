@@ -559,8 +559,14 @@ async def _fake_probe(host, port, path):
     # Deterministic stand-in for proxy.probe_backend in route tests: a host of
     # "reachable.test" passes, anything else reports a connection error.
     if host == "reachable.test":
-        return {"ok": True, "status": 200, "error": "", "url": f"http://{host}:{port}{path}"}
-    return {"ok": False, "status": None, "error": "Connection refused", "url": f"http://{host}:{port}{path}"}
+        body = {
+            "data": [
+                {"id": "gpt-test-1", "object": "model"},
+                {"id": "gpt-test-2", "object": "model"},
+            ]
+        }
+        return {"ok": True, "status": 200, "error": "", "url": f"http://{host}:{port}{path}", "body": body}
+    return {"ok": False, "status": None, "error": "Connection refused", "url": f"http://{host}:{port}{path}", "body": None}
 
 
 def _make_client(
@@ -1825,6 +1831,42 @@ class AdminServiceCrudTests(unittest.TestCase):
         self.assertFalse(bad.json()["probe"]["ok"])
         self.assertIn("Connection refused", bad.json()["probe"]["error"])
 
+    def test_detect_models_returns_model_ids_from_reachable_host(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/operator/services/detect-models",
+            json={"base_url": "http://reachable.test:8000/v1"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        detected = resp.json()["detected"]
+        self.assertTrue(detected["ok"])
+        self.assertEqual(detected["error"], "")
+        self.assertEqual(detected["models"], ["gpt-test-1", "gpt-test-2"])
+
+    def test_detect_models_returns_ok_false_for_unreachable_host(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/operator/services/detect-models",
+            json={"base_url": "http://nope.test:9999/v1"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        detected = resp.json()["detected"]
+        self.assertFalse(detected["ok"])
+        self.assertIn("Connection refused", detected["error"])
+        self.assertEqual(detected["models"], [])
+
+    def test_detect_models_503_when_probe_not_injected(self) -> None:
+        client, _ = _make_client(service_probe=None)
+        resp = client.post(
+            "/admin/api/operator/services/detect-models",
+            json={"base_url": "http://reachable.test:8000/v1"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.json()["error"]["code"], "probe_unavailable")
+
     def test_service_routes_require_admin(self) -> None:
         client, _ = _make_client()
         for method, url in (
@@ -1833,6 +1875,7 @@ class AdminServiceCrudTests(unittest.TestCase):
             ("DELETE", "/admin/api/operator/services/x"),
             ("POST", "/admin/api/operator/services/x/enabled"),
             ("POST", "/admin/api/operator/services/test"),
+            ("POST", "/admin/api/operator/services/detect-models"),
         ):
             resp = client.request(method, url, json={})
             self.assertEqual(resp.status_code, 401, f"{method} {url}")
