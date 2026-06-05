@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import hmac
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
@@ -176,6 +176,22 @@ class AdminStore(Protocol):
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
+    def add_service(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
+    def update_service(
+        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
+    def remove_service(
+        self, *, service_id: str, actor: AdminContext
+    ) -> dict[str, Any]: ...
+
+    def set_service_enabled(
+        self, *, service_id: str, enabled: bool, actor: AdminContext
+    ) -> dict[str, Any]: ...
+
     def get_extension_package_index(self) -> dict[str, Any]: ...
 
     def validate_extension_package_source(
@@ -197,6 +213,8 @@ class AdminStore(Protocol):
 
 AdminAuth = Callable[[Request], AdminContext]
 ProfileResolver = Callable[[str], AppProfile | None]
+# async (host, port, path) -> {ok, status, error, url}
+ServiceProbe = Callable[[str, "int | None", str], "Awaitable[Mapping[str, Any]]"]
 
 
 _AUDIT_DEFAULT_LIMIT = 50
@@ -621,6 +639,41 @@ def _validate_service_registry(payload: Mapping[str, Any]) -> dict[str, Any]:
         ) from exc
 
 
+def _validate_service_form(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate an add/edit backend form and return the cleaned form fields.
+
+    Requires a name and a way to reach the backend (a base URL or host). The
+    store maps the form to a backend config and normalizes it; this gate just
+    surfaces operator-facing 400s for the obvious omissions.
+    """
+    if not isinstance(payload, Mapping):
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST, "invalid_service", "body must be an object"
+        )
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST, "invalid_service", "a name is required"
+        )
+    has_host = bool(str(payload.get("host") or "").strip())
+    has_url = bool(str(payload.get("base_url") or "").strip())
+    if not (has_host or has_url):
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_service",
+            "a base URL (or host) is required",
+        )
+    # An inline plaintext key is never accepted — secrets are referenced by env
+    # var name only (api_key_env).
+    if any(str(k).lower() == "api_key" for k in payload):
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_service",
+            "paste an env var name in 'api_key_env', not the key itself",
+        )
+    return dict(payload)
+
+
 def _validate_extension_package_source(payload: Mapping[str, Any]) -> dict[str, Any]:
     source = payload.get("source") if isinstance(payload, Mapping) else None
     if not isinstance(source, Mapping):
@@ -867,6 +920,7 @@ def create_admin_router(
     *,
     auth: AdminAuth,
     profile_resolver: ProfileResolver | None = None,
+    service_probe: ServiceProbe | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -874,7 +928,10 @@ def create_admin_router(
     ``store`` provides persistence. ``auth`` is invoked on every request and
     must raise :class:`AdminAuthError` for unauthenticated or forbidden
     callers. ``profile_resolver`` lets the policy simulator accept a stored
-    profile id (string) rather than an inline profile dict.
+    profile id (string) rather than an inline profile dict. ``service_probe`` is
+    an optional ``async (host, port, path) -> {ok, status, error, url}`` used by
+    the backend "Test connection" control; when absent that route reports the
+    capability is unavailable rather than failing.
     """
 
     router = APIRouter(prefix=prefix, tags=["admin"])
@@ -1441,6 +1498,116 @@ def create_admin_router(
             status_code=status.HTTP_200_OK,
             content={"service_registry": record},
         )
+
+    def _service_op_error(exc: ValueError) -> JSONResponse:
+        """Map a registry-op ValueError to the right operator-facing status."""
+        msg = str(exc)
+        if "not found" in msg:
+            code, http = "service_not_found", status.HTTP_404_NOT_FOUND
+        elif "already exists" in msg:
+            code, http = "service_conflict", status.HTTP_409_CONFLICT
+        elif "not editable" in msg or "provisioned" in msg:
+            code, http = "service_not_editable", status.HTTP_403_FORBIDDEN
+        else:
+            code, http = "invalid_service", status.HTTP_400_BAD_REQUEST
+        return _RouteError(http, code, msg).as_response()
+
+    @router.post("/operator/services")
+    async def add_service(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            form = _validate_service_form(body)
+            record = store.add_service(data=form, actor=ctx)
+        except _RouteError as exc:
+            return exc.as_response()
+        except ValueError as exc:
+            return _service_op_error(exc)
+        return JSONResponse(
+            status_code=status.HTTP_201_CREATED,
+            content={"service_registry": record},
+        )
+
+    @router.patch("/operator/services/{service_id}")
+    async def update_service(service_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            form = _validate_service_form({**body, "name": body.get("name") or service_id})
+            record = store.update_service(service_id=service_id, data=form, actor=ctx)
+        except _RouteError as exc:
+            return exc.as_response()
+        except ValueError as exc:
+            return _service_op_error(exc)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"service_registry": record},
+        )
+
+    @router.delete("/operator/services/{service_id}")
+    def remove_service(service_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            record = store.remove_service(service_id=service_id, actor=ctx)
+        except ValueError as exc:
+            return _service_op_error(exc)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"service_registry": record},
+        )
+
+    @router.post("/operator/services/{service_id}/enabled")
+    async def set_service_enabled(service_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            enabled = bool(body.get("enabled"))
+            record = store.set_service_enabled(
+                service_id=service_id, enabled=enabled, actor=ctx
+            )
+        except _RouteError as exc:
+            return exc.as_response()
+        except ValueError as exc:
+            return _service_op_error(exc)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"service_registry": record},
+        )
+
+    @router.post("/operator/services/test")
+    async def test_service_connection(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if service_probe is None:
+            return _RouteError(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "probe_unavailable",
+                "connection testing is not available in this process",
+            ).as_response()
+        try:
+            body = await _read_json_body(request)
+        except _RouteError as exc:
+            return exc.as_response()
+        # Accept the live form draft (base_url or host/port) without persisting.
+        raw = service_registry.service_form_to_raw({**body, "name": body.get("name") or "probe"})
+        host = str(raw.get("host") or "").strip()
+        if not host:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_service", "a host or base URL is required"
+            ).as_response()
+        port = raw.get("port")
+        path = str(raw.get("health_endpoint") or (str(raw.get("base_path") or "/v1").rstrip("/") + "/models"))
+        result = await service_probe(host, port, path)
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"probe": dict(result)})
 
     @router.get("/operator/litellm-config")
     def get_litellm_config(request: Request) -> JSONResponse:

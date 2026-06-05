@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Mapping
 
+from gateway import service_registry
 from gateway.admin_catalog import (
     coerce_policy_catalog,
     profile_policy_catalog,
@@ -365,6 +366,34 @@ _PAGE_CSS = """
   .permission-grid .check strong { color: var(--text); font-size: 0.88rem; }
   .permission-grid .check em { color: var(--muted); font-size: 0.78rem; font-style: normal; line-height: 1.35; }
   .inline-options { display: flex; flex-wrap: wrap; gap: 0.55rem 1rem; }
+  /* Backend (service) CRUD. */
+  .service-crud { display: grid; gap: var(--space-3); margin-bottom: var(--space-3); }
+  .service-crud-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+  .service-crud-intro { margin: 0; color: var(--muted); font-size: 0.86rem; line-height: 1.5; max-width: 48rem; }
+  .notice {
+    border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line));
+    background: var(--warn-bg);
+    color: var(--text);
+    border-radius: var(--radius);
+    padding: var(--space-3);
+    font-size: 0.88rem;
+  }
+  .service-form {
+    display: grid; gap: var(--space-3);
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--panel); padding: var(--space-4); min-width: 0;
+  }
+  .service-form h4 { margin: 0; font-size: 1rem; }
+  .field-label { display: grid; gap: 0.3rem; font-size: 0.85rem; color: var(--muted); min-width: 0; }
+  .field-label input, .field-label select { min-width: 0; }
+  .field-hint { color: var(--soft); font-size: 0.78rem; font-weight: 400; }
+  .field-group { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin: 0; }
+  .field-group legend { color: var(--muted); font-size: 0.8rem; padding: 0 0.3rem; }
+  .service-form-advanced > summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; padding: 0.3rem 0; }
+  .row-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+  .service-test-result { font-size: 0.84rem; min-height: 1.1rem; }
+  .service-test-result.good { color: var(--good); }
+  .service-test-result.bad { color: var(--bad); }
   @media (max-width: 760px) {
     /* Tables were the #1 mobile-overflow culprit (a 7-column table is ~1200px
        wide — horizontal scroll OR it pushes the page sideways). On mobile we
@@ -1113,6 +1142,7 @@ def _service_row(record: Mapping[str, Any]) -> str:
         "standby": "attention",
         "degraded": "warn",
         "down": "problem",
+        "pending": "warn",
         "unknown": "attention",
     }.get(status_value, "attention")
     runtime = _esc(record.get("runtime") or record.get("current") or "—")
@@ -1144,8 +1174,246 @@ def _service_row(record: Mapping[str, Any]) -> str:
         f"<td>{status_html}</td>"
         f"<td>{runtime}</td>"
         f"<td>{resources}</td>"
+        f"<td>{_service_actions(record)}</td>"
         "</tr>"
     )
+
+
+def _service_actions(record: Mapping[str, Any]) -> str:
+    """Per-row controls for a backend: enable/disable, edit, delete.
+
+    All rows can be enabled/disabled. Only operator-added (``source == "ui"``)
+    rows can be edited or hard-deleted; provisioned/builtin rows are managed by
+    their source of truth and so are disable-only, with a lock badge.
+    """
+    service_id = _esc(record.get("id") or record.get("key") or "")
+    name = _esc(record.get("name") or record.get("key") or service_id)
+    source = str(record.get("source") or "ui")
+    is_ui = source == "ui"
+    enabled = record.get("enabled", True)
+    toggle_label = "Disable" if enabled else "Enable"
+    parts = [
+        f'<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
+        f'data-service-toggle="{service_id}" data-enabled="{"1" if enabled else "0"}">'
+        f"{toggle_label}</button>"
+    ]
+    if is_ui:
+        parts.append(
+            f'<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
+            f'data-service-edit="{service_id}">Edit</button>'
+        )
+        parts.append(
+            f'<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
+            f'data-service-delete="{service_id}" data-service-name="{name}">'
+            "Delete</button>"
+        )
+    else:
+        parts.append(
+            f'<span class="badge" title="Managed by configuration — edit the '
+            f'config file to change or remove">{_esc(source)}</span>'
+        )
+    return '<div class="row-actions">' + "".join(parts) + "</div>"
+
+
+def _service_form(record: Mapping[str, Any] | None = None) -> str:
+    """The add/edit-a-backend form (server-rendered; works without JS).
+
+    When ``record`` is given, the form is pre-filled for editing (the id is
+    fixed). Secrets are referenced by env-var name only — the key itself is
+    never rendered or accepted here.
+    """
+    rec = record or {}
+    raw_config = rec.get("config")
+    config: Mapping[str, Any] = raw_config if isinstance(raw_config, Mapping) else {}
+    editing = bool(rec)
+    service_id = _esc(rec.get("id") or "")
+    name = _esc(rec.get("name") or config.get("name") or "")
+    host = _esc(config.get("host") or "")
+    port = config.get("port")
+    base_path = _esc(config.get("base_path") or ("/v1" if not editing else ""))
+    base_url = ""
+    if host:
+        authority = f"{host}:{port}" if port else str(host)
+        base_url = _esc(f"http://{authority}{base_path or ''}")
+    api_key_env = _esc(config.get("api_key_env") or "")
+    note = _esc(config.get("note") or "")
+    role = str(rec.get("role") or config.get("role") or "required")
+    priority = rec.get("priority")
+    enabled = rec.get("enabled", True)
+    managed = False
+    lifecycle = rec.get("lifecycle")
+    if isinstance(lifecycle, Mapping):
+        managed = bool(lifecycle.get("managed"))
+    caps = set(_normalize_caps(rec.get("capabilities")))
+
+    preset_options = "".join(
+        f'<option value="{_esc(p["id"])}">{_esc(p["label"])}</option>'
+        for p in service_registry.PROVIDER_PRESETS
+    )
+    cap_choices = ("chat", "completions", "vision", "embeddings", "image", "audio", "speech")
+    cap_boxes = "".join(
+        '<label class="check"><input type="checkbox" name="capabilities" '
+        f'value="{_esc(c)}"{" checked" if c in caps else ""}> {_esc(c)}</label>'
+        for c in cap_choices
+    )
+    role_radios = "".join(
+        '<label class="check"><input type="radio" name="role" '
+        f'value="{_esc(r)}"{" checked" if role == r else ""}> {_esc(r)}</label>'
+        for r in ("required", "standby")
+    )
+    form_kind = "edit" if editing else "add"
+    heading = f"Edit {name}" if editing else "Add a backend"
+    submit_label = "Save changes" if editing else "Add backend"
+    id_field = (
+        f'<input type="hidden" name="id" value="{service_id}">' if editing else ""
+    )
+    preset_row = (
+        ""
+        if editing
+        else (
+            '<label class="field-label">Provider'
+            f'<select name="preset" data-service-preset>{preset_options}</select>'
+            "</label>"
+        )
+    )
+    return (
+        f'<form class="service-form" data-service-form="{form_kind}"'
+        + (f' data-service-id="{service_id}"' if editing else "")
+        + ' hidden>'
+        + id_field
+        + f"<h4>{_esc(heading)}</h4>"
+        + '<label class="field-label">Name'
+        f'<input type="text" name="name" value="{name}" '
+        'placeholder="e.g. Local vLLM" required></label>'
+        + preset_row
+        + '<label class="field-label">Base URL'
+        f'<input type="text" name="base_url" value="{base_url}" '
+        'placeholder="http://127.0.0.1:8000/v1" data-service-base-url></label>'
+        + '<label class="field-label">API key env var <span class="field-hint">'
+        "(name of the environment variable holding the key — never the key "
+        'itself)</span>'
+        f'<input type="text" name="api_key_env" value="{api_key_env}" '
+        'placeholder="MY_BACKEND_API_KEY" autocomplete="off"></label>'
+        + '<fieldset class="field-group"><legend>Capabilities</legend>'
+        + cap_boxes
+        + "</fieldset>"
+        + '<label class="check"><input type="checkbox" name="enabled" '
+        + ("checked" if enabled else "")
+        + "> Enabled</label>"
+        + '<details class="service-form-advanced"><summary>Advanced</summary>'
+        + '<fieldset class="field-group"><legend>Role</legend>'
+        + role_radios
+        + "</fieldset>"
+        + '<label class="field-label">Priority'
+        f'<input type="number" name="priority" value="{_esc(priority) if priority is not None else ""}" '
+        'min="0" placeholder="100"></label>'
+        + '<label class="check"><input type="checkbox" name="managed" '
+        + ("checked" if managed else "")
+        + "> Managed (gateway starts/stops this service)</label>"
+        + '<label class="field-label">Note'
+        f'<input type="text" name="note" value="{note}" '
+        'placeholder="Optional operator note"></label>'
+        + "</details>"
+        + '<div id="service-test-result" class="service-test-result"></div>'
+        + '<div class="row-actions">'
+        + '<button type="button" class="vf-button vf-button-secondary vf-button-sm" '
+        'data-service-test>Test connection</button>'
+        + f'<button type="submit" class="vf-button vf-button-sm">{_esc(submit_label)}</button>'
+        + '<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
+        'data-service-form-cancel>Cancel</button>'
+        + "</div>"
+        + "</form>"
+    )
+
+
+def _normalize_caps(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [str(c).strip() for c in value if str(c).strip()]
+    return []
+
+
+def _service_crud_panel(services: list[Mapping[str, Any]]) -> str:
+    """The operator-managed backends panel: add form, restart banner, list.
+
+    Backends are durable in admin.db; a change applies on the next gateway
+    start (no in-process hot reload), so an honest banner says so after edits.
+    """
+    add_button = (
+        '<button type="button" class="vf-button vf-button-sm" '
+        'data-service-add>+ Add backend</button>'
+    )
+    return (
+        '<div class="service-crud" data-service-crud>'
+        '<div class="service-crud-head">'
+        '<p class="service-crud-intro">Backends are stored in the gateway '
+        "database. Add, edit, enable, or remove an upstream here; changes take "
+        "effect when the gateway restarts.</p>"
+        + add_button
+        + "</div>"
+        '<div id="service-restart-banner" class="notice" hidden>'
+        "Saved. Restart the gateway to apply backend changes.</div>"
+        '<div id="service-form-host">'
+        + _service_form()
+        + "</div>"
+        '<div id="service-crud-message" class="message"></div>'
+        "</div>"
+    )
+
+
+# Client helpers for the backend CRUD UI, spliced into the admin page script
+# (which provides json(), refreshMain(), show(), showError()). The single
+# server-rendered form (#service-form-host .service-form) is reused for both add
+# and edit; edit fetches the current record from the registry to pre-fill.
+_SERVICE_PRESETS_JSON = json.dumps(
+    {
+        p["id"]: {
+            "base_path": p["base_path"],
+            "default_port": p["default_port"],
+            "capabilities": p["capabilities"],
+            "native_passthrough": p["native_passthrough"],
+        }
+        for p in service_registry.PROVIDER_PRESETS
+    }
+)
+
+_SERVICE_CRUD_JS = (
+    "const SERVICE_PRESETS=" + _SERVICE_PRESETS_JSON + ";"
+    "function serviceForm(){return document.querySelector('#service-form-host .service-form')}"
+    "function showServiceForm(rec){const f=serviceForm();if(!f)return;f.reset&&f.reset();"
+    "const tr=document.getElementById('service-test-result');if(tr)tr.textContent='';"
+    "if(rec){fillServiceForm(f,rec)}f.hidden=false;const n=f.querySelector('[name=name]');if(n)n.focus()}"
+    "function hideServiceForm(){const f=serviceForm();if(f)f.hidden=true}"
+    "function showRestartBanner(){const b=document.getElementById('service-restart-banner');if(b)b.hidden=false}"
+    "function fillServiceForm(f,rec){const c=(rec&&rec.config)||{};"
+    "const set=(k,v)=>{const el=f.querySelector('[name='+k+']');if(el)el.value=v==null?'':v};"
+    "set('name',rec.name||c.name||'');"
+    "let url='';if(c.host){url='http://'+c.host+(c.port?(':'+c.port):'')+(c.base_path||'')}set('base_url',url);"
+    "set('api_key_env',c.api_key_env||'');set('note',c.note||'');set('priority',rec.priority!=null?rec.priority:'');"
+    "const caps=(rec.capabilities||[]);f.querySelectorAll('[name=capabilities]').forEach(cb=>{cb.checked=caps.indexOf(cb.value)!==-1});"
+    "f.querySelectorAll('[name=role]').forEach(rb=>{rb.checked=rb.value===(rec.role||'required')});"
+    "const en=f.querySelector('[name=enabled]');if(en)en.checked=rec.enabled!==false;"
+    "const mg=f.querySelector('[name=managed]');if(mg)mg.checked=!!(rec.lifecycle&&rec.lifecycle.managed)}"
+    "function applyServicePreset(id){const p=SERVICE_PRESETS[id];const f=serviceForm();if(!p||!f)return;"
+    "const u=f.querySelector('[name=base_url]');if(u&&!u.value){u.value='http://127.0.0.1'+(p.default_port?(':'+p.default_port):'')+(p.base_path||'')}"
+    "if(p.capabilities){f.querySelectorAll('[name=capabilities]').forEach(cb=>{cb.checked=p.capabilities.indexOf(cb.value)!==-1})}}"
+    "function serviceFormBody(fd){const body={};body.name=String(fd.get('name')||'').trim();"
+    "const url=String(fd.get('base_url')||'').trim();if(url)body.base_url=url;"
+    "const preset=fd.get('preset');if(preset)body.preset=preset;"
+    "const env=String(fd.get('api_key_env')||'').trim();if(env)body.api_key_env=env;"
+    "const note=String(fd.get('note')||'').trim();if(note)body.note=note;"
+    "const pr=String(fd.get('priority')||'').trim();if(pr)body.priority=Number(pr);"
+    "body.capabilities=fd.getAll('capabilities');body.role=fd.get('role')||'required';"
+    "body.enabled=fd.get('enabled')!=null;body.managed=fd.get('managed')!=null;return body}"
+    "async function editService(id){try{const r=await fetch('/admin/api/operator/service-registry',{credentials:'same-origin',cache:'no-store',headers:{'x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken}});const data=await r.json();"
+    "const reg=data.service_registry||data;const rec=(reg.services||{})[id];if(!rec){showError({error:{message:'service not found'}});return}"
+    "showServiceForm(null);const f=serviceForm();if(!f)return;f.dataset.serviceForm='edit';f.dataset.serviceId=id;"
+    "fillServiceForm(f,rec)}catch(err){showError(err)}}"
+    "async function testServiceConnection(){const f=serviceForm();if(!f)return;const fd=new FormData(f);const body=serviceFormBody(fd);"
+    "const out=document.getElementById('service-test-result');if(out){out.textContent='Testing\\u2026';out.className='service-test-result'}"
+    "try{const data=await json('/admin/api/operator/services/test',body);const p=data.probe||{};"
+    "if(out){out.className='service-test-result '+(p.ok?'good':'bad');out.textContent=p.ok?('Reachable (HTTP '+p.status+')'):('Unreachable: '+(p.error||'no response'))}}"
+    "catch(err){if(out){out.className='service-test-result bad';out.textContent='Test failed: '+((err&&err.error&&err.error.message)||err)}}}"
+)
 
 
 def _config_source_row(record: Mapping[str, Any]) -> str:
@@ -2390,9 +2658,10 @@ def render_admin_dashboard(
         (_api_surface_row(surface) for surface in api_surfaces),
     )
     services_table = _table(
-        ["Service", "Role", "Capabilities", "Status", "Runtime", "Mode / resources"],
+        ["Service", "Role", "Capabilities", "Status", "Runtime", "Mode / resources", "Actions"],
         (_service_row(service) for service in services),
     )
+    service_crud_panel = _service_crud_panel(services)
     config_sources_panel = _config_sources_panel(config_sources)
     workflow_inventory_table = _table(
         ["Workflow", "Intent", "Backend", "Tier", "Trust"],
@@ -2463,7 +2732,11 @@ def render_admin_dashboard(
             _operator_controls_panel(operator_override_groups),
             intro="Pause services, describe maintenance, and cap expensive media queues without editing files or restarting the gateway.",
         )
-        + services_table
+        + _subsection(
+            "Backends",
+            service_crud_panel + services_table,
+            intro="Upstream model/inference services this gateway routes to. Operator-added backends can be edited or removed; config-provisioned ones can be enabled or disabled here and changed in the config file.",
+        )
         + _subsection(
             "Sources of Truth",
             config_sources_panel,
@@ -2597,8 +2870,8 @@ def render_admin_dashboard(
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
         "document.addEventListener('submit',async e=>{"
-        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]'),operatorForm=e.target.closest('[data-operator-control]'),oidcForm=e.target.closest('[data-oidc-config]'),extensionForm=e.target.closest('[data-extension-package]');"
-        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm&&!operatorForm&&!oidcForm&&!extensionForm)return;e.preventDefault();"
+        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]'),operatorForm=e.target.closest('[data-operator-control]'),oidcForm=e.target.closest('[data-oidc-config]'),extensionForm=e.target.closest('[data-extension-package]'),serviceForm=e.target.closest('[data-service-form]');"
+        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm&&!operatorForm&&!oidcForm&&!extensionForm&&!serviceForm)return;e.preventDefault();"
         "if(adminKeyForm){const f=adminKeyForm,fd=new FormData(f);const body={name:fd.get('name'),role:fd.get('role')||'admin'};try{const data=await json(f.action,body);f.reset();await refreshMain();showSecret(data,'Admin automation key created. Copy it now; it will not be shown again.','Use this admin key only for /admin/api and /status. Never paste it into chat apps, SDK tools, browser code, prompts, logs, or issue trackers.')}catch(err){showError(err)}return}"
         "if(oidcForm){const f=oidcForm,fd=new FormData(f);const body={enabled:fd.get('enabled')==='on'};"
         "['issuer','client_id','redirect_uri','authorization_endpoint','token_endpoint','jwks_uri'].forEach(k=>{body[k]=String(fd.get(k)||'').trim()});"
@@ -2637,13 +2910,26 @@ def render_admin_dashboard(
         "if(keyForm){const f=keyForm,fd=new FormData(f),appId=fd.get('app_id');"
         "const body={};const label=String(fd.get('label')||'').trim();if(label)body.label=label;"
         "const url=f.dataset.actionTemplate.replace('{app_id}',encodeURIComponent(appId));"
-        "try{const data=await json(url,body);f.reset();await refreshMain();showSecret(data,'App API key created. Copy it now; it will not be shown again.','Use this key only in runtime Apps and SDK tools.','OpenAI-compatible setup: Base URL '+runtimeBaseUrl+' · API key {key}')}catch(err){showError(err)}}});"
+        "try{const data=await json(url,body);f.reset();await refreshMain();showSecret(data,'App API key created. Copy it now; it will not be shown again.','Use this key only in runtime Apps and SDK tools.','OpenAI-compatible setup: Base URL '+runtimeBaseUrl+' · API key {key}')}catch(err){showError(err)}return}"
+        "if(serviceForm){const f=serviceForm,fd=new FormData(f);const body=serviceFormBody(fd);"
+        "const editing=f.dataset.serviceForm==='edit';const sid=f.dataset.serviceId||'';"
+        "const url=editing?'/admin/api/operator/services/'+encodeURIComponent(sid):'/admin/api/operator/services';"
+        "try{await json(url,body,editing?'PATCH':'POST');await refreshMain();showRestartBanner()}catch(err){showError(err)}return}});"
         "document.addEventListener('click',async e=>{const revoke=e.target.closest('[data-revoke-credential]'),disable=e.target.closest('[data-disable-runtime-mapping]'),appDisable=e.target.closest('[data-disable-app]');"
+        "const svcAdd=e.target.closest('[data-service-add]'),svcEdit=e.target.closest('[data-service-edit]'),svcDelete=e.target.closest('[data-service-delete]'),svcToggle=e.target.closest('[data-service-toggle]'),svcTest=e.target.closest('[data-service-test]'),svcCancel=e.target.closest('[data-service-form-cancel]');"
+        "if(svcAdd){e.preventDefault();showServiceForm(null);return}"
+        "if(svcCancel){e.preventDefault();hideServiceForm();return}"
+        "if(svcTest){e.preventDefault();await testServiceConnection();return}"
+        "if(svcEdit){e.preventDefault();await editService(svcEdit.dataset.serviceEdit);return}"
+        "if(svcDelete){e.preventDefault();const id=svcDelete.dataset.serviceDelete,nm=svcDelete.dataset.serviceName||id;if(!confirm('Delete backend '+nm+'? It is removed from the gateway and takes effect on restart.'))return;try{await json('/admin/api/operator/services/'+encodeURIComponent(id),{},'DELETE');await refreshMain();showRestartBanner()}catch(err){showError(err)}return}"
+        "if(svcToggle){e.preventDefault();const id=svcToggle.dataset.serviceToggle,enabled=svcToggle.dataset.enabled==='1';try{await json('/admin/api/operator/services/'+encodeURIComponent(id)+'/enabled',{enabled:!enabled});await refreshMain();showRestartBanner()}catch(err){showError(err)}return}"
         "if(!revoke&&!disable&&!appDisable)return;"
         "if(revoke){const id=revoke.dataset.revokeCredential;try{const data=await json('/admin/api/credentials/'+encodeURIComponent(id)+'/revoke',{});await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(appDisable){const id=appDisable.dataset.disableApp;try{const data=await json('/admin/api/apps/'+encodeURIComponent(id),{},'DELETE');await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(disable){const id=disable.dataset.disableRuntimeMapping;try{const r=await fetch('/admin/api/runtime-profile-mappings/'+encodeURIComponent(id),{method:'DELETE',credentials:'same-origin',headers:{'x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken}});const text=await r.text();const data=text?JSON.parse(text):{};if(!r.ok)throw data;await refreshMain();show(data)}catch(err){showError(err)}}});"
-        "});"
+        "document.addEventListener('change',e=>{const p=e.target.closest('[data-service-preset]');if(p)applyServicePreset(p.value)});"
+        + _SERVICE_CRUD_JS
+        + "});"
         "</script>"
         "</head><body>"
         + header_html

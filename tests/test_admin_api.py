@@ -442,6 +442,49 @@ class FakeAdminStore:
         )
         return dict(self.service_registry)
 
+    # The single-service CRUD methods delegate to the real registry ops so the
+    # route tests exercise actual validation, guards, and error mapping.
+    def add_service(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        service_id = service_registry.normalize_id(data.get("id") or data.get("name"))
+        raw = service_registry.service_form_to_raw(data)
+        registry, _ = service_registry.upsert_service_in_registry(
+            self.service_registry, service_id=service_id, raw=raw, source="ui"
+        )
+        self.service_registry = registry
+        return dict(registry)
+
+    def update_service(
+        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        raw = service_registry.service_form_to_raw(data)
+        registry, _ = service_registry.upsert_service_in_registry(
+            self.service_registry,
+            service_id=service_id,
+            raw=raw,
+            source="ui",
+            replace=True,
+        )
+        self.service_registry = registry
+        return dict(registry)
+
+    def remove_service(
+        self, *, service_id: str, actor: AdminContext
+    ) -> dict[str, Any]:
+        self.service_registry = service_registry.remove_service_from_registry(
+            self.service_registry, service_id
+        )
+        return dict(self.service_registry)
+
+    def set_service_enabled(
+        self, *, service_id: str, enabled: bool, actor: AdminContext
+    ) -> dict[str, Any]:
+        self.service_registry = service_registry.set_service_enabled(
+            self.service_registry, service_id, enabled
+        )
+        return dict(self.service_registry)
+
     def get_extension_package_index(self) -> dict[str, Any]:
         return dict(self.extension_package_index)
 
@@ -512,10 +555,19 @@ def _admin_auth(request: Request) -> AdminContext:
     raise AdminAuthError()
 
 
+async def _fake_probe(host, port, path):
+    # Deterministic stand-in for proxy.probe_backend in route tests: a host of
+    # "reachable.test" passes, anything else reports a connection error.
+    if host == "reachable.test":
+        return {"ok": True, "status": 200, "error": "", "url": f"http://{host}:{port}{path}"}
+    return {"ok": False, "status": None, "error": "Connection refused", "url": f"http://{host}:{port}{path}"}
+
+
 def _make_client(
     store: FakeAdminStore | None = None,
     *,
     profile_resolver=None,
+    service_probe=_fake_probe,
 ) -> tuple[TestClient, FakeAdminStore]:
     store = store or FakeAdminStore()
     app = FastAPI()
@@ -524,6 +576,7 @@ def _make_client(
             store,
             auth=_admin_auth,
             profile_resolver=profile_resolver,
+            service_probe=service_probe,
         )
     )
     return TestClient(app), store
@@ -1632,6 +1685,157 @@ execution: job
             media_resp.json()["error"]["code"],
             "invalid_operator_override",
         )
+
+
+class AdminServiceCrudTests(unittest.TestCase):
+    def _store_with_provisioned(self) -> FakeAdminStore:
+        store = FakeAdminStore()
+        store.service_registry = service_registry.build_service_registry_seed(
+            {
+                "backends": {
+                    "tabby": {
+                        "name": "TabbyAPI",
+                        "host": "127.0.0.1",
+                        "port": 5050,
+                        "capabilities": ["vision"],
+                        "source": "provisioned",
+                    }
+                }
+            }
+        )
+        return store
+
+    def test_add_service_creates_ui_record(self) -> None:
+        client, store = _make_client(self._store_with_provisioned())
+        resp = client.post(
+            "/admin/api/operator/services",
+            json={"name": "My vLLM", "preset": "vllm", "base_url": "http://10.0.0.5:8000/v1"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 201)
+        services = resp.json()["service_registry"]["services"]
+        self.assertIn("my-vllm", services)
+        self.assertEqual(services["my-vllm"]["source"], "ui")
+        self.assertEqual(services["my-vllm"]["config"]["port"], 8000)
+
+    def test_add_service_requires_name_and_url(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/operator/services", json={"name": "x"}, headers=_auth()
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["code"], "invalid_service")
+
+    def test_add_service_rejects_inline_api_key(self) -> None:
+        client, _ = _make_client()
+        resp = client.post(
+            "/admin/api/operator/services",
+            json={"name": "x", "base_url": "http://h:1/v1", "api_key": "sk-secret"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("api_key_env", resp.json()["error"]["message"])
+
+    def test_add_duplicate_is_conflict(self) -> None:
+        client, _ = _make_client()
+        payload = {"name": "dup", "base_url": "http://h:1/v1"}
+        self.assertEqual(
+            client.post("/admin/api/operator/services", json=payload, headers=_auth()).status_code,
+            201,
+        )
+        resp = client.post("/admin/api/operator/services", json=payload, headers=_auth())
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["error"]["code"], "service_conflict")
+
+    def test_update_service_edits_ui_record(self) -> None:
+        client, _ = _make_client()
+        client.post(
+            "/admin/api/operator/services",
+            json={"name": "edit-me", "base_url": "http://h:1/v1", "capabilities": ["chat"]},
+            headers=_auth(),
+        )
+        resp = client.patch(
+            "/admin/api/operator/services/edit-me",
+            json={"base_url": "http://h:1/v1", "capabilities": ["chat", "completions"], "role": "standby"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        svc = resp.json()["service_registry"]["services"]["edit-me"]
+        self.assertEqual(svc["capabilities"], ["chat", "completions"])
+        self.assertEqual(svc["role"], "standby")
+
+    def test_edit_provisioned_is_forbidden(self) -> None:
+        client, _ = _make_client(self._store_with_provisioned())
+        resp = client.patch(
+            "/admin/api/operator/services/tabby",
+            json={"base_url": "http://h:1/v1"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error"]["code"], "service_not_editable")
+
+    def test_delete_ui_service_then_404(self) -> None:
+        client, _ = _make_client()
+        client.post(
+            "/admin/api/operator/services",
+            json={"name": "gone", "base_url": "http://h:1/v1"},
+            headers=_auth(),
+        )
+        self.assertEqual(
+            client.delete("/admin/api/operator/services/gone", headers=_auth()).status_code,
+            200,
+        )
+        resp = client.delete("/admin/api/operator/services/gone", headers=_auth())
+        self.assertEqual(resp.status_code, 404)
+
+    def test_delete_provisioned_is_forbidden(self) -> None:
+        client, _ = _make_client(self._store_with_provisioned())
+        resp = client.delete("/admin/api/operator/services/tabby", headers=_auth())
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error"]["code"], "service_not_editable")
+
+    def test_toggle_enabled_on_any_source(self) -> None:
+        client, _ = _make_client(self._store_with_provisioned())
+        resp = client.post(
+            "/admin/api/operator/services/tabby/enabled",
+            json={"enabled": False},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(
+            resp.json()["service_registry"]["services"]["tabby"]["enabled"]
+        )
+
+    def test_test_connection_reports_reachability(self) -> None:
+        client, _ = _make_client()
+        ok = client.post(
+            "/admin/api/operator/services/test",
+            json={"base_url": "http://reachable.test:8000/v1"},
+            headers=_auth(),
+        )
+        self.assertEqual(ok.status_code, 200)
+        self.assertTrue(ok.json()["probe"]["ok"])
+
+        bad = client.post(
+            "/admin/api/operator/services/test",
+            json={"base_url": "http://nope.test:9999/v1"},
+            headers=_auth(),
+        )
+        self.assertEqual(bad.status_code, 200)
+        self.assertFalse(bad.json()["probe"]["ok"])
+        self.assertIn("Connection refused", bad.json()["probe"]["error"])
+
+    def test_service_routes_require_admin(self) -> None:
+        client, _ = _make_client()
+        for method, url in (
+            ("POST", "/admin/api/operator/services"),
+            ("PATCH", "/admin/api/operator/services/x"),
+            ("DELETE", "/admin/api/operator/services/x"),
+            ("POST", "/admin/api/operator/services/x/enabled"),
+            ("POST", "/admin/api/operator/services/test"),
+        ):
+            resp = client.request(method, url, json={})
+            self.assertEqual(resp.status_code, 401, f"{method} {url}")
 
 
 if __name__ == "__main__":

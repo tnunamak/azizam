@@ -685,6 +685,107 @@ class AdminSQLiteStore:
         self.write_litellm_config(record["value"])
         return record["value"]
 
+    # -- single-service CRUD -------------------------------------------------
+    # Granular operator edits on one backend service. Each persists the new
+    # registry, writes an audit row, and rewrites the LiteLLM substrate config
+    # (so the execution layer stays in sync) — the same durable effects as the
+    # full-registry update, scoped to one service. Changes take effect on the
+    # next process start (the boot path re-derives config["backends"] from the
+    # registry); there is no in-process hot reload.
+
+    def _persist_service_registry(
+        self,
+        registry: Mapping[str, Any],
+        *,
+        action: str,
+        actor: AdminContext,
+        service_id: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        value = service_registry.normalize_service_registry(registry)
+        record = admin_store.put_operator_setting(
+            SERVICE_REGISTRY_SETTING_KEY,
+            value,
+            updated_by=actor.subject,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            action,
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="service",
+            target_id=service_id,
+            metadata={"service_count": len(value.get("services") or {}), **(extra or {})},
+            path=self.path,
+        )
+        self.write_litellm_config(record["value"])
+        return record["value"]
+
+    def add_service(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        service_id = service_registry.normalize_id(
+            data.get("id") or data.get("name")
+        )
+        raw = service_registry.service_form_to_raw(data)
+        registry, _record = service_registry.upsert_service_in_registry(
+            self.get_service_registry(),
+            service_id=service_id,
+            raw=raw,
+            source="ui",
+        )
+        return self._persist_service_registry(
+            registry,
+            action="operator.service.added",
+            actor=actor,
+            service_id=service_id,
+        )
+
+    def update_service(
+        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        raw = service_registry.service_form_to_raw(data)
+        registry, _record = service_registry.upsert_service_in_registry(
+            self.get_service_registry(),
+            service_id=service_id,
+            raw=raw,
+            source="ui",
+            replace=True,
+        )
+        return self._persist_service_registry(
+            registry,
+            action="operator.service.updated",
+            actor=actor,
+            service_id=service_registry.normalize_id(service_id),
+        )
+
+    def remove_service(
+        self, *, service_id: str, actor: AdminContext
+    ) -> dict[str, Any]:
+        registry = service_registry.remove_service_from_registry(
+            self.get_service_registry(), service_id
+        )
+        return self._persist_service_registry(
+            registry,
+            action="operator.service.removed",
+            actor=actor,
+            service_id=service_registry.normalize_id(service_id),
+        )
+
+    def set_service_enabled(
+        self, *, service_id: str, enabled: bool, actor: AdminContext
+    ) -> dict[str, Any]:
+        registry = service_registry.set_service_enabled(
+            self.get_service_registry(), service_id, enabled
+        )
+        return self._persist_service_registry(
+            registry,
+            action="operator.service.toggled",
+            actor=actor,
+            service_id=service_registry.normalize_id(service_id),
+            extra={"enabled": bool(enabled)},
+        )
+
     def get_extension_package_index(self) -> dict[str, Any]:
         record = admin_store.get_operator_setting(
             EXTENSION_PACKAGE_INDEX_SETTING_KEY,

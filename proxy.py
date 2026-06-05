@@ -2750,6 +2750,37 @@ async def wait_for_tabby_ready(timeout: int = 60) -> bool:
     return False
 
 
+async def probe_backend(
+    host: str,
+    port: int | None,
+    path: str = "/v1/models",
+    *,
+    scheme: str = "http",
+) -> dict[str, Any]:
+    """Probe a backend's reachability for the admin "Test connection" control.
+
+    Issues a GET to ``{scheme}://{host}:{port}{path}`` and reports the outcome
+    without persisting anything. Returns ``{ok, status, error, url}`` where
+    ``ok`` is true on any HTTP response < 500 (the endpoint answered), and
+    ``error`` carries the real connection/transport error otherwise so the
+    operator sees why it failed.
+    """
+    safe_path = path if path.startswith("/") else "/" + path
+    authority = f"{host}:{port}" if port else str(host)
+    url = f"{scheme}://{authority}{safe_path}"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=HEALTH_CHECK_TIMEOUT)
+        return {
+            "ok": resp.status_code < 500,
+            "status": resp.status_code,
+            "error": "" if resp.status_code < 500 else f"HTTP {resp.status_code}",
+            "url": url,
+        }
+    except Exception as exc:  # noqa: BLE001 — surface the real transport error
+        return {"ok": False, "status": None, "error": str(exc) or type(exc).__name__, "url": url}
+
+
 async def check_tabby_health() -> bool:
     """Check if TabbyAPI is healthy."""
     if TABBY_MANAGED and state.tabby_process:
@@ -8748,6 +8779,7 @@ app.include_router(
         ADMIN_STORE,
         auth=ADMIN_AUTH,
         profile_resolver=ADMIN_STORE.profile_for_id,
+        service_probe=probe_backend,
     )
 )
 
@@ -9115,9 +9147,11 @@ def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dic
     status_by_name = _status_by_service_name(payload)
     service_overrides = _operator_service_availability_overrides()
     rows: list[dict[str, Any]] = []
+    live_keys: set[str] = set()
     for key, raw in (config.get("backends") or {}).items():
         if not isinstance(raw, Mapping):
             continue
+        live_keys.add(str(key))
         name = str(raw.get("name") or key)
         live = status_by_name.get(name) or {}
         live_status = str(live.get("live_status") or live.get("status") or "unknown")
@@ -9134,9 +9168,12 @@ def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dic
         rows.append(
             {
                 "key": key,
+                "id": key,
                 "name": name,
                 "source": raw.get("service_source") or raw.get("source") or "ui",
                 "editable": bool_from_config(raw.get("editable"), True),
+                "enabled": bool_from_config(raw.get("enabled"), True),
+                "config": dict(raw),
                 "priority": raw.get("priority"),
                 "role": role,
                 "capabilities": raw.get("capabilities") or [],
@@ -9149,6 +9186,36 @@ def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dic
                 ),
             }
         )
+    # The running config["backends"] is frozen at process start; the DB registry
+    # is the source of truth operators edit live. Surface any registry service
+    # NOT yet in the running config as "pending restart" so an operator can see,
+    # edit, and remove a just-added backend immediately (it applies on restart).
+    try:
+        registry = ADMIN_STORE.get_service_registry()
+        for service_id, service in (registry.get("services") or {}).items():
+            if not isinstance(service, Mapping) or str(service_id) in live_keys:
+                continue
+            cfg = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+            rows.append(
+                {
+                    "key": str(service_id),
+                    "id": str(service_id),
+                    "name": str(service.get("name") or service_id),
+                    "source": str(service.get("source") or "ui"),
+                    "editable": bool_from_config(service.get("editable"), service.get("source") == "ui"),
+                    "enabled": bool_from_config(service.get("enabled"), True),
+                    "config": dict(cfg),
+                    "priority": service.get("priority"),
+                    "role": str(service.get("role") or "required"),
+                    "capabilities": service.get("capabilities") or [],
+                    "status": "pending",
+                    "last_error": "",
+                    "note": "Added in the dashboard — applies on the next gateway restart.",
+                    "runtime": "pending restart",
+                }
+            )
+    except Exception:  # noqa: BLE001 — never break the dashboard over this
+        pass
     return rows
 
 

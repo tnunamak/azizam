@@ -447,6 +447,226 @@ def backend_config_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in raw.items() if value not in (None, "")}
 
 
+# ---------------------------------------------------------------------------
+# Single-service CRUD on a normalized registry document.
+#
+# These are pure: they take a registry dict, apply one operation, and return a
+# new normalized registry (plus, for upsert, the affected record). The store
+# layer (gateway/admin_runtime.AdminStore) persists the result. Operator-added
+# services are ``source == "ui"``; only those can be hard-removed (config-,
+# builtin-, and import-provisioned records resurrect on the next boot from their
+# source of truth, so the UI may disable but not delete them).
+# ---------------------------------------------------------------------------
+
+# Provider presets for the "add a backend" form. Each pre-fills the connection
+# fields for a common upstream; "openai-compatible" is the custom escape hatch.
+# Kept here (not in the renderer) so the form and any API consumer share one
+# source of truth. base_path/default_port are hints; the operator can override.
+PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "openai-compatible",
+        "label": "OpenAI-compatible (custom)",
+        "base_path": "/v1",
+        "default_port": None,
+        "capabilities": ["chat", "completions"],
+        "native_passthrough": True,
+    },
+    {
+        "id": "vllm",
+        "label": "vLLM",
+        "base_path": "/v1",
+        "default_port": 8000,
+        "capabilities": ["chat", "completions"],
+        "native_passthrough": True,
+    },
+    {
+        "id": "ollama",
+        "label": "Ollama",
+        "base_path": "/v1",
+        "default_port": 11434,
+        "capabilities": ["chat", "completions"],
+        "native_passthrough": True,
+    },
+    {
+        "id": "tabbyapi",
+        "label": "TabbyAPI",
+        "base_path": "/v1",
+        "default_port": 5000,
+        "capabilities": ["chat", "completions", "vision"],
+        "native_passthrough": True,
+    },
+    {
+        "id": "lmstudio",
+        "label": "LM Studio",
+        "base_path": "/v1",
+        "default_port": 1234,
+        "capabilities": ["chat", "completions"],
+        "native_passthrough": True,
+    },
+    {
+        "id": "comfyui",
+        "label": "ComfyUI",
+        "base_path": "",
+        "default_port": 8188,
+        "capabilities": ["image"],
+        "native_passthrough": False,
+    },
+)
+
+_CAPABILITY_CHOICES: tuple[str, ...] = (
+    "chat",
+    "completions",
+    "vision",
+    "embeddings",
+    "image",
+    "audio",
+    "speech",
+)
+
+
+def provider_preset(preset_id: Any) -> dict[str, Any] | None:
+    pid = normalize_id(preset_id)
+    for preset in PROVIDER_PRESETS:
+        if preset["id"] == pid:
+            return preset
+    return None
+
+
+def upsert_service_in_registry(
+    registry: Mapping[str, Any],
+    *,
+    service_id: str,
+    raw: Mapping[str, Any],
+    source: str = "ui",
+    replace: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Add or replace one service in a registry; returns (registry, record).
+
+    ``replace=False`` (create) raises if the id already exists. ``replace=True``
+    (edit) raises if the id is missing or its existing record is not editable.
+    The new/edited record is stored as ``source`` (default ``"ui"``).
+    """
+    out = normalize_service_registry(registry)
+    sid = normalize_id(service_id)
+    if not sid:
+        raise ValueError("service id is required")
+    existing = out["services"].get(sid)
+    if replace:
+        if existing is None:
+            raise ValueError(f"service {sid!r} not found")
+        if not bool_from_config(existing.get("editable"), existing.get("source") == "ui"):
+            raise ValueError(f"service {sid!r} is not editable")
+    elif existing is not None:
+        raise ValueError(f"service {sid!r} already exists")
+    record = service_from_backend_config(sid, raw, source=source)
+    out["services"][sid] = record
+    out["updated_at"] = int(time.time())
+    return out, record
+
+
+def remove_service_from_registry(
+    registry: Mapping[str, Any], service_id: str
+) -> dict[str, Any]:
+    """Hard-remove one operator-added service. Raises for non-UI records."""
+    out = normalize_service_registry(registry)
+    sid = normalize_id(service_id)
+    existing = out["services"].get(sid)
+    if existing is None:
+        raise ValueError(f"service {sid!r} not found")
+    if str(existing.get("source") or "ui") != "ui":
+        raise ValueError(
+            f"service {sid!r} is provisioned (source "
+            f"{existing.get('source')!r}); disable it instead of deleting"
+        )
+    del out["services"][sid]
+    out["updated_at"] = int(time.time())
+    return out
+
+
+def set_service_enabled(
+    registry: Mapping[str, Any], service_id: str, enabled: bool
+) -> dict[str, Any]:
+    """Enable/disable any service (allowed regardless of source)."""
+    out = normalize_service_registry(registry)
+    sid = normalize_id(service_id)
+    existing = out["services"].get(sid)
+    if existing is None:
+        raise ValueError(f"service {sid!r} not found")
+    existing["enabled"] = bool(enabled)
+    out["updated_at"] = int(time.time())
+    return out
+
+
+def split_base_url(value: Any) -> dict[str, Any]:
+    """Parse a base URL into host/port/base_path (the form's single URL field).
+
+    Accepts ``http://host:port/v1`` and bare ``host:port``. Returns only the
+    keys it can determine, so a caller can merge with explicit fields.
+    """
+    from urllib.parse import urlparse
+
+    text = str(value or "").strip()
+    if not text:
+        return {}
+    if "://" not in text:
+        text = "http://" + text
+    parsed = urlparse(text)
+    out: dict[str, Any] = {}
+    if parsed.hostname:
+        out["host"] = parsed.hostname
+    if parsed.port:
+        out["port"] = int(parsed.port)
+    path = (parsed.path or "").rstrip("/")
+    if path:
+        out["base_path"] = path
+    return out
+
+
+def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
+    """Map the SLVP add/edit form fields to a backend-config dict.
+
+    The form's single ``base_url`` field is parsed into host/port/base_path,
+    overridden by any explicit host/port/base_path. Secrets are referenced by
+    env-var name only (``api_key_env``) — the plaintext key is never accepted
+    or stored. Unknown/empty fields are dropped so defaults apply downstream.
+    """
+    raw: dict[str, Any] = {}
+    raw.update(split_base_url(form.get("base_url")))
+
+    preset = provider_preset(form.get("preset"))
+    if preset:
+        raw.setdefault("base_path", preset["base_path"])
+        if preset.get("default_port") and "port" not in raw:
+            raw["port"] = int(preset["default_port"])
+        raw.setdefault("native_passthrough", preset["native_passthrough"])
+        if not normalize_string_list(form.get("capabilities")):
+            raw["capabilities"] = list(preset["capabilities"])
+
+    # Explicit fields win over preset/URL-derived values.
+    for key in ("name", "host", "base_path", "protocol", "health_endpoint",
+                "api_key_env", "note", "service_name"):
+        value = form.get(key)
+        if value not in (None, ""):
+            raw[key] = str(value).strip()
+    if form.get("port") not in (None, ""):
+        raw["port"] = int(form["port"])
+    if form.get("priority") not in (None, ""):
+        raw["priority"] = int(form["priority"])
+
+    caps = normalize_string_list(form.get("capabilities"))
+    if caps:
+        raw["capabilities"] = caps
+    raw["role"] = str(form.get("role") or "required")
+    raw["enabled"] = bool_from_config(form.get("enabled"), True)
+    raw["managed"] = bool_from_config(form.get("managed"), False)
+    if "native_passthrough" in form:
+        raw["native_passthrough"] = bool_from_config(form.get("native_passthrough"), False)
+
+    # base_path defaults to /v1 for an OpenAI-style backend when nothing set it.
+    raw.setdefault("base_path", "/v1")
+    return {key: value for key, value in raw.items() if value not in (None, "")}
+
+
 def normalize_protocol_frontend(frontend_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
     source = str(raw.get("source") or "ui")
     if source not in PROTOCOL_FRONTEND_SOURCES:

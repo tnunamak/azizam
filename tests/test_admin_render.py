@@ -901,11 +901,15 @@ class AdminRenderHappyPathTests(unittest.TestCase):
     def test_empty_runtime_inventory_sections_are_hidden(self) -> None:
         html = render_admin_dashboard({})
         self.assertNotIn('id="apis"', html)
-        self.assertNotIn('id="services"', html)
         self.assertNotIn('id="activity"', html)
         # Core operator sections still render even with an empty snapshot.
         self.assertIn('id="profiles"', html)
         self.assertIn('id="apps-keys"', html)
+        # The Services section always renders — even with no backends — because
+        # it offers backend management (add your first backend is exactly the
+        # thing an operator with an empty inventory needs).
+        self.assertIn('id="services"', html)
+        self.assertIn("data-service-add", html)
 
     def test_services_show_resource_mode_queue_and_limits_when_provided(self) -> None:
         snapshot = _snapshot()

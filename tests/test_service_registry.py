@@ -487,3 +487,121 @@ def test_list_resource_summaries_sorted_by_priority() -> None:
     results = service_registry.list_resource_summaries(registry, audience="admin")
     ids = [r["id"] for r in results]
     assert ids.index("high") < ids.index("low")
+
+
+# ---------------------------------------------------------------------------
+# Single-service CRUD ops (operator add/edit/remove/enable from the UI).
+# ---------------------------------------------------------------------------
+
+
+def _seed_with_provisioned() -> dict:
+    return service_registry.build_service_registry_seed(
+        {
+            "backends": {
+                "tabby": {
+                    "name": "TabbyAPI",
+                    "host": "127.0.0.1",
+                    "port": 5050,
+                    "capabilities": ["vision", "chat"],
+                    "source": "provisioned",
+                }
+            }
+        }
+    )
+
+
+def test_service_form_to_raw_parses_base_url_and_applies_preset() -> None:
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "My vLLM",
+            "preset": "vllm",
+            "base_url": "http://10.0.0.5:8000/v1",
+            "role": "required",
+        }
+    )
+    assert raw["host"] == "10.0.0.5"
+    assert raw["port"] == 8000
+    assert raw["base_path"] == "/v1"
+    # The vLLM preset supplies default capabilities when the form omits them.
+    assert raw["capabilities"] == ["chat", "completions"]
+    assert raw["native_passthrough"] is True
+
+
+def test_service_form_to_raw_keeps_secret_as_env_ref_only() -> None:
+    raw = service_registry.service_form_to_raw(
+        {"name": "x", "base_url": "http://h:1/v1", "api_key_env": "MY_KEY"}
+    )
+    assert raw["api_key_env"] == "MY_KEY"
+    # The plaintext key is never accepted into the stored config.
+    assert "api_key" not in raw
+
+
+def test_upsert_creates_ui_service_and_rejects_duplicate() -> None:
+    reg = _seed_with_provisioned()
+    raw = service_registry.service_form_to_raw(
+        {"name": "My vLLM", "preset": "vllm", "base_url": "http://h:8000/v1"}
+    )
+    reg2, rec = service_registry.upsert_service_in_registry(
+        reg, service_id="my-vllm", raw=raw, source="ui"
+    )
+    assert rec["id"] == "my-vllm"
+    assert rec["source"] == "ui"
+    assert rec["editable"] is True
+    assert reg2["services"]["my-vllm"]["config"]["port"] == 8000
+
+    try:
+        service_registry.upsert_service_in_registry(
+            reg2, service_id="my-vllm", raw=raw
+        )
+        raise AssertionError("duplicate create should raise")
+    except ValueError as exc:
+        assert "already exists" in str(exc)
+
+
+def test_upsert_edit_rejects_non_editable_record() -> None:
+    reg = _seed_with_provisioned()
+    raw = service_registry.service_form_to_raw(
+        {"name": "TabbyAPI", "base_url": "http://h:5050/v1"}
+    )
+    # Provisioned records are not editable from the UI.
+    assert reg["services"]["tabby"]["editable"] is False
+    try:
+        service_registry.upsert_service_in_registry(
+            reg, service_id="tabby", raw=raw, replace=True
+        )
+        raise AssertionError("editing a provisioned record should raise")
+    except ValueError as exc:
+        assert "not editable" in str(exc)
+
+
+def test_remove_only_deletes_ui_services() -> None:
+    reg = _seed_with_provisioned()
+    raw = service_registry.service_form_to_raw(
+        {"name": "Mine", "base_url": "http://h:9/v1"}
+    )
+    reg, _ = service_registry.upsert_service_in_registry(
+        reg, service_id="mine", raw=raw, source="ui"
+    )
+    reg = service_registry.remove_service_from_registry(reg, "mine")
+    assert "mine" not in reg["services"]
+
+    try:
+        service_registry.remove_service_from_registry(reg, "tabby")
+        raise AssertionError("deleting a provisioned record should raise")
+    except ValueError as exc:
+        assert "provisioned" in str(exc)
+
+
+def test_set_service_enabled_toggles_any_source() -> None:
+    reg = _seed_with_provisioned()
+    reg = service_registry.set_service_enabled(reg, "tabby", False)
+    assert reg["services"]["tabby"]["enabled"] is False
+    reg = service_registry.set_service_enabled(reg, "tabby", True)
+    assert reg["services"]["tabby"]["enabled"] is True
+
+
+def test_provider_presets_have_a_custom_escape_hatch() -> None:
+    ids = [p["id"] for p in service_registry.PROVIDER_PRESETS]
+    assert "openai-compatible" in ids
+    assert service_registry.provider_preset("vllm")["default_port"] == 8000
+    assert service_registry.provider_preset("nope") is None
