@@ -222,20 +222,67 @@ def _backfill_collection_metadata(
                 record[key] = copy.deepcopy(seed[key])
 
 
+# Runtime fields the registry promotes to the top of a service record but that
+# the legacy execution/router paths also read off a flat backend dict. The rest
+# of the flat backend shape comes verbatim from the record's ``config`` (which
+# holds the full original backend declaration minus secrets), so the projection
+# is lossless without enumerating every open-ended execution field
+# (workflows_dir, start_command, model_dir, …).
+_RUNTIME_PROMOTED_FIELDS = ("name", "enabled", "role", "capabilities", "priority")
+
+
+def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
+    """Project ONE registry service record to the flat runtime backend dict.
+
+    This is the single, one-directional read-only projection the router and
+    legacy execution paths consume. It carries the service's ``config`` (the
+    full original backend declaration) plus the few runtime fields the registry
+    promotes to the top level. It deliberately omits admin/provenance fields
+    (``source``, ``editable``, ``provenance``, the ``lifecycle`` wrapper): those
+    are registry concerns, and admin/discovery surfaces read the service record
+    directly rather than this projection.
+    """
+    config = service.get("config")
+    out: dict[str, Any] = copy.deepcopy(dict(config)) if isinstance(config, Mapping) else {}
+    for field in _RUNTIME_PROMOTED_FIELDS:
+        value = service.get(field)
+        if value not in (None, ""):
+            out[field] = copy.deepcopy(value)
+    # ``managed`` and the systemd service name live under ``lifecycle`` in the
+    # record but flat on the backend dict; promote them for managed backends.
+    lifecycle = service.get("lifecycle")
+    if isinstance(lifecycle, Mapping):
+        if lifecycle.get("managed"):
+            out["managed"] = True
+        if lifecycle.get("service_name"):
+            out["service_name"] = str(lifecycle["service_name"])
+    return {key: value for key, value in out.items() if value not in (None, "")}
+
+
+def runtime_backends(registry: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Project the whole registry to the flat ``{id: backend}`` runtime map."""
+    services = registry.get("services") if isinstance(registry, Mapping) else {}
+    if not isinstance(services, Mapping):
+        return {}
+    return {
+        service_id: runtime_backend_from_service(service)
+        for service_id, service in services.items()
+        if isinstance(service, Mapping)
+    }
+
+
 def apply_service_registry_to_config(
     proxy_config: Mapping[str, Any],
     registry: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Return a config copy whose backend registry comes from admin.db."""
+    """Return a config copy whose ``backends`` are projected from the registry.
 
+    The registry (admin.db) is the source of truth; this rebuilds the flat
+    ``config["backends"]`` legacy execution paths route with as a one-way
+    read-only projection. Nothing writes a backend shape back into the registry.
+    """
     out = copy.deepcopy(dict(proxy_config))
-    services = registry.get("services") if isinstance(registry, Mapping) else {}
-    if isinstance(services, Mapping):
-        out["backends"] = {
-            service_id: backend_config_from_service(service)
-            for service_id, service in services.items()
-            if isinstance(service, Mapping)
-        }
+    out["backends"] = runtime_backends(registry)
     return out
 
 
@@ -423,28 +470,6 @@ def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
         or kind in {"litellm", "llm-substrate"}
         or execution_substrate == "litellm"
     )
-
-
-def backend_config_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
-    raw = copy.deepcopy(dict(service.get("config") or {}))
-    raw["name"] = str(service.get("name") or raw.get("name") or service.get("id") or "")
-    raw["kind"] = str(service.get("kind") or raw.get("kind") or "")
-    raw["service_source"] = str(service.get("source") or "ui")
-    raw["editable"] = bool_from_config(service.get("editable"), raw.get("service_source") == "ui")
-    raw["priority"] = int(service.get("priority") or raw.get("priority") or 100)
-    raw["enabled"] = bool_from_config(service.get("enabled"), True)
-    raw["role"] = str(service.get("role") or raw.get("role") or "required")
-    raw["capabilities"] = normalize_string_list(
-        service.get("capabilities") or raw.get("capabilities")
-    )
-    lifecycle = service.get("lifecycle")
-    if isinstance(lifecycle, Mapping):
-        raw["managed"] = bool_from_config(lifecycle.get("managed"), raw.get("managed", False))
-        if lifecycle.get("service_name"):
-            raw["service_name"] = str(lifecycle["service_name"])
-        if lifecycle.get("type") and lifecycle.get("type") != "external":
-            raw["lifecycle"] = str(lifecycle["type"])
-    return {key: value for key, value in raw.items() if value not in (None, "")}
 
 
 # ---------------------------------------------------------------------------
