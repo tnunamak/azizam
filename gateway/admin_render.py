@@ -1262,8 +1262,8 @@ def _service_form(record: Mapping[str, Any] | None = None) -> str:
         for r in ("required", "standby")
     )
     form_kind = "edit" if editing else "add"
-    heading = f"Edit {name}" if editing else "Add a backend"
-    submit_label = "Save changes" if editing else "Add backend"
+    heading = f"Edit {name}" if editing else "Add a service"
+    submit_label = "Save changes" if editing else "Add service"
     id_field = (
         f'<input type="hidden" name="id" value="{service_id}">' if editing else ""
     )
@@ -1340,18 +1340,20 @@ def _service_crud_panel(services: list[Mapping[str, Any]]) -> str:
     """
     add_button = (
         '<button type="button" class="vf-button vf-button-sm" '
-        'data-service-add>+ Add backend</button>'
+        'data-service-add>+ Add service</button>'
     )
     return (
         '<div class="service-crud" data-service-crud>'
         '<div class="service-crud-head">'
-        '<p class="service-crud-intro">Backends are stored in the gateway '
-        "database. Add, edit, enable, or remove an upstream here; changes take "
-        "effect when the gateway restarts.</p>"
+        '<p class="service-crud-intro">Services are the upstream/local systems '
+        "this gateway calls (a model server, ComfyUI, TTS/STT, an "
+        "OpenAI-compatible endpoint). They are stored in the gateway database; "
+        "add, edit, enable, or remove one here, and changes take effect when the "
+        "gateway restarts.</p>"
         + add_button
         + "</div>"
         '<div id="service-restart-banner" class="notice" hidden>'
-        "Saved. Restart the gateway to apply backend changes.</div>"
+        "Saved. Restart the gateway to apply service changes.</div>"
         '<div id="service-form-host">'
         + _service_form()
         + "</div>"
@@ -2733,9 +2735,9 @@ def render_admin_dashboard(
             intro="Pause services, describe maintenance, and cap expensive media queues without editing files or restarting the gateway.",
         )
         + _subsection(
-            "Backends",
+            "Configured services",
             service_crud_panel + services_table,
-            intro="Upstream model/inference services this gateway routes to. Operator-added backends can be edited or removed; config-provisioned ones can be enabled or disabled here and changed in the config file.",
+            intro="The model/inference systems this gateway calls. Services you add here can be edited or removed; ones provisioned from config or built in can be enabled or disabled here and changed in the config file. The table shows every service's source, status, and capabilities.",
         )
         + _subsection(
             "Sources of Truth",
@@ -2921,7 +2923,7 @@ def render_admin_dashboard(
         "if(svcCancel){e.preventDefault();hideServiceForm();return}"
         "if(svcTest){e.preventDefault();await testServiceConnection();return}"
         "if(svcEdit){e.preventDefault();await editService(svcEdit.dataset.serviceEdit);return}"
-        "if(svcDelete){e.preventDefault();const id=svcDelete.dataset.serviceDelete,nm=svcDelete.dataset.serviceName||id;if(!confirm('Delete backend '+nm+'? It is removed from the gateway and takes effect on restart.'))return;try{await json('/admin/api/operator/services/'+encodeURIComponent(id),{},'DELETE');await refreshMain();showRestartBanner()}catch(err){showError(err)}return}"
+        "if(svcDelete){e.preventDefault();const id=svcDelete.dataset.serviceDelete,nm=svcDelete.dataset.serviceName||id;if(!confirm('Delete service '+nm+'? It is removed from the gateway and takes effect on restart.'))return;try{await json('/admin/api/operator/services/'+encodeURIComponent(id),{},'DELETE');await refreshMain();showRestartBanner()}catch(err){showError(err)}return}"
         "if(svcToggle){e.preventDefault();const id=svcToggle.dataset.serviceToggle,enabled=svcToggle.dataset.enabled==='1';try{await json('/admin/api/operator/services/'+encodeURIComponent(id)+'/enabled',{enabled:!enabled});await refreshMain();showRestartBanner()}catch(err){showError(err)}return}"
         "if(!revoke&&!disable&&!appDisable)return;"
         "if(revoke){const id=revoke.dataset.revokeCredential;try{const data=await json('/admin/api/credentials/'+encodeURIComponent(id)+'/revoke',{});await refreshMain();show(data)}catch(err){showError(err)}return}"
@@ -2960,7 +2962,7 @@ def render_admin_dashboard(
             "Services",
             services_html,
             section_id="services",
-            intro="Backend services and capabilities. Visibility only — runtime access still flows through Profiles.",
+            intro="The upstream and local systems this gateway can call or manage — model servers, ComfyUI, TTS/STT, and the LiteLLM substrate — plus the protocol lanes and capabilities they expose. Runtime access to them still flows through Profiles.",
         )
         + _section(
             "APIs",
