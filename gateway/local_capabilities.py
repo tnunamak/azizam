@@ -59,6 +59,7 @@ def build_local_capabilities(
     *,
     enabled_flags: Mapping[str, bool] | None = None,
     known_workflow_files: Iterable[str] | None = None,
+    backends: Mapping[str, Any] | None = None,
 ) -> list[Capability]:
     """Build raw :class:`Capability` records from a proxy config dict.
 
@@ -71,13 +72,23 @@ def build_local_capabilities(
     When supplied, workflow entries whose ``file`` is *not* in the set get
     an extra caveat. When ``None`` (the default), no existence claim is
     made — callers that don't want to do that check just leave it unset.
+
+    ``backends`` overrides the backends map read from ``config["backends"]``.
+    Pass a live projection (e.g. from
+    ``service_registry.runtime_backends(registry)``) so that capability
+    discovery reflects the current DB service registry rather than the
+    frozen-at-boot config.  When ``None`` (the default) the function falls
+    back to ``config.get("backends")``.
     """
     flags = dict(enabled_flags or {})
     known_files = set(known_workflow_files or ())
 
     capabilities: list[Capability] = []
 
-    backends = _as_mapping(config.get("backends"))
+    if backends is None:
+        backends = _as_mapping(config.get("backends"))
+    else:
+        backends = _as_mapping(backends)
     capabilities.extend(_build_llm_capabilities(config, backends, flags))
     capabilities.extend(_build_openai_endpoint_capabilities(backends, flags))
     capabilities.extend(_build_tts_capabilities(backends, flags))

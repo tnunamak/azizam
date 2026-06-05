@@ -8380,6 +8380,12 @@ def _capability_for_profile(
 
 
 def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Capability]:
+    try:
+        _live_backends: Mapping[str, Any] | None = service_registry.runtime_backends(
+            ADMIN_STORE.get_service_registry()
+        )
+    except Exception:  # noqa: BLE001
+        _live_backends = None
     capabilities = list(build_local_capabilities(
         config,
         enabled_flags={
@@ -8391,6 +8397,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
             "videos": COMFY_ENABLED,
             "audio": COMFY_ENABLED,
         },
+        backends=_live_backends,
     ))
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
@@ -9147,20 +9154,48 @@ def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dic
     status_by_name = _status_by_service_name(payload)
     service_overrides = _operator_service_availability_overrides()
     rows: list[dict[str, Any]] = []
-    live_keys: set[str] = set()
-    for key, raw in (config.get("backends") or {}).items():
-        if not isinstance(raw, Mapping):
+    # The DB service registry is the live source of truth for backends; iterate
+    # it as the primary source. Services not yet in the running config["backends"]
+    # (frozen at boot) are shown as "pending" so operators can see/edit them
+    # immediately after adding via the dashboard. Fall back to config["backends"]
+    # if the registry is unavailable to keep the dashboard non-fatal.
+    try:
+        registry = ADMIN_STORE.get_service_registry()
+        registry_services: Mapping[str, Any] = registry.get("services") or {}
+        if not isinstance(registry_services, Mapping):
+            registry_services = {}
+    except Exception:  # noqa: BLE001 — never break the dashboard over this
+        registry_services = None  # type: ignore[assignment]
+    if registry_services is None:
+        # Fallback: registry unavailable — iterate frozen boot config
+        registry_services = {}
+        for key, raw in (config.get("backends") or {}).items():
+            if isinstance(raw, Mapping):
+                registry_services[key] = raw
+    live_config_keys: set[str] = set((config.get("backends") or {}).keys())
+    for service_id, service in registry_services.items():
+        if not isinstance(service, Mapping):
             continue
-        live_keys.add(str(key))
-        name = str(raw.get("name") or key)
-        live = status_by_name.get(name) or {}
-        live_status = str(live.get("live_status") or live.get("status") or "unknown")
-        role = str(raw.get("role") or "required")
+        key = str(service_id)
+        cfg = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+        name = str(service.get("name") or key)
+        is_live = key in live_config_keys
+        if is_live:
+            live = status_by_name.get(name) or {}
+            live_status = str(live.get("live_status") or live.get("status") or "unknown")
+            last_error = live.get("last_error") or ""
+        else:
+            live = {}
+            live_status = "pending"
+            last_error = ""
+        role = str(service.get("role") or "required")
         if role == "standby" and live_status == "down":
             live_status = "standby"
-        override = service_overrides.get(str(key), {})
+        override = service_overrides.get(key, {})
         override_state = str(override.get("state") or "").strip()
-        note = raw.get("note") or live.get("last_error") or ""
+        note = service.get("note") or last_error or ""
+        if not is_live and not note:
+            note = "Added in the dashboard — applies on the next gateway restart."
         if override_state and override_state != "available":
             live_status = override_state
             override_reason = str(override.get("reason") or "").strip()
@@ -9170,52 +9205,22 @@ def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dic
                 "key": key,
                 "id": key,
                 "name": name,
-                "source": raw.get("service_source") or raw.get("source") or "ui",
-                "editable": bool_from_config(raw.get("editable"), True),
-                "enabled": bool_from_config(raw.get("enabled"), True),
-                "config": dict(raw),
-                "priority": raw.get("priority"),
+                "source": str(service.get("source") or "ui"),
+                "editable": bool(service.get("editable", service.get("source") == "ui")),
+                "enabled": bool_from_config(service.get("enabled"), True),
+                "config": dict(cfg),
+                "priority": service.get("priority"),
                 "role": role,
-                "capabilities": raw.get("capabilities") or [],
+                "capabilities": service.get("capabilities") or [],
                 "status": live_status,
-                "last_error": live.get("last_error") or "",
+                "last_error": last_error,
                 "note": note,
                 "runtime": _admin_service_runtime_summary(
-                    str(key),
+                    key,
                     status_payload=payload,
-                ),
+                ) if is_live else ("pending restart" if not is_live else ""),
             }
         )
-    # The running config["backends"] is frozen at process start; the DB registry
-    # is the source of truth operators edit live. Surface any registry service
-    # NOT yet in the running config as "pending restart" so an operator can see,
-    # edit, and remove a just-added backend immediately (it applies on restart).
-    try:
-        registry = ADMIN_STORE.get_service_registry()
-        for service_id, service in (registry.get("services") or {}).items():
-            if not isinstance(service, Mapping) or str(service_id) in live_keys:
-                continue
-            cfg = service.get("config") if isinstance(service.get("config"), Mapping) else {}
-            rows.append(
-                {
-                    "key": str(service_id),
-                    "id": str(service_id),
-                    "name": str(service.get("name") or service_id),
-                    "source": str(service.get("source") or "ui"),
-                    "editable": bool_from_config(service.get("editable"), service.get("source") == "ui"),
-                    "enabled": bool_from_config(service.get("enabled"), True),
-                    "config": dict(cfg),
-                    "priority": service.get("priority"),
-                    "role": str(service.get("role") or "required"),
-                    "capabilities": service.get("capabilities") or [],
-                    "status": "pending",
-                    "last_error": "",
-                    "note": "Added in the dashboard — applies on the next gateway restart.",
-                    "runtime": "pending restart",
-                }
-            )
-    except Exception:  # noqa: BLE001 — never break the dashboard over this
-        pass
     return rows
 
 
@@ -9380,14 +9385,22 @@ def _admin_service_override_controls(
 ) -> list[dict[str, Any]]:
     overrides = _operator_service_availability_overrides()
     rows: list[dict[str, Any]] = []
-    backend_keys = [
-        str(key)
-        for key, raw in (config.get("backends") or {}).items()
-        if isinstance(raw, Mapping)
-    ]
-    for key in sorted(set(backend_keys) | set(overrides.keys())):
-        raw = (config.get("backends") or {}).get(key, {})
-        name = str(raw.get("name") or key) if isinstance(raw, Mapping) else key
+    # Use the live registry as the canonical service source; fall back to
+    # config["backends"] (frozen at boot) if the registry is unavailable.
+    try:
+        registry = ADMIN_STORE.get_service_registry()
+        registry_services: Mapping[str, Any] = registry.get("services") or {}
+        if not isinstance(registry_services, Mapping):
+            registry_services = {}
+    except Exception:  # noqa: BLE001
+        registry_services = {}
+        for key, raw in (config.get("backends") or {}).items():
+            if isinstance(raw, Mapping):
+                registry_services[key] = raw
+    registry_keys = [str(k) for k in registry_services if isinstance(registry_services[k], Mapping)]
+    for key in sorted(set(registry_keys) | set(overrides.keys())):
+        svc = registry_services.get(key) or {}
+        name = str(svc.get("name") or key) if isinstance(svc, Mapping) else key
         override = overrides.get(key, {})
         state = str(override.get("state") or "available")
         reason = override.get("reason")
@@ -9567,13 +9580,26 @@ def _admin_workflow_inventory() -> list[dict[str, Any]]:
 def _admin_backend_inventory(status_payload: Mapping[str, Any]) -> list[dict[str, str]]:
     status_by_name = _status_by_service_name(status_payload)
     items: list[dict[str, str]] = []
-    for key, raw in (config.get("backends") or {}).items():
-        if not isinstance(raw, Mapping):
+    # Read live registry; fall back to frozen boot config if unavailable.
+    try:
+        registry = ADMIN_STORE.get_service_registry()
+        registry_services: Mapping[str, Any] = registry.get("services") or {}
+        if not isinstance(registry_services, Mapping):
+            registry_services = {}
+    except Exception:  # noqa: BLE001
+        registry_services = {}
+        for k, v in (config.get("backends") or {}).items():
+            if isinstance(v, Mapping):
+                registry_services[k] = v
+    for service_id, service in registry_services.items():
+        if not isinstance(service, Mapping):
             continue
-        name = str(raw.get("name") or key)
+        key = str(service_id)
+        cfg = service.get("config") if isinstance(service.get("config"), Mapping) else service
+        name = str(service.get("name") or key)
         live = status_by_name.get(name) or {}
         status = live.get("live_status") or live.get("status") or "unknown"
-        capabilities = raw.get("capabilities") or []
+        capabilities = service.get("capabilities") or (cfg.get("capabilities") if isinstance(cfg, Mapping) else None) or []
         description = ", ".join(str(item) for item in capabilities) if capabilities else ""
         if status:
             description = (description + "; " if description else "") + f"status {status}"
