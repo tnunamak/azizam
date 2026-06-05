@@ -1424,7 +1424,10 @@ def _service_crud_panel(services: list[Mapping[str, Any]]) -> str:
         + add_button
         + "</div>"
         '<div id="service-restart-banner" class="notice" hidden>'
-        "Saved. Restart the gateway to apply service changes.</div>"
+        "Saved. <strong>Restart the gateway</strong> to apply service changes. "
+        "Then grant the service's model(s) to a "
+        '<a href="#profiles" data-admin-jump="profiles">Profile</a> so app keys '
+        "can use them — runtime access flows through Profiles.</div>"
         '<div id="service-form-host">'
         + _service_form()
         + "</div>"
