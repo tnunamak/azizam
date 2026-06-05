@@ -13,6 +13,7 @@ The page shares its chrome (header, nav, sign-out affordance) with
 
 from __future__ import annotations
 
+import time
 from typing import Any, Mapping
 
 from gateway.gateway_shell import (
@@ -63,6 +64,25 @@ _PAGE_CSS = """
     letter-spacing: 0.16em;
     margin: 0;
     text-transform: uppercase;
+  }
+  /* Entry point: a calm, confident title (kicker + name), like the leading dev
+     tools' keys surface. Not a chummy time-of-day greeting. */
+  .portal-topbar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding-bottom: var(--space-1);
+  }
+  .portal-topbar-id { display: grid; gap: 0.2rem; min-width: 0; }
+  .portal-greeting {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 600;
+    font-size: 1.7rem;
+    line-height: 1.05;
+    letter-spacing: -0.01em;
+    color: var(--text);
   }
   .card, .app-create, .base-card {
     background: var(--panel);
@@ -361,8 +381,34 @@ _PAGE_CSS = """
     min-width: 0;
   }
   .app-detail-line { margin: 0; color: var(--muted); font-size: 0.86rem; line-height: 1.5; }
-  /* The masked-key sub-line in the closed row reuses the row-sub mono style. */
-  .app-card .vf-row-sub code { color: inherit; font-size: inherit; font-family: inherit; }
+  /* Per-App initials avatar — a deterministic colored tile so each App is
+     instantly distinguishable in the list (replaces a repeated generic glyph). */
+  .app-avatar {
+    width: 2.125rem;
+    height: 2.125rem;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    font-family: var(--font-sans);
+    font-size: 0.8rem;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+  }
+  /* Trailing column of the collapsed app row: recency text + chevron. */
+  .app-card-trailing {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex: 0 0 auto;
+  }
+  .app-card-usage {
+    font-size: 0.8rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  /* .badge — used by the key-detail sheet's access-list cards (client JS). */
   .badge {
     display: inline-flex;
     align-items: center;
@@ -379,50 +425,46 @@ _PAGE_CSS = """
   .badge.warn { color: var(--warn); background: var(--warn-bg); }
   .meta { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .list, .key-list { display: grid; gap: var(--space-2); }
-  .key-list { margin-top: var(--space-2); }
-  /* A key is a calm, tappable row (design 03): glyph · name · masked prefix ·
-     chevron. The whole row opens the detail sheet. */
+  .key-list { margin-top: var(--space-1); }
+  /* A key is a calm, tappable row inside the expanded app card: label + masked
+     value on the left, an honest recency on the right, then a chevron. The
+     whole row opens the detail sheet. */
   .key-row {
     display: flex;
     align-items: center;
     gap: var(--space-3);
     width: 100%;
-    padding: 0.7rem 0.8rem;
+    padding: 0.7rem 0.85rem;
     border: 1px solid var(--line);
     border-radius: var(--radius);
     background: var(--panel-2);
     color: var(--text);
     text-align: left;
     cursor: pointer;
-    min-height: 3.25rem;
+    min-height: 3rem;
   }
   .key-row:hover { border-color: var(--line-strong); background: var(--panel-3); }
-  .key-row-glyph {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 2.1rem;
-    height: 2.1rem;
-    flex: 0 0 auto;
-    border-radius: 10px;
-    background: var(--panel-3);
-    color: var(--accent);
-  }
-  .key-row-main { display: grid; gap: 0.1rem; min-width: 0; flex: 1; }
+  .key-row-main { display: grid; gap: 0.15rem; min-width: 0; flex: 1; }
   .key-row-name {
     font-weight: 600;
-    font-size: 0.94rem;
+    font-size: 0.92rem;
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .key-row-prefix {
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     color: var(--soft);
     font-family: var(--font-mono);
+    letter-spacing: 0.02em;
   }
-  .key-row-prefix code { color: var(--soft); font-size: inherit; }
+  .key-row-usage {
+    font-size: 0.76rem;
+    color: var(--muted);
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
   .key-row-chevron { color: var(--soft); flex: 0 0 auto; display: inline-flex; }
   /* "+ New key" — quiet inline disclosure under the key list. */
   .key-create { margin-top: var(--space-1); }
@@ -482,7 +524,16 @@ _PAGE_CSS = """
   /* Recent-activity feed — the design's divided-row feed (brand .vf-feed /
      .vf-feed-row). The rows are buttons (they open the receipt sheet), so this
      adds the button reset + hover on top of the brand row layout. */
-  .recent-card .empty { margin: 0; padding: var(--space-4); border: 0; }
+  .recent-card .empty { margin: 0; padding: var(--space-5) var(--space-4); border: 0; }
+  /* Light empty state: when the feed holds only the empty line, drop the card
+     chrome so a "no activity yet" message doesn't carry more visual weight than
+     real rows would (prior art: dev-tool keys dashboards keep empty states to a
+     muted line, not a bordered box). */
+  .recent-card:has(> .empty:only-child) {
+    border: 0;
+    background: transparent;
+    padding: 0;
+  }
   .activity-row {
     width: 100%;
     background: transparent;
@@ -687,10 +738,6 @@ _PAGE_CSS = """
 """
 
 
-def _badge(text: Any, cls: str = "") -> str:
-    return f'<span class="badge {cls}">{esc(text)}</span>'
-
-
 def _client_account(account: Mapping[str, Any] | None, *, show_permission_details: bool) -> dict[str, Any]:
     if not account:
         return {"authenticated": False, "apps": []}
@@ -746,6 +793,70 @@ def _active_credentials(app: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     ]
 
 
+# The canonical secret-masking format used by Stripe / OpenAI / Resend: keep the
+# scheme prefix readable, mask the middle with bullet dots, reveal the last four
+# so a user can disambiguate which key a row is. Our stored ``prefix`` is the
+# full random head of the key (e.g. ``opk_UVPUywNEQuZvgW``); we show
+# ``opk_ •••• vgW`` style — scheme + dots + last-4-of-the-known-head. We never
+# have or render the full secret. Mirrored in the client JS as ``maskKey``.
+_MASK_DOTS = "••••"  # four U+2022 bullets
+
+
+def _mask_key(prefix: str) -> str:
+    """Return ``scheme_ •••• last4`` for a credential's stored prefix."""
+    raw = str(prefix or "").strip()
+    if not raw:
+        return "key"
+    scheme, sep, tail = raw.partition("_")
+    if sep and tail:
+        last4 = tail[-4:] if len(tail) >= 4 else tail
+        return f"{scheme}_ {_MASK_DOTS} {last4}"
+    last4 = raw[-4:] if len(raw) >= 4 else raw
+    return f"{_MASK_DOTS} {last4}"
+
+
+def _relative_time(ts: Any, *, now: int | None = None) -> str:
+    """Human relative time for an epoch-seconds value ('2m ago', '3d ago')."""
+    try:
+        seconds_ago = (int(time.time()) if now is None else int(now)) - int(ts)
+    except (TypeError, ValueError):
+        return ""
+    if seconds_ago < 0:
+        seconds_ago = 0
+    if seconds_ago < 45:
+        return "just now"
+    minutes = seconds_ago // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    if days < 7:
+        return f"{days}d ago"
+    weeks = days // 7
+    if weeks < 5:
+        return f"{weeks}w ago"
+    months = days // 30
+    if months < 12:
+        return f"{months}mo ago"
+    return f"{days // 365}y ago"
+
+
+def _key_usage_label(record: Mapping[str, Any]) -> str:
+    """A short, honest recency label for a key row's trailing metadata.
+
+    Prefers real ``last_used_at`` ('used 2m ago'); falls back to 'Never used'
+    once a key exists but has no recorded use. (The auth path records use via
+    ``admin_store.touch_credential_last_used``, so this is real signal.)
+    """
+    last_used = record.get("last_used_at")
+    if last_used:
+        rel = _relative_time(last_used)
+        return f"used {rel}" if rel else "used recently"
+    return "Never used"
+
+
 def _sanitize_client_credential(credential: Mapping[str, Any]) -> dict[str, Any]:
     allowed = {
         "id",
@@ -753,6 +864,7 @@ def _sanitize_client_credential(credential: Mapping[str, Any]) -> dict[str, Any]
         "display_name",
         "created_at",
         "expires_at",
+        "last_used_at",
         "active",
     }
     return {key: credential.get(key) for key in allowed if key in credential}
@@ -762,24 +874,25 @@ def _credential_html(record: Mapping[str, Any]) -> str:
     if not record.get("active", True):
         return ""
     credential_id = esc(record.get("id"))
-    prefix = esc(record.get("prefix") or "key")
     label = esc(record.get("display_name") or "API key")
-    # The key is a calm, tappable row (design 03): icon · label · masked
-    # prefix · chevron. The whole row opens the detail sheet ("What this key
-    # can do"), where View-access and Revoke live — no destructive buttons on
-    # the surface. We deliberately show NO "last used" time: per-key activity
-    # isn't recorded yet, and inventing a timestamp would be dishonest.
+    masked = esc(_mask_key(str(record.get("prefix") or "")))
+    # Each key is a calm, tappable row (design 03): label · masked value (Stripe/
+    # OpenAI/Resend convention: scheme + dots + last 4) on the left, and an
+    # honest recency on the right ("used 2m ago" / "Never used", from real
+    # last_used_at). Tapping opens the detail sheet (View-access + Revoke live
+    # there — no destructive buttons on the calm surface).
+    usage = esc(_key_usage_label(record))
     return (
         '<button class="key-row" type="button" data-view-owned-key="'
         + credential_id
         + '" data-key-label="'
         + label
         + '" aria-label="Open ' + label + '">'
-        '<span class="key-row-glyph" aria-hidden="true">' + _key_glyph() + "</span>"
         '<span class="key-row-main">'
         f'<span class="key-row-name">{label}</span>'
-        f'<span class="key-row-prefix"><code>{prefix}</code>···</span>'
+        f'<span class="key-row-prefix">{masked}</span>'
         "</span>"
+        f'<span class="key-row-usage">{usage}</span>'
         '<span class="key-row-chevron" aria-hidden="true">'
         '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" '
         'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
@@ -792,16 +905,16 @@ def _credential_html(record: Mapping[str, Any]) -> str:
 def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) -> str:
     app_id = esc(app.get("id"))
     name = esc(app.get("name") or app_id or "App")
+    # Only admins (show_permission_details) see a permission line, naming the
+    # actual Profile. Non-admins get no Profile/permission chrome on this calm
+    # surface — it's operator vocabulary they can't act on.
     profile = app.get("profile") if isinstance(app.get("profile"), Mapping) else None
     permission_text = "your account permissions"
     raw_profile_id = str(app.get("profile_id") or "")
-    permission_badge = _badge("account permissions")
     if profile:
         raw_profile_id = str(profile.get("id") or raw_profile_id)
-        inherited = bool(profile.get("inherited"))
         if profile.get("missing"):
             permission_text = "permissions that are currently unavailable"
-            permission_badge = _badge("permissions unavailable", "bad")
         elif show_permission_details:
             permission_text = str(
                 profile.get("name")
@@ -809,12 +922,8 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
                 or raw_profile_id
                 or "account permissions"
             )
-            permission_badge = _badge(
-                "inherited permissions" if inherited else "custom permissions"
-            )
-        elif not inherited:
+        elif not bool(profile.get("inherited")):
             permission_text = "custom account permissions"
-            permission_badge = _badge("custom permissions")
     credentials = _active_credentials(app)
     credential_html = (
         "".join(_credential_html(c) for c in credentials)
@@ -860,21 +969,34 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
         "</details>"
     )
     # The card's calm face is the design's app row (design 03): a glyph tile, the
-    # App name, and a single quiet sub-line — the masked key when there's exactly
-    # one, a count otherwise. No "last used" time: per-key activity isn't tracked
-    # yet, and inventing one would be dishonest. The whole row taps to expand the
-    # keys + management controls in place (progressive disclosure), so the
-    # surface stays calm while every flow is one tap away.
+    # App name over a quiet key-count sub-line on the left, and the App's most
+    # recent key usage on the right ("used 2m ago" / "Never used", from real
+    # last_used_at) so the row is balanced and informative instead of a lone
+    # chevron in dead space. Tapping expands the keys + management controls in
+    # place; each key row carries its own masked value and recency.
     active_count = len(credentials)
-    if active_count == 1:
-        prefix = esc(credentials[0].get("prefix") or "key")
-        sub_html = f'<code>{prefix}</code>···'
-    elif active_count == 0:
-        sub_html = "No keys yet"
+    sub_text = (
+        "No keys yet"
+        if active_count == 0
+        else f"{active_count} key" + ("" if active_count == 1 else "s")
+    )
+    # Most-recent use across this App's keys → the trailing metadata.
+    last_used_values = [
+        int(c["last_used_at"])
+        for c in credentials
+        if c.get("last_used_at")
+    ]
+    if last_used_values:
+        usage_meta = "used " + (_relative_time(max(last_used_values)) or "recently")
+    elif active_count:
+        usage_meta = "Never used"
     else:
-        sub_html = f"{active_count} keys"
-    # Admins who asked for permission detail get the Profile name in the sub-line
-    # area as a quiet badge inside the expanded body; the calm face stays minimal.
+        usage_meta = ""
+    usage_html = (
+        f'<span class="app-card-usage">{esc(usage_meta)}</span>' if usage_meta else ""
+    )
+    # Admins who asked for permission detail get one quiet line naming the
+    # Profile; non-admins never see permission/Profile chrome on this surface.
     detail_line = (
         f'<p class="app-detail-line">Keys use {esc(permission_text)}.</p>'
         if show_permission_details
@@ -885,21 +1007,22 @@ def _app_html(app: Mapping[str, Any], *, show_permission_details: bool = False) 
         '<summary class="app-card-summary">'
         '<span class="vf-row">'
         '<span class="vf-row-main">'
-        '<span class="vf-glyph" aria-hidden="true">' + _app_glyph() + "</span>"
-        '<span class="vf-row-id">'
+        + _app_avatar(app.get("name") or app_id or "App")
+        + '<span class="vf-row-id">'
         f'<span class="vf-row-name">{name}</span>'
-        f'<span class="vf-row-sub">{sub_html}</span>'
+        f'<span class="vf-row-sub">{esc(sub_text)}</span>'
         "</span>"
         "</span>"
-        '<span class="app-card-chevron" aria-hidden="true">' + _chevron_svg() + "</span>"
+        '<span class="app-card-trailing">'
+        + usage_html
+        + '<span class="app-card-chevron" aria-hidden="true">'
+        + _chevron_svg()
+        + "</span>"
+        "</span>"
         "</span>"
         "</summary>"
         '<div class="app-card-body">'
         + detail_line
-        + '<div class="meta">'
-        + permission_badge
-        + _badge(f"{active_count} active keys", "good")
-        + "</div>"
         + '<div class="key-list" data-key-list="' + app_id + '">'
         + credential_html
         + "</div>"
@@ -1009,9 +1132,6 @@ def _signed_out_hero(
 
 
 def _signed_in_account(account: Mapping[str, Any]) -> str:
-    user_value = account.get("user")
-    user = user_value if isinstance(user_value, Mapping) else {}
-    user_label = esc(user.get("email") or user.get("name") or "signed-in user")
     apps = [a for a in account.get("apps", []) if isinstance(a, Mapping)]
     is_admin = can_admin(account)
     # The form fields are shared between the empty-state hero CTA and the
@@ -1034,19 +1154,8 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
         if apps
         else '<div id="apps-list" class="apps-list"><p class="empty">Create your first App to get an <code>opk_</code> API key.</p></div>'
     )
-    admin_hint = (
-        ' <a href="/admin">Admin</a> manages shared Apps and permission Profiles.'
-        if is_admin
-        else ""
-    )
     app_count = len(apps)
     is_empty = app_count == 0
-    if is_empty:
-        gateway_line = "Nothing's connected yet — create your first App to get a key."
-    elif app_count == 1:
-        gateway_line = "Your gateway. 1 app connected."
-    else:
-        gateway_line = f"Your gateway. {app_count} apps connected."
 
     # Empty-state hero CTA (design: "Make your first key"). On a fresh account
     # the create form is wrapped in a calm gradient card that leads the eye to
@@ -1084,16 +1193,19 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
             'data-focus-create-app aria-label="Create another App">+ New</button>'
         )
 
-    # Orientation is kept to one line: the title says where you are, the health
-    # card says it's working, and the controls (+ New key, tappable key rows)
-    # are self-labeling. We don't narrate "create an App, mint a key, tap a
-    # key…" on every view — that tutorial is cost the returning user re-pays
-    # forever. Identity ("Signed in as …") stays; for admins, the one actionable
-    # pointer to /admin stays.
-    hint_html = (
-        f'<p class="hint">Signed in as {user_label}.{admin_hint}</p>'
-        if admin_hint
-        else f'<p class="hint">Signed in as {user_label}.</p>'
+    # Entry point: the leading dev tools (Stripe / OpenAI / Resend) don't greet
+    # on a keys surface — they open with a calm, confident title and the create
+    # action, and reserve greetings for a pure overview. So Home opens with a
+    # TopBar (kicker + "Your gateway"), not a chummy "Hi, {name}". No "Signed in
+    # as …" line: the title plus the Sign-out control in the header already
+    # carry identity; the Admin tab carries the admin path. (Prior art:
+    # docs/solutions research on dev-tool key dashboards.)
+    top_bar = (
+        '<div class="portal-topbar">'
+        '<div class="portal-topbar-id">'
+        '<h1 class="portal-greeting">Your gateway</h1>'
+        "</div>"
+        "</div>"
     )
     # Design 03 order: a reachability card leads, then the "YOUR APPS" section
     # (kicker = key count + title + "+ New"), then the apps, then the activity
@@ -1105,8 +1217,8 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
     ) if key_count else "no keys yet"
     return (
         '<section aria-labelledby="apps-heading">'
-        + _health_card(gateway_line)
-        + hint_html
+        + top_bar
+        + _health_card()
         + '<div class="vf-section">'
         '<div class="vf-section-head">'
         "<div>"
@@ -1140,8 +1252,8 @@ def _recent_activity_section() -> str:
         '<section class="vf-section recent-section" aria-labelledby="recent-heading">'
         '<div class="vf-section-head">'
         "<div>"
-        '<p class="vf-section-label">your calls</p>'
-        '<h2 id="recent-heading" class="vf-section-title">Recent</h2>'
+        '<p class="vf-section-label">last calls</p>'
+        '<h2 id="recent-heading" class="vf-section-title">Recent activity</h2>'
         "</div>"
         "</div>"
         '<div class="vf-card vf-feed recent-card" id="recent-activity">'
@@ -1243,18 +1355,43 @@ def _key_glyph() -> str:
     )
 
 
-def _app_glyph() -> str:
-    # A neutral "application" mark for the app-row glyph tile. Real Apps don't
-    # carry an icon type, so one calm grid glyph stands in for all of them
-    # (the design's per-app bot/edit/chat icons are prototype flavor).
+# Distinct, calm hues for the per-App initials avatar — a deterministic accent
+# so each App is instantly scannable in the list (a repeated generic glyph reads
+# as a template, not real data). Tints stay muted to fit the dark surface.
+_AVATAR_HUES = (
+    ("#7BC4C8", "rgba(123,196,200,0.16)"),  # accent / sea-glass
+    ("#D49AA6", "rgba(212,154,166,0.16)"),  # rose
+    ("#9CC68B", "rgba(156,198,139,0.16)"),  # leaf
+    ("#C9A66B", "rgba(201,166,107,0.16)"),  # sand
+    ("#8FB4E0", "rgba(143,180,224,0.16)"),  # sky
+    ("#B79AD4", "rgba(183,154,212,0.16)"),  # iris
+)
+
+
+def _app_initials(name: str) -> str:
+    """Up to two initials from an App name (e.g. 'Claude Code' -> 'CC')."""
+    words = [w for w in str(name or "").split() if w]
+    if not words:
+        return "?"
+    if len(words) == 1:
+        return words[0][:2].upper()
+    return (words[0][0] + words[1][0]).upper()
+
+
+def _avatar_hue(name: str) -> tuple[str, str]:
+    """A deterministic (fg, bg) hue pair for an App name."""
+    key = str(name or "")
+    total = sum(ord(c) for c in key) if key else 0
+    return _AVATAR_HUES[total % len(_AVATAR_HUES)]
+
+
+def _app_avatar(name: str) -> str:
+    """A small colored initials tile standing in for a per-App icon."""
+    fg, bg = _avatar_hue(name)
+    initials = esc(_app_initials(name))
     return (
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-        'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" '
-        'width="18" height="18" aria-hidden="true">'
-        '<rect x="3" y="3" width="7" height="7" rx="1.5"/>'
-        '<rect x="14" y="3" width="7" height="7" rx="1.5"/>'
-        '<rect x="3" y="14" width="7" height="7" rx="1.5"/>'
-        '<rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'
+        f'<span class="app-avatar" aria-hidden="true" '
+        f'style="color:{fg};background:{bg}">{initials}</span>'
     )
 
 
@@ -1266,23 +1403,25 @@ def _chevron_svg() -> str:
     )
 
 
-def _health_card(gateway_line: str) -> str:
-    """A calm reachability + "what works" summary at the top of signed-in home.
+def _health_card() -> str:
+    """A calm reachability card at the top of signed-in home.
 
-    The dot/text are seeded reachable and refreshed by the page script once a
-    live ``/health`` check returns, so the card never lies on first paint. The
-    capability summary ("N kinds of model · tap to see") is filled lazily from
-    ``/gateway/v1/capabilities`` and expands a per-modality breakdown on demand
-    — one card answers "is it up?" and "what can it do?" without a second card
-    or a phantom tab.
+    Leads with a confident, quiet headline ("Gateway reachable") and a status
+    dot — like the leading dev tools, it reassures rather than over-reports.
+    The capability count ("N kinds of model") and the per-modality breakdown of
+    *what works* live inside the expandable detail, not in the headline, so the
+    calm surface isn't front-loaded with stats nobody asked for on every visit.
+    Seeded reachable and refreshed by a live ``/health`` check so it never lies
+    on first paint.
     """
     return (
         '<details class="vf-card health-card" id="gateway-health">'
         '<summary class="health-summary">'
-        '<span class="vf-status-dot" id="health-dot" aria-hidden="true"></span>'
+        '<span class="vf-status-dot vf-status-dot-pulse" id="health-dot" '
+        'aria-hidden="true"></span>'
         '<div class="health-text">'
-        f'<div class="health-line" id="health-line">{esc(gateway_line)}</div>'
-        '<div class="health-detail" id="health-detail">Checking reachability…</div>'
+        '<div class="health-line" id="health-line">Gateway reachable</div>'
+        '<div class="health-detail" id="health-detail">Tap for details</div>'
         "</div>"
         '<span class="health-chevron" aria-hidden="true">'
         '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" '
@@ -1427,21 +1566,30 @@ def render_user_portal(
   }}
 
   // Live reachability for the home health card. /health is public, so this
-  // works regardless of the runtime auth mode and never blocks the page.
+  // works regardless of the runtime auth mode and never blocks the page. The
+  // headline stays calm ("Gateway reachable"); only an actual failure rewrites
+  // it. The detail line carries the freshness ("checked just now") and, once
+  // capabilities load, the model-kinds count.
   const healthDot = $("health-dot");
   const healthDetail = $("health-detail");
+  const healthLine = $("health-line");
+  let capsDetailSuffix = "";
+  function setHealthDetail(prefix) {{
+    if (healthDetail) healthDetail.textContent = prefix + capsDetailSuffix;
+  }}
   async function refreshHealth() {{
-    if (!healthDot || !healthDetail) return;
+    if (!healthDot) return;
     try {{
       const res = await fetch("/health", {{ cache: "no-store" }});
       const ok = res.ok;
-      healthDot.className = "vf-status-dot" + (ok ? "" : " vf-status-dot-bad");
-      healthDetail.textContent = ok
-        ? "Reachable · checked just now"
-        : "Unreachable · gateway returned " + res.status;
+      healthDot.className =
+        "vf-status-dot" + (ok ? " vf-status-dot-pulse" : " vf-status-dot-bad");
+      if (healthLine) healthLine.textContent = ok ? "Gateway reachable" : "Gateway unreachable";
+      setHealthDetail(ok ? "Checked just now" : "Gateway returned " + res.status);
     }} catch (_) {{
       healthDot.className = "vf-status-dot vf-status-dot-bad";
-      healthDetail.textContent = "Unreachable · no response";
+      if (healthLine) healthLine.textContent = "Gateway unreachable";
+      setHealthDetail("No response");
     }}
   }}
   if (healthDot) {{
@@ -1456,7 +1604,6 @@ def render_user_portal(
   // they say what the gateway exposes, not that every backend is up right now
   // (the reachability dot covers "is it up?").
   const healthCard = $("gateway-health");
-  const healthLine = $("health-line");
   const capsRoot = $("health-caps");
   let capsLoaded = false;
   async function loadCapabilities() {{
@@ -1467,12 +1614,15 @@ def render_user_portal(
       const data = res.ok ? await res.json() : {{}};
       const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
       const groups = groupAccessByModality(caps, []);
-      // Update the card's lead line with an at-a-glance count.
-      if (healthLine && groups.length) {{
+      // The headline stays "Gateway reachable"; the model-kinds count rides
+      // quietly on the detail line (" · N kinds of model"), and the full
+      // breakdown lives in the expanded body below.
+      if (groups.length) {{
         const kinds = groups.length;
-        healthLine.textContent =
-          caps.length + (caps.length === 1 ? " capability" : " capabilities") +
-          " · " + kinds + (kinds === 1 ? " kind" : " kinds") + " of model";
+        capsDetailSuffix = " · " + kinds + (kinds === 1 ? " kind" : " kinds") + " of model";
+        if (healthDetail && /Checked just now/.test(healthDetail.textContent || "")) {{
+          setHealthDetail("Checked just now");
+        }}
       }}
       if (!capsRoot) return;
       capsRoot.textContent = "";
@@ -1727,35 +1877,92 @@ def render_user_portal(
     return String(value);
   }}
 
+  // Mirrors of the server's _mask_key / _relative_time / usage helpers so a
+  // client re-render (after create/mint/delete) matches the initial HTML.
+  const MASK_DOTS = "\\u2022\\u2022\\u2022\\u2022";
+  function maskKey(prefix) {{
+    const raw = String(prefix || "").trim();
+    if (!raw) return "key";
+    const i = raw.indexOf("_");
+    if (i > 0 && i < raw.length - 1) {{
+      const scheme = raw.slice(0, i), tail = raw.slice(i + 1);
+      const last4 = tail.length >= 4 ? tail.slice(-4) : tail;
+      return scheme + "_ " + MASK_DOTS + " " + last4;
+    }}
+    const last4 = raw.length >= 4 ? raw.slice(-4) : raw;
+    return MASK_DOTS + " " + last4;
+  }}
+  function relativeTime(ts) {{
+    const n = parseInt(ts, 10);
+    if (!n) return "";
+    let s = Math.floor(Date.now() / 1000) - n;
+    if (s < 0) s = 0;
+    if (s < 45) return "just now";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + "m ago";
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + "h ago";
+    const d = Math.floor(h / 24);
+    if (d < 7) return d + "d ago";
+    const w = Math.floor(d / 7);
+    if (w < 5) return w + "w ago";
+    const mo = Math.floor(d / 30);
+    if (mo < 12) return mo + "mo ago";
+    return Math.floor(d / 365) + "y ago";
+  }}
+  function keyUsageLabel(credential) {{
+    if (credential && credential.last_used_at) {{
+      const rel = relativeTime(credential.last_used_at);
+      return rel ? "used " + rel : "used recently";
+    }}
+    return "Never used";
+  }}
+  function appUsageLabel(credentials) {{
+    const used = credentials
+      .map((c) => parseInt(c.last_used_at, 10))
+      .filter((n) => n);
+    if (used.length) return "used " + (relativeTime(Math.max(...used)) || "recently");
+    return credentials.length ? "Never used" : "";
+  }}
+
+  // Per-App initials avatar — mirrors the server's _app_initials / _avatar_hue.
+  const AVATAR_HUES = [
+    ["#7BC4C8", "rgba(123,196,200,0.16)"],
+    ["#D49AA6", "rgba(212,154,166,0.16)"],
+    ["#9CC68B", "rgba(156,198,139,0.16)"],
+    ["#C9A66B", "rgba(201,166,107,0.16)"],
+    ["#8FB4E0", "rgba(143,180,224,0.16)"],
+    ["#B79AD4", "rgba(183,154,212,0.16)"]
+  ];
+  function appInitials(name) {{
+    const words = String(name || "").split(/\\s+/).filter(Boolean);
+    if (!words.length) return "?";
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }}
+  function avatarHue(name) {{
+    const key = String(name || "");
+    let total = 0;
+    for (let i = 0; i < key.length; i++) total += key.charCodeAt(i);
+    return AVATAR_HUES[total % AVATAR_HUES.length];
+  }}
+
   function activeCredentials(app) {{
     return (Array.isArray(app.credentials) ? app.credentials : [])
       .filter((credential) => credential && credential.active !== false);
   }}
 
-  function permissionInfo(app) {{
-    const profile = app && typeof app.profile === "object" ? app.profile : null;
-    if (profile && profile.missing) {{
-      return {{ text: "permissions unavailable", badge: "permissions unavailable", cls: "bad" }};
-    }}
-    if (profile && profile.inherited === false) {{
-      return {{ text: "custom account permissions", badge: "custom permissions", cls: "" }};
-    }}
-    return {{ text: "your account permissions", badge: "account permissions", cls: "" }};
-  }}
-
-  // Inline SVGs, kept byte-identical to the server's _key_glyph()/chevron so a
-  // client re-render after create/delete matches the initial HTML exactly.
-  const KEY_GLYPH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" aria-hidden="true"><circle cx="8" cy="12" r="3"/><path d="M11 12h10v3M16 12v3"/></svg>';
+  // Inline SVGs, kept byte-identical to the server's chevron/glyph so a client
+  // re-render after create/delete matches the initial HTML exactly.
   const CHEVRON_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
-  // App-row glyph + the down-chevron for the app card summary — byte-identical
-  // to the server's _app_glyph()/_chevron_svg() so a client re-render matches.
-  const APP_GLYPH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
+  // The app-card summary's down-chevron — byte-identical to the server's
+  // _chevron_svg() so a client re-render matches the initial HTML.
   const APP_CHEVRON_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
 
   function renderCredential(credential) {{
-    // A calm, tappable row: glyph · label · masked prefix · chevron. Tapping
-    // opens the detail sheet (View-access + Revoke live there); no destructive
-    // buttons on the surface, and no fabricated "last used" time.
+    // A calm, tappable row: label + masked value on the left, honest recency on
+    // the right, then a chevron. Tapping opens the detail sheet (View-access +
+    // Revoke live there). Mirrors the server's _credential_html.
     const label = text(credential.display_name, "API key");
     const row = document.createElement("button");
     row.type = "button";
@@ -1764,11 +1971,6 @@ def render_user_portal(
     row.dataset.keyLabel = label;
     row.setAttribute("aria-label", "Open " + label);
 
-    const glyph = document.createElement("span");
-    glyph.className = "key-row-glyph";
-    glyph.setAttribute("aria-hidden", "true");
-    glyph.innerHTML = KEY_GLYPH_SVG;
-
     const main = document.createElement("span");
     main.className = "key-row-main";
     const name = document.createElement("span");
@@ -1776,24 +1978,25 @@ def render_user_portal(
     name.textContent = label;
     const pfx = document.createElement("span");
     pfx.className = "key-row-prefix";
-    const code = document.createElement("code");
-    code.textContent = text(credential.prefix, "key");
-    pfx.append(code, "···");
+    pfx.textContent = maskKey(credential.prefix);
     main.append(name, pfx);
+
+    const usage = document.createElement("span");
+    usage.className = "key-row-usage";
+    usage.textContent = keyUsageLabel(credential);
 
     const chevron = document.createElement("span");
     chevron.className = "key-row-chevron";
     chevron.setAttribute("aria-hidden", "true");
     chevron.innerHTML = CHEVRON_SVG;
 
-    row.append(glyph, main, chevron);
+    row.append(main, usage, chevron);
     return row;
   }}
 
   function renderApp(app) {{
     const appId = text(app.id);
     const credentials = activeCredentials(app);
-    const permission = permissionInfo(app);
     const appName = text(app.name, appId || "App");
     // A calm .vf-card whose summary is the design's app row; tapping expands the
     // keys + management controls in place. Mirrors the server's _app_html.
@@ -1807,10 +2010,13 @@ def render_user_portal(
     row.className = "vf-row";
     const main = document.createElement("span");
     main.className = "vf-row-main";
-    const glyph = document.createElement("span");
-    glyph.className = "vf-glyph";
-    glyph.setAttribute("aria-hidden", "true");
-    glyph.innerHTML = APP_GLYPH_SVG;
+    const avatar = document.createElement("span");
+    avatar.className = "app-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    const hue = avatarHue(appName);
+    avatar.style.color = hue[0];
+    avatar.style.background = hue[1];
+    avatar.textContent = appInitials(appName);
     const idBlock = document.createElement("span");
     idBlock.className = "vf-row-id";
     const name = document.createElement("span");
@@ -1818,36 +2024,32 @@ def render_user_portal(
     name.textContent = appName;
     const sub = document.createElement("span");
     sub.className = "vf-row-sub";
-    // One quiet sub-line: the masked key when there's exactly one, else a count.
-    // No "last used" — per-key activity isn't tracked; inventing it is dishonest.
-    if (credentials.length === 1) {{
-      const code = document.createElement("code");
-      code.textContent = text(credentials[0].prefix, "key");
-      sub.append(code, "···");
-    }} else if (credentials.length === 0) {{
-      sub.textContent = "No keys yet";
-    }} else {{
-      sub.textContent = credentials.length + " keys";
-    }}
+    sub.textContent = credentials.length === 0
+      ? "No keys yet"
+      : credentials.length + (credentials.length === 1 ? " key" : " keys");
     idBlock.append(name, sub);
-    main.append(glyph, idBlock);
+    main.append(avatar, idBlock);
+    // Trailing: the App's most recent key usage + chevron (balances the row).
+    const trailing = document.createElement("span");
+    trailing.className = "app-card-trailing";
+    const usageMeta = appUsageLabel(credentials);
+    if (usageMeta) {{
+      const u = document.createElement("span");
+      u.className = "app-card-usage";
+      u.textContent = usageMeta;
+      trailing.append(u);
+    }}
     const chevron = document.createElement("span");
     chevron.className = "app-card-chevron";
     chevron.setAttribute("aria-hidden", "true");
     chevron.innerHTML = APP_CHEVRON_SVG;
-    row.append(main, chevron);
+    trailing.append(chevron);
+    row.append(main, trailing);
     summary.append(row);
 
     const body = document.createElement("div");
     body.className = "app-card-body";
     const title = {{ textContent: appName }};  // kept for delete-button labels below
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.append(
-      badge(permission.badge, permission.cls),
-      badge(credentials.length + " active keys", "good")
-    );
 
     const list = document.createElement("div");
     list.className = "key-list";
@@ -1914,7 +2116,7 @@ def render_user_portal(
       remove.append(summary, warn, deleteApp);
     }}
 
-    body.append(meta, list);
+    body.append(list);
     if (create) body.append(create);
     if (remove) body.append(remove);
     article.append(summary, body);

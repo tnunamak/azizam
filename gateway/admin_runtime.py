@@ -1096,6 +1096,16 @@ def runtime_identity_for_app_credential_hash(
     if credential.get("subject_kind") != "app":
         return None
 
+    # Record that this key was just used so the portal can show real "used N
+    # ago" recency. Debounced in the store (at most one write per key per
+    # minute) and best-effort: a recency write must never fail a live request.
+    cred_id = credential.get("id")
+    if cred_id:
+        try:
+            admin_store.touch_credential_last_used(str(cred_id), path=path)
+        except Exception:
+            pass
+
     app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
     if not app_id:
         return None

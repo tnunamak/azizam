@@ -87,7 +87,12 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("user@example.com", html)
         self.assertIn("user-laptop", html)
         self.assertNotIn("Family chat", html)
-        self.assertIn("account permissions", html)
+        # Non-admins see no Profile/permission chrome on this calm surface — it's
+        # operator vocabulary they can't act on. The calm entry point is a title.
+        self.assertNotIn("account permissions", html)
+        self.assertIn("Your gateway", html)
+        # The key value is masked Stripe/OpenAI-style: scheme + dots + last 4.
+        self.assertIn("opk_ •••• abcd", html)
         self.assertIn("base-url-display", html)
         self.assertIn("copy-base-url", html)
         self.assertNotIn("Check another key", html)
@@ -153,7 +158,10 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn(">Admin<", html)
         self.assertIn('href="/status">Status</a>', html)
         self.assertNotIn("role owner", html)
-        self.assertIn("permission Profiles", html)
+        # The admin path is the /admin nav link in the header — no "Admin manages
+        # permission Profiles" jargon sentence on the calm Home surface anymore.
+        self.assertNotIn("permission Profiles", html)
+        self.assertNotIn("Signed in as", html)
         self.assertIn("Create one App for each tool or script", html)
         self.assertNotIn('<form class="actions" data-request-access>', html)
         self.assertNotIn("<button type=\"submit\">Request access</button>", html)
@@ -270,7 +278,7 @@ class UserPortalRenderTests(unittest.TestCase):
             },
         )
         self.assertIn('id="recent-activity"', html)
-        self.assertIn(">Recent</h2>", html)
+        self.assertIn(">Recent activity</h2>", html)
         self.assertIn('accountJson("/me/api/activity?limit=5")', html)
         self.assertIn("No calls yet", html)
         # Receipt detail = an addressable sheet bound to /r/:id.

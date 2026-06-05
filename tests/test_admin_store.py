@@ -479,6 +479,48 @@ class TestCredentialLifecycle(AdminStoreTestBase):
         self.assertIsNotNone(revoked)
         self.assertIsNotNone(revoked["revoked_at"])  # type: ignore[index]
 
+    def test_touch_last_used_writes_then_debounces(self) -> None:
+        cred = admin_store.create_credential_hash(
+            subject_kind="app",
+            subject_id=self.app["id"],
+            hash=_hash("used"),
+            prefix="opk",
+            path=self.db,
+        )
+        cid = cred["id"]
+        # A fresh credential has no last-used timestamp.
+        self.assertIsNone(
+            admin_store.get_credential(cid, path=self.db)["last_used_at"]  # type: ignore[index]
+        )
+        # First touch writes.
+        self.assertTrue(
+            admin_store.touch_credential_last_used(cid, now=1000, path=self.db)
+        )
+        self.assertEqual(
+            admin_store.get_credential(cid, path=self.db)["last_used_at"],  # type: ignore[index]
+            1000,
+        )
+        # A touch within the debounce window is a no-op (write rate is bounded).
+        self.assertFalse(
+            admin_store.touch_credential_last_used(
+                cid, now=1000 + 30, min_interval=60, path=self.db
+            )
+        )
+        self.assertEqual(
+            admin_store.get_credential(cid, path=self.db)["last_used_at"],  # type: ignore[index]
+            1000,
+        )
+        # Past the window, it writes the newer timestamp.
+        self.assertTrue(
+            admin_store.touch_credential_last_used(
+                cid, now=1000 + 61, min_interval=60, path=self.db
+            )
+        )
+        self.assertEqual(
+            admin_store.get_credential(cid, path=self.db)["last_used_at"],  # type: ignore[index]
+            1061,
+        )
+
     def test_expired_omitted_from_active(self) -> None:
         cred = admin_store.create_credential_hash(
             subject_kind="app",

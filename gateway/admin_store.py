@@ -1022,6 +1022,40 @@ def revoke_credential(
         return cur.rowcount > 0
 
 
+# Coarsen ``last_used_at`` writes: this fires on the data-plane auth hot path
+# (every authenticated request), so we only persist a new timestamp when the
+# stored one is missing or older than this many seconds. The portal shows a
+# relative "used N ago", which doesn't need second-level precision, and this
+# keeps the write rate to at most one UPDATE per key per minute under load.
+TOUCH_LAST_USED_INTERVAL_SECONDS = 60
+
+
+def touch_credential_last_used(
+    cred_id: str,
+    *,
+    now: int | None = None,
+    min_interval: int = TOUCH_LAST_USED_INTERVAL_SECONDS,
+    path: Path = DB_PATH,
+) -> bool:
+    """Record that a credential was just used (debounced).
+
+    Updates ``last_used_at`` only when it is null or older than ``min_interval``
+    seconds, so a busy key doesn't issue a write on every request. Returns True
+    when a row was actually updated. Best-effort: callers on the auth hot path
+    should not fail a request if this raises.
+    """
+    ts = _now() if now is None else int(now)
+    cutoff = ts - max(0, int(min_interval))
+    with _conn(path) as conn:
+        cur = conn.execute(
+            "UPDATE credentials SET last_used_at = ? "
+            "WHERE id = ? AND (last_used_at IS NULL OR last_used_at <= ?)",
+            (ts, cred_id, cutoff),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def get_credential(
     cred_id: str, *, path: Path = DB_PATH
 ) -> dict[str, Any] | None:

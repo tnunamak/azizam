@@ -5,7 +5,7 @@ single source of truth for the gateway's visual language. To change tokens or
 component classes, edit ``~/code/vivid-fish-brand`` and re-run the script.
 
     source:  @vivid-fish/brand v0.2.0
-    commit:  a9762ec8f91a819ec51047d80096e7205aa38603
+    commit:  069c23e727dd7f817549e60a84cd61a15d4a877c
     repo:    github.com/Vivid-Fish/vivid-fish-brand
 
 ``BRAND_TOKENS_CSS`` is ``src/tokens.css`` verbatim (the ``:root`` custom
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 __all__ = ["BRAND_TOKENS_CSS", "BRAND_COMPONENTS_CSS", "BRAND_SOURCE_COMMIT"]
 
-BRAND_SOURCE_COMMIT = "a9762ec8f91a819ec51047d80096e7205aa38603"
+BRAND_SOURCE_COMMIT = "069c23e727dd7f817549e60a84cd61a15d4a877c"
 
 BRAND_TOKENS_CSS = r"""
 :root {
@@ -31,8 +31,8 @@ BRAND_TOKENS_CSS = r"""
   --vf-border: rgba(95, 145, 210, 0.14);
   --vf-border-strong: rgba(125, 180, 230, 0.26);
   --vf-text: #E8E2D3;
-  --vf-text-muted: #8FA8BD;
-  --vf-text-subtle: #5C7589;
+  --vf-text-muted: #A3BACE;
+  --vf-text-subtle: #7B93A8;
   --vf-accent: #7BC4C8;
   --vf-accent-2: #D49AA6;
   --vf-ok: #6FB89A;
