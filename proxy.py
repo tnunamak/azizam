@@ -648,6 +648,15 @@ async def switch_backend(target: str) -> bool:
 
     print(f"[proxy] Switching LLM backend to {target}...", flush=True)
 
+    # Reload before starting so systemd uses the current unit file, not a
+    # stale in-memory state left over from a failed drop-in swap.
+    reload_proc = await asyncio.create_subprocess_exec(
+        'systemctl', '--user', 'daemon-reload',
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await reload_proc.communicate()
+
     proc = await asyncio.create_subprocess_exec(
         'systemctl', '--user', 'start', service,
         stdout=asyncio.subprocess.PIPE,
@@ -678,9 +687,9 @@ async def switch_backend(target: str) -> bool:
     return False
 
 
-# Drop-in file used to override LLAMA_TURBO_MODEL for a specific GGUF.
+# Drop-in file used to override the kobold model env var for a specific GGUF.
 # Numbered higher than 10-qwen27b.conf so systemd's last-wins semantics apply.
-KOBOLD_MODEL_DROPIN = Path.home() / ".config/systemd/user/llama-turbo.service.d/20-model.conf"
+KOBOLD_MODEL_DROPIN = Path.home() / f".config/systemd/user/{KOBOLD_SERVICE_NAME}.d/20-model.conf"
 
 # Lock to serialize concurrent kobold model swaps. In-flight callers await the
 # in-progress swap so we don't restart llama-turbo.service twice for the same target.
@@ -832,16 +841,22 @@ async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = Non
             KOBOLD_MODEL_DROPIN.write_text(
                 "# Managed by openai-proxy. Do not edit by hand; set role `model:`/`mmproj:` in proxy_config.yml.\n"
                 "[Service]\n"
-                f'Environment="LLAMA_TURBO_MODEL={target_path}"\n'
-                f'Environment="LLAMA_TURBO_MMPROJ={mmproj_value}"\n'
+                f'Environment="LLAMA_BEE_MODEL={target_path}"\n'
+                f'Environment="LLAMA_BEE_MMPROJ={mmproj_value}"\n'
             )
         except Exception as e:
             print(f"[proxy] swap_kobold_model: failed to write drop-in: {e}", flush=True)
             return False
 
+        def _remove_dropin() -> None:
+            try:
+                KOBOLD_MODEL_DROPIN.unlink(missing_ok=True)
+            except Exception as e:
+                print(f"[proxy] swap_kobold_model: failed to remove drop-in: {e}", flush=True)
+
         for cmd in (
             ["systemctl", "--user", "daemon-reload"],
-            ["systemctl", "--user", "restart", "llama-turbo.service"],
+            ["systemctl", "--user", "restart", KOBOLD_SERVICE_NAME],
         ):
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -851,6 +866,7 @@ async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = Non
             _, stderr = await proc.communicate()
             if proc.returncode != 0:
                 print(f"[proxy] swap_kobold_model: `{' '.join(cmd)}` failed: {stderr.decode()}", flush=True)
+                _remove_dropin()
                 return False
 
         # Invalidate the loaded-model cache so the next read re-checks pgrep.
@@ -880,6 +896,7 @@ async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = Non
             await asyncio.sleep(1)
 
         print(f"[proxy] swap failed: kobold did not become ready within {SWITCH_TIMEOUT}s", flush=True)
+        _remove_dropin()
         return False
 
 
@@ -2529,6 +2546,16 @@ async def _prepare_litellm_local_llm_request(
     if not target_backend:
         return None, body
 
+    if request_path in ("/v1/chat/completions", "/v1/completions"):
+        role_cfg = ROLES.get(model_name) if isinstance(ROLES, dict) else None
+        if isinstance(role_cfg, Mapping):
+            sampling = role_cfg.get("sampling")
+            if isinstance(sampling, Mapping):
+                for field, value in sampling.items():
+                    if field not in body:
+                        body[field] = value
+
+
     if request_path == "/v1/chat/completions":
         reasoning_error = apply_chat_completions_reasoning_effort(body)
         if reasoning_error:
@@ -2548,7 +2575,7 @@ async def _prepare_litellm_local_llm_request(
         requested_model=model_name,
         backend=target_backend,
         target_model=target_model,
-        target_mmproj=target_mmproj if vision_needed else None,
+        target_mmproj=target_mmproj,
     )
     return response, body
 
@@ -3995,6 +4022,113 @@ def parse_image_background(value: Any) -> tuple[Optional[str], Optional[str]]:
     return None, "background must be one of 'transparent', 'opaque', or 'auto'"
 
 
+_IDEOGRAM4_STRUCTURIZE_USER_TEMPLATE = (
+    "/no_think\n"
+    "Convert this image description to an Ideogram 4 JSON caption. Output ONLY the JSON "
+    "object, nothing before or after it, no markdown fences, no commentary.\n\n"
+    "Input: {prompt}\n\n"
+    "Schema (bbox = integers 0-1000 in order [y_min, x_min, y_max, x_max]).\n"
+    "Element types: \"obj\" for visual objects, \"text\" for words rendered IN the image "
+    "(labels, signs, captions, speech bubbles, annotations).\n"
+    "Rules that make the model render reliably (follow ALL of them):\n"
+    "1. DEPTH BANDS: always begin elements with full-width horizontal bands stacked back "
+    "to front — a BACKGROUND band, a MID-GROUND band, and a GROUND band — even for simple "
+    "scenes. Prefix each desc with its role in caps (e.g. \"BACKGROUND — ...\", \"GROUND — "
+    "...\", \"PRIMARY SUBJECT — ...\"). These bands are what stop the model emitting a blank "
+    "refusal image; never omit them.\n"
+    "2. SUBJECT + PROPS: then a PRIMARY SUBJECT box, plus 1-3 secondary prop/scenery boxes "
+    "spread across the canvas. Give each desc material + lighting detail, not just a noun.\n"
+    "3. TEXT: for EVERY piece of visible text emit a SEPARATE \"text\" element with the exact "
+    "words in its \"text\" field and a roomy own bbox. Never bury text inside an obj desc.\n"
+    "4. Fill style_description.lighting and .photo with a full descriptive sentence each, not "
+    "one word. Always give a concrete \"background\" string.\n"
+    'Example shape:\n'
+    '{{"high_level_description":"one rich sentence describing the whole scene",'
+    '"style_description":{{"aesthetics":"...","lighting":"full sentence on light source, direction, quality, color temperature",'
+    '"photo":"full sentence on framing, composition, depth of field, lens","medium":"photograph"}},'
+    '"compositional_deconstruction":{{"background":"concrete description of the backdrop",'
+    '"elements":['
+    '{{"type":"obj","bbox":[0,0,800,1000],"desc":"BACKGROUND — ... material/lighting"}},'
+    '{{"type":"obj","bbox":[400,0,600,1000],"desc":"MID-GROUND — ... material/lighting"}},'
+    '{{"type":"obj","bbox":[600,0,1000,1000],"desc":"GROUND — ... material/lighting"}},'
+    '{{"type":"obj","bbox":[300,250,900,750],"desc":"PRIMARY SUBJECT — ... material/lighting"}},'
+    '{{"type":"obj","bbox":[350,40,800,240],"desc":"PROP — a nearby object"}},'
+    '{{"type":"text","bbox":[120,150,260,880],"text":"EXACT WORDS HERE","desc":"handwritten label"}}'
+    ']}}}}'
+)
+
+
+def _ideogram4_minimal_grounded_json(brief: str) -> str:
+    """Last-resort JSON wrapper for a plain-text brief.
+
+    Returning raw plain text to Ideogram 4 almost always trips its safety
+    classifier (grey 'Image blocked' output). When the LLM converter is
+    unavailable or keeps producing invalid JSON, wrap the brief in a minimal
+    but *grounded* JSON skeleton (subject + floor + backdrop boxes) — the
+    r/StableDiffusion 'enough bboxes' fix — so we still hand the model the
+    structured form it expects instead of guaranteed-blocked plain text.
+    """
+    safe = json.dumps(brief)[1:-1]  # escape quotes/newlines, drop outer quotes
+    return (
+        '{"high_level_description":"' + safe + '",'
+        '"style_description":{"aesthetics":"as described","lighting":"flat",'
+        '"photo":"illustration","medium":"illustration"},'
+        '"compositional_deconstruction":{"background":"a plain backdrop",'
+        '"elements":['
+        '{"type":"obj","bbox":[250,300,750,800],"desc":"' + safe + '"},'
+        '{"type":"obj","bbox":[0,800,1000,1000],"desc":"the ground"},'
+        '{"type":"obj","bbox":[0,0,1000,280],"desc":"the backdrop behind the scene"}'
+        ']}}'
+    )
+
+
+async def _ideogram4_structurize_prompt(plain_prompt: str) -> str:
+    """Convert a plain-text prompt to Ideogram 4 JSON caption via local LLM.
+
+    Retries the conversion a few times on parse failure, since Qwen3
+    occasionally emits empty/garbled output. NEVER falls back to raw plain
+    text (that reliably trips Ideogram's safety filter); on total failure it
+    returns a minimal grounded JSON skeleton instead. Qwen3 in thinking mode
+    uses ~1700 reasoning tokens before emitting visible output, so max_tokens
+    must be >=2000.
+    """
+    # Truncate to ~600 chars — the converter only needs the creative brief, not
+    # the full style/constraint boilerplate that callers often append.
+    brief = plain_prompt[:600]
+    user_msg = _IDEOGRAM4_STRUCTURIZE_USER_TEMPLATE.format(prompt=brief)
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5)) as client:
+                resp = await client.post(
+                    f"{KOBOLD_HOST}/v1/chat/completions",
+                    json={
+                        "messages": [{"role": "user", "content": user_msg}],
+                        "max_tokens": 3000,
+                        # Slightly vary temperature across retries so a stuck
+                        # generation has a chance to produce different output.
+                        "temperature": 0.1 + 0.2 * attempt,
+                    },
+                )
+            if resp.status_code != 200:
+                continue
+            content = resp.json()["choices"][0]["message"]["content"].strip()
+            # Drop any <think>...</think> block the model may leak despite /no_think.
+            if "</think>" in content:
+                content = content.split("</think>", 1)[1].strip()
+            # Strip accidental markdown fences
+            if content.startswith("```"):
+                content = content.split("```")[1].lstrip("json").strip()
+            # Some models add prose before/after the JSON — extract the outermost object.
+            if not content.startswith("{") and "{" in content:
+                content = content[content.index("{"): content.rindex("}") + 1]
+            json.loads(content)  # validate — raises if not valid JSON
+            return content
+        except Exception:
+            continue
+    # All attempts failed — return grounded JSON, never raw plain text.
+    return _ideogram4_minimal_grounded_json(brief)
+
+
 async def resolve_image_background_decision(
     background: str,
     prompt: str,
@@ -5135,6 +5269,11 @@ async def proxy_comfy_request(
     requested_model = body.get("model", COMFY_DEFAULT_MODEL)
     model = requested_model
     size = body.get("size", "1024x1024")
+    if str(model).startswith("ideogram4") and prompt:
+        try:
+            json.loads(prompt)  # already JSON — skip conversion
+        except (ValueError, TypeError):
+            prompt = await _ideogram4_structurize_prompt(prompt)
     if receipt is not None:
         receipt.requested_model = str(requested_model) if requested_model is not None else None
     _record_image_input(receipt, "model")
@@ -5303,9 +5442,10 @@ async def proxy_comfy_request(
         workflow[prompt_node]["inputs"]["text"] = prompt
 
     width, height = parse_size(size)
-    if size_node and size_node in workflow:
-        workflow[size_node]["inputs"]["width"] = width
-        workflow[size_node]["inputs"]["height"] = height
+    for _sn in ([size_node] if isinstance(size_node, str) else (size_node or [])):
+        if _sn and _sn in workflow:
+            workflow[_sn]["inputs"]["width"] = width
+            workflow[_sn]["inputs"]["height"] = height
     workflow = _apply_manifest_route_inputs(
         manifest,
         workflow,
@@ -15590,6 +15730,28 @@ async def list_models(request: Request):
             existing_ids.add(entry["id"])
 
     data, policy_metadata = await _filter_model_list_for_profile(data, auth_context)
+
+    # Annotate each model entry with a description sourced from roles: or
+    # models: in proxy_config.yml. Non-standard field — ignored by spec-
+    # compliant clients, readable by agents querying the catalog.
+    roles_cfg = config.get("roles") or {}
+    extra_models_cfg = {
+        normalize_model_id(str(m.get("id") or "")): m
+        for m in (config.get("models") or [])
+        if isinstance(m, Mapping) and m.get("id")
+    }
+    for item in data:
+        if not isinstance(item, dict) or item.get("description"):
+            continue
+        mid = normalize_model_id(str(item.get("id") or ""))
+        role = roles_cfg.get(mid) if isinstance(roles_cfg, Mapping) else None
+        desc = str(role.get("description") or "") if isinstance(role, Mapping) else ""
+        if not desc:
+            extra = extra_models_cfg.get(mid)
+            desc = str(extra.get("description") or "") if isinstance(extra, Mapping) else ""
+        if desc:
+            item["description"] = desc
+
     upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data
     upstream_payload["object"] = upstream_payload.get("object") or "list"
@@ -17739,7 +17901,12 @@ def _split_reasoning_visible_text(text: Any) -> tuple[Optional[str], Optional[st
 
 
 def _normalize_chat_completion_visible_content(payload: dict[str, Any]) -> bool:
-    """Ensure OpenAI chat responses expose visible assistant text in content."""
+    """Strip <think>...</think> blocks if they leak into message content.
+
+    llama-server with Qwen3.6 correctly places thinking tokens in reasoning_content
+    and the answer in content. This function is a safety net for backends that
+    accidentally emit the raw <think> tags inside content itself.
+    """
     changed = False
     choices = payload.get("choices")
     if not isinstance(choices, list):
@@ -17751,20 +17918,21 @@ def _normalize_chat_completion_visible_content(payload: dict[str, Any]) -> bool:
         if isinstance(message, dict):
             content = message.get("content")
             reasoning = message.get("reasoning_content")
-            if (content is None or content == "") and isinstance(reasoning, str) and reasoning:
-                split_reasoning, visible = _split_reasoning_visible_text(reasoning)
-                message["content"] = visible or reasoning
-                if split_reasoning is not None:
-                    message["reasoning_content"] = split_reasoning
-                changed = True
+            if isinstance(content, str) and "</think>" in content.lower():
+                split_reasoning, visible = _split_reasoning_visible_text(content)
+                if visible is not None:
+                    message["content"] = visible
+                    if not isinstance(reasoning, str) and split_reasoning:
+                        message["reasoning_content"] = split_reasoning
+                    changed = True
         delta = choice.get("delta")
         if isinstance(delta, dict):
             content = delta.get("content")
-            reasoning = delta.get("reasoning_content")
-            if (content is None or content == "") and isinstance(reasoning, str) and reasoning:
-                _, visible = _split_reasoning_visible_text(reasoning)
-                delta["content"] = visible or reasoning
-                changed = True
+            if isinstance(content, str) and "</think>" in content.lower():
+                _, visible = _split_reasoning_visible_text(content)
+                if visible is not None:
+                    delta["content"] = visible
+                    changed = True
     return changed
 
 
@@ -17773,7 +17941,7 @@ def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:
         text = chunk.decode("utf-8")
     except UnicodeDecodeError:
         return chunk
-    if "data:" not in text or "reasoning_content" not in text:
+    if "data:" not in text or ("reasoning_content" not in text and "</think>" not in text.lower()):
         return chunk
     out_lines: list[str] = []
     changed = False
