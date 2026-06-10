@@ -4042,6 +4042,10 @@ _IDEOGRAM4_STRUCTURIZE_USER_TEMPLATE = (
     "words in its \"text\" field and a roomy own bbox. Never bury text inside an obj desc.\n"
     "4. Fill style_description.lighting and .photo with a full descriptive sentence each, not "
     "one word. Always give a concrete \"background\" string.\n"
+    "5. ENGLISH ONLY: every \"text\" element value must be English using only Latin "
+    "letters/numerals. Never emit Chinese, Japanese, Korean, or any non-English glyphs "
+    "(the model injects them unprompted otherwise). Also append ', all rendered text in "
+    "English only' to high_level_description.\n"
     'Example shape:\n'
     '{{"high_level_description":"one rich sentence describing the whole scene",'
     '"style_description":{{"aesthetics":"...","lighting":"full sentence on light source, direction, quality, color temperature",'
