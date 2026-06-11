@@ -1,0 +1,100 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+
+import { cn } from "@/lib/cn";
+import { Button, type ButtonSize, type ButtonVariant } from "./button";
+import { CheckIcon, CopyIcon } from "./icons";
+
+/** Copy text to the clipboard. Falls back to a hidden textarea when the
+ * async Clipboard API is unavailable (e.g. plain-http LAN deployments). */
+export async function copyText(value: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.className = "sr-only";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    textarea.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Shared "flash a check for 2s after copying" state. */
+export function useCopied(): {
+  copied: boolean;
+  copy: (value: string) => Promise<void>;
+} {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  const copy = useCallback(async (value: string) => {
+    const ok = await copyText(value);
+    if (!ok) return;
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 2000);
+  }, []);
+
+  return { copied, copy };
+}
+
+export interface CopyButtonProps {
+  /** Text placed on the clipboard. Never logged. */
+  value: string;
+  /** Visible label; icon-only when omitted. */
+  children?: ReactNode;
+  size?: ButtonSize;
+  variant?: ButtonVariant;
+  className?: string;
+  "aria-label"?: string;
+}
+
+export function CopyButton({
+  value,
+  children,
+  size = "sm",
+  variant = "secondary",
+  className,
+  "aria-label": ariaLabel,
+}: CopyButtonProps) {
+  const { copied, copy } = useCopied();
+  return (
+    <Button
+      size={size}
+      variant={variant}
+      className={cn(children ? undefined : "px-2", className)}
+      aria-label={ariaLabel ?? (children ? undefined : "Copy")}
+      onClick={() => void copy(value)}
+    >
+      {copied ? (
+        <CheckIcon className="text-vf-ok size-4" />
+      ) : (
+        <CopyIcon className="size-4" />
+      )}
+      {children}
+      <span aria-live="polite" className="sr-only">
+        {copied ? "Copied to clipboard" : ""}
+      </span>
+    </Button>
+  );
+}

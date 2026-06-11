@@ -1,0 +1,11 @@
+@import "./fonts.css";
+@import "tailwindcss";
+@import "@vivid-fish/brand";
+
+/* Base page chrome from brand tokens only (no local literals — see
+   docs/design/WEB_UI_STEERING.md, presentation law #9). */
+@layer base {
+  body {
+    @apply bg-vf-bg text-vf-text font-sans antialiased;
+  }
+}

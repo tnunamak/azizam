@@ -939,6 +939,30 @@ def create_admin_router(
     def _guard(request: Request) -> AdminContext | JSONResponse:
         return _require_admin(auth, request)
 
+    @router.get("/session")
+    def session(request: Request) -> JSONResponse:
+        """Actor identity + CSRF token for browser (cookie-session) clients.
+
+        The server-rendered admin embeds the CSRF token in its HTML; a JS
+        client (the ``/ui/`` React app) bootstraps the same data from this
+        endpoint using its session cookie. ``csrf_token`` is empty for
+        bearer-key callers, whose mutations don't require CSRF headers.
+        """
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "actor": {
+                    "subject": ctx.subject,
+                    "email": ctx.email,
+                    "roles": sorted(ctx.roles),
+                    "csrf_token": ctx.csrf_token or "",
+                }
+            },
+        )
+
     @router.get("/overview")
     def overview(request: Request) -> JSONResponse:
         ctx = _guard(request)
@@ -1351,6 +1375,23 @@ def create_admin_router(
             ).as_response()
         return JSONResponse(
             status_code=status.HTTP_201_CREATED, content={"credential": record}
+        )
+
+    @router.get("/credentials")
+    def list_credentials(request: Request) -> JSONResponse:
+        """Flat list of every credential (app keys + admin automation keys).
+
+        Records are scrubbed of key material. Clients group by ``app_id`` /
+        ``subject_kind`` to render per-app key rows and active-key counts.
+        """
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "credentials": _scrub_credentials(store.list_credentials())
+            },
         )
 
     @router.delete("/credentials/{credential_id}")

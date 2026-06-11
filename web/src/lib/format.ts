@@ -1,0 +1,124 @@
+/** Shared formatters — the single source of truth for how values render.
+ * The presentation law (docs/design/WEB_UI_STEERING.md): no raw timestamps,
+ * no raw entity IDs, no raw secrets. Components in `components/ui` consume
+ * these; surfaces should never re-implement them. */
+
+export type TimestampInput = number | string | Date | null | undefined;
+
+/** Gateway APIs use epoch *seconds* (web-api-contract.md). Anything in the
+ * 2001–2128 range as seconds is treated as seconds; larger numbers as ms. */
+const EPOCH_SECONDS_MIN = 1_000_000_000;
+const EPOCH_SECONDS_MAX = 5_000_000_000;
+
+export function isEpochSeconds(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= EPOCH_SECONDS_MIN &&
+    value <= EPOCH_SECONDS_MAX
+  );
+}
+
+/** Coerce an epoch-seconds int, epoch-ms int, ISO string, or Date to a Date.
+ * Returns null for null/undefined/unparseable input. */
+export function toDate(ts: TimestampInput): Date | null {
+  if (ts === null || ts === undefined || ts === "") return null;
+  if (ts instanceof Date) return Number.isNaN(ts.getTime()) ? null : ts;
+  if (typeof ts === "number") {
+    if (!Number.isFinite(ts)) return null;
+    return new Date(ts <= EPOCH_SECONDS_MAX ? ts * 1000 : ts);
+  }
+  const parsed = new Date(ts);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** Absolute UTC, for `title` tooltips: "2026-06-11 14:03:22 UTC". */
+export function formatAbsoluteUTC(ts: TimestampInput): string {
+  const date = toDate(ts);
+  if (!date) return "";
+  return (
+    `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-` +
+    `${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:` +
+    `${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())} UTC`
+  );
+}
+
+const MINUTE = 60;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+const MONTH = 30 * DAY;
+const YEAR = 365 * DAY;
+
+/** "2m ago" / "in 3d" / "just now". `nowMs` is injectable for tests and the
+ * shared RelativeTime ticker. */
+export function formatRelativeTime(
+  ts: TimestampInput,
+  nowMs: number = Date.now(),
+): string {
+  const date = toDate(ts);
+  if (!date) return "";
+  const diffSeconds = Math.round((nowMs - date.getTime()) / 1000);
+  const abs = Math.abs(diffSeconds);
+  if (abs < 45) return "just now";
+
+  let value: number;
+  let unit: string;
+  if (abs < 90) {
+    value = 1;
+    unit = "m";
+  } else if (abs < HOUR) {
+    value = Math.round(abs / MINUTE);
+    unit = "m";
+  } else if (abs < DAY) {
+    value = Math.round(abs / HOUR);
+    unit = "h";
+  } else if (abs < WEEK * 2) {
+    value = Math.round(abs / DAY);
+    unit = "d";
+  } else if (abs < MONTH * 2) {
+    value = Math.round(abs / WEEK);
+    unit = "w";
+  } else if (abs < YEAR) {
+    value = Math.round(abs / MONTH);
+    unit = "mo";
+  } else {
+    value = Math.round(abs / YEAR);
+    unit = "y";
+  }
+  return diffSeconds >= 0 ? `${value}${unit} ago` : `in ${value}${unit}`;
+}
+
+const numberFormat = new Intl.NumberFormat("en-US");
+
+export function formatNumber(n: number): string {
+  return numberFormat.format(n);
+}
+
+/** Split a key prefix like "opk_AbC123xY…" into the parts SecretMask renders:
+ * scheme ("opk_") + last 4 visible chars. */
+export function splitSecretPrefix(prefix: string): {
+  scheme: string;
+  last4: string;
+} {
+  const underscore = prefix.indexOf("_");
+  const scheme = underscore >= 0 ? prefix.slice(0, underscore + 1) : "";
+  const rest = underscore >= 0 ? prefix.slice(underscore + 1) : prefix;
+  return { scheme, last4: rest.slice(-4) };
+}
+
+/** Default scalar formatting for DataTable cells without a custom renderer.
+ * Returns a plain string; nullish values map to an em dash so empty cells
+ * read as deliberate. Epoch-second numbers are NOT handled here — DataTable
+ * routes those to <RelativeTime> (no raw timestamps, law #1). */
+export function formatCellValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "number") return formatNumber(value);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "string") return value;
+  return String(value);
+}

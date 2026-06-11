@@ -318,8 +318,11 @@ class FakeAdminStore:
             "id": cred_id,
             "app_id": app_id,
             "label": data.get("label") or "api key",
+            "display_name": data.get("label") or "api key",
+            "prefix": raw_key[:11],
             "created_at": "2026-05-17T00:00:00Z",
             "revoked_at": None,
+            "last_used_at": None,
         }
         self.credentials[cred_id] = stored
         self.audit.append(
@@ -726,6 +729,80 @@ class AdminAuthTests(unittest.TestCase):
             },
         )
         self.assertEqual(allowed.status_code, 201, allowed.text)
+
+
+class AdminSessionTests(unittest.TestCase):
+    """GET /admin/api/session — the JSON bootstrap for browser clients."""
+
+    def test_session_requires_auth(self) -> None:
+        client, _ = _make_client()
+        resp = client.get("/admin/api/session")
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["error"]["code"], "admin_unauthenticated")
+
+    def test_session_returns_actor_identity_for_key_auth(self) -> None:
+        client, _ = _make_client()
+        resp = client.get("/admin/api/session", headers=_auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        actor = resp.json()["actor"]
+        self.assertEqual(actor["subject"], "u_owner")
+        self.assertEqual(actor["email"], "owner@example.com")
+        self.assertEqual(actor["roles"], ["admin"])
+        # Bearer-key callers don't need CSRF; the field is present but empty.
+        self.assertEqual(actor["csrf_token"], "")
+
+    def test_session_exposes_csrf_token_for_cookie_sessions(self) -> None:
+        def session_auth(_request: Request) -> AdminContext:
+            return AdminContext(
+                subject="u_owner",
+                email="owner@example.com",
+                roles=frozenset({"owner"}),
+                auth_method="session",
+                csrf_token="csrf-token",
+            )
+
+        app = FastAPI()
+        app.include_router(create_admin_router(FakeAdminStore(), auth=session_auth))
+        resp = TestClient(app).get("/admin/api/session")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["actor"]["csrf_token"], "csrf-token")
+
+
+class AdminCredentialListingTests(unittest.TestCase):
+    """GET /admin/api/credentials — flat scrubbed list for the keys surface."""
+
+    def test_list_credentials_requires_auth(self) -> None:
+        client, _ = _make_client()
+        resp = client.get("/admin/api/credentials")
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["error"]["code"], "admin_unauthenticated")
+
+    def test_list_credentials_returns_scrubbed_flat_list(self) -> None:
+        client, _ = _make_client()
+        app_id = client.post(
+            "/admin/api/apps", json={"name": "brother-laptop"}, headers=_auth()
+        ).json()["app"]["id"]
+        minted = client.post(
+            f"/admin/api/apps/{app_id}/keys",
+            json={"label": "first key"},
+            headers=_auth(),
+        ).json()["credential"]
+
+        resp = client.get("/admin/api/credentials", headers=_auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        creds = resp.json()["credentials"]
+        self.assertEqual(len(creds), 1)
+        record = creds[0]
+        self.assertEqual(record["id"], minted["id"])
+        self.assertEqual(record["app_id"], app_id)
+        # The Apps & Keys surface renders these; the store always has them.
+        self.assertIn("prefix", record)
+        self.assertIn("created_at", record)
+        self.assertIn("last_used_at", record)
+        # List responses never carry raw key material (the display prefix is
+        # fine — it's what SecretMask renders — but the full key must not be).
+        self.assertNotIn("api_key", record)
+        self.assertNotIn(minted["api_key"], resp.text)
 
 
 class AdminAppKeyFlowTests(unittest.TestCase):

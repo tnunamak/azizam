@@ -8286,6 +8286,35 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# -----------------------------------------------------------------------------
+# Static React UI (web/out) — strangler surfaces under /ui
+# (docs/design/WEB_UI_STEERING.md). The export is a build artifact
+# (`cd web && npm run build`), so a source checkout without it must still
+# boot: a missing directory means "no mount", never a crash.
+# -----------------------------------------------------------------------------
+
+WEB_UI_DIR = Path(__file__).resolve().parent / "web" / "out"
+
+
+def mount_web_ui(target_app: FastAPI, directory: Path = WEB_UI_DIR) -> bool:
+    """Mount the static Next.js export at /ui when it exists.
+
+    Returns True if mounted. ``check_dir=False`` keeps StaticFiles itself from
+    raising if the directory disappears after boot (e.g. a rebuild in place);
+    the existence guard here is what makes boot-without-build safe.
+    """
+    if not directory.is_dir():
+        return False
+    target_app.mount(
+        "/ui",
+        StaticFiles(directory=str(directory), html=True, check_dir=False),
+        name="web_ui",
+    )
+    return True
+
+
+WEB_UI_MOUNTED = mount_web_ui(app)
+
 _PROTOCOL_ROUTE_REGISTRY = (
     service_registry.load_service_registry(path=ADMIN_DB_PATH)
     or service_registry.build_service_registry_seed(config)
@@ -11027,6 +11056,7 @@ _FIREHOSE_NO_RECORD_PREFIXES = (
     "/v1/status",
     "/v1/audio/health",
     "/_next/",
+    "/ui/",
     "/firehose",
     "/favicon.ico",
     "/static/",
@@ -11035,7 +11065,7 @@ _FIREHOSE_NO_RECORD_PREFIXES = (
     "/.well-known/",
 )
 # Exact paths (not prefixes) that should be excluded too.
-_FIREHOSE_NO_RECORD_EXACT = {"/", "/me", "/llms.txt"}
+_FIREHOSE_NO_RECORD_EXACT = {"/", "/me", "/ui", "/llms.txt"}
 
 # Map known successful-response paths to a synthesized event-type for the
 # Recent activity timeline. We don't peek at request bodies — the path tells
