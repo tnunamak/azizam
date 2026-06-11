@@ -3240,6 +3240,122 @@ def load_comfy_workflow(model_name: str) -> Optional[dict]:
     return workflow
 
 
+# Cache for object_info slot definitions and for derived UI graphs (keyed by a
+# hash of the API graph, so it survives across requests but updates if a workflow
+# file changes).
+_OBJECT_INFO_CACHE: dict[str, Optional[dict]] = {}
+_DERIVED_UI_CACHE: dict[str, Optional[dict]] = {}
+
+
+def _comfy_object_info(class_type: str) -> Optional[dict]:
+    """Fetch (and cache) a node type's slot definitions from ComfyUI /object_info.
+
+    Used to derive a UI-format graph from an API graph. Returns None on any error
+    (ComfyUI down, unknown node) so the caller falls back gracefully.
+    """
+    if class_type in _OBJECT_INFO_CACHE:
+        return _OBJECT_INFO_CACHE[class_type]
+    info = None
+    try:
+        with httpx.Client(timeout=httpx.Timeout(10, connect=3)) as client:
+            resp = client.get(f"{COMFY_HOST}/object_info/{class_type}")
+        if resp.status_code == 200:
+            info = resp.json().get(class_type)
+    except Exception:
+        info = None
+    _OBJECT_INFO_CACHE[class_type] = info
+    return info
+
+
+def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
+    """Derive a UI-format ComfyUI graph from an API-format workflow.
+
+    So generated images embed the 'workflow' PNG chunk (re-openable in the
+    ComfyUI frontend) even when no hand-authored `<name>.ui.json` twin exists.
+    Uses /object_info for each node's input/output slot ordering. Best-effort:
+    returns None if ComfyUI is unreachable or any node type is unknown, in which
+    case the caller simply omits the chunk (status quo, no regression).
+    """
+    api = {k: v for k, v in api.items() if not (isinstance(k, str) and k.startswith("_"))}
+    try:
+        ids = sorted(api.keys(), key=lambda x: int(x))
+    except (TypeError, ValueError):
+        return None
+    if not ids:
+        return None
+
+    def input_order(ct: str) -> Optional[list]:
+        oi = _comfy_object_info(ct)
+        if not oi:
+            return None
+        req = list(oi.get("input", {}).get("required", {}).keys())
+        opt = list(oi.get("input", {}).get("optional", {}).keys())
+        return req + opt
+
+    def output_types(ct: str) -> list:
+        oi = _comfy_object_info(ct)
+        if not oi:
+            return []
+        names = oi.get("output_name") or oi.get("output") or []
+        types = oi.get("output") or []
+        return list(zip(names, types)) if names else [(t, t) for t in types]
+
+    nodes = []
+    node_by_id: dict[int, dict] = {}
+    for i, nid in enumerate(ids):
+        spec = api[nid]
+        ct = spec.get("class_type")
+        if not ct:
+            return None
+        oi = input_order(ct)
+        if oi is None:
+            return None  # unknown node -> bail, omit chunk rather than emit a broken graph
+        ins = spec.get("inputs", {}) or {}
+        ui_inputs, widget_vals = [], []
+        for name in oi:
+            v = ins.get(name, None)
+            ui_inputs.append({"name": name, "localized_name": name, "type": "*",
+                              "link": None, "widget": {"name": name}})
+            if not (isinstance(v, list) and len(v) == 2 and isinstance(v[0], str)) and v is not None:
+                widget_vals.append(v)
+        ui_outputs = [{"name": (n or t), "localized_name": (n or t), "type": t,
+                       "links": [], "slot_index": j}
+                      for j, (n, t) in enumerate(output_types(ct))]
+        node = {"id": int(nid), "type": ct,
+                "pos": [100 + (i % 4) * 340, 80 + (i // 4) * 240],
+                "size": [300, 120], "flags": {}, "order": i, "mode": 0,
+                "inputs": ui_inputs, "outputs": ui_outputs,
+                "properties": {"Node name for S&R": ct}, "widgets_values": widget_vals}
+        nodes.append(node)
+        node_by_id[int(nid)] = node
+
+    links = []
+    lid = 0
+    for nid in ids:
+        spec = api[nid]
+        ct = spec.get("class_type")
+        oi = input_order(ct) or []
+        tnode = node_by_id[int(nid)]
+        for name, v in (spec.get("inputs", {}) or {}).items():
+            if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
+                from_id, from_slot = int(v[0]), int(v[1])
+                tslot = oi.index(name) if name in oi else 0
+                lid += 1
+                fnode = node_by_id.get(from_id)
+                ltype = (fnode["outputs"][from_slot]["type"]
+                         if fnode and from_slot < len(fnode["outputs"]) else "*")
+                links.append([lid, from_id, from_slot, int(nid), tslot, ltype])
+                if tslot < len(tnode["inputs"]):
+                    tnode["inputs"][tslot]["link"] = lid
+                if fnode and from_slot < len(fnode["outputs"]):
+                    fnode["outputs"][from_slot]["links"].append(lid)
+
+    return {"id": "00000000-0000-0000-0000-000000000000", "revision": 0,
+            "last_node_id": max(int(i) for i in ids), "last_link_id": lid,
+            "nodes": nodes, "links": links, "groups": [], "config": {},
+            "extra": {}, "version": 0.4}
+
+
 def _load_comfy_workflow_file(workflow_path: Path) -> Optional[dict]:
     with open(workflow_path) as f:
         workflow = json.load(f)
@@ -3250,7 +3366,12 @@ def _load_comfy_workflow_file(workflow_path: Path) -> Optional[dict]:
             flush=True,
         )
         return None
+    # Prefer a hand-authored UI twin (nice layout); otherwise derive one on the fly
+    # from the API graph so generated images STILL embed the re-openable workflow
+    # chunk. Works for any workflow, current or future, with no twin file needed.
     ui = _load_ui_workflow(workflow_path)
+    if ui is None:
+        ui = _derive_ui_workflow(workflow)
     if ui is not None:
         workflow["__ui_workflow__"] = ui
     return workflow
