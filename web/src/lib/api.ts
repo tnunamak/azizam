@@ -194,8 +194,17 @@ export interface ProviderPreset {
   native_passthrough: boolean;
 }
 
+export interface CapabilityChoice {
+  id: string;
+  label: string;
+}
+
 export interface PresetsResponse {
   presets: ProviderPreset[];
+  /** Canonical capability choices from the server — use these instead of a
+   * client-side static list. Present since the capabilities-dedup update;
+   * fall back to the static list if absent (older server). */
+  capabilities?: CapabilityChoice[];
 }
 
 // ---------------------------------------------------------------------------
@@ -613,7 +622,7 @@ export const api = {
     presets: () =>
       adminFetch<PresetsResponse>(
         "/admin/api/operator/service-presets",
-      ).then((r) => r.presets),
+      ),
     add: (input: Record<string, unknown>) =>
       adminFetch<ServiceRegistryResponse>("/admin/api/operator/services", {
         method: "POST",

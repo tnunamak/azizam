@@ -2151,6 +2151,26 @@ class AdminServicePresetsTests(unittest.TestCase):
         resp = client.get("/admin/api/operator/service-presets")
         self.assertEqual(resp.status_code, 401)
 
+    def test_presets_response_includes_capabilities_list(self) -> None:
+        """GET /operator/service-presets includes capabilities [{id, label}] for dedup."""
+        client, _ = _make_client()
+        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertIn("capabilities", body, "response must include 'capabilities' key")
+        caps = body["capabilities"]
+        self.assertIsInstance(caps, list)
+        self.assertGreater(len(caps), 0, "capabilities list must be non-empty")
+        for cap in caps:
+            self.assertIn("id", cap, f"capability entry missing 'id': {cap!r}")
+            self.assertIn("label", cap, f"capability entry missing 'label': {cap!r}")
+            self.assertIsInstance(cap["id"], str)
+            self.assertIsInstance(cap["label"], str)
+        # Spot-check a few expected values
+        ids = [c["id"] for c in caps]
+        for expected in ("chat", "completions", "vision", "embeddings"):
+            self.assertIn(expected, ids, f"expected capability {expected!r} missing")
+
     def test_managed_substrate_remove_is_blocked(self) -> None:
         """DELETE on the litellm managed-substrate row returns 403."""
         store = FakeAdminStore()

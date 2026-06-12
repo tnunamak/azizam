@@ -36,6 +36,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogForm,
   DialogHeader,
   DialogTitle,
   EmptyState,
@@ -563,7 +564,7 @@ function OidcEditDialogContent({
 
   return (
     <DialogContent className="max-w-xl">
-      <form onSubmit={handleSubmit}>
+      <DialogForm onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>
             {existing ? "Edit sign-in settings" : "Configure sign-in"}
@@ -774,7 +775,7 @@ function OidcEditDialogContent({
             Save
           </Button>
         </DialogFooter>
-      </form>
+      </DialogForm>
     </DialogContent>
   );
 }
@@ -969,7 +970,7 @@ function AddExtensionDialogContent({
   if (step === "review" && review) {
     return (
       <DialogContent className="max-w-lg">
-        <form onSubmit={handleEnable}>
+        <DialogForm onSubmit={handleEnable}>
           <DialogHeader>
             <DialogTitle>Review extension</DialogTitle>
             <DialogDescription>
@@ -1064,14 +1065,14 @@ function AddExtensionDialogContent({
               Enable extension
             </Button>
           </DialogFooter>
-        </form>
+        </DialogForm>
       </DialogContent>
     );
   }
 
   return (
     <DialogContent className="max-w-lg">
-      <form onSubmit={handleValidate}>
+      <DialogForm onSubmit={handleValidate}>
         <DialogHeader>
           <DialogTitle>Add extension</DialogTitle>
           <DialogDescription>
@@ -1150,7 +1151,7 @@ function AddExtensionDialogContent({
             Validate
           </Button>
         </DialogFooter>
-      </form>
+      </DialogForm>
     </DialogContent>
   );
 }

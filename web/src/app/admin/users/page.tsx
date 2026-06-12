@@ -47,6 +47,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogForm,
   DialogHeader,
   DialogTitle,
   EmptyState,
@@ -752,7 +753,7 @@ function CreateMappingDialogContent({
 
   return (
     <DialogContent>
-      <form onSubmit={handleSubmit}>
+      <DialogForm onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>Add profile mapping</DialogTitle>
           <DialogDescription>
@@ -852,7 +853,7 @@ function CreateMappingDialogContent({
             Add mapping
           </Button>
         </DialogFooter>
-      </form>
+      </DialogForm>
     </DialogContent>
   );
 }

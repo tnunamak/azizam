@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 
 import { formatCellValue, isEpochSeconds } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -36,6 +36,9 @@ export interface DataTableProps<T> {
   /** Accessible table caption (visually hidden). */
   label?: string;
   className?: string;
+  /** Called when a row body is clicked (not the rowMenu cell). Makes rows
+   * cursor-pointer and keyboard-activatable (Enter/Space). */
+  onRowClick?: (row: T) => void;
 }
 
 /** Default cell rendering routes through the shared formatters: epoch-second
@@ -70,6 +73,7 @@ export function DataTable<T>({
   rowMenu,
   label,
   className,
+  onRowClick,
 }: DataTableProps<T>) {
   const isEmpty = !loading && rows.length === 0;
   const [primary, ...rest] = columns;
@@ -121,7 +125,23 @@ export function DataTable<T>({
               : rows.map((row) => (
                   <tr
                     key={rowKey(row)}
-                    className="border-vf-border/60 hover:bg-vf-surface-1 border-b transition-colors"
+                    className={cn(
+                      "border-vf-border/60 hover:bg-vf-surface-1 border-b transition-colors",
+                      onRowClick && "cursor-pointer",
+                    )}
+                    {...(onRowClick
+                      ? {
+                          tabIndex: 0,
+                          role: "button",
+                          onClick: () => onRowClick(row),
+                          onKeyDown: (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onRowClick(row);
+                            }
+                          },
+                        }
+                      : {})}
                   >
                     {columns.map((column) => (
                       <td
@@ -135,7 +155,10 @@ export function DataTable<T>({
                       </td>
                     ))}
                     {rowMenu && (
-                      <td className="px-3 py-2 text-right align-middle">
+                      <td
+                        className="px-3 py-2 text-right align-middle"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {rowMenu(row)}
                       </td>
                     )}
@@ -161,13 +184,33 @@ export function DataTable<T>({
           : rows.map((row) => (
               <div
                 key={rowKey(row)}
-                className="rounded-vf-md border-vf-border bg-vf-surface-1 border p-4"
+                className={cn(
+                  "rounded-vf-md border-vf-border bg-vf-surface-1 border p-4",
+                  onRowClick && "cursor-pointer hover:bg-vf-surface-2 transition-colors",
+                )}
+                {...(onRowClick
+                  ? {
+                      tabIndex: 0,
+                      role: "button",
+                      onClick: () => onRowClick(row),
+                      onKeyDown: (e: KeyboardEvent) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onRowClick(row);
+                        }
+                      },
+                    }
+                  : {})}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="text-vf-body text-vf-text min-w-0">
                     {primary ? renderCell(primary, row) : null}
                   </div>
-                  {rowMenu && <div className="shrink-0">{rowMenu(row)}</div>}
+                  {rowMenu && (
+                    <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                      {rowMenu(row)}
+                    </div>
+                  )}
                 </div>
                 {mobileDetailColumns.length > 0 && (
                   <dl className="mt-3 flex flex-col gap-1.5">

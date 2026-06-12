@@ -1622,9 +1622,28 @@ def create_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         presets = [dict(p) for p in service_registry.PROVIDER_PRESETS]
+        _cap_labels: dict[str, str] = {
+            "chat": "Chat",
+            "completions": "Completions",
+            "vision": "Vision",
+            "embeddings": "Embeddings",
+            "image": "Images",
+            "audio": "Audio",
+            "speech": "Speech",
+        }
+        capability_choices = [
+            {
+                "id": cap,
+                "label": _cap_labels.get(
+                    cap,
+                    cap.replace(".", " ").replace("_", " ").capitalize(),
+                ),
+            }
+            for cap in service_registry._CAPABILITY_CHOICES
+        ]
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"presets": presets},
+            content={"presets": presets, "capabilities": capability_choices},
         )
 
     @router.post("/operator/services")

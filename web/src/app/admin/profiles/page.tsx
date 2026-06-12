@@ -52,6 +52,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogForm,
   DialogHeader,
   DialogTitle,
   EmptyState,
@@ -547,7 +548,7 @@ function ProfileDialogContent({
 
   return (
     <DialogContent>
-      <form onSubmit={handleSubmit}>
+      <DialogForm onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
@@ -684,7 +685,7 @@ function ProfileDialogContent({
             {actionLabel}
           </Button>
         </DialogFooter>
-      </form>
+      </DialogForm>
     </DialogContent>
   );
 }

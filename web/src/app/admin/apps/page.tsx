@@ -41,6 +41,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogForm,
   DialogHeader,
   DialogTitle,
   EmptyState,
@@ -840,7 +841,7 @@ function CreateAppDialogContent({
 
   return (
     <DialogContent>
-      <form onSubmit={handleSubmit}>
+      <DialogForm onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>Create app</DialogTitle>
           <DialogDescription>
@@ -927,7 +928,7 @@ function CreateAppDialogContent({
             Create app
           </Button>
         </DialogFooter>
-      </form>
+      </DialogForm>
     </DialogContent>
   );
 }
@@ -991,7 +992,7 @@ function ChangeProfileDialogContent({
 
   return (
     <DialogContent className="max-w-md">
-      <form onSubmit={handleSubmit}>
+      <DialogForm onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>Change profile</DialogTitle>
           <DialogDescription>
@@ -1034,7 +1035,7 @@ function ChangeProfileDialogContent({
             Save
           </Button>
         </DialogFooter>
-      </form>
+      </DialogForm>
     </DialogContent>
   );
 }
@@ -1095,7 +1096,7 @@ function MintKeyDialogContent({
 
   return (
     <DialogContent className="max-w-md">
-      <form onSubmit={handleSubmit}>
+      <DialogForm onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>Mint key</DialogTitle>
           <DialogDescription>
@@ -1134,7 +1135,7 @@ function MintKeyDialogContent({
             Mint key
           </Button>
         </DialogFooter>
-      </form>
+      </DialogForm>
     </DialogContent>
   );
 }
@@ -1203,7 +1204,7 @@ function CreateAdminKeyDialogContent({
 
   return (
     <DialogContent>
-      <form onSubmit={handleSubmit}>
+      <DialogForm onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>Create admin key</DialogTitle>
           <DialogDescription>
@@ -1260,7 +1261,7 @@ function CreateAdminKeyDialogContent({
             Create key
           </Button>
         </DialogFooter>
-      </form>
+      </DialogForm>
     </DialogContent>
   );
 }

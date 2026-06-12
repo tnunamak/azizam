@@ -31,6 +31,7 @@ export {
   type DialogContentProps,
   DialogDescription,
   DialogFooter,
+  DialogForm,
   DialogHeader,
   DialogTitle,
   DialogTrigger,

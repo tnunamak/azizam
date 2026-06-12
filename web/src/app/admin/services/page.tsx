@@ -42,6 +42,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogForm,
   DialogHeader,
   DialogTitle,
   EmptyState,
@@ -341,14 +342,17 @@ export default function AdminServicesPage() {
       id: "enabled",
       header: "Enabled",
       cell: (svc) => (
-        <Switch
-          checked={svc.enabled}
-          disabled={toggleMutation.isPending}
-          aria-label={`Toggle ${svc.name}`}
-          onCheckedChange={(checked) =>
-            toggleMutation.mutate({ serviceId: svc.id, enabled: checked })
-          }
-        />
+        // stopPropagation so clicking the switch does NOT open the Edit dialog
+        <span onClick={(e) => e.stopPropagation()}>
+          <Switch
+            checked={svc.enabled}
+            disabled={toggleMutation.isPending}
+            aria-label={`Toggle ${svc.name}`}
+            onCheckedChange={(checked) =>
+              toggleMutation.mutate({ serviceId: svc.id, enabled: checked })
+            }
+          />
+        </span>
       ),
     },
   ];
@@ -382,6 +386,7 @@ export default function AdminServicesPage() {
             rows={services}
             rowKey={(svc) => svc.id}
             loading={isPending}
+            onRowClick={(svc) => setEditTarget(svc)}
             empty={
               <EmptyState
                 action={
@@ -484,6 +489,10 @@ export default function AdminServicesPage() {
           setEditTarget(null);
           showRestartBanner();
           toast.success("Service updated");
+        }}
+        onOpenModels={(svc) => {
+          setEditTarget(null);
+          setModelsTarget(svc);
         }}
       />
 
@@ -757,10 +766,11 @@ function AddServiceDialogContent({
   onOpenChange: (open: boolean) => void;
   onSaved: (registry: ServiceRegistry) => void;
 }) {
-  const { data: presets = [], isPending: presetsLoading } = useQuery({
+  const { data: presetsData, isPending: presetsLoading } = useQuery({
     queryKey: queryKeys.servicePresets,
     queryFn: api.services.presets,
   });
+  const presets = presetsData?.presets ?? [];
 
   const defaultPreset = presets[0]?.id ?? "openai-compatible";
   const [form, setForm] = useState<ServiceFormState>(() =>
@@ -823,7 +833,7 @@ function AddServiceDialogContent({
 
   return (
     <DialogContent>
-      <form onSubmit={handleSubmit}>
+      <DialogForm onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>Add service</DialogTitle>
           <DialogDescription>
@@ -859,7 +869,7 @@ function AddServiceDialogContent({
             Add service
           </Button>
         </DialogFooter>
-      </form>
+      </DialogForm>
     </DialogContent>
   );
 }
@@ -897,15 +907,15 @@ interface EditFormState {
   enabled: boolean;
 }
 
-// Canonical capability list — mirrors _CAPABILITY_CHOICES in service_registry.py
-const CAPABILITY_CHOICES = [
-  "chat",
-  "completions",
-  "vision",
-  "embeddings",
-  "image",
-  "audio",
-  "speech",
+// Canonical capability list — static fallback; server provides authoritative list via presets endpoint.
+const CAPABILITY_CHOICES_FALLBACK = [
+  { id: "chat", label: "Chat" },
+  { id: "completions", label: "Completions" },
+  { id: "vision", label: "Vision" },
+  { id: "embeddings", label: "Embeddings" },
+  { id: "image", label: "Images" },
+  { id: "audio", label: "Audio" },
+  { id: "speech", label: "Speech" },
 ] as const;
 
 // Valid protocol values accepted by the backend normalizer
@@ -1006,10 +1016,12 @@ function EditServiceDialog({
   service,
   onOpenChange,
   onSaved,
+  onOpenModels,
 }: {
   service: Service | null;
   onOpenChange: (open: boolean) => void;
   onSaved: (registry: ServiceRegistry) => void;
+  onOpenModels: (service: Service) => void;
 }) {
   return (
     <Dialog open={service !== null} onOpenChange={onOpenChange}>
@@ -1018,6 +1030,7 @@ function EditServiceDialog({
           service={service}
           onOpenChange={onOpenChange}
           onSaved={onSaved}
+          onOpenModels={onOpenModels}
         />
       )}
     </Dialog>
@@ -1028,12 +1041,20 @@ function EditServiceDialogContent({
   service,
   onOpenChange,
   onSaved,
+  onOpenModels,
 }: {
   service: Service;
   onOpenChange: (open: boolean) => void;
   onSaved: (registry: ServiceRegistry) => void;
+  onOpenModels: (service: Service) => void;
 }) {
   const managed = isManagedSubstrate(service);
+
+  const { data: presetsData } = useQuery({
+    queryKey: queryKeys.servicePresets,
+    queryFn: api.services.presets,
+  });
+  const capabilityChoices = presetsData?.capabilities ?? CAPABILITY_CHOICES_FALLBACK;
 
   // Full edit form state (non-managed rows)
   const [form, setForm] = useState<EditFormState>(() => serviceToEditForm(service));
@@ -1099,7 +1120,7 @@ function EditServiceDialogContent({
 
   return (
     <DialogContent>
-      <form onSubmit={handleSubmit}>
+      <DialogForm onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>Edit {service.name}</DialogTitle>
           <DialogDescription>
@@ -1243,17 +1264,17 @@ function EditServiceDialogContent({
                     Capabilities
                   </legend>
                   <div className="flex flex-wrap gap-x-4 gap-y-2">
-                    {CAPABILITY_CHOICES.map((cap) => (
-                      <label key={cap} className="flex items-center gap-2 cursor-pointer">
+                    {capabilityChoices.map((cap) => (
+                      <label key={cap.id} className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
-                          checked={form.capabilities.includes(cap)}
-                          onChange={() => toggleCapability(cap)}
+                          checked={form.capabilities.includes(cap.id)}
+                          onChange={() => toggleCapability(cap.id)}
                           disabled={save.isPending}
                           className="accent-vf-accent h-4 w-4"
                         />
                         <span className="text-vf-small text-vf-text">
-                          {capabilityLabel(cap)}
+                          {cap.label}
                         </span>
                       </label>
                     ))}
@@ -1286,8 +1307,7 @@ function EditServiceDialogContent({
                     className="text-vf-accent underline-offset-2 hover:underline"
                     onClick={() => {
                       onOpenChange(false);
-                      // The Models dialog is opened by the parent via setModelsTarget;
-                      // close this dialog and the parent will route to Models on the same service.
+                      onOpenModels(service);
                     }}
                   >
                     open Models…
@@ -1442,7 +1462,7 @@ function EditServiceDialogContent({
             Save
           </Button>
         </DialogFooter>
-      </form>
+      </DialogForm>
     </DialogContent>
   );
 }

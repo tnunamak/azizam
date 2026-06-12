@@ -222,6 +222,15 @@ client-side** — consume this endpoint instead.
     { "id": "vllm", "label": "vLLM", "base_path": "/v1", "default_port": 8000, "…": "…" },
     { "id": "ollama", "label": "Ollama", "base_path": "/v1", "default_port": 11434, "…": "…" },
     "…"
+  ],
+  "capabilities": [
+    { "id": "chat", "label": "Chat" },
+    { "id": "completions", "label": "Completions" },
+    { "id": "vision", "label": "Vision" },
+    { "id": "embeddings", "label": "Embeddings" },
+    { "id": "image", "label": "Images" },
+    { "id": "audio", "label": "Audio" },
+    { "id": "speech", "label": "Speech" }
   ]
 }
 ```
@@ -230,6 +239,10 @@ The first entry is always `"openai-compatible"` (the custom escape hatch).
 Every preset has: `id`, `label`, `base_path`, `default_port` (null for custom),
 `protocol` (null for non-OpenAI presets like ComfyUI), `capabilities`,
 `native_passthrough`.
+
+`capabilities` is the canonical list of capability identifiers and human labels
+for use in the Edit service form. **Never duplicate this list client-side** —
+fall back to a static copy only while the response is loading.
 
 ### POST /admin/api/operator/services  (add service)
 

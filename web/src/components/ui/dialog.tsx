@@ -2,6 +2,7 @@
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import React from "react";
 
 import { cn } from "@/lib/cn";
 import { IconButton } from "./icon-button";
@@ -31,7 +32,8 @@ export function DialogContent({
       <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4">
         <DialogPrimitive.Content
           className={cn(
-            "rounded-vf-lg border-vf-border bg-vf-surface-1 shadow-vf-caustic-2 relative w-full max-w-lg border p-6 focus:outline-none",
+            "rounded-vf-lg border-vf-border bg-vf-surface-1 shadow-vf-caustic-2 relative flex w-full max-w-lg flex-col border p-6 focus:outline-none",
+            "max-h-[85dvh]",
             className,
           )}
           {...props}
@@ -55,6 +57,24 @@ export function DialogContent({
   );
 }
 
+/** Wrap a `<form>` inside DialogContent so it participates in the flex-column
+ * height layout (header/footer pinned, body scrolls). Required whenever a
+ * dialog has a form that wraps DialogHeader + DialogBody + DialogFooter. */
+export function DialogForm({
+  className,
+  children,
+  ...props
+}: React.ComponentPropsWithoutRef<"form">) {
+  return (
+    <form
+      className={cn("flex min-h-0 flex-1 flex-col", className)}
+      {...props}
+    >
+      {children}
+    </form>
+  );
+}
+
 export function DialogHeader({
   className,
   children,
@@ -63,7 +83,7 @@ export function DialogHeader({
   children: ReactNode;
 }) {
   return (
-    <div className={cn("flex flex-col gap-1.5 pr-8", className)}>
+    <div className={cn("shrink-0 flex flex-col gap-1.5 pr-8", className)}>
       {children}
     </div>
   );
@@ -101,7 +121,7 @@ export function DialogBody({
   children: ReactNode;
 }) {
   return (
-    <div className={cn("mt-4 flex flex-col gap-4", className)}>{children}</div>
+    <div className={cn("mt-4 min-h-0 flex-1 overflow-y-auto flex flex-col gap-4", className)}>{children}</div>
   );
 }
 
@@ -115,7 +135,7 @@ export function DialogFooter({
   return (
     <div
       className={cn(
-        "mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        "shrink-0 mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
         className,
       )}
     >
