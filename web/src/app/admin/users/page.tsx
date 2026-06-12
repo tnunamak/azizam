@@ -16,7 +16,7 @@
  *  - Destructive actions in OverflowMenu + ConfirmDialog
  *  - Loading skeleton + designed empty + error states
  *  - React Query via the same patterns as the apps page
- *  - All data via adminFetch from lib/api.ts */
+ *  - All data via api.* from lib/api.ts */
 
 import { useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
@@ -27,12 +27,14 @@ import {
 } from "@tanstack/react-query";
 
 import {
-  adminFetch,
   ApiError,
   api,
   queryKeys,
   type Profile,
   type User,
+  type UserAccessDefaults,
+  type RuntimeMappingSourceKind,
+  type RuntimeProfileMapping,
 } from "@/lib/api";
 import {
   Badge,
@@ -62,83 +64,10 @@ import {
 } from "@/components/ui";
 
 // ---------------------------------------------------------------------------
-// Local types for endpoints not yet in lib/api.ts
-// (Library gap: RuntimeProfileMapping, UserAccessDefaults, and their API
-// endpoints are not in lib/api.ts — using local types + adminFetch directly.
-// These should be upstreamed to lib/api.ts and queryKeys when the fan-out
-// settles.)
+// Stable query key aliases (aliased from global queryKeys for local readability)
 
-export interface UserAccessDefaults {
-  self_service_apps: boolean;
-  auto_create_personal_app: boolean;
-}
-
-export type RuntimeMappingSourceKind =
-  | "oidc_group"
-  | "oidc_role"
-  | "email"
-  | "domain"
-  | "gateway_role"
-  | "all_users";
-
-export interface RuntimeProfileMapping {
-  id: string;
-  source_kind: RuntimeMappingSourceKind;
-  source_value: string;
-  profile_id: string;
-  created_at: number;
-  created_by: string;
-  disabled_at: number | null;
-}
-
-// ---------------------------------------------------------------------------
-// Query keys (local; not in global queryKeys because these endpoints belong
-// to the users surface exclusively)
-
-const QK_OVERRIDES = ["operator", "overrides"] as const;
-const QK_MAPPINGS = ["runtime-profile-mappings"] as const;
-
-// ---------------------------------------------------------------------------
-// API calls
-
-function fetchUserAccessDefaults(): Promise<UserAccessDefaults> {
-  return adminFetch<{ overrides: { user_access_defaults: UserAccessDefaults } }>(
-    "/admin/api/operator/overrides",
-  ).then((r) => r.overrides.user_access_defaults);
-}
-
-function saveUserAccessDefaults(
-  input: Partial<UserAccessDefaults>,
-): Promise<UserAccessDefaults> {
-  return adminFetch<{ user_access_defaults: UserAccessDefaults }>(
-    "/admin/api/operator/user-access-defaults",
-    { method: "PUT", body: input },
-  ).then((r) => r.user_access_defaults);
-}
-
-function fetchMappings(): Promise<RuntimeProfileMapping[]> {
-  return adminFetch<{ mappings: RuntimeProfileMapping[] }>(
-    "/admin/api/runtime-profile-mappings",
-  ).then((r) => r.mappings);
-}
-
-function createMapping(input: {
-  source_kind: RuntimeMappingSourceKind;
-  source_value: string;
-  profile_id: string;
-}): Promise<RuntimeProfileMapping> {
-  return adminFetch<{ mapping: RuntimeProfileMapping }>(
-    "/admin/api/runtime-profile-mappings",
-    { method: "POST", body: input },
-  ).then((r) => r.mapping);
-}
-
-function disableMapping(mappingId: string): Promise<RuntimeProfileMapping> {
-  return adminFetch<{ mapping: RuntimeProfileMapping }>(
-    `/admin/api/runtime-profile-mappings/${mappingId}`,
-    { method: "DELETE" },
-  ).then((r) => r.mapping);
-}
+const QK_OVERRIDES = queryKeys.operatorOverrides;
+const QK_MAPPINGS = queryKeys.runtimeProfileMappings;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -208,14 +137,14 @@ export default function AdminUsersPage() {
     isPending: defaultsPending,
     isError: defaultsIsError,
     refetch: refetchDefaults,
-  } = useQuery({ queryKey: QK_OVERRIDES, queryFn: fetchUserAccessDefaults });
+  } = useQuery({ queryKey: QK_OVERRIDES, queryFn: api.userAccessDefaults.get });
 
   const {
     data: mappingsData,
     isPending: mappingsPending,
     isError: mappingsIsError,
     refetch: refetchMappings,
-  } = useQuery({ queryKey: QK_MAPPINGS, queryFn: fetchMappings });
+  } = useQuery({ queryKey: QK_MAPPINGS, queryFn: api.runtimeProfileMappings.list });
 
   const { data: profilesData } = useQuery({
     queryKey: queryKeys.profiles,
@@ -255,7 +184,7 @@ export default function AdminUsersPage() {
   // Optimistic disable mapping
   const disableMappingMutation = useMutation({
     mutationFn: (mapping: RuntimeProfileMapping) =>
-      disableMapping(mapping.id),
+      api.runtimeProfileMappings.disable(mapping.id),
     onMutate: async (mapping) => {
       await queryClient.cancelQueries({ queryKey: QK_MAPPINGS });
       const previous = queryClient.getQueryData<RuntimeProfileMapping[]>(QK_MAPPINGS);
@@ -533,7 +462,7 @@ function DefaultsEditor({
 
   const save = useMutation({
     mutationFn: (input: Partial<UserAccessDefaults>) =>
-      saveUserAccessDefaults(input),
+      api.userAccessDefaults.update(input),
     onSuccess: (serverDefaults) => {
       queryClient.setQueryData<UserAccessDefaults>(QK_OVERRIDES, serverDefaults);
       setLocalDefaults(null);
@@ -796,7 +725,7 @@ function CreateMappingDialogContent({
 
   const create = useMutation({
     mutationFn: () =>
-      createMapping({
+      api.runtimeProfileMappings.create({
         source_kind: sourceKind,
         source_value: sourceKind === "all_users" ? "" : sourceValue.trim(),
         profile_id: profileId,

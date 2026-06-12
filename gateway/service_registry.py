@@ -400,12 +400,11 @@ def service_from_backend_config(
     source = source if source in SERVICE_SOURCES else "ui"
     name = str(raw.get("name") or service_id)
     capabilities = normalize_string_list(raw.get("capabilities"))
-    return {
+    record = {
         "id": service_id,
         "name": name,
         "kind": str(raw.get("kind") or "provider"),
         "source": source,
-        "editable": bool(raw.get("editable", source == "ui")),
         "enabled": bool_from_config(raw.get("enabled"), True),
         "priority": int(raw.get("priority") or 100),
         "role": str(raw.get("role") or "required"),
@@ -419,6 +418,10 @@ def service_from_backend_config(
         },
         "provenance": dict(provenance or {}),
     }
+    # EDITABILITY LAW: editable is true for all records except managed-substrate
+    # rows (LiteLLM). The stored editable:false from old seeds is ignored here.
+    record["editable"] = not is_litellm_service_record(service_id, record)
+    return record
 
 
 def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -438,12 +441,11 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
     provenance = raw.get("provenance")
     if not isinstance(provenance, Mapping):
         provenance = {}
-    return {
+    record = {
         "id": service_id,
         "name": str(raw.get("name") or config.get("name") or service_id),
         "kind": str(raw.get("kind") or "provider"),
         "source": source,
-        "editable": bool_from_config(raw.get("editable"), source == "ui"),
         "enabled": bool_from_config(raw.get("enabled"), True),
         "priority": int(raw.get("priority") or 100),
         "role": str(raw.get("role") or config.get("role") or "required"),
@@ -457,6 +459,10 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
         },
         "provenance": copy.deepcopy(dict(provenance)),
     }
+    # EDITABILITY LAW: editable is true for all records except managed-substrate
+    # rows (LiteLLM). Stored editable:false from old seeds is normalized away.
+    record["editable"] = not is_litellm_service_record(service_id, record)
+    return record
 
 
 def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
@@ -477,10 +483,14 @@ def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
 #
 # These are pure: they take a registry dict, apply one operation, and return a
 # new normalized registry (plus, for upsert, the affected record). The store
-# layer (gateway/admin_runtime.AdminStore) persists the result. Operator-added
-# services are ``source == "ui"``; only those can be hard-removed (config-,
-# builtin-, and import-provisioned records resurrect on the next boot from their
-# source of truth, so the UI may disable but not delete them).
+# layer (gateway/admin_runtime.AdminStore) persists the result.
+#
+# EDITABILITY LAW: all service rows are editable and removable regardless of
+# ``source`` (source is provenance/history, not permission). The DB registry
+# is the source of truth after the one-time config seed; removed rows are NOT
+# re-imported on reboot. The sole exception is the LiteLLM managed-substrate
+# row — the gateway spawns that process, so endpoint/protocol fields are
+# derived and locked; rename/enable/note are still allowed; removal is blocked.
 # ---------------------------------------------------------------------------
 
 # Provider presets for the "add a backend" form. Each pre-fills the connection
@@ -577,8 +587,13 @@ def upsert_service_in_registry(
     """Add or replace one service in a registry; returns (registry, record).
 
     ``replace=False`` (create) raises if the id already exists. ``replace=True``
-    (edit) raises if the id is missing or its existing record is not editable.
-    The new/edited record is stored as ``source`` (default ``"ui"``).
+    (edit) raises if the id is missing.
+
+    EDITABILITY LAW: after the one-time config import the DB registry is the
+    source of truth, so all rows are editable regardless of ``source``. The
+    sole exception is managed-substrate rows (LiteLLM) — the gateway spawns
+    that process, so endpoint/protocol fields are derived and locked; only
+    name, enabled, and note may be changed.
     """
     out = normalize_service_registry(registry)
     sid = normalize_id(service_id)
@@ -588,11 +603,41 @@ def upsert_service_in_registry(
     if replace:
         if existing is None:
             raise ValueError(f"service {sid!r} not found")
-        if not bool_from_config(existing.get("editable"), existing.get("source") == "ui"):
-            raise ValueError(f"service {sid!r} is not editable")
+        if is_litellm_service_record(sid, existing):
+            # Managed substrate: only allow metadata edits (name, enabled, note).
+            # Endpoint and connection fields are derived by the gateway.
+            # host/port/base_url define the actual connection; protocol and
+            # execution_substrate control how the gateway talks to the process.
+            _MANAGED_LOCKED_FIELDS = frozenset(
+                {"host", "port", "base_url", "protocol", "execution_substrate"}
+            )
+            blocked = [k for k in raw if k in _MANAGED_LOCKED_FIELDS]
+            if blocked:
+                raise ValueError(
+                    f"service {sid!r} is a managed substrate (LiteLLM); "
+                    f"fields {sorted(blocked)} are derived by the gateway and "
+                    "cannot be edited — only name, enabled, and note may be changed"
+                )
     elif existing is not None:
         raise ValueError(f"service {sid!r} already exists")
-    record = service_from_backend_config(sid, raw, source=source)
+
+    if replace and existing is not None and is_litellm_service_record(sid, existing):
+        # For managed substrate: preserve the existing config; only patch allowed fields.
+        updated = dict(existing)
+        for field in ("name", "enabled", "note"):
+            if field in raw:
+                updated[field] = raw[field]
+        record = normalize_service_record(sid, updated)
+    else:
+        # Preserve the original source for non-UI rows (editability law: source is
+        # provenance/history, not permission; don't re-stamp it as "ui").
+        effective_source = source
+        if replace and existing is not None:
+            existing_source = str(existing.get("source") or "ui")
+            if existing_source in SERVICE_SOURCES:
+                effective_source = existing_source
+        record = service_from_backend_config(sid, raw, source=effective_source)
+
     out["services"][sid] = record
     out["updated_at"] = int(time.time())
     return out, record
@@ -601,16 +646,23 @@ def upsert_service_in_registry(
 def remove_service_from_registry(
     registry: Mapping[str, Any], service_id: str
 ) -> dict[str, Any]:
-    """Hard-remove one operator-added service. Raises for non-UI records."""
+    """Hard-remove a service from the registry.
+
+    Raises for managed-substrate rows (e.g. LiteLLM) — the gateway spawns
+    those processes, so they cannot be deleted; disable them instead. All
+    other sources (config-imported, provisioned, builtin, discovered, ui)
+    are removable: the DB registry is the source of truth after the one-time
+    seed, and the YAML is never re-merged on subsequent boots.
+    """
     out = normalize_service_registry(registry)
     sid = normalize_id(service_id)
     existing = out["services"].get(sid)
     if existing is None:
         raise ValueError(f"service {sid!r} not found")
-    if str(existing.get("source") or "ui") != "ui":
+    if is_litellm_service_record(sid, existing):
         raise ValueError(
-            f"service {sid!r} is provisioned (source "
-            f"{existing.get('source')!r}); disable it instead of deleting"
+            f"service {sid!r} is a managed substrate (LiteLLM); "
+            "disable it instead of removing it — the gateway manages this process"
         )
     del out["services"][sid]
     out["updated_at"] = int(time.time())

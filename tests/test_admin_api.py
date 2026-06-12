@@ -1920,15 +1920,18 @@ class AdminServiceCrudTests(unittest.TestCase):
         self.assertEqual(svc["capabilities"], ["chat", "completions"])
         self.assertEqual(svc["role"], "standby")
 
-    def test_edit_provisioned_is_forbidden(self) -> None:
+    def test_edit_provisioned_is_allowed(self) -> None:
+        # EDITABILITY LAW: provisioned rows are editable — source is provenance,
+        # not a permission gate. Only managed-substrate (litellm) is locked.
         client, _ = _make_client(self._store_with_provisioned())
         resp = client.patch(
             "/admin/api/operator/services/tabby",
-            json={"base_url": "http://h:1/v1"},
+            json={"base_url": "http://h:1/v1", "name": "TabbyAPI Updated"},
             headers=_auth(),
         )
-        self.assertEqual(resp.status_code, 403)
-        self.assertEqual(resp.json()["error"]["code"], "service_not_editable")
+        self.assertEqual(resp.status_code, 200)
+        svc = resp.json()["service_registry"]["services"]["tabby"]
+        self.assertEqual(svc["name"], "TabbyAPI Updated")
 
     def test_delete_ui_service_then_404(self) -> None:
         client, _ = _make_client()
@@ -1944,11 +1947,13 @@ class AdminServiceCrudTests(unittest.TestCase):
         resp = client.delete("/admin/api/operator/services/gone", headers=_auth())
         self.assertEqual(resp.status_code, 404)
 
-    def test_delete_provisioned_is_forbidden(self) -> None:
+    def test_delete_provisioned_is_allowed(self) -> None:
+        # EDITABILITY LAW: provisioned rows are removable after the one-time seed.
+        # The DB is the source of truth; the YAML is never re-merged on reboot.
         client, _ = _make_client(self._store_with_provisioned())
         resp = client.delete("/admin/api/operator/services/tabby", headers=_auth())
-        self.assertEqual(resp.status_code, 403)
-        self.assertEqual(resp.json()["error"]["code"], "service_not_editable")
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn("tabby", resp.json()["service_registry"]["services"])
 
     def test_toggle_enabled_on_any_source(self) -> None:
         client, _ = _make_client(self._store_with_provisioned())
@@ -2029,6 +2034,114 @@ class AdminServiceCrudTests(unittest.TestCase):
         ):
             resp = client.request(method, url, json={})
             self.assertEqual(resp.status_code, 401, f"{method} {url}")
+
+    def test_patch_service_accepts_models_list(self) -> None:
+        """PATCH with a models list must be accepted and round-trip through the registry."""
+        client, store = _make_client()
+        # Create a service first.
+        client.post(
+            "/admin/api/operator/services",
+            json={"name": "tgw", "preset": "openai-compatible", "base_url": "http://h:7860/v1"},
+            headers=_auth(),
+        )
+        # Patch with a models list.
+        resp = client.patch(
+            "/admin/api/operator/services/tgw",
+            json={
+                "base_url": "http://h:7860/v1",
+                "models": [
+                    {"public": "llama-3-8b", "upstream": "Meta-Llama-3-8B"},
+                    {"public": "mistral-7b", "upstream": "Mistral-7B-Instruct"},
+                ],
+            },
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        svc = resp.json()["service_registry"]["services"]["tgw"]
+        stored_models = svc["config"].get("models", [])
+        model_groups = [m["model_group"] for m in stored_models]
+        self.assertIn("llama-3-8b", model_groups)
+        self.assertIn("mistral-7b", model_groups)
+
+    def test_patch_models_invalid_type_is_400(self) -> None:
+        """A non-list models value must return 400."""
+        client, _ = _make_client()
+        client.post(
+            "/admin/api/operator/services",
+            json={"name": "tgw2", "base_url": "http://h:9/v1"},
+            headers=_auth(),
+        )
+        resp = client.patch(
+            "/admin/api/operator/services/tgw2",
+            json={"base_url": "http://h:9/v1", "models": "not-a-list"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["code"], "invalid_service")
+
+
+class AdminServicePresetsTests(unittest.TestCase):
+    def test_presets_endpoint_returns_list_with_custom_first(self) -> None:
+        """GET /operator/service-presets returns all presets; custom is first."""
+        client, _ = _make_client()
+        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
+        self.assertEqual(resp.status_code, 200)
+        presets = resp.json()["presets"]
+        self.assertIsInstance(presets, list)
+        self.assertGreater(len(presets), 1)
+        # Custom preset must be first.
+        self.assertEqual(presets[0]["id"], "openai-compatible")
+
+    def test_presets_each_have_required_fields(self) -> None:
+        """Every preset must have id, label, base_path, default_port, capabilities."""
+        client, _ = _make_client()
+        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
+        for preset in resp.json()["presets"]:
+            for field in ("id", "label", "base_path", "capabilities", "native_passthrough"):
+                self.assertIn(field, preset, f"preset {preset.get('id')!r} missing {field!r}")
+
+    def test_presets_requires_admin(self) -> None:
+        client, _ = _make_client()
+        resp = client.get("/admin/api/operator/service-presets")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_managed_substrate_remove_is_blocked(self) -> None:
+        """DELETE on the litellm managed-substrate row returns 403."""
+        store = FakeAdminStore()
+        store.service_registry = service_registry.build_service_registry_seed({"backends": {}})
+        client, _ = _make_client(store)
+        resp = client.delete("/admin/api/operator/services/litellm", headers=_auth())
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("managed substrate", resp.json()["error"]["message"])
+
+    def test_managed_substrate_host_edit_is_blocked(self) -> None:
+        """PATCH with a base_url on the litellm managed-substrate row returns 403."""
+        store = FakeAdminStore()
+        store.service_registry = service_registry.build_service_registry_seed({"backends": {}})
+        client, _ = _make_client(store)
+        resp = client.patch(
+            "/admin/api/operator/services/litellm",
+            json={"base_url": "http://127.0.0.1:9999/v1"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("managed substrate", resp.json()["error"]["message"])
+
+    def test_managed_substrate_rename_is_allowed(self) -> None:
+        """PATCH with only name on the litellm managed-substrate row returns 200."""
+        store = FakeAdminStore()
+        store.service_registry = service_registry.build_service_registry_seed({"backends": {}})
+        client, _ = _make_client(store)
+        resp = client.patch(
+            "/admin/api/operator/services/litellm",
+            json={"name": "LiteLLM Custom"},
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        svc = resp.json()["service_registry"]["services"]["litellm"]
+        self.assertEqual(svc["name"], "LiteLLM Custom")
+        # Config must still be derived (execution_substrate preserved).
+        self.assertEqual(svc["config"]["execution_substrate"], "litellm")
 
 
 if __name__ == "__main__":

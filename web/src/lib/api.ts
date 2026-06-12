@@ -119,6 +119,156 @@ export interface Profile {
   status_visibility: string;
 }
 
+// ---------------------------------------------------------------------------
+// Services
+
+export interface ServiceModelMapping {
+  model_group: string;
+  upstream_model: string;
+}
+
+export interface ServiceConfig {
+  host?: string;
+  port?: number;
+  base_url?: string;
+  execution_substrate?: string;
+  models?: ServiceModelMapping[];
+  [key: string]: unknown;
+}
+
+export type ServiceSource =
+  | "provisioned"
+  | "ui"
+  | "builtin"
+  | "imported"
+  | "discovered";
+
+export interface Service {
+  id: string;
+  name: string;
+  kind: string;
+  source: ServiceSource;
+  enabled: boolean;
+  editable: boolean;
+  capabilities: string[];
+  config: ServiceConfig;
+  note?: string;
+}
+
+export interface ServiceRegistry {
+  schema_version: number;
+  services: Record<string, Service>;
+  protocol_frontends?: Record<string, unknown>;
+  workflows?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
+}
+
+export interface ServiceRegistryResponse {
+  service_registry: ServiceRegistry;
+}
+
+export interface ProviderPreset {
+  id: string;
+  label: string;
+  base_path: string;
+  default_port: number | null;
+  protocol: string | null;
+  capabilities: string[];
+  native_passthrough: boolean;
+}
+
+export interface PresetsResponse {
+  presets: ProviderPreset[];
+}
+
+// ---------------------------------------------------------------------------
+// Profiles (full CRUD types)
+
+export interface CreateProfileInput {
+  name: string;
+  description?: string;
+  profile: {
+    id?: string;
+    protocols?: string[];
+    status_visibility?: { level: string };
+    allow?: {
+      intents?: string[];
+      models?: string[];
+      workflows?: string[];
+    };
+  };
+}
+
+export interface UpdateProfileInput {
+  name?: string;
+  description?: string;
+  profile?: {
+    protocols?: string[];
+    status_visibility?: { level: string };
+    allow?: {
+      intents?: string[];
+      models?: string[];
+      workflows?: string[];
+    };
+  };
+}
+
+export interface SimulateRequest {
+  profile: string;
+  request: {
+    protocol?: string | null;
+    intent?: string | null;
+    model?: string | null;
+    workflow?: string | null;
+    backend?: string | null;
+    capability_exposure?: string;
+    capability_trust_tier?: string;
+    capability_resource_tier?: string;
+    capability_tags?: string[];
+    requires_cloud_fallback?: boolean;
+    native_passthrough?: boolean;
+    native_operation?: string | null;
+    native_backend?: string | null;
+  };
+}
+
+export interface SimulateResult {
+  profile_id: string;
+  decision: {
+    decision: "allowed" | "denied";
+    allowed: boolean;
+    sources: string[];
+    reasons: string[];
+    visibility_level: string;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Users surface
+
+export interface UserAccessDefaults {
+  self_service_apps: boolean;
+  auto_create_personal_app: boolean;
+}
+
+export type RuntimeMappingSourceKind =
+  | "oidc_group"
+  | "oidc_role"
+  | "email"
+  | "domain"
+  | "gateway_role"
+  | "all_users";
+
+export interface RuntimeProfileMapping {
+  id: string;
+  source_kind: RuntimeMappingSourceKind;
+  source_value: string;
+  profile_id: string;
+  created_at: number;
+  created_by: string;
+  disabled_at: number | null;
+}
+
 export interface AttentionItem {
   kind: string;
   severity: "problem" | "attention";
@@ -381,6 +531,109 @@ export const api = {
       adminFetch<{ profiles: Profile[] }>("/admin/api/profiles").then(
         (r) => r.profiles,
       ),
+    create: (input: CreateProfileInput) =>
+      adminFetch<{ profile: Profile }>("/admin/api/profiles", {
+        method: "POST",
+        body: input,
+      }).then((r) => r.profile),
+    update: (profileId: string, input: UpdateProfileInput) =>
+      adminFetch<{ profile: Profile }>(`/admin/api/profiles/${profileId}`, {
+        method: "PATCH",
+        body: input,
+      }).then((r) => r.profile),
+    delete: (profileId: string) =>
+      adminFetch<{ profile: Profile }>(`/admin/api/profiles/${profileId}`, {
+        method: "DELETE",
+      }).then((r) => r.profile),
+  },
+
+  policy: {
+    simulate: (input: SimulateRequest) =>
+      adminFetch<SimulateResult>("/admin/api/policy/simulate", {
+        method: "POST",
+        body: input,
+      }),
+  },
+
+  userAccessDefaults: {
+    get: () =>
+      adminFetch<{ overrides: { user_access_defaults: UserAccessDefaults } }>(
+        "/admin/api/operator/overrides",
+      ).then((r) => r.overrides.user_access_defaults),
+    update: (input: Partial<UserAccessDefaults>) =>
+      adminFetch<{ user_access_defaults: UserAccessDefaults }>(
+        "/admin/api/operator/user-access-defaults",
+        { method: "PUT", body: input },
+      ).then((r) => r.user_access_defaults),
+  },
+
+  runtimeProfileMappings: {
+    list: () =>
+      adminFetch<{ mappings: RuntimeProfileMapping[] }>(
+        "/admin/api/runtime-profile-mappings",
+      ).then((r) => r.mappings),
+    create: (input: {
+      source_kind: RuntimeMappingSourceKind;
+      source_value: string;
+      profile_id: string;
+    }) =>
+      adminFetch<{ mapping: RuntimeProfileMapping }>(
+        "/admin/api/runtime-profile-mappings",
+        { method: "POST", body: input },
+      ).then((r) => r.mapping),
+    disable: (mappingId: string) =>
+      adminFetch<{ mapping: RuntimeProfileMapping }>(
+        `/admin/api/runtime-profile-mappings/${mappingId}`,
+        { method: "DELETE" },
+      ).then((r) => r.mapping),
+  },
+
+  services: {
+    registry: () =>
+      adminFetch<ServiceRegistryResponse>(
+        "/admin/api/operator/service-registry",
+      ).then((r) => r.service_registry),
+    presets: () =>
+      adminFetch<PresetsResponse>(
+        "/admin/api/operator/service-presets",
+      ).then((r) => r.presets),
+    add: (input: Record<string, unknown>) =>
+      adminFetch<ServiceRegistryResponse>("/admin/api/operator/services", {
+        method: "POST",
+        body: input,
+      }).then((r) => r.service_registry),
+    edit: (serviceId: string, input: Record<string, unknown>) =>
+      adminFetch<ServiceRegistryResponse>(
+        `/admin/api/operator/services/${serviceId}`,
+        { method: "PATCH", body: input },
+      ).then((r) => r.service_registry),
+    remove: (serviceId: string) =>
+      adminFetch<ServiceRegistryResponse>(
+        `/admin/api/operator/services/${serviceId}`,
+        { method: "DELETE" },
+      ).then((r) => r.service_registry),
+    toggleEnabled: (serviceId: string, enabled: boolean) =>
+      adminFetch<ServiceRegistryResponse>(
+        `/admin/api/operator/services/${serviceId}/enabled`,
+        { method: "POST", body: { enabled } },
+      ).then((r) => r.service_registry),
+    testConnection: (input: Record<string, unknown>) =>
+      adminFetch<{ probe: { ok: boolean; status: number | null; error: string; url: string } }>(
+        "/admin/api/operator/services/test",
+        { method: "POST", body: input },
+      ).then((r) => r.probe),
+    detectModels: (input: Record<string, unknown>) =>
+      adminFetch<{ detected: { ok: boolean; models: string[]; error: string } }>(
+        "/admin/api/operator/services/detect-models",
+        { method: "POST", body: input },
+      ).then((r) => r.detected),
+    litellmConfig: () =>
+      adminFetch<{
+        litellm_config: {
+          model_list: Array<{ model_name: string; litellm_params: Record<string, unknown> }>;
+          general_settings?: Record<string, unknown>;
+        };
+      }>("/admin/api/operator/litellm-config").then((r) => r.litellm_config),
   },
 
   overview: () => adminFetch<Overview>("/admin/api/overview"),
@@ -404,7 +657,15 @@ export const queryKeys = {
   credentials: ["credentials"] as const,
   profiles: ["profiles"] as const,
   overview: ["overview"] as const,
+  /** Recent audit teaser (3 rows on the overview). */
   auditRecent: ["audit", "recent"] as const,
+  /** Parameterized audit key — pass limit to scope the cache entry. */
+  audit: (limit: number) => ["audit", { limit }] as const,
+  serviceRegistry: ["serviceRegistry"] as const,
+  servicePresets: ["servicePresets"] as const,
+  litellmConfig: ["litellmConfig"] as const,
+  operatorOverrides: ["operator", "overrides"] as const,
+  runtimeProfileMappings: ["runtime-profile-mappings"] as const,
 };
 
 /** QueryClient with contract-aware retry: 4xx errors are deterministic

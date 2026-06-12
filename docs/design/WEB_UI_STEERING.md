@@ -179,15 +179,27 @@ overflow + ConfirmDialog; every state designed):
   EmptyState, no box). Below: one quiet stat strip (services up/total, apps,
   active keys — text, not dashboard tiles) and the 3 most recent audit rows
   with "View all" → Audit. NOTHING else; resist dashboard-itis.
-- **Services**: DataTable — Service (EntityRef name; source badge `config`/
-  `ui` with lock for non-editable), Endpoint (host:port, mono small),
-  Capabilities (quiet badge row), Status (availability incl. overrides),
-  Enabled (Switch), ⋯ (Edit, Test connection, Detect models, Remove —
-  UI-source only). "Add service" Dialog: provider preset Select, name, base
-  URL, api-key ENV-REF field (never secret values), advanced in collapsed
-  disclosure. Honest apply: banner "Saved — restart the gateway to apply"
-  after writes (existing semantics). LiteLLM substrate config = read-only
-  mono viewer behind a disclosure, not a top-level table.
+- **Services**: DataTable — Service (EntityRef name; PROVENANCE badge
+  `config`/`ui`/`managed` — provenance is history, NOT permission), Endpoint
+  (host:port, mono small), Capabilities (human-labeled badge row), Status
+  (availability incl. overrides), Enabled (Switch), ⋯ (Edit, Models, Test
+  connection, Detect models, Remove). EDITABILITY LAW: the DB registry owns
+  every service after the one-time config import, so ALL rows are fully
+  editable and removable regardless of source. Sole exception: `managed`
+  substrate rows (litellm) — the gateway spawns that process, so endpoint/
+  protocol are derived (locked with one-line explanation in the dialog);
+  rename/enable/note only; no Remove (disable instead). Removing a
+  config-imported row uses typed-name ConfirmDialog with provenance-aware
+  copy ("imported from your config file; your YAML is not modified and will
+  not re-import it"). **Models editor**: per-service dialog listing model
+  mappings (public name → upstream name) with add/remove/edit rows — this is
+  what makes a backend's models routable; never read-only. "Add service"
+  Dialog: preset Select with "Custom (OpenAI-compatible)" FIRST (presets
+  served from GET /admin/api/operator/service-presets — never duplicated
+  client-side), name, base URL, api-key ENV-REF field (never secret values),
+  protocol + capabilities in collapsed advanced. Honest apply: banner
+  "Saved — restart the gateway to apply" after writes. LiteLLM substrate
+  config = read-only mono viewer behind a disclosure (genuinely derived).
 - **Profiles**: DataTable — Profile (EntityRef), Access summary (e.g.
   "4 models · chat, images" — derived, human), Apps using it (count), ⋯
   (Edit, Duplicate?, Delete → typed-name ConfirmDialog; block/explain when

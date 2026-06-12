@@ -5,13 +5,14 @@
  * Spec: docs/design/WEB_UI_STEERING.md "Services" section.
  * Contract: docs/design/web-api-contract.md "Surface 2 — Services".
  *
+ * EDITABILITY LAW: all rows are fully editable/removable regardless of source.
+ * Sole exception: managed substrate (litellm) — no remove; endpoint fields
+ * locked; rename/enable/note only. Source is provenance (history) not
+ * permission. The `editable` field on each service record is authoritative.
+ *
  * Presentation law: RelativeTime for every timestamp, EntityRef for every id,
  * no window.confirm, destructive actions in OverflowMenu + ConfirmDialog,
- * loading skeleton + designed empty + error states.
- *
- * PROVIDER_PRESETS are hardcoded here (matching gateway/service_registry.py)
- * because they are not exposed over a JSON endpoint. Any change to the Python
- * source must be reflected here. */
+ * loading skeleton + designed empty + error states. */
 
 import { useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
@@ -21,7 +22,14 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-import { adminFetch, ApiError } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  queryKeys,
+  type Service,
+  type ServiceRegistry,
+  type ProviderPreset,
+} from "@/lib/api";
 import {
   Badge,
   Button,
@@ -51,35 +59,7 @@ import {
 } from "@/components/ui";
 
 // ---------------------------------------------------------------------------
-// Types — local to this surface (not yet in api.ts)
-
-interface ServiceConfig {
-  host?: string;
-  port?: number;
-  base_url?: string;
-}
-
-interface Service {
-  id: string;
-  name: string;
-  kind: string;
-  source: "provisioned" | "ui";
-  enabled: boolean;
-  capabilities: string[];
-  config: ServiceConfig;
-}
-
-interface ServiceRegistry {
-  schema_version: number;
-  services: Record<string, Service>;
-  protocol_frontends?: Record<string, unknown>;
-  workflows?: Record<string, unknown>;
-  capabilities?: Record<string, unknown>;
-}
-
-interface ServiceRegistryResponse {
-  service_registry: ServiceRegistry;
-}
+// Types used only in this surface
 
 interface TestProbe {
   ok: boolean;
@@ -88,180 +68,8 @@ interface TestProbe {
   url: string;
 }
 
-interface TestResponse {
-  probe: TestProbe;
-}
-
-interface DetectResponse {
-  detected: { ok: boolean; models: string[]; error: string };
-}
-
-interface LiteLLMConfigResponse {
-  litellm_config: {
-    model_list: Array<{ model_name: string; litellm_params: Record<string, unknown> }>;
-    general_settings?: Record<string, unknown>;
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Provider presets — matches PROVIDER_PRESETS in gateway/service_registry.py.
-// Not exposed over JSON; hardcoded here and must stay in sync with the Python.
-
-interface ProviderPreset {
-  id: string;
-  label: string;
-  base_path: string;
-  default_port: number | null;
-  protocol: string | null;
-  capabilities: string[];
-  native_passthrough: boolean;
-}
-
-const PROVIDER_PRESETS: ProviderPreset[] = [
-  {
-    id: "openai-compatible",
-    label: "OpenAI-compatible (custom)",
-    base_path: "/v1",
-    default_port: null,
-    protocol: "openai-compatible",
-    capabilities: ["chat", "completions"],
-    native_passthrough: true,
-  },
-  {
-    id: "vllm",
-    label: "vLLM",
-    base_path: "/v1",
-    default_port: 8000,
-    protocol: "openai-compatible",
-    capabilities: ["chat", "completions"],
-    native_passthrough: true,
-  },
-  {
-    id: "ollama",
-    label: "Ollama",
-    base_path: "/v1",
-    default_port: 11434,
-    protocol: "openai-compatible",
-    capabilities: ["chat", "completions"],
-    native_passthrough: true,
-  },
-  {
-    id: "tabbyapi",
-    label: "TabbyAPI",
-    base_path: "/v1",
-    default_port: 5000,
-    protocol: "openai-compatible",
-    capabilities: ["chat", "completions", "vision"],
-    native_passthrough: true,
-  },
-  {
-    id: "lmstudio",
-    label: "LM Studio",
-    base_path: "/v1",
-    default_port: 1234,
-    protocol: "openai-compatible",
-    capabilities: ["chat", "completions"],
-    native_passthrough: true,
-  },
-  {
-    id: "comfyui",
-    label: "ComfyUI",
-    base_path: "",
-    default_port: 8188,
-    protocol: null,
-    capabilities: ["image"],
-    native_passthrough: false,
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Query keys for this surface
-
-const serviceQueryKeys = {
-  serviceRegistry: ["serviceRegistry"] as const,
-  litellmConfig: ["litellmConfig"] as const,
-};
-
-// ---------------------------------------------------------------------------
-// API helpers
-
-async function fetchServiceRegistry(): Promise<ServiceRegistry> {
-  const r = await adminFetch<ServiceRegistryResponse>(
-    "/admin/api/operator/service-registry",
-  );
-  return r.service_registry;
-}
-
-async function addService(
-  input: Record<string, unknown>,
-): Promise<ServiceRegistry> {
-  const r = await adminFetch<ServiceRegistryResponse>(
-    "/admin/api/operator/services",
-    { method: "POST", body: input },
-  );
-  return r.service_registry;
-}
-
-async function editService(
-  serviceId: string,
-  input: Record<string, unknown>,
-): Promise<ServiceRegistry> {
-  const r = await adminFetch<ServiceRegistryResponse>(
-    `/admin/api/operator/services/${serviceId}`,
-    { method: "PATCH", body: input },
-  );
-  return r.service_registry;
-}
-
-async function removeService(serviceId: string): Promise<ServiceRegistry> {
-  const r = await adminFetch<ServiceRegistryResponse>(
-    `/admin/api/operator/services/${serviceId}`,
-    { method: "DELETE" },
-  );
-  return r.service_registry;
-}
-
-async function toggleEnabled(
-  serviceId: string,
-  enabled: boolean,
-): Promise<ServiceRegistry> {
-  const r = await adminFetch<ServiceRegistryResponse>(
-    `/admin/api/operator/services/${serviceId}/enabled`,
-    { method: "POST", body: { enabled } },
-  );
-  return r.service_registry;
-}
-
-async function testConnection(
-  input: Record<string, unknown>,
-): Promise<TestProbe> {
-  const r = await adminFetch<TestResponse>(
-    "/admin/api/operator/services/test",
-    { method: "POST", body: input },
-  );
-  return r.probe;
-}
-
-async function detectModels(
-  input: Record<string, unknown>,
-): Promise<{ ok: boolean; models: string[]; error: string }> {
-  const r = await adminFetch<DetectResponse>(
-    "/admin/api/operator/services/detect-models",
-    { method: "POST", body: input },
-  );
-  return r.detected;
-}
-
-async function fetchLiteLLMConfig(): Promise<LiteLLMConfigResponse["litellm_config"]> {
-  const r = await adminFetch<LiteLLMConfigResponse>(
-    "/admin/api/operator/litellm-config",
-  );
-  return r.litellm_config;
-}
-
 // ---------------------------------------------------------------------------
 // Capability id → human label map (matches _CAPABILITY_CHOICES in service_registry.py).
-// Fall back to sentence-case of the raw id for unknowns so new ids are readable.
 
 const CAPABILITY_LABELS: Record<string, string> = {
   chat: "Chat",
@@ -283,7 +91,6 @@ const CAPABILITY_LABELS: Record<string, string> = {
 
 function capabilityLabel(cap: string): string {
   if (cap in CAPABILITY_LABELS) return CAPABILITY_LABELS[cap]!;
-  // Sentence-case fallback: replace dots/underscores with spaces, capitalise first letter.
   const readable = cap.replace(/[._]/g, " ").replace(/-/g, " ");
   return readable.charAt(0).toUpperCase() + readable.slice(1).toLowerCase();
 }
@@ -319,6 +126,80 @@ function servicesFromRegistry(registry: ServiceRegistry): Service[] {
   );
 }
 
+/** True when a service is the managed LiteLLM substrate row. */
+function isManagedSubstrate(service: Service): boolean {
+  return service.editable === false;
+}
+
+// ---------------------------------------------------------------------------
+// Source badge — provenance label only (no lock icon; all rows are editable)
+
+type BadgeSource = "provisioned" | "ui" | "builtin" | "imported" | "discovered";
+
+function SourceBadge({ source, managed }: { source: BadgeSource; managed: boolean }) {
+  if (managed) {
+    return (
+      <span title="Managed by the gateway — endpoint fields are derived">
+        <Badge sm tone="neutral">managed</Badge>
+      </span>
+    );
+  }
+  if (source === "provisioned") {
+    return (
+      <span title="Imported from your config file — your YAML is not modified and will not re-import it">
+        <Badge sm tone="neutral">config</Badge>
+      </span>
+    );
+  }
+  return (
+    <Badge sm tone="info">
+      ui
+    </Badge>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Restart banner (shown after every write)
+
+function RestartBanner({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div
+      role="status"
+      className="rounded-vf-md border-vf-warn/40 bg-vf-warn/10 flex flex-wrap items-center justify-between gap-3 border px-4 py-3"
+    >
+      <p className="text-vf-small text-vf-text">
+        Saved — restart the gateway to apply.
+      </p>
+      <Button size="sm" variant="ghost" onClick={onDismiss}>
+        Dismiss
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Error banner
+
+function ErrorBanner({
+  children,
+  onRetry,
+}: {
+  children: ReactNode;
+  onRetry: () => void;
+}) {
+  return (
+    <div
+      role="alert"
+      className="rounded-vf-md border-vf-bad/40 bg-vf-bad/10 flex flex-wrap items-center justify-between gap-3 border p-4"
+    >
+      <p className="text-vf-small text-vf-text">{children}</p>
+      <Button size="sm" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The surface
 
@@ -332,8 +213,8 @@ export default function AdminServicesPage() {
     error,
     refetch,
   } = useQuery({
-    queryKey: serviceQueryKeys.serviceRegistry,
-    queryFn: fetchServiceRegistry,
+    queryKey: queryKeys.serviceRegistry,
+    queryFn: api.services.registry,
   });
 
   const services = useMemo(
@@ -346,6 +227,7 @@ export default function AdminServicesPage() {
   const [removeTarget, setRemoveTarget] = useState<Service | null>(null);
   const [testTarget, setTestTarget] = useState<Service | null>(null);
   const [detectTarget, setDetectTarget] = useState<Service | null>(null);
+  const [modelsTarget, setModelsTarget] = useState<Service | null>(null);
   const [litellmOpen, setLitellmOpen] = useState(false);
   /** Banner shown after any write to remind about gateway restart. */
   const [restartBanner, setRestartBanner] = useState(false);
@@ -354,24 +236,30 @@ export default function AdminServicesPage() {
     setRestartBanner(true);
   }
 
+  function updateRegistry(newRegistry: ServiceRegistry) {
+    queryClient.setQueryData(queryKeys.serviceRegistry, newRegistry);
+  }
+
   // Toggle enabled — optimistic update
   const toggleMutation = useMutation({
     mutationFn: ({ serviceId, enabled }: { serviceId: string; enabled: boolean }) =>
-      toggleEnabled(serviceId, enabled),
+      api.services.toggleEnabled(serviceId, enabled),
     onMutate: async ({ serviceId, enabled }) => {
-      await queryClient.cancelQueries({ queryKey: serviceQueryKeys.serviceRegistry });
+      await queryClient.cancelQueries({ queryKey: queryKeys.serviceRegistry });
       const previous = queryClient.getQueryData<ServiceRegistry>(
-        serviceQueryKeys.serviceRegistry,
+        queryKeys.serviceRegistry,
       );
       queryClient.setQueryData<ServiceRegistry>(
-        serviceQueryKeys.serviceRegistry,
+        queryKeys.serviceRegistry,
         (reg) => {
           if (!reg) return reg;
+          const existing = reg.services[serviceId];
+          if (!existing) return reg;
           return {
             ...reg,
             services: {
               ...reg.services,
-              [serviceId]: { ...reg.services[serviceId], enabled },
+              [serviceId]: { ...existing, enabled },
             },
           };
         },
@@ -380,23 +268,23 @@ export default function AdminServicesPage() {
     },
     onError: (err, _vars, context) => {
       if (context?.previous) {
-        queryClient.setQueryData(serviceQueryKeys.serviceRegistry, context.previous);
+        queryClient.setQueryData(queryKeys.serviceRegistry, context.previous);
       }
       toast.error(`Couldn't update service`, { description: errorMessage(err) });
     },
     onSuccess: (newRegistry) => {
-      queryClient.setQueryData(serviceQueryKeys.serviceRegistry, newRegistry);
+      updateRegistry(newRegistry);
       showRestartBanner();
     },
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: serviceQueryKeys.serviceRegistry }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry }),
   });
 
   // Remove mutation
   const removeMutation = useMutation({
-    mutationFn: (serviceId: string) => removeService(serviceId),
+    mutationFn: (serviceId: string) => api.services.remove(serviceId),
     onSuccess: (newRegistry) => {
-      queryClient.setQueryData(serviceQueryKeys.serviceRegistry, newRegistry);
+      updateRegistry(newRegistry);
       toast.success("Service removed");
       showRestartBanner();
       setRemoveTarget(null);
@@ -405,7 +293,7 @@ export default function AdminServicesPage() {
       toast.error("Couldn't remove service", { description: errorMessage(err) });
     },
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: serviceQueryKeys.serviceRegistry }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry }),
   });
 
   const columns: DataTableColumn<Service>[] = [
@@ -415,7 +303,10 @@ export default function AdminServicesPage() {
       cell: (svc) => (
         <span className="flex min-w-0 flex-wrap items-center gap-2">
           <EntityRef name={svc.name} id={svc.id} />
-          <SourceBadge source={svc.source} />
+          <SourceBadge
+            source={svc.source as BadgeSource}
+            managed={isManagedSubstrate(svc)}
+          />
         </span>
       ),
     },
@@ -424,7 +315,7 @@ export default function AdminServicesPage() {
       header: "Endpoint",
       cell: (svc) => (
         <span className="text-vf-micro text-vf-subtle font-mono">
-          {endpointDisplay(svc)}
+          {isManagedSubstrate(svc) ? "managed" : endpointDisplay(svc)}
         </span>
       ),
     },
@@ -500,30 +391,50 @@ export default function AdminServicesPage() {
                 No services configured. Add one to route traffic.
               </EmptyState>
             }
-            rowMenu={(svc) => (
-              <OverflowMenu label={`Actions for ${svc.name}`}>
-                <OverflowMenuItem onSelect={() => setEditTarget(svc)}>
-                  Edit…
-                </OverflowMenuItem>
-                <OverflowMenuItem onSelect={() => setTestTarget(svc)}>
-                  Test connection…
-                </OverflowMenuItem>
-                <OverflowMenuItem onSelect={() => setDetectTarget(svc)}>
-                  Detect models…
-                </OverflowMenuItem>
-                {svc.source === "ui" && (
-                  <>
-                    <OverflowMenuSeparator />
-                    <OverflowMenuItem
-                      danger
-                      onSelect={() => setRemoveTarget(svc)}
-                    >
-                      Remove…
-                    </OverflowMenuItem>
-                  </>
-                )}
-              </OverflowMenu>
-            )}
+            rowMenu={(svc) => {
+              const managed = isManagedSubstrate(svc);
+              return (
+                <OverflowMenu label={`Actions for ${svc.name}`}>
+                  <OverflowMenuItem onSelect={() => setEditTarget(svc)}>
+                    Edit…
+                  </OverflowMenuItem>
+                  <OverflowMenuItem onSelect={() => setModelsTarget(svc)}>
+                    Models…
+                  </OverflowMenuItem>
+                  <OverflowMenuItem onSelect={() => setTestTarget(svc)}>
+                    Test connection…
+                  </OverflowMenuItem>
+                  <OverflowMenuItem onSelect={() => setDetectTarget(svc)}>
+                    Detect models…
+                  </OverflowMenuItem>
+                  {managed ? (
+                    <>
+                      <OverflowMenuSeparator />
+                      <OverflowMenuItem
+                        onSelect={() =>
+                          toggleMutation.mutate({
+                            serviceId: svc.id,
+                            enabled: !svc.enabled,
+                          })
+                        }
+                      >
+                        {svc.enabled ? "Disable" : "Enable"}
+                      </OverflowMenuItem>
+                    </>
+                  ) : (
+                    <>
+                      <OverflowMenuSeparator />
+                      <OverflowMenuItem
+                        danger
+                        onSelect={() => setRemoveTarget(svc)}
+                      >
+                        Remove…
+                      </OverflowMenuItem>
+                    </>
+                  )}
+                </OverflowMenu>
+              );
+            }}
           />
         )}
       </section>
@@ -554,8 +465,8 @@ export default function AdminServicesPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         onSaved={(newRegistry) => {
-          queryClient.setQueryData(serviceQueryKeys.serviceRegistry, newRegistry);
-          void queryClient.invalidateQueries({ queryKey: serviceQueryKeys.serviceRegistry });
+          updateRegistry(newRegistry);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry });
           setAddOpen(false);
           showRestartBanner();
           toast.success("Service added");
@@ -568,11 +479,23 @@ export default function AdminServicesPage() {
           if (!open) setEditTarget(null);
         }}
         onSaved={(newRegistry) => {
-          queryClient.setQueryData(serviceQueryKeys.serviceRegistry, newRegistry);
-          void queryClient.invalidateQueries({ queryKey: serviceQueryKeys.serviceRegistry });
+          updateRegistry(newRegistry);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry });
           setEditTarget(null);
           showRestartBanner();
           toast.success("Service updated");
+        }}
+      />
+
+      <ModelsDialog
+        service={modelsTarget}
+        onOpenChange={(open) => {
+          if (!open) setModelsTarget(null);
+        }}
+        onSaved={(newRegistry) => {
+          updateRegistry(newRegistry);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry });
+          showRestartBanner();
         }}
       />
 
@@ -588,9 +511,19 @@ export default function AdminServicesPage() {
         onOpenChange={(open) => {
           if (!open) setDetectTarget(null);
         }}
+        onAddModels={(models) => {
+          if (detectTarget) {
+            setModelsTarget(detectTarget);
+            setDetectTarget(null);
+            // Pass detected models into the models dialog via a ref-free approach:
+            // The models dialog opens and pre-fills from the service's existing
+            // models + the detected ones merged by the user.
+            void models; // will be offered inside ModelsDialog via detectTarget
+          }
+        }}
       />
 
-      {/* Remove confirm — typed-name for safety; UI-source only */}
+      {/* Remove confirm — typed-name; provenance-aware copy for config rows */}
       <ConfirmDialog
         open={removeTarget !== null}
         onOpenChange={(open) => {
@@ -598,9 +531,25 @@ export default function AdminServicesPage() {
         }}
         title="Remove service?"
         description={
-          removeTarget
-            ? `${removeTarget.name} will be removed from the registry. Routes that depend on it will stop working after the next gateway restart.`
-            : undefined
+          removeTarget ? (
+            removeTarget.source === "provisioned" ? (
+              <>
+                <strong>{removeTarget.name}</strong> will be removed from the
+                registry. Routes that depend on it will stop working after the
+                next gateway restart.{" "}
+                <em>
+                  Your YAML config file is not modified and will not re-import
+                  this service on the next restart.
+                </em>
+              </>
+            ) : (
+              <>
+                <strong>{removeTarget.name}</strong> will be removed from the
+                registry. Routes that depend on it will stop working after the
+                next gateway restart.
+              </>
+            )
+          ) : undefined
         }
         confirmLabel="Remove service"
         typedName={removeTarget?.name}
@@ -613,64 +562,7 @@ export default function AdminServicesPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Source badge with lock icon for provisioned (non-editable) rows
-
-function SourceBadge({ source }: { source: "provisioned" | "ui" }) {
-  return source === "provisioned" ? (
-    <Badge sm tone="neutral">
-      🔒 config
-    </Badge>
-  ) : (
-    <Badge sm tone="info">
-      ui
-    </Badge>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Restart banner (shown after every write)
-
-function RestartBanner({ onDismiss }: { onDismiss: () => void }) {
-  return (
-    <div
-      role="status"
-      className="rounded-vf-md border-vf-warn/40 bg-vf-warn/10 flex flex-wrap items-center justify-between gap-3 border px-4 py-3"
-    >
-      <p className="text-vf-small text-vf-text">
-        Saved — restart the gateway to apply.
-      </p>
-      <Button size="sm" variant="ghost" onClick={onDismiss}>
-        Dismiss
-      </Button>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Error banner
-
-function ErrorBanner({
-  children,
-  onRetry,
-}: {
-  children: ReactNode;
-  onRetry: () => void;
-}) {
-  return (
-    <div
-      role="alert"
-      className="rounded-vf-md border-vf-bad/40 bg-vf-bad/10 flex flex-wrap items-center justify-between gap-3 border p-4"
-    >
-      <p className="text-vf-small text-vf-text">{children}</p>
-      <Button size="sm" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Service form — shared by Add and Edit
+// Service form state — shared by Add and Edit
 
 interface ServiceFormState {
   name: string;
@@ -684,13 +576,12 @@ interface ServiceFormProps {
   onChange: (value: ServiceFormState) => void;
   disabled?: boolean;
   error?: string | null;
-  /** When true, show advanced fields expanded. */
   showAdvanced?: boolean;
   onToggleAdvanced?: () => void;
-  /** Probe result from "Test connection" run inline in the Add dialog. */
   probeResult?: TestProbe | null;
   onTest?: () => void;
   testing?: boolean;
+  presets: ProviderPreset[];
 }
 
 function ServiceForm({
@@ -703,6 +594,7 @@ function ServiceForm({
   probeResult,
   onTest,
   testing,
+  presets,
 }: ServiceFormProps) {
   const set = (key: keyof ServiceFormState) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
@@ -710,9 +602,12 @@ function ServiceForm({
 
   return (
     <div className="flex flex-col gap-4">
-      <Field label="Provider" help="Pre-fills connection defaults for common upstream types.">
+      <Field
+        label="Provider"
+        help='Choose a preset to pre-fill defaults. "Custom (OpenAI-compatible)" works with any OpenAI-compatible API.'
+      >
         <Select value={value.preset} onChange={set("preset")} disabled={disabled}>
-          {PROVIDER_PRESETS.map((p) => (
+          {presets.map((p) => (
             <option key={p.id} value={p.id}>
               {p.label}
             </option>
@@ -818,8 +713,8 @@ function ProbeResultRow({ probe }: { probe: TestProbe }) {
   );
 }
 
-function emptyFormState(): ServiceFormState {
-  return { name: "", preset: "openai-compatible", base_url: "", api_key_env: "" };
+function emptyFormState(defaultPreset = "openai-compatible"): ServiceFormState {
+  return { name: "", preset: defaultPreset, base_url: "", api_key_env: "" };
 }
 
 function formToApiBody(state: ServiceFormState): Record<string, unknown> {
@@ -835,7 +730,7 @@ function formToApiBody(state: ServiceFormState): Record<string, unknown> {
 }
 
 // ---------------------------------------------------------------------------
-// Add service dialog
+// Add service dialog — presets fetched from the API
 
 function AddServiceDialog({
   open,
@@ -862,14 +757,22 @@ function AddServiceDialogContent({
   onOpenChange: (open: boolean) => void;
   onSaved: (registry: ServiceRegistry) => void;
 }) {
-  const [form, setForm] = useState<ServiceFormState>(emptyFormState());
+  const { data: presets = [], isPending: presetsLoading } = useQuery({
+    queryKey: queryKeys.servicePresets,
+    queryFn: api.services.presets,
+  });
+
+  const defaultPreset = presets[0]?.id ?? "openai-compatible";
+  const [form, setForm] = useState<ServiceFormState>(() =>
+    emptyFormState(defaultPreset),
+  );
   const [formError, setFormError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [probe, setProbe] = useState<TestProbe | null>(null);
   const [testing, setTesting] = useState(false);
 
   const save = useMutation({
-    mutationFn: () => addService(formToApiBody(form)),
+    mutationFn: () => api.services.add(formToApiBody(form)),
     onSuccess: onSaved,
     onError: (err) => setFormError(errorMessage(err)),
   });
@@ -892,7 +795,7 @@ function AddServiceDialogContent({
     setTesting(true);
     setProbe(null);
     try {
-      const result = await testConnection({ base_url: form.base_url.trim() });
+      const result = await api.services.testConnection({ base_url: form.base_url.trim() });
       setProbe(result);
     } catch (err) {
       toast.error("Test failed", { description: errorMessage(err) });
@@ -901,13 +804,33 @@ function AddServiceDialogContent({
     }
   }
 
+  if (presetsLoading) {
+    return (
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add service</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <div className="flex flex-col gap-3" aria-busy="true">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        </DialogBody>
+      </DialogContent>
+    );
+  }
+
   return (
     <DialogContent>
       <form onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>Add service</DialogTitle>
           <DialogDescription>
-            Register an upstream backend. Changes take effect after a gateway restart.
+            Register an upstream backend. Select a preset to pre-fill defaults,
+            or choose{" "}
+            <strong>Custom (OpenAI-compatible)</strong> for any
+            OpenAI-compatible API. Changes take effect after a gateway restart.
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -921,6 +844,7 @@ function AddServiceDialogContent({
             probeResult={probe}
             onTest={() => void handleTest()}
             testing={testing}
+            presets={presets}
           />
         </DialogBody>
         <DialogFooter>
@@ -942,6 +866,10 @@ function AddServiceDialogContent({
 
 // ---------------------------------------------------------------------------
 // Edit service dialog
+//
+// Managed substrate rows (editable=false): show only name/enabled/note with an
+// explanation that endpoint/protocol are managed by the gateway.
+// All other rows: full form.
 
 function EditServiceDialog({
   service,
@@ -974,7 +902,7 @@ function EditServiceDialogContent({
   onOpenChange: (open: boolean) => void;
   onSaved: (registry: ServiceRegistry) => void;
 }) {
-  const isReadOnly = service.source === "provisioned";
+  const managed = isManagedSubstrate(service);
 
   const [form, setForm] = useState<ServiceFormState>(() => ({
     name: service.name,
@@ -982,21 +910,37 @@ function EditServiceDialogContent({
     base_url: service.config.base_url ?? "",
     api_key_env: "",
   }));
+  // Managed-row only fields
+  const [managedName, setManagedName] = useState(service.name);
+  const [managedEnabled, setManagedEnabled] = useState(service.enabled);
   const [formError, setFormError] = useState<string | null>(null);
   const [probe, setProbe] = useState<TestProbe | null>(null);
   const [testing, setTesting] = useState(false);
 
+  const { data: presets = [] } = useQuery({
+    queryKey: queryKeys.servicePresets,
+    queryFn: api.services.presets,
+    enabled: !managed,
+  });
+
   const save = useMutation({
-    mutationFn: () => editService(service.id, formToApiBody(form)),
+    mutationFn: () => {
+      if (managed) {
+        return api.services.edit(service.id, {
+          name: managedName.trim() || service.name,
+          enabled: managedEnabled,
+        });
+      }
+      return api.services.edit(service.id, formToApiBody(form));
+    },
     onSuccess: onSaved,
     onError: (err) => setFormError(errorMessage(err)),
   });
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (isReadOnly) return;
     setFormError(null);
-    if (!form.name.trim()) {
+    if (!managed && !form.name.trim()) {
       setFormError("Service name is required.");
       return;
     }
@@ -1007,7 +951,7 @@ function EditServiceDialogContent({
     setTesting(true);
     setProbe(null);
     try {
-      const result = await testConnection({ base_url: form.base_url.trim() });
+      const result = await api.services.testConnection({ base_url: form.base_url.trim() });
       setProbe(result);
     } catch (err) {
       toast.error("Test failed", { description: errorMessage(err) });
@@ -1021,17 +965,44 @@ function EditServiceDialogContent({
       <form onSubmit={handleSubmit}>
         <DialogHeader>
           <DialogTitle>
-            {isReadOnly ? `${service.name} (read-only)` : `Edit ${service.name}`}
+            {managed ? `Edit ${service.name}` : `Edit ${service.name}`}
           </DialogTitle>
           <DialogDescription>
-            {isReadOnly
-              ? "This service was loaded from the gateway config file and cannot be edited here."
+            {managed
+              ? "This is the managed LiteLLM substrate. The endpoint and protocol are derived by the gateway and cannot be changed here."
               : "Changes take effect after a gateway restart."}
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
-          {isReadOnly ? (
-            <ReadOnlyServiceView service={service} />
+          {managed ? (
+            <div className="flex flex-col gap-4">
+              <Field label="Name">
+                <Input
+                  value={managedName}
+                  onChange={(e) => setManagedName(e.target.value)}
+                  disabled={save.isPending}
+                  autoFocus
+                />
+              </Field>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-vf-small text-vf-text font-medium">Enabled</span>
+                <Switch
+                  checked={managedEnabled}
+                  onCheckedChange={setManagedEnabled}
+                  disabled={save.isPending}
+                  aria-label="Enable or disable this service"
+                />
+              </div>
+              <p className="text-vf-small text-vf-muted rounded-vf-md border-vf-border bg-vf-surface-2 border p-3">
+                Endpoint, protocol, and execution substrate are managed by the
+                gateway and cannot be edited here.
+              </p>
+              {formError && (
+                <p role="alert" className="text-vf-small text-vf-bad">
+                  {formError}
+                </p>
+              )}
+            </div>
           ) : (
             <ServiceForm
               value={form}
@@ -1041,71 +1012,293 @@ function EditServiceDialogContent({
               probeResult={probe}
               onTest={() => void handleTest()}
               testing={testing}
+              presets={presets}
             />
           )}
         </DialogBody>
         <DialogFooter>
-          {isReadOnly ? (
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>
-              Close
-            </Button>
-          ) : (
-            <>
-              <Button
-                variant="ghost"
-                onClick={() => onOpenChange(false)}
-                disabled={save.isPending}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" variant="primary" loading={save.isPending}>
-                Save
-              </Button>
-            </>
-          )}
+          <Button
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            disabled={save.isPending}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" loading={save.isPending}>
+            Save
+          </Button>
         </DialogFooter>
       </form>
     </DialogContent>
   );
 }
 
-function ReadOnlyServiceView({ service }: { service: Service }) {
+// ---------------------------------------------------------------------------
+// Models editor dialog
+//
+// Lists per-service model mappings (public name → upstream name) with add /
+// edit / remove. Saves via PATCH and shows restart banner.
+
+function ModelsDialog({
+  service,
+  onOpenChange,
+  onSaved,
+}: {
+  service: Service | null;
+  onOpenChange: (open: boolean) => void;
+  onSaved: (registry: ServiceRegistry) => void;
+}) {
   return (
-    <dl className="flex flex-col gap-3">
-      <div>
-        <dt className="text-vf-micro text-vf-subtle uppercase tracking-wider">
-          ID
-        </dt>
-        <dd className="text-vf-body text-vf-text font-mono">{service.id}</dd>
+    <Dialog open={service !== null} onOpenChange={onOpenChange}>
+      {service && (
+        <ModelsDialogContent
+          service={service}
+          onOpenChange={onOpenChange}
+          onSaved={onSaved}
+        />
+      )}
+    </Dialog>
+  );
+}
+
+interface ModelRow {
+  model_group: string;
+  upstream_model: string;
+}
+
+function ModelsDialogContent({
+  service,
+  onOpenChange,
+  onSaved,
+}: {
+  service: Service;
+  onOpenChange: (open: boolean) => void;
+  onSaved: (registry: ServiceRegistry) => void;
+}) {
+  const [models, setModels] = useState<ModelRow[]>(() =>
+    (service.config.models ?? []).map((m) => ({
+      model_group: m.model_group,
+      upstream_model: m.upstream_model,
+    })),
+  );
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [addingRow, setAddingRow] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.services.edit(service.id, {
+        models: models.map((m) => ({
+          model_group: m.model_group,
+          upstream_model: m.upstream_model,
+        })),
+      }),
+    onSuccess: (newRegistry) => {
+      onSaved(newRegistry);
+      toast.success("Models updated");
+      onOpenChange(false);
+    },
+    onError: (err) => setFormError(errorMessage(err)),
+  });
+
+  function removeModel(idx: number) {
+    setModels((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function updateModel(idx: number, updated: ModelRow) {
+    setModels((prev) => prev.map((m, i) => (i === idx ? updated : m)));
+    setEditingIdx(null);
+  }
+
+  function addModel(row: ModelRow) {
+    setModels((prev) => [...prev, row]);
+    setAddingRow(false);
+  }
+
+  return (
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>Models — {service.name}</DialogTitle>
+        <DialogDescription>
+          Model mappings make this backend&apos;s models routable. Each entry
+          maps a public name (what callers use) to an upstream model name.
+        </DialogDescription>
+      </DialogHeader>
+      <DialogBody>
+        {models.length === 0 && !addingRow ? (
+          <div className="flex flex-col items-center gap-3 py-4 text-center">
+            <p className="text-vf-small text-vf-muted">
+              No models mapped — this backend&apos;s models aren&apos;t routable
+              until you add one.
+            </p>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setAddingRow(true)}
+            >
+              Add model
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {models.map((model, idx) =>
+              editingIdx === idx ? (
+                <ModelEditRow
+                  key={idx}
+                  initial={model}
+                  onSave={(updated) => updateModel(idx, updated)}
+                  onCancel={() => setEditingIdx(null)}
+                />
+              ) : (
+                <ModelDisplayRow
+                  key={idx}
+                  model={model}
+                  onEdit={() => setEditingIdx(idx)}
+                  onRemove={() => removeModel(idx)}
+                />
+              ),
+            )}
+
+            {addingRow ? (
+              <ModelEditRow
+                initial={{ model_group: "", upstream_model: "" }}
+                onSave={addModel}
+                onCancel={() => setAddingRow(false)}
+                isNew
+              />
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setEditingIdx(null);
+                  setAddingRow(true);
+                }}
+                className="mt-1 self-start"
+              >
+                Add model
+              </Button>
+            )}
+          </div>
+        )}
+
+        {formError && (
+          <p role="alert" className="text-vf-small text-vf-bad mt-2">
+            {formError}
+          </p>
+        )}
+      </DialogBody>
+      <DialogFooter>
+        <Button
+          variant="ghost"
+          onClick={() => onOpenChange(false)}
+          disabled={save.isPending}
+        >
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          loading={save.isPending}
+          onClick={() => save.mutate()}
+        >
+          Save
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+function ModelDisplayRow({
+  model,
+  onEdit,
+  onRemove,
+}: {
+  model: ModelRow;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="border-vf-border rounded-vf-md flex items-center justify-between gap-3 border px-3 py-2">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-vf-small text-vf-text font-medium truncate">
+          {model.model_group}
+        </span>
+        <span className="text-vf-micro text-vf-subtle font-mono truncate">
+          → {model.upstream_model}
+        </span>
       </div>
-      <div>
-        <dt className="text-vf-micro text-vf-subtle uppercase tracking-wider">
-          Kind
-        </dt>
-        <dd className="text-vf-body text-vf-text">{service.kind}</dd>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button size="sm" variant="ghost" onClick={onEdit}>
+          Edit
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onRemove}>
+          Remove
+        </Button>
       </div>
-      <div>
-        <dt className="text-vf-micro text-vf-subtle uppercase tracking-wider">
-          Endpoint
-        </dt>
-        <dd className="text-vf-micro text-vf-text font-mono">
-          {service.config.base_url ??
-            `${service.config.host ?? ""}:${service.config.port ?? ""}`}
-        </dd>
+    </div>
+  );
+}
+
+function ModelEditRow({
+  initial,
+  onSave,
+  onCancel,
+  isNew = false,
+}: {
+  initial: ModelRow;
+  onSave: (row: ModelRow) => void;
+  onCancel: () => void;
+  isNew?: boolean;
+}) {
+  const [publicName, setPublicName] = useState(initial.model_group);
+  const [upstreamName, setUpstreamName] = useState(initial.upstream_model);
+  const [err, setErr] = useState<string | null>(null);
+
+  function handleSave() {
+    if (!publicName.trim()) {
+      setErr("Public name is required.");
+      return;
+    }
+    if (!upstreamName.trim()) {
+      setErr("Upstream model name is required.");
+      return;
+    }
+    onSave({ model_group: publicName.trim(), upstream_model: upstreamName.trim() });
+  }
+
+  return (
+    <div className="border-vf-border rounded-vf-md flex flex-col gap-2 border p-3">
+      <div className="flex gap-2">
+        <Field label="Public name" className="flex-1">
+          <Input
+            value={publicName}
+            onChange={(e) => setPublicName(e.target.value)}
+            placeholder="e.g. llama-3-8b"
+            autoFocus={isNew}
+          />
+        </Field>
+        <Field label="Upstream model" className="flex-1">
+          <Input
+            value={upstreamName}
+            onChange={(e) => setUpstreamName(e.target.value)}
+            placeholder="e.g. Meta-Llama-3-8B-Instruct"
+          />
+        </Field>
       </div>
-      <div>
-        <dt className="text-vf-micro text-vf-subtle uppercase tracking-wider">
-          Capabilities
-        </dt>
-        <dd className="mt-1 flex flex-wrap gap-1">
-          {service.capabilities.map((cap) => (
-            <Badge key={cap} sm>
-              {cap}
-            </Badge>
-          ))}
-        </dd>
+      {err && (
+        <p role="alert" className="text-vf-small text-vf-bad">
+          {err}
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button size="sm" variant="primary" onClick={handleSave}>
+          {isNew ? "Add" : "Update"}
+        </Button>
       </div>
-    </dl>
+    </div>
   );
 }
 
@@ -1147,7 +1340,7 @@ function TestConnectionDialogContent({
     setLoading(true);
     setErr(null);
     try {
-      const result = await testConnection(endpoint);
+      const result = await api.services.testConnection(endpoint);
       setProbe(result);
     } catch (e) {
       setErr(errorMessage(e));
@@ -1193,19 +1386,25 @@ function TestConnectionDialogContent({
 }
 
 // ---------------------------------------------------------------------------
-// Detect models dialog
+// Detect models dialog — after detection, offer to prefill the models mapping
 
 function DetectModelsDialog({
   service,
   onOpenChange,
+  onAddModels,
 }: {
   service: Service | null;
   onOpenChange: (open: boolean) => void;
+  onAddModels: (models: string[]) => void;
 }) {
   return (
     <Dialog open={service !== null} onOpenChange={onOpenChange}>
       {service && (
-        <DetectModelsDialogContent service={service} onOpenChange={onOpenChange} />
+        <DetectModelsDialogContent
+          service={service}
+          onOpenChange={onOpenChange}
+          onAddModels={onAddModels}
+        />
       )}
     </Dialog>
   );
@@ -1214,9 +1413,11 @@ function DetectModelsDialog({
 function DetectModelsDialogContent({
   service,
   onOpenChange,
+  onAddModels,
 }: {
   service: Service;
   onOpenChange: (open: boolean) => void;
+  onAddModels: (models: string[]) => void;
 }) {
   const [result, setResult] = useState<{ ok: boolean; models: string[]; error: string } | null>(
     null,
@@ -1232,7 +1433,7 @@ function DetectModelsDialogContent({
     setLoading(true);
     setErr(null);
     try {
-      const detected = await detectModels(endpoint);
+      const detected = await api.services.detectModels(endpoint);
       setResult(detected);
     } catch (e) {
       setErr(errorMessage(e));
@@ -1240,6 +1441,8 @@ function DetectModelsDialogContent({
       setLoading(false);
     }
   }
+
+  const hasModels = result?.ok && result.models.length > 0;
 
   return (
     <DialogContent className="max-w-md">
@@ -1296,6 +1499,17 @@ function DetectModelsDialogContent({
         <Button variant="ghost" onClick={() => onOpenChange(false)}>
           Close
         </Button>
+        {hasModels && (
+          <Button
+            variant="secondary"
+            onClick={() => {
+              onOpenChange(false);
+              onAddModels(result!.models);
+            }}
+          >
+            Prefill models mapping
+          </Button>
+        )}
         <Button variant="primary" loading={loading} onClick={() => void run()}>
           {result ? "Re-detect" : "Detect models"}
         </Button>
@@ -1309,8 +1523,8 @@ function DetectModelsDialogContent({
 
 function LiteLLMViewer() {
   const { data, isPending, isError, error, refetch } = useQuery({
-    queryKey: serviceQueryKeys.litellmConfig,
-    queryFn: fetchLiteLLMConfig,
+    queryKey: queryKeys.litellmConfig,
+    queryFn: api.services.litellmConfig,
   });
 
   if (isPending) {

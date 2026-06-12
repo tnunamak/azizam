@@ -20,6 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   api,
   ApiError,
+  queryKeys,
   type AuditEntry,
   type User,
 } from "@/lib/api";
@@ -105,13 +106,6 @@ const LOAD_MORE_STEP = 50;
 const MAX_LIMIT = 200;
 
 // ---------------------------------------------------------------------------
-// Query key for audit (parameterised by limit)
-
-function auditQueryKey(limit: number) {
-  return ["audit", { limit }] as const;
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 
 function errorMessage(error: unknown): string {
@@ -140,7 +134,7 @@ export default function AdminAuditPage() {
     refetch: refetchAudit,
     isFetching: auditFetching,
   } = useQuery({
-    queryKey: auditQueryKey(limit),
+    queryKey: queryKeys.audit(limit),
     queryFn: () => api.audit.list(limit),
   });
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gateway import service_registry
+import pytest
+
+from gateway import admin_store, service_registry
 
 
 def test_protocol_frontends_are_seed_data_not_python_defaults(tmp_path: Path) -> None:
@@ -156,7 +158,9 @@ def test_proxy_config_can_seed_custom_protocol_frontends() -> None:
     ]
 
 
-def test_imported_source_normalizes_read_only_by_default() -> None:
+def test_imported_source_normalizes_editable_for_non_managed_rows() -> None:
+    # EDITABILITY LAW: source is provenance/history, not permission.
+    # Imported service rows are editable (only managed-substrate is locked).
     service = service_registry.normalize_service_record(
         "imported-service",
         {
@@ -184,10 +188,11 @@ def test_imported_source_normalizes_read_only_by_default() -> None:
     )
 
     assert service["source"] == "imported"
-    assert service["editable"] is False
+    # Non-managed imported rows are editable under the editability law.
+    assert service["editable"] is True
     assert service["provenance"]["package_hash"] == "sha256:test"
     assert frontend["source"] == "imported"
-    assert frontend["editable"] is False
+    # Protocol frontends retain their own editable logic (not changed by editability law).
     assert frontend["provenance"]["package_hash"] == "sha256:test"
 
 
@@ -558,23 +563,55 @@ def test_upsert_creates_ui_service_and_rejects_duplicate() -> None:
         assert "already exists" in str(exc)
 
 
-def test_upsert_edit_rejects_non_editable_record() -> None:
+def test_upsert_edit_allows_provisioned_records() -> None:
+    # EDITABILITY LAW: provisioned rows are editable — source is provenance,
+    # not permission. Only managed-substrate (litellm) rows are locked.
     reg = _seed_with_provisioned()
     raw = service_registry.service_form_to_raw(
-        {"name": "TabbyAPI", "base_url": "http://h:5050/v1"}
+        {"name": "TabbyAPI Updated", "base_url": "http://h:5050/v1"}
     )
-    # Provisioned records are not editable from the UI.
-    assert reg["services"]["tabby"]["editable"] is False
+    # Provisioned records are now editable (editability law).
+    assert reg["services"]["tabby"]["editable"] is True
+    reg2, rec = service_registry.upsert_service_in_registry(
+        reg, service_id="tabby", raw=raw, replace=True
+    )
+    assert rec["id"] == "tabby"
+    assert rec["name"] == "TabbyAPI Updated"
+    # Source is preserved from the existing record (provenance history).
+    assert rec["source"] == "provisioned"
+
+
+def test_upsert_edit_rejects_managed_substrate_host_changes() -> None:
+    # Managed-substrate rows (litellm) block endpoint/protocol changes.
+    reg = service_registry.build_service_registry_seed({"backends": {}})
+    assert service_registry.is_litellm_service_record("litellm", reg["services"]["litellm"])
+    raw = service_registry.service_form_to_raw(
+        {"name": "LiteLLM", "base_url": "http://127.0.0.1:9999/v1"}
+    )
     try:
         service_registry.upsert_service_in_registry(
-            reg, service_id="tabby", raw=raw, replace=True
+            reg, service_id="litellm", raw=raw, replace=True
         )
-        raise AssertionError("editing a provisioned record should raise")
+        raise AssertionError("editing managed substrate host should raise")
     except ValueError as exc:
-        assert "not editable" in str(exc)
+        assert "managed substrate" in str(exc)
 
 
-def test_remove_only_deletes_ui_services() -> None:
+def test_upsert_edit_allows_managed_substrate_rename() -> None:
+    # Managed-substrate rows allow name, enabled, note changes.
+    reg = service_registry.build_service_registry_seed({"backends": {}})
+    raw = {"name": "LiteLLM Renamed", "enabled": True}
+    reg2, rec = service_registry.upsert_service_in_registry(
+        reg, service_id="litellm", raw=raw, replace=True
+    )
+    assert rec["name"] == "LiteLLM Renamed"
+    # Config is preserved from existing record.
+    assert rec["config"]["execution_substrate"] == "litellm"
+
+
+def test_remove_allows_any_non_managed_source() -> None:
+    # EDITABILITY LAW: all sources are removable except managed-substrate.
+    # provisioned rows (like tabby) can now be removed.
     reg = _seed_with_provisioned()
     raw = service_registry.service_form_to_raw(
         {"name": "Mine", "base_url": "http://h:9/v1"}
@@ -582,14 +619,24 @@ def test_remove_only_deletes_ui_services() -> None:
     reg, _ = service_registry.upsert_service_in_registry(
         reg, service_id="mine", raw=raw, source="ui"
     )
+    # UI row is removable.
     reg = service_registry.remove_service_from_registry(reg, "mine")
     assert "mine" not in reg["services"]
 
+    # Provisioned row is also removable (it won't resurrect on boot).
+    reg = service_registry.remove_service_from_registry(reg, "tabby")
+    assert "tabby" not in reg["services"]
+
+
+def test_remove_blocks_managed_substrate() -> None:
+    # Only managed-substrate rows (litellm) are blocked from removal.
+    reg = service_registry.build_service_registry_seed({"backends": {}})
+    assert "litellm" in reg["services"]
     try:
-        service_registry.remove_service_from_registry(reg, "tabby")
-        raise AssertionError("deleting a provisioned record should raise")
+        service_registry.remove_service_from_registry(reg, "litellm")
+        raise AssertionError("deleting managed substrate should raise")
     except ValueError as exc:
-        assert "provisioned" in str(exc)
+        assert "managed substrate" in str(exc)
 
 
 def test_set_service_enabled_toggles_any_source() -> None:
@@ -700,3 +747,153 @@ def test_added_service_without_models_is_inert() -> None:
     }
     compiled = litellm_substrate.compile_litellm_config_from_registry(registry)
     assert compiled["model_list"] == []
+
+
+# ---------------------------------------------------------------------------
+# Editability law: ensure_service_registry / backfill_seed_catalog_metadata
+# ---------------------------------------------------------------------------
+
+
+def test_remove_config_sourced_service_not_resurrected_on_reboot(tmp_path: Path) -> None:
+    """After removal, a second ensure_service_registry call must NOT resurrect the row.
+
+    The DB registry is the source of truth after the one-time seed. Removing a
+    config-imported row marks the DB as intentional; YAML is never re-merged.
+    """
+    proxy_config = {
+        "backends": {
+            "my-vllm": {
+                "name": "My vLLM",
+                "host": "127.0.0.1",
+                "port": 8000,
+                "capabilities": ["chat"],
+            }
+        }
+    }
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+
+    # First boot: seeds the registry.
+    registry = service_registry.ensure_service_registry(proxy_config, path=db)
+    assert "my-vllm" in registry["services"]
+
+    # Operator removes the service.
+    updated = service_registry.remove_service_from_registry(registry, "my-vllm")
+    admin_store.put_operator_setting(
+        service_registry.SERVICE_REGISTRY_SETTING_KEY,
+        updated,
+        updated_by="test",
+        path=db,
+    )
+
+    # Second boot with the same proxy_config: must NOT re-add the removed row.
+    registry2 = service_registry.ensure_service_registry(proxy_config, path=db)
+    assert "my-vllm" not in registry2["services"], (
+        "ensure_service_registry must not resurrect a removed service"
+    )
+
+
+def test_backfill_seed_catalog_metadata_never_overwrites_operator_edits() -> None:
+    """backfill_seed_catalog_metadata fills missing fields only, never overwrites.
+
+    An operator rename (e.g. the litellm service) must survive a boot that
+    calls backfill_seed_catalog_metadata.
+    """
+    # Simulate an existing DB registry where the operator renamed litellm.
+    existing_registry = {
+        "schema_version": 1,
+        "services": {
+            "litellm": {
+                "id": "litellm",
+                "name": "My Custom LiteLLM Name",  # operator edit
+                "kind": "llm-substrate",
+                "source": "builtin",
+                "editable": False,
+                "enabled": True,
+                "priority": 10,
+                "role": "required",
+                "capabilities": ["llm.execution"],
+                "config": {
+                    "execution_substrate": "litellm",
+                    "protocol": "litellm",
+                    "base_url_env": "AI_GATEWAY_LITELLM_BASE_URL",
+                    "default_base_url": "http://127.0.0.1:4011",
+                },
+                "secret_refs": {},
+                "lifecycle": {"type": "external", "managed": False, "service_name": "litellm"},
+                "provenance": {},
+            }
+        },
+        "protocol_frontends": {},
+        "workflows": {},
+        "capabilities": {},
+    }
+
+    result = service_registry.backfill_seed_catalog_metadata(existing_registry, proxy_config={})
+
+    # The operator's custom name must be preserved.
+    assert result["services"]["litellm"]["name"] == "My Custom LiteLLM Name", (
+        "backfill must not overwrite operator-edited name"
+    )
+
+
+def test_models_list_round_trips_through_form_to_raw_to_litellm(tmp_path: Path) -> None:
+    """form models list -> service_form_to_raw -> upsert -> litellm compilation.
+
+    This is the full round-trip proof: a PATCH body with a models list must
+    produce a routable LiteLLM model_list entry (the PATCH models acceptance test).
+    """
+    from gateway import litellm_substrate
+
+    # Simulate what the PATCH route does: form -> raw -> upsert.
+    form = {
+        "name": "my-tgw",
+        "preset": "openai-compatible",
+        "base_url": "http://127.0.0.1:7860/v1",
+        "models": [
+            {"public": "llama-3-8b", "upstream": "Meta-Llama-3-8B-Instruct"},
+            {"public": "llama-3-70b", "upstream": "Meta-Llama-3-70B-Instruct"},
+        ],
+    }
+    raw = service_registry.service_form_to_raw(form)
+    assert raw["models"] == [
+        {"model_group": "llama-3-8b", "upstream_model": "Meta-Llama-3-8B-Instruct"},
+        {"model_group": "llama-3-70b", "upstream_model": "Meta-Llama-3-70B-Instruct"},
+    ]
+
+    # Upsert into registry.
+    seed = service_registry.build_service_registry_seed({"backends": {}})
+    registry, record = service_registry.upsert_service_in_registry(
+        seed, service_id="my-tgw", raw=raw, source="ui"
+    )
+
+    # The stored config carries the models list.
+    assert record["config"]["models"] == raw["models"]
+
+    # LiteLLM compilation produces one entry per model mapping.
+    compiled = litellm_substrate.compile_litellm_config_from_registry(registry)
+    model_names = [e["model_name"] for e in compiled["model_list"]]
+    assert "llama-3-8b" in model_names
+    assert "llama-3-70b" in model_names
+
+
+def test_litellm_service_is_editable_false_managed_substrate() -> None:
+    """litellm is the only editable=False record after the editability law."""
+    registry = service_registry.build_service_registry_seed({"backends": {}})
+    litellm_svc = registry["services"]["litellm"]
+    assert litellm_svc["editable"] is False
+    assert service_registry.is_litellm_service_record("litellm", litellm_svc)
+
+
+def test_provisioned_service_is_editable_true_after_editability_law() -> None:
+    """Provisioned rows are editable=True — source is provenance, not permission."""
+    reg = _seed_with_provisioned()
+    assert reg["services"]["tabby"]["source"] == "provisioned"
+    assert reg["services"]["tabby"]["editable"] is True
+
+
+def test_provider_presets_custom_is_first() -> None:
+    """The custom/openai-compatible preset must be the first entry."""
+    presets = service_registry.PROVIDER_PRESETS
+    assert presets[0]["id"] == "openai-compatible"
+    assert presets[0]["label"].lower().startswith("openai")

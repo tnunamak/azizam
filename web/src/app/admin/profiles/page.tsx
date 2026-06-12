@@ -23,9 +23,7 @@
  * allowed/denied plus the verbatim reason string. It uses an inline profile
  * id ref so no unsaved changes are needed before testing.
  *
- * api.profiles.create / .update / .delete and api.policy.simulate are called
- * directly via adminFetch (lib/api.ts exports it) since they aren't in the
- * api.profiles namespace yet. */
+ * All mutations use api.profiles.* and api.policy.simulate from lib/api.ts. */
 
 import { useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
@@ -36,11 +34,11 @@ import {
 } from "@tanstack/react-query";
 
 import {
-  adminFetch,
   ApiError,
   api,
   queryKeys,
   type Profile,
+  type SimulateResult,
 } from "@/lib/api";
 import {
   Badge,
@@ -68,92 +66,6 @@ import {
   Skeleton,
   toast,
 } from "@/components/ui";
-
-// ---------------------------------------------------------------------------
-// Extra API calls (not yet in lib/api.ts — reported as contract gap)
-
-interface CreateProfileInput {
-  name: string;
-  description?: string;
-  profile: {
-    id?: string;
-    protocols?: string[];
-    status_visibility?: { level: string };
-    allow?: {
-      intents?: string[];
-      models?: string[];
-      workflows?: string[];
-    };
-  };
-}
-
-interface UpdateProfileInput {
-  name?: string;
-  description?: string;
-  profile?: {
-    protocols?: string[];
-    status_visibility?: { level: string };
-    allow?: {
-      intents?: string[];
-      models?: string[];
-      workflows?: string[];
-    };
-  };
-}
-
-interface SimulateRequest {
-  profile: string;
-  request: {
-    protocol?: string | null;
-    intent?: string | null;
-    model?: string | null;
-    workflow?: string | null;
-    backend?: string | null;
-    capability_exposure?: string;
-    capability_trust_tier?: string;
-    capability_resource_tier?: string;
-    capability_tags?: string[];
-    requires_cloud_fallback?: boolean;
-    native_passthrough?: boolean;
-    native_operation?: string | null;
-    native_backend?: string | null;
-  };
-}
-
-interface SimulateResult {
-  profile_id: string;
-  decision: {
-    decision: "allowed" | "denied";
-    allowed: boolean;
-    sources: string[];
-    reasons: string[];
-    visibility_level: string;
-  };
-}
-
-function profilesApi() {
-  return {
-    create: (input: CreateProfileInput) =>
-      adminFetch<{ profile: Profile }>("/admin/api/profiles", {
-        method: "POST",
-        body: input,
-      }).then((r) => r.profile),
-    update: (profileId: string, input: UpdateProfileInput) =>
-      adminFetch<{ profile: Profile }>(`/admin/api/profiles/${profileId}`, {
-        method: "PATCH",
-        body: input,
-      }).then((r) => r.profile),
-    delete: (profileId: string) =>
-      adminFetch<{ profile: Profile }>(`/admin/api/profiles/${profileId}`, {
-        method: "DELETE",
-      }).then((r) => r.profile),
-    simulate: (input: SimulateRequest) =>
-      adminFetch<SimulateResult>("/admin/api/policy/simulate", {
-        method: "POST",
-        body: input,
-      }),
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -264,7 +176,7 @@ export default function AdminProfilesPage() {
 
   // Delete mutation
   const deleteProfile = useMutation({
-    mutationFn: (profile: Profile) => profilesApi().delete(profile.id),
+    mutationFn: (profile: Profile) => api.profiles.delete(profile.id),
     onSuccess: async (_, profile) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.profiles });
       toast.success(`${profile.name} deleted`);
@@ -595,13 +507,13 @@ function ProfileDialogContent({
     mutationFn: () => {
       const profileDoc = buildProfileDoc();
       if (mode === "create") {
-        return profilesApi().create({
+        return api.profiles.create({
           name: form.name.trim(),
           description: form.description.trim() || undefined,
           profile: profileDoc,
         });
       } else {
-        return profilesApi().update(profile!.id, {
+        return api.profiles.update(profile!.id, {
           name: form.name.trim(),
           description: form.description.trim() || undefined,
           profile: profileDoc,
@@ -884,7 +796,7 @@ function TestAccessDialog(
   const simulate = useMutation({
     mutationFn: () => {
       if (!activeProfileId) return Promise.reject(new Error("No profile selected"));
-      return profilesApi().simulate({
+      return api.policy.simulate({
         profile: activeProfileId,
         request: {
           protocol: protocol || null,

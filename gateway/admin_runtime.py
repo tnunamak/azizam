@@ -762,9 +762,43 @@ class AdminSQLiteStore:
     def update_service(
         self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
-        raw = service_registry.service_form_to_raw(data)
+        # Merge PATCH data onto the existing record so a partial update (e.g.
+        # models-only) doesn't lose existing name, base_url, capabilities, etc.
+        # We flatten the stored record into a form-like dict, then overlay the
+        # caller-supplied data so explicit values always win.
+        sid = service_registry.normalize_id(service_id)
+        current_registry = self.get_service_registry()
+        existing = (current_registry.get("services") or {}).get(sid)
+        if existing is not None and not service_registry.is_litellm_service_record(
+            sid, existing
+        ):
+            existing_config = existing.get("config") or {}
+            form_base: dict[str, Any] = {
+                "name": existing.get("name") or sid,
+                "enabled": existing.get("enabled"),
+                "capabilities": existing.get("capabilities"),
+                "role": existing.get("role"),
+                "priority": existing.get("priority"),
+                # Connection fields live inside config
+                "base_url": existing_config.get("base_url"),
+                "host": existing_config.get("host"),
+                "port": existing_config.get("port"),
+                "base_path": existing_config.get("base_path"),
+                "protocol": existing_config.get("protocol"),
+                "native_passthrough": existing_config.get("native_passthrough"),
+                "models": existing_config.get("models"),
+            }
+            # Drop None values so they don't override defaults downstream, then
+            # overlay the caller-supplied partial data.
+            merged: dict[str, Any] = {
+                k: v for k, v in form_base.items() if v is not None
+            }
+            merged.update(data)
+        else:
+            merged = dict(data)
+        raw = service_registry.service_form_to_raw(merged)
         registry, _record = service_registry.upsert_service_in_registry(
-            self.get_service_registry(),
+            current_registry,
             service_id=service_id,
             raw=raw,
             source="ui",

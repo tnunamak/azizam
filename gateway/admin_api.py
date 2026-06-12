@@ -643,30 +643,39 @@ def _validate_service_registry(payload: Mapping[str, Any]) -> dict[str, Any]:
         ) from exc
 
 
-def _validate_service_form(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_service_form(
+    payload: Mapping[str, Any],
+    *,
+    require_endpoint: bool = True,
+    require_name: bool = True,
+) -> dict[str, Any]:
     """Validate an add/edit backend form and return the cleaned form fields.
 
-    Requires a name and a way to reach the backend (a base URL or host). The
-    store maps the form to a backend config and normalizes it; this gate just
-    surfaces operator-facing 400s for the obvious omissions.
+    For creates (require_endpoint=True, require_name=True) a base URL or host
+    and a name are mandatory. For PATCH edits name is optional (the service_id
+    is used as the default downstream); for edits of managed-substrate rows
+    (require_endpoint=False) only name/enabled/note are needed — endpoint
+    fields are derived by the gateway. The ``models`` list is accepted and
+    passed through to service_form_to_raw unchanged.
     """
     if not isinstance(payload, Mapping):
         raise _RouteError(
             status.HTTP_400_BAD_REQUEST, "invalid_service", "body must be an object"
         )
     name = str(payload.get("name") or "").strip()
-    if not name:
+    if require_name and not name:
         raise _RouteError(
             status.HTTP_400_BAD_REQUEST, "invalid_service", "a name is required"
         )
-    has_host = bool(str(payload.get("host") or "").strip())
-    has_url = bool(str(payload.get("base_url") or "").strip())
-    if not (has_host or has_url):
-        raise _RouteError(
-            status.HTTP_400_BAD_REQUEST,
-            "invalid_service",
-            "a base URL (or host) is required",
-        )
+    if require_endpoint:
+        has_host = bool(str(payload.get("host") or "").strip())
+        has_url = bool(str(payload.get("base_url") or "").strip())
+        if not (has_host or has_url):
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_service",
+                "a base URL (or host) is required",
+            )
     # An inline plaintext key is never accepted — secrets are referenced by env
     # var name only (api_key_env).
     if any(str(k).lower() == "api_key" for k in payload):
@@ -675,6 +684,16 @@ def _validate_service_form(payload: Mapping[str, Any]) -> dict[str, Any]:
             "invalid_service",
             "paste an env var name in 'api_key_env', not the key itself",
         )
+    # Validate models list shape if provided (list of objects; each row is
+    # validated/normalised downstream in service_form_to_raw/_form_models_to_config).
+    if "models" in payload:
+        models = payload["models"]
+        if models is not None and not isinstance(models, list):
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_service",
+                "'models' must be a list of {public, upstream} objects",
+            )
     return dict(payload)
 
 
@@ -1585,11 +1604,28 @@ def create_admin_router(
             code, http = "service_not_found", status.HTTP_404_NOT_FOUND
         elif "already exists" in msg:
             code, http = "service_conflict", status.HTTP_409_CONFLICT
-        elif "not editable" in msg or "provisioned" in msg:
+        elif "not editable" in msg or "provisioned" in msg or "managed substrate" in msg:
             code, http = "service_not_editable", status.HTTP_403_FORBIDDEN
         else:
             code, http = "invalid_service", status.HTTP_400_BAD_REQUEST
         return _RouteError(http, code, msg).as_response()
+
+    @router.get("/operator/service-presets")
+    def get_service_presets(request: Request) -> JSONResponse:
+        """Return the provider preset list for the Add-service dialog.
+
+        "Custom (OpenAI-compatible)" is always first; subsequent entries are
+        known backends (vLLM, Ollama, …). The client MUST consume this endpoint
+        instead of duplicating the list client-side.
+        """
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        presets = [dict(p) for p in service_registry.PROVIDER_PRESETS]
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"presets": presets},
+        )
 
     @router.post("/operator/services")
     async def add_service(request: Request) -> JSONResponse:
@@ -1616,7 +1652,13 @@ def create_admin_router(
             return ctx
         try:
             body = await _read_json_body(request)
-            form = _validate_service_form({**body, "name": body.get("name") or service_id})
+            # Endpoint is only required for full edits; metadata-only edits (name,
+            # enabled, note — the only fields allowed for managed-substrate rows)
+            # may omit host/url.
+            has_host = bool(str(body.get("host") or "").strip())
+            has_url = bool(str(body.get("base_url") or "").strip())
+            require_endpoint = has_host or has_url
+            form = _validate_service_form(body, require_endpoint=require_endpoint, require_name=False)
             record = store.update_service(service_id=service_id, data=form, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()

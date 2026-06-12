@@ -171,8 +171,65 @@ that is a separate fetch, not embedded in the overview response.
 }
 ```
 
-`source` field: `"provisioned"` = from bootstrap YAML/config (read-only in UI;
-lock icon); `"ui"` = created via admin API (full CRUD).
+`source` field values: `"provisioned"` = from bootstrap YAML/config; `"ui"` =
+created via admin API; `"builtin"` = bundled catalog; `"imported"` = extension
+package; `"discovered"` = runtime-detected. Source is **provenance (history),
+not permission** — all sources are fully editable and removable after the
+one-time config import. Sole exception: `managed` substrate rows (LiteLLM) —
+see Editability Law below.
+
+**Editability Law** (enforced server-side):
+
+- Every service record exposes `"editable": true` after normalization, EXCEPT
+  the LiteLLM managed-substrate row which has `"editable": false`.
+- The LiteLLM row is identified by: `id == "litellm"`, OR
+  `kind == "llm-substrate"` / `"litellm"`, OR
+  `config.execution_substrate == "litellm"`.
+- For the LiteLLM row: remove is blocked (`403 service_not_editable`); editing
+  `host`, `port`, `base_url`, `protocol`, or `execution_substrate` is blocked
+  (`403 service_not_editable`); renaming (`name`), toggling (`enabled`), and
+  adding a note are allowed.
+- All other rows: fully editable and removable. Config-imported rows removed
+  via the API are **not re-imported** on the next boot (DB is the source of
+  truth; YAML is never re-merged after the initial seed).
+
+**`editable` field in service records**: normalized to `true` for all
+non-managed rows. A stored `editable: false` from old seeds is ignored.
+
+**`models` field** in `config`: list of `{ model_group, upstream_model }`
+deployment mappings. What makes an OpenAI-compatible service routable — each
+entry produces one LiteLLM model_list entry. Populated via the form's Models
+editor; round-trips through PATCH and compile_litellm_config.
+
+### GET /admin/api/operator/service-presets  (preset list for Add-service dialog)
+
+Returns the canonical provider preset list. **Never duplicate this list
+client-side** — consume this endpoint instead.
+
+`200` →
+```json
+{
+  "presets": [
+    {
+      "id": "openai-compatible",
+      "label": "OpenAI-compatible (custom)",
+      "base_path": "/v1",
+      "default_port": null,
+      "protocol": "openai-compatible",
+      "capabilities": ["chat", "completions"],
+      "native_passthrough": true
+    },
+    { "id": "vllm", "label": "vLLM", "base_path": "/v1", "default_port": 8000, "…": "…" },
+    { "id": "ollama", "label": "Ollama", "base_path": "/v1", "default_port": 11434, "…": "…" },
+    "…"
+  ]
+}
+```
+
+The first entry is always `"openai-compatible"` (the custom escape hatch).
+Every preset has: `id`, `label`, `base_path`, `default_port` (null for custom),
+`protocol` (null for non-OpenAI presets like ComfyUI), `capabilities`,
+`native_passthrough`.
 
 ### POST /admin/api/operator/services  (add service)
 
@@ -183,29 +240,43 @@ Request:
   "preset": "vllm",
   "base_url": "http://10.0.0.5:8000/v1",
   "api_key_env": "VLLM_API_KEY",
-  "capabilities": ["chat.completions"]
+  "capabilities": ["chat.completions"],
+  "models": [
+    { "public": "llama-3-8b", "upstream": "Meta-Llama-3-8B-Instruct" }
+  ]
 }
 ```
 
 Rules: `name` required; `base_url` OR `host` required; `api_key` (inline
-secret) is rejected — use `api_key_env` (env-var name) instead.
+secret) is rejected — use `api_key_env` (env-var name) instead. `models` is
+optional — a list of `{ "public": "…", "upstream": "…" }` mappings (also
+accepts `model_group`/`upstream_model` keys); stored as
+`config.models = [{ model_group, upstream_model }]`.
 
 `201` → `{ "service_registry": { …same shape as GET… } }`
 
-`409 service_conflict` if a service with this id (normalised from `name`) already
-exists. `403 service_not_editable` if it exists but is `provisioned`.
+`409 service_conflict` if a service with this id (normalised from `name`)
+already exists.
 
 ### PATCH /admin/api/operator/services/{service_id}  (edit service)
 
 Request: same fields as POST (partial ok; `name` defaults to `service_id` when
-omitted). `403 service_not_editable` for provisioned services.
+omitted); `base_url`/`host` are optional when doing a metadata-only edit (name,
+enabled, note — the only fields allowed for managed-substrate rows). Accepts
+`models` list with same shape as POST.
 
 `200` → `{ "service_registry": { … } }`
 
+`403 service_not_editable` only for managed-substrate rows (`litellm`) when
+endpoint/protocol fields are included.
+
 ### DELETE /admin/api/operator/services/{service_id}  (remove service)
 
-`200` → `{ "service_registry": { … } }`; `403` for provisioned; `404` after
-second delete.
+`200` → `{ "service_registry": { … } }`; `403 service_not_editable` only for
+the managed-substrate (`litellm`) row; `404` after second delete.
+
+Config-imported rows show a provenance-aware confirmation: "imported from your
+config file; your YAML is not modified and will not re-import it".
 
 ### POST /admin/api/operator/services/{service_id}/enabled  (toggle enabled)
 
