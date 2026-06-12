@@ -15,7 +15,11 @@ records:
       base_url_env: AI_GATEWAY_LITELLM_BASE_URL
       default_base_url: http://127.0.0.1:4011
       api_key_env: AI_GATEWAY_LITELLM_API_KEY
-      config_path: data/litellm.config.yaml
+      # Resolved relative to the gateway state dir (ADMIN_DB_PATH.parent, i.e.
+      # data/), so this is a bare filename — NOT "data/litellm.config.yaml",
+      # which would double the prefix to data/data/ and diverge from the path
+      # start.sh's litellm watcher reads (data/litellm.config.yaml).
+      config_path: litellm.config.yaml
     lifecycle:
       type: external
       managed: false

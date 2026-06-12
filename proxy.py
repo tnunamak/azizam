@@ -326,10 +326,60 @@ KOBOLD_HOST = f"http://{kobold_cfg.get('host', '127.0.0.1')}:{kobold_cfg.get('po
 KOBOLD_HEALTH_ENDPOINT = kobold_cfg.get("health_endpoint", "/api/v1/model")
 KOBOLD_SERVICE = kobold_cfg.get("service_name", "koboldcpp.service")
 
-LLM_BACKEND_HOSTS = {
-    "kobold": KOBOLD_HOST,
-    "tabby": TABBY_HOST,
-}
+def _is_chat_capable_native_backend(backend_id: str, backend_cfg: Mapping) -> bool:
+    """Return True if this backend belongs in LLM_BACKEND_HOSTS.
+
+    Criteria (all must hold):
+    - enabled (default True when absent)
+    - has at least one of the capabilities: chat, completions
+    - is NOT the LiteLLM execution substrate (that has no host to proxy to)
+
+    The LiteLLM substrate is identified by execution_substrate == "litellm" or
+    kind in {litellm, llm-substrate} — same test as service_registry.is_litellm_service_record.
+    """
+    if not bool_from_config(backend_cfg.get("enabled"), True):
+        return False
+    caps = backend_cfg.get("capabilities") or []
+    if isinstance(caps, (str, bytes)):
+        caps = [caps]
+    cap_set = {str(c).strip().lower() for c in caps if str(c).strip()}
+    if not (cap_set & {"chat", "completions"}):
+        return False
+    # Exclude the LiteLLM managed substrate — it has no direct host to proxy to.
+    execution_substrate = str(backend_cfg.get("execution_substrate") or "").strip().lower()
+    kind = str(backend_cfg.get("kind") or "").strip().lower()
+    if (
+        backend_id.strip().lower() == "litellm"
+        or execution_substrate == "litellm"
+        or kind in {"litellm", "llm-substrate"}
+    ):
+        return False
+    return True
+
+
+def _build_llm_backend_hosts() -> dict[str, str]:
+    """Derive the {id: "http://host:port"} map of chat-capable native backends.
+
+    Reads config["backends"] (a boot-time projection of the DB registry) so that
+    any service added via the admin UI and marked chat-capable is automatically
+    included after a restart. The tabby/kobold entries come out identical to the
+    previous hard-coded dict for the current deployment.
+    """
+    result: dict[str, str] = {}
+    for bid, bcfg in (config.get("backends") or {}).items():
+        if not isinstance(bcfg, Mapping):
+            continue
+        if not _is_chat_capable_native_backend(bid, bcfg):
+            continue
+        host = bcfg.get("host", "127.0.0.1")
+        port = bcfg.get("port")
+        if not port:
+            continue
+        result[bid] = f"http://{host}:{port}"
+    return result
+
+
+LLM_BACKEND_HOSTS: dict[str, str] = _build_llm_backend_hosts()
 
 
 def configured_backend_capabilities(backend: str) -> set[str]:
@@ -362,7 +412,52 @@ def backend_for_host(host: str) -> Optional[str]:
             return backend
     if EMBEDDINGS_ENABLED and host == EMBEDDINGS_HOST:
         return "embeddings"
+    # Unknown host: no match.  The caller (catch-all route) uses a separate
+    # registry-aware fallback rather than depending on this returning a value.
     return None
+
+
+def _highest_priority_chat_backend() -> Optional[str]:
+    """Return the id of the highest-priority enabled chat-capable native backend.
+
+    Priority follows the registry convention: lower numeric value = higher priority
+    (same ordering used by list_resource_summaries). Returns None when
+    LLM_BACKEND_HOSTS is empty.
+    """
+    backends = config.get("backends") or {}
+    candidates = []
+    for bid in LLM_BACKEND_HOSTS:
+        bcfg = backends.get(bid)
+        if not isinstance(bcfg, Mapping):
+            continue
+        priority = int(bcfg.get("priority") or 100)
+        candidates.append((priority, bid))
+    if not candidates:
+        return None
+    candidates.sort()  # ascending: lowest priority number wins
+    return candidates[0][1]
+
+
+def vision_capable_llm_backends() -> list[str]:
+    """Return ids of vision-capable backends in LLM_BACKEND_HOSTS, ordered by priority.
+
+    A backend is vision-capable if it is in LLM_BACKEND_HOSTS (enabled + chat/completions
+    capable) AND its capabilities include "vision".  The kobold mmproj check is NOT done
+    here — that is orchestration-level logic handled at the call site.
+    """
+    backends = config.get("backends") or {}
+    result = []
+    for bid in LLM_BACKEND_HOSTS:
+        bcfg = backends.get(bid)
+        if not isinstance(bcfg, Mapping):
+            continue
+        caps = {str(c).strip().lower() for c in (bcfg.get("capabilities") or []) if str(c).strip()}
+        if "vision" not in caps:
+            continue
+        priority = int(bcfg.get("priority") or 100)
+        result.append((priority, bid))
+    result.sort()
+    return [bid for _, bid in result]
 
 # Model routing - auto-detect backend from filesystem
 routing_cfg = config.get("model_routing", {})
@@ -616,23 +711,21 @@ def detect_model_backend(model_name: str) -> Optional[str]:
 
 
 async def get_active_backend() -> Optional[str]:
-    """Check which LLM backend is currently running. Returns 'tabby', 'kobold', or None."""
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5)) as client:
-            resp = await client.get(f"{TABBY_HOST}{TABBY_HEALTH_ENDPOINT}")
-            if resp.status_code == 200:
-                return 'tabby'
-    except Exception:
-        pass
+    """Check which LLM backend is currently running.
 
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5)) as client:
-            resp = await client.get(f"{KOBOLD_HOST}{KOBOLD_HEALTH_ENDPOINT}")
-            if resp.status_code == 200:
-                return 'kobold'
-    except Exception:
-        pass
-
+    Probes all backends in LLM_BACKEND_HOSTS (registry-derived) in priority
+    order and returns the id of the first one that answers healthy.  For the
+    current deployment this resolves to 'tabby' or 'kobold' exactly as before.
+    """
+    backends = config.get("backends") or {}
+    # Sort by priority (lower = higher priority) so the preferred backend wins.
+    candidates = sorted(
+        LLM_BACKEND_HOSTS.keys(),
+        key=lambda bid: int((backends.get(bid) or {}).get("priority") or 100),
+    )
+    for bid in candidates:
+        if await check_service_health(bid):
+            return bid
     return None
 
 
@@ -695,19 +788,78 @@ KOBOLD_MODEL_DROPIN = Path.home() / f".config/systemd/user/{KOBOLD_SERVICE_NAME}
 # in-progress swap so we don't restart llama-turbo.service twice for the same target.
 kobold_swap_lock = asyncio.Lock()
 
-# Short TTL cache for the currently-loaded GGUF path so the request hot path doesn't
-# pgrep on every call.
-_kobold_loaded_cache: dict = {"value": None, "ts": 0.0}
-_KOBOLD_LOADED_TTL = 5.0
+# Kobold loaded-state cache. Seeded from the backend's state endpoint on first read
+# after startup, then updated authoritatively after every swap. TTL guards against
+# the server being restarted out-of-band (e.g. manual systemctl restart).
+_kobold_state: dict = {"model": None, "mmproj": None, "ts": 0.0}
+_KOBOLD_STATE_TTL = 5.0
+
+# Per-state_type seed strategies.  Each entry describes how to ask a live backend
+# what model it has loaded.  Add a new entry here when wiring up a new backend type
+# (vllm, ollama, etc.) — no other code needs to change.
+#
+# Keys:
+#   endpoint     – path to GET; response must be JSON
+#   model_key    – dot-path into the JSON to the loaded model identifier
+#   mmproj_key   – dot-path to the mmproj path, or None if the backend has no mmproj
+#   mmproj_pgrep – if True, fall back to pgrep --mmproj parsing when mmproj_key is None
+#                  (llama.cpp exposes mmproj only in the process cmdline, not in /props)
+#
+# Dot-path format: "a.b" means data["a"]["b"].  A bare key "x" means data["x"].
+_BACKEND_STATE_STRATEGIES: dict = {
+    "llama_cpp": {
+        "endpoint": "/props",
+        "model_key": "model_path",
+        "mmproj_key": None,
+        "mmproj_pgrep": True,
+    },
+    "tabbyapi": {
+        "endpoint": "/v1/model",
+        "model_key": "id",
+        "mmproj_key": None,
+        "mmproj_pgrep": False,
+    },
+    # vllm exposes /v1/models (list); take the first model id.
+    # Set mmproj_pgrep: False — vllm has no mmproj concept.
+    "vllm": {
+        "endpoint": "/v1/models",
+        "model_key": "data.0.id",
+        "mmproj_key": None,
+        "mmproj_pgrep": False,
+    },
+    # Generic OpenAI-compatible backend (Ollama, LM Studio, etc.)
+    "openai_compatible": {
+        "endpoint": "/v1/models",
+        "model_key": "data.0.id",
+        "mmproj_key": None,
+        "mmproj_pgrep": False,
+    },
+}
 
 
-def kobold_has_mmproj() -> Optional[bool]:
-    """Return True iff the running llama-server includes an --mmproj flag.
+def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
+    """Walk dot-separated keys/indices into a parsed JSON structure."""
+    cur: object = data
+    for part in path.split("."):
+        if isinstance(cur, dict):
+            cur = cur.get(part)
+        elif isinstance(cur, list):
+            try:
+                cur = cur[int(part)]
+            except (IndexError, ValueError):
+                return None
+        else:
+            return None
+    return str(cur) if cur is not None else None
 
-    Used by Fix 3 (vision routing): if mmproj is loaded, the kobold backend is
-    natively vision-capable and we don't need to switch to tabby. Returns None
-    if we couldn't determine (no llama-server running, pgrep failed).
+
+def _kobold_mmproj_from_pgrep() -> Optional[str]:
+    """Read --mmproj from the llama-server process on the kobold port.
+
+    /props does not expose the mmproj path, so pgrep is the fallback source.
+    Scoped to the kobold port to avoid matching other llama-server instances.
     """
+    kobold_port = str(kobold_cfg.get("port", 5051))
     try:
         result = subprocess.run(
             ["pgrep", "-af", "llama-server"],
@@ -716,29 +868,7 @@ def kobold_has_mmproj() -> Optional[bool]:
             timeout=2,
         )
         for line in result.stdout.splitlines():
-            if "llama-server" not in line:
-                continue
-            return "--mmproj" in line
-    except Exception as e:
-        print(f"[proxy] kobold_has_mmproj: pgrep failed: {e}", flush=True)
-    return None
-
-
-def currently_loaded_kobold_mmproj() -> Optional[str]:
-    """Return the absolute path passed to llama-server's --mmproj flag, or None.
-
-    Parsed from the running llama-server cmdline via pgrep. Returns None if no
-    --mmproj flag is set (text-only model) or no llama-server is running.
-    """
-    try:
-        result = subprocess.run(
-            ["pgrep", "-af", "llama-server"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        for line in result.stdout.splitlines():
-            if "llama-server" not in line:
+            if f"--port {kobold_port}" not in line:
                 continue
             idx = line.find("--mmproj ")
             if idx == -1:
@@ -747,51 +877,92 @@ def currently_loaded_kobold_mmproj() -> Optional[str]:
             end = tail.find(" --")
             if end != -1:
                 tail = tail[:end]
-            path = tail.strip()
-            return path or None
+            return tail.strip() or None
     except Exception as e:
-        print(f"[proxy] currently_loaded_kobold_mmproj: pgrep failed: {e}", flush=True)
+        print(f"[proxy] _kobold_mmproj_from_pgrep: pgrep failed: {e}", flush=True)
     return None
 
 
-def currently_loaded_kobold_model() -> Optional[str]:
-    """Return the absolute path of the GGUF llama-server is currently serving, or None.
+def _seed_kobold_state() -> None:
+    """Populate _kobold_state by querying the live backend.
 
-    Parses --model from the running llama-server cmdline via pgrep. Cached for
-    _KOBOLD_LOADED_TTL seconds to avoid spawning pgrep on every request.
+    Strategy is selected by `state_type` in the kobold backend config
+    (proxy_config.yml).  Falls back to pgrep-only if the HTTP query fails or
+    the state_type is unrecognised.  Called when the cache is cold (startup or
+    TTL expiry) — synchronous but cheap relative to a model swap.
     """
-    now = time.time()
-    if _kobold_loaded_cache["value"] is not None and (now - _kobold_loaded_cache["ts"]) < _KOBOLD_LOADED_TTL:
-        return _kobold_loaded_cache["value"]
+    import urllib.request as _urlreq
 
-    path: Optional[str] = None
-    try:
-        result = subprocess.run(
-            ["pgrep", "-af", "llama-server"],
-            capture_output=True,
-            text=True,
-            timeout=2,
+    state_type = kobold_cfg.get("state_type", "llama_cpp")
+    strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
+
+    model: Optional[str] = None
+    mmproj: Optional[str] = None
+
+    if strategy:
+        try:
+            url = f"{KOBOLD_HOST}{strategy['endpoint']}"
+            with _urlreq.urlopen(url, timeout=2) as resp:
+                data = json.loads(resp.read())
+                model = _resolve_dot_path(data, strategy["model_key"])
+        except Exception:
+            pass  # server not up yet, or wrong endpoint — state stays None
+
+        if strategy.get("mmproj_key"):
+            try:
+                url = f"{KOBOLD_HOST}{strategy['endpoint']}"
+                with _urlreq.urlopen(url, timeout=2) as resp:
+                    data = json.loads(resp.read())
+                    mmproj = _resolve_dot_path(data, strategy["mmproj_key"])
+            except Exception:
+                pass
+        elif strategy.get("mmproj_pgrep"):
+            mmproj = _kobold_mmproj_from_pgrep()
+    else:
+        # Unknown state_type — best-effort pgrep only.
+        print(
+            f"[proxy] _seed_kobold_state: unknown state_type={state_type!r}; "
+            "falling back to pgrep (add an entry to _BACKEND_STATE_STRATEGIES to fix this)",
+            flush=True,
         )
-        for line in result.stdout.splitlines():
-            # Look for `--model <path>` followed by another flag (typically `--port`).
-            # Paths can contain spaces, so split on " --" to bound the value.
-            idx = line.find("--model ")
-            if idx == -1:
-                continue
-            tail = line[idx + len("--model "):]
-            # Strip the next flag if present
-            end = tail.find(" --")
-            if end != -1:
-                tail = tail[:end]
-            path = tail.strip()
-            if path:
-                break
-    except Exception as e:
-        print(f"[proxy] currently_loaded_kobold_model: pgrep failed: {e}", flush=True)
+        mmproj = _kobold_mmproj_from_pgrep()
 
-    _kobold_loaded_cache["value"] = path
-    _kobold_loaded_cache["ts"] = now
-    return path
+    _kobold_state["model"] = model
+    _kobold_state["mmproj"] = mmproj
+    _kobold_state["ts"] = time.time()
+
+
+def _kobold_state_fresh() -> bool:
+    return (time.time() - _kobold_state["ts"]) < _KOBOLD_STATE_TTL
+
+
+def kobold_has_mmproj() -> Optional[bool]:
+    """Return True iff the running kobold llama-server has an mmproj loaded.
+
+    Used by Fix 3 (vision routing): if mmproj is loaded, the kobold backend is
+    natively vision-capable and we don't need to switch to tabby. Returns None
+    if we couldn't determine (server not running, seed failed).
+    """
+    if not _kobold_state_fresh():
+        _seed_kobold_state()
+    model = _kobold_state["model"]
+    if model is None:
+        return None
+    return _kobold_state["mmproj"] is not None
+
+
+def currently_loaded_kobold_mmproj() -> Optional[str]:
+    """Return the mmproj path the kobold llama-server has loaded, or None."""
+    if not _kobold_state_fresh():
+        _seed_kobold_state()
+    return _kobold_state["mmproj"]
+
+
+def currently_loaded_kobold_model() -> Optional[str]:
+    """Return the model path the kobold llama-server is currently serving, or None."""
+    if not _kobold_state_fresh():
+        _seed_kobold_state()
+    return _kobold_state["model"]
 
 
 async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = None) -> bool:
@@ -869,9 +1040,10 @@ async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = Non
                 _remove_dropin()
                 return False
 
-        # Invalidate the loaded-model cache so the next read re-checks pgrep.
-        _kobold_loaded_cache["value"] = None
-        _kobold_loaded_cache["ts"] = 0.0
+        # Stale during restart — mark unknown so the next read re-seeds.
+        _kobold_state["model"] = None
+        _kobold_state["mmproj"] = None
+        _kobold_state["ts"] = 0.0
 
         for i in range(SWITCH_TIMEOUT):
             try:
@@ -880,6 +1052,10 @@ async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = Non
                     if resp.status_code == 200:
                         elapsed = time.time() - start
                         print(f"[proxy] swap complete in {elapsed:.1f}s", flush=True)
+                        # Set state authoritatively — no pgrep or /props needed.
+                        _kobold_state["model"] = target_path
+                        _kobold_state["mmproj"] = target_mmproj or None
+                        _kobold_state["ts"] = time.time()
                         try:
                             firehose_metrics.record_event(
                                 "model_swap",
@@ -2506,10 +2682,15 @@ async def _prepare_litellm_local_llm_request(
     )
     if vision_needed and not target_backend:
         active = await get_active_backend()
+        # vision_capable_llm_backends() answers the membership question: which
+        # backends in LLM_BACKEND_HOSTS carry the "vision" capability?  For
+        # today's config this resolves to ["tabby"] when tabby has vision=True,
+        # [] otherwise — exactly as the previous literal check.  The kobold
+        # mmproj check is orchestration-level logic that stays unchanged.
+        _vision_members = vision_capable_llm_backends()
         active_can_serve_vision = (
-            active == "tabby"
-            and profile_allows_backend(auth_context, "tabby")
-            and backend_supports("tabby", "vision")
+            active in _vision_members
+            and profile_allows_backend(auth_context, active)
         ) or (
             active == "kobold"
             and profile_allows_backend(auth_context, "kobold")
@@ -2519,9 +2700,9 @@ async def _prepare_litellm_local_llm_request(
             return None, body
 
     if vision_needed and target_backend:
+        _vision_members = vision_capable_llm_backends()
         target_can_serve_vision = (
-            target_backend == "tabby"
-            and backend_supports("tabby", "vision")
+            target_backend in _vision_members
         ) or (
             target_backend == "kobold"
             and bool(target_mmproj)
@@ -2816,33 +2997,47 @@ async def probe_backend(
         return {"ok": False, "status": None, "error": str(exc) or type(exc).__name__, "url": url, "body": None}
 
 
+async def check_service_health(service_id: str) -> bool:
+    """Generic health probe driven by the registry-projected config["backends"] entry.
+
+    Reads host, port, health_endpoint, and timeout from config["backends"][service_id].
+    Default health_endpoint is "/health"; default timeout is HEALTH_CHECK_TIMEOUT.
+    Returns False when the service_id is not present in config["backends"].
+    """
+    bcfg = (config.get("backends") or {}).get(service_id)
+    if not isinstance(bcfg, Mapping):
+        return False
+    host = bcfg.get("host", "127.0.0.1")
+    port = bcfg.get("port")
+    if not port:
+        return False
+    endpoint = bcfg.get("health_endpoint", "/health")
+    timeout = int(bcfg.get("timeout") or HEALTH_CHECK_TIMEOUT)
+    # Cap the health-check timeout at HEALTH_CHECK_TIMEOUT so callers don't
+    # accidentally inherit very long service timeouts (e.g. TTS: 86400 s).
+    timeout = min(timeout, HEALTH_CHECK_TIMEOUT)
+    url = f"http://{host}:{port}{endpoint}"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=timeout)
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
 async def check_tabby_health() -> bool:
     """Check if TabbyAPI is healthy."""
     if TABBY_MANAGED and state.tabby_process:
         if state.tabby_process.poll() is not None:
             return False
-
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{TABBY_HOST}/health", timeout=HEALTH_CHECK_TIMEOUT)
-            return resp.status_code == 200
-    except:
-        return False
+    return await check_service_health("tabby")
 
 
 async def check_embeddings_health() -> bool:
     """Check if the dedicated embeddings backend is healthy."""
     if not EMBEDDINGS_ENABLED:
         return False
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{EMBEDDINGS_HOST}{EMBEDDINGS_HEALTH_ENDPOINT}",
-                timeout=HEALTH_CHECK_TIMEOUT,
-            )
-            return resp.status_code == 200
-    except Exception:
-        return False
+    return await check_service_health("embeddings")
 
 
 async def restart_tabby_if_needed() -> bool:
@@ -2879,12 +3074,7 @@ async def check_tts_health() -> bool:
     """Check if TTS backend is healthy."""
     if not TTS_ENABLED:
         return False
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{TTS_HOST}/health", timeout=HEALTH_CHECK_TIMEOUT)
-            return resp.status_code == 200
-    except:
-        return False
+    return await check_service_health("tts")
 
 
 def convert_wav_to_mp3(wav_content: bytes) -> bytes:
@@ -3018,12 +3208,7 @@ async def check_stt_health() -> bool:
     """Check if STT backend is healthy."""
     if not STT_ENABLED:
         return False
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{STT_HOST}/health", timeout=HEALTH_CHECK_TIMEOUT)
-            return resp.status_code == 200
-    except:
-        return False
+    return await check_service_health("stt")
 
 
 def stt_backend_supports_translation() -> bool:
@@ -3420,12 +3605,7 @@ async def check_comfy_health() -> bool:
     """Check if ComfyUI backend is healthy."""
     if not COMFY_ENABLED:
         return False
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{COMFY_HOST}/system_stats", timeout=HEALTH_CHECK_TIMEOUT)
-            return resp.status_code == 200
-    except:
-        return False
+    return await check_service_health("comfyui")
 
 
 def parse_size(size_str: str) -> tuple[int, int]:
@@ -4141,6 +4321,58 @@ def parse_image_background(value: Any) -> tuple[Optional[str], Optional[str]]:
     if normalized in ("transparent", "opaque", "auto"):
         return normalized, None
     return None, "background must be one of 'transparent', 'opaque', or 'auto'"
+
+
+def _ideogram4_is_grounded_json(prompt: str) -> bool:
+    """True only if ``prompt`` is an Ideogram-4 caption with real grounding boxes.
+
+    A prompt that merely parses as JSON is NOT enough: callers (e.g. an agent)
+    routinely send ``{"high_level_description": "...prose..."}`` with no
+    ``elements`` — Ideogram then gets a degenerate, ungrounded caption and
+    renders worse text/layout (and trips the safety filter more often). Treat
+    such payloads as plain text so they get structurized into real obj/text
+    boxes. We accept elements at the top level (hand-authored shape) OR under
+    ``compositional_deconstruction`` (the shape our structurizer emits).
+    """
+    try:
+        data = json.loads(prompt)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    for container in (data, data.get("compositional_deconstruction")):
+        if isinstance(container, dict):
+            els = container.get("elements")
+            if isinstance(els, list) and len(els) > 0:
+                return True
+    return False
+
+
+def _ideogram4_brief_from_prompt(prompt: str) -> str:
+    """Return a plain-text creative brief to feed the structurizer.
+
+    Plain text passes through unchanged. JSON-wrapped prose (no grounding
+    elements) gets its human-readable description fields pulled out so the
+    structurizer converts the *intent*, not raw JSON syntax.
+    """
+    try:
+        data = json.loads(prompt)
+    except (ValueError, TypeError):
+        return prompt
+    if not isinstance(data, dict):
+        return prompt
+    parts = []
+    for key in ("high_level_description", "prompt", "description", "scene"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            parts.append(val.strip())
+    style = data.get("style_description")
+    if isinstance(style, dict):
+        aes = style.get("aesthetics") or style.get("medium")
+        if isinstance(aes, str) and aes.strip():
+            parts.append(aes.strip())
+    # Fall back to the raw string only if we found no usable prose.
+    return "  ".join(parts) if parts else prompt
 
 
 _IDEOGRAM4_STRUCTURIZE_USER_TEMPLATE = (
@@ -5395,10 +5627,15 @@ async def proxy_comfy_request(
     model = requested_model
     size = body.get("size", "1024x1024")
     if str(model).startswith("ideogram4") and prompt:
-        try:
-            json.loads(prompt)  # already JSON — skip conversion
-        except (ValueError, TypeError):
-            prompt = await _ideogram4_structurize_prompt(prompt)
+        # Only skip conversion when the prompt is ALREADY a grounded Ideogram-4
+        # caption (has real obj/text elements). JSON that merely wraps a prose
+        # description with no elements (a common agent mistake) must still be
+        # structurized — otherwise Ideogram gets an ungrounded caption and the
+        # text/layout quality collapses. See _ideogram4_is_grounded_json.
+        if not _ideogram4_is_grounded_json(prompt):
+            prompt = await _ideogram4_structurize_prompt(
+                _ideogram4_brief_from_prompt(prompt)
+            )
     if receipt is not None:
         receipt.requested_model = str(requested_model) if requested_model is not None else None
     _record_image_input(receipt, "model")
@@ -15535,6 +15772,181 @@ def _entry_created_ts(path: Optional[str]) -> int:
     return int(time.time())
 
 
+_MODEL_CONTEXT_CACHE_TTL_S = 30.0
+_MODEL_CONTEXT_CACHE: dict[str, tuple[float, int | None]] = {}
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _context_window_from_model_info(model_info: Mapping[str, Any] | None) -> int | None:
+    if not isinstance(model_info, Mapping):
+        return None
+    for key, value in model_info.items():
+        key_s = str(key).lower()
+        if key_s.endswith(".context_length") or key_s in {
+            "context_length",
+            "context_window",
+            "max_context_tokens",
+            "n_ctx",
+        }:
+            found = _positive_int(value)
+            if found is not None:
+                return found
+    return None
+
+
+def _context_window_from_mapping(data: Mapping[str, Any] | None) -> int | None:
+    if not isinstance(data, Mapping):
+        return None
+    for key in (
+        "context_window",
+        "context_length",
+        "max_context_tokens",
+        "max_model_len",
+        "max_seq_len",
+        "n_ctx",
+    ):
+        found = _positive_int(data.get(key))
+        if found is not None:
+            return found
+    meta = data.get("meta")
+    if isinstance(meta, Mapping):
+        found = _context_window_from_mapping(meta)
+        if found is not None:
+            return found
+    found = _context_window_from_model_info(
+        data.get("model_info") if isinstance(data.get("model_info"), Mapping) else None
+    )
+    if found is not None:
+        return found
+    top_provider = data.get("top_provider")
+    if isinstance(top_provider, Mapping):
+        return _context_window_from_mapping(top_provider)
+    return None
+
+
+def _configured_context_window_for_backend(backend: str | None) -> int | None:
+    if not backend:
+        return None
+    if backend == "tabby":
+        _, _, params = get_tabby_model_config()
+        return _context_window_from_mapping(params)
+    backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
+    raw = backends.get(backend) if isinstance(backends, Mapping) else None
+    if isinstance(raw, Mapping):
+        return _context_window_from_mapping(raw)
+    return None
+
+
+async def _kobold_context_window() -> int | None:
+    cached = _MODEL_CONTEXT_CACHE.get("kobold")
+    now = time.time()
+    if cached and now - cached[0] < _MODEL_CONTEXT_CACHE_TTL_S:
+        return cached[1]
+
+    value: int | None = None
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
+            resp = await client.get(f"{KOBOLD_HOST}/v1/models")
+        if resp.status_code == 200:
+            payload = resp.json()
+            data = payload.get("data") if isinstance(payload, Mapping) else None
+            if isinstance(data, list):
+                for item in data:
+                    if not isinstance(item, Mapping):
+                        continue
+                    value = _context_window_from_mapping(item)
+                    if value is not None:
+                        break
+            if value is None and isinstance(payload, Mapping):
+                value = _context_window_from_mapping(payload)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] /v1/models: could not read kobold context window: {e}", flush=True)
+
+    _MODEL_CONTEXT_CACHE["kobold"] = (now, value)
+    return value
+
+
+def _configured_model_record_for_id(model_id: str) -> tuple[str | None, Mapping[str, Any] | None]:
+    normalized = normalize_model_id(model_id)
+    if not normalized:
+        return None, None
+
+    role = ROLES.get(normalized) if isinstance(ROLES, Mapping) else None
+    if isinstance(role, Mapping):
+        backend = str(role.get("backend") or "").strip() or None
+        return backend, role
+
+    catalog = MODELS_CATALOG.get(normalized)
+    if isinstance(catalog, Mapping):
+        backend = str(catalog.get("backend") or "").strip() or None
+        return backend, catalog
+
+    backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
+    if isinstance(backends, Mapping):
+        for backend, service_cfg in backends.items():
+            if not isinstance(service_cfg, Mapping):
+                continue
+            service_model = normalize_model_id(str(service_cfg.get("model_id") or ""))
+            if service_model == normalized:
+                return str(backend), service_cfg
+            for item in _service_model_records(service_cfg):
+                names = {
+                    normalize_model_id(str(item.get("id") or "")),
+                    normalize_model_id(str(item.get("model_group") or "")),
+                    normalize_model_id(str(item.get("public_name") or "")),
+                    normalize_model_id(str(item.get("upstream_model") or "")),
+                }
+                if normalized in names:
+                    return str(backend), item
+
+    return None, None
+
+
+async def _context_window_for_model_id(
+    model_id: str,
+    entry: Mapping[str, Any] | None = None,
+) -> int | None:
+    found = _context_window_from_mapping(entry)
+    if found is not None:
+        return found
+
+    backend = None
+    if isinstance(entry, Mapping):
+        backend = str(entry.get("vivid_fish_backend") or "").strip() or None
+    configured_backend, record = _configured_model_record_for_id(model_id)
+    backend = backend or configured_backend
+
+    found = _context_window_from_mapping(record)
+    if found is not None:
+        return found
+
+    found = _configured_context_window_for_backend(backend)
+    if found is not None:
+        return found
+    if backend == "kobold":
+        return await _kobold_context_window()
+    return None
+
+
+async def _annotate_model_context_windows(data: list[Any]) -> None:
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        found = await _context_window_for_model_id(model_id, item)
+        if found is not None:
+            item["context_window"] = found
+
+
 def _build_role_catalog_entries() -> list[dict]:
     """Return configured local LLM handles for admin inventory and policy checks."""
     entries: list[dict] = []
@@ -15764,20 +16176,22 @@ def _litellm_model_summaries_from_payload(payload: Mapping[str, Any]) -> list[di
         modified_at = None
         if isinstance(created, (int, float)):
             modified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created))
-        summaries.append(
-            {
-                "id": model_id,
-                "object": str(item.get("object") or "model"),
-                "owned_by": str(item.get("owned_by") or "litellm"),
-                "modified_at": modified_at,
-                "format": str(item.get("format") or ""),
-                "family": str(item.get("family") or ""),
-                "parameter_size": str(item.get("parameter_size") or ""),
-                "quantization_level": str(item.get("quantization_level") or ""),
-                "capabilities": item.get("capabilities") or ["completion"],
-                "model_info": item.get("model_info") if isinstance(item.get("model_info"), Mapping) else {},
-            }
-        )
+        summary = {
+            "id": model_id,
+            "object": str(item.get("object") or "model"),
+            "owned_by": str(item.get("owned_by") or "litellm"),
+            "modified_at": modified_at,
+            "format": str(item.get("format") or ""),
+            "family": str(item.get("family") or ""),
+            "parameter_size": str(item.get("parameter_size") or ""),
+            "quantization_level": str(item.get("quantization_level") or ""),
+            "capabilities": item.get("capabilities") or ["completion"],
+            "model_info": item.get("model_info") if isinstance(item.get("model_info"), Mapping) else {},
+        }
+        context_window = _context_window_from_mapping(item)
+        if context_window is not None:
+            summary["context_window"] = context_window
+        summaries.append(summary)
     return summaries
 
 
@@ -15906,6 +16320,8 @@ async def list_models(request: Request):
             desc = str(extra.get("description") or "") if isinstance(extra, Mapping) else ""
         if desc:
             item["description"] = desc
+
+    await _annotate_model_context_windows(data)
 
     upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data
@@ -16759,6 +17175,7 @@ async def _ollama_model_catalog_summaries(
             _litellm_model_summaries_from_payload(payload),
             auth_context,
         )
+        await _annotate_model_context_windows(filtered)
         return filtered
 
     return []
@@ -18056,11 +18473,19 @@ def _split_reasoning_visible_text(text: Any) -> tuple[Optional[str], Optional[st
 
 
 def _normalize_chat_completion_visible_content(payload: dict[str, Any]) -> bool:
-    """Strip <think>...</think> blocks if they leak into message content.
+    """Normalize visible content in chat completion payloads.
+
+    Handles two cases:
+    1. <think>...</think> tags that leaked into message/delta content — strip them
+       and promote the reasoning into reasoning_content.
+    2. reasoning_content is populated but content is empty/absent — backfill
+       content from reasoning_content (stripping think tags from reasoning_content
+       if present, so content gets only the visible portion).
 
     llama-server with Qwen3.6 correctly places thinking tokens in reasoning_content
     and the answer in content. This function is a safety net for backends that
-    accidentally emit the raw <think> tags inside content itself.
+    either emit raw <think> tags inside content, or populate reasoning_content but
+    leave content blank.
     """
     changed = False
     choices = payload.get("choices")
@@ -18074,20 +18499,40 @@ def _normalize_chat_completion_visible_content(payload: dict[str, Any]) -> bool:
             content = message.get("content")
             reasoning = message.get("reasoning_content")
             if isinstance(content, str) and "</think>" in content.lower():
+                # Case 1: think tags leaked into content — strip them out.
                 split_reasoning, visible = _split_reasoning_visible_text(content)
                 if visible is not None:
                     message["content"] = visible
                     if not isinstance(reasoning, str) and split_reasoning:
                         message["reasoning_content"] = split_reasoning
                     changed = True
+            elif isinstance(reasoning, str) and reasoning and not content:
+                # Case 2: reasoning_content is set but content is empty/absent.
+                # Backfill content: if reasoning_content itself has think tags,
+                # extract only the visible portion; otherwise mirror as-is.
+                split_reasoning, visible = _split_reasoning_visible_text(reasoning)
+                if visible is not None:
+                    # reasoning_content had think tags — split it
+                    message["content"] = visible
+                    message["reasoning_content"] = split_reasoning or reasoning
+                else:
+                    # No think tags — mirror reasoning_content into content
+                    message["content"] = reasoning
+                changed = True
         delta = choice.get("delta")
         if isinstance(delta, dict):
             content = delta.get("content")
+            reasoning = delta.get("reasoning_content")
             if isinstance(content, str) and "</think>" in content.lower():
+                # Case 1: think tags leaked into delta content — strip them.
                 _, visible = _split_reasoning_visible_text(content)
                 if visible is not None:
                     delta["content"] = visible
                     changed = True
+            elif isinstance(reasoning, str) and reasoning and not content:
+                # Case 2: delta has reasoning_content but no content — mirror it.
+                delta["content"] = reasoning
+                changed = True
     return changed
 
 
@@ -18508,7 +18953,20 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 
     body_peek = await request.body()
 
-    target_host = TABBY_HOST
+    # Registry-aware backend selection for the catch-all native route.
+    # Prefer tabby when it exists and is enabled (zero behavior change for
+    # today's deployment).  When tabby is absent or disabled, fall back to
+    # the highest-priority enabled chat-capable backend from LLM_BACKEND_HOSTS.
+    _tabby_cfg = (config.get("backends") or {}).get("tabby")
+    _tabby_present_and_enabled = isinstance(_tabby_cfg, Mapping) and bool_from_config(
+        _tabby_cfg.get("enabled"), True
+    ) and "tabby" in LLM_BACKEND_HOSTS
+    if _tabby_present_and_enabled:
+        target_host = TABBY_HOST
+    else:
+        # tabby absent or disabled — pick the highest-priority chat-capable backend.
+        _fallback_id = _highest_priority_chat_backend()
+        target_host = LLM_BACKEND_HOSTS[_fallback_id] if _fallback_id else TABBY_HOST
 
     target_service_for_admission = backend_for_host(target_host)
     if target_service_for_admission:
@@ -18557,7 +19015,10 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         url += f"?{request.url.query}"
 
     body = body_peek  # Already read above for model detection
-    target_service = backend_for_host(target_host) or "kobold"
+    # backend_for_host resolves known hosts; for an unknown host (shouldn't
+    # happen given the registry-derived target above) we fall back to the
+    # highest-priority chat backend id rather than a bare literal.
+    target_service = backend_for_host(target_host) or _highest_priority_chat_backend() or "kobold"
     headers = prepare_downstream_headers(
         request.headers,
         auth_context,

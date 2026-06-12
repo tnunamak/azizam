@@ -412,13 +412,36 @@ def show_response_from_model_summary(summary: Mapping[str, Any]) -> dict[str, An
             "general.quantization_version": details["quantization_level"],
         }
 
+    model_info = dict(model_info)
+    context_window = _positive_int(
+        summary.get("context_window")
+        or summary.get("context_length")
+        or summary.get("max_context_tokens")
+        or summary.get("n_ctx")
+    )
+    if context_window is not None:
+        has_context_length = any(
+            str(key).lower() == "context_length"
+            or str(key).lower().endswith(".context_length")
+            for key in model_info
+        )
+        if not has_context_length:
+            architecture = str(
+                model_info.get("general.architecture") or details.get("family") or "general"
+            ).strip() or "general"
+            model_info[f"{architecture}.context_length"] = context_window
+
+    parameters = str(summary.get("parameters") or "")
+    if context_window is not None and "num_ctx" not in parameters.split():
+        parameters = (parameters.rstrip() + f"\nnum_ctx {context_window}").lstrip()
+
     return {
         "license": summary.get("license", ""),
         "modelfile": summary.get("modelfile") or f"FROM {name}",
-        "parameters": summary.get("parameters", ""),
+        "parameters": parameters,
         "template": summary.get("template", ""),
         "details": details,
-        "model_info": dict(model_info),
+        "model_info": model_info,
         "capabilities": summary.get("capabilities") or ["completion"],
     }
 
@@ -503,6 +526,14 @@ _OLLAMA_OPTIONS_NATIVE_ONLY = frozenset(
         "min_p",
     }
 )
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
 
 
 def _apply_options(canonical: dict[str, Any], options: Any) -> None:

@@ -155,3 +155,58 @@ Rough tiers by tractability:
 6. **Machine-specific absolute paths** (tabbyapi configs, ComfyUI output,
    gpu_budget.sh, Daisy paths): config/env injection, prerequisite for any
    non-Tim deployment.
+
+---
+
+## Migrated 2026-06-12
+
+**Branch:** `ideogram4-quality-tuning`  
+**Files:** `proxy.py` (surgical edits, ~+200 / -60 lines), `tests/test_registry_migration.py` (new, 53 tests)
+
+### Findings addressed (tier-2 registry migration)
+
+| Audit # | Location | What was fixed |
+|---------|----------|---------------|
+| #9 (cross/routing) | proxy.py:329–365 | `LLM_BACKEND_HOSTS` is no longer a closed literal `{kobold, tabby}` dict. `_build_llm_backend_hosts()` derives it from `config["backends"]` (enabled + chat/completions capable, excluding litellm substrate). Identical output for today's config. |
+| #10 (cross/routing) | proxy.py:412–418 | `backend_for_host()` fallback comment updated; caller (catch-all route) uses `_highest_priority_chat_backend()` instead of bare literal `"kobold"`. |
+| #11 (cross/routing) | proxy.py:18953–18975 | Catch-all native route: prefers tabby when present+enabled (zero behavior change); when tabby absent/disabled, selects highest-priority enabled chat-capable backend via `_highest_priority_chat_backend()`. |
+| #12 (cross/routing) | proxy.py:420–440 | `_highest_priority_chat_backend()` added: reads priority field from `config["backends"]`, lower number wins (registry convention). |
+| #24 (cross/health) | proxy.py:3000–3030 | `check_service_health(service_id)` added: generic async probe reading host/port/health_endpoint/timeout from `config["backends"]`. Timeout capped at `HEALTH_CHECK_TIMEOUT` to prevent long TTS timeouts from leaking. |
+| #26 (tabby/health) | proxy.py:3033 | `check_tabby_health()` delegates to `check_service_health("tabby")`. |
+| #31 (embeddings/health) | proxy.py:3040 | `check_embeddings_health()` delegates to `check_service_health("embeddings")`. |
+| #38 (tts/health) | proxy.py:3077 | `check_tts_health()` delegates to `check_service_health("tts")`. |
+| #45 (stt/health) | proxy.py:3211 | `check_stt_health()` delegates to `check_service_health("stt")`. |
+| #53 (comfyui/health) | proxy.py:3608 | `check_comfy_health()` delegates to `check_service_health("comfyui")` — uses `/system_stats` from registry. |
+| #65 (kobold/health) | proxy.py:720–730 | Inline kobold health check in `get_active_backend()` replaced by `check_service_health("kobold")`. |
+| #70-partial (cross/routing) | proxy.py:441–463, 2685–2714 | `vision_capable_llm_backends()` helper added: membership query over `LLM_BACKEND_HOSTS` filtered by "vision" capability, ordered by priority. Vision gate in `_prepare_litellm_local_llm_request()` uses this instead of literal `active == "tabby"`. kobold mmproj/swap orchestration untouched. |
+
+### Health endpoint verification
+
+All health endpoints now come from `proxy_config.yml` → `build_service_registry_seed()` → `apply_service_registry_to_config()` projection. Values confirmed against live seed:
+
+| Backend | health_endpoint (in registry) |
+|---------|------------------------------|
+| tabby | `/v1/models` |
+| kobold | `/v1/models` (was defaulting to `/api/v1/model` before this change) |
+| tts | `/health` |
+| stt | `/health` |
+| embeddings | `/health` |
+| comfyui | `/system_stats` |
+
+No backfill was needed — `proxy_config.yml` already seeded `health_endpoint` for every backend.
+
+### What remains (not addressed in this pass)
+
+- **Lifecycle tier** (`proxy.py` model-swap systemd orchestration, tabby
+  load/unload protocol, idle timers, pgrep mmproj discovery): genuinely
+  service-shaped behavior requiring a `lifecycle` registry schema.
+- **`status_endpoint.py` process-name lists** (lines 80-85): hardcoded
+  service names for process presence checks — needs a `process_name` field
+  in the registry.
+- **`backend_supports()` reads proxy_config.yml capabilities** (proxy.py:349-350):
+  already reads `config["backends"]` (post-projection) so this is actually
+  resolved at runtime; no code change needed.
+- **`VISION_MODEL_PATTERNS`** (proxy.py:546-564): name-substring gate, unrelated
+  to this tier.
+- **`status_endpoint.py` swap-lock keys and bmap literals**: firehose_render.py
+  tier (display layer, not routing).

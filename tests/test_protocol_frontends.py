@@ -913,6 +913,7 @@ class OllamaTagsAndErrorTests(unittest.TestCase):
                 "quantization_level": "Q4_K_M",
                 "template": "{{ .Prompt }}",
                 "capabilities": ["completion", "tools"],
+                "context_window": 102400,
             }
         )
         self.assertEqual(out["modelfile"], "FROM llama3:8b")
@@ -920,6 +921,8 @@ class OllamaTagsAndErrorTests(unittest.TestCase):
         self.assertEqual(out["details"]["family"], "llama")
         self.assertEqual(out["capabilities"], ["completion", "tools"])
         self.assertEqual(out["model_info"]["general.architecture"], "llama")
+        self.assertEqual(out["model_info"]["llama.context_length"], 102400)
+        self.assertIn("num_ctx 102400", out["parameters"])
 
     def test_ps_response_from_summaries(self) -> None:
         out = oll.ps_response_from_model_summaries(

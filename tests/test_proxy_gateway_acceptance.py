@@ -173,6 +173,7 @@ class _FakeLiteLLMModelsResponse:
                         "id": "assistant-default",
                         "object": "model",
                         "owned_by": "litellm",
+                        "context_window": 102400,
                     }
                 ],
             }
@@ -442,8 +443,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(len(activations), 1)
         backend, model, mmproj = activations[0]
         self.assertEqual(backend, "kobold")
-        self.assertTrue(model and model.endswith("Qwen3.6-27B-UD-Q4_K_XL.gguf"))
-        self.assertIsNone(mmproj)
+        self.assertEqual(model, proxy.ROLES["default"]["model"])
+        self.assertEqual(mmproj, proxy.ROLES["default"]["mmproj"])
         forwarded = json.loads(calls[0].body.decode())
         self.assertEqual(forwarded["model"], "default")
         self.assertNotIn("reasoning_effort", forwarded)
@@ -728,6 +729,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertIn("assistant-default", ids)
         self.assertIn("image.generate.test", ids)
         self.assertNotIn("default", ids)
+        assistant = next(item for item in payload["data"] if item["id"] == "assistant-default")
+        self.assertEqual(assistant["context_window"], 102400)
         self.assertEqual(payload["x_ai_gateway_llm_execution"], "litellm")
         self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/models")
 
@@ -1503,6 +1506,7 @@ class TestAnthropicAndOllamaRoutes(unittest.TestCase):
                 "family": "llama",
                 "parameter_size": "8B",
                 "quantization_level": "Q4_K_M",
+                "context_window": 8192,
             }
         ]
         with self._patch_auth_open(), patch.object(
@@ -1521,6 +1525,8 @@ class TestAnthropicAndOllamaRoutes(unittest.TestCase):
 
         self.assertEqual(show.status_code, 200, show.text)
         self.assertEqual(show.json()["details"]["family"], "llama")
+        self.assertEqual(show.json()["model_info"]["llama.context_length"], 8192)
+        self.assertIn("num_ctx 8192", show.json()["parameters"])
         self.assertEqual(ps.status_code, 200, ps.text)
         self.assertEqual(ps.json()["models"][0]["model"], "llama3:8b")
         self.assertEqual(version.status_code, 200, version.text)
