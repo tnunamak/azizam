@@ -2079,6 +2079,52 @@ class AdminServiceCrudTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"]["code"], "invalid_service")
 
+    def test_patch_full_fidelity_fields_accepted(self) -> None:
+        """PATCH accepts all full-fidelity fields (health_endpoint, timeout,
+        resources, note, native_passthrough, protocol, role, priority) and
+        they appear in the returned service_registry config."""
+        client, _ = _make_client()
+        client.post(
+            "/admin/api/operator/services",
+            json={"name": "emb", "base_url": "http://127.0.0.1:5061/v1"},
+            headers=_auth(),
+        )
+        resp = client.patch(
+            "/admin/api/operator/services/emb",
+            json={
+                "base_url": "http://127.0.0.1:5061/v1",
+                "health_endpoint": "/health",
+                "timeout": 120,
+                "protocol": "openai-compatible",
+                "native_passthrough": True,
+                "capabilities": ["openai", "embeddings"],
+                "role": "required",
+                "priority": 100,
+                "note": "Local embedding backend",
+                "resources": {
+                    "duration_class": "interactive",
+                    "gpu_required": False,
+                    "max_parallel": 4,
+                    "vram_gb_estimate": 0,
+                },
+            },
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        svc = resp.json()["service_registry"]["services"]["emb"]
+        cfg = svc["config"]
+        res = cfg.get("resources") or {}
+
+        self.assertEqual(cfg.get("health_endpoint"), "/health")
+        self.assertEqual(cfg.get("timeout"), 120)
+        self.assertTrue(cfg.get("native_passthrough"))
+        self.assertEqual(cfg.get("note"), "Local embedding backend")
+        self.assertEqual(res.get("duration_class"), "interactive")
+        self.assertEqual(res.get("max_parallel"), 4)
+        self.assertEqual(res.get("gpu_required"), False)
+        self.assertEqual(svc.get("role"), "required")
+        self.assertEqual(svc.get("priority"), 100)
+
 
 class AdminServicePresetsTests(unittest.TestCase):
     def test_presets_endpoint_returns_list_with_custom_first(self) -> None:

@@ -265,6 +265,31 @@ omitted); `base_url`/`host` are optional when doing a metadata-only edit (name,
 enabled, note — the only fields allowed for managed-substrate rows). Accepts
 `models` list with same shape as POST.
 
+Full field list accepted by PATCH (all optional in partial edits):
+
+**Connection**: `name`, `base_url` (or `host`+`port`+`base_path`),
+`api_key_env` (env var name only, never a key value), `protocol`
+(`"openai-compatible"`, `"openai"`, `"comfyui"`, or `null`/`""`),
+`health_endpoint`, `timeout` (integer seconds).
+
+**Routing**: `capabilities` (list of strings; canonical values: `chat`,
+`completions`, `vision`, `embeddings`, `image`, `audio`, `speech`),
+`native_passthrough` (boolean — send directly to backend, bypassing LiteLLM
+substrate), `models` (list of `{ public, upstream }` mappings, same shape as
+POST).
+
+**Admission / Advanced**: `role` (`"required"`, `"optional"`, `"standby"`),
+`priority` (integer, lower = preferred, default 100), `note` (string),
+`resources` (object: `gpu_required` bool, `max_parallel` int, `vram_gb_estimate`
+number, `duration_class` `"interactive"|"batch"`).
+
+**Top-level**: `enabled` (boolean).
+
+Unknown config keys in the existing record (e.g. `model_id`, custom execution
+fields) are **never dropped** by a partial PATCH — the merge in
+`AdminSQLiteStore.update_service` flattens only the fields it models; all other
+keys survive verbatim from the stored config.
+
 `200` → `{ "service_registry": { … } }`
 
 `403 service_not_editable` only for managed-substrate rows (`litellm`) when

@@ -869,7 +869,138 @@ function AddServiceDialogContent({
 //
 // Managed substrate rows (editable=false): show only name/enabled/note with an
 // explanation that endpoint/protocol are managed by the gateway.
-// All other rows: full form.
+// All other rows: full-fidelity form with all config fields.
+
+// ---------------------------------------------------------------------------
+// Edit form state — richer than the Add form
+
+interface EditFormState {
+  // Connection
+  name: string;
+  base_url: string;
+  api_key_env: string;
+  protocol: string;
+  health_endpoint: string;
+  timeout: string;
+  // Routing
+  capabilities: string[];
+  native_passthrough: boolean;
+  // Admission (advanced)
+  role: string;
+  priority: string;
+  gpu_required: boolean;
+  max_parallel: string;
+  vram_gb_estimate: string;
+  duration_class: string;
+  note: string;
+  // Top-level
+  enabled: boolean;
+}
+
+// Canonical capability list — mirrors _CAPABILITY_CHOICES in service_registry.py
+const CAPABILITY_CHOICES = [
+  "chat",
+  "completions",
+  "vision",
+  "embeddings",
+  "image",
+  "audio",
+  "speech",
+] as const;
+
+// Valid protocol values accepted by the backend normalizer
+const PROTOCOL_OPTIONS = [
+  { value: "", label: "— (none)" },
+  { value: "openai-compatible", label: "OpenAI-compatible" },
+  { value: "openai", label: "OpenAI" },
+  { value: "comfyui", label: "ComfyUI" },
+];
+
+// Role values per registry semantics
+const ROLE_OPTIONS = [
+  { value: "required", label: "Required — gateway will error if unavailable" },
+  { value: "optional", label: "Optional — gateway routes around if unavailable" },
+  { value: "standby", label: "Standby — only used when explicitly requested" },
+];
+
+const DURATION_CLASS_OPTIONS = [
+  { value: "interactive", label: "Interactive (low latency)" },
+  { value: "batch", label: "Batch (throughput)" },
+];
+
+/** Compose a base_url display string from host/port/base_path — inverse of split_base_url. */
+function composeBaseUrl(config: Service["config"]): string {
+  if (config.base_url) return config.base_url;
+  if (config.host) {
+    const scheme = config.port === 443 ? "https" : "http";
+    const port = config.port ? `:${config.port}` : "";
+    const path = config.base_path ?? "";
+    return `${scheme}://${config.host}${port}${path}`;
+  }
+  return "";
+}
+
+/** Read the api_key env var name from wherever the record stores it — config or secret_refs. */
+function extractApiKeyEnv(service: Service): string {
+  // api_key_env is a secret reference key (_env suffix), so split_secret_refs
+  // passes it through into the safe config dict (not secret_refs).
+  if (service.config.api_key_env) return String(service.config.api_key_env);
+  // Fallback: some older records might store it under secret_refs
+  const refs = service.secret_refs ?? {};
+  for (const key of Object.keys(refs)) {
+    if (key.toLowerCase().includes("api_key")) return key;
+  }
+  return "";
+}
+
+function serviceToEditForm(service: Service): EditFormState {
+  const cfg = service.config;
+  const res = cfg.resources ?? {};
+  return {
+    name: service.name,
+    base_url: composeBaseUrl(cfg),
+    api_key_env: extractApiKeyEnv(service),
+    protocol: cfg.protocol ?? "",
+    health_endpoint: cfg.health_endpoint ?? "",
+    timeout: cfg.timeout != null ? String(cfg.timeout) : "",
+    capabilities: [...(service.capabilities ?? [])],
+    native_passthrough: cfg.native_passthrough ?? false,
+    role: service.role ?? "required",
+    priority: service.priority != null ? String(service.priority) : "100",
+    gpu_required: Boolean(res.gpu_required),
+    max_parallel: res.max_parallel != null ? String(res.max_parallel) : "",
+    vram_gb_estimate: res.vram_gb_estimate != null ? String(res.vram_gb_estimate) : "",
+    duration_class: String(res.duration_class ?? "interactive"),
+    note: cfg.note ?? "",
+    enabled: service.enabled,
+  };
+}
+
+function editFormToApiBody(form: EditFormState): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    name: form.name.trim(),
+    base_url: form.base_url.trim(),
+    enabled: form.enabled,
+    capabilities: form.capabilities,
+    native_passthrough: form.native_passthrough,
+    role: form.role,
+  };
+  if (form.api_key_env.trim()) body.api_key_env = form.api_key_env.trim();
+  if (form.protocol) body.protocol = form.protocol;
+  if (form.health_endpoint.trim()) body.health_endpoint = form.health_endpoint.trim();
+  if (form.timeout.trim()) body.timeout = parseInt(form.timeout, 10);
+  if (form.priority.trim()) body.priority = parseInt(form.priority, 10);
+  if (form.note.trim()) body.note = form.note.trim();
+
+  // Build resources sub-object — only include what's non-empty
+  const resources: Record<string, unknown> = { gpu_required: form.gpu_required };
+  if (form.max_parallel.trim()) resources.max_parallel = parseInt(form.max_parallel, 10);
+  if (form.vram_gb_estimate.trim()) resources.vram_gb_estimate = parseFloat(form.vram_gb_estimate);
+  if (form.duration_class) resources.duration_class = form.duration_class;
+  body.resources = resources;
+
+  return body;
+}
 
 function EditServiceDialog({
   service,
@@ -904,24 +1035,30 @@ function EditServiceDialogContent({
 }) {
   const managed = isManagedSubstrate(service);
 
-  const [form, setForm] = useState<ServiceFormState>(() => ({
-    name: service.name,
-    preset: "openai-compatible",
-    base_url: service.config.base_url ?? "",
-    api_key_env: "",
-  }));
+  // Full edit form state (non-managed rows)
+  const [form, setForm] = useState<EditFormState>(() => serviceToEditForm(service));
   // Managed-row only fields
   const [managedName, setManagedName] = useState(service.name);
   const [managedEnabled, setManagedEnabled] = useState(service.enabled);
   const [formError, setFormError] = useState<string | null>(null);
   const [probe, setProbe] = useState<TestProbe | null>(null);
   const [testing, setTesting] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const { data: presets = [] } = useQuery({
-    queryKey: queryKeys.servicePresets,
-    queryFn: api.services.presets,
-    enabled: !managed,
-  });
+  function set<K extends keyof EditFormState>(key: K) {
+    return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+      setForm((prev) => ({ ...prev, [key]: e.target.value }));
+    };
+  }
+
+  function toggleCapability(cap: string) {
+    setForm((prev) => ({
+      ...prev,
+      capabilities: prev.capabilities.includes(cap)
+        ? prev.capabilities.filter((c) => c !== cap)
+        : [...prev.capabilities, cap],
+    }));
+  }
 
   const save = useMutation({
     mutationFn: () => {
@@ -931,7 +1068,7 @@ function EditServiceDialogContent({
           enabled: managedEnabled,
         });
       }
-      return api.services.edit(service.id, formToApiBody(form));
+      return api.services.edit(service.id, editFormToApiBody(form));
     },
     onSuccess: onSaved,
     onError: (err) => setFormError(errorMessage(err)),
@@ -964,9 +1101,7 @@ function EditServiceDialogContent({
     <DialogContent>
       <form onSubmit={handleSubmit}>
         <DialogHeader>
-          <DialogTitle>
-            {managed ? `Edit ${service.name}` : `Edit ${service.name}`}
-          </DialogTitle>
+          <DialogTitle>Edit {service.name}</DialogTitle>
           <DialogDescription>
             {managed
               ? "This is the managed LiteLLM substrate. The endpoint and protocol are derived by the gateway and cannot be changed here."
@@ -1004,16 +1139,295 @@ function EditServiceDialogContent({
               )}
             </div>
           ) : (
-            <ServiceForm
-              value={form}
-              onChange={setForm}
-              disabled={save.isPending}
-              error={formError}
-              probeResult={probe}
-              onTest={() => void handleTest()}
-              testing={testing}
-              presets={presets}
-            />
+            <div className="flex flex-col gap-6">
+              {/* ── Connection ──────────────────────────────── */}
+              <div className="flex flex-col gap-4">
+                <p className="text-vf-micro text-vf-muted font-semibold uppercase tracking-wide">
+                  Connection
+                </p>
+
+                <Field label="Name" required>
+                  <Input
+                    value={form.name}
+                    onChange={set("name")}
+                    disabled={save.isPending}
+                    autoFocus
+                  />
+                </Field>
+
+                <Field
+                  label="Base URL"
+                  required
+                  help="Full URL including scheme, host, port, and path."
+                >
+                  <Input
+                    value={form.base_url}
+                    onChange={set("base_url")}
+                    placeholder="http://127.0.0.1:8000/v1"
+                    disabled={save.isPending}
+                  />
+                </Field>
+
+                <div className="flex flex-col gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    loading={testing}
+                    disabled={!form.base_url}
+                    onClick={() => void handleTest()}
+                  >
+                    Test connection
+                  </Button>
+                  {probe !== null && <ProbeResultRow probe={probe} />}
+                </div>
+
+                <Field
+                  label="API key env var"
+                  help="Name of an env variable on the gateway host — never the key itself."
+                >
+                  <Input
+                    value={form.api_key_env}
+                    onChange={set("api_key_env")}
+                    placeholder="e.g. VLLM_API_KEY"
+                    disabled={save.isPending}
+                  />
+                </Field>
+
+                <Field label="Protocol">
+                  <Select
+                    value={form.protocol}
+                    onChange={set("protocol")}
+                    disabled={save.isPending}
+                  >
+                    {PROTOCOL_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+
+                <Field
+                  label="Health endpoint"
+                  help="Path probed to check reachability (e.g. /health or /v1/models)."
+                >
+                  <Input
+                    value={form.health_endpoint}
+                    onChange={set("health_endpoint")}
+                    placeholder="/health"
+                    disabled={save.isPending}
+                  />
+                </Field>
+
+                <Field label="Timeout (seconds)">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={form.timeout}
+                    onChange={set("timeout")}
+                    placeholder="120"
+                    disabled={save.isPending}
+                  />
+                </Field>
+              </div>
+
+              {/* ── Routing ─────────────────────────────────── */}
+              <div className="flex flex-col gap-4">
+                <p className="text-vf-micro text-vf-muted font-semibold uppercase tracking-wide">
+                  Routing
+                </p>
+
+                <fieldset className="flex flex-col gap-2">
+                  <legend className="text-vf-small text-vf-text font-medium mb-1">
+                    Capabilities
+                  </legend>
+                  <div className="flex flex-wrap gap-x-4 gap-y-2">
+                    {CAPABILITY_CHOICES.map((cap) => (
+                      <label key={cap} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={form.capabilities.includes(cap)}
+                          onChange={() => toggleCapability(cap)}
+                          disabled={save.isPending}
+                          className="accent-vf-accent h-4 w-4"
+                        />
+                        <span className="text-vf-small text-vf-text">
+                          {capabilityLabel(cap)}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-vf-small text-vf-text font-medium">
+                      Native passthrough
+                    </span>
+                    <span className="text-vf-micro text-vf-muted">
+                      Send requests straight to this backend instead of through the LiteLLM substrate.
+                    </span>
+                  </div>
+                  <Switch
+                    checked={form.native_passthrough}
+                    onCheckedChange={(checked) =>
+                      setForm((prev) => ({ ...prev, native_passthrough: checked }))
+                    }
+                    disabled={save.isPending}
+                    aria-label="Native passthrough"
+                  />
+                </div>
+
+                <p className="text-vf-small text-vf-muted">
+                  Model mappings are managed separately —{" "}
+                  <button
+                    type="button"
+                    className="text-vf-accent underline-offset-2 hover:underline"
+                    onClick={() => {
+                      onOpenChange(false);
+                      // The Models dialog is opened by the parent via setModelsTarget;
+                      // close this dialog and the parent will route to Models on the same service.
+                    }}
+                  >
+                    open Models…
+                  </button>
+                </p>
+              </div>
+
+              {/* ── Enabled ─────────────────────────────────── */}
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-vf-small text-vf-text font-medium">Enabled</span>
+                <Switch
+                  checked={form.enabled}
+                  onCheckedChange={(checked) =>
+                    setForm((prev) => ({ ...prev, enabled: checked }))
+                  }
+                  disabled={save.isPending}
+                  aria-label="Enable or disable this service"
+                />
+              </div>
+
+              {/* ── Advanced (admission) ─────────────────────── */}
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  className="text-vf-small text-vf-muted hover:text-vf-text flex items-center gap-1.5 transition-colors"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  aria-expanded={showAdvanced}
+                >
+                  <span
+                    className={`inline-block transition-transform ${showAdvanced ? "rotate-90" : ""}`}
+                    aria-hidden
+                  >
+                    ▶
+                  </span>
+                  Advanced
+                </button>
+
+                {showAdvanced && (
+                  <div className="flex flex-col gap-4 pl-4 pt-2">
+                    <fieldset className="flex flex-col gap-2">
+                      <legend className="text-vf-small text-vf-text font-medium mb-1">
+                        Role
+                      </legend>
+                      <div className="flex flex-col gap-2">
+                        {ROLE_OPTIONS.map((opt) => (
+                          <label key={opt.value} className="flex items-start gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="role"
+                              value={opt.value}
+                              checked={form.role === opt.value}
+                              onChange={set("role")}
+                              disabled={save.isPending}
+                              className="accent-vf-accent mt-0.5 h-4 w-4 shrink-0"
+                            />
+                            <span className="text-vf-small text-vf-text">{opt.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+
+                    <Field label="Priority" help="Lower numbers are preferred (default 100).">
+                      <Input
+                        type="number"
+                        value={form.priority}
+                        onChange={set("priority")}
+                        placeholder="100"
+                        disabled={save.isPending}
+                      />
+                    </Field>
+
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-vf-small text-vf-text font-medium">GPU required</span>
+                      <Switch
+                        checked={form.gpu_required}
+                        onCheckedChange={(checked) =>
+                          setForm((prev) => ({ ...prev, gpu_required: checked }))
+                        }
+                        disabled={save.isPending}
+                        aria-label="GPU required"
+                      />
+                    </div>
+
+                    <Field label="Max parallel" help="Maximum concurrent requests to this backend.">
+                      <Input
+                        type="number"
+                        min={1}
+                        value={form.max_parallel}
+                        onChange={set("max_parallel")}
+                        placeholder="4"
+                        disabled={save.isPending}
+                      />
+                    </Field>
+
+                    <Field label="VRAM estimate (GB)">
+                      <Input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={form.vram_gb_estimate}
+                        onChange={set("vram_gb_estimate")}
+                        placeholder="0"
+                        disabled={save.isPending}
+                      />
+                    </Field>
+
+                    <Field label="Duration class">
+                      <Select
+                        value={form.duration_class}
+                        onChange={set("duration_class")}
+                        disabled={save.isPending}
+                      >
+                        {DURATION_CLASS_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+
+                    <Field label="Note">
+                      <textarea
+                        value={form.note}
+                        onChange={set("note")}
+                        rows={3}
+                        disabled={save.isPending}
+                        placeholder="Optional operator note about this service."
+                        className="border-vf-border bg-vf-surface focus:ring-vf-accent/30 text-vf-small text-vf-text placeholder:text-vf-subtle w-full resize-none rounded-md border px-3 py-2 focus:ring-2 focus:outline-none disabled:opacity-50"
+                      />
+                    </Field>
+                  </div>
+                )}
+              </div>
+
+              {formError && (
+                <p role="alert" className="text-vf-small text-vf-bad">
+                  {formError}
+                </p>
+              )}
+            </div>
           )}
         </DialogBody>
         <DialogFooter>

@@ -897,3 +897,121 @@ def test_provider_presets_custom_is_first() -> None:
     presets = service_registry.PROVIDER_PRESETS
     assert presets[0]["id"] == "openai-compatible"
     assert presets[0]["label"].lower().startswith("openai")
+
+
+# ---------------------------------------------------------------------------
+# service_form_to_raw — timeout, resources, note round-trip
+# ---------------------------------------------------------------------------
+
+def test_service_form_to_raw_preserves_timeout() -> None:
+    """timeout field is accepted and stored as an integer."""
+    raw = service_registry.service_form_to_raw(
+        {"name": "x", "base_url": "http://h:1/v1", "timeout": 120}
+    )
+    assert raw["timeout"] == 120
+
+
+def test_service_form_to_raw_preserves_timeout_string() -> None:
+    """timeout can arrive as a string (form submission) and is coerced to int."""
+    raw = service_registry.service_form_to_raw(
+        {"name": "x", "base_url": "http://h:1/v1", "timeout": "60"}
+    )
+    assert raw["timeout"] == 60
+
+
+def test_service_form_to_raw_preserves_resources() -> None:
+    """resources dict (gpu_required, max_parallel, vram_gb_estimate, duration_class) round-trips."""
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "embeddings",
+            "base_url": "http://127.0.0.1:5061/v1",
+            "resources": {
+                "gpu_required": False,
+                "max_parallel": 4,
+                "vram_gb_estimate": 0,
+                "duration_class": "interactive",
+            },
+        }
+    )
+    assert raw["resources"] == {
+        "gpu_required": False,
+        "max_parallel": 4,
+        "vram_gb_estimate": 0,
+        "duration_class": "interactive",
+    }
+
+
+def test_service_form_to_raw_preserves_health_endpoint() -> None:
+    """health_endpoint is passed through explicitly."""
+    raw = service_registry.service_form_to_raw(
+        {"name": "x", "base_url": "http://h:1/v1", "health_endpoint": "/health"}
+    )
+    assert raw["health_endpoint"] == "/health"
+
+
+def test_service_form_to_raw_preserves_note() -> None:
+    """note is passed through as a string."""
+    raw = service_registry.service_form_to_raw(
+        {"name": "x", "base_url": "http://h:1/v1", "note": "on-demand backend"}
+    )
+    assert raw["note"] == "on-demand backend"
+
+
+def test_full_embeddings_record_round_trips_through_form_to_raw() -> None:
+    """The example 'embeddings' service from the spec round-trips losslessly.
+
+    Verifies that all fields from the live DB record survive the
+    service_form_to_raw -> upsert_service_in_registry pipeline.
+    """
+    form = {
+        "name": "embeddings",
+        "base_url": "http://127.0.0.1:5061/v1",
+        "health_endpoint": "/health",
+        "timeout": 120,
+        "protocol": "openai-compatible",
+        "native_passthrough": True,
+        "capabilities": ["openai", "embeddings"],
+        "role": "required",
+        "priority": 100,
+        "note": "Local embedding backend",
+        "resources": {
+            "duration_class": "interactive",
+            "gpu_required": False,
+            "max_parallel": 4,
+            "vram_gb_estimate": 0,
+        },
+        "models": [{"public": "nomic-embed-text-v1.5", "upstream": "nomic-embed-text-v1.5"}],
+    }
+    raw = service_registry.service_form_to_raw(form)
+
+    assert raw["host"] == "127.0.0.1"
+    assert raw["port"] == 5061
+    assert raw["base_path"] == "/v1"
+    assert raw["health_endpoint"] == "/health"
+    assert raw["timeout"] == 120
+    assert raw["protocol"] == "openai-compatible"
+    assert raw["native_passthrough"] is True
+    assert raw["role"] == "required"
+    assert raw["priority"] == 100
+    assert raw["note"] == "Local embedding backend"
+    assert raw["resources"]["gpu_required"] is False
+    assert raw["resources"]["max_parallel"] == 4
+    assert raw["resources"]["duration_class"] == "interactive"
+    assert raw["models"] == [
+        {"model_group": "nomic-embed-text-v1.5", "upstream_model": "nomic-embed-text-v1.5"}
+    ]
+
+    # Upsert into a fresh registry — stored config must carry all fields.
+    seed = service_registry.build_service_registry_seed({"backends": {}})
+    registry, record = service_registry.upsert_service_in_registry(
+        seed, service_id="embeddings", raw=raw, source="ui"
+    )
+    cfg = record["config"]
+    assert cfg.get("health_endpoint") == "/health"
+    assert cfg.get("timeout") == 120
+    assert cfg.get("resources", {}).get("max_parallel") == 4
+    assert cfg.get("resources", {}).get("duration_class") == "interactive"
+    assert cfg.get("note") == "Local embedding backend"
+    assert cfg.get("native_passthrough") is True
+    assert record["role"] == "required"
+    assert record["priority"] == 100

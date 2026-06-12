@@ -127,11 +127,26 @@ export interface ServiceModelMapping {
   upstream_model: string;
 }
 
+export interface ServiceResources {
+  gpu_required?: boolean;
+  max_parallel?: number;
+  vram_gb_estimate?: number;
+  duration_class?: string;
+}
+
 export interface ServiceConfig {
   host?: string;
   port?: number;
+  base_path?: string;
   base_url?: string;
   execution_substrate?: string;
+  protocol?: string;
+  health_endpoint?: string;
+  timeout?: number;
+  native_passthrough?: boolean;
+  api_key_env?: string;
+  note?: string;
+  resources?: ServiceResources;
   models?: ServiceModelMapping[];
   [key: string]: unknown;
 }
@@ -151,8 +166,10 @@ export interface Service {
   enabled: boolean;
   editable: boolean;
   capabilities: string[];
+  role?: string;
+  priority?: number;
   config: ServiceConfig;
-  note?: string;
+  secret_refs?: Record<string, string>;
 }
 
 export interface ServiceRegistry {

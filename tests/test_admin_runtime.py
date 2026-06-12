@@ -822,5 +822,172 @@ class AdminOidcSettingsTests(unittest.TestCase):
         self.assertEqual(OIDC_PROVIDER_SETTING_KEY, "oidc_provider_config")
 
 
+class ServicePatchRoundTripTests(unittest.TestCase):
+    """PATCH /operator/services/{id} via AdminSQLiteStore.update_service.
+
+    These tests go through the real AdminSQLiteStore (not the FakeAdminStore)
+    to prove that a partial PATCH preserves all untouched fields — the merge
+    logic lives in AdminSQLiteStore.update_service, not in admin_api.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "admin.db"
+        admin_store.init_db(self.db)
+        self.store = AdminSQLiteStore(self.db)
+        self.ctx = AdminContext(subject="owner", roles=frozenset({"owner"}))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _seed_embeddings(self) -> None:
+        """Add the canonical 'embeddings' service from the spec example."""
+        self.store.add_service(
+            data={
+                "name": "embeddings",
+                "base_url": "http://127.0.0.1:5061/v1",
+                "health_endpoint": "/health",
+                "timeout": 120,
+                "protocol": "openai-compatible",
+                "native_passthrough": True,
+                "capabilities": ["openai", "embeddings"],
+                "role": "required",
+                "priority": 100,
+                "note": "Local embedding backend",
+                "resources": {
+                    "duration_class": "interactive",
+                    "gpu_required": False,
+                    "max_parallel": 4,
+                    "vram_gb_estimate": 0,
+                },
+                "models": [{"public": "nomic-embed-text-v1.5", "upstream": "nomic-embed-text-v1.5"}],
+            },
+            actor=self.ctx,
+        )
+
+    def test_partial_patch_preserves_health_endpoint_and_timeout(self) -> None:
+        """PATCH that only changes name must not lose health_endpoint or timeout."""
+        self._seed_embeddings()
+        registry = self.store.update_service(
+            service_id="embeddings",
+            data={"name": "embeddings-renamed"},
+            actor=self.ctx,
+        )
+        svc = registry["services"]["embeddings"]
+        cfg = svc["config"]
+        self.assertEqual(svc["name"], "embeddings-renamed")
+        self.assertEqual(cfg.get("health_endpoint"), "/health",
+                         "health_endpoint must survive a name-only PATCH")
+        self.assertEqual(cfg.get("timeout"), 120,
+                         "timeout must survive a name-only PATCH")
+
+    def test_partial_patch_preserves_resources(self) -> None:
+        """PATCH that only changes note must not lose resources sub-keys."""
+        self._seed_embeddings()
+        registry = self.store.update_service(
+            service_id="embeddings",
+            data={"note": "updated note"},
+            actor=self.ctx,
+        )
+        svc = registry["services"]["embeddings"]
+        cfg = svc["config"]
+        res = cfg.get("resources") or {}
+        self.assertEqual(res.get("max_parallel"), 4,
+                         "max_parallel must survive a note-only PATCH")
+        self.assertEqual(res.get("duration_class"), "interactive",
+                         "duration_class must survive a note-only PATCH")
+        self.assertEqual(res.get("gpu_required"), False,
+                         "gpu_required must survive a note-only PATCH")
+        self.assertEqual(cfg.get("note"), "updated note")
+
+    def test_partial_patch_preserves_api_key_env(self) -> None:
+        """api_key_env (a _ref key stored in config) survives a partial PATCH."""
+        self.store.add_service(
+            data={
+                "name": "keyed-svc",
+                "base_url": "http://h:9000/v1",
+                "api_key_env": "MY_BACKEND_KEY",
+            },
+            actor=self.ctx,
+        )
+        registry = self.store.update_service(
+            service_id="keyed-svc",
+            data={"timeout": 30},
+            actor=self.ctx,
+        )
+        svc = registry["services"]["keyed-svc"]
+        cfg = svc["config"]
+        self.assertEqual(cfg.get("api_key_env"), "MY_BACKEND_KEY",
+                         "api_key_env must survive a timeout-only PATCH")
+        self.assertEqual(cfg.get("timeout"), 30)
+
+    def test_full_patch_round_trip_preserves_all_spec_fields(self) -> None:
+        """The full 'embeddings' spec record survives a complete PATCH overwrite.
+
+        Sends every field (same values) and verifies they all come back intact,
+        proving there are no unmodeled fields that get silently dropped.
+        """
+        self._seed_embeddings()
+        full_patch = {
+            "name": "embeddings",
+            "base_url": "http://127.0.0.1:5061/v1",
+            "health_endpoint": "/health",
+            "timeout": 120,
+            "protocol": "openai-compatible",
+            "native_passthrough": True,
+            "capabilities": ["openai", "embeddings"],
+            "role": "required",
+            "priority": 100,
+            "note": "Local embedding backend",
+            "resources": {
+                "duration_class": "interactive",
+                "gpu_required": False,
+                "max_parallel": 4,
+                "vram_gb_estimate": 0,
+            },
+            "models": [{"public": "nomic-embed-text-v1.5", "upstream": "nomic-embed-text-v1.5"}],
+        }
+        registry = self.store.update_service(
+            service_id="embeddings",
+            data=full_patch,
+            actor=self.ctx,
+        )
+        svc = registry["services"]["embeddings"]
+        cfg = svc["config"]
+        res = cfg.get("resources") or {}
+
+        self.assertEqual(svc["name"], "embeddings")
+        self.assertEqual(svc["role"], "required")
+        self.assertEqual(svc["priority"], 100)
+        self.assertEqual(sorted(svc["capabilities"]), sorted(["openai", "embeddings"]))
+        self.assertEqual(cfg.get("health_endpoint"), "/health")
+        self.assertEqual(cfg.get("timeout"), 120)
+        self.assertTrue(cfg.get("native_passthrough"))
+        self.assertEqual(cfg.get("note"), "Local embedding backend")
+        self.assertEqual(res.get("duration_class"), "interactive")
+        self.assertEqual(res.get("gpu_required"), False)
+        self.assertEqual(res.get("max_parallel"), 4)
+        self.assertEqual(res.get("vram_gb_estimate"), 0)
+        stored_models = cfg.get("models") or []
+        model_groups = [m["model_group"] for m in stored_models]
+        self.assertIn("nomic-embed-text-v1.5", model_groups)
+
+    def test_patch_timeout_only_updates_timeout(self) -> None:
+        """PATCH with only timeout=60 must update timeout and leave other fields."""
+        self._seed_embeddings()
+        registry = self.store.update_service(
+            service_id="embeddings",
+            data={"timeout": 60},
+            actor=self.ctx,
+        )
+        svc = registry["services"]["embeddings"]
+        cfg = svc["config"]
+        self.assertEqual(cfg.get("timeout"), 60)
+        # Other fields must be intact
+        self.assertEqual(cfg.get("health_endpoint"), "/health")
+        self.assertEqual(cfg.get("native_passthrough"), True)
+        self.assertEqual(svc["role"], "required")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -787,6 +787,14 @@ class AdminSQLiteStore:
                 "protocol": existing_config.get("protocol"),
                 "native_passthrough": existing_config.get("native_passthrough"),
                 "models": existing_config.get("models"),
+                # Additional config fields that must survive a partial PATCH.
+                # Note: api_key_env lives in config (is_secret_reference_key passes
+                # it through split_secret_refs into the safe config dict).
+                "health_endpoint": existing_config.get("health_endpoint"),
+                "timeout": existing_config.get("timeout"),
+                "resources": existing_config.get("resources"),
+                "api_key_env": existing_config.get("api_key_env"),
+                "note": existing_config.get("note"),
             }
             # Drop None values so they don't override defaults downstream, then
             # overlay the caller-supplied partial data.

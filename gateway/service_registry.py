@@ -741,8 +741,15 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
             raw[key] = str(value).strip()
     if form.get("port") not in (None, ""):
         raw["port"] = int(form["port"])
+    if form.get("timeout") not in (None, ""):
+        raw["timeout"] = int(form["timeout"])
     if form.get("priority") not in (None, ""):
         raw["priority"] = int(form["priority"])
+
+    # resources is a nested dict; merge over any preset-derived defaults.
+    resources = form.get("resources")
+    if isinstance(resources, Mapping) and resources:
+        raw["resources"] = dict(resources)
 
     caps = normalize_string_list(form.get("capabilities"))
     if caps:
