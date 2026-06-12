@@ -116,6 +116,10 @@ class AdminStore(Protocol):
         self, *, app_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
+    def enable_app(
+        self, *, app_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None: ...
+
     def list_profiles(self) -> list[dict[str, Any]]: ...
 
     def get_profile(self, profile_id: str) -> dict[str, Any] | None: ...
@@ -976,6 +980,15 @@ def create_admin_router(
         active_credentials = [
             c for c in credentials if not c.get("revoked_at")
         ]
+        # Derive service up/total counts from the stored service registry.
+        # This is static config state; live connectivity is not probed here.
+        registry = store.get_service_registry()
+        services_map = registry.get("services") or {}
+        services_total = len(services_map)
+        services_up = sum(
+            1 for svc in services_map.values()
+            if isinstance(svc, dict) and svc.get("enabled", True)
+        )
         # "Things that want a look" — the operator's real landing list, derived
         # from the same data the detail tables show. Service health needs a live
         # status fetch this read-only endpoint doesn't do, so the JSON exposes
@@ -999,6 +1012,8 @@ def create_admin_router(
                 "runtime_profile_mappings": len(runtime_mappings),
                 "credentials": len(credentials),
                 "active_credentials": len(active_credentials),
+                "services_total": services_total,
+                "services_enabled": services_up,
             },
             "attention": attention,
             "runtime_profile_mappings": runtime_mappings,
@@ -1106,6 +1121,29 @@ def create_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         record = store.disable_app(app_id=app_id, actor=ctx)
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "app_not_found",
+                f"app {app_id!r} not found",
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK, content={"app": record}
+        )
+
+    @router.post("/apps/{app_id}/enable")
+    def enable_app(app_id: str, request: Request) -> JSONResponse:
+        """Re-enable a disabled App.
+
+        DELETE /apps/{id} is a one-way soft-disable. This endpoint is the undo
+        — the smallest honest fix that lets the optimistic-disable flow offer a
+        toast with an "Undo" action. Idempotent: enabling an already-active app
+        is a no-op that returns 200 and the current record.
+        """
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = store.enable_app(app_id=app_id, actor=ctx)
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,

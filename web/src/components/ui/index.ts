@@ -44,7 +44,22 @@ export {
   type IconButtonSize,
   type IconButtonVariant,
 } from "./icon-button";
-export { CheckIcon, ChevronDownIcon, CopyIcon, DotsIcon, XIcon } from "./icons";
+export {
+  AuditIcon,
+  AppsIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  CopyIcon,
+  DotsIcon,
+  ExternalLinkIcon,
+  MenuIcon,
+  OverviewIcon,
+  ProfilesIcon,
+  ServicesIcon,
+  SettingsIcon,
+  UsersIcon,
+  XIcon,
+} from "./icons";
 export { Input, type InputProps } from "./input";
 export {
   OverflowMenu,

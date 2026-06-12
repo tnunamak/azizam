@@ -13,7 +13,6 @@
 import { useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
-  QueryClientProvider,
   useMutation,
   useQuery,
   useQueryClient,
@@ -22,7 +21,6 @@ import {
 import {
   api,
   ApiError,
-  createQueryClient,
   queryKeys,
   type App,
   type AppKind,
@@ -65,7 +63,6 @@ import {
   SheetTitle,
   Skeleton,
   toast,
-  Toaster,
 } from "@/components/ui";
 
 // ---------------------------------------------------------------------------
@@ -116,22 +113,9 @@ interface RevealedKey {
 }
 
 // ---------------------------------------------------------------------------
-// Page shell (static export: everything is client-side)
+// The surface (QueryClientProvider + Toaster are in the admin layout)
 
 export default function AdminAppsPage() {
-  const [queryClient] = useState(createQueryClient);
-  return (
-    <QueryClientProvider client={queryClient}>
-      <AppsAndKeys />
-      <Toaster />
-    </QueryClientProvider>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// The surface
-
-function AppsAndKeys() {
   const queryClient = useQueryClient();
 
   const {
@@ -237,7 +221,42 @@ function AppsAndKeys() {
       );
       toast.success(`${serverApp.name} disabled`, {
         description: "Its keys stop working immediately.",
+        action: {
+          label: "Undo",
+          onClick: () => enableApp.mutate(serverApp),
+        },
       });
+    },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.apps }),
+  });
+
+  // Re-enable: the undo for optimistic disable.
+  const enableApp = useMutation({
+    mutationFn: (app: App) => api.apps.enable(app.id),
+    onMutate: async (app) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.apps });
+      const previous = queryClient.getQueryData<App[]>(queryKeys.apps);
+      queryClient.setQueryData<App[]>(queryKeys.apps, (rows) =>
+        rows?.map((row) =>
+          row.id === app.id ? { ...row, disabled_at: null } : row,
+        ),
+      );
+      return { previous };
+    },
+    onError: (error, app, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(queryKeys.apps, context.previous);
+      }
+      toast.error(`Couldn't re-enable ${app.name}`, {
+        description: errorMessage(error),
+      });
+    },
+    onSuccess: (serverApp) => {
+      queryClient.setQueryData<App[]>(queryKeys.apps, (rows) =>
+        rows?.map((row) => (row.id === serverApp.id ? serverApp : row)),
+      );
+      toast.success(`${serverApp.name} re-enabled`);
     },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.apps }),

@@ -347,6 +347,24 @@ class AdminSQLiteStore:
         )
         return self._enrich_app(record) if record is not None else None
 
+    def enable_app(
+        self, *, app_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None:
+        before = admin_store.get_app(app_id, path=self.path)
+        if before is None:
+            return None
+        record = admin_store.enable_app(app_id, path=self.path)
+        admin_store.record_audit(
+            "app.enable",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="app",
+            target_id=app_id,
+            metadata={"name": before.get("name")},
+            path=self.path,
+        )
+        return self._enrich_app(record) if record is not None else None
+
     def list_profiles(self) -> list[dict[str, Any]]:
         return [
             _profile_summary(record)

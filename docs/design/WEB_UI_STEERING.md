@@ -144,8 +144,84 @@ no `usr_`/`cred_` as cell text) and judges against this spec.
 - Playwright (python, existing venv) screenshot verification per surface.
 - Components must not import from `app/` (one-way dependency: app → ui).
 
+## Admin information architecture (binding)
+
+Seven flat, noun-named sections (Tailscale-calm; no nesting, no Title Case):
+
+| Route (`/ui/admin/…`) | Nav label | One job |
+|---|---|---|
+| `/` (overview) | Overview | "Does anything need me?" |
+| `/services` | Services | The upstream backends this gateway fronts |
+| `/apps` | Apps & keys | Who can call in (DONE — surface spec #1) |
+| `/profiles` | Profiles | What callers are allowed to reach |
+| `/users` | Users | The people, and default access for new ones |
+| `/audit` | Audit | Who changed what, when |
+| `/settings` | Settings | Sign-in, extensions, gateway-wide config |
+
+**Shell** (`web/src/app/admin/layout.tsx`): desktop ≥960px — fixed left
+sidebar 240px on `vf-surface-1` (content column stays on `vf-bg`): wordmark
+(text, brand voice) + micro kicker "admin" on top; nav items (icon + label,
+active = accent text + subtle accent-tinted background, `rounded-vf-sm`);
+bottom = signed-in email (small, muted), quiet links "Open portal" (`/me`)
+and "Sign out". Mobile — top bar (wordmark + menu IconButton opening the
+nav in a `Sheet`); content full-width. Content column: `max-w-[1080px]`,
+generous whitespace (px-6 md:px-10, py-8/12); every page starts with
+`SectionHeader`. Rhythm: section gap-8, intra-card gap-4; tables use
+`small` text with relaxed row height. No card-borders-everywhere: prefer
+spacing and single hairline rules (`vf-border`) over boxes.
+
+**Per-surface specs** (each list-first; create/edit = Dialog; destructive =
+overflow + ConfirmDialog; every state designed):
+
+- **Overview**: attention list from `GET /overview` (single source:
+  `derive_admin_attention`) — each item one row: tone dot/badge, plain-language
+  line, action Button-link to the owning section. Empty = "All quiet." (light
+  EmptyState, no box). Below: one quiet stat strip (services up/total, apps,
+  active keys — text, not dashboard tiles) and the 3 most recent audit rows
+  with "View all" → Audit. NOTHING else; resist dashboard-itis.
+- **Services**: DataTable — Service (EntityRef name; source badge `config`/
+  `ui` with lock for non-editable), Endpoint (host:port, mono small),
+  Capabilities (quiet badge row), Status (availability incl. overrides),
+  Enabled (Switch), ⋯ (Edit, Test connection, Detect models, Remove —
+  UI-source only). "Add service" Dialog: provider preset Select, name, base
+  URL, api-key ENV-REF field (never secret values), advanced in collapsed
+  disclosure. Honest apply: banner "Saved — restart the gateway to apply"
+  after writes (existing semantics). LiteLLM substrate config = read-only
+  mono viewer behind a disclosure, not a top-level table.
+- **Profiles**: DataTable — Profile (EntityRef), Access summary (e.g.
+  "4 models · chat, images" — derived, human), Apps using it (count), ⋯
+  (Edit, Duplicate?, Delete → typed-name ConfirmDialog; block/explain when
+  apps still reference it). Create/Edit Dialog mirrors the existing profile
+  form fields (models, workflows, protocols) progressively disclosed.
+  "Test access" disclosure wired to `POST /policy/simulate`: pick app +
+  model → allowed/denied with the actual reason. This is a trust feature —
+  make it visible but quiet.
+- **Users**: DataTable — User (EntityRef name/email), Role badge, Apps
+  (count), Created (RelativeTime). Below, a "Default access" group:
+  user-access-defaults (PUT) + runtime profile mappings (list + create/
+  disable) — these answer "what does a brand-new user get?"; copy must say
+  exactly that. No user CRUD (identities come from sign-in) — say so in the
+  empty/explainer copy.
+- **Audit**: reverse-chron DataTable — When (RelativeTime), Actor (EntityRef),
+  Action (sentence-case human phrase mapped from the event type, micro mono
+  raw type as the quiet detail), Target (EntityRef). Filter chips above the
+  table client-side (actor, action family). Row → Sheet with the full record
+  (mono JSON, CopyButton). `GET /audit?limit=`, newest first, "Load more".
+- **Settings**: grouped cards with SectionHeaders, in order: Sign-in (OIDC
+  config — status line + edit Dialog; never render secrets), Extensions
+  (package list + validate/enable flow), Media admission (the existing
+  override fields, explained in product language). Each group is independent;
+  no global save button.
+
+**Shared-file discipline for parallel agents**: the shell owns `layout.tsx`
++ nav; surface agents touch ONLY their own `web/src/app/admin/<section>/`
+directory. Library gaps are reported, never patched ad hoc; `components/ui`
+is frozen during a fan-out.
+
 ## Later (explicitly out of this increment)
 
-Portal surfaces, remaining admin sections, status page redesign, absorbing
-`status-page/` into `web/`, promoting `ui/` to `@vivid-fish/brand/react`,
-deleting Python renderers, canonical-route cutover.
+Portal surfaces, status page redesign, absorbing `status-page/` into
+`web/`, promoting `ui/` to `@vivid-fish/brand/react`, deleting Python
+renderers, canonical-route cutover (per-area flips: `/admin` first, then
+`/me`; `basePath` `''` + gateway serves export at canonical routes +
+`/ui/*` redirects).

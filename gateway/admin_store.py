@@ -905,6 +905,27 @@ def disable_app(
     return _row_to_dict(row)
 
 
+def enable_app(
+    app_id: str, *, path: Path = DB_PATH
+) -> dict[str, Any] | None:
+    """Clear the disabled_at flag on an App. Idempotent; returns the current row when found."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM apps WHERE id = ?", (app_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "UPDATE apps SET disabled_at = NULL WHERE id = ?",
+            (app_id,),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM apps WHERE id = ?", (app_id,)
+        ).fetchone()
+    return _row_to_dict(row)
+
+
 def list_apps(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
     with _conn(path) as conn:
         rows = conn.execute(

@@ -178,6 +178,23 @@ class FakeAdminStore:
         )
         return dict(record)
 
+    def enable_app(
+        self, *, app_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None:
+        record = self.apps.get(app_id)
+        if record is None:
+            return None
+        record["disabled_at"] = None
+        self.audit.append(
+            {
+                "at": "2026-05-17T02:00:00Z",
+                "actor": actor.subject,
+                "action": "app.enable",
+                "target": app_id,
+            }
+        )
+        return dict(record)
+
     def list_profiles(self) -> list[dict[str, Any]]:
         return list(self.profiles)
 
@@ -658,6 +675,25 @@ class AdminAuthTests(unittest.TestCase):
         self.assertIn("attention", body)
         self.assertIsInstance(body["attention"], list)
 
+    def test_overview_includes_service_counts(self) -> None:
+        client, store = _make_client()
+        store.service_registry = {
+            "schema_version": 1,
+            "services": {
+                "openai": {"id": "openai", "name": "OpenAI", "enabled": True},
+                "local-llm": {"id": "local-llm", "name": "Local LLM", "enabled": False},
+                "comfy": {"id": "comfy", "name": "ComfyUI", "enabled": True},
+            },
+            "protocol_frontends": {},
+            "workflows": {},
+            "capabilities": {},
+        }
+        resp = client.get("/admin/api/overview", headers=_auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        counts = resp.json()["counts"]
+        self.assertEqual(counts["services_total"], 3)
+        self.assertEqual(counts["services_enabled"], 2)
+
     def test_owner_role_is_admin_capable(self) -> None:
         def owner_auth(_request: Request) -> AdminContext:
             return AdminContext(
@@ -897,6 +933,43 @@ class AdminAppKeyFlowTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertIsNotNone(resp.json()["app"]["disabled_at"])
         self.assertIn("app.disable", [event["action"] for event in store.audit])
+
+    def test_enable_app_clears_disabled_at(self) -> None:
+        client, store = _make_client()
+        app_id = client.post(
+            "/admin/api/apps", json={"name": "toggled"}, headers=_auth()
+        ).json()["app"]["id"]
+        # disable first
+        client.delete(f"/admin/api/apps/{app_id}", headers=_auth())
+        self.assertIsNotNone(store.apps[app_id]["disabled_at"])
+
+        resp = client.post(f"/admin/api/apps/{app_id}/enable", headers=_auth())
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIsNone(resp.json()["app"]["disabled_at"])
+        self.assertIn("app.enable", [event["action"] for event in store.audit])
+
+    def test_enable_already_active_app_is_idempotent(self) -> None:
+        client, _ = _make_client()
+        app_id = client.post(
+            "/admin/api/apps", json={"name": "active"}, headers=_auth()
+        ).json()["app"]["id"]
+
+        resp = client.post(f"/admin/api/apps/{app_id}/enable", headers=_auth())
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIsNone(resp.json()["app"]["disabled_at"])
+
+    def test_enable_unknown_app_returns_404(self) -> None:
+        client, _ = _make_client()
+        resp = client.post("/admin/api/apps/app_missing/enable", headers=_auth())
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json()["error"]["code"], "app_not_found")
+
+    def test_enable_requires_admin(self) -> None:
+        client, _ = _make_client()
+        resp = client.post("/admin/api/apps/app_x/enable")
+        self.assertEqual(resp.status_code, 401)
 
 
 class AdminAutomationKeyFlowTests(unittest.TestCase):

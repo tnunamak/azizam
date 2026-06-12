@@ -127,6 +127,17 @@ export interface AttentionItem {
   section: string;
 }
 
+export interface AuditEntry {
+  id: string;
+  created_at: number;
+  actor_kind: "admin" | "cli" | null;
+  actor_id: string;
+  action: string;
+  target_kind: string | null;
+  target_id: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
 export interface Overview {
   actor: Omit<SessionActor, "csrf_token">;
   counts: {
@@ -136,6 +147,8 @@ export interface Overview {
     runtime_profile_mappings: number;
     credentials: number;
     active_credentials: number;
+    services_total?: number;
+    services_enabled?: number;
   };
   attention: AttentionItem[];
   runtime_profile_mappings: Record<string, string>;
@@ -326,6 +339,11 @@ export const api = {
       adminFetch<{ app: App }>(`/admin/api/apps/${appId}`, {
         method: "DELETE",
       }).then((r) => r.app),
+    /** POST /admin/api/apps/{id}/enable clears disabled_at (undo for disable). */
+    enable: (appId: string) =>
+      adminFetch<{ app: App }>(`/admin/api/apps/${appId}/enable`, {
+        method: "POST",
+      }).then((r) => r.app),
     mintKey: (appId: string, input: MintKeyInput = {}) =>
       adminFetch<{ credential: MintedCredential }>(
         `/admin/api/apps/${appId}/keys`,
@@ -366,6 +384,13 @@ export const api = {
   },
 
   overview: () => adminFetch<Overview>("/admin/api/overview"),
+
+  audit: {
+    list: (limit = 50) =>
+      adminFetch<{ audit: AuditEntry[]; limit: number }>(
+        `/admin/api/audit?limit=${limit}`,
+      ).then((r) => r.audit),
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -379,6 +404,7 @@ export const queryKeys = {
   credentials: ["credentials"] as const,
   profiles: ["profiles"] as const,
   overview: ["overview"] as const,
+  auditRecent: ["audit", "recent"] as const,
 };
 
 /** QueryClient with contract-aware retry: 4xx errors are deterministic
