@@ -5,6 +5,15 @@
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Operator-local machine paths (gitignored; absent on a fresh install, where
+# the affected integrations are simply off). See CONFIG.md for the AGW_* vars.
+if [ -f ".env.local" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source ".env.local"
+    set +a
+fi
+
 # Use proxy's own isolated venv
 if [ ! -d "venv" ]; then
     echo "Creating venv..."

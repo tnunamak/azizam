@@ -5,13 +5,11 @@ and ``OPENAI_PROXY_BASE_URL``/``OPENAI_PROXY_API_KEY`` are set.
 
 Install with::
 
-    /home/tnunamak/applications/openai-proxy/venv/bin/pip install \
-        -r tests/compat/python/requirements-openai.txt
+    pip install -r tests/compat/python/requirements-openai.txt
 
 Run with::
 
-    /home/tnunamak/applications/openai-proxy/venv/bin/python \
-        -m unittest tests.compat.python.probe_openai -v
+    python -m unittest tests.compat.python.probe_openai -v
 """
 
 from __future__ import annotations

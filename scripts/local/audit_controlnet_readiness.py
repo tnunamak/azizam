@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -233,8 +234,8 @@ def _main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--comfyui-root",
-        default="/home/tnunamak/applications/ComfyUI",
-        help="Path to the local ComfyUI checkout",
+        default=os.environ.get("AGW_COMFY_DIR", ""),
+        help="Path to the local ComfyUI installation (or set AGW_COMFY_DIR)",
     )
     parser.add_argument(
         "--object-info",

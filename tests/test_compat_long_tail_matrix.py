@@ -7,8 +7,7 @@ the JSON source of truth.
 
 Run via::
 
-    /home/tnunamak/applications/openai-proxy/venv/bin/python \\
-        -m unittest discover -s tests -p 'test_*.py' -v
+    python -m unittest discover -s tests -p 'test_*.py' -v
 """
 
 from __future__ import annotations

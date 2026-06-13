@@ -5,13 +5,11 @@ require ``OPENAI_PROXY_BASE_URL`` plus the per-surface flag documented below.
 
 Install with::
 
-    /home/tnunamak/applications/openai-proxy/venv/bin/pip install \
-        -r tests/compat/python/requirements-openai.txt
+    pip install -r tests/compat/python/requirements-openai.txt
 
 Run local checks with::
 
-    /home/tnunamak/applications/openai-proxy/venv/bin/python \
-        -m unittest tests.compat.python.probe_openai_responses_media -v
+    python -m unittest tests.compat.python.probe_openai_responses_media -v
 
 Optional live checks::
 

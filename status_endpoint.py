@@ -56,18 +56,42 @@ _SUBPROC_TIMEOUT = 1.5  # seconds per shell probe
 # Cached budget read (60s TTL — file rarely changes).
 _BUDGET_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 _BUDGET_CACHE_TTL_S = 60.0
-_GPU_BUDGET_PATH = Path("/home/tnunamak/applications/config/gpu_budget.sh")
-_VRAM_ESTIMATES_PATH = Path("/home/tnunamak/applications/openai-proxy/cache/vram_estimates.json")
-_DRIFT_REPORT_PATH = Path("/home/tnunamak/applications/openai-proxy/cache/drift_status.json")
-_IMAGE_CACHE_DIR = Path("/home/tnunamak/applications/openai-proxy/cache/images")
-_DAISY_AUDIT_PATH = Path("/home/tnunamak/applications/daisy-audit/audit.jsonl")
+_SELF_DIR = Path(__file__).parent
+
+_GPU_BUDGET_PATH = Path(
+    os.environ.get("AGW_GPU_BUDGET_PATH", "")
+) if os.environ.get("AGW_GPU_BUDGET_PATH") else None
+_VRAM_ESTIMATES_PATH = Path(
+    os.environ.get("AGW_VRAM_ESTIMATES_PATH", str(_SELF_DIR / "cache" / "vram_estimates.json"))
+)
+_DRIFT_REPORT_PATH = Path(
+    os.environ.get("AGW_DRIFT_REPORT_PATH", str(_SELF_DIR / "cache" / "drift_status.json"))
+)
+_IMAGE_CACHE_DIR = Path(
+    os.environ.get("AGW_IMAGE_CACHE_DIR", str(_SELF_DIR / "cache" / "images"))
+)
+_DAISY_AUDIT_PATH = Path(
+    os.environ.get("AGW_DAISY_AUDIT_PATH", "")
+) if os.environ.get("AGW_DAISY_AUDIT_PATH") else None
 
 # Hot-spot directories the firehose should surface separately from the root partition.
+def _optional_path(env_key: str, default: str | None = None) -> Path | None:
+    val = os.environ.get(env_key, default or "")
+    return Path(val) if val else None
+
+
+_COMFY_OUTPUT_ROOT = _optional_path(
+    "AGW_COMFY_OUTPUT_DIR",
+    os.environ.get("AGW_COMFY_DIR", "") and os.path.join(os.environ["AGW_COMFY_DIR"], "output") or "",
+)
 _HOTSPOT_DIRS = [
-    ("comfy_output_root", Path("/home/tnunamak/applications/ComfyUI/output")),
-    ("comfy_output_video", Path("/home/tnunamak/applications/ComfyUI/output/video")),
-    ("openai_image_cache", Path("/home/tnunamak/applications/openai-proxy/cache/images")),
-    ("daisy_audit", Path("/home/tnunamak/applications/daisy-audit")),
+    entry for entry in [
+        ("comfy_output_root", _COMFY_OUTPUT_ROOT),
+        ("comfy_output_video", Path(_COMFY_OUTPUT_ROOT / "video") if _COMFY_OUTPUT_ROOT else None),
+        ("openai_image_cache", _IMAGE_CACHE_DIR),
+        ("daisy_audit", _optional_path("AGW_DAISY_DIR")),
+    ]
+    if entry[1] is not None
 ]
 
 # Service units we want to attribute VRAM to. Anything outside this list is
@@ -711,8 +735,11 @@ def _read_proc_comm(pid: int) -> Optional[str]:
         return None
 
 
-_REPO_PATH = "/home/tnunamak/applications/openai-proxy"
-_COMFY_CUSTOM_NODES = Path("/home/tnunamak/applications/ComfyUI/custom_nodes")
+_REPO_PATH = os.environ.get("AGW_REPO_PATH", str(Path(__file__).parent))
+_COMFY_CUSTOM_NODES = _optional_path(
+    "AGW_COMFY_CUSTOM_NODES_DIR",
+    os.environ.get("AGW_COMFY_DIR", "") and os.path.join(os.environ["AGW_COMFY_DIR"], "custom_nodes") or "",
+)
 
 
 def _ram_attribution() -> dict:
@@ -830,7 +857,7 @@ def _comfy_custom_nodes() -> list[dict]:
     activity timestamp we can reach (.git/HEAD mtime if it's a git checkout,
     falling back to the dir's own mtime). Cheap: just stats — no git fork.
     """
-    if not _COMFY_CUSTOM_NODES.is_dir():
+    if not _COMFY_CUSTOM_NODES or not _COMFY_CUSTOM_NODES.is_dir():
         return []
     out: list[dict] = []
     for child in _COMFY_CUSTOM_NODES.iterdir():
@@ -1082,6 +1109,8 @@ def _read_gpu_budget() -> Optional[dict]:
     if cached is not None and (now - _BUDGET_CACHE.get("ts", 0.0)) < _BUDGET_CACHE_TTL_S:
         return cached
     try:
+        if _GPU_BUDGET_PATH is None:
+            raise FileNotFoundError("AGW_GPU_BUDGET_PATH not configured")
         text = _GPU_BUDGET_PATH.read_text(encoding="utf-8")
     except Exception:
         _BUDGET_CACHE["data"] = None
@@ -2051,8 +2080,8 @@ def _cpu_usage_quick() -> dict:
 
 # --- recent renders -------------------------------------------------------
 
-_VIDEO_DIR = Path("/home/tnunamak/applications/ComfyUI/output/video")
-_IMAGE_DIR = Path("/home/tnunamak/applications/ComfyUI/output")
+_VIDEO_DIR = Path(_COMFY_OUTPUT_ROOT / "video") if _COMFY_OUTPUT_ROOT else None
+_IMAGE_DIR = _COMFY_OUTPUT_ROOT
 
 # In-memory probe cache keyed by (path, mtime) so we don't re-shell ffprobe /
 # re-open Pillow on every status poll. Bounded by the n we ever look at.
@@ -2254,7 +2283,7 @@ def _recent_renders_videos(
     video_meta: Optional[dict[str, dict]] = None,
     recent_events: Optional[list[dict]] = None,
 ) -> list[dict]:
-    if not _VIDEO_DIR.is_dir():
+    if not _VIDEO_DIR or not _VIDEO_DIR.is_dir():
         return []
     try:
         files = [f for f in _VIDEO_DIR.iterdir() if f.suffix == ".mp4" and f.is_file()]
@@ -2299,7 +2328,7 @@ def _recent_renders_videos(
 
 
 def _recent_renders_images(n: int = 10) -> list[dict]:
-    if not _IMAGE_DIR.is_dir():
+    if not _IMAGE_DIR or not _IMAGE_DIR.is_dir():
         return []
     try:
         files = [
@@ -2416,7 +2445,10 @@ def _voices_summary(proxy_module) -> Optional[dict]:
 
 # --- daisy ---------------------------------------------------------------
 
-_DAISY_MODELS_JSON = Path("/home/tnunamak/applications/daisy/.pi/agent/models.json")
+_DAISY_MODELS_JSON = _optional_path(
+    "AGW_DAISY_MODELS_JSON",
+    os.environ.get("AGW_DAISY_DIR", "") and os.path.join(os.environ["AGW_DAISY_DIR"], ".pi", "agent", "models.json") or "",
+)
 _DAISY_TMUX_TARGET = "main:daisy"
 
 
@@ -2430,7 +2462,7 @@ def _daisy_pi_context() -> dict:
     """
     info: dict[str, Any] = {}
     try:
-        if _DAISY_MODELS_JSON.is_file():
+        if _DAISY_MODELS_JSON and _DAISY_MODELS_JSON.is_file():
             data = json.loads(_DAISY_MODELS_JSON.read_text(encoding="utf-8")) or {}
             ctx_window = None
             for prov in (data.get("providers") or {}).values():
@@ -2612,6 +2644,8 @@ def _daisy_telegram_bridge() -> dict:
 
 def _daisy_audit_summary() -> dict:
     """Read the last few audit entries from daisy's audit log."""
+    if _DAISY_AUDIT_PATH is None:
+        return {"path": None, "exists": False, "unavailable_reason": "AGW_DAISY_AUDIT_PATH not configured"}
     info: dict[str, Any] = {"path": str(_DAISY_AUDIT_PATH), "exists": _DAISY_AUDIT_PATH.is_file()}
     if not _DAISY_AUDIT_PATH.is_file():
         return info

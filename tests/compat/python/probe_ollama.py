@@ -4,8 +4,7 @@ Skipped unless ``ollama`` is installed and the harness env is set.
 
 Install with::
 
-    /home/tnunamak/applications/openai-proxy/venv/bin/pip install \
-        -r tests/compat/python/requirements-ollama.txt
+    pip install -r tests/compat/python/requirements-ollama.txt
 """
 
 from __future__ import annotations

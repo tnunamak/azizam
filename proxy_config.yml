@@ -32,28 +32,29 @@ backends:
       - completions
     managed: false
   kobold:
-    name: llama-turbo / kobold (LLM)
+    name: BeeLlama (LLM + MTP)
     native_passthrough: true
     protocol: openai-compatible
     base_path: /v1
     host: 127.0.0.1
     port: 5051
+    state_type: llama_cpp
     health_endpoint: /v1/models
     models:
       - id: default
         model_group: default
-        upstream_model: Qwen3.6-27B-UD-Q4_K_XL.gguf
-        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+        upstream_model: Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
       - id: coder
         model_group: coder
-        upstream_model: Qwen3.6-27B-UD-Q4_K_XL.gguf
-        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+        upstream_model: Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
       - id: rp
         model_group: rp
-        upstream_model: Qwen3.6-27B-Uncensored-HauhauCS-Balanced-Q4_K_P.gguf
-        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-Uncensored-HauhauCS-Balanced-Q4_K_P.gguf
+        upstream_model: Huihui-Qwen3.6-27B-abliterated-UD-Q4_K_XL-MTP.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Huihui-Qwen3.6-27B-abliterated-UD-Q4_K_XL-MTP.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     role: required
     capabilities:
@@ -129,9 +130,9 @@ backends:
     managed: false
 images:
   # Cache for `response_format: "url"` and content-addressed image storage.
-  cache_dir: /home/tnunamak/applications/openai-proxy/cache/images
+  cache_dir: cache/images
   # Persistent VRAM-per-(workflow,size) measurements used for adaptive batching.
-  vram_estimates_file: /home/tnunamak/applications/openai-proxy/cache/vram_estimates.json
+  vram_estimates_file: cache/vram_estimates.json
   # Signed URL TTL (seconds). Default 1 hour.
   signed_url_ttl: 3600
   # HMAC secret for signed URLs. If unset/empty, generated at first run and persisted
@@ -155,7 +156,8 @@ model_routing:
   model_dir: /media/windows/AI Models/LLMs
   gguf_dir: /media/windows/AI Models/LLMs/GGUF
   tabby_service: tabbyapi.service
-  kobold_service: llama-turbo.service
+  kobold_service: llama-bee.service
+  kobold_service_legacy: llama-turbo.service
   switch_timeout: 60
   # Per-chunk (idle) read timeout for /v1/chat/completions and /v1/completions
   # forwarding. NOT a wall-clock cap — this is the max silence between bytes
@@ -171,24 +173,46 @@ routing:
 roles:
   default:
     backend: kobold
-    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
-    description: Default LLM (Qwen3.6-27B UD-Q4_K_XL via llama-turbo on :5051)
+    description: Default LLM (Qwen3.6-27B UD-Q4_K_XL MTP via BeeLlama on :5051)
+    # Qwen3.6 thinking mode for coding — from official Qwen team recommendations
+    sampling:
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
   vision:
     backend: tabby
     description: Vision-capable EXL3 model (when tabbyapi.service is active on :5050)
   rp:
     backend: kobold
-    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-Uncensored-HauhauCS-Balanced-Q4_K_P.gguf
+    model: /media/windows/AI Models/LLMs/GGUF/Huihui-Qwen3.6-27B-abliterated-UD-Q4_K_XL-MTP.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
-    description:
-      Roleplay LLM (Qwen3.6-27B Uncensored HauhauCS-Balanced Q4_K_P via
-      llama-turbo)
+    description: Roleplay LLM (Huihui Qwen3.6-27B abliterated UD-Q4_K_XL MTP)
+    # Qwen3.6 non-thinking/instruct mode — from official Qwen team recommendations
+    sampling:
+      temperature: 0.7
+      top_p: 0.80
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 1.5
+      repetition_penalty: 1.0
   coder:
     backend: kobold
-    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
-    description: Coding LLM (Qwen3.6-27B UD-Q4_K_XL via llama-turbo)
+    description: Coding LLM (Qwen3.6-27B UD-Q4_K_XL MTP via BeeLlama)
+    # Qwen3.6 thinking mode for coding — from official Qwen team recommendations
+    sampling:
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
 # Optional catalog of additional GGUF aliases. Each entry becomes a selectable
 # model in /v1/models — clients send `model: "<id>"` and the proxy resolves it
 # through the same ensure_target() path as roles: (cold-swap on first use).

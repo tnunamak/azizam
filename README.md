@@ -1,26 +1,86 @@
-# Vivid Fish AI Gateway
+# AI Gateway
 
-> Project directory and Python package are still named `openai-proxy`. The product, public discovery surfaces, and self-hoster docs are now branded **Vivid Fish AI Gateway** (or **AI Gateway** for short). Existing app configs that point at `openai.vivid.fish` keep working unchanged.
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-Self-hosted, OpenAI-compatible HTTP gateway and control plane. The repo ships
-seed records and adapters for a local AI stack, but live service/provider
-availability is resolved from the DB/UI registry:
+**One reliable OpenAI-compatible endpoint in front of all your local AI engines, with honest visibility into what actually happened.**
 
-- **TabbyAPI** (Qwen3-VL EXL3) — chat / completions / vision
-- **llama.cpp / koboldcpp** — GGUF chat/completions (mutually exclusive with TabbyAPI on the same GPU; swap via systemd)
-- **Voxtral-4B** (vLLM) — text-to-speech
-- **Parakeet TDT 0.6B** — speech-to-text
-- **ComfyUI** — image generation, image edit, and video generation (LTX-2.3, Wan 2.2)
+Self-hosted HTTP gateway that routes requests from any OpenAI-compatible client (LibreChat, Open WebUI, Continue, Cline, the OpenAI SDKs, etc.) to the engines you already run — llama.cpp, vLLM, TabbyAPI, ComfyUI, and more. The gateway does **not** install or manage engines; it routes to the ones you set up yourself.
+
+**What it is:**
+- An OpenAI-compatible endpoint (`/v1/chat/completions`, `/v1/images/generations`, `/v1/audio/speech`, etc.) that routes to local engines
+- A thin control plane with Apps, Profiles, and API keys so you can share your gateway with others without exposing everything
+- An honest status/audit trail: every request produces a Receipt; the `/status` page shows real queue depth, GPU VRAM, and render history
+
+**What it does not do:**
+- Download, install, or run AI engines — bring your own llama.cpp / Ollama / vLLM / ComfyUI
+- Require cloud accounts, API keys, or internet access (it is fully local-first)
+- Support horizontal scaling or multi-GPU orchestration (single-machine design)
+
+The gateway is still in active development. The engine registry migration (config-as-code) is in progress. See [`docs/design/ENGINE_REGISTRY_DESIGN.md`](docs/design/ENGINE_REGISTRY_DESIGN.md) for architecture.
+
+## 5-minute quickstart
+
+**Prerequisites:** Python 3.11+, an OpenAI-compatible engine already running (e.g. [Ollama](https://ollama.com) on `http://localhost:11434`, or llama.cpp server on `http://localhost:8080`).
+
+### Option A — Docker Compose (recommended)
+
+```bash
+git clone https://github.com/your-org/openai-proxy.git
+cd openai-proxy
+
+# Configure your engine (edit the URL to match your running engine)
+cat > .env <<'EOF'
+AI_GATEWAY_LITELLM_BASE_URL=http://host.docker.internal:11434   # Ollama example
+EOF
+
+docker compose up -d
+```
+
+The gateway starts on port 5000 with a LiteLLM sidecar that proxies to your engine. Open `http://localhost:5000/setup` to claim the first owner account and mint an API key, then:
+
+```bash
+# Smoke test
+curl -s http://localhost:5000/health
+curl -s http://localhost:5000/v1/models \
+     -H "Authorization: Bearer opk_YOUR_KEY_HERE"
+
+# Chat completion
+curl -s http://localhost:5000/v1/chat/completions \
+     -H "Authorization: Bearer opk_YOUR_KEY_HERE" \
+     -H "Content-Type: application/json" \
+     -d '{"model":"llama3","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+Point any OpenAI-compatible client at `http://localhost:5000/openai/v1` with your `opk_...` key.
+
+### Option B — bare Python
+
+```bash
+git clone https://github.com/your-org/openai-proxy.git
+cd openai-proxy
+
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
+
+# Minimal config: copy the example and edit to point at your engine
+cp proxy_config.yml.example proxy_config.yml   # if present, else start bare
+
+./start.sh   # listens on :5000 by default
+```
+
+Open `http://localhost:5000/setup` to create the owner account.
+
+> **Note:** The Docker Compose setup ships a LiteLLM sidecar for LLM routing. For bare-Python you'll need to configure `proxy_config.yml` with your backend URLs. See the Setup section below for full details.
+
+---
 
 The gateway presents canonical protocol aliases for OpenAI, Anthropic, and Ollama-compatible clients:
 
-- `/openai/v1` — OpenAI-compatible surface
+- `/openai/v1` — OpenAI-compatible surface (recommended for new setups)
 - `/anthropic/v1` — Anthropic Messages subset
 - `/ollama/api` — Ollama-compatible subset
 
-For existing tools, the convenience routes `/v1` and `/api` remain mounted and map to the OpenAI and Ollama-compatible surfaces. Off-the-shelf apps (LibreChat, Open WebUI, OpenClaw, Continue, Cline, the OpenAI SDKs, etc.) can keep using those convenience routes without modification.
-
-The canonical public host is **`https://ai.vivid.fish`**. The original **`https://openai.vivid.fish`** host is preserved as a compatibility alias — every route, discovery document, and signed URL resolves identically on both hosts, so existing apps do not need to be reconfigured.
+Convenience routes `/v1` and `/api` also work for drop-in compatibility with existing tool configs.
 
 ## Agent discovery
 
@@ -307,7 +367,8 @@ lives in `admin.db` and is edited from the dashboard. Provisioning / as-code
 config export is deferred; default Profiles are seeded into `admin.db` on
 first startup, not YAML-managed. See
 [`docs/CONFIG_SOURCE_OF_TRUTH.md`](docs/CONFIG_SOURCE_OF_TRUTH.md) for the
-full policy.
+full policy. For all environment variables (paths, engine integrations,
+monitoring), see [`CONFIG.md`](CONFIG.md).
 
 ### 3. Start the proxy
 
@@ -317,7 +378,7 @@ For development:
 ./start.sh
 ```
 
-For production, install the included systemd unit. The reference unit at `openai-proxy.service` expects the proxy at `/home/tnunamak/applications/openai-proxy` — adjust `WorkingDirectory` and `ExecStart` for your install path:
+For production, install the included systemd unit. Edit `WorkingDirectory` and `ExecStart` in the unit file to match your install path:
 
 ```bash
 cp openai-proxy.service ~/.config/systemd/user/openai-proxy.service

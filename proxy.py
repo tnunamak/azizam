@@ -784,9 +784,24 @@ async def switch_backend(target: str) -> bool:
 # Numbered higher than 10-qwen27b.conf so systemd's last-wins semantics apply.
 KOBOLD_MODEL_DROPIN = Path.home() / f".config/systemd/user/{KOBOLD_SERVICE_NAME}.d/20-model.conf"
 
-# Lock to serialize concurrent kobold model swaps. In-flight callers await the
-# in-progress swap so we don't restart llama-turbo.service twice for the same target.
-kobold_swap_lock = asyncio.Lock()
+# Generic per-service swap-lock registry.  Keyed by service id (e.g. "kobold",
+# "tabby", or any future backend id).  A lock is created lazily on first access.
+# Concurrency safety: dict reads/writes are GIL-atomic in CPython, so two
+# coroutines racing to create the lock for the same key will at worst both
+# evaluate asyncio.Lock() and one will overwrite the other — but both callers
+# will then obtain *the surviving lock*, which is fine because the only
+# invariant we need is "all callers for id X share one lock object".  The
+# setdefault() call below makes this explicit and reduces the window to one
+# atomic C-level operation.
+_service_swap_locks: dict[str, asyncio.Lock] = {}
+
+
+def swap_lock_for(service_id: str) -> asyncio.Lock:
+    """Return the swap lock for *service_id*, creating it on first call."""
+    lock = _service_swap_locks.get(service_id)
+    if lock is None:
+        lock = _service_swap_locks.setdefault(service_id, asyncio.Lock())
+    return lock
 
 # Kobold loaded-state cache. Seeded from the backend's state endpoint on first read
 # after startup, then updated authoritatively after every swap. TTL guards against
@@ -970,7 +985,7 @@ async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = Non
 
     Writes a higher-numbered drop-in (20-model.conf) overriding LLAMA_TURBO_MODEL
     AND LLAMA_TURBO_MMPROJ, runs daemon-reload + restart, then polls /v1/models
-    until ready. Concurrent callers serialize on kobold_swap_lock; in-flight
+    until ready. Concurrent callers serialize on swap_lock_for("kobold"); in-flight
     requests await the in-progress swap.
 
     target_mmproj behavior:
@@ -993,7 +1008,7 @@ async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = Non
             return False
     mmproj_value = target_mmproj or ""
 
-    async with kobold_swap_lock:
+    async with swap_lock_for("kobold"):
         # Re-check inside the lock — another caller may have already loaded this model.
         current = currently_loaded_kobold_model()
         current_mmproj = currently_loaded_kobold_mmproj() if current == target_path else None
@@ -1096,9 +1111,7 @@ async def ensure_backend_for_model(model_name: str) -> Optional[str]:
     return None
 
 
-# Lock to serialize concurrent tabby model swaps so two requests don't fight over
-# /v1/model/load and /v1/model/unload at the same time.
-tabby_swap_lock = asyncio.Lock()
+# (tabby swap lock is managed by the generic swap_lock_for("tabby") registry above.)
 
 
 def is_literal_gguf_path(value: str) -> bool:
@@ -1138,7 +1151,7 @@ async def swap_tabby_model(target_model: str) -> bool:
     if not target_model:
         return False
 
-    async with tabby_swap_lock:
+    async with swap_lock_for("tabby"):
         current = await currently_loaded_tabby_model()
         if current == target_model:
             return True
@@ -1315,9 +1328,10 @@ TABBY_API_KEY_ENV = auth_cfg.get("api_key_env", "TABBY_API_KEY")
 ADMIN_KEY = os.environ.get(TABBY_ADMIN_KEY_ENV, "") or os.environ.get("TABBY_ADMIN_KEY", "")
 API_KEY = os.environ.get(TABBY_API_KEY_ENV, "") or os.environ.get("TABBY_API_KEY", "")
 
-# Try loading from tabbyapi's api_tokens.yml
-tokens_file = Path("/home/tnunamak/applications/tabbyapi/api_tokens.yml")
-if tokens_file.exists():
+# Try loading from tabbyapi's api_tokens.yml (disabled when env var not set)
+_tabbyapi_dir_env = os.environ.get("AGW_TABBYAPI_DIR", "")
+tokens_file = Path(_tabbyapi_dir_env) / "api_tokens.yml" if _tabbyapi_dir_env else None
+if tokens_file and tokens_file.exists():
     for line in tokens_file.read_text().splitlines():
         if line.startswith("admin_key:") and not ADMIN_KEY:
             ADMIN_KEY = line.split(":", 1)[1].strip()
@@ -2128,8 +2142,8 @@ def handle_cli_command() -> bool:
     return False
 
 
-# TabbyAPI config path
-TABBY_CONFIG_FILE = Path("/home/tnunamak/applications/tabbyapi/config.yml")
+# TabbyAPI config path (optional; feature disabled when AGW_TABBYAPI_DIR is not set)
+TABBY_CONFIG_FILE = Path(_tabbyapi_dir_env) / "config.yml" if _tabbyapi_dir_env else None
 
 def get_tabby_model_config() -> tuple[str, str, dict]:
     """Read TabbyAPI config live. Returns (default_model, model_dir, model_params)."""
@@ -2137,7 +2151,7 @@ def get_tabby_model_config() -> tuple[str, str, dict]:
     model_dir = ""
     model_params = {}
 
-    if TABBY_CONFIG_FILE.exists():
+    if TABBY_CONFIG_FILE and TABBY_CONFIG_FILE.exists():
         try:
             with open(TABBY_CONFIG_FILE) as f:
                 tabby_config = yaml.safe_load(f)
@@ -2897,8 +2911,16 @@ state = ProxyState()
 # =============================================================================
 
 def start_tabby_process() -> subprocess.Popen:
-    """Start TabbyAPI as subprocess."""
-    script_dir = Path("/home/tnunamak/applications/tabbyapi")
+    """Start TabbyAPI as subprocess.
+
+    Requires AGW_TABBYAPI_DIR to be set; raises RuntimeError if not configured.
+    """
+    if not _tabbyapi_dir_env:
+        raise RuntimeError(
+            "AGW_TABBYAPI_DIR is not set; cannot start TabbyAPI as a subprocess. "
+            "Set AGW_TABBYAPI_DIR to the root of your TabbyAPI installation."
+        )
+    script_dir = Path(_tabbyapi_dir_env)
     env = os.environ.copy()
     env["LD_PRELOAD"] = "/usr/lib/x86_64-linux-gnu/libstdc++.so.6"
     env["PYTORCH_ALLOC_CONF"] = "backend:native"

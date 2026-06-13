@@ -1,5 +1,4 @@
 # Optional SDK probe deps; not part of the core repo install.
 # Install into the existing venv:
-#   /home/tnunamak/applications/openai-proxy/venv/bin/pip install \
-#       -r tests/compat/python/requirements-openai.txt
+#   pip install -r tests/compat/python/requirements-openai.txt
 openai>=1.30.0
