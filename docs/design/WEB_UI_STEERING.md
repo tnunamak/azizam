@@ -194,6 +194,36 @@ OpenAI-compatible form is wrong for ComfyUI and any non-LLM backend.
 - **Honest passthrough copy:** for non-`openai-compatible` protocols,
   native passthrough is stated as the mode, not offered as a toggle.
 
+## Audit & sign-in honesty fixes (binding, 2026-06-13)
+
+Two deferred trust-breakers from the UX audit, both honesty-law violations:
+
+**Audit — filtering must not silently truncate (H1/H3).** Today the audit
+endpoint takes only `limit` (hard-capped at 200) and the UI filters the
+loaded window client-side. Filtering by an actor whose matching events are
+older than the 200 newest rows shows a confident, incomplete result that
+reads as "no more matches" — deception by omission. Fix:
+- `GET /admin/api/audit` gains optional server-side filters `actor_id`,
+  `action_prefix` (the family, e.g. `service.`), `before` (keyset cursor =
+  the `created_at` of the last seen row; the schema already indexes
+  `created_at`). Returns `{records, next_cursor}`; `next_cursor` null when
+  the result is exhausted FOR THE CURRENT FILTER. Keep `limit` (page size),
+  drop the 200 hard ceiling for pagination (page through, don't cap).
+- Filter chips drive the server query, not a client slice. "Load more"
+  follows `next_cursor`. When no cursor remains, say "End of audit log"
+  (or "No more matching events" under a filter) — never an ambiguous empty
+  tail. The chips therefore search the WHOLE log, not a 200-row window.
+
+**Sign-in — OIDC group→role setup must be completable (H4).** The Configure
+sign-in dialog lacks a `groups_claim` field, so an operator wiring
+group-based roles via Users → profile mappings has no way to tell the
+gateway which token claim carries groups — a dead-end setup that looks
+complete. Add `groups_claim` to the OIDC config (form field + GET/PUT,
+default `groups`), with help copy linking the concept to the Users
+mapping flow. Verify GET still never returns the client secret (H: secrets
+stay write-only). If the backend OIDC model lacks the field, add it
+(additive, defaulted) so existing configs are unaffected.
+
 ## Admin information architecture (binding)
 
 Seven flat, noun-named sections (Tailscale-calm; no nesting, no Title Case):

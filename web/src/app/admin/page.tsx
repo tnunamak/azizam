@@ -250,7 +250,7 @@ export default function AdminOverviewPage() {
     isError: auditError,
   } = useQuery({
     queryKey: queryKeys.auditRecent,
-    queryFn: () => api.audit.list(3),
+    queryFn: () => api.audit.list({ limit: 3 }).then((r) => r.records),
   });
 
   // Fetch users to resolve actor names in the audit teaser rows.

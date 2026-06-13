@@ -314,6 +314,23 @@ export interface AuditEntry {
   metadata: Record<string, unknown> | null;
 }
 
+/** Response shape for GET /admin/api/audit (keyset-paginated). */
+export interface AuditPage {
+  records: AuditEntry[];
+  /** Opaque cursor "<created_at>:<id>"; null when no more rows exist for the
+   * current filter set. Pass verbatim as the `before` query param. */
+  next_cursor: string | null;
+}
+
+/** Filter + pagination options for the audit endpoint. */
+export interface AuditQueryParams {
+  limit?: number;
+  actor_id?: string;
+  action_prefix?: string;
+  /** Keyset cursor from a prior next_cursor. */
+  before?: string;
+}
+
 export interface Overview {
   actor: Omit<SessionActor, "csrf_token">;
   counts: {
@@ -665,10 +682,16 @@ export const api = {
   overview: () => adminFetch<Overview>("/admin/api/overview"),
 
   audit: {
-    list: (limit = 50) =>
-      adminFetch<{ audit: AuditEntry[]; limit: number }>(
-        `/admin/api/audit?limit=${limit}`,
-      ).then((r) => r.audit),
+    /** Paginated fetch. Returns {records, next_cursor}. */
+    list: (params: AuditQueryParams = {}) => {
+      const q = new URLSearchParams();
+      if (params.limit !== undefined) q.set("limit", String(params.limit));
+      if (params.actor_id) q.set("actor_id", params.actor_id);
+      if (params.action_prefix) q.set("action_prefix", params.action_prefix);
+      if (params.before) q.set("before", params.before);
+      const qs = q.toString();
+      return adminFetch<AuditPage>(`/admin/api/audit${qs ? `?${qs}` : ""}`);
+    },
   },
 };
 
@@ -685,8 +708,11 @@ export const queryKeys = {
   overview: ["overview"] as const,
   /** Recent audit teaser (3 rows on the overview). */
   auditRecent: ["audit", "recent"] as const,
-  /** Parameterized audit key — pass limit to scope the cache entry. */
-  audit: (limit: number) => ["audit", { limit }] as const,
+  /** Parameterized audit key — includes filters so each filter combo is cached
+   * independently. The cursor is NOT part of the key: pages are accumulated in
+   * component state, not in separate cache entries. */
+  audit: (params: { actorId: string | null; actionPrefix: string | null }) =>
+    ["audit", params] as const,
   serviceRegistry: ["serviceRegistry"] as const,
   servicePresets: ["servicePresets"] as const,
   litellmConfig: ["litellmConfig"] as const,

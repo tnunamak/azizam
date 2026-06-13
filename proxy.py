@@ -11193,6 +11193,7 @@ async def admin_oidc_callback(request: Request):
         oidc_access_names = access_names_from_oidc_claims(
             claims,
             client_id=cfg.client_id,
+            groups_claim=cfg.groups_claim,
         )
         admin_store.replace_user_identity_claims(
             str(user["id"]),

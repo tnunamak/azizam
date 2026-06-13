@@ -557,6 +557,85 @@ class FakeAdminStore:
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
         return list(self.audit[-limit:])
 
+    def list_audit_page(
+        self,
+        *,
+        limit: int = 50,
+        actor_id: str | None = None,
+        action_prefix: str | None = None,
+        before_created_at: int | None = None,
+        before_id: str | None = None,
+        target_kind: str | None = None,
+        target_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Minimal in-memory implementation of cursor-paged audit for route tests."""
+        rows = list(self.audit)
+        # Apply keyset cursor (audit rows in this fake store have a 'created_at'
+        # and 'id' field when the real store is used; the fake rows may only
+        # have partial fields — fall back gracefully).
+        if before_created_at is not None and before_id is not None:
+            rows = [
+                r for r in rows
+                if (
+                    int(r.get("created_at", 0)) < before_created_at
+                    or (
+                        int(r.get("created_at", 0)) == before_created_at
+                        and str(r.get("id", "")) < before_id
+                    )
+                )
+            ]
+        if actor_id is not None:
+            rows = [r for r in rows if r.get("actor_id") == actor_id or r.get("actor") == actor_id]
+        if action_prefix is not None:
+            rows = [r for r in rows if str(r.get("action", "")).startswith(action_prefix)]
+        if target_kind is not None:
+            rows = [r for r in rows if r.get("target_kind") == target_kind]
+        if target_id is not None:
+            rows = [r for r in rows if r.get("target_id") == target_id or r.get("target") == target_id]
+        # Sort newest-first by (created_at DESC, id DESC); fall back to list order.
+        rows_sorted = sorted(
+            rows,
+            key=lambda r: (int(r.get("created_at", 0)), str(r.get("id", ""))),
+            reverse=True,
+        )
+        fetch = rows_sorted[: limit + 1]
+        has_more = len(fetch) == limit + 1
+        page = fetch[:limit]
+        next_cursor: str | None = None
+        if has_more and page:
+            last = page[-1]
+            next_cursor = f"{last.get('created_at', 0)}:{last.get('id', '')}"
+        return {"records": page, "next_cursor": next_cursor}
+
+    def get_oidc_config_setting(self) -> dict[str, Any] | None:
+        raw: dict[str, Any] | None = getattr(self, "_oidc_config", None)
+        if raw is None:
+            return None
+        redacted = dict(raw)
+        if redacted.get("client_secret"):
+            redacted["client_secret"] = "<redacted>"
+            redacted["client_secret_set"] = True
+        else:
+            redacted.setdefault("client_secret", "")
+            redacted["client_secret_set"] = False
+        return redacted
+
+    def update_oidc_config_setting(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        current: dict[str, Any] = getattr(self, "_oidc_config", {}) or {}
+        merged = {**current, **data}
+        # Never return client_secret in plain form — mirror real store behaviour.
+        redacted = dict(merged)
+        if "client_secret" in redacted and redacted["client_secret"]:
+            redacted["client_secret"] = "<redacted>"
+            redacted["client_secret_set"] = True
+        else:
+            redacted.setdefault("client_secret", "")
+            redacted["client_secret_set"] = False
+        self._oidc_config = merged  # type: ignore[attr-defined]
+        return redacted
+
 
 def _admin_auth(request: Request) -> AdminContext:
     header = request.headers.get("authorization", "")
@@ -1351,19 +1430,210 @@ class AdminAuditTests(unittest.TestCase):
         )
         resp = client.get("/admin/api/audit", headers=_auth())
         self.assertEqual(resp.status_code, 200)
-        entries = resp.json()["audit"]
-        self.assertEqual(entries[-1]["action"], "app.create")
+        body = resp.json()
+        # New response shape: {records, next_cursor}
+        self.assertIn("records", body)
+        entries = body["records"]
+        self.assertTrue(any(e.get("action") == "app.create" for e in entries))
 
-    def test_audit_limit_is_capped(self) -> None:
+    def test_audit_page_size_respected(self) -> None:
         client, store = _make_client()
-        # Populate the audit log directly.
+        # Populate the audit log directly with created_at so the fake store
+        # sorts correctly.
         for i in range(10):
-            store.audit.append({"action": f"event_{i}"})
+            store.audit.append({"action": f"event_{i}", "created_at": i, "id": f"aud_{i}"})
         resp = client.get("/admin/api/audit?limit=3", headers=_auth())
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        self.assertEqual(body["limit"], 3)
-        self.assertEqual(len(body["audit"]), 3)
+        self.assertIn("records", body)
+        self.assertEqual(len(body["records"]), 3)
+
+    def test_audit_pagination_reaches_oldest_event(self) -> None:
+        """Paging via next_cursor must reach events older than the first page."""
+        client, store = _make_client()
+        # Seed 260 audit events with distinct created_at + id values so all
+        # pages can be distinguished.  The oldest event has action "oldest_event".
+        for i in range(259):
+            store.audit.append({
+                "action": f"bulk_event_{i}",
+                "created_at": 1000 + i,
+                "id": f"aud_{i:04d}",
+                "actor_id": "usr_bulk",
+            })
+        store.audit.append({
+            "action": "oldest_event",
+            "created_at": 999,
+            "id": "aud_oldest",
+            "actor_id": "usr_special",
+        })
+        # Page through with limit=50 until exhausted.
+        seen_actions: list[str] = []
+        cursor: str | None = None
+        iterations = 0
+        while True:
+            url = "/admin/api/audit?limit=50"
+            if cursor:
+                url += f"&before={cursor}"
+            resp = client.get(url, headers=_auth())
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            page = body["records"]
+            seen_actions.extend(r.get("action", "") for r in page)
+            cursor = body["next_cursor"]
+            iterations += 1
+            if cursor is None:
+                break
+            # Safety guard — should never need more than 10 pages for 260 rows.
+            self.assertLess(iterations, 10, "cursor pagination did not terminate")
+        self.assertIn("oldest_event", seen_actions)
+
+    def test_audit_actor_id_filter_reaches_old_events(self) -> None:
+        """actor_id filter must return matching events older than the first 200 rows.
+
+        This is the regression test for the deception bug: filtering by actor
+        client-side over a 200-row window silently omits older matching events.
+        """
+        client, store = _make_client()
+        # Flood 210 events from a common actor so a naive 200-row window fills up.
+        for i in range(210):
+            store.audit.append({
+                "action": f"noise_event_{i}",
+                "created_at": 2000 + i,
+                "id": f"aud_noise_{i:04d}",
+                "actor_id": "usr_noise",
+            })
+        # Add a target event from a different actor at an older timestamp.
+        store.audit.append({
+            "action": "target_action",
+            "created_at": 1999,
+            "id": "aud_target",
+            "actor_id": "usr_target",
+        })
+        # actor_id filter must find the target event even though it's older
+        # than the 200 newest events.
+        resp = client.get("/admin/api/audit?actor_id=usr_target", headers=_auth())
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        actions = [r.get("action") for r in body["records"]]
+        self.assertIn("target_action", actions)
+        # Must NOT include the noise events.
+        for a in actions:
+            self.assertEqual(a, "target_action")
+
+    def test_audit_action_prefix_filter(self) -> None:
+        client, store = _make_client()
+        store.audit.append({"action": "app.create", "created_at": 100, "id": "a1", "actor_id": "u"})
+        store.audit.append({"action": "service.update", "created_at": 101, "id": "a2", "actor_id": "u"})
+        store.audit.append({"action": "app.disable", "created_at": 102, "id": "a3", "actor_id": "u"})
+        resp = client.get("/admin/api/audit?action_prefix=app.", headers=_auth())
+        self.assertEqual(resp.status_code, 200)
+        actions = [r.get("action") for r in resp.json()["records"]]
+        self.assertIn("app.create", actions)
+        self.assertIn("app.disable", actions)
+        self.assertNotIn("service.update", actions)
+
+    def test_audit_next_cursor_null_at_exhaustion(self) -> None:
+        client, store = _make_client()
+        for i in range(5):
+            store.audit.append({"action": f"ev_{i}", "created_at": i, "id": f"aud_{i}"})
+        # With limit=10 and only 5 rows, next_cursor must be null.
+        resp = client.get("/admin/api/audit?limit=10", headers=_auth())
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.json()["next_cursor"])
+
+    def test_audit_filter_and_cursor_compose(self) -> None:
+        """action_prefix filter must still work when a before cursor is supplied."""
+        client, store = _make_client()
+        for i in range(10):
+            store.audit.append({
+                "action": "app.create" if i % 2 == 0 else "service.update",
+                "created_at": 1000 + i,
+                "id": f"aud_{i:03d}",
+                "actor_id": "u",
+            })
+        # First page — limit 3 with filter.
+        resp1 = client.get("/admin/api/audit?action_prefix=app.&limit=3", headers=_auth())
+        self.assertEqual(resp1.status_code, 200)
+        body1 = resp1.json()
+        # 5 matching events total; page 1 returns 3, next_cursor non-null.
+        self.assertEqual(len(body1["records"]), 3)
+        cursor = body1["next_cursor"]
+        self.assertIsNotNone(cursor)
+        # Second page.
+        resp2 = client.get(
+            f"/admin/api/audit?action_prefix=app.&limit=3&before={cursor}",
+            headers=_auth(),
+        )
+        self.assertEqual(resp2.status_code, 200)
+        body2 = resp2.json()
+        # Remaining 2 events on page 2, no further cursor.
+        self.assertEqual(len(body2["records"]), 2)
+        self.assertIsNone(body2["next_cursor"])
+        # All records should match the filter.
+        for r in body2["records"]:
+            self.assertEqual(r["action"], "app.create")
+
+    def test_audit_bad_cursor_returns_400(self) -> None:
+        client, _ = _make_client()
+        resp = client.get("/admin/api/audit?before=notavalidcursor", headers=_auth())
+        self.assertEqual(resp.status_code, 400)
+
+    def test_audit_oidc_groups_claim_round_trips(self) -> None:
+        """groups_claim field round-trips through GET/PUT oidc-config."""
+        client, store = _make_client()
+        # PUT with groups_claim.
+        put_resp = client.put(
+            "/admin/api/oidc-config",
+            json={
+                "enabled": False,
+                "issuer": "https://idp.example.com",
+                "client_id": "my-client",
+                "client_secret": "s3cr3t",
+                "redirect_uri": "https://gw.example.com/auth/callback",
+                "groups_claim": "cognito:groups",
+            },
+            headers=_auth(),
+        )
+        self.assertEqual(put_resp.status_code, 200, put_resp.text)
+        cfg_put = put_resp.json()["oidc_config"]
+        self.assertEqual(cfg_put.get("groups_claim"), "cognito:groups")
+        # client_secret must be redacted.
+        self.assertNotEqual(cfg_put.get("client_secret"), "s3cr3t")
+
+        # GET must return the stored groups_claim plainly (not redacted).
+        get_resp = client.get("/admin/api/oidc-config", headers=_auth())
+        self.assertEqual(get_resp.status_code, 200)
+        cfg_get = get_resp.json()["oidc_config"]
+        self.assertEqual(cfg_get.get("groups_claim"), "cognito:groups")
+        # client_secret still must not be returned.
+        self.assertNotEqual(cfg_get.get("client_secret"), "s3cr3t")
+
+    def test_audit_oidc_groups_claim_default(self) -> None:
+        """When groups_claim is omitted, the stored value is preserved (patch semantics)."""
+        client, store = _make_client()
+        # Save an initial config with a custom groups_claim.
+        client.put(
+            "/admin/api/oidc-config",
+            json={
+                "enabled": False,
+                "issuer": "https://idp.example.com",
+                "client_id": "c",
+                "client_secret": "s",
+                "redirect_uri": "https://gw/cb",
+                "groups_claim": "my_groups",
+            },
+            headers=_auth(),
+        )
+        # Update a different field without touching groups_claim.
+        patch_resp = client.put(
+            "/admin/api/oidc-config",
+            json={"enabled": False, "issuer": "https://other.example.com"},
+            headers=_auth(),
+        )
+        self.assertEqual(patch_resp.status_code, 200)
+        cfg = patch_resp.json()["oidc_config"]
+        # groups_claim must be preserved from the earlier PUT.
+        self.assertEqual(cfg.get("groups_claim"), "my_groups")
 
 
 class AdminOperatorOverrideTests(unittest.TestCase):

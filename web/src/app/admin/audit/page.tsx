@@ -3,17 +3,22 @@
 /** Admin → Audit — surface spec (docs/design/WEB_UI_STEERING.md).
  *
  * Reverse-chron list of gateway events. Key behaviours:
- *  - Raw action strings ("app.create") mapped to sentence-case human phrases;
- *    raw type rendered as micro mono detail below the phrase.
- *  - Client-side filter chips: actor + action family (the prefix before the
- *    first dot, e.g. "app", "credential", "operator").
- *  - "Load more" increases the limit param and re-fetches the full window
- *    (per the contract: no cursor/offset at current volumes).
+ *  - Filter chips (actor, action family) drive the SERVER query — they pass
+ *    actor_id / action_prefix to GET /audit, not a client-side slice.
+ *  - Changing a filter resets pagination and refetches from the server.
+ *  - "Load more" follows next_cursor from the response (append pages).
+ *  - HONEST END STATE: when next_cursor is null, render "End of audit log"
+ *    (no filter) or "No more matching events" (under a filter).
  *  - Row click opens a Sheet with the full record as mono JSON + CopyButton.
  *  - Every timestamp goes through <RelativeTime>; every entity id through
- *    <EntityRef> — raw IDs and epoch ints never appear as primary content. */
+ *    <EntityRef> — raw IDs and epoch ints never appear as primary content.
+ *
+ * Action-family chips: derived from the currently loaded set. Because the
+ * full log is server-paginated we cannot enumerate all families cheaply, so
+ * chips show the families seen in the loaded pages. A note makes this clear
+ * when a family filter is active. */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -43,8 +48,8 @@ import {
 // ---------------------------------------------------------------------------
 // Action phrase map — raw event type → sentence-case human phrase + family
 //
-// The "family" is used for the action-family filter chip.  It is the portion
-// before the first dot, normalised to lower-case (e.g. "operator", "app").
+// The "family" is used for the action-family filter chip and maps to the
+// action_prefix server param (e.g. family "app" → action_prefix "app.").
 
 interface ActionMeta {
   /** Sentence-case human phrase shown in the Action cell. */
@@ -89,7 +94,15 @@ function actionMeta(action: string): ActionMeta {
   return { phrase, family };
 }
 
-/** All unique action families present in the current result set. */
+/** Map a family name to the action_prefix server param. */
+function familyToPrefix(family: string): string {
+  // Special families that don't share the family name as a prefix.
+  if (family === "key") return "credential.";
+  if (family === "access") return "runtime_profile_mapping.";
+  return `${family}.`;
+}
+
+/** All unique action families present in the accumulated entries. */
 function deriveActionFamilies(entries: AuditEntry[]): string[] {
   const families = new Set<string>();
   for (const entry of entries) {
@@ -99,11 +112,12 @@ function deriveActionFamilies(entries: AuditEntry[]): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Pagination — "Load more" re-fetches the full window at an increased limit.
+// Page-level pagination state
+//
+// We accumulate pages manually (not useInfiniteQuery) because the filter
+// set can change mid-session and we need a simple reset path.
 
-const INITIAL_LIMIT = 50;
-const LOAD_MORE_STEP = 50;
-const MAX_LIMIT = 200;
+const PAGE_SIZE = 50;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -121,21 +135,49 @@ function userLabel(user: User | undefined): string {
 // Page
 
 export default function AdminAuditPage() {
-  const [limit, setLimit] = useState(INITIAL_LIMIT);
+  // Active server-side filters
   const [actorFilter, setActorFilter] = useState<string | null>(null);
   const [familyFilter, setFamilyFilter] = useState<string | null>(null);
+
+  // Accumulated pages: list of cursors consumed (tracked for future
+  // refetch-all support; not read directly by render logic).
+  const [, setCursors] = useState<Array<string | undefined>>([undefined]);
+  // next_cursor returned by the last fetched page (null = exhausted)
+  const [nextCursor, setNextCursor] = useState<string | null | undefined>(
+    undefined,
+  );
+  // Accumulated rows across all pages
+  const [allEntries, setAllEntries] = useState<AuditEntry[]>([]);
+  // Whether we're fetching an additional page (beyond the first)
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const [detailEntry, setDetailEntry] = useState<AuditEntry | null>(null);
 
+  // Build the query params for the FIRST page
+  const firstPageParams = {
+    limit: PAGE_SIZE,
+    actor_id: actorFilter ?? undefined,
+    action_prefix: familyFilter ? familyToPrefix(familyFilter) : undefined,
+  };
+
   const {
-    data: auditEntries,
-    isPending: auditPending,
-    isError: auditIsError,
-    error: auditError,
-    refetch: refetchAudit,
-    isFetching: auditFetching,
+    isPending: firstPagePending,
+    isError: firstPageIsError,
+    error: firstPageError,
+    refetch: refetchFirst,
+    isFetching: firstPageFetching,
   } = useQuery({
-    queryKey: queryKeys.audit(limit),
-    queryFn: () => api.audit.list(limit),
+    queryKey: queryKeys.audit({ actorId: actorFilter, actionPrefix: familyFilter }),
+    queryFn: async () => {
+      const result = await api.audit.list(firstPageParams);
+      // On first page response, reset accumulated state
+      setAllEntries(result.records);
+      setNextCursor(result.next_cursor);
+      setCursors([undefined]);
+      return result;
+    },
+    // Don't cache stale data when filters change — always treat as fresh
+    staleTime: 0,
   });
 
   const {
@@ -151,48 +193,62 @@ export default function AdminAuditPage() {
     [usersData],
   );
 
-  // Unique actors for filter chips (computed from loaded entries).
+  // Unique actors for filter chips (computed from all loaded entries).
   const actorOptions = useMemo(() => {
-    if (!auditEntries) return [];
     const seen = new Map<string, string>(); // actor_id → display label
-    for (const entry of auditEntries) {
+    for (const entry of allEntries) {
       if (!seen.has(entry.actor_id)) {
         seen.set(entry.actor_id, actorDisplayLabel(entry, usersById));
       }
     }
     return Array.from(seen.entries()).map(([id, label]) => ({ id, label }));
-  }, [auditEntries, usersById]);
+  }, [allEntries, usersById]);
 
   const actionFamilies = useMemo(
-    () => deriveActionFamilies(auditEntries ?? []),
-    [auditEntries],
+    () => deriveActionFamilies(allEntries),
+    [allEntries],
   );
 
-  // Client-side filter: apply both actor and action family chips.
-  const visibleEntries = useMemo(() => {
-    if (!auditEntries) return [];
-    return auditEntries.filter((entry) => {
-      if (actorFilter && entry.actor_id !== actorFilter) return false;
-      if (
-        familyFilter &&
-        (actionMeta(entry.action).family ?? "other") !== familyFilter
-      )
-        return false;
-      return true;
-    });
-  }, [auditEntries, actorFilter, familyFilter]);
+  // Reset all pagination state when a filter changes
+  const handleActorChange = useCallback((id: string | null) => {
+    setActorFilter(id);
+    setAllEntries([]);
+    setNextCursor(undefined);
+    setCursors([undefined]);
+  }, []);
 
-  const canLoadMore =
-    !auditIsError &&
-    !auditPending &&
-    (auditEntries?.length ?? 0) >= limit &&
-    limit < MAX_LIMIT;
+  const handleFamilyChange = useCallback((family: string | null) => {
+    setFamilyFilter(family);
+    setAllEntries([]);
+    setNextCursor(undefined);
+    setCursors([undefined]);
+  }, []);
 
-  function loadMore() {
-    setLimit((prev) => Math.min(prev + LOAD_MORE_STEP, MAX_LIMIT));
+  // Load the next page
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await api.audit.list({
+        limit: PAGE_SIZE,
+        actor_id: actorFilter ?? undefined,
+        action_prefix: familyFilter ? familyToPrefix(familyFilter) : undefined,
+        before: nextCursor,
+      });
+      setAllEntries((prev) => [...prev, ...result.records]);
+      setNextCursor(result.next_cursor);
+      setCursors((prev) => [...prev, nextCursor]);
+    } catch {
+      // Silently — the user can retry via the "Load more" button
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
-  const loading = auditPending || usersPending;
+  const loading = firstPagePending || usersPending;
+  const hasFilter = Boolean(actorFilter ?? familyFilter);
+  // Exhausted = last page returned null cursor (and we've seen at least one page)
+  const exhausted = nextCursor === null && !firstPagePending;
 
   const columns: DataTableColumn<AuditEntry>[] = [
     {
@@ -227,41 +283,41 @@ export default function AdminAuditPage() {
         description="A record of who changed what, when. Newest first."
       />
 
-      {auditIsError && !auditEntries ? (
-        <ErrorBanner onRetry={() => void refetchAudit()}>
-          Couldn&apos;t load audit events. {errorMessage(auditError)}
+      {firstPageIsError && allEntries.length === 0 ? (
+        <ErrorBanner onRetry={() => void refetchFirst()}>
+          Couldn&apos;t load audit events. {errorMessage(firstPageError)}
         </ErrorBanner>
       ) : (
         <>
-          {/* Filter chips — client-side only, no round-trip. */}
+          {/* Filter chips — drive the server query (not client-side slice). */}
           {!loading && (actorOptions.length > 0 || actionFamilies.length > 0) && (
             <FilterBar
               actorOptions={actorOptions}
               actorFilter={actorFilter}
-              onActorChange={setActorFilter}
+              onActorChange={handleActorChange}
               actionFamilies={actionFamilies}
               familyFilter={familyFilter}
-              onFamilyChange={setFamilyFilter}
+              onFamilyChange={handleFamilyChange}
             />
           )}
 
           <DataTable
             label="Audit events"
             columns={columns}
-            rows={visibleEntries}
+            rows={allEntries}
             rowKey={(entry) => entry.id}
-            loading={loading}
+            loading={loading || (firstPageFetching && allEntries.length === 0)}
             skeletonRows={8}
             empty={
-              actorFilter || familyFilter ? (
+              hasFilter ? (
                 <EmptyState
                   action={
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        setActorFilter(null);
-                        setFamilyFilter(null);
+                        handleActorChange(null);
+                        handleFamilyChange(null);
                       }}
                     >
                       Clear filters
@@ -287,22 +343,26 @@ export default function AdminAuditPage() {
             )}
           />
 
-          {canLoadMore && (
+          {/* Load more / End of log — honest end state per the honesty law */}
+          {!loading && allEntries.length > 0 && (
             <div className="flex justify-center pt-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                loading={auditFetching}
-                onClick={loadMore}
-              >
-                Load more
-              </Button>
+              {exhausted ? (
+                <p className="text-vf-small text-vf-subtle">
+                  {hasFilter
+                    ? "No more matching events"
+                    : "End of audit log"}
+                </p>
+              ) : nextCursor !== undefined ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  loading={loadingMore}
+                  onClick={() => void loadMore()}
+                >
+                  Load more
+                </Button>
+              ) : null}
             </div>
-          )}
-          {!canLoadMore && limit >= MAX_LIMIT && (auditEntries?.length ?? 0) > 0 && (
-            <p className="text-vf-small text-vf-subtle text-center">
-              Showing the most recent {MAX_LIMIT} events.
-            </p>
           )}
         </>
       )}
@@ -402,6 +462,10 @@ function TargetCell({ entry }: { entry: AuditEntry }) {
 
 // ---------------------------------------------------------------------------
 // Filter bar — actor chip group + action-family chip group.
+//
+// Families are derived from the loaded set. Because the log is server-
+// paginated we cannot enumerate all families cheaply. Chips show what's
+// been seen in the loaded pages; filtering searches the WHOLE log server-side.
 
 function FilterBar({
   actorOptions,

@@ -214,6 +214,18 @@ class AdminStore(Protocol):
 
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]: ...
 
+    def list_audit_page(
+        self,
+        *,
+        limit: int = 50,
+        actor_id: str | None = None,
+        action_prefix: str | None = None,
+        before_created_at: int | None = None,
+        before_id: str | None = None,
+        target_kind: str | None = None,
+        target_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
 
 AdminAuth = Callable[[Request], AdminContext]
 ProfileResolver = Callable[[str], AppProfile | None]
@@ -222,7 +234,7 @@ ServiceProbe = Callable[[str, "int | None", str], "Awaitable[Mapping[str, Any]]"
 
 
 _AUDIT_DEFAULT_LIMIT = 50
-_AUDIT_MAX_LIMIT = 200
+_AUDIT_MAX_LIMIT = 200  # max page size; pagination via cursor reaches arbitrarily old events
 _SERVICE_AVAILABILITY_STATES = frozenset(
     {"available", "degraded", "draining", "maintenance", "disabled"}
 )
@@ -728,6 +740,7 @@ _OIDC_CONFIG_FIELDS = frozenset(
         "token_endpoint",
         "jwks_uri",
         "clock_skew_seconds",
+        "groups_claim",
     }
 )
 _OIDC_STRING_FIELDS = frozenset(
@@ -739,6 +752,7 @@ _OIDC_STRING_FIELDS = frozenset(
         "authorization_endpoint",
         "token_endpoint",
         "jwks_uri",
+        "groups_claim",
     }
 )
 _OIDC_LIST_FIELDS = frozenset(
@@ -1979,6 +1993,24 @@ def create_admin_router(
 
     @router.get("/audit")
     def audit(request: Request) -> JSONResponse:
+        """List audit events with optional server-side filters and keyset cursor pagination.
+
+        Query params:
+          limit        — page size (default 50, max 200 per page); pagination
+                         via ``next_cursor`` makes the full log reachable beyond
+                         a single page.
+          actor_id     — exact match on actor_id (e.g. ``usr_…`` or ``cli``).
+          action_prefix — matches events whose action starts with this prefix
+                          (e.g. ``service.`` or ``app.``).
+          before       — keyset cursor returned as ``next_cursor`` from a prior
+                         response, encoded as ``"<created_at>:<id>"``; fetches
+                         the next page older than that position.
+
+        Response:
+          { "records": [...], "next_cursor": "<created_at>:<id>" | null }
+          ``next_cursor`` is null exactly when no more rows match the current
+          filter — ``"End of audit log"`` territory for the UI.
+        """
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
@@ -1987,10 +2019,50 @@ def create_admin_router(
             default=_AUDIT_DEFAULT_LIMIT,
             maximum=_AUDIT_MAX_LIMIT,
         )
-        entries = store.recent_audit(limit=limit)
+        actor_id = request.query_params.get("actor_id") or None
+        action_prefix = request.query_params.get("action_prefix") or None
+        before_created_at: int | None = None
+        before_id: str | None = None
+        before_raw = request.query_params.get("before") or None
+        if before_raw:
+            parts = before_raw.split(":", 1)
+            if len(parts) == 2:
+                try:
+                    before_created_at = int(parts[0])
+                    before_id = parts[1]
+                except (ValueError, TypeError):
+                    return JSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={
+                            "error": {
+                                "code": "invalid_cursor",
+                                "message": "before cursor must be '<created_at>:<id>'",
+                            }
+                        },
+                    )
+            else:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={
+                        "error": {
+                            "code": "invalid_cursor",
+                            "message": "before cursor must be '<created_at>:<id>'",
+                        }
+                    },
+                )
+        page = store.list_audit_page(
+            limit=limit,
+            actor_id=actor_id,
+            action_prefix=action_prefix,
+            before_created_at=before_created_at,
+            before_id=before_id,
+        )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"audit": list(entries), "limit": limit},
+            content={
+                "records": page["records"],
+                "next_cursor": page["next_cursor"],
+            },
         )
 
     @router.get("/audit-events")

@@ -2180,9 +2180,10 @@ class AdminAuditEventsEndpointTests(unittest.TestCase):
         resp = self.client.get("/admin/api/audit-events", headers=self._auth())
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
-        self.assertIn("audit", body)
-        self.assertIn("limit", body)
-        actions = [e["action"] for e in body["audit"]]
+        # New response shape: {records, next_cursor}
+        self.assertIn("records", body)
+        self.assertIn("next_cursor", body)
+        actions = [e["action"] for e in body["records"]]
         self.assertIn("app.create", actions)
 
     def test_audit_events_matches_audit_endpoint(self) -> None:
@@ -2190,7 +2191,7 @@ class AdminAuditEventsEndpointTests(unittest.TestCase):
         r2 = self.client.get("/admin/api/audit-events", headers=self._auth())
         self.assertEqual(r1.status_code, 200)
         self.assertEqual(r2.status_code, 200)
-        self.assertEqual(r1.json()["audit"], r2.json()["audit"])
+        self.assertEqual(r1.json()["records"], r2.json()["records"])
 
     def test_audit_events_limit_param(self) -> None:
         for i in range(5):
@@ -2201,8 +2202,7 @@ class AdminAuditEventsEndpointTests(unittest.TestCase):
             "/admin/api/audit-events?limit=2", headers=self._auth()
         )
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["limit"], 2)
-        self.assertLessEqual(len(resp.json()["audit"]), 2)
+        self.assertLessEqual(len(resp.json()["records"]), 2)
 
 
 if __name__ == "__main__":

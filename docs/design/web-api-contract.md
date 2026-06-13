@@ -702,16 +702,26 @@ Request: `{ "source_kind": "oidc_group", "source_value": "trusted-users", "profi
 
 ## Surface 6 — Audit
 
-### GET /admin/api/audit?limit=50
+### GET /admin/api/audit
 
-Reverse-chronological list of audit events. Default limit 50, maximum 200.
-There is no cursor/offset pagination — for "Load more" the client increases
-`limit` and re-fetches the full window (acceptable at current volumes; add a
-`cursor` parameter when the table grows).
+Reverse-chronological list of audit events with server-side filtering and
+keyset cursor pagination. The 200-row truncation ceiling is **gone**: paginate
+with `next_cursor` to reach arbitrarily old events for any filter.
+
+**Query parameters** (all optional):
+
+| Param | Type | Description |
+|---|---|---|
+| `limit` | int | Page size. Default 50, max 200 per page. |
+| `actor_id` | string | Exact match on `actor_id` (e.g. `usr_…`, `svc_…`, `"cli"`). |
+| `action_prefix` | string | Prefix match on `action` (e.g. `"service."`, `"app."`). |
+| `before` | string | Keyset cursor from a prior `next_cursor`; encoded as `"<created_at>:<id>"`. Fetches the next page older than that position. |
+
+**Response**:
 
 ```json
 {
-  "audit": [ {
+  "records": [ {
     "id": "aud_…",
     "created_at": 1765…,
     "actor_kind": "admin" | "cli" | null,
@@ -721,7 +731,7 @@ There is no cursor/offset pagination — for "Load more" the client increases
     "target_id": "app_… | prof_… | …",
     "metadata": { "name": "brother-laptop", "kind": "service" } | null
   } ],
-  "limit": 50
+  "next_cursor": "<created_at>:<id>" | null
 }
 ```
 
@@ -747,6 +757,13 @@ Field notes:
 - `metadata` is a free-form object specific to each action; render as
   mono JSON in the row detail Sheet.
 - Results are sorted newest-first (`created_at DESC`).
+- `next_cursor` is `null` exactly when no more rows exist **for the current
+  filter set** — the UI may display "End of audit log" (or "No more matching
+  events" under an active filter). A non-null cursor is opaque; pass it
+  verbatim as the `before` param on the next fetch.
+- Filter chips in the UI drive the **server** query, not a client-side slice.
+  `actor_id` + `action_prefix` work across the entire log, not just the first
+  200 rows.
 
 `GET /admin/api/audit-events` is a canonical noun-based alias for the same
 endpoint; the React client should prefer `/audit`.
@@ -780,21 +797,41 @@ configured").
     "token_endpoint": "",
     "jwks_uri": "",
     "clock_skew_seconds": 60,
+    "groups_claim": "groups",
     "updated_at": 1765…
   } | null
 }
 ```
 
+`groups_claim` is the name of the ID-token claim that carries the user's group
+memberships (default `"groups"`). Change this when your IdP uses a different
+claim name — e.g. `"cognito:groups"` (AWS Cognito), `"roles"`, or a custom
+namespaced claim. The gateway reads this claim for two purposes:
+1. **Admin grant** — if the claim value intersects `admin_groups`, the user is
+   granted the `admin` role.
+2. **Profile mapping** — the claim values are stored as `oidc_group` access
+   names (see Users → runtime-profile-mappings) so operators can map groups
+   to gateway access profiles.
+
+`groups_claim` is returned plainly by GET (it is not a secret). `client_secret`
+is **always** redacted in GET responses; it is write-only.
+
+> **Runtime gap note**: the `groups_claim` field is fully wired — the live
+> OIDC auth path in `proxy.py` reads the configured claim name for both admin
+> role evaluation and profile mapping. Setting this field is immediately
+> effective after the next gateway restart.
+
 ### PUT /admin/api/oidc-config  (save OIDC config)
 
 Request: any subset of the `oidc_config` fields above. When `client_secret` is
 omitted, blank, or `"<redacted>"`, the existing stored secret is preserved
+(patch semantics). Omitting `groups_claim` preserves the existing value
 (patch semantics). Unknown fields return `400 invalid_oidc_config`.
 
 Accepted fields: `enabled`, `issuer`, `client_id`, `client_secret`,
 `redirect_uri`, `scopes`, `allowed_email_domains`, `admin_emails`,
 `admin_groups`, `admin_roles`, `authorization_endpoint`, `token_endpoint`,
-`jwks_uri`, `clock_skew_seconds`.
+`jwks_uri`, `clock_skew_seconds`, `groups_claim`.
 
 `200` → `{ "oidc_config": { …same scrubbed shape… } }`
 

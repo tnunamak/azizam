@@ -61,6 +61,7 @@ OIDC_PROVIDER_FIELDS: tuple[str, ...] = (
     "token_endpoint",
     "jwks_uri",
     "clock_skew_seconds",
+    "groups_claim",
 )
 
 OIDC_SECRET_FIELDS: frozenset[str] = frozenset({"client_secret"})
@@ -1082,6 +1083,43 @@ class AdminSQLiteStore:
 
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
         return admin_store.list_audit(limit=limit, path=self.path)
+
+    def list_audit_page(
+        self,
+        *,
+        limit: int = 50,
+        actor_id: str | None = None,
+        action_prefix: str | None = None,
+        before_created_at: int | None = None,
+        before_id: str | None = None,
+        target_kind: str | None = None,
+        target_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return one page of audit events with cursor-based pagination.
+
+        Requests ``limit + 1`` rows from the store to cheaply detect whether
+        more rows exist.  Returns ``next_cursor`` as ``"<created_at>:<id>"``
+        when more rows follow, or ``null`` when the result is exhausted for the
+        given filter set.
+        """
+        fetch_limit = int(limit) + 1
+        rows = admin_store.list_audit(
+            target_kind=target_kind,
+            target_id=target_id,
+            actor_id=actor_id,
+            action_prefix=action_prefix,
+            before_created_at=before_created_at,
+            before_id=before_id,
+            limit=fetch_limit,
+            path=self.path,
+        )
+        has_more = len(rows) == fetch_limit
+        page = rows[:limit]
+        next_cursor: str | None = None
+        if has_more and page:
+            last = page[-1]
+            next_cursor = f"{last['created_at']}:{last['id']}"
+        return {"records": page, "next_cursor": next_cursor}
 
     def profile_for_id(self, profile_id: str):
         record = admin_store.get_profile(profile_id, path=self.path)

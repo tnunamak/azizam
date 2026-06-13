@@ -71,6 +71,11 @@ interface OidcConfig {
   token_endpoint: string;
   jwks_uri: string;
   clock_skew_seconds: number;
+  /** The ID-token claim that carries the user's group memberships. Default
+   * "groups". The gateway reads this claim for admin-role evaluation (via
+   * admin_groups) and for profile mappings (Users → runtime-profile-mappings
+   * with source_kind "oidc_group"). */
+  groups_claim: string;
   updated_at: number | null;
 }
 
@@ -442,6 +447,7 @@ interface OidcFormState {
   token_endpoint: string;
   jwks_uri: string;
   clock_skew_seconds: string;
+  groups_claim: string;
 }
 
 function oidcFormDefaults(existing: OidcConfig | null): OidcFormState {
@@ -461,6 +467,7 @@ function oidcFormDefaults(existing: OidcConfig | null): OidcFormState {
       token_endpoint: "",
       jwks_uri: "",
       clock_skew_seconds: "60",
+      groups_claim: "groups",
     };
   }
   return {
@@ -479,6 +486,7 @@ function oidcFormDefaults(existing: OidcConfig | null): OidcFormState {
     token_endpoint: existing.token_endpoint,
     jwks_uri: existing.jwks_uri,
     clock_skew_seconds: String(existing.clock_skew_seconds ?? 60),
+    groups_claim: existing.groups_claim ?? "groups",
   };
 }
 
@@ -540,6 +548,7 @@ function OidcEditDialogContent({
         token_endpoint: form.token_endpoint.trim(),
         jwks_uri: form.jwks_uri.trim(),
         clock_skew_seconds: Number(form.clock_skew_seconds) || 60,
+        groups_claim: form.groups_claim.trim() || "groups",
       };
       // Only include client_secret when the user typed something new.
       // Blank / "<redacted>" → preserved by the server (patch semantics).
@@ -706,6 +715,23 @@ function OidcEditDialogContent({
                   value={form.admin_roles}
                   onChange={(e) => set("admin_roles", e.target.value)}
                   placeholder="admin"
+                  disabled={save.isPending}
+                />
+              </Field>
+
+              <Field
+                label="Groups claim"
+                help={
+                  "The ID-token claim that carries the user's group memberships. " +
+                  "Used by admin groups (above) to grant admin access, and by " +
+                  "Users → profile mappings to assign access by group. " +
+                  "Common values: “groups” (default), “cognito:groups” (AWS Cognito), “roles”."
+                }
+              >
+                <Input
+                  value={form.groups_claim}
+                  onChange={(e) => set("groups_claim", e.target.value)}
+                  placeholder="groups"
                   disabled={save.isPending}
                 />
               </Field>

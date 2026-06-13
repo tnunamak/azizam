@@ -172,6 +172,11 @@ class OIDCConfig:
     # "/trusted-users" and roles under realm_access/resource_access.
     admin_groups: frozenset[str] = field(default_factory=frozenset)
     admin_roles: frozenset[str] = field(default_factory=frozenset)
+    # Name of the ID-token claim that carries the user's group memberships.
+    # Defaults to "groups" (the de-facto standard for Keycloak, Okta, etc.).
+    # Change this if your IdP uses a different claim name (e.g. "roles",
+    # "cognito:groups", "https://example.com/groups").
+    groups_claim: str = "groups"
 
     def __post_init__(self) -> None:
         if not self.enabled:
@@ -393,6 +398,7 @@ def load_oidc_config(
         clock_skew_seconds=int(data.get("clock_skew_seconds", 60)),
         admin_groups=_coerce_access_name_set(admin_groups),
         admin_roles=_coerce_access_name_set(admin_roles),
+        groups_claim=str(data.get("groups_claim") or "groups"),
     )
 
 
@@ -699,7 +705,7 @@ def admin_role_from_oidc_claims(
     bootstrap/manual concept, while "trusted users" can be managed in the
     IdP as the normal admin set for this gateway.
     """
-    if _claim_values_match(claims.get("groups"), config.admin_groups):
+    if _claim_values_match(claims.get(config.groups_claim), config.admin_groups):
         return AdminRole.ADMIN
 
     realm_access = claims.get("realm_access")
@@ -725,17 +731,22 @@ def access_names_from_oidc_claims(
     claims: Mapping[str, Any],
     *,
     client_id: str,
+    groups_claim: str = "groups",
 ) -> dict[str, tuple[str, ...]]:
     """Return normalized OIDC group/role names for runtime Profile mapping.
 
     The gateway stores aliases rather than raw claims so an admin can map
     "trusted users", "trusted-users", or "/trusted-users" without caring how
     the IdP serialized the name on a given login.
+
+    ``groups_claim`` is the name of the ID-token claim that carries group
+    memberships.  Defaults to ``"groups"``; override with the value stored in
+    ``OIDCConfig.groups_claim``.
     """
     groups: set[str] = set()
     roles: set[str] = set()
 
-    for item in _iter_claim_strings(claims.get("groups")):
+    for item in _iter_claim_strings(claims.get(groups_claim)):
         groups.update(_access_name_aliases(item))
 
     realm_access = claims.get("realm_access")

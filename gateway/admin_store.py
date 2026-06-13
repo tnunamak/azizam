@@ -1454,9 +1454,29 @@ def list_audit(
     *,
     target_kind: str | None = None,
     target_id: str | None = None,
+    actor_id: str | None = None,
+    action_prefix: str | None = None,
+    before_created_at: int | None = None,
+    before_id: str | None = None,
     limit: int = 100,
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
+    """Query audit events with optional filters and keyset cursor pagination.
+
+    Filters:
+      target_kind / target_id — exact match (unchanged).
+      actor_id               — exact match on actor_id column.
+      action_prefix          — matches action LIKE '<prefix>%'.
+      before_created_at + before_id — keyset cursor; both must be supplied
+        together.  Returns events strictly older than the given position using
+        the composite tuple comparison ``(created_at, id) < (before_created_at,
+        before_id)`` which is consistent with the ORDER BY created_at DESC,
+        id DESC.
+
+    Returns up to *limit* rows sorted newest-first.  To check whether more
+    rows exist the caller should request ``limit + 1`` rows and inspect the
+    result length.
+    """
     clauses: list[str] = []
     params: list[Any] = []
     if target_kind is not None:
@@ -1465,6 +1485,20 @@ def list_audit(
     if target_id is not None:
         clauses.append("target_id = ?")
         params.append(target_id)
+    if actor_id is not None:
+        clauses.append("actor_id = ?")
+        params.append(actor_id)
+    if action_prefix is not None:
+        clauses.append("action LIKE ?")
+        params.append(action_prefix + "%")
+    if before_created_at is not None and before_id is not None:
+        # Composite keyset: (created_at, id) < (before_created_at, before_id)
+        # This is correct for ORDER BY created_at DESC, id DESC because we
+        # want rows that are "earlier" in that ordering.
+        clauses.append(
+            "(created_at < ? OR (created_at = ? AND id < ?))"
+        )
+        params.extend([int(before_created_at), int(before_created_at), before_id])
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
     with _conn(path) as conn:
