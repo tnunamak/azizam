@@ -370,6 +370,30 @@ export default function AdminAppsPage() {
         const count = (appKeysByApp.get(app.id) ?? []).filter(
           isActiveKey,
         ).length;
+        // H4: "0 keys" is only a button when it does something.
+        // If disabled, it can't get a key — render plain text.
+        // If 0 active keys and app is live, clicking mints the first key.
+        // If >0 keys, clicking opens the keys panel.
+        if (app.disabled_at !== null) {
+          return (
+            <span className="text-vf-small text-vf-muted">
+              {count} {count === 1 ? "key" : "keys"}
+            </span>
+          );
+        }
+        if (count === 0) {
+          return (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-vf-small h-6 px-1.5"
+              onClick={() => setMintTarget(app)}
+              aria-label={`Mint first key for ${app.name}`}
+            >
+              Mint key
+            </Button>
+          );
+        }
         return (
           <Button
             variant="ghost"

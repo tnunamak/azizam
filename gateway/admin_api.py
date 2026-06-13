@@ -1630,6 +1630,8 @@ def create_admin_router(
             "image": "Images",
             "audio": "Audio",
             "speech": "Speech",
+            "generations": "Generations",
+            "videos": "Videos",
         }
         capability_choices = [
             {

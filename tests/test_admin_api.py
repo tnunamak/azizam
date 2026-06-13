@@ -2209,6 +2209,60 @@ class AdminServicePresetsTests(unittest.TestCase):
         # Config must still be derived (execution_substrate preserved).
         self.assertEqual(svc["config"]["execution_substrate"], "litellm")
 
+    def test_presets_capabilities_include_generations_and_videos(self) -> None:
+        """Capability vocab must include 'generations' and 'videos' (H2: no hidden caps)."""
+        client, _ = _make_client()
+        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
+        self.assertEqual(resp.status_code, 200)
+        caps = resp.json()["capabilities"]
+        ids = [c["id"] for c in caps]
+        self.assertIn("generations", ids,
+                      "generations must appear in the capability vocabulary")
+        self.assertIn("videos", ids,
+                      "videos must appear in the capability vocabulary")
+        # Both must have non-empty human labels
+        cap_by_id = {c["id"]: c for c in caps}
+        self.assertTrue(cap_by_id["generations"]["label"],
+                        "generations must have a non-empty label")
+        self.assertTrue(cap_by_id["videos"]["label"],
+                        "videos must have a non-empty label")
+
+    def test_detect_models_comfyui_protocol_returns_not_ok(self) -> None:
+        """POST /operator/services/detect-models for a comfyui-protocol service.
+
+        ComfyUI does not expose an OpenAI-compatible /v1/models endpoint, so
+        detect-models returns ok=False (cannot scan workflow dir via HTTP probe).
+        The endpoint must still return 200 with a structured detected object.
+        This documents the gap: detect-models does not support comfyui.
+        """
+        import asyncio
+
+        async def _failing_probe(host: str, port: Any, path: str) -> dict:
+            # Simulate the probe reaching an endpoint that isn't /models
+            return {"ok": False, "status": 404, "error": "Not Found", "body": None}
+
+        client, _ = _make_client(service_probe=_failing_probe)
+        resp = client.post(
+            "/admin/api/operator/services/detect-models",
+            json={
+                "name": "comfyui-local",
+                "host": "127.0.0.1",
+                "port": 8188,
+                "protocol": "comfyui",
+                "base_path": "",
+            },
+            headers=_auth(),
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        detected = resp.json()["detected"]
+        self.assertIn("ok", detected)
+        self.assertIn("models", detected)
+        # A comfyui backend has no /models endpoint — probe returns not-ok.
+        self.assertFalse(detected["ok"],
+                         "detect-models for comfyui must return ok=False "
+                         "(no OpenAI-compatible /models endpoint)")
+        self.assertEqual(detected["models"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -230,7 +230,9 @@ client-side** — consume this endpoint instead.
     { "id": "embeddings", "label": "Embeddings" },
     { "id": "image", "label": "Images" },
     { "id": "audio", "label": "Audio" },
-    { "id": "speech", "label": "Speech" }
+    { "id": "speech", "label": "Speech" },
+    { "id": "generations", "label": "Generations" },
+    { "id": "videos", "label": "Videos" }
   ]
 }
 ```
@@ -286,10 +288,10 @@ Full field list accepted by PATCH (all optional in partial edits):
 `health_endpoint`, `timeout` (integer seconds).
 
 **Routing**: `capabilities` (list of strings; canonical values: `chat`,
-`completions`, `vision`, `embeddings`, `image`, `audio`, `speech`),
-`native_passthrough` (boolean — send directly to backend, bypassing LiteLLM
-substrate), `models` (list of `{ public, upstream }` mappings, same shape as
-POST).
+`completions`, `vision`, `embeddings`, `image`, `audio`, `speech`,
+`generations`, `videos`), `native_passthrough` (boolean — send directly to
+backend, bypassing LiteLLM substrate), `models` (list of `{ public, upstream }`
+mappings, same shape as POST).
 
 **Admission / Advanced**: `role` (`"required"`, `"optional"`, `"standby"`),
 `priority` (integer, lower = preferred, default 100), `note` (string),
@@ -298,10 +300,34 @@ number, `duration_class` `"interactive"|"batch"`).
 
 **Top-level**: `enabled` (boolean).
 
-Unknown config keys in the existing record (e.g. `model_id`, custom execution
-fields) are **never dropped** by a partial PATCH — the merge in
-`AdminSQLiteStore.update_service` flattens only the fields it models; all other
-keys survive verbatim from the stored config.
+**Protocol-specific fields** (accepted and persisted for any service; validated
+by `_validate_service_form` and round-tripped by `service_form_to_raw`):
+
+| Protocol | Field | Type | Description |
+|---|---|---|---|
+| `comfyui` | `workflows_dir` | string | Absolute path to the directory holding workflow `.json` files |
+| `comfyui` | `video_workflows_dir` | string | Absolute path to the video workflow directory |
+| `comfyui` | `video_timeout` | integer (seconds) | Max seconds to wait for a video generation job |
+| `comfyui` | `default_model` | string | Name of the default workflow (basename without `.json`), used when the caller does not specify a model |
+
+`default_model` should match a `.json` filename in `workflows_dir`; a value
+with no corresponding file will result in a 404 at request time. The form
+should populate this as a Select populated by scanning the workflow dir (if
+accessible) with a free-text fallback. These fields are stored directly in
+`config` and survive any subsequent PATCH — including a partial edit that does
+not send them.
+
+**Honesty law H1 (preserve mechanism)**: `AdminSQLiteStore.update_service`
+starts its merge base from ALL keys in the existing `config` dict (not a
+hand-listed whitelist). It then overlays the caller-supplied form fields.
+`service_form_to_raw` explicitly handles known fields and passes any remaining
+unknown keys through verbatim (see `_FORM_CONSUMED_KEYS`). This means any
+config key ever written to the DB — including future protocol fields and
+extension-added keys — survives a partial PATCH by default, with zero per-field
+maintenance.
+
+Unknown config keys in the existing record are **never dropped** by a partial
+PATCH.
 
 `200` → `{ "service_registry": { … } }`
 
@@ -338,6 +364,14 @@ Request: same shape as test. Not persisted.
 `200` → `{ "detected": { "ok": true, "models": ["gpt-4o", "gpt-4-turbo"], "error": "" } }`
 
 `models` is empty and `ok` is false when the host is unreachable.
+
+**ComfyUI gap**: ComfyUI does not expose an OpenAI-compatible `/models`
+endpoint; `detect-models` probes `<base_path>/models` (which is empty for
+ComfyUI's default `base_path=""`) and returns `ok: false`. The frontend
+should offer `default_model` as a free-text field (with an optional directory
+scan if the workflow dir is locally accessible) rather than relying on
+detect-models for ComfyUI services. A future `/operator/services/{id}/scan-workflows`
+endpoint would close this gap by reading the workflow dir server-side.
 
 ### GET /admin/api/operator/litellm-config  (read-only viewer)
 

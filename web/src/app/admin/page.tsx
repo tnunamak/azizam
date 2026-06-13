@@ -125,7 +125,7 @@ function StatStrip({
     <div className="flex flex-wrap gap-6">
       <StatItem
         label="services"
-        value={`${servicesUp} / ${servicesTotal} up`}
+        value={`${servicesUp} / ${servicesTotal} enabled`}
       />
       <StatItem label="apps" value={String(apps)} />
       <StatItem label="active keys" value={String(activeKeys)} />

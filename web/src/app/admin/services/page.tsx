@@ -895,6 +895,11 @@ interface EditFormState {
   // Routing
   capabilities: string[];
   native_passthrough: boolean;
+  // ComfyUI protocol-specific fields (only sent/shown when protocol === "comfyui")
+  workflows_dir: string;
+  video_workflows_dir: string;
+  video_timeout: string;
+  default_model: string;
   // Admission (advanced)
   role: string;
   priority: string;
@@ -908,6 +913,7 @@ interface EditFormState {
 }
 
 // Canonical capability list — static fallback; server provides authoritative list via presets endpoint.
+// Includes generations + videos so ComfyUI capability checkboxes appear even when the presets call fails.
 const CAPABILITY_CHOICES_FALLBACK = [
   { id: "chat", label: "Chat" },
   { id: "completions", label: "Completions" },
@@ -916,7 +922,9 @@ const CAPABILITY_CHOICES_FALLBACK = [
   { id: "image", label: "Images" },
   { id: "audio", label: "Audio" },
   { id: "speech", label: "Speech" },
-] as const;
+  { id: "generations", label: "Generations" },
+  { id: "videos", label: "Videos" },
+];
 
 // Valid protocol values accepted by the backend normalizer
 const PROTOCOL_OPTIONS = [
@@ -975,6 +983,12 @@ function serviceToEditForm(service: Service): EditFormState {
     timeout: cfg.timeout != null ? String(cfg.timeout) : "",
     capabilities: [...(service.capabilities ?? [])],
     native_passthrough: cfg.native_passthrough ?? false,
+    // ComfyUI protocol-specific fields — always hydrated from config so they
+    // survive a round-trip even when the user edits another section.
+    workflows_dir: cfg.workflows_dir != null ? String(cfg.workflows_dir) : "",
+    video_workflows_dir: cfg.video_workflows_dir != null ? String(cfg.video_workflows_dir) : "",
+    video_timeout: cfg.video_timeout != null ? String(cfg.video_timeout) : "",
+    default_model: cfg.default_model != null ? String(cfg.default_model) : "",
     role: service.role ?? "required",
     priority: service.priority != null ? String(service.priority) : "100",
     gpu_required: Boolean(res.gpu_required),
@@ -986,13 +1000,32 @@ function serviceToEditForm(service: Service): EditFormState {
   };
 }
 
+// Keys the edit form explicitly models — any config key NOT in this set that
+// is present in the stored record will be shown in the "Advanced — managed in
+// config" read-only disclosure (H2) so operators can see everything the record
+// holds.
+const FORM_MODELED_CONFIG_KEYS = new Set([
+  "base_url", "host", "port", "base_path", "protocol", "api_key_env",
+  "health_endpoint", "timeout", "native_passthrough", "note", "resources",
+  "models", "workflows_dir", "video_workflows_dir", "video_timeout",
+  "default_model",
+]);
+
+/** Returns config keys in `service.config` that the form has no widget for.
+ * These are shown read-only so H2 (show everything the record carries) holds. */
+function unknownConfigKeys(service: Service): [string, unknown][] {
+  return Object.entries(service.config).filter(
+    ([key]) => !FORM_MODELED_CONFIG_KEYS.has(key),
+  );
+}
+
 function editFormToApiBody(form: EditFormState): Record<string, unknown> {
+  const isComfyUI = form.protocol === "comfyui";
   const body: Record<string, unknown> = {
     name: form.name.trim(),
     base_url: form.base_url.trim(),
     enabled: form.enabled,
     capabilities: form.capabilities,
-    native_passthrough: form.native_passthrough,
     role: form.role,
   };
   if (form.api_key_env.trim()) body.api_key_env = form.api_key_env.trim();
@@ -1001,6 +1034,22 @@ function editFormToApiBody(form: EditFormState): Record<string, unknown> {
   if (form.timeout.trim()) body.timeout = parseInt(form.timeout, 10);
   if (form.priority.trim()) body.priority = parseInt(form.priority, 10);
   if (form.note.trim()) body.note = form.note.trim();
+
+  // native_passthrough: only meaningful for openai-compatible; for comfyui it
+  // is always native — don't send a misleading toggle value.
+  if (!isComfyUI) {
+    body.native_passthrough = form.native_passthrough;
+  }
+
+  // ComfyUI protocol-specific fields — always sent for comfyui services so
+  // they round-trip even when the user edits another section (H1).
+  // For non-comfyui services they are omitted entirely.
+  if (isComfyUI) {
+    if (form.workflows_dir.trim()) body.workflows_dir = form.workflows_dir.trim();
+    if (form.video_workflows_dir.trim()) body.video_workflows_dir = form.video_workflows_dir.trim();
+    if (form.video_timeout.trim()) body.video_timeout = parseInt(form.video_timeout, 10);
+    if (form.default_model.trim()) body.default_model = form.default_model.trim();
+  }
 
   // Build resources sub-object — only include what's non-empty
   const resources: Record<string, unknown> = { gpu_required: form.gpu_required };
@@ -1065,6 +1114,10 @@ function EditServiceDialogContent({
   const [probe, setProbe] = useState<TestProbe | null>(null);
   const [testing, setTesting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showUnknownKeys, setShowUnknownKeys] = useState(false);
+
+  const isComfyUI = form.protocol === "comfyui";
+  const unknownKeys = unknownConfigKeys(service);
 
   function set<K extends keyof EditFormState>(key: K) {
     return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -1253,6 +1306,71 @@ function EditServiceDialogContent({
                 </Field>
               </div>
 
+              {/* ── Protocol-specific section ────────────────── */}
+              {isComfyUI ? (
+                <div className="flex flex-col gap-4">
+                  <p className="text-vf-micro text-vf-muted font-semibold uppercase tracking-wide">
+                    ComfyUI
+                  </p>
+                  <p className="text-vf-small text-vf-muted rounded-vf-md border-vf-border bg-vf-surface-2 border p-3">
+                    ComfyUI is reached directly — image and video jobs bypass
+                    the LiteLLM substrate entirely. Workflow graphs are edited in
+                    ComfyUI itself; this section points the gateway at the
+                    workflow directory and sets a default.
+                  </p>
+
+                  <Field
+                    label="Workflows directory"
+                    help="Absolute path on the gateway host to the directory holding workflow .json files."
+                  >
+                    <Input
+                      value={form.workflows_dir}
+                      onChange={set("workflows_dir")}
+                      placeholder="/opt/comfyui/workflows"
+                      disabled={save.isPending}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Video workflows directory"
+                    help="Absolute path to the directory holding video workflow .json files."
+                  >
+                    <Input
+                      value={form.video_workflows_dir}
+                      onChange={set("video_workflows_dir")}
+                      placeholder="/opt/comfyui/video-workflows"
+                      disabled={save.isPending}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Video timeout (seconds)"
+                    help="Maximum seconds to wait for a video generation job to complete."
+                  >
+                    <Input
+                      type="number"
+                      min={1}
+                      value={form.video_timeout}
+                      onChange={set("video_timeout")}
+                      placeholder="300"
+                      disabled={save.isPending}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Default model"
+                    help="Basename (without .json) of the workflow file used when the caller doesn't specify a model. Must match a file in the workflows directory."
+                  >
+                    <Input
+                      value={form.default_model}
+                      onChange={set("default_model")}
+                      placeholder="e.g. sd3-medium"
+                      disabled={save.isPending}
+                    />
+                  </Field>
+                </div>
+              ) : null}
+
               {/* ── Routing ─────────────────────────────────── */}
               <div className="flex flex-col gap-4">
                 <p className="text-vf-micro text-vf-muted font-semibold uppercase tracking-wide">
@@ -1281,39 +1399,89 @@ function EditServiceDialogContent({
                   </div>
                 </fieldset>
 
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-vf-small text-vf-text font-medium">
-                      Native passthrough
-                    </span>
-                    <span className="text-vf-micro text-vf-muted">
-                      Send requests straight to this backend instead of through the LiteLLM substrate.
-                    </span>
+                {/* H3 honesty: for ComfyUI, native passthrough is the only mode —
+                    don't show it as a toggle implying an alternative exists. */}
+                {isComfyUI ? (
+                  <p className="text-vf-small text-vf-muted">
+                    Image and video requests are sent directly to ComfyUI —
+                    native passthrough is always on for this protocol.
+                  </p>
+                ) : (
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-vf-small text-vf-text font-medium">
+                        Native passthrough
+                      </span>
+                      <span className="text-vf-micro text-vf-muted">
+                        Send requests straight to this backend instead of through the LiteLLM substrate.
+                      </span>
+                    </div>
+                    <Switch
+                      checked={form.native_passthrough}
+                      onCheckedChange={(checked) =>
+                        setForm((prev) => ({ ...prev, native_passthrough: checked }))
+                      }
+                      disabled={save.isPending}
+                      aria-label="Native passthrough"
+                    />
                   </div>
-                  <Switch
-                    checked={form.native_passthrough}
-                    onCheckedChange={(checked) =>
-                      setForm((prev) => ({ ...prev, native_passthrough: checked }))
-                    }
-                    disabled={save.isPending}
-                    aria-label="Native passthrough"
-                  />
-                </div>
+                )}
 
-                <p className="text-vf-small text-vf-muted">
-                  Model mappings are managed separately —{" "}
+                {!isComfyUI && (
+                  <p className="text-vf-small text-vf-muted">
+                    Model mappings are managed separately —{" "}
+                    <button
+                      type="button"
+                      className="text-vf-accent underline-offset-2 hover:underline"
+                      onClick={() => {
+                        onOpenChange(false);
+                        onOpenModels(service);
+                      }}
+                    >
+                      open Models…
+                    </button>
+                  </p>
+                )}
+              </div>
+
+              {/* ── Unknown config keys (H2) ─────────────────── */}
+              {unknownKeys.length > 0 && (
+                <div className="flex flex-col gap-2">
                   <button
                     type="button"
-                    className="text-vf-accent underline-offset-2 hover:underline"
-                    onClick={() => {
-                      onOpenChange(false);
-                      onOpenModels(service);
-                    }}
+                    className="text-vf-small text-vf-muted hover:text-vf-text flex items-center gap-1.5 transition-colors"
+                    onClick={() => setShowUnknownKeys((v) => !v)}
+                    aria-expanded={showUnknownKeys}
                   >
-                    open Models…
+                    <span
+                      className={`inline-block transition-transform ${showUnknownKeys ? "rotate-90" : ""}`}
+                      aria-hidden
+                    >
+                      ▶
+                    </span>
+                    Advanced — managed in config ({unknownKeys.length})
                   </button>
-                </p>
-              </div>
+                  {showUnknownKeys && (
+                    <div className="rounded-vf-md border-vf-border bg-vf-surface-2 border p-3">
+                      <p className="text-vf-micro text-vf-muted mb-2">
+                        These keys are stored in this service&apos;s config but
+                        have no widget in the form. They are preserved on every
+                        save and are shown here for transparency.
+                      </p>
+                      <dl className="flex flex-col gap-1.5">
+                        {unknownKeys.map(([key, val]) => (
+                          <div key={key} className="flex flex-wrap items-start gap-x-3 gap-y-0.5">
+                            <dt className="text-vf-micro text-vf-subtle font-mono shrink-0">{key}</dt>
+                            <dd className="text-vf-micro text-vf-text font-mono break-all">
+                              {JSON.stringify(val)}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* ── Enabled ─────────────────────────────────── */}
               <div className="flex items-center justify-between gap-4">

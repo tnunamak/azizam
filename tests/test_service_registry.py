@@ -1015,3 +1015,100 @@ def test_full_embeddings_record_round_trips_through_form_to_raw() -> None:
     assert cfg.get("native_passthrough") is True
     assert record["role"] == "required"
     assert record["priority"] == 100
+
+
+# ---------------------------------------------------------------------------
+# ComfyUI protocol fields — service_form_to_raw round-trip
+# ---------------------------------------------------------------------------
+
+def test_service_form_to_raw_comfyui_protocol_fields() -> None:
+    """ComfyUI-specific fields round-trip through service_form_to_raw."""
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "comfy",
+            "host": "127.0.0.1",
+            "port": 8188,
+            "protocol": "comfyui",
+            "capabilities": ["image", "generations", "videos"],
+            "workflows_dir": "/data/workflows",
+            "video_workflows_dir": "/data/video_workflows",
+            "video_timeout": 300,
+            "default_model": "my_workflow",
+        }
+    )
+    assert raw["workflows_dir"] == "/data/workflows"
+    assert raw["video_workflows_dir"] == "/data/video_workflows"
+    assert raw["video_timeout"] == 300
+    assert raw["default_model"] == "my_workflow"
+    assert "generations" in raw["capabilities"]
+    assert "videos" in raw["capabilities"]
+
+
+def test_service_form_to_raw_video_timeout_coerces_string() -> None:
+    """video_timeout is coerced to int from a string (form submission)."""
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "comfy",
+            "host": "127.0.0.1",
+            "port": 8188,
+            "video_timeout": "120",
+        }
+    )
+    assert raw["video_timeout"] == 120
+
+
+def test_comfyui_protocol_fields_stored_in_config() -> None:
+    """ComfyUI fields survive the upsert_service_in_registry pipeline."""
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "comfyui",
+            "host": "127.0.0.1",
+            "port": 8188,
+            "protocol": "comfyui",
+            "capabilities": ["image", "generations", "videos"],
+            "workflows_dir": "/data/workflows",
+            "video_workflows_dir": "/data/video_workflows",
+            "video_timeout": 300,
+            "default_model": "my_workflow",
+        }
+    )
+    seed = service_registry.build_service_registry_seed({"backends": {}})
+    _registry, record = service_registry.upsert_service_in_registry(
+        seed, service_id="comfyui", raw=raw, source="ui"
+    )
+    cfg = record["config"]
+    assert cfg.get("workflows_dir") == "/data/workflows"
+    assert cfg.get("video_workflows_dir") == "/data/video_workflows"
+    assert cfg.get("video_timeout") == 300
+    assert cfg.get("default_model") == "my_workflow"
+
+
+# ---------------------------------------------------------------------------
+# Capability vocabulary — generations and videos
+# ---------------------------------------------------------------------------
+
+def test_capability_choices_includes_generations_and_videos() -> None:
+    """_CAPABILITY_CHOICES must include generations and videos (honesty H2)."""
+    assert "generations" in service_registry._CAPABILITY_CHOICES
+    assert "videos" in service_registry._CAPABILITY_CHOICES
+
+
+def test_unknown_config_key_survives_form_to_raw_passthrough() -> None:
+    """An unknown config key present in the form dict passes through unchanged.
+
+    This is the generic regression guard: any future config field that
+    service_form_to_raw doesn't explicitly model must not be silently dropped.
+    Simulates the pattern used by update_service: the existing config is
+    flattened into form_base, so all keys end up in the merged dict.
+    """
+    # Simulate a future field the form doesn't model yet.
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "x",
+            "host": "localhost",
+            "port": 9999,
+            "some_future_field": "preserved-value",
+        }
+    )
+    # service_form_to_raw drops blank/None values but must not strip unknown keys.
+    assert raw.get("some_future_field") == "preserved-value"

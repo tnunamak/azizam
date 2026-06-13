@@ -144,6 +144,56 @@ no `usr_`/`cred_` as cell text) and judges against this spec.
 - Playwright (python, existing venv) screenshot verification per surface.
 - Components must not import from `app/` (one-way dependency: app → ui).
 
+## The honesty law (non-negotiable, added 2026-06-13)
+
+The audited operator (self-hoster: r/selfhosted, r/LocalLLaMA) forgives a
+missing feature but never a UI that lies or silently destroys their config.
+Above all else:
+
+H1. **No silent data loss.** An edit must never drop a field the operator
+    didn't touch. Saving a partial form preserves the ENTIRE stored record;
+    fields the form doesn't model are passed through untouched, not
+    whitelisted away. (Bug of record: saving the generic service Edit form
+    for ComfyUI dropped `workflows_dir`/`video_workflows_dir`/`video_timeout`/
+    `default_model` — proven, fixed.)
+H2. **Show everything the record carries.** If a service holds config keys
+    or capabilities the form has no widget for, render them — read-only with
+    an "edited elsewhere" note is acceptable; hiding them is not. A form that
+    shows a subset misrepresents the object.
+H3. **State labels must be true.** Don't say "up" for "enabled" when health
+    isn't probed; say "enabled". Don't show a control implying a choice that
+    doesn't exist (e.g. "Native passthrough" as a toggle on a backend where
+    it's the only mode). Copy states what is, including "this is managed by
+    X, not here."
+H4. **No dead affordances.** A button that looks actionable does something or
+    isn't there. "0 keys" either mints a key or isn't a button. Absent
+    capabilities (e.g. user role editing has no API) are explained in plain
+    copy, not represented by a control that fails.
+
+## Protocol-aware service editing (binding)
+
+A service's editable shape depends on its `protocol`. The generic
+OpenAI-compatible form is wrong for ComfyUI and any non-LLM backend.
+
+- **Field schema is keyed on protocol.** `openai-compatible` →
+  connection + LLM capabilities + models map (today's form). `comfyui`
+  (and future non-LLM protocols) → a protocol section with that backend's
+  real fields as first-class inputs: `workflows_dir`, `video_workflows_dir`,
+  `video_timeout`, `default_model` (default_model as a Select populated by
+  scanning the workflow dir — a free-text model with no matching
+  `<name>.json` is a latent 404, so guide the choice). The backend's
+  `service_form_to_raw`/validator must know each protocol's keys so they
+  round-trip instead of dropping (H1).
+- **Capability vocabulary is complete.** `generations` and `videos` join
+  the canonical capability list (served from `/operator/service-presets`);
+  no capability a record can hold is missing a checkbox.
+- **Out of scope (correctly):** editing/uploading/previewing the workflow
+  JSON files themselves, or a model catalog browser. ComfyUI's own node
+  editor owns the graphs; this gateway points at the directory and picks a
+  default. Say so in the form.
+- **Honest passthrough copy:** for non-`openai-compatible` protocols,
+  native passthrough is stated as the mode, not offered as a toggle.
+
 ## Admin information architecture (binding)
 
 Seven flat, noun-named sections (Tailscale-calm; no nesting, no Title Case):

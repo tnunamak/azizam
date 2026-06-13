@@ -565,7 +565,19 @@ _CAPABILITY_CHOICES: tuple[str, ...] = (
     "image",
     "audio",
     "speech",
+    "generations",
+    "videos",
 )
+
+# Per-protocol fields beyond the generic openai-compatible set.  Each entry
+# lists fields that service_form_to_raw should accept and round-trip for that
+# protocol.  Fields not listed here for a given protocol pass through the
+# generic path unchanged.
+_PROTOCOL_FIELDS: dict[str, tuple[str, ...]] = {
+    "comfyui": ("workflows_dir", "video_workflows_dir", "default_model"),
+    # openai-compatible uses the generic path; listed here for documentation.
+    "openai-compatible": (),
+}
 
 
 def provider_preset(preset_id: Any) -> dict[str, Any] | None:
@@ -708,13 +720,52 @@ def split_base_url(value: Any) -> dict[str, Any]:
     return out
 
 
+# Form-level keys that are consumed/transformed by service_form_to_raw and
+# must NOT be passed through as raw config verbatim.  Everything else in the
+# form dict is treated as an unknown config key and passes through unchanged
+# (honesty law H1: a partial PATCH must never silently drop a stored field).
+_FORM_CONSUMED_KEYS: frozenset[str] = frozenset({
+    # Parsed/derived — stored as host+port+base_path instead.
+    "base_url",
+    # Form-only routing hint — not stored in config.
+    "preset",
+    # Top-level record fields, not config fields.
+    "name",
+    "enabled",
+    "role",
+    "priority",
+    "capabilities",
+    "managed",
+    # Explicitly handled below with type coercion.
+    "host",
+    "port",
+    "base_path",
+    "protocol",
+    "health_endpoint",
+    "api_key_env",
+    "note",
+    "service_name",
+    "timeout",
+    "resources",
+    "native_passthrough",
+    "models",
+    # Protocol-specific fields handled explicitly below.
+    "video_timeout",
+})
+
+
 def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     """Map the SLVP add/edit form fields to a backend-config dict.
 
     The form's single ``base_url`` field is parsed into host/port/base_path,
     overridden by any explicit host/port/base_path. Secrets are referenced by
     env-var name only (``api_key_env``) — the plaintext key is never accepted
-    or stored. Unknown/empty fields are dropped so defaults apply downstream.
+    or stored.
+
+    Honesty law H1: keys not explicitly consumed by this function are passed
+    through verbatim so that a partial PATCH via update_service never silently
+    drops stored config keys the form has no widget for (e.g. comfyui protocol
+    fields, or any future extension field).
     """
     raw: dict[str, Any] = {}
     raw.update(split_base_url(form.get("base_url")))
@@ -768,6 +819,30 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     models = _form_models_to_config(form.get("models"))
     if models:
         raw["models"] = models
+
+    # Protocol-specific string fields (e.g. comfyui directory paths, default_model).
+    # Each protocol declares its extra string fields in _PROTOCOL_FIELDS; we also
+    # accept them unconditionally so an explicit key always wins regardless of
+    # what protocol label the form sends.
+    _all_protocol_str_fields: set[str] = set()
+    for _fields in _PROTOCOL_FIELDS.values():
+        _all_protocol_str_fields.update(_fields)
+    for key in _all_protocol_str_fields:
+        value = form.get(key)
+        if value not in (None, ""):
+            raw[key] = str(value).strip()
+
+    # video_timeout is a protocol-specific integer field (comfyui).
+    if form.get("video_timeout") not in (None, ""):
+        raw["video_timeout"] = int(form["video_timeout"])
+
+    # Honesty law H1: pass through any key not explicitly consumed above so
+    # that stored config fields unknown to the current form schema are never
+    # silently dropped during a partial PATCH.  _FORM_CONSUMED_KEYS lists every
+    # key the code above already handles; everything else goes straight through.
+    for key, value in form.items():
+        if key not in _FORM_CONSUMED_KEYS and key not in raw and value not in (None, ""):
+            raw[key] = value
 
     # base_path defaults to /v1 for an OpenAI-style backend when nothing set it.
     raw.setdefault("base_path", "/v1")

@@ -32,13 +32,19 @@ export function DialogContent({
       <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4">
         <DialogPrimitive.Content
           className={cn(
-            "rounded-vf-lg border-vf-border bg-vf-surface-1 shadow-vf-caustic-2 relative flex w-full max-w-lg flex-col border p-6 focus:outline-none",
-            "max-h-[85dvh]",
+            "rounded-vf-lg border-vf-border bg-vf-surface-1 shadow-vf-caustic-2 relative flex w-full max-w-lg flex-col border focus:outline-none",
+            "max-h-[85dvh] overflow-hidden",
             className,
           )}
           {...props}
         >
-          {children}
+          {/* Inner wrapper applies horizontal padding so the scrollbar hugs
+              the dialog border. Header and footer are padded here; the
+              scrollable body extends edge-to-edge so the scrollbar sits flush
+              against the right border with no mid-gutter float. */}
+          <div className="flex min-h-0 flex-1 flex-col px-6 pt-6">
+            {children}
+          </div>
           {!hideClose && (
             <DialogPrimitive.Close asChild>
               <IconButton
@@ -121,7 +127,20 @@ export function DialogBody({
   children: ReactNode;
 }) {
   return (
-    <div className={cn("mt-4 min-h-0 flex-1 overflow-y-auto flex flex-col gap-4", className)}>{children}</div>
+    /* -mx-6 pulls the scroll container to the dialog edge so the native
+       scrollbar hugs the border. px-6 restores the gutter for the content
+       so it aligns with the header/footer. The fade masks clean up the
+       clip edge under the pinned header and footer. */
+    <div
+      className={cn(
+        "mt-4 min-h-0 flex-1 overflow-y-auto flex flex-col gap-4",
+        "-mx-6 px-6",
+        "[mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]",
+        className,
+      )}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -135,7 +154,7 @@ export function DialogFooter({
   return (
     <div
       className={cn(
-        "shrink-0 mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        "shrink-0 mt-6 pb-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
         className,
       )}
     >

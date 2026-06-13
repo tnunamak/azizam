@@ -988,6 +988,124 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         self.assertEqual(cfg.get("native_passthrough"), True)
         self.assertEqual(svc["role"], "required")
 
+    def _seed_comfyui(self) -> None:
+        """Add a ComfyUI service with all protocol-specific fields."""
+        self.store.add_service(
+            data={
+                "name": "ComfyUI Local",
+                "host": "127.0.0.1",
+                "port": 8188,
+                "protocol": "comfyui",
+                "capabilities": ["image", "generations", "videos"],
+                "workflows_dir": "/data/comfyui/workflows",
+                "video_workflows_dir": "/data/comfyui/video_workflows",
+                "video_timeout": 300,
+                "default_model": "flux_schnell",
+            },
+            actor=self.ctx,
+        )
+
+    def test_comfyui_name_only_patch_preserves_all_protocol_fields(self) -> None:
+        """H1 regression: a name-only PATCH on a ComfyUI service must not drop
+        workflows_dir, video_workflows_dir, video_timeout, or default_model.
+
+        This is the exact bug-of-record: saving the generic edit form dropped
+        these four fields because update_service used a hard-coded whitelist.
+        """
+        self._seed_comfyui()
+        registry = self.store.update_service(
+            service_id="comfyui-local",
+            data={"name": "ComfyUI (renamed)"},
+            actor=self.ctx,
+        )
+        svc = registry["services"]["comfyui-local"]
+        cfg = svc["config"]
+        self.assertEqual(svc["name"], "ComfyUI (renamed)", "name must update")
+        self.assertEqual(
+            cfg.get("workflows_dir"), "/data/comfyui/workflows",
+            "workflows_dir must survive a name-only PATCH",
+        )
+        self.assertEqual(
+            cfg.get("video_workflows_dir"), "/data/comfyui/video_workflows",
+            "video_workflows_dir must survive a name-only PATCH",
+        )
+        self.assertEqual(
+            cfg.get("video_timeout"), 300,
+            "video_timeout must survive a name-only PATCH",
+        )
+        self.assertEqual(
+            cfg.get("default_model"), "flux_schnell",
+            "default_model must survive a name-only PATCH",
+        )
+        self.assertIn("generations", svc["capabilities"],
+                      "generations capability must survive a name-only PATCH")
+        self.assertIn("videos", svc["capabilities"],
+                      "videos capability must survive a name-only PATCH")
+
+    def test_comfyui_protocol_fields_round_trip_via_patch(self) -> None:
+        """Protocol fields can be updated via PATCH and persist correctly."""
+        self._seed_comfyui()
+        registry = self.store.update_service(
+            service_id="comfyui-local",
+            data={
+                "workflows_dir": "/new/workflows",
+                "video_timeout": 600,
+                "default_model": "wan_video",
+            },
+            actor=self.ctx,
+        )
+        svc = registry["services"]["comfyui-local"]
+        cfg = svc["config"]
+        self.assertEqual(cfg.get("workflows_dir"), "/new/workflows")
+        self.assertEqual(cfg.get("video_timeout"), 600)
+        self.assertEqual(cfg.get("default_model"), "wan_video")
+        # video_workflows_dir was not in the PATCH — must still be intact
+        self.assertEqual(
+            cfg.get("video_workflows_dir"), "/data/comfyui/video_workflows",
+            "video_workflows_dir must survive a partial PATCH that doesn't mention it",
+        )
+
+    def test_unknown_config_key_survives_partial_patch(self) -> None:
+        """Generic regression: a config key not modeled by the form must survive.
+
+        Seeds a service with an unknown_future_field in its config (simulating a
+        future extension), then patches only the name.  The unknown key must not
+        be dropped — this guards against any future whitelist regression.
+        """
+        # Add a service via the raw registry API so we can plant an unknown key.
+        reg = self.store.get_service_registry()
+        from gateway import service_registry as sr
+        existing_config = {
+            "host": "localhost",
+            "port": 9000,
+            "base_path": "/v1",
+            "protocol": "openai-compatible",
+            "unknown_future_field": "must-survive",
+        }
+        raw = {**existing_config, "name": "future-svc", "capabilities": ["chat"]}
+        registry, _ = sr.upsert_service_in_registry(
+            reg, service_id="future-svc", raw=raw, source="ui"
+        )
+        import gateway.admin_store as _admin_store
+        _admin_store.put_operator_setting(
+            sr.SERVICE_REGISTRY_SETTING_KEY,
+            registry,
+            updated_by="test",
+            path=self.db,
+        )
+
+        # Name-only PATCH
+        registry2 = self.store.update_service(
+            service_id="future-svc",
+            data={"name": "future-svc-renamed"},
+            actor=self.ctx,
+        )
+        cfg = registry2["services"]["future-svc"]["config"]
+        self.assertEqual(
+            cfg.get("unknown_future_field"), "must-survive",
+            "An unknown config key must survive a partial PATCH",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

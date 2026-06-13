@@ -288,7 +288,7 @@ export default function AdminUsersPage() {
         <SectionHeader
           kicker="people"
           title="Users"
-          description="Everyone who has signed in. Accounts are created automatically on first sign-in — there's no manual invite flow."
+          description="Everyone who has signed in. Accounts are created automatically on first sign-in — there's no manual invite flow. Roles (admin, owner) are assigned via OIDC group mappings at provisioning time; there is no role editor here."
         />
 
         {appsJoinError && (

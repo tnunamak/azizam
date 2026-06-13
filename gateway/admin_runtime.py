@@ -773,29 +773,25 @@ class AdminSQLiteStore:
             sid, existing
         ):
             existing_config = existing.get("config") or {}
+            # H1 (honesty law): start from ALL top-level record fields and EVERY
+            # config key so that unmodeled/unknown fields are never silently
+            # dropped by a partial PATCH.  The explicit caller-supplied data
+            # overlays last so it always wins.
+            #
+            # Top-level record fields that belong in the form namespace:
             form_base: dict[str, Any] = {
                 "name": existing.get("name") or sid,
                 "enabled": existing.get("enabled"),
                 "capabilities": existing.get("capabilities"),
                 "role": existing.get("role"),
                 "priority": existing.get("priority"),
-                # Connection fields live inside config
-                "base_url": existing_config.get("base_url"),
-                "host": existing_config.get("host"),
-                "port": existing_config.get("port"),
-                "base_path": existing_config.get("base_path"),
-                "protocol": existing_config.get("protocol"),
-                "native_passthrough": existing_config.get("native_passthrough"),
-                "models": existing_config.get("models"),
-                # Additional config fields that must survive a partial PATCH.
-                # Note: api_key_env lives in config (is_secret_reference_key passes
-                # it through split_secret_refs into the safe config dict).
-                "health_endpoint": existing_config.get("health_endpoint"),
-                "timeout": existing_config.get("timeout"),
-                "resources": existing_config.get("resources"),
-                "api_key_env": existing_config.get("api_key_env"),
-                "note": existing_config.get("note"),
             }
+            # Every config key passes through — this is the fix for the
+            # ComfyUI data-loss bug (workflows_dir, video_workflows_dir,
+            # video_timeout, default_model, and any future protocol keys).
+            for cfg_key, cfg_val in existing_config.items():
+                if cfg_key not in form_base:
+                    form_base[cfg_key] = cfg_val
             # Drop None values so they don't override defaults downstream, then
             # overlay the caller-supplied partial data.
             merged: dict[str, Any] = {
