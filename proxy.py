@@ -413,6 +413,15 @@ def backend_for_host(host: str) -> Optional[str]:
     for backend, backend_host in LLM_BACKEND_HOSTS.items():
         if host == backend_host:
             return backend
+    # Registry-driven fallback: check if the host matches the highest-priority
+    # backend for the embeddings capability (replaces the hardcoded EMBEDDINGS_HOST
+    # pin so a second embeddings backend is resolved correctly).
+    _embeddings_host = host_for_capability("embeddings")
+    if _embeddings_host and host == _embeddings_host:
+        backends = backends_for_capability("embeddings")
+        return backends[0] if backends else None
+    # Legacy fallback: if capability resolution yields nothing but EMBEDDINGS_HOST
+    # is set and enabled, preserve the old behavior.
     if EMBEDDINGS_ENABLED and host == EMBEDDINGS_HOST:
         return "embeddings"
     # Unknown host: no match.  The caller (catch-all route) uses a separate
@@ -461,6 +470,77 @@ def vision_capable_llm_backends() -> list[str]:
         result.append((priority, bid))
     result.sort()
     return [bid for _, bid in result]
+
+
+def backends_for_capability(capability: str) -> list[str]:
+    """Return ids of enabled backends that declare *capability*, ordered by priority (asc).
+
+    Mirrors the §2.1 resolution algorithm: scan config["backends"], keep every
+    backend that is enabled and whose capabilities list includes the requested
+    capability string (case-insensitive).  Priority follows the registry
+    convention: lower numeric value = higher priority (same as
+    _highest_priority_chat_backend).  Backends with no explicit priority default
+    to 100.
+
+    This is the capability-dispatch analogue of vision_capable_llm_backends():
+    it is NOT limited to LLM_BACKEND_HOSTS — it covers ALL backends (TTS, STT,
+    embeddings, etc.) so that /v1/audio/speech, /v1/audio/transcriptions, and
+    /v1/embeddings can resolve their host from the registry rather than from a
+    hardcoded constant.
+
+    Compound capability matching: a capability like "audio.speech" matches if
+    EITHER the full compound string "audio.speech" is in the backend's caps OR
+    all of its dot-separated parts ("audio" AND "speech") are individually
+    present.  This allows the §2.1 vocabulary (audio.speech, audio.transcriptions,
+    audio.translations, embeddings) to work with existing config entries that
+    express the same semantics as separate strings (e.g. ["audio", "speech"]).
+    Simple (non-compound) capabilities like "embeddings" or "vision" must appear
+    verbatim in the caps list.
+    """
+    cap = capability.strip().lower()
+    parts = cap.split(".")
+    compound = len(parts) > 1
+    backends = config.get("backends") or {}
+    result: list[tuple[int, str]] = []
+    for bid, bcfg in backends.items():
+        if not isinstance(bcfg, Mapping):
+            continue
+        if not bool_from_config(bcfg.get("enabled"), True):
+            continue
+        caps = {str(c).strip().lower() for c in (bcfg.get("capabilities") or []) if str(c).strip()}
+        # Match either the full compound string or all component parts.
+        if compound:
+            matched = cap in caps or all(p in caps for p in parts)
+        else:
+            matched = cap in caps
+        if not matched:
+            continue
+        priority = int(bcfg.get("priority") or 100)
+        result.append((priority, bid))
+    result.sort()
+    return [bid for _, bid in result]
+
+
+def host_for_capability(capability: str) -> str | None:
+    """Return the host URL of the highest-priority enabled backend for *capability*.
+
+    Returns the first backend's ``http://host:port`` from backends_for_capability,
+    or None if no enabled backend declares the capability.  Health-checking is
+    out of scope for this step; the caller should fall back to the legacy constant
+    when None is returned.
+    """
+    backends = config.get("backends") or {}
+    for bid in backends_for_capability(capability):
+        bcfg = backends.get(bid)
+        if not isinstance(bcfg, Mapping):
+            continue
+        host = bcfg.get("host", "127.0.0.1")
+        port = bcfg.get("port")
+        if not port:
+            continue
+        return f"http://{host}:{port}"
+    return None
+
 
 # Model routing - auto-detect backend from filesystem
 routing_cfg = config.get("model_routing", {})
@@ -3292,7 +3372,8 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
     except (json.JSONDecodeError, AttributeError):
         pass
 
-    url = f"{TTS_HOST}/v1/audio/speech"
+    _tts_host = host_for_capability("audio.speech") or (TTS_HOST if TTS_ENABLED else None) or TTS_HOST
+    url = f"{_tts_host}/v1/audio/speech"
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(TTS_TIMEOUT, connect=10)) as client:
@@ -3327,7 +3408,7 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
         )
     except httpx.ConnectError:
         return Response(
-            content=json.dumps({"error": {"message": f"TTS backend unavailable at {TTS_HOST}", "type": "api_error"}}),
+            content=json.dumps({"error": {"message": f"TTS backend unavailable at {_tts_host}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
@@ -3397,7 +3478,9 @@ async def proxy_stt_request(
 
     headers = prepare_downstream_headers(request.headers, auth_context, "stt")
 
-    url = f"{STT_HOST}/v1/audio/{operation}"
+    _stt_capability = f"audio.{operation}"  # audio.transcriptions or audio.translations
+    _stt_host = host_for_capability(_stt_capability) or (STT_HOST if STT_ENABLED else None) or STT_HOST
+    url = f"{_stt_host}/v1/audio/{operation}"
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(STT_TIMEOUT, connect=10)) as client:
@@ -3474,7 +3557,7 @@ async def proxy_stt_request(
         )
     except httpx.ConnectError:
         return Response(
-            content=json.dumps({"error": {"message": f"STT backend unavailable at {STT_HOST}", "type": "api_error"}}),
+            content=json.dumps({"error": {"message": f"STT backend unavailable at {_stt_host}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
