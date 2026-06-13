@@ -208,6 +208,11 @@ class AdminSQLiteStore:
 
     def __init__(self, path: Path = admin_store.DB_PATH) -> None:
         self.path = path
+        # Optional zero-argument callable invoked after every service-registry
+        # mutation (add/update/remove/enable/toggle/bulk-replace).  Set this
+        # from outside (e.g. proxy.py after ADMIN_STORE is created) to trigger
+        # an in-process hot reload without a circular import.
+        self.on_service_registry_changed: "Callable[[], None] | None" = None
 
     def init_db(self) -> None:
         admin_store.init_db(self.path)
@@ -702,15 +707,31 @@ class AdminSQLiteStore:
             path=self.path,
         )
         self.write_litellm_config(record["value"])
+        self._fire_registry_changed()
         return record["value"]
 
     # -- single-service CRUD -------------------------------------------------
     # Granular operator edits on one backend service. Each persists the new
     # registry, writes an audit row, and rewrites the LiteLLM substrate config
     # (so the execution layer stays in sync) — the same durable effects as the
-    # full-registry update, scoped to one service. Changes take effect on the
-    # next process start (the boot path re-derives config["backends"] from the
-    # registry); there is no in-process hot reload.
+    # full-registry update, scoped to one service. Changes take effect
+    # immediately via the on_service_registry_changed callback (hot reload);
+    # the LiteLLM subprocess still requires a separate restart.
+
+    def _fire_registry_changed(self) -> None:
+        """Invoke the registered hot-reload callback, if any."""
+        cb = self.on_service_registry_changed
+        if cb is not None:
+            try:
+                cb()
+            except Exception as exc:  # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+                print(
+                    f"[admin_runtime] WARNING: on_service_registry_changed callback "
+                    f"raised an exception (hot-reload may not have taken effect): {exc}",
+                    flush=True,
+                )
 
     def _persist_service_registry(
         self,
@@ -738,6 +759,7 @@ class AdminSQLiteStore:
             path=self.path,
         )
         self.write_litellm_config(record["value"])
+        self._fire_registry_changed()
         return record["value"]
 
     def add_service(

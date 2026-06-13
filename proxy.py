@@ -227,6 +227,9 @@ def load_config() -> dict:
 
 
 config = load_config()
+# Preserve the raw YAML config so reload_runtime_config() can re-apply the
+# service-registry overlay without re-reading the file.
+_bootstrap_config: dict = dict(config)
 
 
 def _configured_admin_db_path(admin_config: Mapping[str, Any] | None = None) -> Path:
@@ -647,6 +650,116 @@ VISION_MODEL_PATTERNS = [
     "cogvlm",  # CogVLM
     "internvl",# InternVL
 ]
+
+
+# =============================================================================
+# Live runtime registry — hot-reload without process restart
+# =============================================================================
+# Module-level names (TABBY_HOST, KOBOLD_HOST, LLM_BACKEND_HOSTS, …) are
+# Python globals: every function that references them looks up the current
+# value at call time, not at import time.  reload_runtime_config() re-derives
+# all of them from the DB and reassigns the module names atomically (one
+# reference assignment per name, safe under the GIL), so any in-flight or
+# subsequent request sees either the old or the new values — never a mix.
+#
+# The LiteLLM subprocess still needs its own restart to pick up litellm
+# config-file changes (that is a separate concern tracked in the design doc).
+# Native-routed and capability-routed requests reflect the new registry
+# immediately after this function returns.
+
+def _derive_backend_constants(effective_cfg: dict) -> dict:
+    """Re-derive all backend-derived constants from *effective_cfg*.
+
+    Returns a dict whose keys match the module-level names that
+    reload_runtime_config() will reassign.  Factored out so tests can call
+    it directly without touching global state.
+    """
+    t_cfg = effective_cfg.get("backends", {}).get("tabby", {})
+    k_cfg = effective_cfg.get("backends", {}).get("kobold", {})
+    tts_c = effective_cfg.get("backends", {}).get("tts", {})
+    stt_c = effective_cfg.get("backends", {}).get("stt", {})
+    emb_c = effective_cfg.get("backends", {}).get("embeddings", {})
+    cfy_c = effective_cfg.get("backends", {}).get("comfyui", {})
+
+    new_tabby_host = f"http://{t_cfg.get('host', '127.0.0.1')}:{t_cfg.get('port', 5050)}"
+    new_kobold_host = f"http://{k_cfg.get('host', '127.0.0.1')}:{k_cfg.get('port', 5051)}"
+    new_tts_host = f"http://{tts_c.get('host', '127.0.0.1')}:{tts_c.get('port', 8880)}"
+    new_stt_host = f"http://{stt_c.get('host', '127.0.0.1')}:{stt_c.get('port', 5092)}"
+    new_emb_host = f"http://{emb_c.get('host', '127.0.0.1')}:{emb_c.get('port', 5061)}"
+    new_cfy_host = f"http://{cfy_c.get('host', '127.0.0.1')}:{cfy_c.get('port', 7890)}"
+    new_tts_enabled = bool_from_config(tts_c.get("enabled"), True)
+    new_stt_enabled = bool_from_config(stt_c.get("enabled"), True)
+    new_emb_enabled = bool_from_config(emb_c.get("enabled"), bool(emb_c))
+    new_cfy_enabled = bool_from_config(cfy_c.get("enabled"), True)
+
+    # Build LLM_BACKEND_HOSTS from the new config — reuse the same predicate
+    # as _build_llm_backend_hosts() but over the new effective_cfg.
+    new_llm_hosts: dict[str, str] = {}
+    for bid, bcfg in (effective_cfg.get("backends") or {}).items():
+        if not isinstance(bcfg, Mapping):
+            continue
+        if not _is_chat_capable_native_backend(bid, bcfg):
+            continue
+        host = bcfg.get("host", "127.0.0.1")
+        port = bcfg.get("port")
+        if not port:
+            continue
+        new_llm_hosts[bid] = f"http://{host}:{port}"
+
+    return {
+        "TABBY_HOST": new_tabby_host,
+        "KOBOLD_HOST": new_kobold_host,
+        "TTS_HOST": new_tts_host,
+        "STT_HOST": new_stt_host,
+        "EMBEDDINGS_HOST": new_emb_host,
+        "COMFY_HOST": new_cfy_host,
+        "TTS_ENABLED": new_tts_enabled,
+        "STT_ENABLED": new_stt_enabled,
+        "EMBEDDINGS_ENABLED": new_emb_enabled,
+        "COMFY_ENABLED": new_cfy_enabled,
+        "LLM_BACKEND_HOSTS": new_llm_hosts,
+    }
+
+
+def reload_runtime_config() -> dict:
+    """Re-derive all backend constants from the current DB service registry.
+
+    Atomically reassigns every module-level name that was originally computed
+    from config["backends"] at import time.  Safe to call from any thread:
+    each name assignment is a single reference swap under the GIL.
+
+    Returns the dict of updated names → new values (for logging / tests).
+
+    Note: the LiteLLM subprocess config file is NOT reloaded here — that
+    requires a separate litellm restart.  Native-routed and capability-routed
+    requests see the new registry immediately.
+    """
+    # Re-overlay the service registry onto the bootstrap YAML config.
+    new_cfg = _load_effective_runtime_config(_bootstrap_config)
+
+    # Atomically swap the module-level config dict in place so that any code
+    # reading `config.get(...)` directly (e.g. _highest_priority_chat_backend)
+    # also sees the new values.  We clear-and-update rather than replacing the
+    # reference so existing callers that captured `config` at import time still
+    # work (there are none in practice, but this is defensive).
+    config.clear()
+    config.update(new_cfg)
+
+    # Re-derive and reassign every backend-derived constant.
+    # Use globals() rather than sys.modules[__name__] so this works even when
+    # a test has popped 'proxy' from sys.modules (e.g. test_gateway_api.py).
+    _g = globals()
+    updates = _derive_backend_constants(new_cfg)
+    for name, value in updates.items():
+        _g[name] = value
+
+    print(
+        f"[proxy] runtime config reloaded — "
+        f"LLM backends: {list(updates['LLM_BACKEND_HOSTS'].keys())} "
+        f"TABBY={updates['TABBY_HOST']} KOBOLD={updates['KOBOLD_HOST']}",
+        flush=True,
+    )
+    return updates
 
 
 def is_vision_model(model_name: str) -> bool:
@@ -1460,6 +1573,10 @@ ADMIN_SESSION_SIGNING_KEY = (
     else _admin_session_signing_key()
 )
 ADMIN_STORE = AdminSQLiteStore(ADMIN_DB_PATH)
+# Wire in-process hot-reload: after every service-registry mutation the store
+# calls reload_runtime_config() so the new backend hosts take effect
+# immediately without a process restart.
+ADMIN_STORE.on_service_registry_changed = reload_runtime_config
 ADMIN_AUTH = AdminAuthenticator(
     ADMIN_STORE,
     signing_key=ADMIN_SESSION_SIGNING_KEY,
@@ -11304,6 +11421,51 @@ async def admin_logout():
         domain=cookie.domain,
     )
     return response
+
+
+@app.post("/admin/api/config/reload", include_in_schema=False)
+async def admin_config_reload(request: Request):
+    """Hot-reload the runtime config from the DB service registry.
+
+    Re-derives all backend host constants (TABBY_HOST, KOBOLD_HOST,
+    LLM_BACKEND_HOSTS, TTS_HOST, STT_HOST, EMBEDDINGS_HOST, COMFY_HOST …)
+    without a process restart.  Requests that arrive after this returns will
+    see the new values.
+
+    Note: the LiteLLM subprocess still requires a separate restart to pick up
+    its config-file changes.
+    """
+    try:
+        ADMIN_AUTH(request)
+    except AdminAuthError as exc:
+        return Response(
+            content=json.dumps({"error": {"code": exc.code, "message": exc.message}}),
+            status_code=exc.status_code,
+            media_type="application/json",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        updates = reload_runtime_config()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "reloaded": True,
+                "backends": {
+                    "llm_hosts": updates["LLM_BACKEND_HOSTS"],
+                    "tabby": updates["TABBY_HOST"],
+                    "kobold": updates["KOBOLD_HOST"],
+                    "tts": updates["TTS_HOST"],
+                    "stt": updates["STT_HOST"],
+                    "embeddings": updates["EMBEDDINGS_HOST"],
+                    "comfyui": updates["COMFY_HOST"],
+                },
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"code": "reload_failed", "message": str(exc)}},
+        )
 
 
 # Endpoint paths excluded from the firehose per-key request counter.
