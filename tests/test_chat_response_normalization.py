@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy
+from gateway.transforms import normalize_chat_completion_payload
 
 
 class ChatResponseNormalizationTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class ChatResponseNormalizationTests(unittest.TestCase):
             ]
         }
 
-        changed = proxy._normalize_chat_completion_visible_content(payload)
+        changed = normalize_chat_completion_payload(payload)
 
         self.assertTrue(changed)
         message = payload["choices"][0]["message"]
@@ -45,7 +46,7 @@ class ChatResponseNormalizationTests(unittest.TestCase):
             ]
         }
 
-        changed = proxy._normalize_chat_completion_visible_content(payload)
+        changed = normalize_chat_completion_payload(payload)
 
         self.assertTrue(changed)
         message = payload["choices"][0]["message"]
@@ -65,7 +66,7 @@ class ChatResponseNormalizationTests(unittest.TestCase):
             ]
         }
 
-        changed = proxy._normalize_chat_completion_visible_content(payload)
+        changed = normalize_chat_completion_payload(payload)
 
         self.assertFalse(changed)
         self.assertEqual(payload["choices"][0]["message"]["content"], "already visible")

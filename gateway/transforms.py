@@ -21,7 +21,8 @@ Public surface
 from __future__ import annotations
 
 import copy
-from typing import Any, Protocol, runtime_checkable
+import json
+from typing import Any, Optional, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # Context
@@ -464,6 +465,10 @@ class TransformRegistry:
         """
         return self._transforms[name]
 
+    def register_builtin(self, name: str, instance: Any) -> None:
+        """Register a named built-in instance (must implement on_request/on_response)."""
+        self._transforms[name] = [instance]
+
     def names(self) -> list[str]:
         return list(self._transforms.keys())
 
@@ -511,6 +516,361 @@ def run_response_pipeline(
         for primitive in primitives:
             payload = primitive.on_response(payload, ctx)
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Named built-ins  (reviewed composed classes, not arbitrary-code plugins)
+# ---------------------------------------------------------------------------
+
+# Shared constants for the /no_think suppression surface — single source of truth.
+# Background-removal helper (proxy.py) imports QWEN3_NO_THINK_HINT so the literal
+# lives here alongside the transform, not scattered across call sites.
+QWEN3_NO_THINK_HINT: str = "/no_think"
+QWEN3_ENABLE_THINKING_KEY: str = "enable_thinking"
+
+
+def apply_thinking_suppression(body: dict[str, Any]) -> None:
+    """Apply Qwen3-style thinking suppression to *body* in-place.
+
+    Single source of truth for the mutation shared by:
+      - Qwen3ThinkingTransform (reasoning_effort=none/minimal path)
+      - Background-removal helper (direct suppression without reasoning_effort)
+
+    Sets chat_template_kwargs.enable_thinking = False (via setdefault) and
+    injects QWEN3_NO_THINK_HINT into the FIRST system message (appending with
+    "\\n" separator if the message already has non-empty content) or inserts a
+    new system message at index 0 if none exists.
+
+    Does NOT inject if the hint is already present in the first system message.
+    """
+    hint = QWEN3_NO_THINK_HINT
+    # Belt-and-suspenders: chat template kwarg for llama-server Qwen3 family.
+    kwargs = body.setdefault("chat_template_kwargs", {})
+    if isinstance(kwargs, dict):
+        kwargs.setdefault(QWEN3_ENABLE_THINKING_KEY, False)
+
+    messages = body.get("messages")
+    if isinstance(messages, list):
+        for i, m in enumerate(messages):
+            if isinstance(m, dict) and m.get("role") == "system":
+                existing = m.get("content") or ""
+                if isinstance(existing, str) and hint not in existing:
+                    messages[i] = {
+                        **m,
+                        "content": (existing + ("\n" if existing else "") + hint),
+                    }
+                return
+        messages.insert(0, {"role": "system", "content": hint})
+
+
+class Qwen3ThinkingTransform:
+    """Named built-in: reproduce apply_chat_completions_reasoning_effort() exactly.
+
+    Registered as "qwen3-thinking" in REGISTRY.
+
+    Handles request phase only (validated pop of reasoning_effort + body mutation).
+    Returns a string error message if reasoning_effort is invalid (the caller
+    must turn this into a 400 Response — the 400 plumbing stays in proxy.py).
+
+    Contract reproduced byte-for-byte from proxy.py:5242:
+      1. reasoning_effort absent → no-op.
+      2. Pop reasoning_effort. If None → no-op (treat as absent after pop).
+      3. If not str or not in _REASONING_EFFORT_VALUES → return error string.
+      4. If not in {none, minimal} → strip only (already popped), no suppression.
+      5. Suppress path (none/minimal):
+         a. body.setdefault("chat_template_kwargs", {}) then
+            kwargs.setdefault("enable_thinking", False)
+         b. Messages inject: find the FIRST system message; if found, append
+            "/no_think" (with "\\n" prefix if content non-empty) IFF it is not
+            already in that message's content, then return None.  If no system
+            message found, insert {"role":"system","content":"/no_think"} at 0.
+    """
+
+    # The valid set — matches _REASONING_EFFORT_VALUES in proxy.py:5235
+    _VALID: frozenset[str] = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
+    # Efforts that suppress thinking
+    _SUPPRESS: frozenset[str] = frozenset({"none", "minimal"})
+
+    def apply(self, body: dict[str, Any]) -> str | None:
+        """Mutate body in-place.  Return an error string or None."""
+        if "reasoning_effort" not in body:
+            return None
+        effort = body.pop("reasoning_effort")
+        if effort is None:
+            return None
+        if not isinstance(effort, str) or effort not in self._VALID:
+            return (
+                f"Invalid value for 'reasoning_effort': {effort!r}. "
+                f"Expected one of: {sorted(self._VALID)}."
+            )
+        if effort not in self._SUPPRESS:
+            return None
+
+        # Suppress thinking — delegate to shared helper.
+        apply_thinking_suppression(body)
+        return None
+
+    # Transform protocol shim — lets this live in the registry alongside
+    # primitives even though it is not a _Primitive subclass.
+    def on_request(self, body: dict[str, Any], ctx: "TransformContext") -> dict[str, Any]:
+        # Error return is handled by the dispatch site; here we just mutate.
+        self.apply(body)
+        return body
+
+    def on_response(self, payload: dict[str, Any], ctx: "TransformContext") -> dict[str, Any]:
+        return payload
+
+
+# ---------------------------------------------------------------------------
+# Step 4a — reasoning-field-normalize built-in
+# ---------------------------------------------------------------------------
+
+
+def split_reasoning_visible_text(text: Any) -> tuple[Optional[str], Optional[str]]:
+    """Split ``<think>...</think>`` tags out of *text*.
+
+    Ported verbatim from proxy.py:18869 (_split_reasoning_visible_text).
+    Exposed here so the SSE-chunk normalizer in proxy.py can import it and
+    stay in sync with the transform's logic.
+
+    Returns (reasoning, visible):
+      - If no ``</think>`` found: (None, text)  — text is the full visible content.
+      - If ``</think>`` found: (reasoning_or_None, visible_or_None).
+    """
+    if not isinstance(text, str) or not text:
+        return None, None
+    lower = text.lower()
+    close = lower.rfind("</think>")
+    if close >= 0:
+        reasoning = text[:close].strip()
+        open_tag = reasoning.lower().rfind("<think>")
+        if open_tag >= 0:
+            reasoning = reasoning[open_tag + len("<think>"):].strip()
+        visible = text[close + len("</think>"):].strip()
+        return reasoning or None, visible or None
+    return None, text
+
+
+def normalize_chat_completion_payload(payload: dict[str, Any]) -> bool:
+    """Normalize visible content in a chat-completion response payload.
+
+    Ported verbatim from proxy.py:18884 (_normalize_chat_completion_visible_content).
+    Mutates *payload* in-place; returns True iff any field was changed.
+
+    Two cases handled for both ``message`` and ``delta`` in each choice:
+      1. ``</think>`` leaked into content → strip tags, promote reasoning.
+      2. ``reasoning_content`` set but ``content`` empty/absent → backfill.
+
+    This is a detect-and-normalize (Revision D) — it inspects the payload and
+    acts when the canonical shape is absent, regardless of any capability flag.
+    """
+    changed = False
+    choices = payload.get("choices")
+    if not isinstance(choices, list):
+        return False
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            reasoning = message.get("reasoning_content")
+            if isinstance(content, str) and "</think>" in content.lower():
+                # Case 1: think tags leaked into content — strip them out.
+                split_reasoning, visible = split_reasoning_visible_text(content)
+                if visible is not None:
+                    message["content"] = visible
+                    if not isinstance(reasoning, str) and split_reasoning:
+                        message["reasoning_content"] = split_reasoning
+                    changed = True
+            elif isinstance(reasoning, str) and reasoning and not content:
+                # Case 2: reasoning_content set but content empty/absent.
+                # Backfill content: if reasoning_content itself has think tags,
+                # extract only the visible portion; otherwise mirror as-is.
+                split_r, visible = split_reasoning_visible_text(reasoning)
+                if visible is not None:
+                    # reasoning_content had think tags — split it
+                    message["content"] = visible
+                    message["reasoning_content"] = split_r or reasoning
+                else:
+                    # No think tags — mirror reasoning_content into content
+                    message["content"] = reasoning
+                changed = True
+        delta = choice.get("delta")
+        if isinstance(delta, dict):
+            content = delta.get("content")
+            reasoning = delta.get("reasoning_content")
+            if isinstance(content, str) and "</think>" in content.lower():
+                # Case 1: think tags leaked into delta content — strip them.
+                _, visible = split_reasoning_visible_text(content)
+                if visible is not None:
+                    delta["content"] = visible
+                    changed = True
+            elif isinstance(reasoning, str) and reasoning and not content:
+                # Case 2: delta has reasoning_content but no content — mirror it.
+                delta["content"] = reasoning
+                changed = True
+    return changed
+
+
+class ReasoningFieldNormalizeTransform:
+    """Step 4a built-in: response-phase reasoning-field normalization.
+
+    Registered as "reasoning-field-normalize" in REGISTRY.
+
+    Detect-and-normalize (Revision D): inspects the payload and acts when the
+    canonical shape is absent, regardless of any capability flag.  Delegates to
+    normalize_chat_completion_payload() which is byte-identical to the legacy
+    _normalize_chat_completion_visible_content() at proxy.py:18884.
+    """
+
+    def on_request(self, body: dict[str, Any], ctx: TransformContext) -> dict[str, Any]:
+        return body
+
+    def on_response(self, payload: dict[str, Any], ctx: TransformContext) -> dict[str, Any]:
+        normalize_chat_completion_payload(payload)
+        return payload
+
+
+# ---------------------------------------------------------------------------
+# Step 4b — streaming-think-split built-in (opt-in, new capability)
+# ---------------------------------------------------------------------------
+
+# The maximum delimiter length we need to buffer across chunks.
+_THINK_CLOSE_TAG = "</think>"
+_THINK_CLOSE_TAG_LEN = len(_THINK_CLOSE_TAG)
+
+
+class StreamingThinkSplitTransform:
+    """Step 4b built-in: catch ``</think>`` split across SSE chunks.
+
+    Ships OPT-IN — attached only when explicitly configured.  When NOT attached,
+    the existing per-chunk behavior (_normalize_chat_completion_sse_chunk) is
+    byte-identical (no regression).
+
+    Maintains a bounded cross-chunk buffer (at most len("</think>") - 1 bytes)
+    to catch the case where the close-delimiter is split across two consecutive
+    SSE chunks.  The buffer is flushed immediately on finding the delimiter.
+
+    This is a stateful built-in; it holds mutable state (the carry buffer) and
+    is therefore NOT safe to share across concurrent requests — each request must
+    use its own instance.  The registry stores the class; callers instantiate.
+
+    NOTE: This transform operates on raw SSE bytes, not on the dict payload, so
+    it does not fit the standard on_request/on_response protocol.  It exposes a
+    separate ``process_chunk(chunk: bytes) -> bytes`` API.  The on_response shim
+    is a no-op (included for registry protocol compliance).
+    """
+
+    def __init__(self) -> None:
+        self._carry: bytes = b""
+
+    def process_chunk(self, chunk: bytes) -> bytes:
+        """Process one raw SSE chunk, applying cross-chunk delimiter repair."""
+        data = self._carry + chunk
+        self._carry = b""
+
+        # Fast path: if no hint of think tags, return immediately.
+        lower = data.lower()
+        if b"</think>" not in lower and b"</" not in lower:
+            return chunk  # nothing to buffer — emit original
+
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return chunk  # can't decode — pass through unchanged
+
+        # Check if data ends with a prefix of </think> (partial delimiter).
+        # Buffer the suffix so next chunk can complete it.
+        close_tag_lower = _THINK_CLOSE_TAG  # "</think>"
+        # Search for the last occurrence of a partial suffix of </think> at the end.
+        end_carry = b""
+        for length in range(1, _THINK_CLOSE_TAG_LEN):
+            suffix = _THINK_CLOSE_TAG[:length].encode("utf-8")
+            if data.endswith(suffix) and b"</think>" not in data[:-length + 1 or None].lower():
+                end_carry = suffix
+                data = data[: len(data) - length]
+                break
+        self._carry = end_carry
+
+        # Now process data for full </think> delimiters using the existing SSE logic.
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            self._carry = b""  # reset carry on decode error
+            return chunk
+
+        if "data:" not in text or ("reasoning_content" not in text and "</think>" not in text.lower()):
+            return data if end_carry else chunk
+
+        out_lines: list[str] = []
+        changed = False
+        for line in text.splitlines(keepends=True):
+            stripped = line.strip()
+            if not stripped.startswith("data:"):
+                out_lines.append(line)
+                continue
+            prefix, rest = line.split("data:", 1)
+            newline = ""
+            if rest.endswith("\r\n"):
+                rest = rest[:-2]
+                newline = "\r\n"
+            elif rest.endswith("\n"):
+                rest = rest[:-1]
+                newline = "\n"
+            rest = rest.strip()
+            if not rest or rest == "[DONE]":
+                out_lines.append(line)
+                continue
+            try:
+                payload = json.loads(rest)
+            except json.JSONDecodeError:
+                out_lines.append(line)
+                continue
+            if isinstance(payload, dict) and normalize_chat_completion_payload(payload):
+                out_lines.append(f"{prefix}data: {json.dumps(payload, separators=(',', ':'))}{newline}")
+                changed = True
+            else:
+                out_lines.append(line)
+
+        if changed or end_carry:
+            return "".join(out_lines).encode("utf-8")
+        return chunk
+
+    # Protocol shims for registry compliance
+    def on_request(self, body: dict[str, Any], ctx: TransformContext) -> dict[str, Any]:
+        return body
+
+    def on_response(self, payload: dict[str, Any], ctx: TransformContext) -> dict[str, Any]:
+        return payload
+
+
+# ---------------------------------------------------------------------------
+# Step 5 — KoboldCpp null-param-strip (named built-in, value-test not key-list)
+# ---------------------------------------------------------------------------
+
+
+class KoboldCppNullStripTransform(_Primitive):
+    """Remove top-level keys whose value is None/null (KoboldCpp 422s on null).
+
+    Registered as "koboldcpp-null-strip" in REGISTRY.
+
+    A value-based filter that cannot be expressed with drop-params (which is
+    key-list only).  Iterates all top-level keys and removes those with a None
+    value, which is the exact behavior KoboldCpp needs to avoid 422 errors.
+
+    The ``when:`` predicate and phase routing are inherited from _Primitive.
+
+    YAML config (conceptual, for documentation):
+        koboldcpp-null-strip:
+          kind: (built-in)
+    """
+
+    def _apply(self, body: dict[str, Any]) -> dict[str, Any]:
+        null_keys = [k for k, v in body.items() if v is None]
+        for k in null_keys:
+            del body[k]
+        return body
 
 
 # ---------------------------------------------------------------------------
@@ -571,4 +931,102 @@ REGISTRY.register(
         },
         "default": "neutral_female",
     },
+)
+
+# ---- qwen3-thinking (Step 2 built-in) ------------------------------------
+# Reproduces apply_chat_completions_reasoning_effort() from proxy.py:5242.
+# The body-mutation path runs through this registered instance; the 400 error
+# sentinel is handled at the dispatch site (proxy.py) which calls
+# Qwen3ThinkingTransform().apply() directly for the error return path.
+REGISTRY.register_builtin("qwen3-thinking", Qwen3ThinkingTransform())
+
+# ---- reasoning-field-normalize (Step 4a built-in) ------------------------
+# Ports _normalize_chat_completion_visible_content from proxy.py:18884.
+# Default-ON, detect-and-normalize (Revision D) — registered here for
+# future attach-to-backend wiring.  The legacy call site at proxy.py:18631
+# is updated in Step 4a to delegate to normalize_chat_completion_payload().
+REGISTRY.register_builtin("reasoning-field-normalize", ReasoningFieldNormalizeTransform())
+
+# ---- streaming-think-split (Step 4b built-in, OPT-IN) -------------------
+# Catches </think> split across SSE chunks.  Each request needs its own
+# instance (stateful carry buffer) — the registry stores the CLASS, not an
+# instance.  Attach only when explicitly configured for a backend.
+# NOTE: not registered as a singleton — use StreamingThinkSplitTransform()
+# directly at the call site when opted in.
+
+# ---------------------------------------------------------------------------
+# Step 5 — Tier-1 per-backend packs (suggested-on-add, NOT auto-attached)
+# ---------------------------------------------------------------------------
+# These are additive — they attach to NEW backends or are opt-in.
+# They do NOT alter the current 8-service config.
+
+# ---- ollama-unsupported-params -------------------------------------------
+# Ollama /v1/chat/completions rejects these OpenAI params with 400/422.
+# Source: ENGINE_QUIRK_FINDINGS.md §2.2 + r/LocalLLaMA audit.
+REGISTRY.register(
+    "ollama-unsupported-params",
+    {
+        "kind": "drop-params",
+        "drop": ["n", "logprobs", "top_logprobs", "logit_bias", "tool_choice", "user"],
+    },
+)
+
+# ---- koboldcpp-null-strip -------------------------------------------------
+# KoboldCpp 422s on keys whose value is null rather than ignoring them.
+# This is a value-test built-in (see KoboldCppNullStripTransform above).
+# Source: ENGINE_TRANSFORMS_DESIGN.md §3.3 (null-param-strip).
+REGISTRY.register_builtin("koboldcpp-null-strip", KoboldCppNullStripTransform({}))
+
+# ---- llamacpp-cache-prompt ------------------------------------------------
+# llama-server enables KV-cache reuse when cache_prompt=true is sent.
+# setdefault semantics — does not overwrite if caller explicitly sets false.
+# Source: ENGINE_TRANSFORMS_DESIGN.md §2.3, r/LocalLLaMA audit.
+REGISTRY.register(
+    "llamacpp-cache-prompt",
+    {
+        "kind": "default-params",
+        "set": {"cache_prompt": True},
+    },
+)
+
+# ---- mistral-penalty-clamp ------------------------------------------------
+# Mistral's API accepts frequency_penalty and presence_penalty in [-2.0, 2.0].
+# Clamp both so out-of-range client values don't trigger a 400.
+# Source: ENGINE_QUIRK_FINDINGS.md §2.6 (Mistral penalty ranges differ).
+REGISTRY.register(
+    "mistral-penalty-clamp",
+    [
+        {
+            "kind": "clamp",
+            "param": "frequency_penalty",
+            "min": -2.0,
+            "max": 2.0,
+        },
+        {
+            "kind": "clamp",
+            "param": "presence_penalty",
+            "min": -2.0,
+            "max": 2.0,
+        },
+    ],
+)
+
+# ---- tabby-penalty-floor --------------------------------------------------
+# TabbyAPI (ExLlamaV2) enforces ge=0 on frequency/presence_penalty via Pydantic.
+# Clamp both to a floor of 0.0 so negative client values don't 422.
+# Source: ENGINE_TRANSFORMS_DESIGN.md §2.6 (tabby-penalty-clamp example).
+REGISTRY.register(
+    "tabby-penalty-floor",
+    [
+        {
+            "kind": "clamp",
+            "param": "frequency_penalty",
+            "min": 0.0,
+        },
+        {
+            "kind": "clamp",
+            "param": "presence_penalty",
+            "min": 0.0,
+        },
+    ],
 )

@@ -148,7 +148,15 @@ from gateway.chat_extensions import (
     validate_responses_extensions,
 )
 from gateway.comfyui_workflow_validation import validate_comfyui_workflow_graph
-from gateway.transforms import REGISTRY as _TRANSFORM_REGISTRY, TransformContext as _TransformContext, run_request_pipeline as _run_request_pipeline
+from gateway.transforms import (
+    REGISTRY as _TRANSFORM_REGISTRY,
+    TransformContext as _TransformContext,
+    run_request_pipeline as _run_request_pipeline,
+    Qwen3ThinkingTransform as _Qwen3ThinkingTransform,
+    QWEN3_NO_THINK_HINT as _QWEN3_NO_THINK_HINT,
+    QWEN3_ENABLE_THINKING_KEY as _QWEN3_ENABLE_THINKING_KEY,
+    normalize_chat_completion_payload as _normalize_chat_completion_payload,
+)
 from gateway.discovery import WorkflowRegistry
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
@@ -2983,7 +2991,9 @@ async def _prepare_litellm_local_llm_request(
 
 
     if request_path == "/v1/chat/completions":
-        reasoning_error = apply_chat_completions_reasoning_effort(body)
+        # Step 2: reasoning_effort handled by the qwen3-thinking built-in.
+        # Body mutation goes through the transform; 400 plumbing stays here.
+        reasoning_error = _Qwen3ThinkingTransform().apply(body)
         if reasoning_error:
             return Response(
                 content=json.dumps({"error": {
@@ -4855,13 +4865,15 @@ async def decide_image_background_removal(
         model_id = default_model_for_operation("chat", "default")
 
     headers = configured_downstream_headers(auth_context, service)
+    # Step 3: /no_think hint and enable_thinking key sourced from gateway/transforms.py
+    # (single source of truth alongside the qwen3-thinking built-in).
     payload = {
         "model": model_id,
         "messages": [
             {
                 "role": "system",
                 "content": (
-                    "/no_think\n"
+                    _QWEN3_NO_THINK_HINT + "\n"
                     "Decide whether an image generation request should have its "
                     "background removed and returned as a transparent PNG. "
                     "Use the user's intent, not keyword matching. Return only JSON "
@@ -4878,7 +4890,7 @@ async def decide_image_background_removal(
         "temperature": 0,
         "max_tokens": 160,
         "response_format": {"type": "json_object"},
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": {_QWEN3_ENABLE_THINKING_KEY: False},
     }
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(IMAGE_BACKGROUND_REMOVAL_TIMEOUT, connect=5)) as client:
@@ -5226,64 +5238,6 @@ async def evict_image_cache_loop(stop_event: asyncio.Event) -> None:
             await asyncio.wait_for(stop_event.wait(), timeout=IMAGE_CACHE_EVICT_INTERVAL)
         except asyncio.TimeoutError:
             continue
-
-
-# OpenAI's documented set of valid reasoning_effort values on /v1/chat/completions.
-# Per OpenAI docs (May 2026): gpt-5.1+ accepts "none", gpt-5 accepts "minimal",
-# o-series/GPT-5 accept "low"/"medium"/"high", gpt-5.2 and codex variants add
-# "xhigh". We accept the union and return 400 on anything else.
-_REASONING_EFFORT_VALUES = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
-
-# Effort values that should suppress thinking on local reasoning models that have
-# a binary thinking switch (Qwen3.6's /no_think + chat_template_kwargs.enable_thinking).
-_REASONING_EFFORT_SUPPRESS = frozenset({"none", "minimal"})
-
-
-def apply_chat_completions_reasoning_effort(body_json: dict) -> Optional[str]:
-    """Translate OpenAI's `reasoning_effort` on /v1/chat/completions into signals
-    the local backend (llama-server) understands. Mutates body_json in place.
-
-    Returns an error message string if the value is invalid (caller should emit
-    a 400 in OpenAI's error shape). Returns None on success or no-op.
-
-    Local models (Qwen3.6 family) have a binary thinking switch, not graded effort
-    tiers, so we map:
-      - "none" / "minimal" -> /no_think + chat_template_kwargs.enable_thinking=false
-      - "low" / "medium" / "high" / "xhigh" -> no-op (model thinks normally)
-    The field itself is always stripped before forwarding so llama-server doesn't
-    see an unknown parameter.
-    """
-    if "reasoning_effort" not in body_json:
-        return None
-    effort = body_json.pop("reasoning_effort")
-    if effort is None:
-        return None
-    if not isinstance(effort, str) or effort not in _REASONING_EFFORT_VALUES:
-        return (
-            f"Invalid value for 'reasoning_effort': {effort!r}. "
-            f"Expected one of: {sorted(_REASONING_EFFORT_VALUES)}."
-        )
-    if effort not in _REASONING_EFFORT_SUPPRESS:
-        return None
-
-    # Suppress thinking. Belt-and-suspenders: chat template kwarg (preferred,
-    # llama-server understands it for Qwen3 family) plus /no_think system hint
-    # (fallback for backends that ignore the kwarg).
-    kwargs = body_json.setdefault("chat_template_kwargs", {})
-    if isinstance(kwargs, dict):
-        kwargs.setdefault("enable_thinking", False)
-
-    messages = body_json.get("messages")
-    if isinstance(messages, list):
-        hint = "/no_think"
-        for i, m in enumerate(messages):
-            if isinstance(m, dict) and m.get("role") == "system":
-                existing = m.get("content") or ""
-                if isinstance(existing, str) and hint not in existing:
-                    messages[i] = {**m, "content": (existing + ("\n" if existing else "") + hint)}
-                return None
-        messages.insert(0, {"role": "system", "content": hint})
-    return None
 
 
 def has_vision_content(messages) -> bool:
@@ -18682,7 +18636,8 @@ async def _forward_litellm_proxy_request(
                 if isinstance(response_json, dict):
                     if 200 <= resp.status_code < 300:
                         if request_path == "/v1/chat/completions":
-                            _normalize_chat_completion_visible_content(response_json)
+                            # Step 4a: delegate to the registered transform function.
+                            _normalize_chat_completion_payload(response_json)
                         if (
                             request_path == "/v1/embeddings"
                             and requested_embedding_dimensions is not None
@@ -18920,85 +18875,6 @@ def _should_return_not_found_before_backend(request_path: str) -> bool:
     return True
 
 
-def _split_reasoning_visible_text(text: Any) -> tuple[Optional[str], Optional[str]]:
-    if not isinstance(text, str) or not text:
-        return None, None
-    lower = text.lower()
-    close = lower.rfind("</think>")
-    if close >= 0:
-        reasoning = text[:close].strip()
-        open_tag = reasoning.lower().rfind("<think>")
-        if open_tag >= 0:
-            reasoning = reasoning[open_tag + len("<think>") :].strip()
-        visible = text[close + len("</think>") :].strip()
-        return reasoning or None, visible or None
-    return None, text
-
-
-def _normalize_chat_completion_visible_content(payload: dict[str, Any]) -> bool:
-    """Normalize visible content in chat completion payloads.
-
-    Handles two cases:
-    1. <think>...</think> tags that leaked into message/delta content — strip them
-       and promote the reasoning into reasoning_content.
-    2. reasoning_content is populated but content is empty/absent — backfill
-       content from reasoning_content (stripping think tags from reasoning_content
-       if present, so content gets only the visible portion).
-
-    llama-server with Qwen3.6 correctly places thinking tokens in reasoning_content
-    and the answer in content. This function is a safety net for backends that
-    either emit raw <think> tags inside content, or populate reasoning_content but
-    leave content blank.
-    """
-    changed = False
-    choices = payload.get("choices")
-    if not isinstance(choices, list):
-        return False
-    for choice in choices:
-        if not isinstance(choice, dict):
-            continue
-        message = choice.get("message")
-        if isinstance(message, dict):
-            content = message.get("content")
-            reasoning = message.get("reasoning_content")
-            if isinstance(content, str) and "</think>" in content.lower():
-                # Case 1: think tags leaked into content — strip them out.
-                split_reasoning, visible = _split_reasoning_visible_text(content)
-                if visible is not None:
-                    message["content"] = visible
-                    if not isinstance(reasoning, str) and split_reasoning:
-                        message["reasoning_content"] = split_reasoning
-                    changed = True
-            elif isinstance(reasoning, str) and reasoning and not content:
-                # Case 2: reasoning_content is set but content is empty/absent.
-                # Backfill content: if reasoning_content itself has think tags,
-                # extract only the visible portion; otherwise mirror as-is.
-                split_reasoning, visible = _split_reasoning_visible_text(reasoning)
-                if visible is not None:
-                    # reasoning_content had think tags — split it
-                    message["content"] = visible
-                    message["reasoning_content"] = split_reasoning or reasoning
-                else:
-                    # No think tags — mirror reasoning_content into content
-                    message["content"] = reasoning
-                changed = True
-        delta = choice.get("delta")
-        if isinstance(delta, dict):
-            content = delta.get("content")
-            reasoning = delta.get("reasoning_content")
-            if isinstance(content, str) and "</think>" in content.lower():
-                # Case 1: think tags leaked into delta content — strip them.
-                _, visible = _split_reasoning_visible_text(content)
-                if visible is not None:
-                    delta["content"] = visible
-                    changed = True
-            elif isinstance(reasoning, str) and reasoning and not content:
-                # Case 2: delta has reasoning_content but no content — mirror it.
-                delta["content"] = reasoning
-                changed = True
-    return changed
-
-
 def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:
     try:
         text = chunk.decode("utf-8")
@@ -19030,7 +18906,7 @@ def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:
         except json.JSONDecodeError:
             out_lines.append(line)
             continue
-        if isinstance(payload, dict) and _normalize_chat_completion_visible_content(payload):
+        if isinstance(payload, dict) and _normalize_chat_completion_payload(payload):
             out_lines.append(f"{prefix}data: {json.dumps(payload, separators=(',', ':'))}{newline}")
             changed = True
         else:
