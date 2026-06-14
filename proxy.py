@@ -563,16 +563,32 @@ SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cfg.get("upstream_read_timeout", 600)))
 
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
-# hardcoding a filename. Roles map to a backend type ("kobold" or "tabby") — never to
-# a specific model file. Whichever model the chosen backend has loaded is what gets used.
+# hardcoding a filename. Roles map to a backend type ("kobold", "tabby", or any enabled
+# registry backend) — never to a specific model file for unmanaged backends.
 ROLES = config.get("roles", {})
+
+# Local-swap backends require a GGUF file path to hot-swap the model on disk.
+# kobold and tabby are the canonical local-swap backends; any backend whose role
+# entry carries a "path" key is also treated as local-swap.
+_LOCAL_SWAP_BACKENDS: frozenset[str] = frozenset({"kobold", "tabby"})
 
 # Optional catalog of additional GGUF aliases (parallel to ROLES). Each entry has
 # id/backend/path[/description] and is treated like a role with a pinned model:
 # clients send `model: "<id>"` and the proxy resolves it via ensure_target().
 # This lets us surface arbitrary GGUFs on /v1/models without inventing roles.
+# All MODELS_CATALOG entries require a local file path (this is a GGUF catalog).
+# Any enabled registry backend may appear here; kobold/tabby behavior is unchanged.
 def _normalize_models_catalog(raw) -> dict:
-    """Normalize config['models'] (list of dicts) into {normalized_id: entry}."""
+    """Normalize config['models'] (list of dicts) into {normalized_id: entry}.
+
+    Accepts any backend that is known in config["backends"] (or is a legacy
+    local-swap backend).  All entries in this catalog MUST supply a local file
+    path — it is a GGUF-alias catalog by design.  Entries without a path are
+    skipped, matching the previous kobold/tabby-only behaviour exactly.
+    """
+    known_backends: frozenset[str] = frozenset(
+        (config.get("backends") or {}).keys()
+    ) | _LOCAL_SWAP_BACKENDS
     out: dict = {}
     if not isinstance(raw, list):
         return out
@@ -582,7 +598,8 @@ def _normalize_models_catalog(raw) -> dict:
         mid = str(item.get("id", "")).strip().lower()
         backend = item.get("backend")
         path = item.get("path")
-        if not mid or backend not in ("kobold", "tabby") or not path:
+        # Require a known backend AND a local path (GGUF catalog — path is mandatory).
+        if not mid or backend not in known_backends or not path:
             continue
         mmproj_raw = item.get("mmproj")
         mmproj_path = str(mmproj_raw).strip() if mmproj_raw else None
@@ -16232,7 +16249,21 @@ async def _annotate_model_context_windows(data: list[Any]) -> None:
 
 
 def _build_role_catalog_entries() -> list[dict]:
-    """Return configured local LLM handles for admin inventory and policy checks."""
+    """Return configured LLM role handles for admin inventory and policy checks.
+
+    Accepts any backend that is known in config["backends"] (or is a legacy
+    local-swap backend such as kobold/tabby).  Unknown backends are silently
+    skipped so that a typo in the config does not crash the listing.
+
+    For local-swap backends (kobold/tabby or any role entry with a ``path``
+    key), ``model`` is a GGUF file path and is surfaced as
+    ``vivid_fish_model_path``.  For remote/routed backends the ``model`` field
+    is the upstream model name and is surfaced as ``vivid_fish_model``.  Remote
+    role entries that omit ``model`` entirely are skipped (malformed).
+    """
+    known_backends: frozenset[str] = frozenset(
+        (config.get("backends") or {}).keys()
+    ) | _LOCAL_SWAP_BACKENDS
     entries: list[dict] = []
 
     if isinstance(ROLES, dict):
@@ -16240,20 +16271,41 @@ def _build_role_catalog_entries() -> list[dict]:
             if not isinstance(role_def, dict):
                 continue
             backend = role_def.get("backend")
-            if backend not in ("kobold", "tabby"):
+            # Skip entries whose backend is not known in the registry.
+            if not backend or backend not in known_backends:
                 continue
-            model_path = role_def.get("model")
-            entry = {
-                "id": str(role_name),
-                "object": "model",
-                "created": _entry_created_ts(model_path if isinstance(model_path, str) else None),
-                "owned_by": "vivid-fish",
-                "description": str(role_def.get("description", "") or ""),
-                "vivid_fish_role": True,
-                "vivid_fish_backend": backend,
-            }
-            if isinstance(model_path, str) and model_path:
-                entry["vivid_fish_model_path"] = model_path
+            is_local_swap = backend in _LOCAL_SWAP_BACKENDS or bool(role_def.get("path"))
+            model_value = role_def.get("model")
+            if is_local_swap:
+                # Local-swap: model is a GGUF path (may be absent for unpinned tabby roles).
+                model_path = model_value if isinstance(model_value, str) else None
+                entry = {
+                    "id": str(role_name),
+                    "object": "model",
+                    "created": _entry_created_ts(model_path),
+                    "owned_by": "vivid-fish",
+                    "description": str(role_def.get("description", "") or ""),
+                    "vivid_fish_role": True,
+                    "vivid_fish_backend": backend,
+                }
+                if model_path:
+                    entry["vivid_fish_model_path"] = model_path
+            else:
+                # Remote/routed backend: model is the upstream model name (required).
+                if not model_value or not str(model_value).strip():
+                    # Skip malformed remote role entry (no model name to route to).
+                    continue
+                upstream_model = str(model_value).strip()
+                entry = {
+                    "id": str(role_name),
+                    "object": "model",
+                    "created": _entry_created_ts(None),
+                    "owned_by": "vivid-fish",
+                    "description": str(role_def.get("description", "") or ""),
+                    "vivid_fish_role": True,
+                    "vivid_fish_backend": backend,
+                    "vivid_fish_model": upstream_model,
+                }
             entries.append(entry)
 
     for mid, cat in MODELS_CATALOG.items():
