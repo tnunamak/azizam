@@ -1432,20 +1432,36 @@ async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str
     """Make a (backend, model, mmproj) target real before forwarding a request.
 
     Steps:
-      1. If `backend` isn't currently the active LLM backend, call switch_backend()
-         to start it (cold start). For tabby with TABBY_MANAGED, skip — that's the
-         lifespan's job, but we still verify health after.
-      2. If `model` is provided and the loaded model OR mmproj on `backend` differs,
-         swap via the appropriate primitive (swap_kobold_model or swap_tabby_model).
+      1. If `backend` is kobold or tabby, apply the managed cold-start / model-swap
+         logic (swap_kobold_model / swap_tabby_model).  These two IDs have special
+         swap semantics that are not yet ported to the driver abstraction.
+      2. For any OTHER backend, delegate to its LifecycleDriver.ensure_ready().
+         The default (external) driver performs a health-check GET and returns
+         True if the backend is reachable — so an always-on vLLM, remote
+         OpenAI-compatible endpoint, or second llama.cpp instance passes through
+         instead of 503-ing (the bug fixed here).
+         A docker driver will `docker start` the container first then poll health.
 
     `mmproj` is kobold-only. Pass None for text-only models — the proxy writes an
     empty LLAMA_TURBO_MMPROJ so start_service.sh omits --mmproj.
 
     Returns True only if both steps succeed. Caller turns False into a 503.
     """
+    # --- Route non-kobold/tabby backends through their LifecycleDriver ------
+    # This is the fix for the validated 503 bug: previously every backend that
+    # wasn't literally "kobold" or "tabby" returned False here, making "add an
+    # engine and route to it" a lie for any always-on external backend.
     if backend not in ("kobold", "tabby"):
-        print(f"[proxy] ensure_target: unknown backend '{backend}'", flush=True)
-        return False
+        from gateway.lifecycle_drivers import driver_for_service
+        driver = driver_for_service(backend)
+        bcfg = (config.get("backends") or {}).get(backend) or {}
+        ready = await driver.ensure_ready(bcfg, timeout_s=HEALTH_CHECK_TIMEOUT)
+        if not ready:
+            print(
+                f"[proxy] ensure_target: backend '{backend}' unreachable via driver",
+                flush=True,
+            )
+        return ready
 
     label = f"ensure_target({backend}, {model}, mmproj={mmproj or '<none>'})"
 
