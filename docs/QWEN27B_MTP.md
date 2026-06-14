@@ -6,7 +6,7 @@ the model's native MTP speculative decoding head.
 ## Files
 
 - TurboQuant+MTP llama.cpp checkout:
-  `/home/tnunamak/applications/llama-tq-mtp`
+  `/path/to/llama-tq-mtp`
 - Exact fork/tag tested: `QuinsZouls/llama-cpp-turboquant`,
   `llama-next-b9265-1e5a46d`
 - MTP model:
@@ -38,7 +38,7 @@ Why this is not the default yet:
 
 `scripts/local/run_qwen27b_mtp.sh` defaults to:
 
-- app: `/home/tnunamak/applications/llama-tq-mtp`
+- app: `/path/to/llama-tq-mtp`
 - port: `5051`
 - GPU: `CUDA_VISIBLE_DEVICES=1`
 - context: `196608`
@@ -74,7 +74,7 @@ Isolated test without touching the production port:
 
 ```bash
 TURBO_AUTO_ASYMMETRIC=0 CUDA_VISIBLE_DEVICES=1 \
-  /home/tnunamak/applications/llama-tq-mtp/build/bin/llama-server \
+  /path/to/llama-tq-mtp/build/bin/llama-server \
     --model "/media/windows/AI Models/LLMs/GGUF/MTP/Qwen3.6-27B-MTP-GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf" \
     --port 5052 \
     --host 127.0.0.1 \

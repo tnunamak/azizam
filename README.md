@@ -20,12 +20,12 @@ The gateway is still in active development. The engine registry migration (confi
 
 ## 5-minute quickstart
 
-**Prerequisites:** Python 3.11+, an OpenAI-compatible engine already running (e.g. [Ollama](https://ollama.com) on `http://localhost:11434`, or llama.cpp server on `http://localhost:8080`).
+**Prerequisites:** Python 3.12+, an OpenAI-compatible engine already running (e.g. [Ollama](https://ollama.com) on `http://localhost:11434`, or llama.cpp server on `http://localhost:8080`).
 
 ### Option A — Docker Compose (recommended)
 
 ```bash
-git clone https://github.com/your-org/openai-proxy.git
+git clone https://github.com/Vivid-Fish/openai-proxy.git
 cd openai-proxy
 
 # Configure your engine (edit the URL to match your running engine)
@@ -36,41 +36,41 @@ EOF
 docker compose up -d
 ```
 
-The gateway starts on port 5000 with a LiteLLM sidecar that proxies to your engine. Open `http://localhost:5000/setup` to claim the first owner account and mint an API key, then:
+The gateway starts on port 5000. Open `http://localhost:5000/setup` to claim the first owner account and mint an API key, then:
 
 ```bash
-# Smoke test
+# Always works on a fresh install (no backend required)
 curl -s http://localhost:5000/health
 curl -s http://localhost:5000/v1/models \
      -H "Authorization: Bearer opk_YOUR_KEY_HERE"
 
-# Chat completion
+# Chat completion — requires a running engine pointed at AI_GATEWAY_LITELLM_BASE_URL
+# Without one, this returns a 502/503. Add a backend via /admin first.
 curl -s http://localhost:5000/v1/chat/completions \
      -H "Authorization: Bearer opk_YOUR_KEY_HERE" \
      -H "Content-Type: application/json" \
      -d '{"model":"llama3","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
+> **Engines are not included.** The gateway routes to engines you already run — Ollama, llama.cpp, vLLM, etc. `/health` and the admin UI work immediately on a fresh install with no engine. Chat requests will fail until you add at least one backend in `/admin`.
+
 Point any OpenAI-compatible client at `http://localhost:5000/openai/v1` with your `opk_...` key.
 
 ### Option B — bare Python
 
 ```bash
-git clone https://github.com/your-org/openai-proxy.git
+git clone https://github.com/Vivid-Fish/openai-proxy.git
 cd openai-proxy
 
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
-
-# Minimal config: copy the example and edit to point at your engine
-cp proxy_config.yml.example proxy_config.yml   # if present, else start bare
 
 ./start.sh   # listens on :5000 by default
 ```
 
 Open `http://localhost:5000/setup` to create the owner account.
 
-> **Note:** The Docker Compose setup ships a LiteLLM sidecar for LLM routing. For bare-Python you'll need to configure `proxy_config.yml` with your backend URLs. See the Setup section below for full details.
+> **Note:** The gateway boots with no config — `/health` and the admin UI work immediately on a fresh checkout. To route chat requests to a local engine, configure `proxy_config.yml` with your backend URLs (see the Setup section below) or add a backend from `/admin` after first login.
 
 ---
 
