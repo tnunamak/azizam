@@ -160,16 +160,16 @@ function SourceBadge({ source, managed }: { source: BadgeSource; managed: boolea
 }
 
 // ---------------------------------------------------------------------------
-// Restart banner (shown after every write)
+// Live-apply banner (shown after every write)
 
-function RestartBanner({ onDismiss }: { onDismiss: () => void }) {
+function LiveApplyBanner({ onDismiss }: { onDismiss: () => void }) {
   return (
     <div
       role="status"
-      className="rounded-vf-md border-vf-warn/40 bg-vf-warn/10 flex flex-wrap items-center justify-between gap-3 border px-4 py-3"
+      className="rounded-vf-md border-vf-ok/40 bg-vf-ok/10 flex flex-wrap items-center justify-between gap-3 border px-4 py-3"
     >
       <p className="text-vf-small text-vf-text">
-        Saved — restart the gateway to apply.
+        Saved — applied live. No restart needed.
       </p>
       <Button size="sm" variant="ghost" onClick={onDismiss}>
         Dismiss
@@ -230,7 +230,7 @@ export default function AdminServicesPage() {
   const [detectTarget, setDetectTarget] = useState<Service | null>(null);
   const [modelsTarget, setModelsTarget] = useState<Service | null>(null);
   const [litellmOpen, setLitellmOpen] = useState(false);
-  /** Banner shown after any write to remind about gateway restart. */
+  /** Banner shown after any write confirming live apply. */
   const [restartBanner, setRestartBanner] = useState(false);
 
   function showRestartBanner() {
@@ -363,7 +363,7 @@ export default function AdminServicesPage() {
         <SectionHeader
           kicker="infrastructure"
           title="Services"
-          description="The upstream backends this gateway fronts. Changes require a gateway restart."
+          description="The upstream backends this gateway fronts. Changes apply live — no restart needed."
           action={
             <Button variant="primary" onClick={() => setAddOpen(true)}>
               Add service
@@ -372,7 +372,7 @@ export default function AdminServicesPage() {
         />
 
         {restartBanner && (
-          <RestartBanner onDismiss={() => setRestartBanner(false)} />
+          <LiveApplyBanner onDismiss={() => setRestartBanner(false)} />
         )}
 
         {isError && !registry ? (
@@ -840,7 +840,7 @@ function AddServiceDialogContent({
             Register an upstream backend. Select a preset to pre-fill defaults,
             or choose{" "}
             <strong>Custom (OpenAI-compatible)</strong> for any
-            OpenAI-compatible API. Changes take effect after a gateway restart.
+            OpenAI-compatible API. Changes apply live — no restart needed.
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -1179,7 +1179,7 @@ function EditServiceDialogContent({
           <DialogDescription>
             {managed
               ? "This is the managed LiteLLM substrate. The endpoint and protocol are derived by the gateway and cannot be changed here."
-              : "Changes take effect after a gateway restart."}
+              : "Changes apply live — no restart needed."}
           </DialogDescription>
         </DialogHeader>
         <DialogBody>

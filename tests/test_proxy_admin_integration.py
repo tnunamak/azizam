@@ -2205,5 +2205,115 @@ class AdminAuditEventsEndpointTests(unittest.TestCase):
         self.assertLessEqual(len(resp.json()["records"]), 2)
 
 
+class ConfigExportTests(unittest.TestCase):
+    """Tests for GET /admin/api/config/export (Job A, ENGINE_REGISTRY_DESIGN §5.2)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "admin.db"
+        self.old_path = proxy.ADMIN_STORE.path
+        self.old_signing_key = proxy.ADMIN_AUTH.signing_key
+        self.old_cookie = proxy.ADMIN_AUTH.cookie
+        self.old_auth_enabled = proxy.AUTH_ENABLED
+        proxy.ADMIN_STORE.path = self.db
+        proxy.AUTH_ENABLED = True
+        admin_store.init_db(self.db)
+        self.admin_key, _, _ = create_admin_service_account_key(
+            "test-owner", path=self.db
+        )
+        self.client = TestClient(proxy.app)
+
+    def tearDown(self) -> None:
+        proxy.ADMIN_STORE.path = self.old_path
+        proxy.ADMIN_AUTH.signing_key = self.old_signing_key
+        proxy.ADMIN_AUTH.cookie = self.old_cookie
+        proxy.AUTH_ENABLED = self.old_auth_enabled
+        self.tmp.cleanup()
+
+    def _auth(self) -> dict:
+        return {"Authorization": f"Bearer {self.admin_key}"}
+
+    def test_export_requires_admin_auth(self) -> None:
+        """Unauthenticated request must be rejected with 401."""
+        resp = self.client.get("/admin/api/config/export")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_export_returns_valid_yaml(self) -> None:
+        """Authenticated request returns 200 with parseable YAML content."""
+        import yaml
+
+        resp = self.client.get("/admin/api/config/export", headers=self._auth())
+        self.assertEqual(resp.status_code, 200)
+        # Must be parseable YAML
+        doc = yaml.safe_load(resp.text)
+        self.assertIsInstance(doc, dict)
+
+    def test_export_contains_services_key(self) -> None:
+        """Exported YAML has a top-level 'services' mapping."""
+        import yaml
+
+        resp = self.client.get("/admin/api/config/export", headers=self._auth())
+        self.assertEqual(resp.status_code, 200)
+        doc = yaml.safe_load(resp.text)
+        self.assertIn("services", doc)
+        self.assertIsInstance(doc["services"], dict)
+
+    def test_export_includes_seeded_backends(self) -> None:
+        """After adding a service via the admin API, it appears in the export."""
+        import yaml
+
+        # Add a service via the admin API (same path the UI uses)
+        add_resp = self.client.post(
+            "/admin/api/operator/services",
+            json={
+                "name": "Test vLLM",
+                "base_url": "http://127.0.0.1:9000/v1",
+                "capabilities": ["chat", "completions"],
+                "protocol": "openai-compatible",
+            },
+            headers=self._auth(),
+        )
+        self.assertIn(add_resp.status_code, (200, 201))
+
+        resp = self.client.get("/admin/api/config/export", headers=self._auth())
+        self.assertEqual(resp.status_code, 200)
+        doc = yaml.safe_load(resp.text)
+        # At least one service should now be present
+        self.assertGreater(len(doc["services"]), 0)
+        # Connection config present on at least one service
+        some_service = next(iter(doc["services"].values()))
+        self.assertIn("config", some_service)
+
+    def test_export_excludes_ephemeral_keys(self) -> None:
+        """Export must not contain health, last_used_at, vram, or probe fields."""
+        import yaml
+
+        resp = self.client.get("/admin/api/config/export", headers=self._auth())
+        self.assertEqual(resp.status_code, 200)
+        doc = yaml.safe_load(resp.text)
+
+        ephemeral = {
+            "health", "last_used", "last_used_at", "vram", "vram_used",
+            "vram_gb_used", "probed_at", "probe_window", "health_history",
+            "last_error", "live_status", "runtime",
+        }
+        raw_text = resp.text
+        # Quick text scan: none of the ephemeral keys should appear as YAML keys
+        for key in ephemeral:
+            # A YAML mapping key appears as "  key:" or "key:" at line start
+            self.assertNotRegex(
+                raw_text,
+                rf"(?m)^\s*{re.escape(key)}\s*:",
+                msg=f"Ephemeral key '{key}' must not appear in export",
+            )
+
+    def test_export_content_disposition_suggests_filename(self) -> None:
+        """Response includes Content-Disposition header with a .yml filename."""
+        resp = self.client.get("/admin/api/config/export", headers=self._auth())
+        self.assertEqual(resp.status_code, 200)
+        cd = resp.headers.get("content-disposition", "")
+        self.assertIn(".yml", cd)
+
+
 if __name__ == "__main__":
     unittest.main()

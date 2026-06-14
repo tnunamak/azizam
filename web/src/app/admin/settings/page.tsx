@@ -244,7 +244,8 @@ function ErrorBanner({
 }
 
 // ---------------------------------------------------------------------------
-// Shared restart-to-apply banner (OIDC + Services pattern)
+// OIDC save banner — most settings apply immediately; signing key / cookie
+// name are captured at boot and require a restart to take effect.
 
 function RestartBanner({ onDismiss }: { onDismiss: () => void }) {
   return (
@@ -253,7 +254,9 @@ function RestartBanner({ onDismiss }: { onDismiss: () => void }) {
       className="rounded-vf-md border-vf-accent/30 bg-vf-accent/5 flex flex-wrap items-center justify-between gap-3 border p-4"
     >
       <p className="text-vf-small text-vf-text">
-        Saved — restart the gateway to apply the new sign-in settings.
+        Saved — most sign-in settings apply immediately. If you changed the
+        signing key or cookie name, a gateway restart is required for those
+        fields to take effect.
       </p>
       <Button size="sm" variant="ghost" onClick={onDismiss}>
         Dismiss
@@ -579,8 +582,10 @@ function OidcEditDialogContent({
             {existing ? "Edit sign-in settings" : "Configure sign-in"}
           </DialogTitle>
           <DialogDescription>
-            Changes take effect after restarting the gateway. The client secret
-            is write-only — leave blank to keep the current value.
+            Most settings apply immediately. The signing key and cookie name are
+            captured at startup — changing them requires a gateway restart to
+            take effect. The client secret is write-only — leave blank to keep
+            the current value.
           </DialogDescription>
         </DialogHeader>
 
