@@ -148,6 +148,7 @@ from gateway.chat_extensions import (
     validate_responses_extensions,
 )
 from gateway.comfyui_workflow_validation import validate_comfyui_workflow_graph
+from gateway.transforms import REGISTRY as _TRANSFORM_REGISTRY, TransformContext as _TransformContext, run_request_pipeline as _run_request_pipeline
 from gateway.discovery import WorkflowRegistry
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
@@ -3396,7 +3397,8 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
             return model_compatibility_error(str(e))
 
         requested_voice = body_json.get("voice", "").lower()
-        body_json["voice"] = VOICE_MAP.get(requested_voice, DEFAULT_VOICE)
+        body_json["voice"] = requested_voice  # normalise to lowercase before transform
+        _run_request_pipeline(["voxtral-voices"], body_json, _TransformContext(), _TRANSFORM_REGISTRY)
         body_json["model"] = model_resolution.effective_model or TTS_BACKEND_MODEL
         body_json["response_format"] = "wav"
         body = json.dumps(body_json).encode()
