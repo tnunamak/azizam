@@ -31,6 +31,7 @@ import time
 import atexit
 import hashlib
 import hmac
+import ipaddress
 import secrets
 import uuid
 from dataclasses import dataclass, replace
@@ -38,7 +39,7 @@ from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Iterable, Mapping, Optional
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs, parse_qsl, quote, urlencode
 
 import httpx
 import yaml
@@ -2178,6 +2179,199 @@ _OLLAMA_DISCOVERY_PUBLIC_PATHS = frozenset({
 })
 
 
+# ---------------------------------------------------------------------------
+# Optional frictionless-auth features (all OFF by default; see proxy_config.yml
+# auth: block). With every default left off, behavior is identical to before:
+# header Bearer/x-api-key required on every non-public route.
+#
+# 1. LAN/localhost bypass  — clients in lan_bypass_cidrs skip the key entirely.
+# 2. ?api_key= query param — for clients that cannot set an auth header.
+# 3. path-prefix tokens    — /<token>/v1/... where the path IS the credential.
+#
+# SECURITY: the real client IP is, by default, the raw TCP socket peer. We only
+# consult X-Forwarded-For when the operator has named their reverse proxy in
+# trusted_proxies (rightmost-first walk — the leftmost XFF entry is attacker-
+# controlled). Cloudflare's CF-Connecting-IP is honored only when the peer is a
+# verified Cloudflare IP. This makes LAN bypass safe behind any proxy (or none).
+# ---------------------------------------------------------------------------
+
+LAN_BYPASS_ENABLED = bool_from_config(
+    os.environ.get("OPENAI_PROXY_LAN_BYPASS", auth_cfg.get("lan_bypass_enabled")),
+    False,
+)
+ALLOW_QUERY_PARAM_KEY = bool_from_config(
+    os.environ.get("OPENAI_PROXY_QUERY_PARAM_KEY", auth_cfg.get("allow_query_param_key")),
+    False,
+)
+CLOUDFLARE_MODE = bool_from_config(
+    os.environ.get("OPENAI_PROXY_CF_MODE", auth_cfg.get("cloudflare_mode")),
+    False,
+)
+
+
+def _parse_cidrs(raw) -> list:
+    """Parse a list of IP/CIDR strings into ip_network objects; skip bad ones."""
+    nets = []
+    if isinstance(raw, str):
+        raw = [p.strip() for p in raw.split(",") if p.strip()]
+    for entry in raw or []:
+        try:
+            nets.append(ipaddress.ip_network(str(entry).strip(), strict=False))
+        except ValueError:
+            print(f"[proxy] WARNING: ignoring invalid CIDR in auth config: {entry!r}", flush=True)
+    return nets
+
+
+LAN_BYPASS_CIDRS = _parse_cidrs(auth_cfg.get("lan_bypass_cidrs"))
+TRUSTED_PROXIES = _parse_cidrs(auth_cfg.get("trusted_proxies"))
+PATH_TOKENS = dict(auth_cfg.get("path_tokens") or {})
+
+# Cloudflare edge IP ranges, populated at startup when CLOUDFLARE_MODE is on.
+# None => fetch failed => refuse to honor CF-Connecting-IP (fail closed).
+_CF_IP_NETWORKS: list | None = None
+
+# Docker bridge / RFC-1918 ranges used only to warn operators about the
+# containerized-without-trusted-proxies footgun (NOT auto-trusted for anything).
+_DOCKER_BRIDGE_HINT_NETS = _parse_cidrs(["172.16.0.0/12", "10.0.0.0/8"])
+
+
+def _init_cloudflare_ip_ranges() -> None:
+    """Fetch Cloudflare edge IP ranges once at startup (CLOUDFLARE_MODE only).
+
+    On any failure, leaves _CF_IP_NETWORKS as None so CF-Connecting-IP is refused
+    (fail closed). Synchronous + best-effort; ranges change rarely.
+    """
+    global _CF_IP_NETWORKS
+    if not CLOUDFLARE_MODE:
+        return
+    try:
+        import urllib.request
+        nets = []
+        for url in ("https://www.cloudflare.com/ips-v4", "https://www.cloudflare.com/ips-v6"):
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                body = resp.read().decode("utf-8", "ignore")
+            nets.extend(_parse_cidrs([ln for ln in body.splitlines() if ln.strip()]))
+        if nets:
+            _CF_IP_NETWORKS = nets
+            print(f"[proxy] cloudflare_mode: loaded {len(nets)} Cloudflare IP ranges", flush=True)
+        else:
+            print("[proxy] WARNING: cloudflare_mode on but no IP ranges parsed; "
+                  "CF-Connecting-IP will be refused (fail closed)", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] WARNING: cloudflare_mode on but IP-range fetch failed ({e}); "
+              "CF-Connecting-IP will be refused (fail closed)", flush=True)
+
+
+def _warn_auth_footguns() -> None:
+    """Surface the common LAN-bypass misconfiguration at startup."""
+    if LAN_BYPASS_ENABLED and not LAN_BYPASS_CIDRS:
+        print("[proxy] WARNING: lan_bypass_enabled but lan_bypass_cidrs is empty; "
+              "LAN bypass will never trigger.", flush=True)
+    if LAN_BYPASS_ENABLED and not TRUSTED_PROXIES:
+        print("[proxy] NOTE: LAN bypass uses the raw TCP socket peer (no trusted_proxies "
+              "set). If you run behind a reverse proxy or in Docker, the peer is the "
+              "proxy/bridge IP, not the real client — set auth.trusted_proxies so "
+              "X-Forwarded-For is honored.", flush=True)
+
+
+_init_cloudflare_ip_ranges()
+_warn_auth_footguns()
+
+
+def _normalize_ip(ip_str: str):
+    """Return an ip_address, unwrapping IPv4-mapped IPv6 (::ffff:1.2.3.4)."""
+    addr = ipaddress.ip_address(ip_str.strip())
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    return addr
+
+
+def _ip_in_any(addr, nets) -> bool:
+    for net in nets:
+        try:
+            if addr in net:
+                return True
+        except TypeError:
+            # IPv4 addr vs IPv6 net (or vice versa) — not a match.
+            continue
+    return False
+
+
+def resolve_real_client_ip(request: Request):
+    """Best-effort, spoofing-resistant real client IP.
+
+    Default: trust ONLY the TCP socket peer. Forwarded headers are consulted only
+    when the peer is a configured trusted proxy. Returns an ip_address or None.
+    """
+    client = request.scope.get("client")
+    if not client:
+        return None
+    try:
+        peer = _normalize_ip(client[0])
+    except ValueError:
+        return None
+
+    # Cloudflare: only when the peer is verified Cloudflare infra (fail closed).
+    if CLOUDFLARE_MODE and _CF_IP_NETWORKS and _ip_in_any(peer, _CF_IP_NETWORKS):
+        cf = request.headers.get("cf-connecting-ip", "").strip()
+        if cf:
+            try:
+                return _normalize_ip(cf)
+            except ValueError:
+                return peer
+
+    # X-Forwarded-For, only if the immediate peer is a trusted proxy.
+    if TRUSTED_PROXIES and _ip_in_any(peer, TRUSTED_PROXIES):
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            for candidate in reversed([p.strip() for p in xff.split(",") if p.strip()]):
+                try:
+                    cand = _normalize_ip(candidate)
+                except ValueError:
+                    continue
+                if not _ip_in_any(cand, TRUSTED_PROXIES):
+                    return cand  # first non-proxy IP from the right = real client
+
+    return peer
+
+
+def _client_is_lan(request: Request) -> bool:
+    if not LAN_BYPASS_ENABLED or not LAN_BYPASS_CIDRS:
+        return False
+    addr = resolve_real_client_ip(request)
+    return addr is not None and _ip_in_any(addr, LAN_BYPASS_CIDRS)
+
+
+def _path_token_from_request(request_path: str) -> str | None:
+    """Return a configured path-prefix token if request_path begins with one."""
+    if not PATH_TOKENS:
+        return None
+    first = request_path.lstrip("/").split("/", 1)[0]
+    for token in PATH_TOKENS:
+        if hmac.compare_digest(first, str(token)):
+            return token
+    return None
+
+
+def _identity_for(name: str, marker: str):
+    """Build a synthetic identity for non-credential auth (LAN / path token)."""
+    return RuntimeIdentity(
+        name=name,
+        key_hash=f"{marker}:{hashlib.sha256(name.encode()).hexdigest()[:16]}",
+        profile=DEFAULT_PROFILE,
+    )
+
+
+def _resolve_client_api_key(request: Request) -> str:
+    """Header Bearer/x-api-key, then optional ?api_key= fallback."""
+    key = get_client_api_key_from_headers(request.headers)
+    if key:
+        return key
+    if ALLOW_QUERY_PARAM_KEY:
+        return (request.query_params.get("api_key") or "").strip()
+    return ""
+
+
 def active_app_credential_count() -> int:
     try:
         return len(
@@ -2219,11 +2413,26 @@ def auth_error(message: str, status_code: int = 401) -> Response:
 
 
 def authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
-    """Authenticate a client-facing proxy key when auth is configured."""
+    """Authenticate a client-facing proxy key when auth is configured.
+
+    Decision order: public path -> LAN bypass -> path-prefix token ->
+    header/query API key -> 401. All bypass mechanisms are opt-in and OFF by
+    default, so with stock config this is identical to plain Bearer auth.
+    """
     if not AUTH_ENABLED or is_public_path(request_path):
         return NO_AUTH_CONTEXT
 
-    api_key = get_client_api_key_from_headers(request.headers)
+    # 1. Trusted LAN/localhost client (opt-in via auth.lan_bypass_*).
+    if _client_is_lan(request):
+        return AuthContext(identity=_identity_for("lan-bypass", "lan"))
+
+    # 2. Per-device path-prefix token (opt-in via auth.path_tokens).
+    token = _path_token_from_request(request_path)
+    if token is not None:
+        return AuthContext(identity=_identity_for(str(PATH_TOKENS[token]), "path-token"))
+
+    # 3. Header Bearer / x-api-key, then optional ?api_key= query fallback.
+    api_key = _resolve_client_api_key(request)
     if not api_key:
         return auth_error("Missing API key.")
 
@@ -19265,6 +19474,21 @@ async def provider_native_request(
 async def proxy_request(request: Request, path: str, *, mapped_route: bool = False):
     """Proxy mapped OpenAI requests to a configured local backend."""
     request_path = f"/{path}"
+
+    # Authenticate FIRST, against the original path so a per-device path-prefix
+    # token (/<token>/v1/...) is still visible to the token check.
+    auth_context = authenticate_request(request, request_path)
+    if isinstance(auth_context, Response):
+        return auth_context
+
+    # Then strip the token prefix so the upstream sees a clean path and the token
+    # never leaks into backend logs/routing.
+    _path_token = _path_token_from_request(request_path)
+    if _path_token is not None:
+        stripped = request_path.lstrip("/")[len(str(_path_token)):]
+        request_path = "/" + stripped.lstrip("/")
+        path = request_path.lstrip("/")
+
     if not mapped_route and _should_return_not_found_before_backend(request_path):
         return Response(
             content=json.dumps({
@@ -19280,10 +19504,6 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 
     if request_path in LITELLM_BODY_EXECUTION_PATHS:
         return await _handle_openai_litellm_request(request, request_path)
-
-    auth_context = authenticate_request(request, request_path)
-    if isinstance(auth_context, Response):
-        return auth_context
 
     # Update activity (unless it's a health/status/tts endpoint)
     is_activity = not any(request_path.startswith(p) for p in NO_ACTIVITY_PATHS)
@@ -19348,10 +19568,17 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                     media_type="application/json"
                 )
 
-    # Forward to target backend
+    # Forward to target backend. Strip our own ?api_key= before forwarding so the
+    # gateway credential never reaches the backend (or its access logs); all other
+    # query params are preserved.
     url = f"{target_host}/{path}"
     if request.url.query:
-        url += f"?{request.url.query}"
+        _fwd_qs = [
+            (k, v) for k, v in parse_qsl(request.url.query, keep_blank_values=True)
+            if k != "api_key"
+        ]
+        if _fwd_qs:
+            url += f"?{urlencode(_fwd_qs)}"
 
     body = body_peek  # Already read above for model detection
     # backend_for_host resolves known hosts; for an unknown host (shouldn't

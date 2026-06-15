@@ -346,6 +346,39 @@ auth:
   # Default: false — keep off on internet-facing gateways.
   # Env override: OLLAMA_COMPAT_DISCOVERY=true
   ollama_compat_discovery: false
+
+  # ---- Optional frictionless-auth features (all OFF by default) -------------
+  # With every option below left at its default, auth is unchanged: a valid
+  # Authorization: Bearer / x-api-key is required on every non-public route.
+  #
+  # 1) LAN / localhost bypass — clients whose REAL IP is in lan_bypass_cidrs skip
+  #    the API key. The public URL still requires it. Real IP defaults to the raw
+  #    TCP socket peer; X-Forwarded-For is honored ONLY from proxies you list in
+  #    trusted_proxies (rightmost-first, spoof-resistant).
+  #      lan_bypass_enabled: true
+  #      lan_bypass_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
+  #      trusted_proxies: ["127.0.0.1"]      # your reverse proxy's IP/CIDR; empty = no proxy
+  #    Env overrides: OPENAI_PROXY_LAN_BYPASS=true
+  lan_bypass_enabled: true
+  lan_bypass_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
+  trusted_proxies: ["192.168.1.4"]
+  #
+  # Cloudflare Tunnel: honor CF-Connecting-IP, but ONLY when the connection comes
+  # from a verified Cloudflare edge IP (ranges fetched at startup; fail-closed).
+  #   Env override: OPENAI_PROXY_CF_MODE=true
+  cloudflare_mode: false
+  #
+  # 2) Query-param key — for clients with no auth-header field (e.g. dictation
+  #    apps): accept ?api_key=<key>. Note: appears in some logs; redact upstream.
+  #    Env override: OPENAI_PROXY_QUERY_PARAM_KEY=true
+  allow_query_param_key: false
+  #
+  # 3) Per-device path tokens — the URL path IS the credential, e.g. base URL
+  #    https://host/tok_livingroom/v1 . Each token is independently revocable.
+  #      path_tokens:
+  #        tok_livingroom: living-room-speaker
+  #        tok_workshop: workshop-pi
+  path_tokens: {}
 admin:
   db_path: data/admin.db
   # Deployment brand (data, not product code). A generic install shows only the

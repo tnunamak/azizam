@@ -535,3 +535,95 @@ To silence this legitimately (e.g. when auth is handled by the reverse proxy):
 bind to `127.0.0.1` and put auth enforcement in the reverse proxy layer.
 See [`docs/REVERSE_PROXY.md`](docs/REVERSE_PROXY.md) for recommended Nginx/Caddy
 configuration including TLS and authentication headers.
+
+## Frictionless Auth: LAN bypass, header-less clients, path tokens
+
+Three **optional, default-OFF** features for trusted local clients and for apps
+that cannot send an `Authorization` header. With every option at its default the
+gateway behaves exactly as documented above (a valid Bearer / `x-api-key` is
+required on every non-public route). Configure under `auth:` in `proxy_config.yml`.
+
+### 1. LAN / localhost auth bypass
+
+Let clients on your trusted network skip the API key, while the public/WAN path
+still requires it. Models a Home-Assistant-style `trusted_networks` provider.
+
+```yaml
+auth:
+  lan_bypass_enabled: true
+  lan_bypass_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
+  trusted_proxies: []        # see "Behind a reverse proxy" below
+```
+Env override: `OPENAI_PROXY_LAN_BYPASS=true`.
+
+**How the real client IP is determined (this is the security-critical part):**
+By default the gateway trusts **only the TCP socket peer** — it never reads
+`X-Forwarded-For`. That is safe even with no proxy in front, because forwarded
+headers from an untrusted source are ignored. You only opt into trusting them by
+listing your proxy in `trusted_proxies` (see below). The leftmost `X-Forwarded-For`
+entry is attacker-controlled, so the gateway walks the header **right-to-left** and
+takes the first IP that is *not* one of your trusted proxies — the real client.
+IPv4-mapped IPv6 (`::ffff:1.2.3.4`) is normalized before matching.
+
+#### Behind a reverse proxy (the important bit)
+
+If a proxy/load balancer sits in front of the gateway, the socket peer is the
+*proxy's* IP, not the client's — so LAN detection won't work until you tell the
+gateway which proxies to trust. Set `trusted_proxies` to the proxy's IP/CIDR and
+ensure the proxy forwards `X-Forwarded-For`:
+
+| Deployment | gateway config | proxy config |
+|---|---|---|
+| **No proxy / bare port** | `trusted_proxies: []` | — (socket peer *is* the client) |
+| **nginx** (same host) | `trusted_proxies: ["127.0.0.1"]` | `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` |
+| **nginx / Traefik** (other host) | `trusted_proxies: ["<proxy-ip>"]` | forward XFF (Traefik: `forwardedHeaders.trustedIPs`) |
+| **Caddy** | `trusted_proxies: ["127.0.0.1"]` | `reverse_proxy` sets XFF automatically; set Caddy's own `trusted_proxies` |
+| **Nginx Proxy Manager** | `trusted_proxies: ["<npm-ip-or-cidr>"]` | Advanced tab: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` |
+| **Cloudflare Tunnel** | `cloudflare_mode: true`, `trusted_proxies: []` | none (CF-Connecting-IP used; ranges fetched + verified at startup, fail-closed) |
+| **Docker bridge** | `trusted_proxies: ["<proxy-container-ip>"]` | NOT the bridge gateway; the gateway warns at startup if peer looks like Docker NAT with no `trusted_proxies` |
+| **Tailscale (keyless)** | `lan_bypass_cidrs: ["100.64.0.0/10"]` | bind to the tailnet; trust the Tailscale CGNAT range |
+
+> **Cloudflare note:** `cf-connecting-ip` is honored *only* when the connection
+> arrives from a verified Cloudflare edge IP. Firewall your origin so it only
+> accepts Cloudflare, or an attacker can re-front your origin and forge the header.
+
+### 2. Header-less clients (`?api_key=`)
+
+Some apps (dictation tools, embedded clients) expose only a base-URL field with
+no place for an auth header. Enable a query-param key fallback:
+
+```yaml
+auth:
+  allow_query_param_key: true
+```
+Env override: `OPENAI_PROXY_QUERY_PARAM_KEY=true`. The client uses base URL
+`https://your-host/v1?api_key=YOURKEY`. The gateway strips `api_key` before
+forwarding upstream so it never reaches the backend or its logs. **Note:** query
+params can still appear in *front-proxy* access logs — prefer the header, or a
+LAN bypass / path token, when possible.
+
+### 3. Per-device path tokens
+
+Give each device a unique URL whose path *is* the credential, independently
+revocable:
+
+```yaml
+auth:
+  path_tokens:
+    tok_livingroom: living-room-speaker
+    tok_workshop: workshop-pi
+```
+The device uses base URL `https://your-host/tok_livingroom/v1`. The token prefix
+is validated (constant-time) then stripped before routing, so it never reaches the
+backend. Remove a line to revoke that device.
+
+### Quick recipe: a header-less app on your LAN (e.g. OpenWhispr)
+
+If the gateway is reachable on your LAN (directly or via a reverse proxy whose IP
+is in `trusted_proxies`) and your client's IP is in `lan_bypass_cidrs`, the client
+needs **no key at all** — just point it at the base URL:
+
+```
+Base URL: https://your-host/v1
+API key:  (leave blank, or any placeholder if the field is required)
+```
