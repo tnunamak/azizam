@@ -3038,13 +3038,16 @@ def _configured_litellm_local_model_target(
             return backend, _backend_default_model_to_load(backend), None
 
         for item in _service_model_records(service_cfg):
-            public_names = {
-                normalize_model_id(str(item.get("id") or "")),
-                normalize_model_id(str(item.get("model_group") or "")),
-                normalize_model_id(str(item.get("public_name") or "")),
-                normalize_model_id(str(item.get("upstream_model") or "")),
-            }
-            if normalized not in public_names:
+            # LiteLLM registers one public route name per deployment. Match
+            # that exact name so unknown aliases do not trigger local backend
+            # activation before LiteLLM rejects them.
+            registered_name = str(
+                item.get("model_group")
+                or item.get("id")
+                or item.get("upstream_model")
+                or ""
+            ).strip()
+            if normalize_model_id(registered_name) != normalized:
                 continue
 
             activation_model = str(

@@ -715,6 +715,78 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "policy_denied")
         self.assertIn("no loaded LLM", response.json()["error"]["message"])
 
+    def test_current_model_returns_503_for_existing_only_profile_when_unloaded(self) -> None:
+        current_loaded = AppProfile(
+            id="current-loaded",
+            protocols=frozenset({"openai"}),
+            target_policy=TargetPolicy(
+                visibility="available",
+                activation="existing_only",
+            ),
+        )
+
+        async def forbidden_send(*_args, **_kwargs):
+            raise AssertionError("model='current' must not forward when unloaded")
+
+        with authenticated_profile(current_loaded), patch.object(
+            proxy, "get_active_backend", AsyncMock(return_value="kobold")
+        ), patch.object(
+            proxy, "current_llm_model_for_backend", AsyncMock(return_value="")
+        ), patch.object(
+            proxy, "_service_availability_response", lambda *_args, **_kwargs: None
+        ), patch.object(
+            proxy, "send_llm_execution_request", forbidden_send
+        ):
+            response = self.client.post(
+                "/v1/chat/completions",
+                headers=AUTH_HEADERS,
+                json={
+                    "model": "current",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "current_model_unavailable")
+
+    def test_private_requested_model_field_cannot_spoof_existing_only_policy(self) -> None:
+        default_role = proxy.ROLES.get("default") if isinstance(proxy.ROLES, dict) else {}
+        loaded_path = str(default_role.get("model") or "/models/default.gguf")
+        current_loaded = AppProfile(
+            id="current-loaded",
+            protocols=frozenset({"openai"}),
+            target_policy=TargetPolicy(
+                visibility="available",
+                activation="existing_only",
+            ),
+        )
+
+        async def forbidden_send(*_args, **_kwargs):
+            raise AssertionError("spoofed existing-only request must not forward")
+
+        with authenticated_profile(current_loaded), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", litellm_registry
+        ), patch.object(
+            proxy, "get_active_backend", AsyncMock(return_value="kobold")
+        ), patch.object(
+            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+        ), patch.object(
+            proxy, "send_llm_execution_request", forbidden_send
+        ):
+            response = self.client.post(
+                "/v1/chat/completions",
+                headers=AUTH_HEADERS,
+                json={
+                    "model": "rp",
+                    "_vf_requested_model": "default",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+        self.assertIn("currently loaded", response.json()["error"]["message"])
+
     def test_existing_only_target_policy_uses_workflow_availability(self) -> None:
         existing_only = AppProfile(
             id="workflow-existing-only",

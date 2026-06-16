@@ -504,6 +504,61 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json()["error"]["code"], "current_model_unavailable")
 
+    def test_current_model_returns_503_when_no_backend_is_active(self) -> None:
+        async def forbidden_send(*_args, **_kwargs):
+            raise AssertionError("inactive current model request must not forward")
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "get_active_backend",
+            AsyncMock(return_value=None),
+        ), patch.object(
+            proxy,
+            "send_llm_execution_request",
+            forbidden_send,
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "current",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "current_model_unavailable")
+
+    def test_litellm_activation_lookup_uses_registered_model_name_only(self) -> None:
+        service_cfg = {
+            "models": [
+                {
+                    "id": "internal-id",
+                    "public_name": "friendly-name",
+                    "model_group": "registered-name",
+                    "upstream_model": "upstream-name",
+                    "activation_model": "/models/registered.gguf",
+                }
+            ]
+        }
+        with patch.object(proxy, "LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"}), patch.object(
+            proxy,
+            "config",
+            {"backends": {"kobold": service_cfg}},
+        ):
+            self.assertEqual(
+                proxy._configured_litellm_local_model_target("registered-name"),
+                ("kobold", "/models/registered.gguf", None),
+            )
+            self.assertEqual(
+                proxy._configured_litellm_local_model_target("friendly-name"),
+                (None, None, None),
+            )
+            self.assertEqual(
+                proxy._configured_litellm_local_model_target("upstream-name"),
+                (None, None, None),
+            )
+
     def test_litellm_activates_gateway_owned_local_role_before_forwarding(self) -> None:
         calls: list[Any] = []
         activations: list[tuple[str, str | None, str | None]] = []
