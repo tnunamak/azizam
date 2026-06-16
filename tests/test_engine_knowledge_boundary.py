@@ -18,6 +18,18 @@ Five static checks run over four core files:
 Each check has a FROZEN ALLOWLIST.  If a new match appears outside the
 allowlist, the test fails with a message pointing here.
 
+ALLOWLIST KEY FORMAT (content-keyed, drift-proof)
+--------------------------------------------------
+Allowlists are keyed by (relative_file, stripped_line_text) — NOT by line
+number.  This makes them DRIFT-PROOF: inserting code above an allowlisted
+site no longer shifts every entry and causes spurious failures.  Only a
+change to the actual content of an allowlisted line (or a genuinely new
+pattern) causes a failure.
+
+Where two legitimate sites share identical stripped text (e.g. the same
+`if backend == "kobold":` appears at two locations), one allowlist entry
+covers both — they represent the same reviewed pattern.
+
 ADDING TO AN ALLOWLIST
 -----------------------
 If you believe a new match is a legitimate exception, add it to the
@@ -96,73 +108,101 @@ _ENGINE_BRANCH_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Allowlisted lines: {(relative_file, 1-based-line-number): reason}
-# Every entry here is a deliberate, reviewed exception.
-_ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, int], str] = {
+# Allowlisted entries: {(relative_file, stripped_line_text): reason}
+#
+# Keyed on NORMALIZED LINE CONTENT (line.strip()) instead of line number so
+# the allowlist is DRIFT-PROOF.  Code insertions above an allowlisted site
+# no longer shift entries and cause spurious failures.  A genuinely new
+# engine branch at any site still fails — only previously-reviewed patterns
+# are recorded here.
+#
+# Where two legitimate sites share identical stripped text, one entry covers
+# both — they represent the same reviewed pattern.
+_ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, str], str] = {
     # -------------------------------------------------------------------
     # Bucket B: _LOCAL_SWAP_BACKENDS lifecycle infra (proxy.py)
     # These branches handle managed-local-swap lifecycle (start/stop/restart,
     # GGUF paths, health routing).  They are deployment-pattern code, not
     # request-shape knowledge.  The set is FROZEN at {kobold, tabby} — see
-    # Check 4.  Each site is enumerated here; a new site forces a new entry
-    # and a reviewer to sign off.
+    # Check 4.  Each distinct stripped line pattern is enumerated here; a new
+    # pattern forces a new entry and a reviewer to sign off.
     # -------------------------------------------------------------------
-    ("proxy.py", 923):   "Bucket B: local-swap docstring — not a branch, but line contains engine literal",
-    ("proxy.py", 970):   "Bucket B: local-swap target routing if target == 'tabby'",
-    ("proxy.py", 972):   "Bucket B: local-swap target routing elif target == 'kobold'",
-    ("proxy.py", 1000):  "Bucket B: local-swap host selection target == 'tabby'",
-    ("proxy.py", 1001):  "Bucket B: local-swap health path target == 'tabby'",
-    ("proxy.py", 1336):  "Bucket B: local-swap active host resolution",
-    ("proxy.py", 1340):  "Bucket B: local-swap needed host resolution tabby branch",
-    ("proxy.py", 1344):  "Bucket B: local-swap needed host resolution kobold branch",
-    ("proxy.py", 1496):  "Bucket B: local-swap backend guard ('kobold', 'tabby')",
-    ("proxy.py", 1520):  "Bucket B: local-swap kobold branch",
-    ("proxy.py", 1560):  "Bucket B: local-swap tabby branch",
-    ("proxy.py", 2559):  "Bucket B: local-swap service == 'tabby'",
-    ("proxy.py", 3012):  "Bucket B: local-swap default model backend == 'tabby'",
-    ("proxy.py", 3021):  "Bucket B: local-swap default model backend == 'tabby'",
-    ("proxy.py", 3070):  "Bucket B: local-swap activation model check tabby",
-    ("proxy.py", 3072):  "Bucket B: local-swap activation model check kobold",
-    ("proxy.py", 3307):  "Bucket B: local-swap backend == 'kobold'",
-    ("proxy.py", 3313):  "Bucket B: local-swap backend == 'tabby'",
-    ("proxy.py", 5177):  "Bucket B: local-swap active == 'kobold'",
-    ("proxy.py", 5180):  "Bucket B: local-swap elif active == 'tabby'",
-    ("proxy.py", 9305):  "Bucket B: local-swap tabby loaded model check",
-    ("proxy.py", 9328):  "Bucket B: local-swap active == 'tabby'",
-    ("proxy.py", 10194): "Bucket B: local-swap key in {'kobold', 'tabby'} guard",
-    ("proxy.py", 16544): "Bucket B: local-swap backend == 'tabby'",
-    ("proxy.py", 16640): "Bucket B: local-swap backend == 'kobold'",
-    ("proxy.py", 19700): "Bucket B: local-swap service == 'tabby' API key check",
-    ("proxy.py", 19982): "Bucket B: local-swap tabby unavailable error message",
-    ("proxy.py", 20080): "Bucket B: local-swap target_service == 'tabby' restart",
+    ("proxy.py", "if target == 'tabby':"):
+        "Bucket B: local-swap target routing — deployment-pattern, not engine knowledge",
+    ("proxy.py", "elif target == 'kobold':"):
+        "Bucket B: local-swap target routing — deployment-pattern, not engine knowledge",
+    ("proxy.py", "target_host = TABBY_HOST if target == 'tabby' else KOBOLD_HOST"):
+        "Bucket B: local-swap host selection — deployment-pattern, not engine knowledge",
+    ("proxy.py", "health_path = TABBY_HEALTH_ENDPOINT if target == 'tabby' else KOBOLD_HEALTH_ENDPOINT"):
+        "Bucket B: local-swap health path — deployment-pattern, not engine knowledge",
+    ("proxy.py", "return TABBY_HOST if active == 'tabby' else KOBOLD_HOST if active == 'kobold' else None"):
+        "Bucket B: local-swap active host resolution — deployment-pattern, not engine knowledge",
+    ("proxy.py", "return TABBY_HOST if needed == 'tabby' else KOBOLD_HOST"):
+        "Bucket B: local-swap needed host resolution — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'if backend == "kobold":'):
+        "Bucket B: local-swap kobold branch — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'elif backend == "tabby":'):
+        "Bucket B: local-swap tabby branch — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'if service == "tabby":'):
+        "Bucket B: local-swap service tabby check — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'return DEFAULT_MODEL if backend == "tabby" else None'):
+        "Bucket B: local-swap default model tabby — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'if backend == "tabby" and not activation_model:'):
+        "Bucket B: local-swap activation model check tabby — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'if backend == "kobold" and activation_model and not os.path.isabs(activation_model):'):
+        "Bucket B: local-swap activation model check kobold — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'if backend == "tabby":'):
+        "Bucket B: local-swap backend tabby guard — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'if active == "kobold":'):
+        "Bucket B: local-swap active kobold check — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'elif active == "tabby":'):
+        "Bucket B: local-swap active tabby check — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'elif backend == "tabby" and loaded_model_id:'):
+        "Bucket B: local-swap tabby loaded model check — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'if active == "tabby":'):
+        "Bucket B: local-swap active tabby check — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'if service == "tabby" and (API_KEY or ADMIN_KEY):'):
+        "Bucket B: local-swap tabby API key check — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'if target_service == "tabby" and await restart_tabby_if_needed():'):
+        "Bucket B: local-swap target_service tabby restart — deployment-pattern, not engine knowledge",
+    ("proxy.py", "if backend not in (\"kobold\", \"tabby\"):"):
+        "Bucket B: local-swap backend guard (not-in check) — deployment-pattern, not engine knowledge",
+    ("proxy.py", 'if key in {"kobold", "tabby"}:'):
+        "Bucket B: local-swap key-in-set guard — deployment-pattern, not engine knowledge",
+    # The next two are false-positive branch-pattern matches on non-branch lines
+    # (docstring and error message) that happen to contain engine name literals.
+    # Previously reviewed in the old line-number allowlist.
+    ("proxy.py", "Returns 'tabby', 'kobold', or None if not found.\"\"\""):
+        "Bucket B: local-swap docstring (detect_model_backend) — not a real branch, reviewed false positive",
+    ("proxy.py", "\"Configured backend 'tabby' is unavailable for this catch-all route. \""):
+        "Bucket B: local-swap error message string — not a real branch, reviewed false positive",
 
     # -------------------------------------------------------------------
-    # Bucket D-3: advisory_for_backend per-engine branches (PENDING CUT)
-    # These exist today and are allowed until the D-3 migration collapses
-    # advisory_for_backend to a single generic advisory.  Remove these
-    # entries once that migration is complete — the test then guards against
-    # reintroduction.
+    # D-3 migration is COMPLETE: advisory_for_backend is now engine-agnostic.
+    # No toolcall_detection.py entries needed here.
     # -------------------------------------------------------------------
-    ("gateway/toolcall_detection.py", 97):
-        "D-3 pending: advisory_for_backend vllm branch — cut when D-3 migration done",
-    ("gateway/toolcall_detection.py", 104):
-        "D-3 pending: advisory_for_backend sglang branch — cut when D-3 migration done",
-    ("gateway/toolcall_detection.py", 110):
-        "D-3 pending: advisory_for_backend llama-cpp-python branch — cut when D-3 migration done",
-    ("gateway/toolcall_detection.py", 117):
-        "D-3 pending: advisory_for_backend llamacpp/llama-server branch — cut when D-3 migration done",
-    ("gateway/toolcall_detection.py", 124):
-        "D-3 pending: advisory_for_backend known-lifter loop (ollama, tabby, etc.) — cut when D-3 done",
 }
 
 
-def _check_engine_named_branches() -> list[str]:
+def _check_engine_named_branches(
+    _source_lines: list[tuple[str, list[str]]] | None = None,
+) -> list[str]:
     """Fail if an engine-named string literal appears in a branch condition
-    outside the allowlist."""
+    outside the allowlist.
+
+    The optional *_source_lines* parameter allows tests to inject synthetic
+    source content without touching the real files (used by the self-test).
+    """
     violations: list[str] = []
-    for path in _CORE_FILES:
-        rel = str(path.relative_to(_REPO_ROOT))
-        for lineno, line in enumerate(_lines(path), start=1):
+    if _source_lines is None:
+        sources: list[tuple[str, list[str]]] = [
+            (str(path.relative_to(_REPO_ROOT)), _lines(path))
+            for path in _CORE_FILES
+        ]
+    else:
+        sources = _source_lines
+    for rel, file_lines in sources:
+        for lineno, line in enumerate(file_lines, start=1):
             # Only look at lines that contain a branch keyword
             if not re.search(r'\b(?:if|elif|for)\b', line):
                 continue
@@ -170,7 +210,7 @@ def _check_engine_named_branches() -> list[str]:
             for engine in _ENGINE_NAMES:
                 # Match engine name as a quoted string literal
                 if re.search(r'["\']' + re.escape(engine) + r'["\']', line):
-                    key = (rel, lineno)
+                    key = (rel, line.strip())
                     if key not in _ENGINE_BRANCH_ALLOWLIST:
                         violations.append(
                             f"{rel}:{lineno}: engine literal {engine!r} in branch: "
@@ -194,13 +234,15 @@ _ENGINE_CLASS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Allowlisted entries: {(relative_file, stripped_line_text): reason}
+# Content-keyed for drift-proofness (same rationale as _ENGINE_BRANCH_ALLOWLIST).
 # Allowlisted until the migrations described in §D-1 and §D-2 are complete.
-_ENGINE_CLASS_ALLOWLIST: dict[tuple[str, int], str] = {
-    ("gateway/transforms.py", 854):
+_ENGINE_CLASS_ALLOWLIST: dict[tuple[str, str], str] = {
+    ("gateway/transforms.py", "class KoboldCppNullStripTransform(_Primitive):"):
         "D-2 pending: KoboldCppNullStripTransform — remove entry when renamed to drop-null-params",
-    ("gateway/transforms.py", 567):
+    ("gateway/transforms.py", "class Qwen3ThinkingTransform:"):
         "D-1 pending: Qwen3ThinkingTransform — 400 sentinel built-in; "
-        "remove entry when auto-fire sites (proxy.py:3217, 18896) are cut",
+        "remove entry when auto-fire sites are cut",
 }
 
 
@@ -210,7 +252,7 @@ def _check_engine_named_classes() -> list[str]:
         rel = str(path.relative_to(_REPO_ROOT))
         for lineno, line in enumerate(_lines(path), start=1):
             if _ENGINE_CLASS_PATTERN.search(line):
-                key = (rel, lineno)
+                key = (rel, line.strip())
                 if key not in _ENGINE_CLASS_ALLOWLIST:
                     violations.append(
                         f"{rel}:{lineno}: engine-named Transform class: "
@@ -246,7 +288,9 @@ _ENGINE_FLAG_LITERALS: list[str] = [
 # literals. Any new engine CLI flag appearing in a core file is a real
 # boundary violation — do NOT add an allowlist entry to silence it; remove the
 # flag (it belongs in an operator-authored service-config field, as data).
-_ENGINE_FLAG_ALLOWLIST: dict[tuple[str, int], str] = {}
+#
+# Content-keyed: {(relative_file, stripped_line_text): reason}
+_ENGINE_FLAG_ALLOWLIST: dict[tuple[str, str], str] = {}
 
 
 def _check_engine_flag_literals() -> list[str]:
@@ -260,7 +304,7 @@ def _check_engine_flag_literals() -> list[str]:
                 continue
             for flag in _ENGINE_FLAG_LITERALS:
                 if flag in line:
-                    key = (rel, lineno)
+                    key = (rel, stripped)
                     if key not in _ENGINE_FLAG_ALLOWLIST:
                         violations.append(
                             f"{rel}:{lineno}: engine CLI flag literal {flag!r}: "
@@ -430,3 +474,32 @@ class TestEngineKnowledgeBoundary:
         """
         violations = _check_primitive_vocabulary_closed()
         assert not violations, _fail_message("primitive vocabulary", violations)
+
+    def test_guard_still_catches_new_engine_branches(self) -> None:
+        """The guard must flag a synthetic new engine branch not in the allowlist.
+
+        This self-test proves the check has not been neutered by the content-keyed
+        refactor: a genuinely new engine branch (never reviewed, not in any
+        allowlist entry) must still be reported as a violation.
+        """
+        synthetic_lines = [
+            # An engine-agnostic line — must NOT be flagged
+            'if backend == "tabby":',           # IS allowlisted → not a violation
+            # A synthetic new engine branch — must BE flagged
+            'if backend == "vllm":',            # not in allowlist → violation
+        ]
+        violations = _check_engine_named_branches(
+            _source_lines=[("proxy.py", synthetic_lines)]
+        )
+        # The allowlisted tabby line must NOT appear in violations
+        allowlisted_reported = [v for v in violations if "'tabby'" in v]
+        assert not allowlisted_reported, (
+            "Guard incorrectly flagged an allowlisted line: "
+            + "\n".join(allowlisted_reported)
+        )
+        # The synthetic vllm line MUST appear in violations
+        vllm_reported = [v for v in violations if "'vllm'" in v]
+        assert vllm_reported, (
+            "Guard failed to catch a synthetic new engine branch "
+            '(`if backend == "vllm":`) — the boundary check is broken!'
+        )
