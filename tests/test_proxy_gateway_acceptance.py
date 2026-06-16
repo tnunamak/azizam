@@ -457,8 +457,10 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(forwarded["model"], "Manual-Experiment.gguf")
         self.assertNotIn("_vf_requested_model", forwarded)
         self.assertNotIn("reasoning_effort", forwarded)
-        self.assertEqual(forwarded["messages"][0]["role"], "system")
-        self.assertIn("/no_think", forwarded["messages"][0]["content"])
+        # Suppression is via chat_template_kwargs.enable_thinking=False only; no /no_think injection
+        self.assertFalse(forwarded["chat_template_kwargs"]["enable_thinking"])
+        for msg in forwarded["messages"]:
+            self.assertNotIn("/no_think", msg.get("content", ""))
 
     def test_current_model_does_not_force_fast_path(self) -> None:
         calls: list[Any] = []
@@ -561,8 +563,10 @@ class TestGatewayRouterMounting(unittest.TestCase):
         forwarded = json.loads(calls[0].body.decode())
         self.assertEqual(forwarded["model"], "Manual-Experiment.gguf")
         self.assertNotIn("reasoning_effort", forwarded)
-        self.assertEqual(forwarded["messages"][0]["role"], "system")
-        self.assertIn("/no_think", forwarded["messages"][0]["content"])
+        # Suppression is via chat_template_kwargs.enable_thinking=False only; no /no_think injection
+        self.assertFalse(forwarded["chat_template_kwargs"]["enable_thinking"])
+        for msg in forwarded["messages"]:
+            self.assertNotIn("/no_think", msg.get("content", ""))
 
     def test_current_model_returns_503_when_active_backend_has_no_loaded_model(self) -> None:
         async def forbidden_send(*_args, **_kwargs):
@@ -715,8 +719,10 @@ class TestGatewayRouterMounting(unittest.TestCase):
         forwarded = json.loads(calls[0].body.decode())
         self.assertEqual(forwarded["model"], "default")
         self.assertNotIn("reasoning_effort", forwarded)
-        self.assertEqual(forwarded["messages"][0]["role"], "system")
-        self.assertIn("/no_think", forwarded["messages"][0]["content"])
+        # Suppression is via chat_template_kwargs.enable_thinking=False only; no /no_think injection
+        self.assertFalse(forwarded["chat_template_kwargs"]["enable_thinking"])
+        for msg in forwarded["messages"]:
+            self.assertNotIn("/no_think", msg.get("content", ""))
 
     def test_litellm_activates_mmproj_only_for_vision_requests(self) -> None:
         activations: list[tuple[str, str | None, str | None]] = []

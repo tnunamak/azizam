@@ -1,10 +1,7 @@
 """Step 2 parity test — qwen3-thinking built-in.
 
-GATE: The transform path must produce BYTE-IDENTICAL body mutations to the
-legacy apply_chat_completions_reasoning_effort() function for the full input
-matrix.  Parity was proven against the legacy function before it was deleted
-(all 37 tests passed).  This file now tests the transform directly as the
-source of truth, retaining the full input matrix so the invariant is visible.
+GATE: The transform path must produce the correct body mutations for the full
+input matrix.
 
 Test cases cover:
   - absent           → no-op
@@ -12,10 +9,7 @@ Test cases cover:
   - invalid (not str)  → same 400 error message
   - invalid (wrong str) → same 400 error message
   - low/medium/high/xhigh → param stripped, no suppression injected
-  - none/minimal (no system msg) → enable_thinking=False set + /no_think at index 0
-  - none/minimal (system msg, no hint yet) → appends hint to existing system msg
-  - none/minimal (system msg, hint already present) → no double-injection
-  - none/minimal (system msg, empty content) → appends hint with no leading \\n
+  - none/minimal → enable_thinking=False set via chat_template_kwargs; NO /no_think text injected
   - chat_template_kwargs already present with enable_thinking=True → must NOT overwrite
   - messages absent/not-a-list → body unchanged (except reasoning_effort popped)
 """
@@ -107,7 +101,7 @@ class TestQwen3ThinkingParityInvalid:
         self._assert_400_message("", "empty_str")
 
     def test_error_message_exact_format(self) -> None:
-        """The exact error format from legacy: f"Invalid value ... {effort!r} ... {sorted(...)}." """
+        """The exact error format: f"Invalid value ... {effort!r} ... {sorted(...)}." """
         body = {"reasoning_effort": "bad", "messages": []}
         _, err = _apply(body)
         assert err == (
@@ -154,11 +148,11 @@ class TestQwen3ThinkingParityStrip:
 
 
 class TestQwen3ThinkingParitySuppress:
-    """none/minimal: full suppression path."""
+    """none/minimal: full suppression path — kwarg only, no prompt-string injection."""
 
     @pytest.mark.parametrize("effort", ["none", "minimal"])
-    def test_suppress_no_system_message(self, effort: str) -> None:
-        """No system message → insert /no_think at index 0."""
+    def test_suppress_sets_enable_thinking_false(self, effort: str) -> None:
+        """none/minimal → chat_template_kwargs.enable_thinking=False set."""
         body = {
             "model": "qwen3",
             "reasoning_effort": effort,
@@ -168,12 +162,25 @@ class TestQwen3ThinkingParitySuppress:
         assert err is None
         assert "reasoning_effort" not in b
         assert b["chat_template_kwargs"]["enable_thinking"] is False
-        assert b["messages"][0] == {"role": "system", "content": "/no_think"}
-        assert b["messages"][1]["role"] == "user"
 
     @pytest.mark.parametrize("effort", ["none", "minimal"])
-    def test_suppress_system_message_without_hint(self, effort: str) -> None:
-        """Existing system message without /no_think → append hint."""
+    def test_suppress_no_system_message_inserted(self, effort: str) -> None:
+        """No system message → NO /no_think inserted; messages unchanged except reasoning_effort gone."""
+        body = {
+            "model": "qwen3",
+            "reasoning_effort": effort,
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+        b, err = _apply(body)
+        assert err is None
+        # No system message injected
+        assert all(m.get("role") != "system" for m in b["messages"])
+        # User message untouched
+        assert b["messages"][0] == {"role": "user", "content": "Hello"}
+
+    @pytest.mark.parametrize("effort", ["none", "minimal"])
+    def test_suppress_existing_system_message_unchanged(self, effort: str) -> None:
+        """Existing system message → NOT modified; no /no_think appended."""
         body = {
             "model": "qwen3",
             "reasoning_effort": effort,
@@ -185,43 +192,28 @@ class TestQwen3ThinkingParitySuppress:
         b, err = _apply(body)
         assert err is None
         sys_msg = next(m for m in b["messages"] if m["role"] == "system")
-        assert sys_msg["content"] == "You are helpful.\n/no_think"
+        # System message content must be untouched — no /no_think appended
+        assert sys_msg["content"] == "You are helpful."
+        assert "/no_think" not in sys_msg["content"]
 
     @pytest.mark.parametrize("effort", ["none", "minimal"])
-    def test_suppress_system_message_already_has_hint(self, effort: str) -> None:
-        """System message already contains /no_think → no double-injection."""
+    def test_suppress_no_no_think_text_anywhere(self, effort: str) -> None:
+        """Verify /no_think text never appears in any message after suppression."""
         body = {
             "model": "qwen3",
             "reasoning_effort": effort,
             "messages": [
-                {"role": "system", "content": "You are /no_think assistant."},
+                {"role": "system", "content": "Be helpful."},
                 {"role": "user", "content": "Hello"},
             ],
         }
         b, err = _apply(body)
         assert err is None
-        sys_msg = next(m for m in b["messages"] if m["role"] == "system")
-        # Must remain unchanged — no second injection
-        assert sys_msg["content"] == "You are /no_think assistant."
-        # Only one system message
-        assert sum(1 for m in b["messages"] if m["role"] == "system") == 1
-
-    @pytest.mark.parametrize("effort", ["none", "minimal"])
-    def test_suppress_system_message_empty_content(self, effort: str) -> None:
-        """System message with empty content → hint appended without leading \\n."""
-        body = {
-            "model": "qwen3",
-            "reasoning_effort": effort,
-            "messages": [
-                {"role": "system", "content": ""},
-                {"role": "user", "content": "Hello"},
-            ],
-        }
-        b, err = _apply(body)
-        assert err is None
-        sys_msg = next(m for m in b["messages"] if m["role"] == "system")
-        # Empty content → hint with no leading \n
-        assert sys_msg["content"] == "/no_think"
+        for msg in b["messages"]:
+            content = msg.get("content", "")
+            assert "/no_think" not in content, (
+                f"Found /no_think in message: {msg!r}"
+            )
 
     @pytest.mark.parametrize("effort", ["none", "minimal"])
     def test_suppress_no_messages_key(self, effort: str) -> None:
@@ -304,13 +296,13 @@ class TestQwen3ThinkingParityChatTemplateKwargs:
 
 
 # ---------------------------------------------------------------------------
-# System message selection (FIRST, not LAST)
+# Message list integrity (no injection side-effects)
 # ---------------------------------------------------------------------------
 
 
-class TestQwen3ThinkingParitySystemMessageSelection:
-    def test_first_system_message_modified_not_last(self) -> None:
-        """When multiple system messages exist, the FIRST one gets the hint."""
+class TestQwen3ThinkingMessageIntegrity:
+    def test_multiple_system_messages_all_unchanged(self) -> None:
+        """When multiple system messages exist, NONE are modified — no injection."""
         body = {
             "model": "qwen3",
             "reasoning_effort": "none",
@@ -322,13 +314,13 @@ class TestQwen3ThinkingParitySystemMessageSelection:
         }
         b, err = _apply(body)
         assert err is None
-        # First system message should have the hint
-        assert "/no_think" in b["messages"][0]["content"]
-        # Second system message must be unchanged
+        assert b["chat_template_kwargs"]["enable_thinking"] is False
+        # Neither system message should be modified
+        assert b["messages"][0]["content"] == "First system."
         assert b["messages"][2]["content"] == "Second system."
 
-    def test_non_dict_messages_skipped(self) -> None:
-        """Non-dict entries in messages list should be skipped."""
+    def test_non_dict_messages_skipped_no_injection(self) -> None:
+        """Non-dict entries in messages list → no crash, no injection."""
         body = {
             "model": "qwen3",
             "reasoning_effort": "none",
@@ -339,8 +331,13 @@ class TestQwen3ThinkingParitySystemMessageSelection:
         }
         b, err = _apply(body)
         assert err is None
-        # No system message found → insert at 0
-        assert b["messages"][0] == {"role": "system", "content": "/no_think"}
+        assert b["chat_template_kwargs"]["enable_thinking"] is False
+        # No system message inserted, non-dict entry untouched
+        assert b["messages"][0] == "not a dict"
+        assert all(
+            not isinstance(m, dict) or m.get("role") != "system"
+            for m in b["messages"]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +360,9 @@ class TestQwen3ThinkingRegistration:
         result = run_request_pipeline(["qwen3-thinking"], body)
         assert "reasoning_effort" not in result
         assert result["chat_template_kwargs"]["enable_thinking"] is False
+        # No /no_think injected into messages
+        for msg in result.get("messages", []):
+            assert "/no_think" not in msg.get("content", "")
 
     def test_qwen3_thinking_response_phase_is_noop(self) -> None:
         from gateway.transforms import run_response_pipeline

@@ -523,45 +523,30 @@ def run_response_pipeline(
 # Named built-ins  (reviewed composed classes, not arbitrary-code plugins)
 # ---------------------------------------------------------------------------
 
-# Shared constants for the /no_think suppression surface — single source of truth.
-# Background-removal helper (proxy.py) imports QWEN3_NO_THINK_HINT so the literal
-# lives here alongside the transform, not scattered across call sites.
+# Constant for the enable_thinking kwarg key — single source of truth.
+# QWEN3_NO_THINK_HINT is kept for backward-compat (tests/test_step3 imports it);
+# the /no_think prompt-string injection is removed — only the kwarg is load-bearing.
 QWEN3_NO_THINK_HINT: str = "/no_think"
 QWEN3_ENABLE_THINKING_KEY: str = "enable_thinking"
 
 
 def apply_thinking_suppression(body: dict[str, Any]) -> None:
-    """Apply Qwen3-style thinking suppression to *body* in-place.
+    """Suppress reasoning/thinking on *body* in-place via the standard mechanism.
 
-    Single source of truth for the mutation shared by:
-      - Qwen3ThinkingTransform (reasoning_effort=none/minimal path)
-      - Background-removal helper (direct suppression without reasoning_effort)
+    Sets ``chat_template_kwargs.enable_thinking = False`` (via setdefault). This
+    is the ecosystem-standard reasoning toggle (vLLM auto-maps reasoning_effort
+    to it; the model's own chat template interprets it) — engine-agnostic DATA,
+    not a prompt-string hack.
 
-    Sets chat_template_kwargs.enable_thinking = False (via setdefault) and
-    injects QWEN3_NO_THINK_HINT into the FIRST system message (appending with
-    "\\n" separator if the message already has non-empty content) or inserts a
-    new system message at index 0 if none exists.
-
-    Does NOT inject if the hint is already present in the first system message.
+    The legacy ``/no_think`` PROMPT-STRING injection was removed: it is
+    non-standard AND verified non-functional on this deployment (a live
+    reasoning_effort=none test showed the enable_thinking kwarg suppresses
+    thinking while the /no_think tag alone did not). See
+    docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md D-1.
     """
-    hint = QWEN3_NO_THINK_HINT
-    # Belt-and-suspenders: chat template kwarg for llama-server Qwen3 family.
     kwargs = body.setdefault("chat_template_kwargs", {})
     if isinstance(kwargs, dict):
         kwargs.setdefault(QWEN3_ENABLE_THINKING_KEY, False)
-
-    messages = body.get("messages")
-    if isinstance(messages, list):
-        for i, m in enumerate(messages):
-            if isinstance(m, dict) and m.get("role") == "system":
-                existing = m.get("content") or ""
-                if isinstance(existing, str) and hint not in existing:
-                    messages[i] = {
-                        **m,
-                        "content": (existing + ("\n" if existing else "") + hint),
-                    }
-                return
-        messages.insert(0, {"role": "system", "content": hint})
 
 
 class Qwen3ThinkingTransform:
@@ -573,18 +558,15 @@ class Qwen3ThinkingTransform:
     Returns a string error message if reasoning_effort is invalid (the caller
     must turn this into a 400 Response — the 400 plumbing stays in proxy.py).
 
-    Contract reproduced byte-for-byte from proxy.py:5242:
+    Contract:
       1. reasoning_effort absent → no-op.
       2. Pop reasoning_effort. If None → no-op (treat as absent after pop).
       3. If not str or not in _REASONING_EFFORT_VALUES → return error string.
       4. If not in {none, minimal} → strip only (already popped), no suppression.
       5. Suppress path (none/minimal):
-         a. body.setdefault("chat_template_kwargs", {}) then
-            kwargs.setdefault("enable_thinking", False)
-         b. Messages inject: find the FIRST system message; if found, append
-            "/no_think" (with "\\n" prefix if content non-empty) IFF it is not
-            already in that message's content, then return None.  If no system
-            message found, insert {"role":"system","content":"/no_think"} at 0.
+         body.setdefault("chat_template_kwargs", {}) then
+         kwargs.setdefault("enable_thinking", False).
+         No prompt-string injection — the kwarg is the sole suppression mechanism.
     """
 
     # The valid set — matches _REASONING_EFFORT_VALUES in proxy.py:5235

@@ -155,7 +155,6 @@ from gateway.transforms import (
     run_request_pipeline as _run_request_pipeline,
     run_response_pipeline as _run_response_pipeline,
     Qwen3ThinkingTransform as _Qwen3ThinkingTransform,
-    QWEN3_NO_THINK_HINT as _QWEN3_NO_THINK_HINT,
     QWEN3_ENABLE_THINKING_KEY as _QWEN3_ENABLE_THINKING_KEY,
     normalize_chat_completion_payload as _normalize_chat_completion_payload,
     ValueMapTransform as _ValueMapTransform,
@@ -4957,7 +4956,6 @@ def _ideogram4_brief_from_prompt(prompt: str) -> str:
 
 
 _IDEOGRAM4_STRUCTURIZE_USER_TEMPLATE = (
-    "/no_think\n"
     "Convert this image description to an Ideogram 4 JSON caption. Output ONLY the JSON "
     "object, nothing before or after it, no markdown fences, no commentary.\n\n"
     "Input: {prompt}\n\n"
@@ -5050,7 +5048,7 @@ async def _ideogram4_structurize_prompt(plain_prompt: str) -> str:
             if resp.status_code != 200:
                 continue
             content = resp.json()["choices"][0]["message"]["content"].strip()
-            # Drop any <think>...</think> block the model may leak despite /no_think.
+            # Drop any <think>...</think> block the model may leak despite thinking suppression.
             if "</think>" in content:
                 content = content.split("</think>", 1)[1].strip()
             # Strip accidental markdown fences
@@ -5179,15 +5177,14 @@ async def decide_image_background_removal(
         model_id = default_model_for_operation("chat", "default")
 
     headers = configured_downstream_headers(auth_context, service)
-    # Step 3: /no_think hint and enable_thinking key sourced from gateway/transforms.py
-    # (single source of truth alongside the qwen3-thinking built-in).
+    # enable_thinking=False suppresses thinking (engine-agnostic kwarg — the load-bearing mechanism).
+    # No /no_think prompt-string injection: verified non-functional; kwarg-only is the contract.
     payload = {
         "model": model_id,
         "messages": [
             {
                 "role": "system",
                 "content": (
-                    _QWEN3_NO_THINK_HINT + "\n"
                     "Decide whether an image generation request should have its "
                     "background removed and returned as a transparent PNG. "
                     "Use the user's intent, not keyword matching. Return only JSON "
