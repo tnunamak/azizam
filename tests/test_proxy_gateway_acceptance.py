@@ -460,6 +460,110 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(forwarded["messages"][0]["role"], "system")
         self.assertIn("/no_think", forwarded["messages"][0]["content"])
 
+    def test_current_model_does_not_force_fast_path(self) -> None:
+        calls: list[Any] = []
+
+        async def fake_send(execution_request):
+            calls.append(execution_request)
+            return _FakeStreamClient(), _FakeLiteLLMResponse()
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "LLM_BACKEND_HOSTS",
+            {"kobold": "http://127.0.0.1:5051"},
+        ), patch.object(
+            proxy,
+            "get_active_backend",
+            AsyncMock(return_value="kobold"),
+        ), patch.object(
+            proxy,
+            "current_llm_model_for_backend",
+            AsyncMock(return_value="Manual-Experiment.gguf"),
+        ), patch.object(
+            proxy,
+            "_service_availability_response",
+            lambda *_args, **_kwargs: None,
+        ), patch.object(
+            proxy,
+            "send_llm_execution_request",
+            fake_send,
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "current",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        forwarded = json.loads(calls[0].body.decode())
+        self.assertEqual(forwarded["model"], "Manual-Experiment.gguf")
+        self.assertEqual(
+            forwarded["messages"],
+            [{"role": "user", "content": "ping"}],
+        )
+        self.assertNotIn("reasoning_effort", forwarded)
+        self.assertNotIn("chat_template_kwargs", forwarded)
+
+    def test_current_fast_model_uses_loaded_backend_and_forces_thinking_off(self) -> None:
+        calls: list[Any] = []
+
+        async def fake_send(execution_request):
+            calls.append(execution_request)
+            return _FakeStreamClient(), _FakeLiteLLMResponse()
+
+        async def forbidden_activation(*_args, **_kwargs):
+            raise AssertionError("model='current-fast' must not activate or load models")
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "LLM_BACKEND_HOSTS",
+            {"kobold": "http://127.0.0.1:5051"},
+        ), patch.object(
+            proxy,
+            "get_active_backend",
+            AsyncMock(return_value="kobold"),
+        ), patch.object(
+            proxy,
+            "current_llm_model_for_backend",
+            AsyncMock(return_value="Manual-Experiment.gguf"),
+        ), patch.object(
+            proxy,
+            "_service_availability_response",
+            lambda *_args, **_kwargs: None,
+        ), patch.object(
+            proxy,
+            "ensure_target",
+            forbidden_activation,
+        ), patch.object(
+            proxy,
+            "load_model",
+            forbidden_activation,
+        ), patch.object(
+            proxy,
+            "send_llm_execution_request",
+            fake_send,
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "current-fast",
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "reasoning_effort": "high",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["X-AI-Gateway-LLM-Execution"], "current-loaded")
+        forwarded = json.loads(calls[0].body.decode())
+        self.assertEqual(forwarded["model"], "Manual-Experiment.gguf")
+        self.assertNotIn("reasoning_effort", forwarded)
+        self.assertEqual(forwarded["messages"][0]["role"], "system")
+        self.assertIn("/no_think", forwarded["messages"][0]["content"])
+
     def test_current_model_returns_503_when_active_backend_has_no_loaded_model(self) -> None:
         async def forbidden_send(*_args, **_kwargs):
             raise AssertionError("unloaded current model request must not forward")
@@ -892,6 +996,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertIn("assistant-default", ids)
         self.assertIn("image.generate.test", ids)
         self.assertIn("current", ids)
+        self.assertIn("current-fast", ids)
         self.assertNotIn("default", ids)
         assistant = next(item for item in payload["data"] if item["id"] == "assistant-default")
         self.assertEqual(assistant["context_window"], 102400)
@@ -934,10 +1039,20 @@ class TestGatewayRouterMounting(unittest.TestCase):
             "current",
             [item["id"] for item in openai_models.json()["data"]],
         )
+        self.assertIn(
+            "current-fast",
+            [item["id"] for item in openai_models.json()["data"]],
+        )
         self.assertEqual(anthropic_models.status_code, 200, anthropic_models.text)
-        self.assertEqual(anthropic_models.json()["data"][0]["id"], "current")
+        self.assertEqual(
+            [item["id"] for item in anthropic_models.json()["data"]],
+            ["current", "current-fast"],
+        )
         self.assertEqual(ollama_tags.status_code, 200, ollama_tags.text)
-        self.assertEqual(ollama_tags.json()["models"][0]["name"], "current")
+        self.assertEqual(
+            [item["name"] for item in ollama_tags.json()["models"]],
+            ["current", "current-fast"],
+        )
 
     def test_litellm_routes_embeddings_and_applies_requested_dimensions(self) -> None:
         calls: list[Any] = []
@@ -1079,7 +1194,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(tags.status_code, 200, tags.text)
         self.assertEqual(
             [m["name"] for m in tags.json()["models"]],
-            ["assistant-default", "current"],
+            ["assistant-default", "current", "current-fast"],
         )
         self.assertEqual(ps.status_code, 200, ps.text)
         self.assertEqual(ps.json(), {"models": []})

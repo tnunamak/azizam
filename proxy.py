@@ -153,6 +153,7 @@ from gateway.transforms import (
     REGISTRY as _TRANSFORM_REGISTRY,
     TransformContext as _TransformContext,
     run_request_pipeline as _run_request_pipeline,
+    run_response_pipeline as _run_response_pipeline,
     Qwen3ThinkingTransform as _Qwen3ThinkingTransform,
     QWEN3_NO_THINK_HINT as _QWEN3_NO_THINK_HINT,
     QWEN3_ENABLE_THINKING_KEY as _QWEN3_ENABLE_THINKING_KEY,
@@ -734,6 +735,11 @@ CHECK_INTERVAL = routing_cfg.get("check_interval", 30)
 llm_cfg = config.get("llm", {}) or {}
 PIN_LOADED_MODEL = bool(llm_cfg.get("pin_loaded_model", True))
 USE_LOADED_MODEL_ALIAS = "current"
+USE_LOADED_FAST_MODEL_ALIAS = "current-fast"
+USE_LOADED_MODEL_ALIASES = frozenset({
+    USE_LOADED_MODEL_ALIAS,
+    USE_LOADED_FAST_MODEL_ALIAS,
+})
 
 # Tracks model_paths we've already warned about (when PIN_LOADED_MODEL=True)
 # so we don't spam the journal with one warning per request.
@@ -3284,7 +3290,14 @@ class CurrentLoadedLlmTarget:
 def _is_use_loaded_model_alias(value: Any) -> bool:
     return (
         isinstance(value, str)
-        and normalize_model_id(value) == USE_LOADED_MODEL_ALIAS
+        and normalize_model_id(value) in USE_LOADED_MODEL_ALIASES
+    )
+
+
+def _is_use_loaded_fast_model_alias(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and normalize_model_id(value) == USE_LOADED_FAST_MODEL_ALIAS
     )
 
 
@@ -9315,7 +9328,7 @@ async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> se
     if active == "tabby":
         loaded = await get_tabby_loaded_model_id()
         if loaded:
-            ids.add(USE_LOADED_MODEL_ALIAS)
+            ids.update(USE_LOADED_MODEL_ALIASES)
             ids.add(loaded)
             ids.update(
                 _role_catalog_ids_for_loaded_path(
@@ -9328,7 +9341,7 @@ async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> se
 
     loaded_path = currently_loaded_kobold_model()
     if loaded_path:
-        ids.add(USE_LOADED_MODEL_ALIAS)
+        ids.update(USE_LOADED_MODEL_ALIASES)
         ids.add(loaded_path)
         basename = os.path.basename(loaded_path)
         if basename:
@@ -16832,7 +16845,7 @@ async def _anthropic_model_info_list(
         if isinstance(payload, Mapping):
             entries.extend(_litellm_model_summaries_from_payload(payload))
 
-    entries.append(_current_loaded_model_entry())
+    entries.extend(_current_loaded_model_entries())
     filtered, metadata = await _filter_model_list_for_profile(entries, auth_context)
     seen: set[str] = set()
     models: list[dict[str, Any]] = []
@@ -16925,21 +16938,33 @@ def _litellm_model_summaries_from_payload(payload: Mapping[str, Any]) -> list[di
     return summaries
 
 
-def _current_loaded_model_entry() -> dict[str, Any]:
+def _current_loaded_model_entry(model_id: str = USE_LOADED_MODEL_ALIAS) -> dict[str, Any]:
+    fast = normalize_model_id(model_id) == USE_LOADED_FAST_MODEL_ALIAS
     return {
-        "id": USE_LOADED_MODEL_ALIAS,
+        "id": model_id,
         "object": "model",
         "created": int(time.time()),
         "owned_by": "gateway",
         "description": (
-            "Use the currently loaded local LLM without activating a backend "
-            "or swapping models."
+            "Use the currently loaded local LLM with Qwen thinking off; do "
+            "not activate a backend or swap models."
+            if fast
+            else "Use the currently loaded local LLM without activating a "
+            "backend or swapping models."
         ),
         "capabilities": ["chat", "completion"],
         "vivid_fish_alias": True,
         "vivid_fish_current_loaded": True,
+        "vivid_fish_current_loaded_fast": fast,
         "vivid_fish_backend": "current",
     }
+
+
+def _current_loaded_model_entries() -> list[dict[str, Any]]:
+    return [
+        _current_loaded_model_entry(USE_LOADED_MODEL_ALIAS),
+        _current_loaded_model_entry(USE_LOADED_FAST_MODEL_ALIAS),
+    ]
 
 
 @app.get("/anthropic/v1/models")
@@ -17031,10 +17056,10 @@ async def list_models(request: Request):
 
     workflow_entries = _build_workflow_model_entries()
     existing_ids = {item.get("id") for item in data if isinstance(item, dict)}
-    current_entry = _current_loaded_model_entry()
-    if current_entry["id"] not in existing_ids:
-        data.insert(0, current_entry)
-        existing_ids.add(current_entry["id"])
+    for current_entry in reversed(_current_loaded_model_entries()):
+        if current_entry["id"] not in existing_ids:
+            data.insert(0, current_entry)
+            existing_ids.add(current_entry["id"])
     for entry in workflow_entries:
         if entry["id"] not in existing_ids:
             data.insert(0, entry)
@@ -17915,7 +17940,7 @@ async def _ollama_model_catalog_summaries(
         if isinstance(payload, Mapping):
             entries.extend(_litellm_model_summaries_from_payload(payload))
 
-    entries.append(_current_loaded_model_entry())
+    entries.extend(_current_loaded_model_entries())
     filtered, _ = await _filter_model_list_for_profile(entries, auth_context)
     await _annotate_model_context_windows(filtered)
     return filtered
@@ -18746,6 +18771,23 @@ def _toolcall_backend_hint(service_id: str) -> str:
     return str(bcfg.get("preset") or service_id)
 
 
+def _per_backend_transform_ids(service_id: str) -> list[str]:
+    """Return the list of transform ids declared on a backend's config (data).
+
+    A service record may carry config["transforms"]: a list of registered
+    transform ids (the engine-agnostic primitives + named built-ins). Pure DATA
+    on the service — resolved and run by id, no engine-specific code. See
+    docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md. Returns [] when absent/malformed.
+    """
+    if not service_id:
+        return []
+    bcfg = (config.get("backends") or {}).get(service_id) or {}
+    raw = bcfg.get("transforms")
+    if not isinstance(raw, list):
+        return []
+    return [str(t) for t in raw if isinstance(t, str) and t]
+
+
 def _litellm_gateway_metadata(
     auth_context: AuthContext,
     *,
@@ -18873,6 +18915,7 @@ async def _forward_current_loaded_openai_request(
     auth_context: AuthContext,
     body_json: Mapping[str, Any],
 ) -> Response:
+    requested_alias = body_json.get("model")
     target, target_error = await _current_loaded_llm_target(auth_context)
     if target_error is not None:
         return target_error
@@ -18893,6 +18936,8 @@ async def _forward_current_loaded_openai_request(
     body["model"] = target.model
 
     if request_path == "/v1/chat/completions":
+        if _is_use_loaded_fast_model_alias(requested_alias):
+            body["reasoning_effort"] = "none"
         reasoning_error = _Qwen3ThinkingTransform().apply(body)
         if reasoning_error:
             return Response(
@@ -18988,6 +19033,12 @@ async def _forward_current_loaded_openai_request(
                         _normalize_chat_completion_payload(response_json)
                         _normalize_toolcall_args(response_json)
                         _normalize_toolcall_finish_reason(response_json)
+                        # Per-backend response transforms (data-driven; see ENGINE_KNOWLEDGE_BOUNDARY.md).
+                        _resp_tx = _per_backend_transform_ids(target.backend)
+                        if _resp_tx:
+                            response_json = _run_response_pipeline(
+                                _resp_tx, response_json, _TransformContext(), _TRANSFORM_REGISTRY,
+                            )
                         _tc_family = _detect_unlifted_toolcalls(response_json, _tc_had_tools)
                         if _tc_family:
                             _tc_advisory = _toolcall_advisory_for_backend(_tc_backend_hint, _tc_family)
@@ -19076,6 +19127,20 @@ async def _forward_litellm_proxy_request(
     ):
         body_for_litellm = dict(body_for_litellm)
         body_for_litellm.pop("dimensions", None)
+
+    # Per-backend request transforms (engine-agnostic, data-driven):
+    # a service record may declare config["transforms"] — a list of transform
+    # ids resolved from the registry. Applied here so a backend's quirk handling
+    # is DATA on the service, never engine-specific code in the dispatch path.
+    # See docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md.
+    _backend_transforms = _per_backend_transform_ids(runtime.service_id)
+    if _backend_transforms:
+        body_for_litellm = _run_request_pipeline(
+            _backend_transforms,
+            dict(body_for_litellm),
+            _TransformContext(),
+            _TRANSFORM_REGISTRY,
+        )
 
     body = json.dumps(dict(body_for_litellm)).encode()
     gateway_metadata = _litellm_gateway_metadata(
@@ -19172,6 +19237,12 @@ async def _forward_litellm_proxy_request(
                             # §6: structural normalization (args-stringify + finish-reason repair).
                             _normalize_toolcall_args(response_json)
                             _normalize_toolcall_finish_reason(response_json)
+                            # Per-backend response transforms (data-driven; see ENGINE_KNOWLEDGE_BOUNDARY.md).
+                            _resp_tx = _per_backend_transform_ids(runtime.service_id)
+                            if _resp_tx:
+                                response_json = _run_response_pipeline(
+                                    _resp_tx, response_json, _TransformContext(), _TRANSFORM_REGISTRY,
+                                )
                             # §5.2: detect unlifted tool calls and surface advisory.
                             _tc_family = _detect_unlifted_toolcalls(response_json, _tc_had_tools)
                             if _tc_family:
