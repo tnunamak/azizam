@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from typing import Any, Optional, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
@@ -874,6 +875,430 @@ class KoboldCppNullStripTransform(_Primitive):
 
 
 # ---------------------------------------------------------------------------
+# Step 6 — tool-call family EXTRACTORS (response-phase built-ins, OPT-IN)
+# ---------------------------------------------------------------------------
+#
+# Context (ENGINE_QUIRK_FINDINGS.md): a backend started WITHOUT a
+# --tool-call-parser flag emits tool calls as plain TEXT in the assistant
+# message content, in a model-family-specific format.  A backend that DOES have
+# the flag already emits proper OpenAI tool_calls — these extractors are ONLY
+# for the un-flagged case and are attached per-backend (opt-in), never
+# auto-attached, so they cannot alter any current-config response.
+#
+# DANGER MODEL: a FALSE extract (turning ordinary prose that merely *looks*
+# like a marker into a broken tool_call) is the worst failure — it corrupts a
+# correct response.  Every extractor therefore DETECTS first and only acts when
+# the family's exact markers are present AND parse succeeds; on any ambiguity or
+# malformed markup it PASSES THROUGH the content untouched.  Under-extracting
+# (leaving a genuine tool call as text) is recoverable; over-extracting is not.
+#
+# Verified formats (2026-06-16, see TOOLCALL_EXTRACTORS_REPORT.md):
+#   Hermes     <tool_call>{json}</tool_call>           {"name","arguments"}
+#   Mistral    [TOOL_CALLS][{json},...]                 JSON array, name/arguments
+#   Command-R  Action: ```json [ {tool_name,parameters} ] ```
+#   Qwen-XML   <tool_call><function=NAME><parameter=K>V</parameter></function></tool_call>
+#   Gemma      ```tool_code\n func(arg=val) \n```       python call expr
+#   Llama-3    <|python_tag|>{json}; {json}             {"name","parameters"|"arguments"}
+
+
+def _new_tool_call(name: str, arguments: Any, index: int) -> dict[str, Any]:
+    """Build one OpenAI tool_call dict.
+
+    ``arguments`` is always serialized to a JSON *string* (OpenAI shape).  A
+    deterministic, dependency-free id is used (no random/uuid) so the transform
+    stays pure and testable; uniqueness within a response is provided by index.
+    """
+    if isinstance(arguments, str):
+        args_str = arguments
+    else:
+        args_str = json.dumps(arguments, separators=(",", ":"), ensure_ascii=False)
+    return {
+        "id": f"call_{index:08d}",
+        "type": "function",
+        "function": {"name": name, "arguments": args_str},
+    }
+
+
+def _apply_extracted(
+    payload: dict[str, Any],
+    extractor: "Any",
+) -> dict[str, Any]:
+    """Run a per-choice extractor over a chat-completion payload.
+
+    ``extractor(content: str) -> tuple[list[tool_call] | None, str]`` returns
+    (tool_calls, remaining_content).  A None tool_calls list means "no markers /
+    malformed — leave this choice untouched".  When tool_calls are returned we
+    set them on the message, replace content with the stripped remainder (or
+    None if empty), and set finish_reason="tool_calls" (OpenAI shape).
+
+    Only the non-streaming ``message`` shape is handled.  ``delta`` (streaming)
+    is intentionally NOT handled: reconstructing a family marker that is split
+    across SSE chunks is a separate, stateful problem (cf. StreamingThinkSplit)
+    and a naive per-chunk extract would false-extract on partial markers.
+    """
+    choices = payload.get("choices")
+    if not isinstance(choices, list):
+        return payload
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            continue
+        # Never override tool_calls the engine already produced.
+        if message.get("tool_calls"):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or not content:
+            continue
+        tool_calls, remaining = extractor(content)
+        if not tool_calls:
+            continue
+        message["tool_calls"] = tool_calls
+        message["content"] = remaining if remaining else None
+        choice["finish_reason"] = "tool_calls"
+    return payload
+
+
+class _ToolCallExtractor:
+    """Base for response-phase tool-call extractors.
+
+    Subclasses implement ``extract(content) -> (tool_calls|None, remaining)``.
+    The on_request shim is a no-op; on_response delegates to _apply_extracted.
+    """
+
+    def on_request(self, body: dict[str, Any], ctx: TransformContext) -> dict[str, Any]:
+        return body
+
+    def on_response(self, payload: dict[str, Any], ctx: TransformContext) -> dict[str, Any]:
+        return _apply_extracted(payload, self.extract)
+
+    def extract(self, content: str) -> tuple[Optional[list[dict[str, Any]]], str]:  # pragma: no cover
+        raise NotImplementedError
+
+
+# ---- Hermes -----------------------------------------------------------------
+# <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+# Verified: vLLM hermes_tool_parser.py (tool_call_start/end tokens) +
+# NousResearch/Hermes-2-Pro-Llama-3-8B card.  Content before the first
+# <tool_call> is preserved as visible content.
+
+_HERMES_OPEN = "<tool_call>"
+_HERMES_CLOSE = "</tool_call>"
+
+
+class HermesToolCallExtractor(_ToolCallExtractor):
+    """Lift Hermes ``<tool_call>{json}</tool_call>`` blocks into tool_calls."""
+
+    def extract(self, content: str) -> tuple[Optional[list[dict[str, Any]]], str]:
+        if _HERMES_OPEN not in content:
+            return None, content
+        # Qwen-XML reuses <tool_call> but with a <function=...> body, NOT json.
+        # Defer to the Qwen extractor for that form: if the first body looks
+        # like XML (<function), this is not Hermes — pass through.
+        calls: list[dict[str, Any]] = []
+        pos = 0
+        idx = 0
+        consumed_spans: list[tuple[int, int]] = []
+        while True:
+            start = content.find(_HERMES_OPEN, pos)
+            if start == -1:
+                break
+            body_start = start + len(_HERMES_OPEN)
+            end = content.find(_HERMES_CLOSE, body_start)
+            if end == -1:
+                # Unterminated block — malformed, do not extract anything.
+                return None, content
+            body = content[body_start:end].strip()
+            if body.startswith("<function"):
+                # This is the Qwen-XML form, not Hermes JSON. Pass through.
+                return None, content
+            try:
+                obj = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                return None, content
+            if not isinstance(obj, dict) or "name" not in obj:
+                return None, content
+            calls.append(_new_tool_call(obj["name"], obj.get("arguments", {}), idx))
+            consumed_spans.append((start, end + len(_HERMES_CLOSE)))
+            idx += 1
+            pos = end + len(_HERMES_CLOSE)
+        if not calls:
+            return None, content
+        remaining = _strip_spans(content, consumed_spans)
+        return calls, remaining
+
+
+# ---- Mistral ----------------------------------------------------------------
+# [TOOL_CALLS][{"name": "...", "arguments": {...}}, ...]
+# Verified: vLLM mistral_tool_parser.py (bot_token "[TOOL_CALLS]", regex
+# r"\[{.*}\]").  Content before the token is preserved.
+
+_MISTRAL_TOKEN = "[TOOL_CALLS]"
+
+
+class MistralToolCallExtractor(_ToolCallExtractor):
+    """Lift Mistral ``[TOOL_CALLS][{...}]`` arrays into tool_calls."""
+
+    def extract(self, content: str) -> tuple[Optional[list[dict[str, Any]]], str]:
+        tok = content.find(_MISTRAL_TOKEN)
+        if tok == -1:
+            return None, content
+        before = content[:tok]
+        after = content[tok + len(_MISTRAL_TOKEN):].strip()
+        # The body must be a JSON array of objects. Find the array span so any
+        # trailing text after it is preserved.
+        if not after.startswith("["):
+            return None, content
+        arr, consumed = _scan_json_value(after)
+        if arr is None or not isinstance(arr, list) or not arr:
+            return None, content
+        calls: list[dict[str, Any]] = []
+        for i, obj in enumerate(arr):
+            if not isinstance(obj, dict) or "name" not in obj:
+                return None, content
+            calls.append(_new_tool_call(obj["name"], obj.get("arguments", {}), i))
+        trailing = after[consumed:].strip()
+        remaining = (before + (" " if before and trailing else "") + trailing).strip()
+        return calls, remaining
+
+
+# ---- Command-R (classic c4ai-command-r-v01) ---------------------------------
+# Action: ```json\n[ {"tool_name": "...", "parameters": {...}} ]\n```
+# Verified: Cohere "Prompting Command R and R+" docs.  Keys are tool_name /
+# parameters (NOT name / arguments).  New cmd3/cmd4 melody format is
+# closed-source and intentionally NOT handled.
+
+_COMMANDR_RE = re.compile(r"Action:\s*```json\s*(\[.*?\])\s*```", re.DOTALL)
+
+
+class CommandRToolCallExtractor(_ToolCallExtractor):
+    """Lift Command-R ``Action: ```json [...] ``` `` blocks into tool_calls."""
+
+    def extract(self, content: str) -> tuple[Optional[list[dict[str, Any]]], str]:
+        if "Action:" not in content or "```json" not in content:
+            return None, content
+        m = _COMMANDR_RE.search(content)
+        if m is None:
+            return None, content
+        try:
+            arr = json.loads(m.group(1))
+        except (json.JSONDecodeError, ValueError):
+            return None, content
+        if not isinstance(arr, list) or not arr:
+            return None, content
+        calls: list[dict[str, Any]] = []
+        for i, obj in enumerate(arr):
+            if not isinstance(obj, dict) or "tool_name" not in obj:
+                return None, content
+            calls.append(_new_tool_call(obj["tool_name"], obj.get("parameters", {}), i))
+        remaining = (content[:m.start()] + content[m.end():]).strip()
+        return calls, remaining
+
+
+# ---- Qwen-XML (Qwen3-Coder) -------------------------------------------------
+# <tool_call>\n<function=NAME>\n<parameter=KEY>\nVALUE\n</parameter>\n</function>\n</tool_call>
+# Verified literally: Qwen/Qwen3-Coder-30B-A3B-Instruct chat_template.
+
+_QWEN_TOOLCALL_RE = re.compile(r"<tool_call>\s*(<function=.*?</function>)\s*</tool_call>", re.DOTALL)
+_QWEN_FUNC_RE = re.compile(r"<function=([^>]+)>(.*)</function>", re.DOTALL)
+_QWEN_PARAM_RE = re.compile(r"<parameter=([^>]+)>(.*?)</parameter>", re.DOTALL)
+
+
+class QwenXmlToolCallExtractor(_ToolCallExtractor):
+    """Lift Qwen3-Coder ``<tool_call><function=...>`` XML into tool_calls."""
+
+    def extract(self, content: str) -> tuple[Optional[list[dict[str, Any]]], str]:
+        if "<tool_call>" not in content or "<function=" not in content:
+            return None, content
+        matches = list(_QWEN_TOOLCALL_RE.finditer(content))
+        if not matches:
+            return None, content
+        calls: list[dict[str, Any]] = []
+        spans: list[tuple[int, int]] = []
+        for i, m in enumerate(matches):
+            fm = _QWEN_FUNC_RE.search(m.group(1))
+            if fm is None:
+                return None, content
+            name = fm.group(1).strip()
+            if not name:
+                return None, content
+            args: dict[str, Any] = {}
+            for pm in _QWEN_PARAM_RE.finditer(fm.group(2)):
+                key = pm.group(1).strip()
+                val = pm.group(2).strip()
+                # Best-effort scalar coercion: try JSON (numbers/bools/objects),
+                # fall back to the raw string. Values arrive as plain text.
+                try:
+                    args[key] = json.loads(val)
+                except (json.JSONDecodeError, ValueError):
+                    args[key] = val
+            calls.append(_new_tool_call(name, args, i))
+            spans.append((m.start(), m.end()))
+        remaining = _strip_spans(content, spans)
+        return calls, remaining
+
+
+# ---- Gemma ------------------------------------------------------------------
+# ```tool_code\n func(arg=val, ...) \n```  (python call expression)
+# CONVENTION (not a spec): Google/philschmid Gemma function-calling example.
+# Body parsed via ast as a single call; an optional print(...) wrapper is
+# tolerated. Non-call bodies pass through (do not false-extract arbitrary code).
+
+_GEMMA_RE = re.compile(r"```tool_code\s*\n(.*?)\n```", re.DOTALL)
+
+
+class GemmaToolCallExtractor(_ToolCallExtractor):
+    """Lift Gemma ``` ```tool_code func(...) ``` `` blocks into tool_calls."""
+
+    def extract(self, content: str) -> tuple[Optional[list[dict[str, Any]]], str]:
+        if "```tool_code" not in content:
+            return None, content
+        matches = list(_GEMMA_RE.finditer(content))
+        if not matches:
+            return None, content
+        calls: list[dict[str, Any]] = []
+        spans: list[tuple[int, int]] = []
+        idx = 0
+        for m in matches:
+            parsed = _parse_python_calls(m.group(1).strip())
+            if parsed is None:
+                # Body is not a clean call expression — do not false-extract.
+                return None, content
+            for name, args in parsed:
+                calls.append(_new_tool_call(name, args, idx))
+                idx += 1
+            spans.append((m.start(), m.end()))
+        if not calls:
+            return None, content
+        remaining = _strip_spans(content, spans)
+        return calls, remaining
+
+
+# ---- Llama-3 ----------------------------------------------------------------
+# <|python_tag|>{"name": "...", "parameters": {...}}; {...}
+# Verified: vLLM llama_tool_parser.py (bot_token "<|python_tag|>", "parameters"
+# OR "arguments", multiple separated by "; ").  The python_tag prefix is the
+# unambiguous marker; without it a bare JSON object is too risky to claim.
+
+_LLAMA_TAG = "<|python_tag|>"
+
+
+class Llama3ToolCallExtractor(_ToolCallExtractor):
+    """Lift Llama-3 ``<|python_tag|>{json}; {json}`` blocks into tool_calls."""
+
+    def extract(self, content: str) -> tuple[Optional[list[dict[str, Any]]], str]:
+        tag = content.find(_LLAMA_TAG)
+        if tag == -1:
+            return None, content
+        before = content[:tag]
+        rest = content[tag + len(_LLAMA_TAG):].lstrip()
+        calls: list[dict[str, Any]] = []
+        idx = 0
+        pos = 0
+        n = len(rest)
+        while pos < n:
+            # Skip separators / whitespace between objects.
+            while pos < n and rest[pos] in "; \t\r\n":
+                pos += 1
+            if pos >= n:
+                break
+            if rest[pos] != "{":
+                # Trailing non-JSON text after the calls — stop scanning here.
+                break
+            obj, consumed = _scan_json_value(rest[pos:])
+            if obj is None or not isinstance(obj, dict) or "name" not in obj:
+                return None, content
+            args = obj.get("parameters", obj.get("arguments", {}))
+            calls.append(_new_tool_call(obj["name"], args, idx))
+            idx += 1
+            pos += consumed
+        if not calls:
+            return None, content
+        trailing = rest[pos:].strip()
+        remaining = (before.strip() + (" " if before.strip() and trailing else "") + trailing).strip()
+        return calls, remaining
+
+
+# ---- shared extractor helpers ----------------------------------------------
+
+
+def _strip_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    """Remove [start,end) spans from text and return the trimmed remainder."""
+    if not spans:
+        return text.strip()
+    out: list[str] = []
+    prev = 0
+    for start, end in spans:
+        out.append(text[prev:start])
+        prev = end
+    out.append(text[prev:])
+    return "".join(out).strip()
+
+
+def _scan_json_value(text: str) -> tuple[Any, int]:
+    """Decode the first JSON value at the start of *text*.
+
+    Returns (value, chars_consumed).  On failure returns (None, 0).  Uses the
+    stdlib raw_decoder so trailing text after a complete value is allowed.
+    """
+    try:
+        obj, end = json.JSONDecoder().raw_decode(text)
+        return obj, end
+    except (json.JSONDecodeError, ValueError):
+        return None, 0
+
+
+def _parse_python_calls(src: str) -> Optional[list[tuple[str, dict[str, Any]]]]:
+    """Parse one-or-more python call expressions into (name, kwargs) pairs.
+
+    Accepts:
+      - a single call: ``func(a=1, b="x")``
+      - a ``print(...)`` wrapper around a single call (Gemma variant)
+      - newline-separated calls
+    Only keyword arguments with constant values are accepted; positional args,
+    nested calls, or non-constant values cause a None return (pass-through).
+    Returns None on any parse/shape failure — never raises.
+    """
+    import ast
+
+    lines = [ln.strip() for ln in src.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    results: list[tuple[str, dict[str, Any]]] = []
+    for line in lines:
+        try:
+            node = ast.parse(line, mode="eval").body
+        except (SyntaxError, ValueError):
+            return None
+        # Unwrap a single print(...) wrapper.
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "print"
+            and len(node.args) == 1
+            and not node.keywords
+            and isinstance(node.args[0], ast.Call)
+        ):
+            node = node.args[0]
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            return None
+        if node.args:
+            # Positional args have no OpenAI mapping — refuse rather than guess.
+            return None
+        kwargs: dict[str, Any] = {}
+        for kw in node.keywords:
+            if kw.arg is None:
+                return None  # **kwargs splat — refuse
+            try:
+                kwargs[kw.arg] = ast.literal_eval(kw.value)
+            except (ValueError, SyntaxError, TypeError):
+                return None
+        results.append((node.func.id, kwargs))
+    return results or None
+
+
+# ---------------------------------------------------------------------------
 # Module-level registry singleton + built-in registrations
 # ---------------------------------------------------------------------------
 
@@ -1030,3 +1455,17 @@ REGISTRY.register(
         },
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Step 6 — tool-call family extractors (response-phase, OPT-IN, NOT auto-attached)
+# ---------------------------------------------------------------------------
+# These lift plain-TEXT tool calls (from backends started without a
+# --tool-call-parser) into proper OpenAI tool_calls.  They are registered here
+# but attached only per-backend (opt-in) — never auto-attached — so they cannot
+# alter any current-config response.  See TOOLCALL_EXTRACTORS_REPORT.md.
+REGISTRY.register_builtin("hermes2pro-toolcall-extract", HermesToolCallExtractor())
+REGISTRY.register_builtin("mistral-toolcall-extract", MistralToolCallExtractor())
+REGISTRY.register_builtin("commandr-toolcall-extract", CommandRToolCallExtractor())
+REGISTRY.register_builtin("qwen-xml-toolcall-extract", QwenXmlToolCallExtractor())
+REGISTRY.register_builtin("gemma-toolcall-extract", GemmaToolCallExtractor())
+REGISTRY.register_builtin("llama3-toolcall-extract", Llama3ToolCallExtractor())
