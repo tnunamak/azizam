@@ -883,8 +883,8 @@ class DropNullParamsTransform(_Primitive):
 REGISTRY: TransformRegistry = TransformRegistry()
 
 # ---- voxtral-voices (Step 1 built-in) ------------------------------------
-# Source of truth: proxy.py:2438 VOICE_MAP + proxy.py:2460 DEFAULT_VOICE
-# Registered here so Step 1 can wire the :3399 application site.
+# Single source of truth for voice mapping (replaces the deleted proxy.py VOICE_MAP).
+# The voice listing endpoint reads from this registry entry via _voxtral_voice_map().
 REGISTRY.register(
     "voxtral-voices",
     {

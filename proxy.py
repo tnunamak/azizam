@@ -158,6 +158,7 @@ from gateway.transforms import (
     QWEN3_NO_THINK_HINT as _QWEN3_NO_THINK_HINT,
     QWEN3_ENABLE_THINKING_KEY as _QWEN3_ENABLE_THINKING_KEY,
     normalize_chat_completion_payload as _normalize_chat_completion_payload,
+    ValueMapTransform as _ValueMapTransform,
 )
 from gateway.toolcall_detection import (
     detect_unlifted_toolcalls as _detect_unlifted_toolcalls,
@@ -2665,34 +2666,8 @@ STT_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("transcriptions") or stt_cfg.get("
 EMBEDDINGS_MODEL = MODEL_COMPAT_DEFAULTS.get("embeddings") or EMBEDDINGS_BACKEND_MODEL
 IMAGE_EDIT_DEFAULT_MODEL = MODEL_COMPAT_DEFAULTS.get("image_edits", "flux2-klein-4b-edit")
 
-# Voice mapping: any voice name -> a Voxtral voice the backend accepts.
-# Single source of truth used by both `/v1/audio/speech` (request rewriting)
-# and `/v1/voices` (listing). Listing reflects every key in this map.
-VOICE_MAP = {
-    # OpenAI classic voices
-    "alloy": "neutral_female", "echo": "casual_male", "fable": "cheerful_female",
-    "nova": "casual_female", "onyx": "neutral_male", "shimmer": "cheerful_female",
-    # OpenAI newer voices -> best match
-    "sophia": "neutral_female", "isabella": "cheerful_female", "lily": "casual_female",
-    "evan": "casual_male", "adam": "neutral_male", "ash": "casual_male",
-    "coral": "casual_female", "sage": "neutral_female", "verse": "neutral_male",
-    "ballad": "cheerful_female", "juniper": "casual_female",
-    # Voxtral native voices (pass through)
-    "casual_female": "casual_female", "casual_male": "casual_male",
-    "cheerful_female": "cheerful_female",
-    "neutral_female": "neutral_female", "neutral_male": "neutral_male",
-    "ar_male": "ar_male",
-    "de_female": "de_female", "de_male": "de_male",
-    "es_female": "es_female", "es_male": "es_male",
-    "fr_female": "fr_female", "fr_male": "fr_male",
-    "hi_female": "hi_female", "hi_male": "hi_male",
-    "it_female": "it_female", "it_male": "it_male",
-    "nl_female": "nl_female", "nl_male": "nl_male",
-    "pt_female": "pt_female", "pt_male": "pt_male",
-}
-DEFAULT_VOICE = "neutral_female"
-
-# Voice metadata derived from the id. Keep in sync with VOICE_MAP keys.
+# Voice metadata derived from the id. Keep in sync with the voxtral-voices
+# transform map in gateway/transforms.py (the single source of truth).
 _OPENAI_VOICE_NAMES = {
     "alloy": ("Alloy", "OpenAI alias"),
     "echo": ("Echo", "OpenAI alias"),
@@ -2717,6 +2692,22 @@ _LANG_NAMES = {
     "ar": "Arabic", "de": "German", "es": "Spanish", "fr": "French",
     "hi": "Hindi", "it": "Italian", "nl": "Dutch", "pt": "Portuguese",
 }
+
+
+def _voxtral_voice_map() -> dict[str, str]:
+    """Return the voice-name → mapped-voice dict from the voxtral-voices transform.
+
+    Single source of truth lives in the voxtral-voices registry entry in
+    gateway/transforms.py.  This accessor lets the voice listing endpoint
+    read from that same source instead of a duplicate VOICE_MAP constant.
+    """
+    try:
+        primitives = _TRANSFORM_REGISTRY.resolve("voxtral-voices")
+        if primitives and isinstance(primitives[0], _ValueMapTransform):
+            return dict(primitives[0]._map)
+    except (KeyError, IndexError, AttributeError):
+        pass
+    return {}
 
 
 def _voice_metadata(voice_id: str, mapped: str) -> dict:
@@ -12249,10 +12240,12 @@ async def list_voices(request: Request):
         return policy_response
 
     # Single source of truth: derive every voice the speech endpoint accepts.
+    # The voice map lives in the voxtral-voices transform (gateway/transforms.py).
     # If you can pass it to /v1/audio/speech, you can find it here.
+    _vmap = _voxtral_voice_map()
     voices = []
-    for voice_id in sorted(VOICE_MAP.keys()):
-        mapped = VOICE_MAP[voice_id]
+    for voice_id in sorted(_vmap.keys()):
+        mapped = _vmap[voice_id]
         meta = _voice_metadata(voice_id, mapped)
         voices.append({
             "voice_id": voice_id,
