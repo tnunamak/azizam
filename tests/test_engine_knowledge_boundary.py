@@ -236,10 +236,10 @@ _ENGINE_CLASS_PATTERN = re.compile(
 
 # Allowlisted entries: {(relative_file, stripped_line_text): reason}
 # Content-keyed for drift-proofness (same rationale as _ENGINE_BRANCH_ALLOWLIST).
-# Allowlisted until the migrations described in §D-1 and §D-2 are complete.
+# Allowlisted until the migrations described in §D-1 are complete.
+# D-2 (KoboldCppNullStripTransform) is DONE: class renamed to DropNullParamsTransform,
+# id renamed to "drop-null-params" — no longer engine-named, no longer needs an allowlist entry.
 _ENGINE_CLASS_ALLOWLIST: dict[tuple[str, str], str] = {
-    ("gateway/transforms.py", "class KoboldCppNullStripTransform(_Primitive):"):
-        "D-2 pending: KoboldCppNullStripTransform — remove entry when renamed to drop-null-params",
     ("gateway/transforms.py", "class Qwen3ThinkingTransform:"):
         "D-1 pending: Qwen3ThinkingTransform — 400 sentinel built-in; "
         "remove entry when auto-fire sites are cut",

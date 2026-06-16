@@ -1,6 +1,6 @@
 """Step 5 tests — Tier-1 per-backend transform packs.
 
-GATE: Each named transform (ollama-unsupported-params, koboldcpp-null-strip,
+GATE: Each named transform (ollama-unsupported-params, drop-null-params,
 llamacpp-cache-prompt, mistral-penalty-clamp, tabby-penalty-floor) must:
   1. Apply correctly when its condition is met.
   2. Be a no-op when the `when:` condition is unmet (or when the target param
@@ -83,12 +83,12 @@ class TestOllamaUnsupportedParams:
 
 
 # ---------------------------------------------------------------------------
-# koboldcpp-null-strip
+# drop-null-params
 # ---------------------------------------------------------------------------
 
 
-class TestKoboldCppNullStrip:
-    NAME = "koboldcpp-null-strip"
+class TestDropNullParams:
+    NAME = "drop-null-params"
 
     def test_registered(self) -> None:
         primitives = REGISTRY.resolve(self.NAME)
@@ -296,13 +296,13 @@ class TestTier1PacksNonAlteration:
         # The baseline body has none of the 6 dropped params — should be unchanged
         assert result == body
 
-    def test_baseline_chat_request_unaffected_by_koboldcpp(self) -> None:
+    def test_baseline_chat_request_unaffected_by_drop_null_params(self) -> None:
         body = {
             "model": "qwen3",
             "messages": [{"role": "user", "content": "Hello"}],
             "temperature": 0.7,
         }
-        result = run_request_pipeline(["koboldcpp-null-strip"], copy.deepcopy(body))
+        result = run_request_pipeline(["drop-null-params"], copy.deepcopy(body))
         # No null values — unchanged
         assert result == body
 

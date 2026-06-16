@@ -847,23 +847,24 @@ class StreamingThinkSplitTransform:
 
 
 # ---------------------------------------------------------------------------
-# Step 5 — KoboldCpp null-param-strip (named built-in, value-test not key-list)
+# Step 5 — drop-null-params (generic built-in, value-test not key-list)
 # ---------------------------------------------------------------------------
 
 
-class KoboldCppNullStripTransform(_Primitive):
-    """Remove top-level keys whose value is None/null (KoboldCpp 422s on null).
+class DropNullParamsTransform(_Primitive):
+    """Remove top-level keys whose value is None/null.
 
-    Registered as "koboldcpp-null-strip" in REGISTRY.
+    Registered as "drop-null-params" in REGISTRY.
 
     A value-based filter that cannot be expressed with drop-params (which is
     key-list only).  Iterates all top-level keys and removes those with a None
-    value, which is the exact behavior KoboldCpp needs to avoid 422 errors.
+    value.  Useful for any strict backend that 422s on explicit null params
+    rather than treating them as absent.
 
     The ``when:`` predicate and phase routing are inherited from _Primitive.
 
     YAML config (conceptual, for documentation):
-        koboldcpp-null-strip:
+        drop-null-params:
           kind: (built-in)
     """
 
@@ -973,11 +974,11 @@ REGISTRY.register(
     },
 )
 
-# ---- koboldcpp-null-strip -------------------------------------------------
-# KoboldCpp 422s on keys whose value is null rather than ignoring them.
-# This is a value-test built-in (see KoboldCppNullStripTransform above).
+# ---- drop-null-params -----------------------------------------------------
+# Some strict backends 422 on keys whose value is null rather than ignoring
+# them.  This is a value-test built-in (see DropNullParamsTransform above).
 # Source: ENGINE_TRANSFORMS_DESIGN.md §3.3 (null-param-strip).
-REGISTRY.register_builtin("koboldcpp-null-strip", KoboldCppNullStripTransform({}))
+REGISTRY.register_builtin("drop-null-params", DropNullParamsTransform({}))
 
 # ---- llamacpp-cache-prompt ------------------------------------------------
 # llama-server enables KV-cache reuse when cache_prompt=true is sent.
