@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -432,8 +433,14 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertIn("/gateway/v1/capabilities", paths)
         self.assertNotIn("/{path}", paths)
 
+    # These tests assert the ROUTING-LAYER classification: an unmapped path is
+    # not_found, never a backend passthrough or service_unavailable. That layer
+    # sits BELOW auth, so we disable auth to reach it — matching the convention
+    # in test_protocol_route_aliases.py. (The auth tier above it is exercised
+    # separately by test_unauthenticated_unmapped_path_has_no_enumeration_oracle.)
     def test_unmapped_v1_path_returns_404_not_backend_unavailable(self) -> None:
-        response = self.client.get("/v1/capabilities")
+        with patch.object(proxy, "AUTH_ENABLED", False):
+            response = self.client.get("/v1/capabilities")
         self.assertEqual(response.status_code, 404, response.text)
         body = response.json()
         self.assertEqual(body["error"]["code"], "not_found")
@@ -445,18 +452,42 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertTrue(proxy._should_return_not_found_before_backend("/tabby/v1/model"))
 
     def test_unmapped_non_v1_path_returns_404_not_backend_passthrough(self) -> None:
-        response = self.client.get("/tabby/v1/model")
+        with patch.object(proxy, "AUTH_ENABLED", False):
+            response = self.client.get("/tabby/v1/model")
         self.assertEqual(response.status_code, 404, response.text)
         body = response.json()
         self.assertEqual(body["error"]["code"], "not_found")
         self.assertNotEqual(body["error"]["type"], "service_unavailable")
 
     def test_unmapped_discovery_probes_return_404(self) -> None:
-        for path in ("/v1", "/manifest", "/.well-known/openapi"):
-            with self.subTest(path=path):
-                response = self.client.get(path)
-                self.assertEqual(response.status_code, 404, response.text)
-                self.assertEqual(response.json()["error"]["code"], "not_found")
+        with patch.object(proxy, "AUTH_ENABLED", False):
+            for path in ("/v1", "/manifest", "/.well-known/openapi"):
+                with self.subTest(path=path):
+                    response = self.client.get(path)
+                    self.assertEqual(response.status_code, 404, response.text)
+                    self.assertEqual(response.json()["error"]["code"], "not_found")
+
+    def test_unauthenticated_unmapped_path_has_no_enumeration_oracle(self) -> None:
+        """An unauthenticated (non-bypass) client must NOT be able to tell a
+        real-but-auth-gated path from a nonexistent one: both return 401, so
+        response codes can't be used to enumerate which endpoints exist.
+
+        This is the ideal posture per RFC 9110 §6.5.4 (a server "unwilling to
+        disclose that [a resource] exists") + the anti-enumeration consistency
+        principle. Do NOT "fix" this to 404 for the unmapped path — that would
+        reintroduce the oracle. The semantic-honesty 404 is for clients that
+        HAVE passed auth (LAN bypass / valid key); see the routing tests above.
+        """
+        with patch.object(proxy, "AUTH_ENABLED", True):
+            real_gated = self.client.get("/v1/chat/completions")
+            unmapped = self.client.get("/v1/capabilities")
+        self.assertEqual(real_gated.status_code, 401)
+        self.assertEqual(
+            unmapped.status_code,
+            401,
+            "unmapped path must return the SAME 401 as a real gated path for an "
+            "unauthenticated client — no enumeration oracle",
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

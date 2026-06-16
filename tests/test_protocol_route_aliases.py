@@ -59,14 +59,19 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
         self.assertEqual(duplicates, {})
 
     def test_unregistered_provider_native_paths_stay_not_found(self) -> None:
+        # Routing-layer classification (below auth): disable auth to reach it,
+        # matching the convention used by the other routing tests in this file.
+        # The unauthenticated-client posture (uniform 401, no enumeration oracle)
+        # is asserted in test_discovery_metadata.py.
         client = TestClient(proxy.app)
-        for path in (
-            "/anthropic/v1/unknown",
-            "/ollama/api/unknown",
-        ):
-            response = client.get(path)
-            self.assertEqual(response.status_code, 404, msg=path)
-            self.assertEqual(response.json()["error"]["code"], "not_found")
+        with patch.object(proxy, "AUTH_ENABLED", False):
+            for path in (
+                "/anthropic/v1/unknown",
+                "/ollama/api/unknown",
+            ):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 404, msg=path)
+                self.assertEqual(response.json()["error"]["code"], "not_found")
 
     def test_protocol_namespace_route_ownership_matrix(self) -> None:
         cases = (
