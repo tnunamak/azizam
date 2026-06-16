@@ -396,6 +396,114 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(receipts[0].metadata["execution_backend"], "litellm")
         self.assertEqual(receipts[0].metadata["litellm"]["call_id"], "call_1")
 
+    def test_current_model_uses_active_loaded_backend_without_activation(self) -> None:
+        calls: list[Any] = []
+
+        async def fake_send(execution_request):
+            calls.append(execution_request)
+            return _FakeStreamClient(), _FakeLiteLLMResponse()
+
+        async def forbidden_activation(*_args, **_kwargs):
+            raise AssertionError("model='current' must not activate or load models")
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "LLM_BACKEND_HOSTS",
+            {"kobold": "http://127.0.0.1:5051"},
+        ), patch.object(
+            proxy,
+            "get_active_backend",
+            AsyncMock(return_value="kobold"),
+        ), patch.object(
+            proxy,
+            "current_llm_model_for_backend",
+            AsyncMock(return_value="Manual-Experiment.gguf"),
+        ), patch.object(
+            proxy,
+            "_service_availability_response",
+            lambda *_args, **_kwargs: None,
+        ), patch.object(
+            proxy,
+            "ensure_target",
+            forbidden_activation,
+        ), patch.object(
+            proxy,
+            "load_model",
+            forbidden_activation,
+        ), patch.object(
+            proxy,
+            "send_llm_execution_request",
+            fake_send,
+        ):
+            response = client.post(
+                "/v1/chat/completions?api_key=opk_should_not_forward&trace=1",
+                json={
+                    "model": "current",
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "reasoning_effort": "minimal",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["X-AI-Gateway-LLM-Execution"], "current-loaded")
+        self.assertEqual(response.headers["X-AI-Gateway-Backend"], "kobold")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0].url,
+            "http://127.0.0.1:5051/v1/chat/completions?trace=1",
+        )
+        forwarded = json.loads(calls[0].body.decode())
+        self.assertEqual(forwarded["model"], "Manual-Experiment.gguf")
+        self.assertNotIn("_vf_requested_model", forwarded)
+        self.assertNotIn("reasoning_effort", forwarded)
+        self.assertEqual(forwarded["messages"][0]["role"], "system")
+        self.assertIn("/no_think", forwarded["messages"][0]["content"])
+
+    def test_current_model_returns_503_when_active_backend_has_no_loaded_model(self) -> None:
+        async def forbidden_send(*_args, **_kwargs):
+            raise AssertionError("unloaded current model request must not forward")
+
+        async def forbidden_activation(*_args, **_kwargs):
+            raise AssertionError("unloaded current model request must not load")
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "LLM_BACKEND_HOSTS",
+            {"tabby": "http://127.0.0.1:5050"},
+        ), patch.object(
+            proxy,
+            "get_active_backend",
+            AsyncMock(return_value="tabby"),
+        ), patch.object(
+            proxy,
+            "current_llm_model_for_backend",
+            AsyncMock(return_value=""),
+        ), patch.object(
+            proxy,
+            "_service_availability_response",
+            lambda *_args, **_kwargs: None,
+        ), patch.object(
+            proxy,
+            "load_model",
+            forbidden_activation,
+        ), patch.object(
+            proxy,
+            "send_llm_execution_request",
+            forbidden_send,
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "current",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "current_model_unavailable")
+
     def test_litellm_activates_gateway_owned_local_role_before_forwarding(self) -> None:
         calls: list[Any] = []
         activations: list[tuple[str, str | None, str | None]] = []
@@ -728,6 +836,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         ids = [item["id"] for item in payload["data"]]
         self.assertIn("assistant-default", ids)
         self.assertIn("image.generate.test", ids)
+        self.assertIn("current", ids)
         self.assertNotIn("default", ids)
         assistant = next(item for item in payload["data"] if item["id"] == "assistant-default")
         self.assertEqual(assistant["context_window"], 102400)
@@ -761,15 +870,19 @@ class TestGatewayRouterMounting(unittest.TestCase):
             anthropic_models = client.get("/anthropic/v1/models")
             ollama_tags = client.get("/api/tags")
 
-        self.assertEqual(openai_models.status_code, 503, openai_models.text)
-        self.assertEqual(
-            openai_models.json()["error"]["code"],
-            "backend_unavailable",
+        self.assertEqual(openai_models.status_code, 200, openai_models.text)
+        self.assertIn(
+            "vivid_fish_catalog_warning",
+            openai_models.json(),
+        )
+        self.assertIn(
+            "current",
+            [item["id"] for item in openai_models.json()["data"]],
         )
         self.assertEqual(anthropic_models.status_code, 200, anthropic_models.text)
-        self.assertEqual(anthropic_models.json()["data"], [])
+        self.assertEqual(anthropic_models.json()["data"][0]["id"], "current")
         self.assertEqual(ollama_tags.status_code, 200, ollama_tags.text)
-        self.assertEqual(ollama_tags.json(), {"models": []})
+        self.assertEqual(ollama_tags.json()["models"][0]["name"], "current")
 
     def test_litellm_routes_embeddings_and_applies_requested_dimensions(self) -> None:
         calls: list[Any] = []
@@ -909,7 +1022,10 @@ class TestGatewayRouterMounting(unittest.TestCase):
             ps = client.get("/api/ps")
 
         self.assertEqual(tags.status_code, 200, tags.text)
-        self.assertEqual([m["name"] for m in tags.json()["models"]], ["assistant-default"])
+        self.assertEqual(
+            [m["name"] for m in tags.json()["models"]],
+            ["assistant-default", "current"],
+        )
         self.assertEqual(ps.status_code, 200, ps.text)
         self.assertEqual(ps.json(), {"models": []})
 

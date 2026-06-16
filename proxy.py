@@ -733,6 +733,7 @@ CHECK_INTERVAL = routing_cfg.get("check_interval", 30)
 # remain the supported way to change the loaded GGUF.
 llm_cfg = config.get("llm", {}) or {}
 PIN_LOADED_MODEL = bool(llm_cfg.get("pin_loaded_model", True))
+USE_LOADED_MODEL_ALIAS = "current"
 
 # Tracks model_paths we've already warned about (when PIN_LOADED_MODEL=True)
 # so we don't spam the journal with one warning per request.
@@ -2985,40 +2986,6 @@ def parse_openai_json_body(body: bytes) -> tuple[dict[str, Any] | None, Response
     return body_json, None
 
 
-# Reserved input-only model alias: "use whatever the active backend currently has
-# loaded; do not start a different backend or swap models". It is NOT a role and
-# NOT a catalog model — it is rewritten at the two execution seams (LiteLLM prep
-# and the native passthrough forward) into a concrete model the substrate accepts.
-USE_LOADED_MODEL_ALIAS = "current"
-
-
-def _is_use_loaded_model_alias(model_name: Any) -> bool:
-    return isinstance(model_name, str) and normalize_model_id(model_name) == USE_LOADED_MODEL_ALIAS
-
-
-def _litellm_route_model_for_backend(backend: str) -> Optional[str]:
-    """The LiteLLM model_group to route to for a backend (LiteLLM routes by group).
-
-    Used only for the "current" alias: we route to the active backend's primary
-    group while suppressing the model swap, so LiteLLM forwards to the right
-    backend and the backend serves whatever is already loaded.
-    """
-    backend_cfg = (config.get("backends") or {}).get(backend, {})
-    if not isinstance(backend_cfg, Mapping):
-        return None
-    for item in _service_model_records(backend_cfg):
-        route_model = str(
-            item.get("model_group")
-            or item.get("public_name")
-            or item.get("id")
-            or item.get("upstream_model")
-            or ""
-        ).strip()
-        if route_model:
-            return route_model
-    return str(backend_cfg.get("model_id") or "").strip() or None
-
-
 def _service_model_records(service_cfg: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     raw_models = service_cfg.get("models")
     if isinstance(raw_models, Mapping):
@@ -3173,42 +3140,6 @@ async def _prepare_litellm_local_llm_request(
             code="missing_required_parameter",
         ), body
 
-    # "current" alias: serve whatever the active backend has loaded, no swap.
-    # Route to the active backend's primary LiteLLM group (LiteLLM routes by
-    # group) but force target_model=None so ensure_target() skips the swap. We
-    # preserve the original requested model under a private key so downstream
-    # policy (existing_only) and receipts still see "current", not the route group.
-    if _is_use_loaded_model_alias(model_name):
-        active_backend = await get_active_backend()
-        if not active_backend:
-            return openai_error_response(
-                "Requested model 'current', but no active local LLM backend is running.",
-                status_code=503,
-                error_type="service_unavailable",
-                code="backend_unavailable",
-            ), body
-        route_model = _litellm_route_model_for_backend(active_backend)
-        if not route_model:
-            return openai_error_response(
-                f"Requested model 'current', but active backend '{active_backend}' "
-                "has no LiteLLM-routable model group.",
-                status_code=503,
-                error_type="service_unavailable",
-                code="backend_unavailable",
-            ), body
-        availability = await _ensure_litellm_local_backend_target(
-            auth_context,
-            requested_model=model_name,
-            backend=active_backend,
-            target_model=None,
-            target_mmproj=None,
-        )
-        if availability is not None:
-            return availability, body
-        body["_vf_requested_model"] = model_name
-        body["model"] = route_model
-        return None, body
-
     if _profile_target_activation(auth_context) == "existing_only":
         return None, body
 
@@ -3340,60 +3271,93 @@ async def effective_llm_model_for_host(target_host: str) -> str:
     return ""
 
 
-async def current_llm_model_for_host(target_host: str) -> str:
-    """STRICT currently-loaded model id for a backend (no default fallback).
+@dataclass(frozen=True)
+class CurrentLoadedLlmTarget:
+    backend: str
+    host: str
+    model: str
 
-    Used only for the "current" alias on the native passthrough path. Unlike
-    effective_llm_model_for_host, this never substitutes DEFAULT_MODEL — for an
-    unknown backend it asks the backend's own /v1/models and returns the first
-    id, or "" if it can't be determined (caller then 503s rather than guess).
-    """
-    if target_host == KOBOLD_HOST:
-        return await get_kobold_model_id()
-    if target_host == TABBY_HOST:
-        return await get_tabby_loaded_model_id() or ""
+
+def _is_use_loaded_model_alias(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and normalize_model_id(value) == USE_LOADED_MODEL_ALIAS
+    )
+
+
+async def current_llm_model_for_backend(backend: str) -> str:
+    """Return the model actually loaded on a backend, never a configured fallback."""
+    backend = str(backend or "").strip()
+    if backend == "kobold":
+        loaded_path = currently_loaded_kobold_model()
+        if not loaded_path:
+            return ""
+        loaded_id = await get_kobold_model_id()
+        return loaded_id or os.path.basename(loaded_path) or loaded_path
+    if backend == "tabby":
+        return await currently_loaded_tabby_model() or ""
+
+    host = LLM_BACKEND_HOSTS.get(backend)
+    backend_cfg = (config.get("backends") or {}).get(backend, {})
+    if not host or not isinstance(backend_cfg, Mapping):
+        return ""
+    state_type = str(backend_cfg.get("state_type") or "openai_compatible")
+    strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
+    if not strategy:
+        return ""
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{target_host.rstrip('/')}/v1/models",
-                timeout=HEALTH_CHECK_TIMEOUT,
-            )
-        if resp.status_code == 200:
-            data = resp.json().get("data", [])
-            if data and isinstance(data[0], dict):
-                return str(data[0].get("id") or "").strip()
-    except Exception:  # noqa: BLE001
-        pass
-    return ""
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
+            resp = await client.get(f"{host}{strategy['endpoint']}")
+        if resp.status_code != 200:
+            return ""
+        data = resp.json()
+        if not isinstance(data, dict):
+            return ""
+        return _resolve_dot_path(data, str(strategy["model_key"])) or ""
+    except Exception:
+        return ""
 
 
-async def _rewrite_native_use_loaded_model_body(
-    body: bytes,
-    *,
-    target_host: str,
-) -> tuple[bytes, Response | None]:
-    """For the native passthrough path: if body.model == "current", rewrite it to
-    the backend's actually-loaded model id. We don't forward "current" verbatim
-    because we can't assume an arbitrary native backend ignores unknown model
-    names. Returns (possibly-rewritten body, error-response-or-None). No-op for
-    any non-"current" request (returns the original bytes untouched)."""
-    stripped = body.lstrip()
-    if not stripped or stripped[:1] != b"{":
-        return body, None
-    body_json, _ = parse_openai_json_body(body)
-    if body_json is None or not _is_use_loaded_model_alias(body_json.get("model")):
-        return body, None
-    loaded_model = await current_llm_model_for_host(target_host)
-    if not loaded_model:
-        return body, openai_error_response(
-            "Requested model 'current', but the backend did not report a loaded model.",
+async def _current_loaded_llm_target(
+    auth_context: AuthContext,
+) -> tuple[CurrentLoadedLlmTarget | None, Response | None]:
+    active = await get_active_backend()
+    if not active:
+        return None, openai_error_response(
+            "model 'current' requested, but no local LLM backend is active.",
             status_code=503,
             error_type="service_unavailable",
-            code="backend_unavailable",
+            code="current_model_unavailable",
         )
-    rewritten = dict(body_json)
-    rewritten["model"] = loaded_model
-    return json.dumps(rewritten).encode("utf-8"), None
+    if active not in LLM_BACKEND_HOSTS:
+        return None, openai_error_response(
+            f"model 'current' requested, but active backend {active!r} is not an OpenAI-compatible LLM backend.",
+            status_code=503,
+            error_type="service_unavailable",
+            code="current_model_unavailable",
+        )
+    if not profile_allows_backend(auth_context, active):
+        return None, _policy_denied_response(PolicyDecision(
+            decision=DENIED,
+            reasons=(f"backend {active!r} not permitted by profile",),
+        ))
+    availability = _service_availability_response(active, service_label=active)
+    if availability is not None:
+        return None, availability
+
+    loaded_model = await current_llm_model_for_backend(active)
+    if not loaded_model:
+        return None, openai_error_response(
+            f"model 'current' requested, but backend {active!r} has no loaded model.",
+            status_code=503,
+            error_type="service_unavailable",
+            code="current_model_unavailable",
+        )
+    return CurrentLoadedLlmTarget(
+        backend=active,
+        host=LLM_BACKEND_HOSTS[active],
+        model=loaded_model,
+    ), None
 
 
 async def refresh_openai_model_aliases() -> int:
@@ -9348,6 +9312,7 @@ async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> se
     if active == "tabby":
         loaded = await get_tabby_loaded_model_id()
         if loaded:
+            ids.add(USE_LOADED_MODEL_ALIAS)
             ids.add(loaded)
             ids.update(
                 _role_catalog_ids_for_loaded_path(
@@ -9360,6 +9325,7 @@ async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> se
 
     loaded_path = currently_loaded_kobold_model()
     if loaded_path:
+        ids.add(USE_LOADED_MODEL_ALIAS)
         ids.add(loaded_path)
         basename = os.path.basename(loaded_path)
         if basename:
@@ -16863,6 +16829,7 @@ async def _anthropic_model_info_list(
         if isinstance(payload, Mapping):
             entries.extend(_litellm_model_summaries_from_payload(payload))
 
+    entries.append(_current_loaded_model_entry())
     filtered, metadata = await _filter_model_list_for_profile(entries, auth_context)
     seen: set[str] = set()
     models: list[dict[str, Any]] = []
@@ -16955,6 +16922,23 @@ def _litellm_model_summaries_from_payload(payload: Mapping[str, Any]) -> list[di
     return summaries
 
 
+def _current_loaded_model_entry() -> dict[str, Any]:
+    return {
+        "id": USE_LOADED_MODEL_ALIAS,
+        "object": "model",
+        "created": int(time.time()),
+        "owned_by": "gateway",
+        "description": (
+            "Use the currently loaded local LLM without activating a backend "
+            "or swapping models."
+        ),
+        "capabilities": ["chat", "completion"],
+        "vivid_fish_alias": True,
+        "vivid_fish_current_loaded": True,
+        "vivid_fish_backend": "current",
+    }
+
+
 @app.get("/anthropic/v1/models")
 async def anthropic_models(request: Request):
     """Anthropic-compatible model list projected from the gateway catalog."""
@@ -17019,18 +17003,9 @@ async def list_models(request: Request):
         if isinstance(payload, dict):
             upstream_payload = payload
         else:
-            # This is what a user hits on a gateway with no model backend wired
-            # yet (e.g. the LiteLLM sidecar isn't running). Their key IS valid —
-            # say so plainly, and point the operator at the fix, instead of
-            # leaking the internal "LiteLLM model discovery" jargon.
-            return openai_error_response(
-                "Your key is valid, but this gateway has no model backend "
-                "connected yet, so there are no models to list. Add a model "
-                "backend in Admin (or start the model service), then this call "
-                "returns your models.",
-                status_code=503,
-                error_type="service_unavailable",
-                code="backend_unavailable",
+            upstream_payload["vivid_fish_catalog_warning"] = (
+                "LLM model catalog is temporarily unavailable; gateway-native "
+                "aliases and workflows may still be listed."
             )
 
     data = upstream_payload.get("data")
@@ -17053,6 +17028,10 @@ async def list_models(request: Request):
 
     workflow_entries = _build_workflow_model_entries()
     existing_ids = {item.get("id") for item in data if isinstance(item, dict)}
+    current_entry = _current_loaded_model_entry()
+    if current_entry["id"] not in existing_ids:
+        data.insert(0, current_entry)
+        existing_ids.add(current_entry["id"])
     for entry in workflow_entries:
         if entry["id"] not in existing_ids:
             data.insert(0, entry)
@@ -17922,6 +17901,7 @@ async def _ollama_model_catalog_summaries(
     request: Request | None,
     auth_context: AuthContext,
 ) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
     litellm_runtime = _litellm_runtime_config()
     if litellm_runtime.enabled and request is not None:
         payload = await _litellm_models_payload(
@@ -17929,16 +17909,13 @@ async def _ollama_model_catalog_summaries(
             auth_context,
             runtime_config=litellm_runtime,
         )
-        if not isinstance(payload, Mapping):
-            return []
-        filtered, _ = await _filter_model_list_for_profile(
-            _litellm_model_summaries_from_payload(payload),
-            auth_context,
-        )
-        await _annotate_model_context_windows(filtered)
-        return filtered
+        if isinstance(payload, Mapping):
+            entries.extend(_litellm_model_summaries_from_payload(payload))
 
-    return []
+    entries.append(_current_loaded_model_entry())
+    filtered, _ = await _filter_model_list_for_profile(entries, auth_context)
+    await _annotate_model_context_windows(filtered)
+    return filtered
 
 
 def _ollama_summary_matches_model(summary: Mapping[str, Any], model: str) -> bool:
@@ -18875,6 +18852,177 @@ def _record_litellm_route_receipt(receipt: RouteReceipt) -> None:
         print(f"[proxy] Could not record LiteLLM route receipt: {e}", flush=True)
 
 
+def _forward_query_without_client_api_key(raw_query: str) -> str:
+    if not raw_query:
+        return ""
+    pairs = [
+        (key, value)
+        for key, value in parse_qsl(raw_query, keep_blank_values=True)
+        if key != "api_key"
+    ]
+    return urlencode(pairs)
+
+
+async def _forward_current_loaded_openai_request(
+    request: Request,
+    *,
+    request_path: str,
+    auth_context: AuthContext,
+    body_json: Mapping[str, Any],
+) -> Response:
+    target, target_error = await _current_loaded_llm_target(auth_context)
+    if target_error is not None:
+        return target_error
+    assert target is not None
+
+    body_for_backend: Mapping[str, Any] = body_json
+    if request_path == "/v1/chat/completions":
+        try:
+            extension_result = validate_chat_completions_extensions(body_json)
+        except ExtensionError as e:
+            return _extension_validation_error_response({"extensions": str(e)})
+        if not extension_result.ok:
+            return _extension_validation_error_response(extension_result.rejected)
+        body_for_backend = extension_result.request
+
+    body = copy.deepcopy(dict(body_for_backend))
+    body.pop("_vf_requested_model", None)
+    body["model"] = target.model
+
+    if request_path == "/v1/chat/completions":
+        reasoning_error = _Qwen3ThinkingTransform().apply(body)
+        if reasoning_error:
+            return Response(
+                content=json.dumps({"error": {
+                    "message": reasoning_error,
+                    "type": "invalid_request_error",
+                    "param": "reasoning_effort",
+                    "code": "invalid_value",
+                }}),
+                status_code=400,
+                media_type="application/json",
+            )
+
+    query = _forward_query_without_client_api_key(request.url.query)
+    url = f"{target.host}{request_path}"
+    if query:
+        url = f"{url}?{query}"
+
+    headers = prepare_downstream_headers(
+        request.headers,
+        auth_context,
+        target.backend,
+        request_path,
+    )
+    headers.setdefault("content-type", "application/json")
+    headers.setdefault("accept", "application/json")
+
+    execution_request = LlmExecutionRequest(
+        method=request.method,
+        url=url,
+        headers=headers,
+        body=json.dumps(body).encode(),
+        read_timeout=UPSTREAM_READ_TIMEOUT,
+    )
+
+    try:
+        client, resp = await send_llm_execution_request(execution_request)
+        content_type = resp.headers.get("content-type", "") or "application/json"
+        excluded = ("content-length", "transfer-encoding", "content-type")
+        response_headers = {
+            k: v for k, v in resp.headers.items() if k.lower() not in excluded
+        }
+        response_headers["X-AI-Gateway-LLM-Execution"] = "current-loaded"
+        response_headers["X-AI-Gateway-Backend"] = target.backend
+        response_headers["X-AI-Gateway-Resolved-Model"] = target.model
+
+        _tc_backend_hint = _toolcall_backend_hint(target.backend)
+        _tc_had_tools = (
+            request_path == "/v1/chat/completions"
+            and _request_had_tools(body)
+        )
+
+        if "text/event-stream" in content_type:
+            _tc_detector = _ToolcallStreamDetector(
+                had_tools=_tc_had_tools,
+                backend_hint=_tc_backend_hint,
+            )
+
+            async def stream_response():
+                try:
+                    async for chunk in _tc_detector.wrap(resp.aiter_bytes()):
+                        if request_path == "/v1/chat/completions":
+                            chunk = _normalize_chat_completion_sse_chunk(chunk)
+                        yield chunk
+                finally:
+                    _tc_advisory = _tc_detector.advisory()
+                    if _tc_advisory:
+                        import logging as _logging
+                        _logging.getLogger("gateway.toolcall").warning(
+                            "event=toolcall.unlifted backend=%s family=%s remediation=%r",
+                            _tc_backend_hint,
+                            _tc_detector.detected_family,
+                            _tc_advisory,
+                        )
+                    await resp.aclose()
+                    await client.aclose()
+
+            return StreamingResponse(
+                stream_response(),
+                status_code=resp.status_code,
+                headers=response_headers,
+                media_type=content_type,
+            )
+
+        content = await resp.aread()
+        await resp.aclose()
+        await client.aclose()
+        if "application/json" in content_type:
+            try:
+                response_json = json.loads(content)
+                if isinstance(response_json, dict):
+                    if 200 <= resp.status_code < 300 and request_path == "/v1/chat/completions":
+                        _normalize_chat_completion_payload(response_json)
+                        _normalize_toolcall_args(response_json)
+                        _normalize_toolcall_finish_reason(response_json)
+                        _tc_family = _detect_unlifted_toolcalls(response_json, _tc_had_tools)
+                        if _tc_family:
+                            _tc_advisory = _toolcall_advisory_for_backend(_tc_backend_hint, _tc_family)
+                            import logging as _logging
+                            _logging.getLogger("gateway.toolcall").warning(
+                                "event=toolcall.unlifted backend=%s family=%s remediation=%r",
+                                _tc_backend_hint,
+                                _tc_family,
+                                _tc_advisory,
+                            )
+                            response_headers["x-gateway-toolcall-advisory"] = _tc_advisory
+                    content = json.dumps(response_json).encode()
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+        return Response(
+            content=content,
+            status_code=resp.status_code,
+            headers=response_headers,
+            media_type=content_type,
+        )
+    except httpx.TimeoutException:
+        return openai_error_response(
+            "Current loaded LLM request timed out.",
+            status_code=504,
+            error_type="api_error",
+            code="timeout",
+        )
+    except httpx.ConnectError:
+        response = openai_error_response(
+            f"Active backend {target.backend!r} is unavailable.",
+            status_code=503,
+            error_type="service_unavailable",
+            code="backend_unavailable",
+        )
+        response.headers["Retry-After"] = "10"
+        return response
+
+
 async def _forward_litellm_proxy_request(
     request: Request,
     *,
@@ -18893,18 +19041,10 @@ async def _forward_litellm_proxy_request(
             code="missing_required_parameter",
         )
 
-    # The "current" alias rewrites body["model"] to a route group but stashes the
-    # original under a private key. Recover it so policy/receipts see the alias the
-    # caller actually sent; strip the private key so LiteLLM never sees it.
-    requested_model_name = model_name
-    if isinstance(body_json, Mapping) and body_json.get("_vf_requested_model"):
-        requested_model_name = str(body_json["_vf_requested_model"])
-        body_json = {k: v for k, v in body_json.items() if k != "_vf_requested_model"}
-
     if _profile_target_activation(auth_context) == "existing_only":
         current_loaded_decision = await _current_loaded_model_policy_decision(
             auth_context,
-            requested_model=requested_model_name,
+            requested_model=model_name,
         )
         if current_loaded_decision is not None and current_loaded_decision.denied:
             return _policy_denied_response(current_loaded_decision)
@@ -18916,7 +19056,7 @@ async def _forward_litellm_proxy_request(
     receipt = _start_litellm_route_receipt(
         request_path=request_path,
         auth_context=auth_context,
-        requested_model=requested_model_name,
+        requested_model=model_name,
     )
     body_for_litellm = body_json
     if request_path == "/v1/chat/completions":
@@ -19126,6 +19266,17 @@ async def _handle_openai_litellm_request(
         )
         if policy_decision is not None and policy_decision.denied:
             return _policy_denied_response(policy_decision)
+
+    if (
+        request_path in {"/v1/chat/completions", "/v1/completions"}
+        and _is_use_loaded_model_alias(parsed_body.get("model"))
+    ):
+        return await _forward_current_loaded_openai_request(
+            request,
+            request_path=request_path,
+            auth_context=auth_context,
+            body_json=parsed_body,
+        )
 
     litellm_runtime = _litellm_runtime_config()
     litellm_body: Mapping[str, Any] = parsed_body
@@ -19705,6 +19856,20 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         state.update_activity()
 
     body_peek = await request.body()
+    if (
+        request.method.upper() in {"POST", "PUT", "PATCH"}
+        and any(request_path.startswith(p) for p in MODEL_REQUIRED_PATHS)
+    ):
+        parsed_body, parse_error = parse_openai_json_body(body_peek)
+        if parse_error is not None:
+            return parse_error
+        if _is_use_loaded_model_alias(parsed_body.get("model")):
+            return await _forward_current_loaded_openai_request(
+                request,
+                request_path=request_path,
+                auth_context=auth_context,
+                body_json=parsed_body,
+            )
 
     # Registry-aware backend selection for the catch-all native route.
     # Prefer tabby when it exists and is enabled (zero behavior change for
@@ -19775,14 +19940,6 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             url += f"?{urlencode(_fwd_qs)}"
 
     body = body_peek  # Already read above for model detection
-    # "current" alias on the native path: rewrite to the loaded model id (no-op
-    # for every other request). Keeps the use-loaded feature working for backends
-    # that bypass LiteLLM.
-    body, _use_loaded_err = await _rewrite_native_use_loaded_model_body(
-        body, target_host=target_host
-    )
-    if _use_loaded_err is not None:
-        return _use_loaded_err
     # backend_for_host resolves known hosts; for an unknown host (shouldn't
     # happen given the registry-derived target above) we fall back to the
     # highest-priority chat backend id rather than a bare literal.

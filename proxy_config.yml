@@ -51,6 +51,14 @@ backends:
         upstream_model: Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
+      # Same GGUF as default; the matching roles.default-fast entry adds
+      # reasoning_effort:none (thinking off). Registered here so LiteLLM accepts
+      # the model name and it appears in /v1/models for header-less clients.
+      - id: default-fast
+        model_group: default-fast
+        upstream_model: Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
+        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
       - id: rp
         model_group: rp
         upstream_model: Huihui-Qwen3.6-27B-abliterated-UD-Q4_K_XL-MTP.gguf
@@ -178,6 +186,23 @@ roles:
     description: Default LLM (Qwen3.6-27B UD-Q4_K_XL MTP via BeeLlama on :5051)
     # Qwen3.6 thinking mode for coding — from official Qwen team recommendations
     sampling:
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
+  # Same model as `default`, reasoning OFF — for latency-sensitive or header-less
+  # clients (e.g. dictation cleanup) that can only pick a model name. The
+  # intent-level `reasoning_effort: none` routes onto the no-think path (the Qwen
+  # chat transform turns it into thinking-off), cutting a short call from ~8s to ~1s.
+  default-fast:
+    backend: kobold
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
+    description: Default LLM, reasoning off (low-latency)
+    sampling:
+      reasoning_effort: none
       temperature: 0.6
       top_p: 0.95
       top_k: 20
