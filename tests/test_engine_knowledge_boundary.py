@@ -241,22 +241,12 @@ _ENGINE_FLAG_LITERALS: list[str] = [
 ]
 
 # Allowlisted until D-3 migration cuts advisory_for_backend.
-_ENGINE_FLAG_ALLOWLIST: dict[tuple[str, int], str] = {
-    ("gateway/toolcall_detection.py", 101):
-        "D-3 pending: vllm advisory --tool-call-parser flag — cut when D-3 done",
-    ("gateway/toolcall_detection.py", 107):
-        "D-3 pending: sglang advisory --tool-call-parser flag — cut when D-3 done",
-    ("gateway/toolcall_detection.py", 113):
-        "D-3 pending: llama-cpp-python advisory --chat_format / chatml flag — cut when D-3 done",
-    ("gateway/toolcall_detection.py", 114):
-        "D-3 pending: llama-cpp-python advisory chatml-function-calling literal — cut when D-3 done",
-    ("gateway/toolcall_detection.py", 120):
-        "D-3 pending: llama-server advisory --jinja flag — cut when D-3 done",
-    ("gateway/toolcall_detection.py", 135):
-        "D-3 pending: generic fallback advisory --tool-call-parser — cut when D-3 done",
-    ("gateway/toolcall_detection.py", 136):
-        "D-3 pending: generic fallback advisory --jinja literal — cut when D-3 done",
-}
+# EMPTY by design. Decision D-3 (cut the per-engine advisory flags) is DONE:
+# advisory_for_backend is now engine-agnostic and contains zero CLI flag
+# literals. Any new engine CLI flag appearing in a core file is a real
+# boundary violation — do NOT add an allowlist entry to silence it; remove the
+# flag (it belongs in an operator-authored service-config field, as data).
+_ENGINE_FLAG_ALLOWLIST: dict[tuple[str, int], str] = {}
 
 
 def _check_engine_flag_literals() -> list[str]:

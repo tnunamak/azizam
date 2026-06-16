@@ -207,60 +207,57 @@ class TestDetectUnliftedToolcalls:
 # ---------------------------------------------------------------------------
 
 class TestAdvisoryForBackend:
-    def test_vllm_hermes(self) -> None:
+    """The advisory is ENGINE-AGNOSTIC (ENGINE_KNOWLEDGE_BOUNDARY.md): it carries
+    the detected family (data, from the marker table) + a generic instruction,
+    and NEVER per-engine CLI flags (which churn and are the maintenance treadmill).
+    Exact backend flags, if wanted, come from an operator-authored data field."""
+
+    # Engine CLI flags that must NEVER appear in the gateway's own advisory text.
+    _FORBIDDEN_FLAGS = (
+        "--tool-call-parser",
+        "--enable-auto-tool-choice",
+        "--chat_format",
+        "--jinja",
+        "chatml-function-calling",
+    )
+
+    def test_advisory_states_detected_family_and_generic_fix(self) -> None:
         msg = advisory_for_backend("vllm", "hermes_or_qwen")
-        assert "vllm" in msg.lower()
-        assert "--tool-call-parser hermes" in msg
-        assert "--enable-auto-tool-choice" in msg
-        assert "docs.vllm.ai" in msg
+        assert "hermes_or_qwen" in msg          # detected family (data) is surfaced
+        assert "tool_calls" in msg              # names the missing structured field
+        assert "configuration" in msg.lower() or "config" in msg.lower()
+        assert "vllm" in msg.lower()            # backend label included for context
 
-    def test_vllm_mistral(self) -> None:
-        msg = advisory_for_backend("vllm", "mistral")
-        assert "--tool-call-parser mistral" in msg
+    def test_advisory_carries_no_engine_cli_flags(self) -> None:
+        # Across every backend hint and every detected family, the gateway's own
+        # advisory must contain ZERO engine-specific CLI flags.
+        for hint in ("vllm", "sglang", "llamacpp", "llama-server", "llama-cpp-python",
+                     "ollama", "tabbyapi", "koboldcpp", "my-custom-server", ""):
+            for _, family in TOOLCALL_MARKERS:
+                msg = advisory_for_backend(hint, family)
+                for flag in self._FORBIDDEN_FLAGS:
+                    assert flag not in msg, (
+                        f"engine CLI flag {flag!r} leaked into advisory for "
+                        f"{hint!r}/{family!r}: {msg!r}"
+                    )
 
-    def test_vllm_llama3(self) -> None:
-        msg = advisory_for_backend("vllm", "llama3")
-        assert "--tool-call-parser llama3" in msg
+    def test_operator_authored_advisory_is_appended(self) -> None:
+        # Exact per-backend remediation, when wanted, is supplied as DATA by the
+        # operator (a service-record field), never maintained as code.
+        custom = "Restart vLLM with --tool-call-parser hermes."
+        msg = advisory_for_backend("vllm", "hermes_or_qwen", operator_advisory=custom)
+        assert custom in msg
+        # ...and the generic base is still present.
+        assert "tool_calls" in msg
 
-    def test_sglang(self) -> None:
-        msg = advisory_for_backend("sglang", "hermes_or_qwen")
-        assert "--tool-call-parser hermes" in msg
-        assert "sglang" in msg.lower()
+    def test_no_operator_advisory_omits_specifics(self) -> None:
+        msg = advisory_for_backend("vllm", "hermes_or_qwen", operator_advisory=None)
+        assert "Restart vLLM" not in msg
 
-    def test_llamacpp(self) -> None:
-        msg = advisory_for_backend("llamacpp", "mistral")
-        assert "--jinja" in msg
-        assert "llama" in msg.lower()
-
-    def test_llama_server(self) -> None:
-        msg = advisory_for_backend("llama-server", "llama3")
-        assert "--jinja" in msg
-
-    def test_llama_cpp_python(self) -> None:
-        msg = advisory_for_backend("llama-cpp-python", "hermes_or_qwen")
-        assert "chatml-function-calling" in msg
-
-    def test_ollama_native_lifter(self) -> None:
-        msg = advisory_for_backend("ollama", "mistral")
-        assert "normally lifts" in msg
-
-    def test_tabbyapi_native_lifter(self) -> None:
-        msg = advisory_for_backend("tabbyapi", "hermes_or_qwen")
-        assert "normally lifts" in msg
-
-    def test_koboldcpp_native_lifter(self) -> None:
-        msg = advisory_for_backend("koboldcpp", "hermes_or_qwen")
-        assert "normally lifts" in msg
-
-    def test_generic_unknown(self) -> None:
+    def test_generic_unknown_backend(self) -> None:
         msg = advisory_for_backend("my-custom-server", "llama3")
-        assert "llama3" in msg.lower() or "tool-call-parser" in msg
+        assert "llama3" in msg.lower()
         assert len(msg) > 20
-
-    def test_vllm_preset_substring_match(self) -> None:
-        """Service named 'my-vllm-gpu-a100' should still match vllm advice."""
-        msg = advisory_for_backend("my-vllm-gpu-a100", "hermes_or_qwen")
-        assert "--tool-call-parser hermes" in msg
 
     def test_header_value_is_single_line(self) -> None:
         """Advisory must not contain newlines (used as a response header value)."""
@@ -417,7 +414,9 @@ class TestToolcallStreamDetector:
         ]
         advisory = self._run(chunks, had_tools=True, backend="vllm")
         assert advisory is not None
-        assert "--tool-call-parser" in advisory
+        # The detected family (data) is surfaced; no engine CLI flag.
+        assert "hermes_or_qwen" in advisory
+        assert "--tool-call-parser" not in advisory
 
     def test_detects_mistral_marker(self) -> None:
         chunks = [
@@ -486,16 +485,22 @@ class TestToolcallStreamDetector:
         ]
         advisory = self._run(chunks, had_tools=True, backend="llamacpp")
         assert advisory is not None
-        assert "--jinja" in advisory
+        # Split marker was reassembled and the family detected; engine-agnostic.
+        assert "llama3" in advisory
+        assert "--jinja" not in advisory
 
-    def test_advisory_backend_mapping_in_stream(self) -> None:
-        """Stream advisory carries the correct per-backend remediation."""
+    def test_stream_advisory_is_engine_agnostic(self) -> None:
+        """Stream advisory surfaces the detected family + backend label, never an
+        engine CLI flag (ENGINE_KNOWLEDGE_BOUNDARY.md)."""
         chunks = [
             _sse_chunk(_payload(_delta_choice(content="<tool_call>{}</tool_call>"))),
             b"data: [DONE]\n\n",
         ]
         advisory = self._run(chunks, had_tools=True, backend="llamacpp")
-        assert "--jinja" in advisory
+        assert advisory is not None
+        assert "llamacpp" in advisory.lower()
+        assert "--jinja" not in advisory
+        assert "--tool-call-parser" not in advisory
 
     def test_detected_family_accessible(self) -> None:
         chunks = [

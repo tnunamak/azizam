@@ -82,71 +82,37 @@ def _find_marker(content: str) -> str | None:
 #
 # Matching is case-insensitive substring so "my-vllm-gpu" still hits "vllm".
 
-def advisory_for_backend(backend_hint: str, family: str) -> str:
-    """Return the exact remediation string for (backend, family).
+def advisory_for_backend(
+    backend_hint: str, family: str, operator_advisory: str | None = None
+) -> str:
+    """Return a generic remediation string for a backend that emitted tool-call
+    text without lifting it into ``tool_calls``.
 
-    ``backend_hint`` should be the preset or service-id string.  ``family`` is
-    the name from TOOLCALL_MARKERS (e.g. ``"hermes_or_qwen"``, ``"mistral"``).
+    Engine-agnostic by design (ENGINE_KNOWLEDGE_BOUNDARY.md). The gateway does
+    NOT carry per-engine remediation flags — those churn as engines change and
+    are the maintenance treadmill the boundary forbids. The durable, data-driven
+    value here is the *detected family* (from the marker table) plus the honest
+    observation that the backend isn't structuring tool calls. If an operator
+    wants an exact, backend-specific instruction, they author it as DATA: a
+    ``tool_call_advisory`` string field on the service record, passed in as
+    ``operator_advisory`` — never as code we maintain.
+
+    ``family`` is the detected name from TOOLCALL_MARKERS (data). ``backend_hint``
+    is included only as a label so the operator knows which backend it was.
     """
-    hint = (backend_hint or "").lower()
     fam = family or "unknown"
-
-    # Family label used in parser flags (vLLM / SGLang accept these names).
-    parser_fam = _parser_family(fam)
-
-    if "vllm" in hint:
-        return (
-            f"Detected {fam}-format tool calls in content but tool_calls is empty. "
-            f"This vLLM backend is missing tool-call parsing. "
-            f"Restart vLLM with: --enable-auto-tool-choice --tool-call-parser {parser_fam}. "
-            f"Docs: https://docs.vllm.ai/en/latest/features/tool_calling.html"
-        )
-    if "sglang" in hint:
-        return (
-            f"Detected {fam}-format tool calls in content but tool_calls is empty. "
-            f"Restart SGLang with: --tool-call-parser {parser_fam}. "
-            f"Docs: https://docs.sglang.ai/backend/openai_api_completions.html"
-        )
-    if "llama-cpp-python" in hint or "llama_cpp_python" in hint:
-        return (
-            f"Detected {fam}-format tool calls in content but tool_calls is empty. "
-            f"Restart llama-cpp-python server with: --chat_format chatml-function-calling "
-            f"(or a functionary format). "
-            f"Docs: https://github.com/abetlen/llama-cpp-python"
-        )
-    if "llamacpp" in hint or "llama.cpp" in hint or "llama-server" in hint:
-        return (
-            f"Detected {fam}-format tool calls in content but tool_calls is empty. "
-            f"Restart llama-server with: --jinja. "
-            f"Docs: https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md"
-        )
-    # Backends that should already lift natively.
-    for known_lifter in ("ollama", "lmstudio", "lm-studio", "tgi", "tabbyapi", "tabby", "koboldcpp", "kobold"):
-        if known_lifter in hint:
-            return (
-                f"Detected {fam}-format tool calls in content but tool_calls is empty. "
-                f"This backend ({backend_hint}) normally lifts tool calls automatically. "
-                f"Check your backend version and that the model's chat template supports tools."
-            )
-    # Generic / unknown.
-    return (
-        f"Detected {fam}-format tool calls in content but tool_calls is empty. "
-        f"Your backend is not lifting tool calls to the tool_calls field. "
-        f"If it is vLLM or SGLang, add: --tool-call-parser {parser_fam} --enable-auto-tool-choice. "
-        f"If it is llama.cpp / llama-server, add: --jinja."
+    base = (
+        f"Detected {fam}-format tool calls in the response content, but tool_calls "
+        f"is empty — this backend"
+        + (f" ({backend_hint})" if backend_hint else "")
+        + " is not lifting tool calls into the OpenAI tool_calls field. Enable "
+        "tool-call parsing in the backend's own configuration (most OpenAI-"
+        "compatible servers have a flag or template setting for this), and confirm "
+        "the loaded model's chat template supports tools."
     )
-
-
-def _parser_family(family: str) -> str:
-    """Map our family names to the flag values vLLM/SGLang accept."""
-    _MAP = {
-        "hermes_or_qwen": "hermes",   # advise hermes; operator checks model
-        "mistral": "mistral",
-        "llama3": "llama3",
-        "gemma": "gemma",
-        "command_r": "command-r",
-    }
-    return _MAP.get(family, family)
+    if operator_advisory:
+        return f"{base} {operator_advisory.strip()}"
+    return base
 
 
 # ---------------------------------------------------------------------------
