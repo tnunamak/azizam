@@ -1279,6 +1279,16 @@ if tokens_file and tokens_file.exists():
         elif line.startswith("api_key:") and not API_KEY:
             API_KEY = line.split(":", 1)[1].strip()
 
+# Publish the resolved keys under their configured env names so the generic,
+# data-driven downstream auth path (auth_inject's `secret_env`) can resolve
+# them — including this api_tokens.yml fallback. Without this, a deployment that
+# supplies the keys ONLY via api_tokens.yml (env vars unset) would inject no
+# downstream auth. setdefault: never clobber an explicitly-set env var.
+if ADMIN_KEY:
+    os.environ.setdefault(TABBY_ADMIN_KEY_ENV, ADMIN_KEY)
+if API_KEY:
+    os.environ.setdefault(TABBY_API_KEY_ENV, API_KEY)
+
 
 # =============================================================================
 # Proxy auth
@@ -2214,18 +2224,75 @@ def configured_downstream_headers(auth_context: AuthContext, service: str) -> di
     return headers
 
 
-def apply_tabby_auth(headers: dict, auth_context: AuthContext, request_path: str):
-    service_cfg = service_auth_config(auth_context, "tabby")
-    api_key = downstream_secret(service_cfg, "api_key", API_KEY)
-    admin_key = downstream_secret(service_cfg, "admin_key", ADMIN_KEY)
-    needs_admin = request_path in ["/v1/models", "/v1/model/list"]
+def _path_matches(request_path: str, patterns) -> bool:
+    """A rule with no `paths` matches everything; otherwise exact-path match.
 
-    if needs_admin and admin_key:
-        headers["x-admin-key"] = admin_key
+    Kept deliberately simple (exact paths) — that is all any current backend
+    needs. A pattern list is operator data, so richer matching can be added
+    without touching call sites if a backend ever requires it.
+    """
+    if not patterns:
+        return True
+    return request_path in patterns
+
+
+def _resolve_inject_secret(service_cfg: dict, rule: Mapping) -> str:
+    """Resolve the secret value for one auth_inject rule.
+
+    Resolution order (all DATA — no hardcoded engine secret):
+      1. `secret`: a downstream_secret name — looks up `service_cfg[name]` then
+         `service_cfg[name_env]` (the per-identity downstream config).
+      2. `secret_env`: an environment variable name to read directly. This is
+         the deployment-wide fallback (e.g. the gateway's own TABBY_ADMIN_KEY),
+         used when the identity carries no per-user key — exactly what the old
+         hardcoded tabby auth did, now expressed as config.
+    """
+    secret_name = rule.get("secret")
+    if secret_name:
+        value = downstream_secret(service_cfg, str(secret_name))
+        if value:
+            return value
+    secret_env = rule.get("secret_env")
+    if secret_env:
+        return os.environ.get(str(secret_env), "")
+    return ""
+
+
+def apply_auth_inject(headers: dict, service_cfg: dict, request_path: str):
+    """Inject downstream auth headers from the service's `auth_inject` DATA.
+
+    `service_cfg["auth_inject"]` is a list of rules, first-match-wins:
+
+        auth_inject:
+          - paths: ["/v1/models", "/v1/model/list"]   # omit = matches all paths
+            header: x-admin-key
+            secret: admin_key            # per-identity downstream secret name…
+            secret_env: TABBY_ADMIN_KEY  # …falling back to this env var
+          - header: x-api-key
+            secret: api_key
+            secret_env: TABBY_API_KEY
+
+    For each request, the first rule whose `paths` match (and whose resolved
+    secret is non-empty) sets its header, then injection stops. This expresses
+    per-backend auth quirks (e.g. an admin key required only for model-list
+    endpoints) as operator-authored config — no engine name appears in code.
+    """
+    rules = service_cfg.get("auth_inject")
+    if not isinstance(rules, (list, tuple)):
         return
 
-    if api_key:
-        headers["x-api-key"] = api_key
+    for rule in rules:
+        if not isinstance(rule, Mapping):
+            continue
+        if not _path_matches(request_path, rule.get("paths")):
+            continue
+        header_name = rule.get("header")
+        if not header_name:
+            continue
+        value = _resolve_inject_secret(service_cfg, rule)
+        if value:
+            headers[str(header_name)] = value
+            return
 
 
 def prepare_downstream_headers(
@@ -2246,8 +2313,17 @@ def prepare_downstream_headers(
     service_cfg = service_auth_config(auth_context, service)
     apply_configured_downstream_headers(headers, service_cfg)
 
-    if service == "tabby":
-        apply_tabby_auth(headers, auth_context, request_path)
+    # auth_inject is a property of the BACKEND (e.g. "this engine needs an admin
+    # key for model-list endpoints"), not of each identity — so fall back to the
+    # backend's declared auth_inject when the identity doesn't set its own. This
+    # is what makes downstream auth work for every caller (incl. anonymous), as
+    # the old hardcoded tabby auth did, but now from DATA.
+    inject_cfg = service_cfg
+    if not service_cfg.get("auth_inject"):
+        backend_inject = (config.get("backends") or {}).get(service, {}).get("auth_inject")
+        if backend_inject:
+            inject_cfg = {**service_cfg, "auth_inject": backend_inject}
+    apply_auth_inject(headers, inject_cfg, request_path)
 
     return headers
 
@@ -19281,9 +19357,13 @@ def _provider_native_downstream_auth_classes(
         auth_classes.add("admin_key")
     if isinstance(service_cfg.get("headers"), Mapping) and service_cfg.get("headers"):
         auth_classes.add("configured_headers")
-    if service == "tabby" and (API_KEY or ADMIN_KEY):
-        auth_classes.add("api_key")
-        auth_classes.add("admin_key")
+    # Each auth_inject rule names a downstream secret it injects; report that
+    # secret as an auth class (DATA-driven — no engine name in code).
+    rules = service_cfg.get("auth_inject")
+    if isinstance(rules, (list, tuple)):
+        for rule in rules:
+            if isinstance(rule, Mapping) and rule.get("secret"):
+                auth_classes.add(str(rule["secret"]))
     return sorted(auth_classes)
 
 

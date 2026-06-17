@@ -22,6 +22,17 @@ backends:
     port: 5050
     model_id: qwen3-vl-30b
     health_endpoint: /v1/models
+    # Downstream auth injection (DATA — replaces the old hardcoded apply_tabby_auth):
+    # TabbyAPI wants the admin key for model-list endpoints, the api key otherwise.
+    # First matching rule wins; secret resolves per-identity, falling back to env.
+    auth_inject:
+      - paths: ["/v1/models", "/v1/model/list"]
+        header: x-admin-key
+        secret: admin_key
+        secret_env: TABBY_ADMIN_KEY
+      - header: x-api-key
+        secret: api_key
+        secret_env: TABBY_API_KEY
     load_timeout: 300
     idle_timeout: 0
     role: standby

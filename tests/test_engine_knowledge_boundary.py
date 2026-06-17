@@ -129,8 +129,6 @@ _ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, str], str] = {
     # -------------------------------------------------------------------
     ("proxy.py", 'if backend == "kobold":'):
         "Bucket B: local-swap kobold branch — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'if service == "tabby":'):
-        "Bucket B: local-swap service tabby check — deployment-pattern, not engine knowledge",
     ("proxy.py", 'return DEFAULT_MODEL if backend == "tabby" else None'):
         "Bucket B: local-swap default model tabby — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if backend == "tabby" and not activation_model:'):
@@ -147,8 +145,6 @@ _ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, str], str] = {
         "Bucket B: local-swap tabby loaded model check — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if active == "tabby":'):
         "Bucket B: local-swap active tabby check — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'if service == "tabby" and (API_KEY or ADMIN_KEY):'):
-        "Bucket B: local-swap tabby API key check — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if target_service == "tabby" and await tabby_backend_healthy():'):
         "Bucket B: local-swap tabby health re-probe on connect error — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if key in {"kobold", "tabby"}:'):
