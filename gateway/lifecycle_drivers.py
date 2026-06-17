@@ -502,6 +502,227 @@ class DockerDriver:
 
 
 # ---------------------------------------------------------------------------
+# CommandDriver — drive a service via operator-declared shell commands
+# ---------------------------------------------------------------------------
+
+class CommandDriver:
+    """Drive a backend via operator-declared start/stop/status commands.
+
+    The OS-agnostic, supervisor-agnostic escape hatch. The operator wraps
+    WHATEVER manages their process — systemd, supervisord, s6, runit, PM2, a
+    bare ``nohup``, a Windows ``sc``/``nssm``, even ``ssh host 'systemctl ...'``
+    for a remote engine — as plain commands in ``driver_config``. This driver
+    knows nothing about which supervisor it is talking to; it just runs the
+    commands the operator gave it. That is the whole point: it adds zero
+    engine- or OS-specific knowledge to the gateway (the binding principle —
+    track engines as DATA, never as CODE), yet covers every platform a single
+    coupled SystemdDriver could not.
+
+    driver_config keys (all DATA, operator-authored):
+      - ``start``  (required): command to start the service. String (parsed with
+        shlex) or an argv list. Run only when ``status`` reports not-running
+        (or when no ``status`` is given).
+      - ``stop``   (optional): command to stop the service. Used by stop().
+      - ``status`` (optional): command whose exit code 0 means "running",
+        non-zero means "not running". When absent, ensure_ready runs ``start``
+        unconditionally (it must be idempotent — most supervisor "start"/"up"
+        verbs are) and relies on the health poll for readiness.
+      - ``cwd``    (optional): working directory for the commands.
+      - ``env``    (optional): dict of extra environment variables (merged over
+        the current environment) for the commands.
+      - ``timeout_s`` (optional, default 30): per-command timeout.
+
+    Boundary: like ExternalDriver/DockerDriver this is a process-lifecycle
+    driver — it does NOT support model swap (no single-slot semantics), so
+    build_activation returns {} and supports_swap() is False for it.
+
+    Ownership: the operator (and their supervisor) own the process's existence
+    and crash-restart policy. The gateway only drives start/stop/status — it
+    never daemonizes, never owns a PID, never resurrects a crashed process. If
+    ``start`` backgrounds a process and the gateway exits, that process is the
+    supervisor's to manage, exactly as the operator configured.
+    """
+
+    _DEFAULT_CMD_TIMEOUT_S: float = 30.0
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
+        """Start the service (if status says it isn't running) then poll health."""
+        driver_cfg = self._driver_config(svc)
+        if not self._command(driver_cfg, "start"):
+            return False
+
+        running = await self._status_ok(driver_cfg)
+        if running is False:
+            started = await self._run(driver_cfg, "start")
+            if not started:
+                return False
+        # running is True  -> already up, skip start; just poll health.
+        # running is None   -> no status command; start already ran above only
+        #   if running is False, so when None we DID NOT start. Start now
+        #   (idempotently) since we cannot tell — most "start"/"up" verbs are
+        #   idempotent, and the health poll is the real readiness gate.
+        elif running is None:
+            started = await self._run(driver_cfg, "start")
+            if not started:
+                return False
+
+        return await _poll_health(svc, timeout_s)
+
+    def stop(self, svc: Mapping[str, Any]) -> None:
+        """Run the operator's stop command synchronously (best-effort)."""
+        driver_cfg = self._driver_config(svc)
+        argv = self._command(driver_cfg, "stop")
+        if not argv:
+            return
+        try:
+            subprocess.run(
+                argv,
+                cwd=driver_cfg.get("cwd") or None,
+                env=self._env(driver_cfg),
+                timeout=self._timeout(driver_cfg),
+                check=False,
+                capture_output=True,
+            )
+        except Exception:
+            pass  # best-effort; the operator's supervisor owns the process
+
+    async def status(self, svc: Mapping[str, Any]) -> str:
+        driver_cfg = self._driver_config(svc)
+        running = await self._status_ok(driver_cfg)
+        if running is None:
+            # No status command — fall back to a health probe for a useful answer.
+            ok = await _poll_health(svc, self._DEFAULT_CMD_TIMEOUT_S)
+            return ProcessState.RUNNING if ok else ProcessState.UNMANAGED
+        if running:
+            ok = await _poll_health(svc, 1.0)
+            return ProcessState.RUNNING if ok else ProcessState.STARTING
+        return ProcessState.STOPPED
+
+    async def health(self, svc: Mapping[str, Any]) -> str:
+        ok = await _poll_health(svc, 1.0)
+        return HealthState.HEALTHY if ok else HealthState.UNHEALTHY
+
+    async def preflight(self, svc: Mapping[str, Any]) -> Optional[str]:
+        """Read-only: confirm a start command is configured."""
+        driver_cfg = self._driver_config(svc)
+        if not self._command(driver_cfg, "start"):
+            return "command driver_config.start is required but not set"
+        return None
+
+    def build_activation(
+        self,
+        svc: Mapping[str, Any],
+        *,
+        model: str,
+        aux: Optional[str] = None,
+    ) -> Optional[dict]:
+        """No-op: CommandDriver does not support swap; returns empty dict."""
+        return {}
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _driver_config(svc: Mapping[str, Any]) -> Mapping[str, Any]:
+        lifecycle = svc.get("lifecycle") or {}
+        if isinstance(lifecycle, Mapping):
+            return lifecycle.get("driver_config") or {}
+        return {}
+
+    @staticmethod
+    def _command(driver_cfg: Mapping[str, Any], key: str) -> list[str]:
+        """Resolve a command from driver_config[key] into an argv list.
+
+        Accepts either a string (parsed with shlex.split — POSIX rules) or an
+        already-split argv list. Returns [] when the key is absent/empty.
+        No shell is ever invoked (shell=False), so operator commands are not
+        subject to shell-injection from interpolated values.
+        """
+        import shlex
+
+        raw = driver_cfg.get(key)
+        if not raw:
+            return []
+        if isinstance(raw, str):
+            return shlex.split(raw)
+        if isinstance(raw, (list, tuple)):
+            return [str(part) for part in raw]
+        return []
+
+    @classmethod
+    def _timeout(cls, driver_cfg: Mapping[str, Any]) -> float:
+        try:
+            return float(driver_cfg.get("timeout_s") or cls._DEFAULT_CMD_TIMEOUT_S)
+        except (TypeError, ValueError):
+            return cls._DEFAULT_CMD_TIMEOUT_S
+
+    @staticmethod
+    def _env(driver_cfg: Mapping[str, Any]) -> Optional[dict]:
+        extra = driver_cfg.get("env")
+        if not isinstance(extra, Mapping):
+            return None
+        merged = dict(os.environ)
+        merged.update({str(k): str(v) for k, v in extra.items()})
+        return merged
+
+    async def _status_ok(self, driver_cfg: Mapping[str, Any]) -> Optional[bool]:
+        """Return True/False if a status command is configured, else None.
+
+        True  = status command exited 0 (running).
+        False = status command exited non-zero (not running).
+        None  = no status command configured (caller decides).
+        """
+        argv = self._command(driver_cfg, "status")
+        if not argv:
+            return None
+
+        def _run_status() -> Optional[bool]:
+            try:
+                result = subprocess.run(
+                    argv,
+                    cwd=driver_cfg.get("cwd") or None,
+                    env=self._env(driver_cfg),
+                    timeout=self._timeout(driver_cfg),
+                    check=False,
+                    capture_output=True,
+                )
+                return result.returncode == 0
+            except Exception:
+                return None
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _run_status)
+
+    async def _run(self, driver_cfg: Mapping[str, Any], key: str) -> bool:
+        """Run the command at driver_config[key] in a thread; True iff exit 0."""
+        argv = self._command(driver_cfg, key)
+        if not argv:
+            return False
+
+        def _exec() -> bool:
+            try:
+                result = subprocess.run(
+                    argv,
+                    cwd=driver_cfg.get("cwd") or None,
+                    env=self._env(driver_cfg),
+                    timeout=self._timeout(driver_cfg),
+                    check=False,
+                    capture_output=True,
+                )
+                return result.returncode == 0
+            except Exception:
+                return False
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _exec)
+
+
+# ---------------------------------------------------------------------------
 # Params-provider registry (option A from LIFECYCLE_DRIVER_PORT.md §3.2)
 #
 # Maps a string name to a callable (svc) -> dict of extra load-body params.
@@ -1156,6 +1377,7 @@ class HttpLoadUnloadDriver:
 _DRIVER_MAP: dict[str, Any] = {
     "external":         ExternalDriver,
     "docker":           DockerDriver,
+    "command":          CommandDriver,
     "systemd":          SystemdDriver,
     "http-load-unload": HttpLoadUnloadDriver,
 }
@@ -1163,6 +1385,7 @@ _DRIVER_MAP: dict[str, Any] = {
 # Module-level singletons (stateless drivers; safe to share across calls)
 _external_driver           = ExternalDriver()
 _docker_driver             = DockerDriver()
+_command_driver            = CommandDriver()
 _systemd_driver            = SystemdDriver()
 _http_load_unload_driver   = HttpLoadUnloadDriver()
 
@@ -1203,6 +1426,8 @@ def driver_for_service(service_id: str, config_backends: Optional[Mapping[str, A
 
     if driver_name == "docker":
         return _docker_driver
+    if driver_name == "command":
+        return _command_driver
     if driver_name == "systemd":
         return _systemd_driver
     if driver_name == "http-load-unload":

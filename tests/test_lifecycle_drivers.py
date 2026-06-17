@@ -31,11 +31,13 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway.lifecycle_drivers import (
+    CommandDriver,
     DockerDriver,
     ExternalDriver,
     HealthState,
     ProcessState,
     driver_for_service,
+    supports_swap,
 )
 
 
@@ -547,6 +549,212 @@ class TestDockerDriver(unittest.TestCase):
 
         called_args = mock_run.call_args.args[0]
         self.assertEqual(called_args, ["docker", "stop", "my-container"])
+
+
+# ---------------------------------------------------------------------------
+# 5. CommandDriver — the OS-agnostic, supervisor-agnostic escape hatch
+# ---------------------------------------------------------------------------
+
+def _command_svc(
+    *,
+    start: Any = "supervisorctl start myengine",
+    stop: Any = None,
+    status: Any = None,
+    cwd: str | None = None,
+    env: dict | None = None,
+    timeout_s: Any = None,
+    port: int = 8080,
+) -> dict:
+    driver_config: dict[str, Any] = {"start": start}
+    if stop is not None:
+        driver_config["stop"] = stop
+    if status is not None:
+        driver_config["status"] = status
+    if cwd is not None:
+        driver_config["cwd"] = cwd
+    if env is not None:
+        driver_config["env"] = env
+    if timeout_s is not None:
+        driver_config["timeout_s"] = timeout_s
+    return {
+        "host": "127.0.0.1",
+        "port": port,
+        "health_endpoint": "/health",
+        "enabled": True,
+        "capabilities": ["chat", "completions"],
+        "lifecycle": {"driver": "command", "driver_config": driver_config},
+    }
+
+
+def _proc(returncode: int = 0) -> MagicMock:
+    m = MagicMock()
+    m.returncode = returncode
+    return m
+
+
+class TestCommandDriverResolution(unittest.TestCase):
+    """driver_for_service resolves 'command' to CommandDriver."""
+
+    def test_resolves_to_command_driver(self):
+        backends = {"myengine": _command_svc()}
+        driver = driver_for_service("myengine", config_backends=backends)
+        self.assertIsInstance(driver, CommandDriver)
+
+    def test_command_driver_does_not_support_swap(self):
+        """CommandDriver is a process-lifecycle driver, not a single-slot swapper."""
+        self.assertFalse(supports_swap(CommandDriver()))
+
+    def test_build_activation_is_noop(self):
+        self.assertEqual(
+            CommandDriver().build_activation(_command_svc(), model="x"), {}
+        )
+
+
+class TestCommandDriverEnsureReady(unittest.TestCase):
+    """ensure_ready orchestration: status-gate the start, then poll health."""
+
+    def setUp(self):
+        self.driver = CommandDriver()
+
+    def test_start_runs_when_status_says_stopped(self):
+        """status exits non-zero (stopped) -> start command runs, then health poll."""
+        svc = _command_svc(
+            start="sv up myengine", status="sv check myengine"
+        )
+        # status -> rc 1 (stopped); start -> rc 0
+        runs = [_proc(1), _proc(0)]
+        with patch("subprocess.run", side_effect=runs) as mock_run, \
+             patch("gateway.lifecycle_drivers._poll_health",
+                   new=AsyncMock(return_value=True)) as mock_poll:
+            ok = _run(self.driver.ensure_ready(svc, timeout_s=5.0))
+
+        self.assertTrue(ok)
+        # two subprocess calls: status then start
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(mock_run.call_args_list[0].args[0], ["sv", "check", "myengine"])
+        self.assertEqual(mock_run.call_args_list[1].args[0], ["sv", "up", "myengine"])
+        mock_poll.assert_awaited_once()
+
+    def test_start_skipped_when_status_says_running(self):
+        """status exits 0 (running) -> start is NOT run; just health-poll."""
+        svc = _command_svc(start="sv up myengine", status="sv check myengine")
+        with patch("subprocess.run", side_effect=[_proc(0)]) as mock_run, \
+             patch("gateway.lifecycle_drivers._poll_health",
+                   new=AsyncMock(return_value=True)):
+            ok = _run(self.driver.ensure_ready(svc, timeout_s=5.0))
+
+        self.assertTrue(ok)
+        # only the status check ran — no start
+        self.assertEqual(mock_run.call_count, 1)
+        self.assertEqual(mock_run.call_args_list[0].args[0], ["sv", "check", "myengine"])
+
+    def test_no_status_command_starts_idempotently(self):
+        """No status command -> start runs (idempotent), health poll decides ready."""
+        svc = _command_svc(start="systemctl --user start myengine")  # no status
+        with patch("subprocess.run", side_effect=[_proc(0)]) as mock_run, \
+             patch("gateway.lifecycle_drivers._poll_health",
+                   new=AsyncMock(return_value=True)):
+            ok = _run(self.driver.ensure_ready(svc, timeout_s=5.0))
+
+        self.assertTrue(ok)
+        self.assertEqual(mock_run.call_count, 1)
+        self.assertEqual(
+            mock_run.call_args_list[0].args[0],
+            ["systemctl", "--user", "start", "myengine"],
+        )
+
+    def test_start_failure_returns_false_without_polling(self):
+        """If the start command exits non-zero, ensure_ready returns False."""
+        svc = _command_svc(start="false")  # no status -> start runs, rc 1
+        with patch("subprocess.run", side_effect=[_proc(1)]), \
+             patch("gateway.lifecycle_drivers._poll_health",
+                   new=AsyncMock(return_value=True)) as mock_poll:
+            ok = _run(self.driver.ensure_ready(svc, timeout_s=5.0))
+
+        self.assertFalse(ok)
+        mock_poll.assert_not_awaited()
+
+    def test_missing_start_command_returns_false(self):
+        """A command service with no start command fails closed."""
+        svc = _command_svc()
+        svc["lifecycle"]["driver_config"] = {}  # strip start
+        with patch("subprocess.run") as mock_run:
+            ok = _run(self.driver.ensure_ready(svc, timeout_s=5.0))
+        self.assertFalse(ok)
+        mock_run.assert_not_called()
+
+
+class TestCommandDriverCommands(unittest.TestCase):
+    """Command parsing, stop, preflight, env/cwd, no-shell."""
+
+    def setUp(self):
+        self.driver = CommandDriver()
+
+    def test_string_command_is_shlex_split(self):
+        svc = _command_svc(start='nssm start "My Engine"', status="true")
+        with patch("subprocess.run", side_effect=[_proc(1), _proc(0)]) as mock_run, \
+             patch("gateway.lifecycle_drivers._poll_health",
+                   new=AsyncMock(return_value=True)):
+            _run(self.driver.ensure_ready(svc, timeout_s=1.0))
+        # shlex keeps the quoted arg as one token
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0], ["nssm", "start", "My Engine"]
+        )
+
+    def test_list_command_passed_through(self):
+        svc = _command_svc(start=["ssh", "box", "systemctl start eng"], status="true")
+        with patch("subprocess.run", side_effect=[_proc(1), _proc(0)]) as mock_run, \
+             patch("gateway.lifecycle_drivers._poll_health",
+                   new=AsyncMock(return_value=True)):
+            _run(self.driver.ensure_ready(svc, timeout_s=1.0))
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0],
+            ["ssh", "box", "systemctl start eng"],
+        )
+
+    def test_never_uses_shell(self):
+        """No subprocess.run call may pass shell=True (no shell-injection surface)."""
+        svc = _command_svc(start="start me", stop="stop me", status="check me")
+        with patch("subprocess.run", side_effect=[_proc(1), _proc(0)]) as mock_run, \
+             patch("gateway.lifecycle_drivers._poll_health",
+                   new=AsyncMock(return_value=True)):
+            _run(self.driver.ensure_ready(svc, timeout_s=1.0))
+        for c in mock_run.call_args_list:
+            self.assertNotIn("shell", c.kwargs)
+
+    def test_stop_runs_stop_command(self):
+        svc = _command_svc(start="x", stop="supervisorctl stop myengine")
+        with patch("subprocess.run", return_value=_proc(0)) as mock_run:
+            self.driver.stop(svc)
+        self.assertEqual(
+            mock_run.call_args.args[0], ["supervisorctl", "stop", "myengine"]
+        )
+
+    def test_stop_noop_when_no_stop_command(self):
+        svc = _command_svc(start="x")  # no stop
+        with patch("subprocess.run") as mock_run:
+            self.driver.stop(svc)
+        mock_run.assert_not_called()
+
+    def test_preflight_requires_start(self):
+        svc = _command_svc()
+        svc["lifecycle"]["driver_config"] = {}
+        self.assertIsNotNone(_run(self.driver.preflight(svc)))
+        self.assertIsNone(_run(self.driver.preflight(_command_svc())))
+
+    def test_cwd_and_env_passed_to_subprocess(self):
+        svc = _command_svc(
+            start="run", status="check", cwd="/opt/engine", env={"FOO": "bar"}
+        )
+        with patch("subprocess.run", side_effect=[_proc(1), _proc(0)]) as mock_run, \
+             patch("gateway.lifecycle_drivers._poll_health",
+                   new=AsyncMock(return_value=True)):
+            _run(self.driver.ensure_ready(svc, timeout_s=1.0))
+        start_call = mock_run.call_args_list[1]
+        self.assertEqual(start_call.kwargs.get("cwd"), "/opt/engine")
+        self.assertEqual(start_call.kwargs["env"]["FOO"], "bar")
+        # merged over the real environment, not a bare {FOO: bar}
+        self.assertIn("PATH", start_call.kwargs["env"])
 
 
 if __name__ == "__main__":
