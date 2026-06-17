@@ -405,6 +405,35 @@ def service_from_backend_config(
     source = source if source in SERVICE_SOURCES else "ui"
     name = str(raw.get("name") or service_id)
     capabilities = normalize_string_list(raw.get("capabilities"))
+    # `lifecycle` comes in two shapes:
+    #   - nested dict (proxy_config.yml form): {type, managed, service_name,
+    #     driver, driver_config} — the operator-authored lifecycle block. This is
+    #     what carries the driver + driver_config that drives swaps.
+    #   - scalar string (legacy flat form): the lifecycle *type*, with managed /
+    #     service_name as sibling keys on `raw`.
+    # Handle both so first-boot seeding from proxy_config.yml preserves the
+    # driver config (without this, a nested lifecycle was str()'d into `type`,
+    # destroying driver/driver_config and silently degrading swaps to external).
+    raw_lifecycle = raw.get("lifecycle")
+    if isinstance(raw_lifecycle, Mapping):
+        lifecycle_block = {
+            "type": str(raw_lifecycle.get("type") or "external"),
+            "managed": bool_from_config(
+                raw_lifecycle.get("managed", raw.get("managed")), False
+            ),
+            "service_name": str(
+                raw_lifecycle.get("service_name") or raw.get("service_name") or ""
+            ),
+            **({"driver": str(raw_lifecycle["driver"])} if raw_lifecycle.get("driver") else {}),
+            **({"driver_config": copy.deepcopy(dict(raw_lifecycle["driver_config"]))}
+               if isinstance(raw_lifecycle.get("driver_config"), Mapping) else {}),
+        }
+    else:
+        lifecycle_block = {
+            "type": str(raw_lifecycle or raw.get("lifecycle_type") or "external"),
+            "managed": bool_from_config(raw.get("managed"), False),
+            "service_name": str(raw.get("service_name") or ""),
+        }
     record = {
         "id": service_id,
         "name": name,
@@ -416,11 +445,7 @@ def service_from_backend_config(
         "capabilities": capabilities,
         "config": safe_config,
         "secret_refs": secret_refs,
-        "lifecycle": {
-            "type": str(raw.get("lifecycle") or raw.get("lifecycle_type") or "external"),
-            "managed": bool_from_config(raw.get("managed"), False),
-            "service_name": str(raw.get("service_name") or ""),
-        },
+        "lifecycle": lifecycle_block,
         "provenance": dict(provenance or {}),
     }
     # EDITABILITY LAW: editable is true for all records except managed-substrate

@@ -750,6 +750,77 @@ def test_added_service_without_models_is_inert() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Fresh-install reproducibility: a nested lifecycle block in proxy_config.yml
+# (driver + driver_config) must survive first-boot seeding so the swap path is
+# real for a brand-new operator — not just on a hand-seeded DB.
+# ---------------------------------------------------------------------------
+
+
+def test_nested_lifecycle_driver_survives_first_boot_seed() -> None:
+    """A backend declaring lifecycle.{driver,driver_config} in proxy_config.yml
+    must seed through build_service_registry_seed -> normalize -> runtime_backends
+    with the driver config intact, so driver_for_service resolves the right
+    driver on a fresh install.
+
+    Regression guard for the silent-degradation bug: service_from_backend_config
+    used to assume lifecycle was a scalar string and str()'d a nested dict into
+    `type`, destroying driver/driver_config — which silently degraded every swap
+    to ExternalDriver (a no-op) on any install that wasn't hand-seeded.
+    """
+    from gateway.lifecycle_drivers import driver_for_service
+
+    proxy_config = {
+        "backends": {
+            "kobold": {
+                "host": "127.0.0.1",
+                "port": 5051,
+                "lifecycle": {
+                    "type": "systemd",
+                    "managed": True,
+                    "service_name": "llama-bee.service",
+                    "driver": "systemd",
+                    "driver_config": {
+                        "unit": "llama-bee.service",
+                        "activation_env_keys": {"model": "LLAMA_BEE_MODEL"},
+                        "precheck": "gguf_path",
+                    },
+                },
+            },
+            "tabby": {
+                "host": "127.0.0.1",
+                "port": 5050,
+                "lifecycle": {
+                    "driver": "http-load-unload",
+                    "driver_config": {
+                        "load_url": "/v1/model/load",
+                        "unload_url": "/v1/model/unload",
+                    },
+                },
+            },
+        }
+    }
+
+    registry = service_registry.normalize_service_registry(
+        service_registry.build_service_registry_seed(proxy_config)
+    )
+    backends = service_registry.runtime_backends(registry)
+
+    # driver + driver_config preserved through the whole first-boot pipeline
+    kobold_lc = backends["kobold"]["lifecycle"]
+    assert kobold_lc["driver"] == "systemd"
+    assert kobold_lc["driver_config"]["activation_env_keys"] == {"model": "LLAMA_BEE_MODEL"}
+    assert kobold_lc["driver_config"]["precheck"] == "gguf_path"
+
+    tabby_lc = backends["tabby"]["lifecycle"]
+    assert tabby_lc["driver"] == "http-load-unload"
+    assert tabby_lc["driver_config"]["load_url"] == "/v1/model/load"
+
+    # ...and the resolver picks the right driver from the seeded backends
+    assert type(driver_for_service("kobold", backends)).__name__ == "SystemdDriver"
+    assert type(driver_for_service("tabby", backends)).__name__ == "HttpLoadUnloadDriver"
+
+
+# ---------------------------------------------------------------------------
 # Editability law: ensure_service_registry / backfill_seed_catalog_metadata
 # ---------------------------------------------------------------------------
 
