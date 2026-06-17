@@ -339,8 +339,14 @@ TABBY_HOST = f"http://{tabby_cfg.get('host', '127.0.0.1')}:{tabby_cfg.get('port'
 TABBY_HEALTH_ENDPOINT = tabby_cfg.get("health_endpoint", "/health")
 TABBY_LOAD_TIMEOUT = tabby_cfg.get("load_timeout", 300)
 TABBY_IDLE_TIMEOUT = int(os.environ.get("TABBY_IDLE_TIMEOUT", tabby_cfg.get("idle_timeout", 300)))
-TABBY_MANAGED = tabby_cfg.get("managed", True)
-TABBY_START_CMD = tabby_cfg.get("start_command", "")
+# The gateway never owns an engine's process existence (the binding principle:
+# it manages running and routing, never existence). Tabby's lifecycle —
+# start/stop/crash-restart — belongs to the operator's supervisor: a systemd
+# unit, a docker container, or a `command` LifecycleDriver. There is no
+# gateway-spawns-tabby mode anymore; `managed` is retained only as a
+# read-back-compatible no-op so an old config with `managed: true` still loads
+# (it simply has no effect — the gateway will not spawn a subprocess).
+TABBY_MANAGED = False  # process ownership removed; see CommandDriver / systemd
 
 # KoboldCpp backend
 kobold_cfg = config.get("backends", {}).get("kobold", {})
@@ -3558,8 +3564,9 @@ class ProxyState:
         self.load_failure_count = 0
         self.last_load_failure_time = 0
         self.last_load_error: Optional[str] = None
-
-        self.tabby_process: Optional[subprocess.Popen] = None
+        # NOTE: no tabby_process field — the gateway does not own engine
+        # processes (see the TABBY_MANAGED removal). Existence is the operator's
+        # supervisor's job (systemd / docker / CommandDriver).
         self.shutdown_requested = False
 
     def update_activity(self):
@@ -3593,74 +3600,11 @@ state = ProxyState()
 # TabbyAPI subprocess management
 # =============================================================================
 
-def start_tabby_process() -> subprocess.Popen:
-    """Start TabbyAPI as subprocess.
-
-    Requires AGW_TABBYAPI_DIR to be set; raises RuntimeError if not configured.
-    """
-    if not _tabbyapi_dir_env:
-        raise RuntimeError(
-            "AGW_TABBYAPI_DIR is not set; cannot start TabbyAPI as a subprocess. "
-            "Set AGW_TABBYAPI_DIR to the root of your TabbyAPI installation."
-        )
-    script_dir = Path(_tabbyapi_dir_env)
-    env = os.environ.copy()
-    env["LD_PRELOAD"] = "/usr/lib/x86_64-linux-gnu/libstdc++.so.6"
-    env["PYTORCH_ALLOC_CONF"] = "backend:native"
-
-    proc = subprocess.Popen(
-        [str(script_dir / "venv/bin/python"), "start.py"],
-        cwd=script_dir,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    print(f"[proxy] Started TabbyAPI subprocess (PID: {proc.pid})", flush=True)
-    return proc
-
-
-def stop_tabby_process():
-    """Stop TabbyAPI subprocess gracefully."""
-    if state.tabby_process and state.tabby_process.poll() is None:
-        print(f"[proxy] Stopping TabbyAPI (PID: {state.tabby_process.pid})...", flush=True)
-        state.tabby_process.terminate()
-        try:
-            state.tabby_process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            print(f"[proxy] Force killing TabbyAPI...", flush=True)
-            state.tabby_process.kill()
-            state.tabby_process.wait()
-        print(f"[proxy] TabbyAPI stopped", flush=True)
-
-
-def log_tabby_output():
-    """Thread to log TabbyAPI stdout."""
-    if not state.tabby_process or not state.tabby_process.stdout:
-        return
-    for line in iter(state.tabby_process.stdout.readline, b''):
-        if state.shutdown_requested:
-            break
-        try:
-            print(line.decode('utf-8', errors='replace'), end='', flush=True)
-        except:
-            pass
-
-
-async def wait_for_tabby_ready(timeout: int = 60) -> bool:
-    """Wait for TabbyAPI to be ready."""
-    start = time.time()
-    while time.time() - start < timeout:
-        if state.shutdown_requested:
-            return False
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{TABBY_HOST}/health", timeout=2)
-                if resp.status_code == 200:
-                    return True
-        except:
-            pass
-        await asyncio.sleep(1)
-    return False
+# Tabby process spawn/stop/log/wait-for-ready removed. The gateway no longer
+# owns tabby's existence — an operator who wants the gateway to *start* tabby
+# declares a `command` (or systemd/docker) LifecycleDriver on the tabby service;
+# crash-restart belongs to that supervisor. Readiness is observed via
+# check_tabby_health() / the driver's ensure_ready(), never by spawning here.
 
 
 async def probe_backend(
@@ -3732,9 +3676,6 @@ async def check_service_health(service_id: str) -> bool:
 
 async def check_tabby_health() -> bool:
     """Check if TabbyAPI is healthy."""
-    if TABBY_MANAGED and state.tabby_process:
-        if state.tabby_process.poll() is not None:
-            return False
     return await check_service_health("tabby")
 
 
@@ -3745,30 +3686,15 @@ async def check_embeddings_health() -> bool:
     return await check_service_health("embeddings")
 
 
-async def restart_tabby_if_needed() -> bool:
-    """Restart TabbyAPI if it crashed."""
-    if not TABBY_MANAGED:
-        return await check_tabby_health()
+async def tabby_backend_healthy() -> bool:
+    """Return True iff the tabby backend is reachable and healthy.
 
-    if state.tabby_process and state.tabby_process.poll() is None:
-        return True
-
-    if state.shutdown_requested:
-        return False
-
-    print(f"[proxy] TabbyAPI died, restarting...", flush=True)
-    stop_tabby_process()
-    state.tabby_process = start_tabby_process()
-    log_thread = threading.Thread(target=log_tabby_output, daemon=True)
-    log_thread.start()
-
-    if await wait_for_tabby_ready():
-        print(f"[proxy] TabbyAPI restarted successfully", flush=True)
-        state.reset_load_failures()
-        return True
-    else:
-        print(f"[proxy] TabbyAPI failed to restart", flush=True)
-        return False
+    The gateway no longer restarts engines — existence and crash-restart belong
+    to the operator's supervisor (systemd / docker / CommandDriver). This is a
+    pure health observation; callers decide what to do when it's False (e.g.
+    return 503 and let the supervisor bring tabby back).
+    """
+    return await check_tabby_health()
 
 
 # =============================================================================
@@ -8756,37 +8682,17 @@ async def maintenance_loop():
     is the active LLM is wrong and produces log spam.
 
     Responsibilities kept:
-      - When the proxy itself manages tabby as a child subprocess
-        (TABBY_MANAGED=True), restart it if it crashes. Throttled logging.
       - Idle-timeout unload of an in-process loaded tabby model.
-    """
-    # Throttle "TabbyAPI failed to restart" logging to once per failure-streak.
-    tabby_restart_failure_logged = False
 
+    The gateway never revives backends here: it does not own engine existence
+    (crash-restart belongs to the operator's supervisor — systemd / docker /
+    CommandDriver), and backend selection is request-driven via ensure_target.
+    """
     while not state.shutdown_requested:
         await asyncio.sleep(CHECK_INTERVAL)
 
         if state.shutdown_requested:
             break
-
-        # Only revive tabby if WE own its lifecycle (subprocess mode). When
-        # tabby runs as a separate systemd unit (managed: false), backend
-        # selection is request-driven via ensure_target — don't poll here.
-        if TABBY_MANAGED:
-            if not await check_tabby_health():
-                if await restart_tabby_if_needed():
-                    tabby_restart_failure_logged = False
-                else:
-                    if not tabby_restart_failure_logged:
-                        print(
-                            "[proxy] Failed to restart managed TabbyAPI subprocess; "
-                            "will keep trying silently. Investigate if this persists.",
-                            flush=True,
-                        )
-                        tabby_restart_failure_logged = True
-                continue
-            else:
-                tabby_restart_failure_logged = False
 
         # Check idle timeout (only meaningful when something is loaded on tabby)
         if state.model_loading or state.model_unloading:
@@ -8928,19 +8834,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] firehose replay failed: {e}", flush=True)
 
-    if TABBY_MANAGED:
-        print(f"[proxy] Starting TabbyAPI...", flush=True)
-        state.tabby_process = start_tabby_process()
-        log_thread = threading.Thread(target=log_tabby_output, daemon=True)
-        log_thread.start()
-
-        if not await wait_for_tabby_ready():
-            print(f"[proxy] ERROR: TabbyAPI failed to start", flush=True)
-            stop_tabby_process()
-            sys.exit(1)
-
-        print(f"[proxy] TabbyAPI ready", flush=True)
-
+    # The gateway does not start engines. Tabby is brought up by the operator's
+    # supervisor (systemd / docker / a `command` LifecycleDriver) and reached
+    # lazily via ensure_target on the first request that needs it.
     print(f"[proxy] Idle timeout: {TABBY_IDLE_TIMEOUT}s", flush=True)
     print(f"[proxy] Default model: {DEFAULT_MODEL}", flush=True)
 
@@ -9168,8 +9064,7 @@ async def lifespan(app: FastAPI):
             pass
         except Exception:
             pass
-    if TABBY_MANAGED:
-        stop_tabby_process()
+    # No engine processes to stop — the gateway never owned tabby's existence.
 
 
 app = FastAPI(lifespan=lifespan)
@@ -20092,8 +19987,9 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         if not await check_tabby_health():
             # Backend-native catch-all paths are service-specific. They never
             # fall through to Kobold because native Tabby/Kobold surfaces are
-            # not interchangeable.
-            if not await restart_tabby_if_needed():
+            # not interchangeable. The gateway does not revive tabby — return
+            # 503 and let the operator's supervisor bring it back.
+            if not await tabby_backend_healthy():
                 return Response(
                     content=json.dumps({
                         "error": {
@@ -20196,9 +20092,13 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             media_type="application/json"
         )
     except httpx.ConnectError:
-        if target_service == "tabby" and await restart_tabby_if_needed():
+        # A connect error can be a transient blip or the supervisor mid-restart.
+        # Re-probe health: if tabby is reachable again, tell the client to retry
+        # (503); otherwise it's a hard connection failure (502). The gateway does
+        # not restart tabby — its supervisor owns that.
+        if target_service == "tabby" and await tabby_backend_healthy():
             return Response(
-                content=json.dumps({"detail": "TabbyAPI restarted, please retry"}),
+                content=json.dumps({"detail": "TabbyAPI is reachable again, please retry"}),
                 status_code=503,
                 media_type="application/json"
             )
@@ -20222,8 +20122,6 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 def signal_handler(signum, frame):
     print(f"\n[proxy] Received signal {signum}, shutting down...", flush=True)
     state.shutdown_requested = True
-    if TABBY_MANAGED:
-        stop_tabby_process()
     sys.exit(0)
 
 
@@ -20235,7 +20133,6 @@ if __name__ == "__main__":
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
-    atexit.register(lambda: stop_tabby_process() if TABBY_MANAGED else None)
 
     uvicorn.run(
         app,
