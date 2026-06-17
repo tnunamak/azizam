@@ -31,6 +31,18 @@ backends:
       - chat
       - completions
     managed: false
+    lifecycle:
+      driver: http-load-unload
+      driver_config:
+        load_url: /v1/model/load
+        unload_url: /v1/model/unload
+        admin_header: x-admin-key
+        admin_key_env: TABBY_ADMIN_KEY
+        load_body_params: tabby-config
+        load_timeout_s: 300
+        success_marker: '"status":"finished"'
+        verify_endpoint: /v1/model
+        # activation_model_key defaults to "model_name" (omitted = use default).
   kobold:
     name: BeeLlama (LLM + MTP)
     native_passthrough: true
@@ -70,6 +82,21 @@ backends:
       - chat
       - completions
     managed: false
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: llama-bee.service
+        dropin: 20-model.conf
+        swap_strategy: dropin-env-restart
+        health_endpoint: /v1/models
+        health_timeout_s: 60
+        # Activation env-key mapping — LLAMA_BEE_* names as DATA, not code.
+        activation_env_keys:
+          model: LLAMA_BEE_MODEL
+          aux: LLAMA_BEE_MMPROJ
+        # Precheck type: validate model is an absolute, existing .gguf path.
+        precheck: gguf_path
   tts:
     name: voxtral-int4-tts
     native_passthrough: true

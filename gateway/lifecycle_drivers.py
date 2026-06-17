@@ -163,6 +163,31 @@ class LifecycleDriver(Protocol):
         """Read-only pre-flight check. Returns a warning string or None."""
         ...
 
+    def build_activation(
+        self,
+        svc: Mapping[str, Any],
+        *,
+        model: str,
+        aux: Optional[str] = None,
+    ) -> Optional[dict]:
+        """OPTIONAL — single-slot drivers only.  Build and precheck the activation dict.
+
+        The activation dict is the resolved per-model block passed to swap():
+          - systemd (dropin-env-restart): {"env": {KEY: VALUE, ...}}
+          - http-load-unload:             {"model_name": str}
+
+        Reads all engine-shaped knowledge (env key names, load body key, precheck
+        type) from ``driver_config`` so that no engine literals appear in the
+        caller (ensure_target).
+
+        Returns the activation dict on success, or None if a precheck fails
+        (e.g. the requested GGUF path does not exist on disk).
+
+        ExternalDriver / DockerDriver do NOT implement this; supports_swap()
+        gates the call so they are never reached in normal operation.
+        """
+        ...
+
     async def swap(
         self,
         svc: Mapping[str, Any],
@@ -276,6 +301,16 @@ class ExternalDriver:
         """No read-only check available for an external process."""
         return None
 
+    def build_activation(
+        self,
+        svc: Mapping[str, Any],
+        *,
+        model: str,
+        aux: Optional[str] = None,
+    ) -> Optional[dict]:
+        """No-op: ExternalDriver does not support swap; returns empty dict."""
+        return {}
+
 
 # ---------------------------------------------------------------------------
 # DockerDriver — drives a container the operator already created
@@ -363,6 +398,16 @@ class DockerDriver:
         except Exception as exc:
             return f"docker inspect error: {exc}"
         return None
+
+    def build_activation(
+        self,
+        svc: Mapping[str, Any],
+        *,
+        model: str,
+        aux: Optional[str] = None,
+    ) -> Optional[dict]:
+        """No-op: DockerDriver does not support swap; returns empty dict."""
+        return {}
 
     # ------------------------------------------------------------------
     # Internals
@@ -557,6 +602,51 @@ class SystemdDriver:
         if not unit:
             return "systemd driver_config.unit is required but not set"
         return None
+
+    def build_activation(
+        self,
+        svc: Mapping[str, Any],
+        *,
+        model: str,
+        aux: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Build the activation dict for a dropin-env-restart swap from driver_config.
+
+        Reads the env key names from ``driver_config.activation_env_keys``
+        (mapping of ``{model: <ENV_VAR>, aux: <ENV_VAR>}``) so that LLAMA_BEE_*
+        names are data, not code.
+
+        When ``driver_config.precheck`` is ``"gguf_path"``, validates that the
+        model path is an absolute, existing ``.gguf`` file.  Also validates the
+        aux path when aux is provided.  Returns None (with a printed message) if
+        validation fails — identical behaviour to the legacy ensure_target branch.
+
+        Returns ``{"env": {<model_key>: model, <aux_key>: aux or ""}}``.
+        """
+        dc = self._driver_config(svc)
+
+        # Read env key names from driver_config (pure data — no LLAMA_BEE_* in code).
+        activation_env_keys = dc.get("activation_env_keys") or {}
+        model_key = str(activation_env_keys.get("model") or "MODEL")
+        aux_key = str(activation_env_keys.get("aux") or "AUX")
+
+        # Optional GGUF-path precheck — gates swap when the file is missing.
+        precheck = str(dc.get("precheck") or "").strip()
+        if precheck == "gguf_path":
+            if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
+                print(
+                    f"[proxy] ensure_target(kobold): GGUF not found at {model}",
+                    flush=True,
+                )
+                return None
+            if aux and not (os.path.isabs(aux) and os.path.exists(aux)):
+                print(
+                    f"[proxy] ensure_target(kobold): mmproj not found at {aux}",
+                    flush=True,
+                )
+                return None
+
+        return {"env": {model_key: model, aux_key: aux or ""}}
 
     async def swap(
         self,
@@ -838,6 +928,25 @@ class HttpLoadUnloadDriver:
         if not dc.get("load_url"):
             return "http-load-unload driver_config.load_url is required but not set"
         return None
+
+    def build_activation(
+        self,
+        svc: Mapping[str, Any],
+        *,
+        model: str,
+        aux: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Build the activation dict for an http-load-unload swap from driver_config.
+
+        Reads the model body key name from ``driver_config.activation_model_key``
+        (defaults to ``"model_name"`` when absent — matches the legacy tabby shape).
+        No precheck is performed (the server rejects invalid model names itself).
+
+        Returns ``{<model_key>: model}``.
+        """
+        dc = self._driver_config(svc)
+        model_key = str(dc.get("activation_model_key") or "model_name")
+        return {model_key: model}
 
     async def swap(
         self,

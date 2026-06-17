@@ -104,6 +104,13 @@ def _kobold_svc() -> dict:
                 "swap_strategy": "dropin-env-restart",
                 "health_endpoint": "/v1/models",
                 "health_timeout_s": 5,  # short for tests
+                # Activation env-key mapping — LLAMA_BEE_* as DATA, not code.
+                "activation_env_keys": {
+                    "model": "LLAMA_BEE_MODEL",
+                    "aux": "LLAMA_BEE_MMPROJ",
+                },
+                # Precheck: validate model is an absolute, existing .gguf path.
+                "precheck": "gguf_path",
             },
         },
     }
@@ -764,6 +771,11 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
                 "swap_strategy": "dropin-env-restart",
                 "health_endpoint": "/v1/models",
                 "health_timeout_s": 5,
+                "activation_env_keys": {
+                    "model": "LLAMA_BEE_MODEL",
+                    "aux": "LLAMA_BEE_MMPROJ",
+                },
+                "precheck": "gguf_path",
             },
         }
         tabby_seed = dict(backends.get("tabby") or {})
@@ -1195,6 +1207,150 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
 # Helper: import SwapContext for use in test classes above
 # ---------------------------------------------------------------------------
 import gateway.lifecycle_drivers as _lcd  # noqa: E402 (needed by the proof tests)
+
+
+# ---------------------------------------------------------------------------
+# 6. build_activation golden tests — byte-identical to _activation_for_* legacy
+# ---------------------------------------------------------------------------
+
+class TestBuildActivationGolden(unittest.TestCase):
+    """build_activation() output must be byte-identical to the legacy helpers.
+
+    Verifies:
+      - SystemdDriver.build_activation(seeded_kobold, model=X, aux=Y)
+          == proxy._activation_for_kobold(X, Y)
+      - HttpLoadUnloadDriver.build_activation(seeded_tabby, model=X)
+          == proxy._activation_for_tabby(X)
+      - Precheck: missing GGUF → None (same print as legacy ensure_target branch).
+      - Precheck: present abs .gguf → returns the activation dict.
+      - aux present but not found → None.
+      - aux=None → env key set to "" (empty), byte-identical to legacy.
+    """
+
+    def setUp(self):
+        self.kobold_driver = SystemdDriver()
+        self.tabby_driver = HttpLoadUnloadDriver()
+        # Use the seeded svc dicts (production-matching driver_config).
+        self.kobold_svc = _kobold_svc()
+        self.tabby_svc = _tabby_svc()
+
+    # -----------------------------------------------------------------------
+    # Kobold / SystemdDriver
+    # -----------------------------------------------------------------------
+
+    def test_kobold_build_activation_byte_identical_with_aux(self):
+        """SystemdDriver.build_activation == _activation_for_kobold when file exists."""
+        with patch("os.path.isabs", return_value=True), \
+             patch("os.path.exists", return_value=True):
+            result = self.kobold_driver.build_activation(
+                self.kobold_svc, model=_GGUF, aux=_MMPROJ
+            )
+        expected = proxy._activation_for_kobold(_GGUF, _MMPROJ)
+        self.assertIsNotNone(result)
+        self.assertEqual(result, expected, (
+            "build_activation must be byte-identical to _activation_for_kobold.\n"
+            f"Expected: {expected!r}\nGot:      {result!r}"
+        ))
+
+    def test_kobold_build_activation_byte_identical_no_aux(self):
+        """SystemdDriver.build_activation with aux=None == _activation_for_kobold(model, None)."""
+        with patch("os.path.isabs", return_value=True), \
+             patch("os.path.exists", return_value=True):
+            result = self.kobold_driver.build_activation(
+                self.kobold_svc, model=_GGUF, aux=None
+            )
+        expected = proxy._activation_for_kobold(_GGUF, None)
+        self.assertIsNotNone(result)
+        self.assertEqual(result, expected, (
+            "build_activation (no aux) must be byte-identical to _activation_for_kobold.\n"
+            f"Expected: {expected!r}\nGot:      {result!r}"
+        ))
+
+    def test_kobold_precheck_missing_gguf_returns_none(self):
+        """Precheck: non-existent GGUF path → build_activation returns None."""
+        printed: list[str] = []
+        import builtins
+        orig_print = builtins.print
+
+        def _cap(*args, **kw):
+            printed.append(" ".join(str(a) for a in args))
+            orig_print(*args, **kw)
+
+        with patch("os.path.isabs", return_value=True), \
+             patch("os.path.exists", return_value=False), \
+             patch("builtins.print", side_effect=_cap):
+            result = self.kobold_driver.build_activation(
+                self.kobold_svc, model=_GGUF, aux=None
+            )
+
+        self.assertIsNone(result, "Missing GGUF must return None from build_activation")
+        # Print message must contain the missing path (same wording as legacy).
+        self.assertTrue(
+            any("GGUF not found" in p and _GGUF in p for p in printed),
+            f"Expected 'GGUF not found at {_GGUF}' in print output; got: {printed}",
+        )
+
+    def test_kobold_precheck_missing_aux_returns_none(self):
+        """Precheck: model exists but aux path is missing → build_activation returns None."""
+        printed: list[str] = []
+        import builtins
+        orig_print = builtins.print
+
+        def _cap(*args, **kw):
+            printed.append(" ".join(str(a) for a in args))
+            orig_print(*args, **kw)
+
+        # model check passes (isabs+exists), aux check fails (exists=False for aux).
+        def _exists(path):
+            return str(path) == _GGUF  # only the model exists
+
+        with patch("os.path.isabs", return_value=True), \
+             patch("os.path.exists", side_effect=_exists), \
+             patch("builtins.print", side_effect=_cap):
+            result = self.kobold_driver.build_activation(
+                self.kobold_svc, model=_GGUF, aux=_MMPROJ
+            )
+
+        self.assertIsNone(result, "Missing aux must return None from build_activation")
+        self.assertTrue(
+            any("mmproj not found" in p for p in printed),
+            f"Expected 'mmproj not found' in print output; got: {printed}",
+        )
+
+    def test_kobold_precheck_present_gguf_returns_activation(self):
+        """Precheck passes for an abs .gguf path that exists — returns the activation."""
+        with patch("os.path.isabs", return_value=True), \
+             patch("os.path.exists", return_value=True):
+            result = self.kobold_driver.build_activation(
+                self.kobold_svc, model=_GGUF, aux=None
+            )
+        self.assertIsNotNone(result)
+        self.assertIn("env", result)
+        self.assertEqual(result["env"]["LLAMA_BEE_MODEL"], _GGUF)
+        self.assertEqual(result["env"]["LLAMA_BEE_MMPROJ"], "")
+
+    # -----------------------------------------------------------------------
+    # Tabby / HttpLoadUnloadDriver
+    # -----------------------------------------------------------------------
+
+    def test_tabby_build_activation_byte_identical(self):
+        """HttpLoadUnloadDriver.build_activation == _activation_for_tabby."""
+        result = self.tabby_driver.build_activation(self.tabby_svc, model=_TABBY_MODEL)
+        expected = proxy._activation_for_tabby(_TABBY_MODEL)
+        self.assertIsNotNone(result)
+        self.assertEqual(result, expected, (
+            "build_activation must be byte-identical to _activation_for_tabby.\n"
+            f"Expected: {expected!r}\nGot:      {result!r}"
+        ))
+
+    def test_tabby_build_activation_no_precheck_always_succeeds(self):
+        """HttpLoadUnloadDriver.build_activation has no precheck; always returns a dict."""
+        result = self.tabby_driver.build_activation(
+            self.tabby_svc, model="some-model-name", aux=None
+        )
+        self.assertIsNotNone(result)
+        self.assertIn("model_name", result)
+        self.assertEqual(result["model_name"], "some-model-name")
 
 
 if __name__ == "__main__":
