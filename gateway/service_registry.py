@@ -256,6 +256,11 @@ def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
             out["managed"] = True
         if lifecycle.get("service_name"):
             out["service_name"] = str(lifecycle["service_name"])
+        # Carry the lifecycle WRAPPER (driver + driver_config) onto the flat
+        # backend dict so driver_for_service() can resolve the operator-declared
+        # LifecycleDriver from config["backends"][id]["lifecycle"]. Engine-
+        # agnostic: a service declares its driver as DATA; we only project it.
+        out["lifecycle"] = copy.deepcopy(dict(lifecycle))
     return {key: value for key, value in out.items() if value not in (None, "")}
 
 
@@ -456,6 +461,13 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
             "type": str(lifecycle.get("type") or "external"),
             "managed": bool_from_config(lifecycle.get("managed"), False),
             "service_name": str(lifecycle.get("service_name") or ""),
+            # The operator-declared LifecycleDriver + its config are DATA: a
+            # service chooses how its lifecycle is driven (external | systemd |
+            # docker | http-load-unload | command) and supplies the driver's
+            # config. Preserve them through normalization (engine-agnostic).
+            **({"driver": str(lifecycle["driver"])} if lifecycle.get("driver") else {}),
+            **({"driver_config": copy.deepcopy(dict(lifecycle["driver_config"]))}
+               if isinstance(lifecycle.get("driver_config"), Mapping) else {}),
         },
         "provenance": copy.deepcopy(dict(provenance)),
     }
