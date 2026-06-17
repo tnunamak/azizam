@@ -734,6 +734,24 @@ CHECK_INTERVAL = routing_cfg.get("check_interval", 30)
 # remain the supported way to change the loaded GGUF.
 llm_cfg = config.get("llm", {}) or {}
 PIN_LOADED_MODEL = bool(llm_cfg.get("pin_loaded_model", True))
+
+# ---------------------------------------------------------------------------
+# AGW_DRIVER_SWAP feature flag (default OFF = legacy behavior, byte-identical)
+#
+# When OFF (default): ensure_target() uses the legacy kobold/tabby branches
+#   (swap_kobold_model / swap_tabby_model) unchanged.
+# When ON: ensure_target() routes kobold/tabby through their LifecycleDriver
+#   (SystemdDriver / HttpLoadUnloadDriver).  Enable only after golden tests
+#   pass AND a live smoke-swap on Tim's deployment confirms parity.
+#
+# Rollback: flip this flag; no code change needed.  Legacy functions
+#   (swap_kobold_model, swap_tabby_model, _kobold_state, helpers) are NOT
+#   deleted until the verify phase proves driver path identical in production.
+# ---------------------------------------------------------------------------
+DRIVER_SWAP_ENABLED: bool = bool_from_config(
+    os.environ.get("AGW_DRIVER_SWAP", (routing_cfg or {}).get("driver_swap")),
+    False,
+)
 USE_LOADED_MODEL_ALIAS = "current"
 USE_LOADED_FAST_MODEL_ALIAS = "current-fast"
 USE_LOADED_MODEL_ALIASES = frozenset({
@@ -1470,13 +1488,36 @@ async def swap_tabby_model(target_model: str) -> bool:
             return False
 
 
+def _activation_for_kobold(model: str, mmproj: Optional[str]) -> dict:
+    """Build the SystemdDriver activation dict for a kobold swap.
+
+    Returns {"env": {"LLAMA_BEE_MODEL": model, "LLAMA_BEE_MMPROJ": mmproj_or_empty}}.
+    Keeps the env key names as data here (activation_for), not inside the driver.
+    """
+    mmproj_value = mmproj or ""
+    return {
+        "env": {
+            "LLAMA_BEE_MODEL": model,
+            "LLAMA_BEE_MMPROJ": mmproj_value,
+        }
+    }
+
+
+def _activation_for_tabby(model: str) -> dict:
+    """Build the HttpLoadUnloadDriver activation dict for a tabby swap."""
+    return {"model_name": model}
+
+
 async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str] = None) -> bool:
     """Make a (backend, model, mmproj) target real before forwarding a request.
 
     Steps:
-      1. If `backend` is kobold or tabby, apply the managed cold-start / model-swap
-         logic (swap_kobold_model / swap_tabby_model).  These two IDs have special
-         swap semantics that are not yet ported to the driver abstraction.
+      1. If `backend` is kobold or tabby AND DRIVER_SWAP_ENABLED is False (default),
+         apply the legacy managed cold-start / model-swap logic
+         (swap_kobold_model / swap_tabby_model).  Behavior is byte-identical today.
+      1b. If DRIVER_SWAP_ENABLED is True, route kobold/tabby through their
+         LifecycleDriver (SystemdDriver / HttpLoadUnloadDriver) — same side-effects,
+         proven identical by tests/test_lifecycle_swap_golden.py.
       2. For any OTHER backend, delegate to its LifecycleDriver.ensure_ready().
          The default (external) driver performs a health-check GET and returns
          True if the backend is reachable — so an always-on vLLM, remote
@@ -1485,7 +1526,7 @@ async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str
          A docker driver will `docker start` the container first then poll health.
 
     `mmproj` is kobold-only. Pass None for text-only models — the proxy writes an
-    empty LLAMA_TURBO_MMPROJ so start_service.sh omits --mmproj.
+    empty LLAMA_BEE_MMPROJ so start_service.sh omits --mmproj.
 
     Returns True only if both steps succeed. Caller turns False into a 503.
     """
@@ -1504,6 +1545,42 @@ async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str
                 flush=True,
             )
         return ready
+
+    # -----------------------------------------------------------------------
+    # Driver-swap path (AGW_DRIVER_SWAP=1) — kobold/tabby via LifecycleDriver
+    # Default OFF: falls through to the legacy path below (byte-identical today)
+    # -----------------------------------------------------------------------
+    if DRIVER_SWAP_ENABLED:
+        from gateway.lifecycle_drivers import driver_for_service, supports_swap
+        bcfg = (config.get("backends") or {}).get(backend) or {}
+        driver = driver_for_service(backend, config.get("backends"))
+
+        if supports_swap(driver) and model:
+            if backend == "kobold":
+                # Validate GGUF + mmproj paths before attempting the swap.
+                if not is_literal_gguf_path(model):
+                    if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
+                        print(
+                            f"[proxy] ensure_target({backend}): GGUF not found at {model}",
+                            flush=True,
+                        )
+                        return False
+                if mmproj and not (os.path.isabs(mmproj) and os.path.exists(mmproj)):
+                    print(
+                        f"[proxy] ensure_target({backend}): mmproj not found at {mmproj}",
+                        flush=True,
+                    )
+                    return False
+                activation = _activation_for_kobold(model, mmproj)
+            else:
+                activation = _activation_for_tabby(model)
+            return await driver.swap(bcfg, activation)
+        else:
+            return await driver.ensure_ready(bcfg, timeout_s=HEALTH_CHECK_TIMEOUT)
+
+    # -----------------------------------------------------------------------
+    # LEGACY PATH — unchanged kobold/tabby branches (default, behavior-identical)
+    # -----------------------------------------------------------------------
 
     label = f"ensure_target({backend}, {model}, mmproj={mmproj or '<none>'})"
 
@@ -2633,6 +2710,21 @@ def get_tabby_model_config() -> tuple[str, str, dict]:
 
 # Initial load for startup values
 DEFAULT_MODEL, MODEL_DIR, _ = get_tabby_model_config()
+
+# Register the tabby params-provider so HttpLoadUnloadDriver can call
+# get_tabby_model_config() live at swap time (option A from
+# LIFECYCLE_DRIVER_PORT.md §3.2).  The key "tabby-config" lives in
+# driver_config.load_body_params — purely data; no engine literal in driver code.
+try:
+    from gateway.lifecycle_drivers import register_params_provider as _reg_pp
+
+    def _tabby_params_provider(svc: object) -> dict:  # type: ignore[type-arg]
+        _, _, params = get_tabby_model_config()
+        return params
+
+    _reg_pp("tabby-config", _tabby_params_provider)
+except Exception:
+    pass
 
 
 # =============================================================================
