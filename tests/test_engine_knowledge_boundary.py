@@ -127,18 +127,6 @@ _ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, str], str] = {
     # Check 4.  Each distinct stripped line pattern is enumerated here; a new
     # pattern forces a new entry and a reviewer to sign off.
     # -------------------------------------------------------------------
-    ("proxy.py", "if target == 'tabby':"):
-        "Bucket B: local-swap target routing — deployment-pattern, not engine knowledge",
-    ("proxy.py", "elif target == 'kobold':"):
-        "Bucket B: local-swap target routing — deployment-pattern, not engine knowledge",
-    ("proxy.py", "target_host = TABBY_HOST if target == 'tabby' else KOBOLD_HOST"):
-        "Bucket B: local-swap host selection — deployment-pattern, not engine knowledge",
-    ("proxy.py", "health_path = TABBY_HEALTH_ENDPOINT if target == 'tabby' else KOBOLD_HEALTH_ENDPOINT"):
-        "Bucket B: local-swap health path — deployment-pattern, not engine knowledge",
-    ("proxy.py", "return TABBY_HOST if active == 'tabby' else KOBOLD_HOST if active == 'kobold' else None"):
-        "Bucket B: local-swap active host resolution — deployment-pattern, not engine knowledge",
-    ("proxy.py", "return TABBY_HOST if needed == 'tabby' else KOBOLD_HOST"):
-        "Bucket B: local-swap needed host resolution — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if backend == "kobold":'):
         "Bucket B: local-swap kobold branch — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if service == "tabby":'):
@@ -165,11 +153,8 @@ _ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, str], str] = {
         "Bucket B: local-swap tabby health re-probe on connect error — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if key in {"kobold", "tabby"}:'):
         "Bucket B: local-swap key-in-set guard — deployment-pattern, not engine knowledge",
-    # The next two are false-positive branch-pattern matches on non-branch lines
-    # (docstring and error message) that happen to contain engine name literals.
-    # Previously reviewed in the old line-number allowlist.
-    ("proxy.py", "Returns 'tabby', 'kobold', or None if not found.\"\"\""):
-        "Bucket B: local-swap docstring (detect_model_backend) — not a real branch, reviewed false positive",
+    # A false-positive branch-pattern match on a non-branch line (an error
+    # message string that happens to contain an engine name literal).
     ("proxy.py", "\"Configured backend 'tabby' is unavailable for this catch-all route. \""):
         "Bucket B: local-swap error message string — not a real branch, reviewed false positive",
 

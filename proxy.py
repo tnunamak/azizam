@@ -925,33 +925,6 @@ TTS_PATHS = [
 # Model routing - detect backend from filesystem
 # =============================================================================
 
-def detect_model_backend(model_name: str) -> Optional[str]:
-    """Detect whether a model should be served by TabbyAPI (EXL3/EXL2) or KoboldCpp (GGUF).
-    Returns 'tabby', 'kobold', or None if not found."""
-    if not model_name:
-        return None
-
-    # Check GGUF directory for .gguf files
-    gguf_dir = Path(GGUF_DIR)
-    if gguf_dir.exists():
-        for f in gguf_dir.iterdir():
-            if f.suffix == '.gguf' and model_name.lower() in f.name.lower():
-                return 'kobold'
-
-    # Check model directory for EXL3/EXL2 directories (have .safetensors + quantization_config.json)
-    model_dir = Path(MODEL_DIR)
-    if model_dir.exists():
-        for d in model_dir.iterdir():
-            if d.is_dir() and model_name.lower() in d.name.lower():
-                if (d / 'quantization_config.json').exists():
-                    return 'tabby'
-                # Also check for .gguf files in model dir
-                if any(f.suffix == '.gguf' for f in d.iterdir() if f.is_file()):
-                    return 'kobold'
-
-    return None
-
-
 async def get_active_backend() -> Optional[str]:
     """Check which LLM backend is currently running.
 
@@ -969,57 +942,6 @@ async def get_active_backend() -> Optional[str]:
         if await check_service_health(bid):
             return bid
     return None
-
-
-async def switch_backend(target: str) -> bool:
-    """Switch to the target backend ('tabby' or 'kobold') using systemd Conflicts=.
-    Returns True if successful."""
-    if target == 'tabby':
-        service = TABBY_SERVICE
-    elif target == 'kobold':
-        service = KOBOLD_SERVICE_NAME
-    else:
-        return False
-
-    print(f"[proxy] Switching LLM backend to {target}...", flush=True)
-
-    # Reload before starting so systemd uses the current unit file, not a
-    # stale in-memory state left over from a failed drop-in swap.
-    reload_proc = await asyncio.create_subprocess_exec(
-        'systemctl', '--user', 'daemon-reload',
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    await reload_proc.communicate()
-
-    proc = await asyncio.create_subprocess_exec(
-        'systemctl', '--user', 'start', service,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
-    stdout, stderr = await proc.communicate()
-
-    if proc.returncode != 0:
-        print(f"[proxy] Failed to start {service}: {stderr.decode()}", flush=True)
-        return False
-
-    # Wait for the backend to become healthy
-    target_host = TABBY_HOST if target == 'tabby' else KOBOLD_HOST
-    health_path = TABBY_HEALTH_ENDPOINT if target == 'tabby' else KOBOLD_HEALTH_ENDPOINT
-
-    for i in range(SWITCH_TIMEOUT):
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(3)) as client:
-                resp = await client.get(f"{target_host}{health_path}")
-                if resp.status_code == 200:
-                    print(f"[proxy] Backend {target} is ready (took {i+1}s)", flush=True)
-                    return True
-        except Exception:
-            pass
-        await asyncio.sleep(1)
-
-    print(f"[proxy] Backend {target} did not become ready within {SWITCH_TIMEOUT}s", flush=True)
-    return False
 
 
 # Drop-in file used to override the kobold model env var for a specific GGUF.
@@ -1220,26 +1142,6 @@ def currently_loaded_kobold_model() -> Optional[str]:
     if not _kobold_state_fresh():
         _seed_kobold_state()
     return _kobold_state["model"]
-
-
-async def ensure_backend_for_model(model_name: str) -> Optional[str]:
-    """Ensure the right backend is running for the given model.
-    Returns the backend host URL, or None if switching failed."""
-    needed = detect_model_backend(model_name)
-    if not needed:
-        # Unknown model — use whatever's running
-        active = await get_active_backend()
-        return TABBY_HOST if active == 'tabby' else KOBOLD_HOST if active == 'kobold' else None
-
-    active = await get_active_backend()
-    if active == needed:
-        return TABBY_HOST if needed == 'tabby' else KOBOLD_HOST
-
-    # Need to switch
-    if await switch_backend(needed):
-        return TABBY_HOST if needed == 'tabby' else KOBOLD_HOST
-
-    return None
 
 
 # (tabby swap lock is managed by the generic swap_lock_for("tabby") registry above.)
