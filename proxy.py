@@ -1248,6 +1248,16 @@ def currently_loaded_kobold_model() -> Optional[str]:
 async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = None) -> bool:
     """Restart llama-turbo.service so it loads the given GGUF (and mmproj).
 
+    LEGACY — SCHEDULED FOR DELETION. The driver path (SystemdDriver, default-ON
+    via AGW_DRIVER_SWAP) has replaced this in production. This function and its
+    siblings (swap_tabby_model, _activation_for_kobold, _activation_for_tabby)
+    now survive ONLY as (a) the golden-test oracle in
+    tests/test_lifecycle_swap_golden.py proving the driver is byte-identical, and
+    (b) the AGW_DRIVER_SWAP=0 rollback path. DELETE all four one release after
+    default-on has baked in production without a rollback — that collapses the
+    largest remaining engine-code bucket. See the flag comment near the
+    DRIVER_SWAP_ENABLED definition.
+
     Writes a higher-numbered drop-in (20-model.conf) overriding LLAMA_TURBO_MODEL
     AND LLAMA_TURBO_MMPROJ, runs daemon-reload + restart, then polls /v1/models
     until ready. Concurrent callers serialize on swap_lock_for("kobold"); in-flight
