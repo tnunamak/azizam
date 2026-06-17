@@ -346,14 +346,16 @@ class TestEnsureTargetBugFix(unittest.TestCase):
             "ensure_target should return False when the backend is genuinely unreachable",
         )
 
-    # -- kobold: swap path still taken (no regression) ----------------------
+    # -- rollback path: legacy swap reachable when AGW_DRIVER_SWAP=0 ---------
+    # The driver path is now the DEFAULT (DRIVER_SWAP_ENABLED=True, proven live
+    # in commit 27f2730). These tests pin the rollback escape hatch: forcing the
+    # flag OFF restores the legacy kobold/tabby swap branches byte-for-byte.
 
-    def test_kobold_still_uses_swap_path_not_driver(self):
-        """ensure_target('kobold', ...) still calls the kobold swap path, not the driver.
-
-        This proves zero regression for the managed engines.
-        """
-        with patch.object(proxy, "get_active_backend", new=AsyncMock(return_value="kobold")), \
+    def test_kobold_legacy_swap_path_when_flag_off(self):
+        """With AGW_DRIVER_SWAP forced OFF, ensure_target('kobold', ...) calls the
+        legacy kobold swap path, not the driver — the rollback contract."""
+        with patch.object(proxy, "DRIVER_SWAP_ENABLED", False), \
+             patch.object(proxy, "get_active_backend", new=AsyncMock(return_value="kobold")), \
              patch.object(proxy, "swap_kobold_model", new=AsyncMock(return_value=True)) as mock_swap, \
              patch.object(proxy, "currently_loaded_kobold_model", return_value="/models/other.gguf"), \
              patch.object(proxy, "currently_loaded_kobold_mmproj", return_value=None), \
@@ -361,13 +363,15 @@ class TestEnsureTargetBugFix(unittest.TestCase):
             # Need os.path to pass the gguf validation; use is_literal_gguf_path=True
             result = _run(proxy.ensure_target("kobold", "/models/target.gguf"))
 
-        # swap was called — proving the kobold branch ran, not the driver branch
+        # swap was called — proving the legacy kobold branch ran, not the driver
         mock_swap.assert_called_once()
         self.assertTrue(result, "ensure_target('kobold', ...) should return True after swap")
 
-    def test_tabby_still_uses_swap_path_not_driver(self):
-        """ensure_target('tabby', ...) still calls swap_tabby_model, not the driver."""
-        with patch.object(proxy, "get_active_backend", new=AsyncMock(return_value="tabby")), \
+    def test_tabby_legacy_swap_path_when_flag_off(self):
+        """With AGW_DRIVER_SWAP forced OFF, ensure_target('tabby', ...) calls
+        swap_tabby_model, not the driver — the rollback contract."""
+        with patch.object(proxy, "DRIVER_SWAP_ENABLED", False), \
+             patch.object(proxy, "get_active_backend", new=AsyncMock(return_value="tabby")), \
              patch.object(proxy, "swap_tabby_model", new=AsyncMock(return_value=True)) as mock_swap, \
              patch.object(proxy, "currently_loaded_tabby_model", new=AsyncMock(return_value="other-model")):
             result = _run(proxy.ensure_target("tabby", "qwen3-vl-30b"))
@@ -375,9 +379,11 @@ class TestEnsureTargetBugFix(unittest.TestCase):
         mock_swap.assert_called_once_with("qwen3-vl-30b")
         self.assertTrue(result, "ensure_target('tabby', ...) should return True after swap")
 
-    def test_driver_path_not_taken_for_kobold(self):
-        """The lifecycle driver is NOT instantiated for kobold (byte-identical path)."""
-        with patch("gateway.lifecycle_drivers.driver_for_service") as mock_dfs, \
+    def test_legacy_path_skips_driver_for_kobold_when_flag_off(self):
+        """With AGW_DRIVER_SWAP OFF, the lifecycle driver is NOT instantiated for
+        kobold (legacy byte-identical path)."""
+        with patch.object(proxy, "DRIVER_SWAP_ENABLED", False), \
+             patch("gateway.lifecycle_drivers.driver_for_service") as mock_dfs, \
              patch.object(proxy, "get_active_backend", new=AsyncMock(return_value="kobold")), \
              patch.object(proxy, "currently_loaded_kobold_model", return_value=None), \
              patch.object(proxy, "currently_loaded_kobold_mmproj", return_value=None):
@@ -386,9 +392,11 @@ class TestEnsureTargetBugFix(unittest.TestCase):
 
         mock_dfs.assert_not_called()
 
-    def test_driver_path_not_taken_for_tabby(self):
-        """The lifecycle driver is NOT instantiated for tabby (byte-identical path)."""
-        with patch("gateway.lifecycle_drivers.driver_for_service") as mock_dfs, \
+    def test_legacy_path_skips_driver_for_tabby_when_flag_off(self):
+        """With AGW_DRIVER_SWAP OFF, the lifecycle driver is NOT instantiated for
+        tabby (legacy byte-identical path)."""
+        with patch.object(proxy, "DRIVER_SWAP_ENABLED", False), \
+             patch("gateway.lifecycle_drivers.driver_for_service") as mock_dfs, \
              patch.object(proxy, "get_active_backend", new=AsyncMock(return_value="tabby")), \
              patch.object(proxy, "currently_loaded_tabby_model", new=AsyncMock(return_value=None)):
             _run(proxy.ensure_target("tabby", None))

@@ -736,21 +736,27 @@ llm_cfg = config.get("llm", {}) or {}
 PIN_LOADED_MODEL = bool(llm_cfg.get("pin_loaded_model", True))
 
 # ---------------------------------------------------------------------------
-# AGW_DRIVER_SWAP feature flag (default OFF = legacy behavior, byte-identical)
+# AGW_DRIVER_SWAP feature flag (default ON — driver path is the production path)
 #
-# When OFF (default): ensure_target() uses the legacy kobold/tabby branches
-#   (swap_kobold_model / swap_tabby_model) unchanged.
-# When ON: ensure_target() routes kobold/tabby through their LifecycleDriver
-#   (SystemdDriver / HttpLoadUnloadDriver).  Enable only after golden tests
-#   pass AND a live smoke-swap on Tim's deployment confirms parity.
+# When ON (default): ensure_target() routes kobold/tabby through their
+#   LifecycleDriver (SystemdDriver / HttpLoadUnloadDriver) — the engine-agnostic
+#   path. This is now the default: the verify phase is complete (live swap on
+#   the real deployment, both directions, via the HTTP request path — the model
+#   genuinely changed and restored; see commit 27f2730), and the golden suite
+#   (tests/test_lifecycle_swap_golden.py, 34 tests) proves byte-identical
+#   side-effects vs the legacy functions.
+# When OFF (AGW_DRIVER_SWAP=0): falls back to the legacy kobold/tabby branches.
+#   Retained as a one-release rollback escape hatch only.
 #
-# Rollback: flip this flag; no code change needed.  Legacy functions
-#   (swap_kobold_model, swap_tabby_model, _kobold_state, helpers) are NOT
-#   deleted until the verify phase proves driver path identical in production.
+# Rollback: set AGW_DRIVER_SWAP=0; no code change needed. The legacy functions
+#   (swap_kobold_model, swap_tabby_model, _activation_for_*, _kobold_state) now
+#   serve as the golden-test oracle + rollback path; they are scheduled for
+#   deletion one release after this default flip, once driver-on has run in
+#   production without a rollback.
 # ---------------------------------------------------------------------------
 DRIVER_SWAP_ENABLED: bool = bool_from_config(
     os.environ.get("AGW_DRIVER_SWAP", (routing_cfg or {}).get("driver_swap")),
-    False,
+    True,
 )
 USE_LOADED_MODEL_ALIAS = "current"
 USE_LOADED_FAST_MODEL_ALIAS = "current-fast"
