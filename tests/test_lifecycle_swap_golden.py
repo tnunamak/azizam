@@ -1,11 +1,12 @@
-"""Golden side-effect parity tests for SystemdDriver and HttpLoadUnloadDriver.
+"""Golden side-effect tests for SystemdDriver and HttpLoadUnloadDriver.
 
-LIFECYCLE_DRIVER_PORT.md §4 — behavioral-identity proof.
+LIFECYCLE_DRIVER_PORT.md §4 — swap behavioral contract.
 
-For each swap path we drive BOTH the legacy function (swap_kobold_model /
-swap_tabby_model) and the new driver (SystemdDriver / HttpLoadUnloadDriver)
-under identical mocks and assert the recorded side-effect event sequences are
-equal.
+Each swap path drives the driver (SystemdDriver / HttpLoadUnloadDriver) under
+controlled mocks and asserts the recorded side-effect sequence matches the
+exact expected golden output (drop-in text, exec order, HTTP calls, activation
+dict). These were originally proven byte-identical to the now-deleted legacy
+swap functions; the expected values are pinned here directly.
 
 Side-effect surfaces captured:
   - subprocess: asyncio.create_subprocess_exec calls → ("exec", argv)
@@ -746,17 +747,16 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestEnsureTargetDriverPath(unittest.TestCase):
-    """When DRIVER_SWAP_ENABLED is True, ensure_target() routes through drivers.
+    """ensure_target() routes every backend through its LifecycleDriver.
 
-    To exercise the driver path we inject lifecycle.driver keys into
-    proxy.config["backends"] for kobold/tabby — mirroring the seed data that
-    the production deployment will carry once the lifecycle records are populated.
+    To exercise the swap path we inject lifecycle.driver keys into
+    proxy.config["backends"] for kobold/tabby — mirroring the seed data the
+    production deployment carries (proxy_config.yml -> admin.db registry).
     """
 
     def setUp(self):
         import copy
         _setup_tabby_params_provider()
-        self._orig_flag = proxy.DRIVER_SWAP_ENABLED
         self._orig_config = copy.deepcopy(dict(proxy.config))
 
         # Inject seed lifecycle config so driver_for_service() resolves correctly.
@@ -796,14 +796,12 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
         proxy.config["backends"] = backends
 
     def tearDown(self):
-        proxy.DRIVER_SWAP_ENABLED = self._orig_flag
         proxy.config.clear()
         proxy.config.update(self._orig_config)
 
     def test_kobold_driver_path_calls_systemd_swap(self):
-        """With flag ON, ensure_target('kobold', gguf) calls SystemdDriver.swap()."""
+        """ensure_target('kobold', gguf) calls SystemdDriver.swap()."""
         import gateway.lifecycle_drivers as _lcd
-        proxy.DRIVER_SWAP_ENABLED = True
 
         swap_called_with: list[tuple] = []
 
@@ -835,9 +833,8 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
         self.assertIs(warned_models, proxy._pin_mismatch_warned)
 
     def test_tabby_driver_path_calls_http_load_unload_swap(self):
-        """With flag ON, ensure_target('tabby', model) calls HttpLoadUnloadDriver.swap()."""
+        """ensure_target('tabby', model) calls HttpLoadUnloadDriver.swap()."""
         import gateway.lifecycle_drivers as _lcd
-        proxy.DRIVER_SWAP_ENABLED = True
 
         swap_called_with: list[tuple] = []
 
@@ -856,34 +853,6 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
         # SwapContext must be passed with correct target_model.
         self.assertIsNotNone(ctx, "ctx must be passed to driver.swap()")
         self.assertEqual(ctx.target_model, _TABBY_MODEL)
-
-    def test_flag_off_kobold_still_uses_legacy(self):
-        """With flag OFF (default), ensure_target('kobold') uses legacy swap path."""
-        proxy.DRIVER_SWAP_ENABLED = False
-
-        with patch.object(proxy, "get_active_backend", new=AsyncMock(return_value="kobold")), \
-             patch.object(proxy, "swap_kobold_model", new=AsyncMock(return_value=True)) as mock_legacy, \
-             patch.object(proxy, "currently_loaded_kobold_model", return_value="/other.gguf"), \
-             patch.object(proxy, "currently_loaded_kobold_mmproj", return_value=None), \
-             patch.object(proxy, "is_literal_gguf_path", return_value=True), \
-             patch("gateway.lifecycle_drivers.SystemdDriver.swap") as mock_driver_swap:
-            result = _run(proxy.ensure_target("kobold", _GGUF))
-
-        mock_legacy.assert_called_once()
-        mock_driver_swap.assert_not_called()
-
-    def test_flag_off_tabby_still_uses_legacy(self):
-        """With flag OFF (default), ensure_target('tabby') uses legacy swap path."""
-        proxy.DRIVER_SWAP_ENABLED = False
-
-        with patch.object(proxy, "get_active_backend", new=AsyncMock(return_value="tabby")), \
-             patch.object(proxy, "swap_tabby_model", new=AsyncMock(return_value=True)) as mock_legacy, \
-             patch.object(proxy, "currently_loaded_tabby_model", new=AsyncMock(return_value="other")), \
-             patch("gateway.lifecycle_drivers.HttpLoadUnloadDriver.swap") as mock_driver_swap:
-            result = _run(proxy.ensure_target("tabby", _TABBY_MODEL))
-
-        mock_legacy.assert_called_once_with(_TABBY_MODEL)
-        mock_driver_swap.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1214,17 +1183,17 @@ import gateway.lifecycle_drivers as _lcd  # noqa: E402 (needed by the proof test
 # ---------------------------------------------------------------------------
 
 class TestBuildActivationGolden(unittest.TestCase):
-    """build_activation() output must be byte-identical to the legacy helpers.
+    """build_activation() output is the exact per-model activation block.
 
     Verifies:
       - SystemdDriver.build_activation(seeded_kobold, model=X, aux=Y)
-          == proxy._activation_for_kobold(X, Y)
+          == {"env": {"LLAMA_BEE_MODEL": X, "LLAMA_BEE_MMPROJ": Y}}
       - HttpLoadUnloadDriver.build_activation(seeded_tabby, model=X)
-          == proxy._activation_for_tabby(X)
-      - Precheck: missing GGUF → None (same print as legacy ensure_target branch).
+          == {"model_name": X}
+      - Precheck: missing GGUF → None (loud print).
       - Precheck: present abs .gguf → returns the activation dict.
       - aux present but not found → None.
-      - aux=None → env key set to "" (empty), byte-identical to legacy.
+      - aux=None → env key set to "" (empty).
     """
 
     def setUp(self):
@@ -1238,31 +1207,31 @@ class TestBuildActivationGolden(unittest.TestCase):
     # Kobold / SystemdDriver
     # -----------------------------------------------------------------------
 
-    def test_kobold_build_activation_byte_identical_with_aux(self):
-        """SystemdDriver.build_activation == _activation_for_kobold when file exists."""
+    def test_kobold_build_activation_exact_env_with_aux(self):
+        """SystemdDriver.build_activation produces the exact env block with aux."""
         with patch("os.path.isabs", return_value=True), \
              patch("os.path.exists", return_value=True):
             result = self.kobold_driver.build_activation(
                 self.kobold_svc, model=_GGUF, aux=_MMPROJ
             )
-        expected = proxy._activation_for_kobold(_GGUF, _MMPROJ)
+        expected = {"env": {"LLAMA_BEE_MODEL": _GGUF, "LLAMA_BEE_MMPROJ": _MMPROJ}}
         self.assertIsNotNone(result)
         self.assertEqual(result, expected, (
-            "build_activation must be byte-identical to _activation_for_kobold.\n"
+            "build_activation must produce the exact env activation.\n"
             f"Expected: {expected!r}\nGot:      {result!r}"
         ))
 
-    def test_kobold_build_activation_byte_identical_no_aux(self):
-        """SystemdDriver.build_activation with aux=None == _activation_for_kobold(model, None)."""
+    def test_kobold_build_activation_exact_env_no_aux(self):
+        """SystemdDriver.build_activation with aux=None sets LLAMA_BEE_MMPROJ=''."""
         with patch("os.path.isabs", return_value=True), \
              patch("os.path.exists", return_value=True):
             result = self.kobold_driver.build_activation(
                 self.kobold_svc, model=_GGUF, aux=None
             )
-        expected = proxy._activation_for_kobold(_GGUF, None)
+        expected = {"env": {"LLAMA_BEE_MODEL": _GGUF, "LLAMA_BEE_MMPROJ": ""}}
         self.assertIsNotNone(result)
         self.assertEqual(result, expected, (
-            "build_activation (no aux) must be byte-identical to _activation_for_kobold.\n"
+            "build_activation (no aux) must set the aux env key to empty.\n"
             f"Expected: {expected!r}\nGot:      {result!r}"
         ))
 
@@ -1333,13 +1302,13 @@ class TestBuildActivationGolden(unittest.TestCase):
     # Tabby / HttpLoadUnloadDriver
     # -----------------------------------------------------------------------
 
-    def test_tabby_build_activation_byte_identical(self):
-        """HttpLoadUnloadDriver.build_activation == _activation_for_tabby."""
+    def test_tabby_build_activation_exact_model_name(self):
+        """HttpLoadUnloadDriver.build_activation produces {'model_name': model}."""
         result = self.tabby_driver.build_activation(self.tabby_svc, model=_TABBY_MODEL)
-        expected = proxy._activation_for_tabby(_TABBY_MODEL)
+        expected = {"model_name": _TABBY_MODEL}
         self.assertIsNotNone(result)
         self.assertEqual(result, expected, (
-            "build_activation must be byte-identical to _activation_for_tabby.\n"
+            "build_activation must produce the exact model_name activation.\n"
             f"Expected: {expected!r}\nGot:      {result!r}"
         ))
 

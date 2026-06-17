@@ -141,8 +141,6 @@ _ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, str], str] = {
         "Bucket B: local-swap needed host resolution — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if backend == "kobold":'):
         "Bucket B: local-swap kobold branch — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'elif backend == "tabby":'):
-        "Bucket B: local-swap tabby branch — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if service == "tabby":'):
         "Bucket B: local-swap service tabby check — deployment-pattern, not engine knowledge",
     ("proxy.py", 'return DEFAULT_MODEL if backend == "tabby" else None'):
@@ -165,8 +163,6 @@ _ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, str], str] = {
         "Bucket B: local-swap tabby API key check — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if target_service == "tabby" and await tabby_backend_healthy():'):
         "Bucket B: local-swap tabby health re-probe on connect error — deployment-pattern, not engine knowledge",
-    ("proxy.py", "if backend not in (\"kobold\", \"tabby\"):"):
-        "Bucket B: local-swap backend guard (not-in check) — deployment-pattern, not engine knowledge",
     ("proxy.py", 'if key in {"kobold", "tabby"}:'):
         "Bucket B: local-swap key-in-set guard — deployment-pattern, not engine knowledge",
     # The next two are false-positive branch-pattern matches on non-branch lines

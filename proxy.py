@@ -741,29 +741,6 @@ CHECK_INTERVAL = routing_cfg.get("check_interval", 30)
 llm_cfg = config.get("llm", {}) or {}
 PIN_LOADED_MODEL = bool(llm_cfg.get("pin_loaded_model", True))
 
-# ---------------------------------------------------------------------------
-# AGW_DRIVER_SWAP feature flag (default ON — driver path is the production path)
-#
-# When ON (default): ensure_target() routes kobold/tabby through their
-#   LifecycleDriver (SystemdDriver / HttpLoadUnloadDriver) — the engine-agnostic
-#   path. This is now the default: the verify phase is complete (live swap on
-#   the real deployment, both directions, via the HTTP request path — the model
-#   genuinely changed and restored; see commit 27f2730), and the golden suite
-#   (tests/test_lifecycle_swap_golden.py, 34 tests) proves byte-identical
-#   side-effects vs the legacy functions.
-# When OFF (AGW_DRIVER_SWAP=0): falls back to the legacy kobold/tabby branches.
-#   Retained as a one-release rollback escape hatch only.
-#
-# Rollback: set AGW_DRIVER_SWAP=0; no code change needed. The legacy functions
-#   (swap_kobold_model, swap_tabby_model, _activation_for_*, _kobold_state) now
-#   serve as the golden-test oracle + rollback path; they are scheduled for
-#   deletion one release after this default flip, once driver-on has run in
-#   production without a rollback.
-# ---------------------------------------------------------------------------
-DRIVER_SWAP_ENABLED: bool = bool_from_config(
-    os.environ.get("AGW_DRIVER_SWAP", (routing_cfg or {}).get("driver_swap")),
-    True,
-)
 USE_LOADED_MODEL_ALIAS = "current"
 USE_LOADED_FAST_MODEL_ALIAS = "current-fast"
 USE_LOADED_MODEL_ALIASES = frozenset({
@@ -1245,127 +1222,6 @@ def currently_loaded_kobold_model() -> Optional[str]:
     return _kobold_state["model"]
 
 
-async def swap_kobold_model(target_path: str, target_mmproj: Optional[str] = None) -> bool:
-    """Restart llama-turbo.service so it loads the given GGUF (and mmproj).
-
-    LEGACY — SCHEDULED FOR DELETION. The driver path (SystemdDriver, default-ON
-    via AGW_DRIVER_SWAP) has replaced this in production. This function and its
-    siblings (swap_tabby_model, _activation_for_kobold, _activation_for_tabby)
-    now survive ONLY as (a) the golden-test oracle in
-    tests/test_lifecycle_swap_golden.py proving the driver is byte-identical, and
-    (b) the AGW_DRIVER_SWAP=0 rollback path. DELETE all four one release after
-    default-on has baked in production without a rollback — that collapses the
-    largest remaining engine-code bucket. See the flag comment near the
-    DRIVER_SWAP_ENABLED definition.
-
-    Writes a higher-numbered drop-in (20-model.conf) overriding LLAMA_TURBO_MODEL
-    AND LLAMA_TURBO_MMPROJ, runs daemon-reload + restart, then polls /v1/models
-    until ready. Concurrent callers serialize on swap_lock_for("kobold"); in-flight
-    requests await the in-progress swap.
-
-    target_mmproj behavior:
-      - non-empty str: must exist on disk; written as the mmproj path
-      - None / empty: written as an empty LLAMA_TURBO_MMPROJ so start_service.sh
-        omits --mmproj (text-only model)
-
-    Returns True on success, False on timeout or error.
-    """
-    if not Path(target_path).is_file():
-        print(f"[proxy] swap_kobold_model: target not found: {target_path}", flush=True)
-        return False
-
-    # Validate mmproj exists on disk if specified. Don't try to validate that the
-    # mmproj is architecturally compatible with the model — llama-server does that
-    # and produces a clear error.
-    if target_mmproj:
-        if not Path(target_mmproj).is_file():
-            print(f"[proxy] swap_kobold_model: mmproj not found: {target_mmproj}", flush=True)
-            return False
-    mmproj_value = target_mmproj or ""
-
-    async with swap_lock_for("kobold"):
-        # Re-check inside the lock — another caller may have already loaded this model.
-        current = currently_loaded_kobold_model()
-        current_mmproj = currently_loaded_kobold_mmproj() if current == target_path else None
-        if current == target_path and (current_mmproj or "") == mmproj_value:
-            return True
-
-        print(
-            f"[proxy] swapping kobold model: {current} -> {target_path} "
-            f"(mmproj={mmproj_value or '<none>'})",
-            flush=True,
-        )
-        start = time.time()
-
-        try:
-            KOBOLD_MODEL_DROPIN.parent.mkdir(parents=True, exist_ok=True)
-            KOBOLD_MODEL_DROPIN.write_text(
-                "# Managed by openai-proxy. Do not edit by hand; set role `model:`/`mmproj:` in proxy_config.yml.\n"
-                "[Service]\n"
-                f'Environment="LLAMA_BEE_MODEL={target_path}"\n'
-                f'Environment="LLAMA_BEE_MMPROJ={mmproj_value}"\n'
-            )
-        except Exception as e:
-            print(f"[proxy] swap_kobold_model: failed to write drop-in: {e}", flush=True)
-            return False
-
-        def _remove_dropin() -> None:
-            try:
-                KOBOLD_MODEL_DROPIN.unlink(missing_ok=True)
-            except Exception as e:
-                print(f"[proxy] swap_kobold_model: failed to remove drop-in: {e}", flush=True)
-
-        for cmd in (
-            ["systemctl", "--user", "daemon-reload"],
-            ["systemctl", "--user", "restart", KOBOLD_SERVICE_NAME],
-        ):
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                print(f"[proxy] swap_kobold_model: `{' '.join(cmd)}` failed: {stderr.decode()}", flush=True)
-                _remove_dropin()
-                return False
-
-        # Stale during restart — mark unknown so the next read re-seeds.
-        _kobold_state["model"] = None
-        _kobold_state["mmproj"] = None
-        _kobold_state["ts"] = 0.0
-
-        for i in range(SWITCH_TIMEOUT):
-            try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(3)) as client:
-                    resp = await client.get(f"{KOBOLD_HOST}/v1/models")
-                    if resp.status_code == 200:
-                        elapsed = time.time() - start
-                        print(f"[proxy] swap complete in {elapsed:.1f}s", flush=True)
-                        # Set state authoritatively — no pgrep or /props needed.
-                        _kobold_state["model"] = target_path
-                        _kobold_state["mmproj"] = target_mmproj or None
-                        _kobold_state["ts"] = time.time()
-                        try:
-                            firehose_metrics.record_event(
-                                "model_swap",
-                                f"kobold {current or '—'} → {target_path}",
-                                backend="kobold",
-                                elapsed_s=round(elapsed, 2),
-                                target=target_path,
-                            )
-                        except Exception:
-                            pass
-                        return True
-            except Exception:
-                pass
-            await asyncio.sleep(1)
-
-        print(f"[proxy] swap failed: kobold did not become ready within {SWITCH_TIMEOUT}s", flush=True)
-        _remove_dropin()
-        return False
-
-
 async def ensure_backend_for_model(model_name: str) -> Optional[str]:
     """Ensure the right backend is running for the given model.
     Returns the backend host URL, or None if switching failed."""
@@ -1443,150 +1299,34 @@ def _currently_loaded_aux_for(backend: str) -> Optional[str]:
     return None
 
 
-async def swap_tabby_model(target_model: str) -> bool:
-    """Ensure TabbyAPI has `target_model` loaded. Unloads any current model, then
-    issues /v1/model/load with the target. Returns True on success.
-
-    `target_model` is the TabbyAPI model_name (directory under tabby's model_dir),
-    matching the format the existing `load_model()` path uses.
-    """
-    if not target_model:
-        return False
-
-    async with swap_lock_for("tabby"):
-        current = await currently_loaded_tabby_model()
-        if current == target_model:
-            return True
-
-        print(f"[proxy] swapping tabby model: {current} -> {target_model}", flush=True)
-        start = time.time()
-
-        # Unload whatever's currently there. Idempotent — if nothing is loaded,
-        # TabbyAPI returns ok or a benign error.
-        if current:
-            try:
-                async with httpx.AsyncClient() as client:
-                    resp = await client.post(
-                        f"{TABBY_HOST}/v1/model/unload",
-                        headers={"x-admin-key": ADMIN_KEY},
-                        timeout=60,
-                    )
-                    if resp.status_code not in (200, 204):
-                        print(f"[proxy] swap_tabby_model: unload returned {resp.status_code}: {resp.text[:200]}", flush=True)
-            except Exception as e:
-                print(f"[proxy] swap_tabby_model: unload error: {e}", flush=True)
-                return False
-
-        # Load the target. Reuse model_params from tabby's config (cache_size,
-        # max_seq_len, etc.) to mirror the idle-reload path.
-        _, _, model_params = get_tabby_model_config()
-        load_payload = {"model_name": target_model, **model_params}
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{TABBY_HOST}/v1/model/load",
-                    headers={"x-admin-key": ADMIN_KEY, "Content-Type": "application/json"},
-                    json=load_payload,
-                    timeout=TABBY_LOAD_TIMEOUT,
-                )
-                response_text = ""
-                async for chunk in resp.aiter_bytes():
-                    response_text += chunk.decode("utf-8", errors="replace")
-
-                if resp.status_code == 200 and '"status":"finished"' in response_text:
-                    elapsed = time.time() - start
-                    print(f"[proxy] swap_tabby_model: success in {elapsed:.1f}s", flush=True)
-                    try:
-                        firehose_metrics.record_event(
-                            "model_swap",
-                            f"tabby {current or '—'} → {target_model}",
-                            backend="tabby",
-                            elapsed_s=round(elapsed, 2),
-                            target=target_model,
-                        )
-                    except Exception:
-                        pass
-                    return True
-
-                if '"status":"error"' in response_text or '"error":' in response_text:
-                    print(f"[proxy] swap_tabby_model: load reported error: {response_text[-300:]}", flush=True)
-                    return False
-
-                # Verify by querying /v1/model.
-                loaded_now = await currently_loaded_tabby_model()
-                if loaded_now == target_model:
-                    elapsed = time.time() - start
-                    print(f"[proxy] swap_tabby_model: success (verified) in {elapsed:.1f}s", flush=True)
-                    try:
-                        firehose_metrics.record_event(
-                            "model_swap",
-                            f"tabby {current or '—'} → {target_model}",
-                            backend="tabby",
-                            elapsed_s=round(elapsed, 2),
-                            target=target_model,
-                            verified=True,
-                        )
-                    except Exception:
-                        pass
-                    return True
-
-                print(f"[proxy] swap_tabby_model: outcome unclear, loaded={loaded_now}, response={response_text[-200:]}", flush=True)
-                return False
-        except Exception as e:
-            print(f"[proxy] swap_tabby_model: load error: {e}", flush=True)
-            return False
-
-
-def _activation_for_kobold(model: str, mmproj: Optional[str]) -> dict:
-    """Build the SystemdDriver activation dict for a kobold swap.
-
-    Returns {"env": {"LLAMA_BEE_MODEL": model, "LLAMA_BEE_MMPROJ": mmproj_or_empty}}.
-    Keeps the env key names as data here (activation_for), not inside the driver.
-    """
-    mmproj_value = mmproj or ""
-    return {
-        "env": {
-            "LLAMA_BEE_MODEL": model,
-            "LLAMA_BEE_MMPROJ": mmproj_value,
-        }
-    }
-
-
-def _activation_for_tabby(model: str) -> dict:
-    """Build the HttpLoadUnloadDriver activation dict for a tabby swap."""
-    return {"model_name": model}
-
-
 async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str] = None) -> bool:
     """Make a (backend, model, mmproj) target real before forwarding a request.
 
-    Steps:
-      1. If `backend` is kobold or tabby AND DRIVER_SWAP_ENABLED is False (default),
-         apply the legacy managed cold-start / model-swap logic
-         (swap_kobold_model / swap_tabby_model).  Behavior is byte-identical today.
-      1b. If DRIVER_SWAP_ENABLED is True, route kobold/tabby through their
-         LifecycleDriver (SystemdDriver / HttpLoadUnloadDriver) — same side-effects,
-         proven identical by tests/test_lifecycle_swap_golden.py.
-      2. For any OTHER backend, delegate to its LifecycleDriver.ensure_ready().
-         The default (external) driver performs a health-check GET and returns
-         True if the backend is reachable — so an always-on vLLM, remote
-         OpenAI-compatible endpoint, or second llama.cpp instance passes through
-         instead of 503-ing (the bug fixed here).
-         A docker driver will `docker start` the container first then poll health.
+    Every backend goes through its LifecycleDriver — there is no kobold/tabby
+    special-case anymore. The driver is resolved from the service's
+    `lifecycle.driver` (DATA); engine-shaped knowledge (env key names, load body,
+    prechecks) lives in the driver + driver_config, never here.
 
-    `mmproj` is kobold-only. Pass None for text-only models — the proxy writes an
-    empty LLAMA_BEE_MMPROJ so start_service.sh omits --mmproj.
+      - Non-swap drivers (external / docker / command): ensure_ready() —
+        health-check (external), or start-then-poll (docker / command). An
+        always-on vLLM, remote OpenAI-compatible endpoint, or second llama.cpp
+        instance passes through instead of 503-ing.
+      - Swap drivers (systemd dropin-env-restart / http-load-unload): when a
+        model is requested, build + precheck the activation, then swap() under
+        the per-service lock. The driver does the already-loaded short-circuit
+        and pin-loaded skip from SwapContext.
 
-    Returns True only if both steps succeed. Caller turns False into a 503.
+    `mmproj` is the optional aux file (kobold vision). Pass None for text-only.
+
+    Returns True on success. Caller turns False into a 503.
     """
-    # --- Route non-kobold/tabby backends through their LifecycleDriver ------
-    # This is the fix for the validated 503 bug: previously every backend that
-    # wasn't literally "kobold" or "tabby" returned False here, making "add an
-    # engine and route to it" a lie for any always-on external backend.
-    if backend not in ("kobold", "tabby"):
-        from gateway.lifecycle_drivers import driver_for_service
-        driver = driver_for_service(backend)
-        bcfg = (config.get("backends") or {}).get(backend) or {}
+    from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
+
+    bcfg = (config.get("backends") or {}).get(backend) or {}
+    driver = driver_for_service(backend, config.get("backends"))
+
+    # Non-swap driver, or no model requested → just make the backend ready.
+    if not (supports_swap(driver) and model):
         ready = await driver.ensure_ready(bcfg, timeout_s=HEALTH_CHECK_TIMEOUT)
         if not ready:
             print(
@@ -1595,109 +1335,27 @@ async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str
             )
         return ready
 
-    # -----------------------------------------------------------------------
-    # Driver-swap path (AGW_DRIVER_SWAP=1) — kobold/tabby via LifecycleDriver
-    # Default OFF: falls through to the legacy path below (byte-identical today)
-    # -----------------------------------------------------------------------
-    if DRIVER_SWAP_ENABLED:
-        from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
-        bcfg = (config.get("backends") or {}).get(backend) or {}
-        driver = driver_for_service(backend, config.get("backends"))
+    # The driver builds + prechecks its own activation from driver_config. On a
+    # precheck failure (e.g. a missing GGUF/aux file) it returns None.
+    activation = driver.build_activation(bcfg, model=model, aux=mmproj or None)
+    if activation is None:
+        return False
 
-        if not (supports_swap(driver) and model):
-            return await driver.ensure_ready(bcfg, timeout_s=HEALTH_CHECK_TIMEOUT)
-
-        # The driver builds + prechecks its own activation from driver_config
-        # (engine-shaped knowledge lives in the driver/data, not here). On a
-        # precheck failure (e.g. a missing GGUF/aux file) it returns None.
-        activation = driver.build_activation(bcfg, model=model, aux=mmproj or None)
-        if activation is None:
-            return False
-
-        # Serialize on the same per-service lock the legacy path uses (divergence
-        # 1); the driver does the already-loaded short-circuit (3) and pin-loaded
-        # skip (2) from SwapContext — no engine literal appears in this branch.
-        async with swap_lock_for(backend):
-            return await driver.swap(
-                bcfg,
-                activation,
-                ctx=SwapContext(
-                    loaded_model=await _currently_loaded_model_for(backend),
-                    target_model=model,
-                    loaded_aux=_currently_loaded_aux_for(backend),
-                    target_aux=mmproj or None,
-                    pin_loaded=bool(bcfg.get("pin_loaded_model", PIN_LOADED_MODEL)),
-                ),
-                warned_models=_pin_mismatch_warned,
-            )
-
-    # -----------------------------------------------------------------------
-    # LEGACY PATH — unchanged kobold/tabby branches (default, behavior-identical)
-    # -----------------------------------------------------------------------
-
-    label = f"ensure_target({backend}, {model}, mmproj={mmproj or '<none>'})"
-
-    # Step 1: cold-start the backend if needed.
-    active = await get_active_backend()
-    if active != backend:
-        print(f"[proxy] {label} -> backend cold (active={active}), starting...", flush=True)
-        if not await switch_backend(backend):
-            print(f"[proxy] {label} failed: backend '{backend}' did not start", flush=True)
-            return False
-
-    # Step 2: swap model if pinned and mismatched.
-    if model:
-        if backend == "kobold":
-            if not is_literal_gguf_path(model):
-                # Local activation targets must be absolute paths. If the file is
-                # missing, fail loudly rather than restart llama-turbo broken.
-                if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
-                    print(f"[proxy] {label} failed: GGUF not found at {model}", flush=True)
-                    return False
-            # Pre-validate mmproj path if provided — caller asked for vision support,
-            # so refuse to proceed if the projector file is missing.
-            if mmproj and not (os.path.isabs(mmproj) and os.path.exists(mmproj)):
-                print(f"[proxy] {label} failed: mmproj not found at {mmproj}", flush=True)
-                return False
-
-            loaded = currently_loaded_kobold_model()
-            loaded_mmproj = currently_loaded_kobold_mmproj()
-            target_mmproj = mmproj or None
-            mmproj_mismatch = (loaded_mmproj or None) != target_mmproj
-            if loaded != model or mmproj_mismatch:
-                if PIN_LOADED_MODEL:
-                    # Pinned mode: never auto-restart llama-turbo. Serve the request
-                    # with whatever's loaded. Warn once per distinct requested path.
-                    if model not in _pin_mismatch_warned:
-                        _pin_mismatch_warned.add(model)
-                        print(
-                            f"[proxy] {label} pin_loaded_model=true: skipping switch "
-                            f"(loaded={loaded}, requested={model}, "
-                            f"loaded_mmproj={loaded_mmproj}, requested_mmproj={target_mmproj}); "
-                            f"serving with current model",
-                            flush=True,
-                        )
-                else:
-                    print(
-                        f"[proxy] {label} -> swap from {loaded} (mmproj {loaded_mmproj} -> {target_mmproj})",
-                        flush=True,
-                    )
-                    ok = await swap_kobold_model(model, target_mmproj)
-                    if not ok:
-                        print(f"[proxy] {label} failed: kobold swap to {model} did not complete", flush=True)
-                        return False
-                    print(f"[proxy] {label} success", flush=True)
-        elif backend == "tabby":
-            loaded = await currently_loaded_tabby_model()
-            if loaded != model:
-                print(f"[proxy] {label} -> swap from {loaded}", flush=True)
-                ok = await swap_tabby_model(model)
-                if not ok:
-                    print(f"[proxy] {label} failed: tabby swap to {model} did not complete", flush=True)
-                    return False
-                print(f"[proxy] {label} success", flush=True)
-
-    return True
+    # The driver does the already-loaded short-circuit and pin-loaded skip from
+    # SwapContext — no engine literal appears here.
+    async with swap_lock_for(backend):
+        return await driver.swap(
+            bcfg,
+            activation,
+            ctx=SwapContext(
+                loaded_model=await _currently_loaded_model_for(backend),
+                target_model=model,
+                loaded_aux=_currently_loaded_aux_for(backend),
+                target_aux=mmproj or None,
+                pin_loaded=bool(bcfg.get("pin_loaded_model", PIN_LOADED_MODEL)),
+            ),
+            warned_models=_pin_mismatch_warned,
+        )
 
 
 # =============================================================================

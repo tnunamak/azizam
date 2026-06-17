@@ -3,8 +3,9 @@
 Step 1 of the migration plan: implement the LifecycleDriver Protocol and the TWO
 simplest drivers (external + docker).
 
-Step 2 adds SystemdDriver and HttpLoadUnloadDriver — the two new drivers that
-replace the kobold/tabby hard-coded swap branches, behind the AGW_DRIVER_SWAP flag.
+SystemdDriver and HttpLoadUnloadDriver are the two swap-capable drivers that
+replaced the kobold/tabby hard-coded swap branches (now deleted). They are the
+sole swap path in ensure_target — there is no flag and no legacy fallback.
 
 Design axioms (§0):
 - No driver installs, builds, or provisions anything.
@@ -887,8 +888,9 @@ class SystemdDriver:
           - pin_loaded mismatch → warn-once (via warned_models set) + True.
           - mismatch, not pinned → proceed to drop-in write + restart (below).
 
-        Reproduces swap_kobold_model() side-effects byte-for-byte when seeded
-        with the correct driver_config and activation.env.
+        Drives the dropin-env-restart swap: write a higher-numbered systemd
+        drop-in overriding the activation env keys, daemon-reload, restart the
+        unit, then poll health.
         """
         dc = self._driver_config(svc)
         scope_flag = self._scope_flag(dc)
@@ -941,7 +943,7 @@ class SystemdDriver:
                 return True
         # --- end SwapContext policy -------------------------------------------
 
-        # Build drop-in text — must be byte-identical to swap_kobold_model().
+        # Build the drop-in text (the exact [Service] Environment= override).
         dropin_text = (
             "# Managed by openai-proxy. Do not edit by hand; set role `model:`/`mmproj:` in proxy_config.yml.\n"
             "[Service]\n"
@@ -963,7 +965,7 @@ class SystemdDriver:
             except Exception as exc:
                 print(f"[lifecycle] SystemdDriver.swap: failed to remove drop-in: {exc}", flush=True)
 
-        # daemon-reload then restart — exact order from swap_kobold_model().
+        # daemon-reload then restart — daemon-reload MUST precede restart.
         for cmd in (
             ["systemctl"] + scope_flag + ["daemon-reload"],
             ["systemctl"] + scope_flag + ["restart", unit],
@@ -1179,14 +1181,13 @@ class HttpLoadUnloadDriver:
         """Unload current model (if any) then load target.
 
         When `ctx` is supplied, uses ctx.loaded_model for the already-loaded
-        short-circuit instead of issuing a verify GET (byte-identical outcome —
-        if ctx says it's already loaded, skip unload+load just as the legacy
-        swap_tabby_model does when it finds current == target_model).
+        short-circuit instead of issuing a verify GET (if ctx says it's already
+        loaded, skip unload+load when current == target_model).
         HttpLoadUnloadDriver has no aux or pin concept; those fields of ctx are
         ignored.
 
-        Reproduces swap_tabby_model() side-effects when seeded with the correct
-        driver_config and activation {"model_name": ..., "params": {...}}.
+        Drives the load/unload swap from driver_config and the activation
+        {"model_name": ..., "params": {...}}.
         activation["params"] is merged into the load body alongside model_name;
         if absent the driver calls PARAMS_PROVIDERS[load_body_params](svc) live.
         """
