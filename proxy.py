@@ -1585,26 +1585,16 @@ async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str
         if not (supports_swap(driver) and model):
             return await driver.ensure_ready(bcfg, timeout_s=HEALTH_CHECK_TIMEOUT)
 
-        # Path validation (engine-shaped precheck; driver_config-typed).
-        if backend == "kobold":
-            if not is_literal_gguf_path(model):
-                if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
-                    print(f"[proxy] ensure_target({backend}): GGUF not found at {model}", flush=True)
-                    return False
-            if mmproj and not (os.path.isabs(mmproj) and os.path.exists(mmproj)):
-                print(f"[proxy] ensure_target({backend}): mmproj not found at {mmproj}", flush=True)
-                return False
-            activation = _activation_for_kobold(model, mmproj)
-        else:
-            activation = _activation_for_tabby(model)
+        # The driver builds + prechecks its own activation from driver_config
+        # (engine-shaped knowledge lives in the driver/data, not here). On a
+        # precheck failure (e.g. a missing GGUF/aux file) it returns None.
+        activation = driver.build_activation(bcfg, model=model, aux=mmproj or None)
+        if activation is None:
+            return False
 
-        # Serialize swaps on the same per-service lock the legacy path uses
-        # (divergence 1 fix), then mirror the legacy already-loaded short-circuit
-        # (divergence 3) and PIN_LOADED_MODEL pinning (divergence 2).
-        # The swap POLICY (serialize, already-loaded short-circuit, pin-loaded
-        # skip) is the driver's responsibility — engine-agnostic in ensure_target.
-        # The driver reads pin_loaded / loaded-probe / mmproj-identity from its
-        # own config + a SwapContext, so no engine literal appears here.
+        # Serialize on the same per-service lock the legacy path uses (divergence
+        # 1); the driver does the already-loaded short-circuit (3) and pin-loaded
+        # skip (2) from SwapContext — no engine literal appears in this branch.
         async with swap_lock_for(backend):
             return await driver.swap(
                 bcfg,
