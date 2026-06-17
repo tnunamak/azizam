@@ -57,8 +57,57 @@ import asyncio
 import os
 import subprocess
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Protocol, runtime_checkable
+
+
+# ---------------------------------------------------------------------------
+# SwapContext — engine-agnostic state passed from ensure_target into swap()
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SwapContext:
+    """Engine-agnostic context the caller supplies to driver.swap().
+
+    The driver uses this to apply the already-loaded short-circuit and
+    pin-loaded policy WITHOUT requiring the driver to know about kobold/tabby
+    probe functions.  The caller (ensure_target) collects the current state
+    once and passes it in.
+
+    Fields
+    ------
+    loaded_model:
+        Model currently loaded on the backend (from the relevant probe), or
+        None if nothing is loaded / backend is unreachable.
+    target_model:
+        The model we want loaded after the swap.  The driver uses this for the
+        already-loaded comparison instead of inferring it from activation.
+    loaded_aux:
+        Currently-loaded aux file (mmproj) for drivers that support aux, or
+        None.  Ignored by drivers that have no aux concept (e.g. tabby).
+    target_aux:
+        Desired aux file (mmproj) after the swap, or None for text-only.
+        Ignored by drivers that have no aux concept.
+    pin_loaded:
+        If True the driver must NOT restart the service when there is a
+        mismatch — warn once and return True (serve with whatever is loaded).
+    """
+
+    loaded_model: Optional[str]
+    target_model: str
+    loaded_aux: Optional[str] = None
+    target_aux: Optional[str] = None
+    pin_loaded: bool = False
+
+    # Per-SwapContext set tracking which models we have already warned about so
+    # the warn-once behaviour is mirrored faithfully without needing a global
+    # set in proxy.py.  In practice ensure_target creates a fresh SwapContext
+    # per call, so the global proxy._pin_mismatch_warned set carries across
+    # calls — but the driver only has this one call to emit the warning.
+    # We handle warn-once by delegating the warning-set to the caller via the
+    # `warned_models` parameter of the driver's swap method.  See SystemdDriver.
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -114,12 +163,28 @@ class LifecycleDriver(Protocol):
         """Read-only pre-flight check. Returns a warning string or None."""
         ...
 
-    async def swap(self, svc: Mapping[str, Any], activation: Mapping[str, Any]) -> bool:
+    async def swap(
+        self,
+        svc: Mapping[str, Any],
+        activation: Mapping[str, Any],
+        ctx: Optional[SwapContext] = None,
+        warned_models: Optional[set] = None,
+    ) -> bool:
         """OPTIONAL — single-slot drivers only.  Make `activation` the loaded model.
 
         `activation` is the resolved per-model block:
           - systemd (dropin-env-restart): {"env": {KEY: VALUE, ...}}
           - http-load-unload:             {"model_name": str, "params": {...}}
+
+        `ctx` carries the engine-agnostic state needed to short-circuit when
+        the target is already loaded, or to skip the restart when pin_loaded
+        is set.  When None the driver falls back to its own runtime checks
+        (backward-compatible with existing tests that don't pass ctx).
+
+        `warned_models` is the caller-owned set used for warn-once behaviour
+        under pin_loaded.  Pass proxy._pin_mismatch_warned (or a test set) so
+        the warning fires at most once per model path across calls.  If None a
+        fresh set is used (so warnings always fire — safe for isolated tests).
 
         Returns True iff the engine is serving the target after the swap.
         ExternalDriver / DockerDriver do NOT implement this (no single slot).
@@ -493,11 +558,23 @@ class SystemdDriver:
             return "systemd driver_config.unit is required but not set"
         return None
 
-    async def swap(self, svc: Mapping[str, Any], activation: Mapping[str, Any]) -> bool:
+    async def swap(
+        self,
+        svc: Mapping[str, Any],
+        activation: Mapping[str, Any],
+        ctx: Optional[SwapContext] = None,
+        warned_models: Optional[set] = None,
+    ) -> bool:
         """Write drop-in → daemon-reload → restart → poll health.
 
         activation["env"] must be a dict of {KEY: value} pairs to write as
         Environment="KEY=value" lines in the [Service] drop-in block.
+
+        When `ctx` is supplied, applies the already-loaded short-circuit and
+        pin_loaded policy BEFORE writing anything:
+          - already loaded  (model + aux both match) → return True immediately.
+          - pin_loaded mismatch → warn-once (via warned_models set) + True.
+          - mismatch, not pinned → proceed to drop-in write + restart (below).
 
         Reproduces swap_kobold_model() side-effects byte-for-byte when seeded
         with the correct driver_config and activation.env.
@@ -514,6 +591,44 @@ class SystemdDriver:
 
         env = activation.get("env") or {}
         dropin_path = self._dropin_path(dc)
+
+        # --- SwapContext policy (already-loaded short-circuit + pin) ----------
+        if ctx is not None:
+            target = ctx.target_model
+            # Aux match: only compare aux if the activation env carries an aux
+            # key — drivers without aux (e.g. tabby) won't have it, so we only
+            # factor aux in when the env dict actually contains an aux-shaped key.
+            # We detect aux by checking whether loaded_aux / target_aux are
+            # meaningful: if the activation.env is empty there's nothing to do
+            # anyway, but for correctness we mirror the kobold logic:
+            # mismatch = (model mismatch) OR (aux mismatch, normalised to None).
+            loaded_aux_norm = ctx.loaded_aux or None
+            target_aux_norm = ctx.target_aux or None
+            already_loaded = (
+                ctx.loaded_model == target
+                and loaded_aux_norm == target_aux_norm
+            )
+            if already_loaded:
+                return True
+            if ctx.pin_loaded:
+                # Warn once per model path — use the caller-supplied set so
+                # the warn fires at most once per model across multiple calls.
+                if warned_models is None:
+                    warned_models = set()
+                if target not in warned_models:
+                    warned_models.add(target)
+                    loaded = ctx.loaded_model
+                    loaded_mmproj = ctx.loaded_aux
+                    target_mmproj = ctx.target_aux or None
+                    print(
+                        f"[proxy] ensure_target pin_loaded_model=true: skipping switch "
+                        f"(loaded={loaded}, requested={target}, "
+                        f"loaded_mmproj={loaded_mmproj}, requested_mmproj={target_mmproj}); "
+                        f"serving with current model",
+                        flush=True,
+                    )
+                return True
+        # --- end SwapContext policy -------------------------------------------
 
         # Build drop-in text — must be byte-identical to swap_kobold_model().
         dropin_text = (
@@ -724,8 +839,21 @@ class HttpLoadUnloadDriver:
             return "http-load-unload driver_config.load_url is required but not set"
         return None
 
-    async def swap(self, svc: Mapping[str, Any], activation: Mapping[str, Any]) -> bool:
+    async def swap(
+        self,
+        svc: Mapping[str, Any],
+        activation: Mapping[str, Any],
+        ctx: Optional[SwapContext] = None,
+        warned_models: Optional[set] = None,
+    ) -> bool:
         """Unload current model (if any) then load target.
+
+        When `ctx` is supplied, uses ctx.loaded_model for the already-loaded
+        short-circuit instead of issuing a verify GET (byte-identical outcome —
+        if ctx says it's already loaded, skip unload+load just as the legacy
+        swap_tabby_model does when it finds current == target_model).
+        HttpLoadUnloadDriver has no aux or pin concept; those fields of ctx are
+        ignored.
 
         Reproduces swap_tabby_model() side-effects when seeded with the correct
         driver_config and activation {"model_name": ..., "params": {...}}.
@@ -751,10 +879,18 @@ class HttpLoadUnloadDriver:
         # Get the api key for verify calls — read from svc (mirrors proxy.API_KEY pattern)
         api_key = self._api_key(svc, dc)
 
-        # Step 1: check what's currently loaded (mirrors currently_loaded_tabby_model).
-        current = await self._get_loaded_model(base_url, verify_ep, api_key)
-        if current == target_model:
-            return True
+        # Step 1: check what's currently loaded.
+        # If ctx is supplied, use it directly (no extra GET needed — caller
+        # already probed the backend).  Otherwise fall back to the verify GET
+        # (backward-compat for callers that don't supply ctx).
+        if ctx is not None:
+            current = ctx.loaded_model
+            if current == target_model:
+                return True
+        else:
+            current = await self._get_loaded_model(base_url, verify_ep, api_key)
+            if current == target_model:
+                return True
 
         start = time.time()
         print(f"[lifecycle] HttpLoadUnloadDriver.swap: {current} -> {target_model}", flush=True)

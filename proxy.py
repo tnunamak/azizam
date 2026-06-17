@@ -1394,6 +1394,33 @@ async def currently_loaded_tabby_model() -> Optional[str]:
     return None
 
 
+async def _currently_loaded_model_for(backend: str) -> Optional[str]:
+    """Return the model a swap-managed backend currently has loaded.
+
+    The single contained dispatch from a backend id to its loaded-model probe,
+    used by the driver-swap path's already-loaded short-circuit. (The probes
+    themselves are engine-shaped state introspection; this keeps that knowledge
+    in one lookup rather than scattered through the swap logic.)
+    """
+    if backend == "kobold":
+        return currently_loaded_kobold_model()
+    if backend == "tabby":
+        return await currently_loaded_tabby_model()
+    return None
+
+
+def _currently_loaded_aux_for(backend: str) -> Optional[str]:
+    """Return the aux (mmproj) file a swap-managed backend currently has loaded.
+
+    Contained dispatch from backend id to the aux-probe; used by the
+    driver-swap path to populate SwapContext.loaded_aux. Only kobold carries
+    an aux/mmproj concept — all other backends return None.
+    """
+    if backend == "kobold":
+        return currently_loaded_kobold_mmproj()
+    return None
+
+
 async def swap_tabby_model(target_model: str) -> bool:
     """Ensure TabbyAPI has `target_model` loaded. Unloads any current model, then
     issues /v1/model/load with the target. Returns True on success.
@@ -1551,32 +1578,46 @@ async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str
     # Default OFF: falls through to the legacy path below (byte-identical today)
     # -----------------------------------------------------------------------
     if DRIVER_SWAP_ENABLED:
-        from gateway.lifecycle_drivers import driver_for_service, supports_swap
+        from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
         bcfg = (config.get("backends") or {}).get(backend) or {}
         driver = driver_for_service(backend, config.get("backends"))
 
-        if supports_swap(driver) and model:
-            if backend == "kobold":
-                # Validate GGUF + mmproj paths before attempting the swap.
-                if not is_literal_gguf_path(model):
-                    if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
-                        print(
-                            f"[proxy] ensure_target({backend}): GGUF not found at {model}",
-                            flush=True,
-                        )
-                        return False
-                if mmproj and not (os.path.isabs(mmproj) and os.path.exists(mmproj)):
-                    print(
-                        f"[proxy] ensure_target({backend}): mmproj not found at {mmproj}",
-                        flush=True,
-                    )
-                    return False
-                activation = _activation_for_kobold(model, mmproj)
-            else:
-                activation = _activation_for_tabby(model)
-            return await driver.swap(bcfg, activation)
-        else:
+        if not (supports_swap(driver) and model):
             return await driver.ensure_ready(bcfg, timeout_s=HEALTH_CHECK_TIMEOUT)
+
+        # Path validation (engine-shaped precheck; driver_config-typed).
+        if backend == "kobold":
+            if not is_literal_gguf_path(model):
+                if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
+                    print(f"[proxy] ensure_target({backend}): GGUF not found at {model}", flush=True)
+                    return False
+            if mmproj and not (os.path.isabs(mmproj) and os.path.exists(mmproj)):
+                print(f"[proxy] ensure_target({backend}): mmproj not found at {mmproj}", flush=True)
+                return False
+            activation = _activation_for_kobold(model, mmproj)
+        else:
+            activation = _activation_for_tabby(model)
+
+        # Serialize swaps on the same per-service lock the legacy path uses
+        # (divergence 1 fix), then mirror the legacy already-loaded short-circuit
+        # (divergence 3) and PIN_LOADED_MODEL pinning (divergence 2).
+        # The swap POLICY (serialize, already-loaded short-circuit, pin-loaded
+        # skip) is the driver's responsibility — engine-agnostic in ensure_target.
+        # The driver reads pin_loaded / loaded-probe / mmproj-identity from its
+        # own config + a SwapContext, so no engine literal appears here.
+        async with swap_lock_for(backend):
+            return await driver.swap(
+                bcfg,
+                activation,
+                ctx=SwapContext(
+                    loaded_model=await _currently_loaded_model_for(backend),
+                    target_model=model,
+                    loaded_aux=_currently_loaded_aux_for(backend),
+                    target_aux=mmproj or None,
+                    pin_loaded=bool(bcfg.get("pin_loaded_model", PIN_LOADED_MODEL)),
+                ),
+                warned_models=_pin_mismatch_warned,
+            )
 
     # -----------------------------------------------------------------------
     # LEGACY PATH — unchanged kobold/tabby branches (default, behavior-identical)

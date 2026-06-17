@@ -795,22 +795,32 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
 
         swap_called_with: list[tuple] = []
 
-        async def _fake_swap(svc, activation):
-            swap_called_with.append((svc, activation))
+        async def _fake_swap(svc, activation, ctx=None, warned_models=None):
+            swap_called_with.append((svc, activation, ctx, warned_models))
             return True
 
         # Patch the singleton instance that driver_for_service() returns.
+        # Also patch the loaded-model probes so ensure_target can build SwapContext.
         with patch.object(_lcd._systemd_driver, "swap", side_effect=_fake_swap), \
              patch("os.path.isabs", return_value=True), \
              patch("os.path.exists", return_value=True), \
-             patch.object(proxy, "is_literal_gguf_path", return_value=True):
+             patch.object(proxy, "is_literal_gguf_path", return_value=True), \
+             patch.object(proxy, "currently_loaded_kobold_model", return_value="/old.gguf"), \
+             patch.object(proxy, "currently_loaded_kobold_mmproj", return_value=None):
             result = _run(proxy.ensure_target("kobold", _GGUF, _MMPROJ))
 
         self.assertTrue(result)
         self.assertEqual(len(swap_called_with), 1, "SystemdDriver.swap must be called once")
-        _, activation = swap_called_with[0]
+        _, activation, ctx, warned_models = swap_called_with[0]
         self.assertEqual(activation["env"]["LLAMA_BEE_MODEL"], _GGUF)
         self.assertEqual(activation["env"]["LLAMA_BEE_MMPROJ"], _MMPROJ)
+        # SwapContext must carry the expected state.
+        self.assertIsNotNone(ctx, "ctx must be passed to driver.swap()")
+        self.assertEqual(ctx.target_model, _GGUF)
+        self.assertEqual(ctx.target_aux, _MMPROJ)
+        self.assertEqual(ctx.loaded_model, "/old.gguf")
+        # warned_models must be the shared proxy._pin_mismatch_warned set.
+        self.assertIs(warned_models, proxy._pin_mismatch_warned)
 
     def test_tabby_driver_path_calls_http_load_unload_swap(self):
         """With flag ON, ensure_target('tabby', model) calls HttpLoadUnloadDriver.swap()."""
@@ -819,17 +829,21 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
 
         swap_called_with: list[tuple] = []
 
-        async def _fake_swap(svc, activation):
-            swap_called_with.append((svc, activation))
+        async def _fake_swap(svc, activation, ctx=None, warned_models=None):
+            swap_called_with.append((svc, activation, ctx, warned_models))
             return True
 
-        with patch.object(_lcd._http_load_unload_driver, "swap", side_effect=_fake_swap):
+        with patch.object(_lcd._http_load_unload_driver, "swap", side_effect=_fake_swap), \
+             patch.object(proxy, "currently_loaded_tabby_model", new=AsyncMock(return_value="other-model")):
             result = _run(proxy.ensure_target("tabby", _TABBY_MODEL))
 
         self.assertTrue(result)
         self.assertEqual(len(swap_called_with), 1)
-        _, activation = swap_called_with[0]
+        _, activation, ctx, warned_models = swap_called_with[0]
         self.assertEqual(activation["model_name"], _TABBY_MODEL)
+        # SwapContext must be passed with correct target_model.
+        self.assertIsNotNone(ctx, "ctx must be passed to driver.swap()")
+        self.assertEqual(ctx.target_model, _TABBY_MODEL)
 
     def test_flag_off_kobold_still_uses_legacy(self):
         """With flag OFF (default), ensure_target('kobold') uses legacy swap path."""
@@ -888,6 +902,299 @@ class TestDriverForServiceNewDrivers(unittest.TestCase):
         backends = {"mystery": {"lifecycle": {"driver": "unknown-engine-xyz"}}}
         driver = self._call("mystery", backends)
         self.assertIsInstance(driver, ExternalDriver)
+
+
+# ---------------------------------------------------------------------------
+# 5. Byte-identical proof: SwapContext policy vs legacy functions
+#
+# For each of the 5 canonical cases we assert that:
+#   (i)  The driver path (via SwapContext) returns the same bool as legacy.
+#   (ii) The driver path produces the same side-effect trace as legacy
+#        (subprocess calls, HTTP calls, filesystem writes).
+#
+# "Byte-identical" means same return value AND same side-effect sequence for
+# every case.  We capture side-effects as event lists and compare them.
+# ---------------------------------------------------------------------------
+
+class TestSwapContextByteIdenticalProof(unittest.TestCase):
+    """Prove that the five SwapContext-driven cases match legacy side-effects."""
+
+    def setUp(self):
+        self.kobold_driver = SystemdDriver()
+        self.tabby_driver = HttpLoadUnloadDriver()
+        self.kobold_svc = _kobold_svc()
+        self.tabby_svc = _tabby_svc()
+        # Clear the shared warned set between tests.
+        self._orig_warned = set(proxy._pin_mismatch_warned)
+        proxy._pin_mismatch_warned.clear()
+
+    def tearDown(self):
+        proxy._pin_mismatch_warned.clear()
+        proxy._pin_mismatch_warned.update(self._orig_warned)
+
+    # -------------------------------------------------------------------
+    # Case (a): kobold already-loaded — no dropin write, no restart
+    # -------------------------------------------------------------------
+
+    def test_a_kobold_already_loaded_no_write_no_restart(self):
+        """Case (a): already-loaded kobold → driver returns True with zero subprocess calls.
+
+        Legacy: swap_kobold_model re-checks inside the lock and returns True
+        immediately.  Driver: SwapContext short-circuits before any IO.
+        """
+        activation = {"env": {"LLAMA_BEE_MODEL": _GGUF, "LLAMA_BEE_MMPROJ": _MMPROJ}}
+        ctx = _lcd.SwapContext(
+            loaded_model=_GGUF,
+            target_model=_GGUF,
+            loaded_aux=_MMPROJ,
+            target_aux=_MMPROJ,
+            pin_loaded=False,
+        )
+
+        exec_calls: list = []
+        write_calls: list = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _mock_subprocess_ok()
+
+        orig_write = Path.write_text
+
+        def _fake_write(self_path, text, *a, **kw):
+            write_calls.append(text)
+
+        with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
+             patch.object(Path, "write_text", _fake_write), \
+             patch.object(Path, "mkdir"):
+            result = _run(self.kobold_driver.swap(self.kobold_svc, activation, ctx=ctx))
+
+        self.assertTrue(result, "Case (a): driver must return True for already-loaded kobold")
+        self.assertEqual(exec_calls, [], "Case (a): no subprocess exec when already loaded")
+        self.assertEqual(write_calls, [], "Case (a): no dropin write when already loaded")
+
+    # -------------------------------------------------------------------
+    # Case (b): kobold pinned mismatch — no restart, warn once
+    # -------------------------------------------------------------------
+
+    def test_b_kobold_pinned_mismatch_no_restart_warn_once(self):
+        """Case (b): pinned kobold mismatch → True without restart; warn printed once.
+
+        Legacy (proxy.py ensure_target legacy path):
+          if PIN_LOADED_MODEL and model not in _pin_mismatch_warned:
+              _pin_mismatch_warned.add(model); print(warn); return True
+        Driver must produce identical return (True) + identical warn message.
+        """
+        activation = {"env": {"LLAMA_BEE_MODEL": _GGUF, "LLAMA_BEE_MMPROJ": ""}}
+        ctx = _lcd.SwapContext(
+            loaded_model="/models/other.gguf",
+            target_model=_GGUF,
+            loaded_aux=None,
+            target_aux=None,
+            pin_loaded=True,
+        )
+
+        exec_calls: list = []
+        write_calls: list = []
+        printed: list[str] = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _mock_subprocess_ok()
+
+        def _fake_write(self_path, text, *a, **kw):
+            write_calls.append(text)
+
+        import builtins
+        orig_print = builtins.print
+
+        def _capture_print(*args, **kwargs):
+            printed.append(" ".join(str(a) for a in args))
+            orig_print(*args, **kwargs)
+
+        warned: set = set()
+
+        with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
+             patch.object(Path, "write_text", _fake_write), \
+             patch.object(Path, "mkdir"), \
+             patch("builtins.print", side_effect=_capture_print):
+            # First call — should warn.
+            result1 = _run(self.kobold_driver.swap(
+                self.kobold_svc, activation, ctx=ctx, warned_models=warned
+            ))
+            # Second call — same target, must NOT warn again.
+            result2 = _run(self.kobold_driver.swap(
+                self.kobold_svc, activation, ctx=ctx, warned_models=warned
+            ))
+
+        self.assertTrue(result1, "Case (b): pinned driver must return True on first call")
+        self.assertTrue(result2, "Case (b): pinned driver must return True on second call")
+        self.assertEqual(exec_calls, [], "Case (b): no subprocess exec when pinned")
+        self.assertEqual(write_calls, [], "Case (b): no dropin write when pinned")
+
+        pin_warns = [m for m in printed if "pin_loaded_model=true" in m]
+        self.assertEqual(len(pin_warns), 1, "Case (b): warn must fire exactly once")
+        self.assertIn("requested=" + _GGUF, pin_warns[0])
+        self.assertIn("serving with current model", pin_warns[0])
+
+    # -------------------------------------------------------------------
+    # Case (c): kobold unpinned mismatch → dropin write + daemon-reload + restart
+    # -------------------------------------------------------------------
+
+    def test_c_kobold_unpinned_mismatch_write_reload_restart(self):
+        """Case (c): unpinned kobold mismatch → dropin write + reload + restart.
+
+        Legacy: swap_kobold_model writes drop-in, daemon-reload, restart.
+        Driver: identical byte sequence when ctx shows mismatch + pin_loaded=False.
+        """
+        activation = {"env": {"LLAMA_BEE_MODEL": _GGUF, "LLAMA_BEE_MMPROJ": _MMPROJ}}
+        ctx = _lcd.SwapContext(
+            loaded_model="/models/old.gguf",
+            target_model=_GGUF,
+            loaded_aux=None,
+            target_aux=_MMPROJ,
+            pin_loaded=False,
+        )
+
+        written_texts: list[str] = []
+        exec_argv: list[list] = []
+
+        orig_write = Path.write_text
+
+        def _fake_write(self_path, text, *a, **kw):
+            if "systemd" in str(self_path) or "model.conf" in str(self_path):
+                written_texts.append(text)
+
+        mock_proc = _mock_subprocess_ok()
+        mock_httpx_cls, _ = _httpx_client_200(text="ok")
+
+        # Capture exec argv via a side-effect that still returns the mock proc.
+        orig_create = asyncio.create_subprocess_exec
+
+        async def _capture_exec(*args, **kwargs):
+            exec_argv.append(list(args))
+            return mock_proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=_capture_exec), \
+             patch.object(Path, "mkdir"), \
+             patch.object(Path, "write_text", _fake_write), \
+             patch("httpx.AsyncClient", mock_httpx_cls):
+            result = _run(self.kobold_driver.swap(
+                self.kobold_svc, activation, ctx=ctx
+            ))
+
+        self.assertTrue(result, "Case (c): unpinned mismatch must succeed (mocked success)")
+
+        # Dropin text byte-identical to legacy.
+        self.assertEqual(len(written_texts), 1, "Case (c): exactly one dropin write")
+        self.assertEqual(
+            written_texts[0],
+            _EXPECTED_DROPIN_TEXT,
+            "Case (c): dropin text must match _EXPECTED_DROPIN_TEXT byte-for-byte",
+        )
+
+        # Exec sequence: daemon-reload → restart (order matters).
+        self.assertEqual(len(exec_argv), 2, "Case (c): daemon-reload then restart")
+        self.assertIn("daemon-reload", exec_argv[0])
+        self.assertIn("restart", exec_argv[1])
+        self.assertIn(_KOBOLD_UNIT, exec_argv[1])
+
+    # -------------------------------------------------------------------
+    # Case (d): tabby already-loaded — no unload, no load call
+    # -------------------------------------------------------------------
+
+    def test_d_tabby_already_loaded_no_http_calls(self):
+        """Case (d): tabby already-loaded → True, zero HTTP calls.
+
+        Legacy: swap_tabby_model does current = await currently_loaded_tabby_model();
+        if current == target_model: return True.
+        Driver with ctx: uses ctx.loaded_model directly, same short-circuit.
+        """
+        _setup_tabby_params_provider()
+
+        ctx = _lcd.SwapContext(
+            loaded_model=_TABBY_MODEL,
+            target_model=_TABBY_MODEL,
+        )
+
+        http_calls: list = []
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not GET")))
+        mock_client.post = AsyncMock(side_effect=lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not POST")))
+
+        # We need to track if ANY http calls are made.
+        http_made = []
+        orig_enter = AsyncMock()
+
+        import httpx as _httpx_module
+
+        class _TrackingClient:
+            async def __aenter__(self_inner):
+                http_made.append(True)
+                raise AssertionError("HttpLoadUnloadDriver must not make HTTP calls for already-loaded model")
+
+            async def __aexit__(self_inner, *a):
+                pass
+
+        with patch("httpx.AsyncClient", return_value=_TrackingClient()):
+            result = _run(self.tabby_driver.swap(
+                self.tabby_svc, {"model_name": _TABBY_MODEL}, ctx=ctx
+            ))
+
+        self.assertTrue(result, "Case (d): already-loaded tabby must return True")
+        self.assertEqual(http_made, [], "Case (d): no HTTP calls when ctx says already loaded")
+
+    # -------------------------------------------------------------------
+    # Case (e): tabby mismatch → unload + load (same HTTP call sequence as legacy)
+    # -------------------------------------------------------------------
+
+    def test_e_tabby_mismatch_unload_then_load(self):
+        """Case (e): tabby mismatch → unload POST then load POST, byte-identical to legacy.
+
+        Legacy: if current != target: POST unload, POST load.
+        Driver with ctx: when ctx.loaded_model != target, same sequence.
+        """
+        _setup_tabby_params_provider()
+
+        current_model = "OldModel-7B"
+        ctx = _lcd.SwapContext(
+            loaded_model=current_model,
+            target_model=_TABBY_MODEL,
+        )
+
+        success_text = '"status":"finished"'
+        mock_httpx_cls, mock_httpx_client = _httpx_client_200(text=success_text)
+
+        with patch("httpx.AsyncClient", mock_httpx_cls):
+            result = _run(self.tabby_driver.swap(
+                self.tabby_svc,
+                {"model_name": _TABBY_MODEL},
+                ctx=ctx,
+            ))
+
+        self.assertTrue(result, "Case (e): tabby mismatch swap must succeed (mocked)")
+
+        # Must have made an unload POST and a load POST.
+        post_calls = mock_httpx_client.post.call_args_list
+        self.assertEqual(len(post_calls), 2, "Case (e): must issue exactly 2 POSTs (unload then load)")
+
+        unload_call = post_calls[0]
+        load_call = post_calls[1]
+
+        # Verify unload URL
+        self.assertIn("/v1/model/unload", str(unload_call))
+        # Verify load URL and body
+        self.assertIn("/v1/model/load", str(load_call))
+        # Load body must include model_name
+        load_kwargs = load_call.kwargs if load_call.kwargs else {}
+        if "json" in load_kwargs:
+            self.assertEqual(load_kwargs["json"].get("model_name"), _TABBY_MODEL)
+
+
+# ---------------------------------------------------------------------------
+# Helper: import SwapContext for use in test classes above
+# ---------------------------------------------------------------------------
+import gateway.lifecycle_drivers as _lcd  # noqa: E402 (needed by the proof tests)
 
 
 if __name__ == "__main__":

@@ -128,7 +128,7 @@ class TestDriverForService(unittest.TestCase):
         self.assertIsInstance(driver, ExternalDriver)
 
     def test_kobold_no_lifecycle_key_gets_external(self):
-        """kobold (current config, no lifecycle key) gets ExternalDriver."""
+        """kobold without a lifecycle key (legacy config) gets ExternalDriver."""
         backends = {
             "kobold": {
                 "host": "127.0.0.1",
@@ -150,9 +150,9 @@ class TestDriverForService(unittest.TestCase):
 
     def test_unrecognised_driver_falls_back_to_external(self):
         """An unknown driver name falls back safely to ExternalDriver."""
-        backends = {"box": {**_external_svc(), "lifecycle": {"driver": "systemd"}}}
+        backends = {"box": {**_external_svc(), "lifecycle": {"driver": "unknown-engine-xyz"}}}
         driver = self._call("box", backends)
-        # systemd is not yet implemented → safe fallback
+        # unrecognised driver → safe fallback to ExternalDriver
         self.assertIsInstance(driver, ExternalDriver)
 
 
