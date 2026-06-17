@@ -288,7 +288,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         ), patch.object(
             proxy, "check_embeddings_health", fake_false
         ), patch.object(
-            proxy, "tabby_backend_healthy", fake_false
+            proxy, "check_service_health", fake_false
         ), patch.object(
             proxy, "ensure_target", AsyncMock(side_effect=blocked_activation)
         ), patch.object(

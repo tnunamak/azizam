@@ -56,6 +56,9 @@ _PROXY = _REPO_ROOT / "proxy.py"
 _TRANSFORMS = _REPO_ROOT / "gateway" / "transforms.py"
 _SERVICE_REGISTRY = _REPO_ROOT / "gateway" / "service_registry.py"
 _TOOLCALL = _REPO_ROOT / "gateway" / "toolcall_detection.py"
+# The residual engine literals are isolated in the quarantine module; the
+# LOCAL_SWAP_BACKENDS frozen set now lives there (proxy aliases it).
+_QUARANTINE = _REPO_ROOT / "gateway" / "engine_quarantine.py"
 
 _CORE_FILES = [_PROXY, _TRANSFORMS, _SERVICE_REGISTRY, _TOOLCALL]
 
@@ -120,42 +123,20 @@ _ENGINE_BRANCH_PATTERN = re.compile(
 # both — they represent the same reviewed pattern.
 _ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, str], str] = {
     # -------------------------------------------------------------------
-    # Bucket B: _LOCAL_SWAP_BACKENDS lifecycle infra (proxy.py)
-    # These branches handle managed-local-swap lifecycle (start/stop/restart,
-    # GGUF paths, health routing).  They are deployment-pattern code, not
-    # request-shape knowledge.  The set is FROZEN at {kobold, tabby} — see
-    # Check 4.  Each distinct stripped line pattern is enumerated here; a new
-    # pattern forces a new entry and a reviewer to sign off.
-    # -------------------------------------------------------------------
-    ("proxy.py", 'if backend == "kobold":'):
-        "Bucket B: local-swap kobold branch — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'return DEFAULT_MODEL if backend == "tabby" else None'):
-        "Bucket B: local-swap default model tabby — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'if backend == "tabby" and not activation_model:'):
-        "Bucket B: local-swap activation model check tabby — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'if backend == "kobold" and activation_model and not os.path.isabs(activation_model):'):
-        "Bucket B: local-swap activation model check kobold — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'if backend == "tabby":'):
-        "Bucket B: local-swap backend tabby guard — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'if active == "kobold":'):
-        "Bucket B: local-swap active kobold check — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'elif active == "tabby":'):
-        "Bucket B: local-swap active tabby check — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'elif backend == "tabby" and loaded_model_id:'):
-        "Bucket B: local-swap tabby loaded model check — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'if active == "tabby":'):
-        "Bucket B: local-swap active tabby check — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'if target_service == "tabby" and await tabby_backend_healthy():'):
-        "Bucket B: local-swap tabby health re-probe on connect error — deployment-pattern, not engine knowledge",
-    ("proxy.py", 'if key in {"kobold", "tabby"}:'):
-        "Bucket B: local-swap key-in-set guard — deployment-pattern, not engine knowledge",
-    # A false-positive branch-pattern match on a non-branch line (an error
-    # message string that happens to contain an engine name literal).
-    ("proxy.py", "\"Configured backend 'tabby' is unavailable for this catch-all route. \""):
-        "Bucket B: local-swap error message string — not a real branch, reviewed false positive",
-
-    # -------------------------------------------------------------------
-    # D-3 migration is COMPLETE: advisory_for_backend is now engine-agnostic.
+    # proxy.py is now CLEAN of inline engine-named branches. Every residual
+    # engine literal was moved into the quarantine module
+    # (gateway/engine_quarantine.py); proxy.py calls named predicates
+    # (engine_quarantine.is_local_swap_backend(...), etc.) instead of branching
+    # on a backend id inline. So there are no proxy.py allowlist entries — if a
+    # new `if backend == "..."` ever appears in proxy.py, this guard fails and
+    # the fix is to add the property to the quarantine, not an entry here.
+    #
+    # The quarantine module itself holds the literals as DATA (frozensets keyed
+    # by property) and is intentionally NOT scanned as a violation — it is the
+    # one sanctioned home, reviewed as a unit. See its module docstring for the
+    # per-property removal recipe.
+    #
+    # D-3 migration is COMPLETE: advisory_for_backend is engine-agnostic.
     # No toolcall_detection.py entries needed here.
     # -------------------------------------------------------------------
 }
@@ -298,17 +279,19 @@ def _check_engine_flag_literals() -> list[str]:
 
 _EXPECTED_LOCAL_SWAP_BACKENDS: frozenset[str] = frozenset({"kobold", "tabby"})
 
+# The frozen set now lives in the quarantine as LOCAL_SWAP_BACKENDS (proxy.py
+# aliases it). Match the quarantine definition.
 _LOCAL_SWAP_PATTERN = re.compile(
-    r'_LOCAL_SWAP_BACKENDS\s*(?::\s*\S+)?\s*=\s*frozenset\s*\(\s*\{([^}]*)\}\s*\)'
+    r'LOCAL_SWAP_BACKENDS\s*(?::\s*\S+)?\s*=\s*frozenset\s*\(\s*\{([^}]*)\}\s*\)'
 )
 
 
 def _check_local_swap_backends_frozen() -> list[str]:
-    text = _PROXY.read_text(encoding="utf-8")
+    text = _QUARANTINE.read_text(encoding="utf-8")
     match = _LOCAL_SWAP_PATTERN.search(text)
     if match is None:
         return [
-            "proxy.py: _LOCAL_SWAP_BACKENDS definition not found — "
+            "engine_quarantine.py: LOCAL_SWAP_BACKENDS definition not found — "
             "did it move or get renamed?"
         ]
     # Parse the frozenset contents
@@ -458,19 +441,20 @@ class TestEngineKnowledgeBoundary:
         allowlist entry) must still be reported as a violation.
         """
         synthetic_lines = [
-            # An engine-agnostic line — must NOT be flagged
-            'if backend == "tabby":',           # IS allowlisted → not a violation
-            # A synthetic new engine branch — must BE flagged
+            # An engine-agnostic line (calls the quarantine predicate, no engine
+            # literal) — must NOT be flagged.
+            'if engine_quarantine.is_local_swap_backend(backend):',
+            # A synthetic new inline engine branch — must BE flagged.
             'if backend == "vllm":',            # not in allowlist → violation
         ]
         violations = _check_engine_named_branches(
             _source_lines=[("proxy.py", synthetic_lines)]
         )
-        # The allowlisted tabby line must NOT appear in violations
-        allowlisted_reported = [v for v in violations if "'tabby'" in v]
-        assert not allowlisted_reported, (
-            "Guard incorrectly flagged an allowlisted line: "
-            + "\n".join(allowlisted_reported)
+        # The quarantine-predicate line must NOT appear in violations
+        agnostic_reported = [v for v in violations if "is_local_swap_backend" in v]
+        assert not agnostic_reported, (
+            "Guard incorrectly flagged an engine-agnostic predicate call: "
+            + "\n".join(agnostic_reported)
         )
         # The synthetic vllm line MUST appear in violations
         vllm_reported = [v for v in violations if "'vllm'" in v]

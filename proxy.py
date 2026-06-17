@@ -110,6 +110,7 @@ from gateway.admin_runtime import (
     runtime_identity_for_app_credential_hash,
 )
 from gateway.api import create_gateway_router
+from gateway import engine_quarantine
 from gateway.user_render import render_user_portal
 from gateway.user_runtime import (
     UserPortalError,
@@ -593,9 +594,10 @@ UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cf
 ROLES = config.get("roles", {})
 
 # Local-swap backends require a GGUF file path to hot-swap the model on disk.
-# kobold and tabby are the canonical local-swap backends; any backend whose role
+# The engine literals live in the quarantine (gateway/engine_quarantine.py) —
+# this is an alias so existing call sites keep working. Any backend whose role
 # entry carries a "path" key is also treated as local-swap.
-_LOCAL_SWAP_BACKENDS: frozenset[str] = frozenset({"kobold", "tabby"})
+_LOCAL_SWAP_BACKENDS: frozenset[str] = engine_quarantine.LOCAL_SWAP_BACKENDS
 
 # Optional catalog of additional GGUF aliases (parallel to ROLES). Each entry has
 # id/backend/path[/description] and is treated like a role with a pinned model:
@@ -1182,9 +1184,9 @@ async def _currently_loaded_model_for(backend: str) -> Optional[str]:
     themselves are engine-shaped state introspection; this keeps that knowledge
     in one lookup rather than scattered through the swap logic.)
     """
-    if backend == "kobold":
+    if engine_quarantine.loaded_model_is_path(backend):
         return currently_loaded_kobold_model()
-    if backend == "tabby":
+    if engine_quarantine.loaded_model_is_http_id(backend):
         return await currently_loaded_tabby_model()
     return None
 
@@ -1193,10 +1195,10 @@ def _currently_loaded_aux_for(backend: str) -> Optional[str]:
     """Return the aux (mmproj) file a swap-managed backend currently has loaded.
 
     Contained dispatch from backend id to the aux-probe; used by the
-    driver-swap path to populate SwapContext.loaded_aux. Only kobold carries
-    an aux/mmproj concept — all other backends return None.
+    driver-swap path to populate SwapContext.loaded_aux. Only backends with an
+    aux/mmproj concept (per the quarantine) probe it; all others return None.
     """
-    if backend == "kobold":
+    if engine_quarantine.has_aux_mmproj(backend):
         return currently_loaded_kobold_mmproj()
     return None
 
@@ -2780,7 +2782,7 @@ def _service_model_records(service_cfg: Mapping[str, Any]) -> list[Mapping[str, 
 def _backend_default_model_to_load(backend: str) -> Optional[str]:
     backend_cfg = (config.get("backends") or {}).get(backend, {})
     if not isinstance(backend_cfg, Mapping):
-        return DEFAULT_MODEL if backend == "tabby" else None
+        return DEFAULT_MODEL if engine_quarantine.has_default_model_fallback(backend) else None
     configured = str(
         backend_cfg.get("activation_model")
         or backend_cfg.get("model_id")
@@ -2789,7 +2791,7 @@ def _backend_default_model_to_load(backend: str) -> Optional[str]:
     ).strip()
     if configured:
         return configured
-    return DEFAULT_MODEL if backend == "tabby" else None
+    return DEFAULT_MODEL if engine_quarantine.has_default_model_fallback(backend) else None
 
 
 def _configured_litellm_local_model_target(
@@ -2838,9 +2840,9 @@ def _configured_litellm_local_model_target(
                 or item.get("mmproj")
                 or ""
             ).strip()
-            if backend == "tabby" and not activation_model:
+            if engine_quarantine.activation_from_upstream_id(backend) and not activation_model:
                 activation_model = str(item.get("upstream_model") or item.get("id") or "").strip()
-            if backend == "kobold" and activation_model and not os.path.isabs(activation_model):
+            if engine_quarantine.activation_requires_abs_path(backend) and activation_model and not os.path.isabs(activation_model):
                 activation_model = ""
             return backend, activation_model or None, activation_mmproj or None
 
@@ -2943,8 +2945,8 @@ async def _prepare_litellm_local_llm_request(
             active in _vision_members
             and profile_allows_backend(auth_context, active)
         ) or (
-            active == "kobold"
-            and profile_allows_backend(auth_context, "kobold")
+            engine_quarantine.vision_via_aux(active)
+            and profile_allows_backend(auth_context, active)
             and kobold_has_mmproj() is True
         )
         if active_can_serve_vision:
@@ -2955,7 +2957,7 @@ async def _prepare_litellm_local_llm_request(
         target_can_serve_vision = (
             target_backend in _vision_members
         ) or (
-            target_backend == "kobold"
+            engine_quarantine.vision_via_aux(target_backend)
             and bool(target_mmproj)
         )
         if not target_can_serve_vision:
@@ -3075,13 +3077,13 @@ def _is_use_loaded_fast_model_alias(value: Any) -> bool:
 async def current_llm_model_for_backend(backend: str) -> str:
     """Return the model actually loaded on a backend, never a configured fallback."""
     backend = str(backend or "").strip()
-    if backend == "kobold":
+    if engine_quarantine.loaded_model_is_path(backend):
         loaded_path = currently_loaded_kobold_model()
         if not loaded_path:
             return ""
         loaded_id = await get_kobold_model_id()
         return loaded_id or os.path.basename(loaded_path) or loaded_path
-    if backend == "tabby":
+    if engine_quarantine.loaded_model_is_http_id(backend):
         return await currently_loaded_tabby_model() or ""
 
     host = LLM_BACKEND_HOSTS.get(backend)
@@ -3330,17 +3332,6 @@ async def check_embeddings_health() -> bool:
     if not EMBEDDINGS_ENABLED:
         return False
     return await check_service_health("embeddings")
-
-
-async def tabby_backend_healthy() -> bool:
-    """Return True iff the tabby backend is reachable and healthy.
-
-    The gateway no longer restarts engines — existence and crash-restart belong
-    to the operator's supervisor (systemd / docker / CommandDriver). This is a
-    pure health observation; callers decide what to do when it's False (e.g.
-    return 503 and let the supervisor bring tabby back).
-    """
-    return await check_tabby_health()
 
 
 # =============================================================================
@@ -4864,12 +4855,10 @@ async def decide_image_background_removal(
         return _background_removal_fallback("empty_prompt")
 
     active = await get_active_backend()
-    if active == "kobold":
-        target_host = KOBOLD_HOST
-        service = "kobold"
-    elif active == "tabby":
-        target_host = TABBY_HOST
-        service = "tabby"
+    # Generic: any local-swap LLM backend resolves its host from LLM_BACKEND_HOSTS.
+    target_host = LLM_BACKEND_HOSTS.get(active) if active else None
+    if active and engine_quarantine.is_local_swap_backend(active) and target_host:
+        service = active
     else:
         return _background_removal_fallback("llm_unavailable", "no active LLM backend")
 
@@ -8960,8 +8949,8 @@ def _role_catalog_ids_for_loaded_path(
             if role_model:
                 if matches_path(role_model):
                     ids.add(str(role_name))
-            elif backend == "tabby" and loaded_model_id:
-                # Tabby roles often name a backend without pinning a specific
+            elif engine_quarantine.roles_may_be_unpinned(backend) and loaded_model_id:
+                # Some backends' roles name a backend without pinning a specific
                 # model path. When that backend is hot, the role is a valid
                 # handle for the current loaded model.
                 ids.add(str(role_name))
@@ -8983,14 +8972,14 @@ async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> se
         active = None
 
     ids: set[str] = set()
-    if active == "tabby":
+    if active and engine_quarantine.loaded_model_is_http_id(active):
         loaded = await get_tabby_loaded_model_id()
         if loaded:
             ids.update(USE_LOADED_MODEL_ALIASES)
             ids.add(loaded)
             ids.update(
                 _role_catalog_ids_for_loaded_path(
-                    backend="tabby",
+                    backend=active,
                     loaded_path=None,
                     loaded_model_id=loaded,
                 )
@@ -9849,7 +9838,7 @@ def _admin_service_runtime_summary(
     models = status_payload.get("models") if isinstance(status_payload, Mapping) else {}
     if not isinstance(models, Mapping):
         models = {}
-    if key in {"kobold", "tabby"}:
+    if engine_quarantine.is_local_swap_backend(key):
         loaded = models.get("loaded_llm_name")
         ctx = models.get("ctx_size")
         if loaded and ctx:
@@ -16201,7 +16190,7 @@ def _context_window_from_mapping(data: Mapping[str, Any] | None) -> int | None:
 def _configured_context_window_for_backend(backend: str | None) -> int | None:
     if not backend:
         return None
-    if backend == "tabby":
+    if engine_quarantine.context_window_from_model_params(backend):
         _, _, params = get_tabby_model_config()
         return _context_window_from_mapping(params)
     backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
@@ -16297,7 +16286,7 @@ async def _context_window_for_model_id(
     found = _configured_context_window_for_backend(backend)
     if found is not None:
         return found
-    if backend == "kobold":
+    if engine_quarantine.context_window_from_live_probe(backend):
         return await _kobold_context_window()
     return None
 
@@ -19634,21 +19623,20 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             return service_response
 
     if target_host == TABBY_HOST:
-        if not await check_tabby_health():
-            # Backend-native catch-all paths are service-specific. They never
-            # fall through to Kobold because native Tabby/Kobold surfaces are
-            # not interchangeable. The gateway does not revive tabby — return
-            # 503 and let the operator's supervisor bring it back.
-            if not await tabby_backend_healthy():
-                return Response(
-                    content=json.dumps({
-                        "error": {
-                            "message": (
-                                "Configured backend 'tabby' is unavailable for this catch-all route. "
-                                "Retry after Retry-After."
-                            ),
-                            "type": "service_unavailable",
-                            "code": "backend_unavailable",
+        # Backend-native catch-all paths are service-specific. They never fall
+        # through to another backend because native surfaces are not
+        # interchangeable. The gateway does not revive backends — return 503 and
+        # let the operator's supervisor bring it back.
+        if not await check_service_health(target_service):
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": (
+                            f"Configured backend '{target_service}' is unavailable for this catch-all route. "
+                            "Retry after Retry-After."
+                        ),
+                        "type": "service_unavailable",
+                        "code": "backend_unavailable",
                     }
                 }),
                 status_code=503,
@@ -19743,12 +19731,12 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         )
     except httpx.ConnectError:
         # A connect error can be a transient blip or the supervisor mid-restart.
-        # Re-probe health: if tabby is reachable again, tell the client to retry
-        # (503); otherwise it's a hard connection failure (502). The gateway does
-        # not restart tabby — its supervisor owns that.
-        if target_service == "tabby" and await tabby_backend_healthy():
+        # Re-probe health generically: if the local-swap backend is reachable
+        # again, tell the client to retry (503); otherwise it's a hard connection
+        # failure (502). The gateway does not restart backends — supervisors do.
+        if engine_quarantine.is_local_swap_backend(target_service) and await check_service_health(target_service):
             return Response(
-                content=json.dumps({"detail": "TabbyAPI is reachable again, please retry"}),
+                content=json.dumps({"detail": f"{target_service} is reachable again, please retry"}),
                 status_code=503,
                 media_type="application/json"
             )
