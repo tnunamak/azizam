@@ -240,10 +240,7 @@ _ENGINE_CLASS_PATTERN = re.compile(
 # D-2 (KoboldCppNullStripTransform) is DONE: class renamed to DropNullParamsTransform,
 # id renamed to "drop-null-params" — no longer engine-named, no longer needs an allowlist entry.
 _ENGINE_CLASS_ALLOWLIST: dict[tuple[str, str], str] = {
-    ("gateway/transforms.py", "class Qwen3ThinkingTransform:"):
-        "D-1 residue: Qwen3ThinkingTransform is a 400-validation sentinel only; "
-        "suppression is now the engine-agnostic enable_thinking kwarg (no prompt-string injection); "
-        "remove entry when the 400 validator is generalised away from a named class",
+
 }
 
 

@@ -1,4 +1,4 @@
-"""Step 2 parity test — qwen3-thinking built-in.
+"""Step 2 parity test — reasoning-effort built-in.
 
 GATE: The transform path must produce the correct body mutations for the full
 input matrix.
@@ -21,9 +21,9 @@ from typing import Any, Optional
 
 import pytest
 
-from gateway.transforms import Qwen3ThinkingTransform
+from gateway.transforms import ReasoningEffortTransform
 
-_TRANSFORM = Qwen3ThinkingTransform()
+_TRANSFORM = ReasoningEffortTransform()
 
 
 def _apply(body: dict[str, Any]) -> tuple[dict[str, Any], Optional[str]]:
@@ -348,7 +348,7 @@ class TestQwen3ThinkingMessageIntegrity:
 class TestQwen3ThinkingRegistration:
     def test_qwen3_thinking_is_registered(self) -> None:
         from gateway.transforms import REGISTRY
-        primitives = REGISTRY.resolve("qwen3-thinking")
+        primitives = REGISTRY.resolve("reasoning-effort")
         assert len(primitives) == 1
 
     def test_qwen3_thinking_on_request_mutates_body(self) -> None:
@@ -357,7 +357,7 @@ class TestQwen3ThinkingRegistration:
             "reasoning_effort": "none",
             "messages": [{"role": "user", "content": "Hello"}],
         }
-        result = run_request_pipeline(["qwen3-thinking"], body)
+        result = run_request_pipeline(["reasoning-effort"], body)
         assert "reasoning_effort" not in result
         assert result["chat_template_kwargs"]["enable_thinking"] is False
         # No /no_think injected into messages
@@ -368,5 +368,5 @@ class TestQwen3ThinkingRegistration:
         from gateway.transforms import run_response_pipeline
         payload = {"choices": [{"message": {"content": "hi"}}]}
         original = copy.deepcopy(payload)
-        result = run_response_pipeline(["qwen3-thinking"], copy.deepcopy(payload))
+        result = run_response_pipeline(["reasoning-effort"], copy.deepcopy(payload))
         assert result == original

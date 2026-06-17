@@ -154,7 +154,7 @@ from gateway.transforms import (
     TransformContext as _TransformContext,
     run_request_pipeline as _run_request_pipeline,
     run_response_pipeline as _run_response_pipeline,
-    Qwen3ThinkingTransform as _Qwen3ThinkingTransform,
+    ReasoningEffortTransform as _ReasoningEffortTransform,
     QWEN3_ENABLE_THINKING_KEY as _QWEN3_ENABLE_THINKING_KEY,
     normalize_chat_completion_payload as _normalize_chat_completion_payload,
     ValueMapTransform as _ValueMapTransform,
@@ -3208,9 +3208,9 @@ async def _prepare_litellm_local_llm_request(
 
 
     if request_path == "/v1/chat/completions":
-        # Step 2: reasoning_effort handled by the qwen3-thinking built-in.
+        # Step 2: reasoning_effort handled by the reasoning-effort built-in.
         # Body mutation goes through the transform; 400 plumbing stays here.
-        reasoning_error = _Qwen3ThinkingTransform().apply(body)
+        reasoning_error = _ReasoningEffortTransform().apply(body)
         if reasoning_error:
             return Response(
                 content=json.dumps({"error": {
@@ -18928,7 +18928,7 @@ async def _forward_current_loaded_openai_request(
     if request_path == "/v1/chat/completions":
         if _is_use_loaded_fast_model_alias(requested_alias):
             body["reasoning_effort"] = "none"
-        reasoning_error = _Qwen3ThinkingTransform().apply(body)
+        reasoning_error = _ReasoningEffortTransform().apply(body)
         if reasoning_error:
             return Response(
                 content=json.dumps({"error": {

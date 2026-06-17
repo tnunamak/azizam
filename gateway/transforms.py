@@ -549,10 +549,10 @@ def apply_thinking_suppression(body: dict[str, Any]) -> None:
         kwargs.setdefault(QWEN3_ENABLE_THINKING_KEY, False)
 
 
-class Qwen3ThinkingTransform:
+class ReasoningEffortTransform:
     """Named built-in: reproduce apply_chat_completions_reasoning_effort() exactly.
 
-    Registered as "qwen3-thinking" in REGISTRY.
+    Registered as "reasoning-effort" in REGISTRY.
 
     Handles request phase only (validated pop of reasoning_effort + body mutation).
     Returns a string error message if reasoning_effort is invalid (the caller
@@ -918,12 +918,12 @@ REGISTRY.register(
     },
 )
 
-# ---- qwen3-thinking (Step 2 built-in) ------------------------------------
+# ---- reasoning-effort (Step 2 built-in) ----------------------------------
 # Reproduces apply_chat_completions_reasoning_effort() from proxy.py:5242.
 # The body-mutation path runs through this registered instance; the 400 error
 # sentinel is handled at the dispatch site (proxy.py) which calls
-# Qwen3ThinkingTransform().apply() directly for the error return path.
-REGISTRY.register_builtin("qwen3-thinking", Qwen3ThinkingTransform())
+# ReasoningEffortTransform().apply() directly for the error return path.
+REGISTRY.register_builtin("reasoning-effort", ReasoningEffortTransform())
 
 # ---- reasoning-field-normalize (Step 4a built-in) ------------------------
 # Ports _normalize_chat_completion_visible_content from proxy.py:18884.
