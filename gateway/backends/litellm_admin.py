@@ -147,6 +147,19 @@ class LiteLLMKeyAdminClient:
                 "The LiteLLM execution substrate is not configured; "
                 "no key management endpoint is available.",
             )
+        if not self._config.api_key:
+            # A base_url is wired but no master key is configured. The /key/* API
+            # is master-key protected, so without it we cannot manage keys. Fail
+            # with an actionable message rather than building an illegal
+            # "Bearer " (empty token) header that httpx rejects as a transport
+            # error, which would surface as a confusing "unreachable" 503.
+            raise LiteLLMAdminError(
+                503,
+                "litellm_unconfigured",
+                "The LiteLLM master key is not configured "
+                "(set AI_GATEWAY_LITELLM_API_KEY to match the sidecar's "
+                "LITELLM_MASTER_KEY); virtual-key management is unavailable.",
+            )
         url = litellm_url(base_url=self._config.base_url, path=path, query=query)
         headers = {
             LITELLM_DELEGATED_KEY_HEADER: f"Bearer {self._config.api_key}",

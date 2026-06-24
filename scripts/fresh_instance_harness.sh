@@ -145,6 +145,10 @@ export AI_GATEWAY_MEDIA_JOBS_DB="$TMPDIR_ROOT/media_jobs.db"
 export AI_GATEWAY_CONFIG_PATH="$TMPDIR_ROOT/proxy_config.yml"
 export OPENAI_PROXY_PORT="$HARNESS_PORT"
 export AI_GATEWAY_ADMIN_SESSION_KEY="harness-test-session-key-not-for-production"
+# Fresh-instance probes must not borrow the operator's live LiteLLM sidecar.
+# Keep LiteLLM deliberately unreachable unless a test opts in explicitly.
+export AI_GATEWAY_LITELLM_BASE_URL="${AI_GATEWAY_LITELLM_BASE_URL:-http://127.0.0.1:15999}"
+export AI_GATEWAY_LITELLM_API_KEY="${AI_GATEWAY_LITELLM_API_KEY:-}"
 # Silence noisy tabbyapi health checks that would fail on a fresh host
 export TABBY_IDLE_TIMEOUT=0
 export TTS_ENABLED=false

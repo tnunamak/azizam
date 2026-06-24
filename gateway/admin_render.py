@@ -2971,7 +2971,7 @@ def render_admin_dashboard(
         + _subsection(
             "People",
             users_table,
-            intro="OIDC users who can sign in or own personal Apps.",
+            intro="OIDC users who can sign in or own personal Apps. Roles come from your identity provider and aren't editable here.",
         )
     )
     activity_html = _subsection(

@@ -116,13 +116,21 @@ _SERVICE_UNITS = [
 
 def _run(cmd: list[str], timeout: float = _SUBPROC_TIMEOUT) -> tuple[int, str, str]:
     try:
-        p = subprocess.run(
+        p = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
         )
-        return p.returncode, p.stdout, p.stderr
+        try:
+            stdout, stderr = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                p.kill()
+            except Exception:
+                pass
+            return 124, "", "timeout"
+        return p.returncode, stdout, stderr
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
     except FileNotFoundError as e:

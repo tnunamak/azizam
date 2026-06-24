@@ -1107,5 +1107,121 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         )
 
 
+class ServiceModelRoutabilityTests(unittest.TestCase):
+    """End-to-end: operator create/edit service+model → routable LiteLLM config.
+
+    These guard the seam where the gateway hands a service's model mapping to the
+    LiteLLM subprocess.  start.sh runs a watcher that reloads LiteLLM whenever the
+    config file at the gateway state dir (next to admin.db) changes, and the
+    seeded `litellm` service record documents `config_path` as resolved relative
+    to ADMIN_DB_PATH.parent.  If AdminSQLiteStore.write_litellm_config anchors the
+    artifact anywhere else (e.g. the repo root), operator edits never reach the
+    running LiteLLM subprocess and the new service/model is silently unroutable.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state_dir = Path(self.tmp.name)
+        self.db = self.state_dir / "admin.db"
+        admin_store.init_db(self.db)
+        self.store = AdminSQLiteStore(self.db)
+        self.ctx = AdminContext(subject="owner", roles=frozenset({"owner"}))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _artifact_path(self) -> Path:
+        # Bare config_path from the seeded litellm record resolves against the
+        # state dir; this mirrors start.sh's LITELLM_CONFIG_PATH=data/litellm.config.yaml.
+        return self.state_dir / "litellm.config.yaml"
+
+    def test_added_service_with_model_writes_routable_litellm_config_to_state_dir(self) -> None:
+        fired = {"n": 0}
+        self.store.on_service_registry_changed = lambda: fired.__setitem__("n", fired["n"] + 1)
+
+        self.store.add_service(
+            data={
+                "name": "text-generation-webui",
+                "preset": "openai-compatible",
+                "base_url": "http://127.0.0.1:7860/v1",
+                "models": [{"public": "my-llama", "upstream": "TheBloke_Llama-3-8B"}],
+            },
+            actor=self.ctx,
+        )
+
+        artifact = self._artifact_path()
+        self.assertTrue(
+            artifact.exists(),
+            f"LiteLLM config must be written to the gateway state dir ({artifact}), "
+            "where start.sh's watcher reloads it; otherwise operator edits never "
+            "reach the running LiteLLM subprocess.",
+        )
+        self.assertEqual(fired["n"], 1, "Registry-changed hot-reload callback must fire once")
+
+        import yaml
+        compiled = yaml.safe_load(artifact.read_text())
+        model_list = compiled.get("model_list", [])
+        entry = next((m for m in model_list if m.get("model_name") == "my-llama"), None)
+        self.assertIsNotNone(entry, f"Expected a routable 'my-llama' entry in {model_list}")
+        params = entry["litellm_params"]
+        self.assertEqual(params["model"], "openai/TheBloke_Llama-3-8B")
+        self.assertEqual(params["api_base"], "http://127.0.0.1:7860/v1")
+
+    def test_artifact_anchored_to_state_dir_not_repo_root(self) -> None:
+        """Regression: the artifact must follow the admin.db location, not the repo.
+
+        Previously write_litellm_config hardcoded base_dir to the repo root, so
+        operator edits landed at <repo>/litellm.config.yaml while the watcher read
+        data/litellm.config.yaml — a silent divergence that left LiteLLM stale.
+        """
+        repo_root = Path(__file__).resolve().parent.parent
+        repo_stray = repo_root / "litellm.config.yaml"
+        pre_existing = repo_stray.exists()
+
+        self.store.add_service(
+            data={
+                "name": "svc",
+                "preset": "openai-compatible",
+                "base_url": "http://127.0.0.1:9100/v1",
+                "models": [{"public": "m", "upstream": "u"}],
+            },
+            actor=self.ctx,
+        )
+
+        self.assertTrue(self._artifact_path().exists())
+        if not pre_existing:
+            self.assertFalse(
+                repo_stray.exists(),
+                "write_litellm_config must not leak an artifact into the repo root; "
+                "it must anchor to the gateway state dir (admin.db's directory).",
+            )
+
+    def test_edit_service_model_rewrites_litellm_config(self) -> None:
+        """Editing a service's model mapping must update the on-disk LiteLLM config."""
+        self.store.add_service(
+            data={
+                "name": "svc",
+                "preset": "openai-compatible",
+                "base_url": "http://127.0.0.1:9200/v1",
+                "models": [{"public": "old-name", "upstream": "old-upstream"}],
+            },
+            actor=self.ctx,
+        )
+        self.store.update_service(
+            service_id="svc",
+            data={
+                "base_url": "http://127.0.0.1:9200/v1",
+                "models": [{"public": "new-name", "upstream": "new-upstream"}],
+            },
+            actor=self.ctx,
+        )
+
+        import yaml
+        compiled = yaml.safe_load(self._artifact_path().read_text())
+        names = [m.get("model_name") for m in compiled.get("model_list", [])]
+        self.assertIn("new-name", names, "Edited model mapping must be reflected in LiteLLM config")
+        self.assertNotIn("old-name", names, "Stale model mapping must be removed from LiteLLM config")
+
+
 if __name__ == "__main__":
     unittest.main()

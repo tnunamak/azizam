@@ -679,7 +679,14 @@ class AdminSQLiteStore:
         registry = registry or self.get_service_registry()
         return write_litellm_config_artifact(
             registry,
-            base_dir=Path(__file__).resolve().parent.parent,
+            # Anchor the artifact to the gateway state dir (next to admin.db),
+            # matching proxy.py's startup writer and the litellm record's
+            # config_path contract (resolved relative to ADMIN_DB_PATH.parent).
+            # Using the repo root instead landed operator edits at
+            # <repo>/litellm.config.yaml while start.sh's watcher reloads
+            # data/litellm.config.yaml — so service/model changes never reached
+            # the running LiteLLM subprocess.
+            base_dir=self.path.parent,
         )
 
     def update_service_registry(

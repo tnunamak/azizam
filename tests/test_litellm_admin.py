@@ -153,6 +153,19 @@ class LiteLLMKeyAdminClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.code, "litellm_unconfigured")
         self.assertEqual(ctx.exception.status_code, 503)
 
+    async def test_missing_master_key_raises_unconfigured_without_transport(self) -> None:
+        # A base_url is wired but no master key is configured. The /key/* API is
+        # master-key protected, so the client must fail with an actionable
+        # "unconfigured" error BEFORE building an illegal "Bearer " (empty token)
+        # header that httpx would reject as a transport error -- which used to
+        # surface to the operator as a confusing "unreachable" 503. No transport
+        # call should be attempted, so we leave httpx unpatched.
+        with self.assertRaises(LiteLLMAdminError) as ctx:
+            await _client(api_key="").list_keys()
+        self.assertEqual(ctx.exception.code, "litellm_unconfigured")
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertIn("master key", ctx.exception.message.lower())
+
     async def test_unreachable_sidecar_maps_to_503(self) -> None:
         import httpx
 
