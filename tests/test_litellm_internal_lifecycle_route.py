@@ -4,6 +4,7 @@ import json
 import os
 from unittest.mock import AsyncMock, patch
 
+from fastapi import Response
 from fastapi.testclient import TestClient
 
 import proxy
@@ -197,3 +198,44 @@ def test_internal_litellm_local_route_resolves_activation_path_from_model_data()
     ensure_target.assert_awaited_once_with("kobold", activation_path, activation_mmproj)
     forwarded_body = json.loads(captured["request"].body.decode("utf-8"))
     assert forwarded_body["model"] == "Qwen.gguf"
+
+
+def test_internal_litellm_current_route_does_not_enforce_gateway_profile_policy() -> None:
+    captured = {}
+
+    async def fake_forward(request, *, request_path, auth_context, body_json, enforce_gateway_policy=True):
+        captured.update(
+            {
+                "request_path": request_path,
+                "auth_context": auth_context,
+                "body_json": body_json,
+                "enforce_gateway_policy": enforce_gateway_policy,
+            }
+        )
+        return Response(
+            content='{"ok": true}',
+            status_code=200,
+            media_type="application/json",
+        )
+
+    client = TestClient(proxy.app)
+    with patch.dict(
+        os.environ,
+        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        clear=False,
+    ), patch.object(
+        proxy,
+        "_forward_current_loaded_openai_request",
+        fake_forward,
+    ):
+        response = client.post(
+            "/internal/litellm/current/v1/chat/completions",
+            headers={"Authorization": "Bearer internal-secret"},
+            json={"model": "openai/current-fast", "messages": [{"role": "user", "content": "hi"}]},
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured["request_path"] == "/v1/chat/completions"
+    assert captured["auth_context"] == proxy.NO_AUTH_CONTEXT
+    assert captured["body_json"]["model"] == "current-fast"
+    assert captured["enforce_gateway_policy"] is False

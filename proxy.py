@@ -1844,6 +1844,16 @@ class AuthContext:
 NO_AUTH_CONTEXT = AuthContext()
 
 
+@dataclass(frozen=True)
+class RuntimeRouteAuth:
+    auth_context: AuthContext
+    delegated_litellm_api_key: str | None = None
+
+    @property
+    def delegated_to_litellm(self) -> bool:
+        return bool(self.delegated_litellm_api_key)
+
+
 def hash_api_key(api_key: str) -> str:
     """Hash a client-facing proxy key for storage and lookup."""
     return runtime_hash_api_key(api_key)
@@ -2163,6 +2173,36 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
         return auth_error("Invalid API key.")
 
     return AuthContext(identity=identity)
+
+
+def _looks_like_litellm_virtual_key(api_key: str) -> bool:
+    return api_key.startswith("sk-")
+
+
+def _request_uses_litellm_virtual_key(request: Request) -> bool:
+    api_key = _resolve_client_api_key(request)
+    return bool(api_key and _looks_like_litellm_virtual_key(api_key))
+
+
+def authenticate_runtime_or_litellm_request(
+    request: Request,
+    request_path: str,
+    *,
+    allow_litellm_delegation: bool,
+) -> RuntimeRouteAuth | Response:
+    auth_context = authenticate_request(request, request_path)
+    if not isinstance(auth_context, Response):
+        return RuntimeRouteAuth(auth_context=auth_context)
+
+    if allow_litellm_delegation and AUTH_ENABLED:
+        api_key = _resolve_client_api_key(request)
+        if api_key and _looks_like_litellm_virtual_key(api_key):
+            return RuntimeRouteAuth(
+                auth_context=NO_AUTH_CONTEXT,
+                delegated_litellm_api_key=api_key,
+            )
+
+    return auth_context
 
 
 def pop_header(headers: dict, header_name: str):
@@ -2880,10 +2920,11 @@ async def _ensure_litellm_local_backend_target(
     backend: Optional[str],
     target_model: Optional[str],
     target_mmproj: Optional[str] = None,
+    enforce_gateway_policy: bool = True,
 ) -> Response | None:
     if not backend:
         return None
-    if not profile_allows_backend(auth_context, backend):
+    if enforce_gateway_policy and not profile_allows_backend(auth_context, backend):
         return _policy_denied_response(PolicyDecision(
             decision=DENIED,
             reasons=(f"backend {backend!r} not permitted by profile",),
@@ -2905,6 +2946,7 @@ async def _prepare_litellm_local_llm_request(
     *,
     request_path: str,
     body_json: Mapping[str, Any],
+    enforce_gateway_policy: bool = True,
 ) -> tuple[Response | None, Mapping[str, Any]]:
     """Apply gateway-owned local readiness before LiteLLM execution.
 
@@ -2922,7 +2964,7 @@ async def _prepare_litellm_local_llm_request(
             code="missing_required_parameter",
         ), body
 
-    if _profile_target_activation(auth_context) == "existing_only":
+    if enforce_gateway_policy and _profile_target_activation(auth_context) == "existing_only":
         return None, body
 
     target_backend, target_model, target_mmproj = (
@@ -3012,6 +3054,7 @@ async def _prepare_litellm_local_llm_request(
         backend=target_backend,
         target_model=target_model,
         target_mmproj=target_mmproj,
+        enforce_gateway_policy=enforce_gateway_policy,
     )
     return response, body
 
@@ -3109,6 +3152,8 @@ async def current_llm_model_for_backend(backend: str) -> str:
 
 async def _current_loaded_llm_target(
     auth_context: AuthContext,
+    *,
+    enforce_gateway_policy: bool = True,
 ) -> tuple[CurrentLoadedLlmTarget | None, Response | None]:
     active = await get_active_backend()
     if not active:
@@ -3125,7 +3170,7 @@ async def _current_loaded_llm_target(
             error_type="service_unavailable",
             code="current_model_unavailable",
         )
-    if not profile_allows_backend(auth_context, active):
+    if enforce_gateway_policy and not profile_allows_backend(auth_context, active):
         return None, _policy_denied_response(PolicyDecision(
             decision=DENIED,
             reasons=(f"backend {active!r} not permitted by profile",),
@@ -16515,6 +16560,7 @@ async def _litellm_models_payload(
     auth_context: AuthContext,
     *,
     runtime_config,
+    delegated_litellm_api_key: str = "",
 ) -> dict[str, Any] | None:
     execution_request = LlmExecutionRequest(
         method="GET",
@@ -16526,7 +16572,9 @@ async def _litellm_models_payload(
                 auth_context,
                 request_path="/v1/models",
                 service_id=runtime_config.service_id,
+                delegated_litellm_api_key=delegated_litellm_api_key,
             ),
+            delegated_api_key=delegated_litellm_api_key,
         ),
         body=b"",
         read_timeout=10.0,
@@ -16656,12 +16704,18 @@ async def list_models(request: Request):
       1. LiteLLM's OpenAI-shaped LLM model catalog when the substrate is enabled
       2. Gateway-native media workflow model IDs
     """
-    auth_context = authenticate_request(request, "/v1/models")
-    if isinstance(auth_context, Response):
-        return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/models")
-    if policy_response is not None:
-        return policy_response
+    route_auth = authenticate_runtime_or_litellm_request(
+        request,
+        "/v1/models",
+        allow_litellm_delegation=True,
+    )
+    if isinstance(route_auth, Response):
+        return route_auth
+    auth_context = route_auth.auth_context
+    if not route_auth.delegated_to_litellm:
+        policy_response = _enforce_runtime_route_policy(auth_context, "/v1/models")
+        if policy_response is not None:
+            return policy_response
 
     upstream_payload: dict = {"object": "list", "data": []}
     litellm_runtime = _litellm_runtime_config()
@@ -16676,10 +16730,24 @@ async def list_models(request: Request):
             request,
             auth_context,
             runtime_config=litellm_runtime,
+            delegated_litellm_api_key=route_auth.delegated_litellm_api_key or "",
         )
         if isinstance(payload, dict):
+            if route_auth.delegated_to_litellm:
+                return Response(
+                    content=json.dumps(payload),
+                    status_code=200,
+                    media_type="application/json",
+                )
             upstream_payload = payload
         else:
+            if route_auth.delegated_to_litellm:
+                return openai_error_response(
+                    "LiteLLM model catalog is unavailable.",
+                    status_code=503,
+                    error_type="service_unavailable",
+                    code="litellm_unavailable",
+                )
             upstream_payload["vivid_fish_catalog_warning"] = (
                 "LLM model catalog is temporarily unavailable; gateway-native "
                 "aliases and workflows may still be listed."
@@ -17324,9 +17392,14 @@ async def anthropic_count_tokens(request: Request):
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic Messages-compatible frontend over chat completions."""
-    auth_context = authenticate_request(request, "/v1/messages")
-    if isinstance(auth_context, Response):
-        return auth_context
+    route_auth = authenticate_runtime_or_litellm_request(
+        request,
+        "/v1/messages",
+        allow_litellm_delegation=True,
+    )
+    if isinstance(route_auth, Response):
+        return route_auth
+    auth_context = route_auth.auth_context
 
     body = await _read_json_object(request)
     if isinstance(body, Response):
@@ -17337,19 +17410,20 @@ async def anthropic_messages(request: Request):
     except anthropic_protocol.AnthropicTranslationError as e:
         return _json_error_response(e.error_body, status_code=e.http_status)
 
-    decision = _protocol_policy_decision(
-        auth_context,
-        protocol="anthropic.messages",
-        intent="chat.messages",
-        model=canonical.get("model"),
-    )
-    if decision.denied:
-        reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
-        return _anthropic_error_response(
-            reason,
-            status_code=403,
-            error_type="permission_error",
+    if not route_auth.delegated_to_litellm:
+        decision = _protocol_policy_decision(
+            auth_context,
+            protocol="anthropic.messages",
+            intent="chat.messages",
+            model=canonical.get("model"),
         )
+        if decision.denied:
+            reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+            return _anthropic_error_response(
+                reason,
+                status_code=403,
+                error_type="permission_error",
+            )
 
     state.update_activity()
     if canonical.get("stream"):
@@ -17470,12 +17544,14 @@ async def _ollama_forward_non_streaming(
     protocol: str,
     intent: str,
 ) -> Response | dict[str, Any]:
-    policy_error = _ollama_policy_error_response(
-        auth_context,
-        canonical,
-        protocol=protocol,
-        intent=intent,
-    )
+    policy_error = None
+    if not _request_uses_litellm_virtual_key(request):
+        policy_error = _ollama_policy_error_response(
+            auth_context,
+            canonical,
+            protocol=protocol,
+            intent=intent,
+        )
     if policy_error is not None:
         return policy_error
 
@@ -17503,12 +17579,14 @@ async def _ollama_forward_streaming(
     intent: str,
     translate_chunk: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> Response:
-    policy_error = _ollama_policy_error_response(
-        auth_context,
-        canonical,
-        protocol=protocol,
-        intent=intent,
-    )
+    policy_error = None
+    if not _request_uses_litellm_virtual_key(request):
+        policy_error = _ollama_policy_error_response(
+            auth_context,
+            canonical,
+            protocol=protocol,
+            intent=intent,
+        )
     if policy_error is not None:
         return policy_error
 
@@ -17555,12 +17633,14 @@ async def _ollama_forward_embeddings(
     *,
     protocol: str,
 ) -> Response | dict[str, Any]:
-    policy_error = _ollama_policy_error_response(
-        auth_context,
-        canonical,
-        protocol=protocol,
-        intent="text.embeddings",
-    )
+    policy_error = None
+    if not _request_uses_litellm_virtual_key(request):
+        policy_error = _ollama_policy_error_response(
+            auth_context,
+            canonical,
+            protocol=protocol,
+            intent="text.embeddings",
+        )
     if policy_error is not None:
         return policy_error
 
@@ -17577,6 +17657,8 @@ async def _ollama_forward_embeddings(
 async def _ollama_model_catalog_summaries(
     request: Request | None,
     auth_context: AuthContext,
+    *,
+    delegated_litellm_api_key: str = "",
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     litellm_runtime = _litellm_runtime_config()
@@ -17585,11 +17667,13 @@ async def _ollama_model_catalog_summaries(
             request,
             auth_context,
             runtime_config=litellm_runtime,
+            delegated_litellm_api_key=delegated_litellm_api_key,
         )
         if isinstance(payload, Mapping):
             entries.extend(_litellm_model_summaries_from_payload(payload))
 
-    entries.extend(_current_loaded_model_entries())
+    if not delegated_litellm_api_key:
+        entries.extend(_current_loaded_model_entries())
     filtered, _ = await _filter_model_list_for_profile(entries, auth_context)
     await _annotate_model_context_windows(filtered)
     return filtered
@@ -17673,9 +17757,14 @@ def _ollama_model_policy_response(
 @app.post("/api/chat")
 async def ollama_chat(request: Request):
     """Ollama `/api/chat` frontend over chat completions."""
-    auth_context = authenticate_request(request, "/api/chat")
-    if isinstance(auth_context, Response):
-        return auth_context
+    route_auth = authenticate_runtime_or_litellm_request(
+        request,
+        "/api/chat",
+        allow_litellm_delegation=True,
+    )
+    if isinstance(route_auth, Response):
+        return route_auth
+    auth_context = route_auth.auth_context
 
     body = await _read_json_object(request)
     if isinstance(body, Response):
@@ -17721,9 +17810,14 @@ async def ollama_chat(request: Request):
 @app.post("/api/generate")
 async def ollama_generate(request: Request):
     """Ollama `/api/generate` frontend over chat completions."""
-    auth_context = authenticate_request(request, "/api/generate")
-    if isinstance(auth_context, Response):
-        return auth_context
+    route_auth = authenticate_runtime_or_litellm_request(
+        request,
+        "/api/generate",
+        allow_litellm_delegation=True,
+    )
+    if isinstance(route_auth, Response):
+        return route_auth
+    auth_context = route_auth.auth_context
 
     body = await _read_json_object(request)
     if isinstance(body, Response):
@@ -17769,9 +17863,14 @@ async def ollama_generate(request: Request):
 @app.post("/api/embed")
 async def ollama_embed(request: Request):
     """Ollama current `/api/embed` frontend over OpenAI embeddings."""
-    auth_context = authenticate_request(request, "/api/embed")
-    if isinstance(auth_context, Response):
-        return auth_context
+    route_auth = authenticate_runtime_or_litellm_request(
+        request,
+        "/api/embed",
+        allow_litellm_delegation=True,
+    )
+    if isinstance(route_auth, Response):
+        return route_auth
+    auth_context = route_auth.auth_context
 
     body = await _read_json_object(request)
     if isinstance(body, Response):
@@ -17803,9 +17902,14 @@ async def ollama_embed(request: Request):
 @app.post("/api/embeddings")
 async def ollama_embeddings(request: Request):
     """Ollama legacy `/api/embeddings` frontend over OpenAI embeddings."""
-    auth_context = authenticate_request(request, "/api/embeddings")
-    if isinstance(auth_context, Response):
-        return auth_context
+    route_auth = authenticate_runtime_or_litellm_request(
+        request,
+        "/api/embeddings",
+        allow_litellm_delegation=True,
+    )
+    if isinstance(route_auth, Response):
+        return route_auth
+    auth_context = route_auth.auth_context
 
     body = await _read_json_object(request)
     if isinstance(body, Response):
@@ -17837,22 +17941,32 @@ async def ollama_embeddings(request: Request):
 @app.get("/api/tags")
 async def ollama_tags(request: Request):
     """Ollama model-list frontend over the proxy's configured model catalog."""
-    auth_context = authenticate_request(request, "/api/tags")
-    if isinstance(auth_context, Response):
-        return auth_context
-
-    decision = _protocol_policy_decision(
-        auth_context,
-        protocol="ollama.tags",
-        intent="models.list",
+    route_auth = authenticate_runtime_or_litellm_request(
+        request,
+        "/api/tags",
+        allow_litellm_delegation=True,
     )
-    if decision.denied:
-        reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
-        return _ollama_error_response(reason, status_code=403)
+    if isinstance(route_auth, Response):
+        return route_auth
+    auth_context = route_auth.auth_context
+
+    if not route_auth.delegated_to_litellm:
+        decision = _protocol_policy_decision(
+            auth_context,
+            protocol="ollama.tags",
+            intent="models.list",
+        )
+        if decision.denied:
+            reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+            return _ollama_error_response(reason, status_code=403)
 
     return _json_error_response(
         ollama_protocol.tags_response_from_model_summaries(
-            await _ollama_model_catalog_summaries(request, auth_context)
+            await _ollama_model_catalog_summaries(
+                request,
+                auth_context,
+                delegated_litellm_api_key=route_auth.delegated_litellm_api_key or "",
+            )
         ),
         status_code=200,
     )
@@ -18008,10 +18122,14 @@ async def ollama_delete(request: Request):
 @app.post("/v1/responses")
 async def create_response(request: Request):
     """Create a Response. Translates to Chat Completions and forwards."""
-    auth_context = authenticate_request(request, "/v1/responses")
-    if isinstance(auth_context, Response):
-        return auth_context
-
+    route_auth = authenticate_runtime_or_litellm_request(
+        request,
+        "/v1/responses",
+        allow_litellm_delegation=True,
+    )
+    if isinstance(route_auth, Response):
+        return route_auth
+    auth_context = route_auth.auth_context
     state.update_activity()
 
     try:
@@ -18023,14 +18141,15 @@ async def create_response(request: Request):
         if not isinstance(req_body, dict):
             return _responses_error("Request body must be a JSON object.", code="invalid_request_error")
 
-        decision = _protocol_policy_decision(
-            auth_context,
-            protocol="openai.chat",
-            intent="chat.responses",
-            model=req_body.get("model") if isinstance(req_body.get("model"), str) else None,
-        )
-        if decision.denied:
-            return _policy_denied_response(decision)
+        if not route_auth.delegated_to_litellm:
+            decision = _protocol_policy_decision(
+                auth_context,
+                protocol="openai.chat",
+                intent="chat.responses",
+                model=req_body.get("model") if isinstance(req_body.get("model"), str) else None,
+            )
+            if decision.denied:
+                return _policy_denied_response(decision)
 
         try:
             extension_result = validate_responses_extensions(req_body)
@@ -18491,6 +18610,7 @@ def _litellm_gateway_metadata(
     *,
     request_path: str,
     service_id: str = "",
+    delegated_litellm_api_key: str = "",
 ) -> dict[str, str]:
     metadata = {
         "execution": "litellm",
@@ -18499,6 +18619,10 @@ def _litellm_gateway_metadata(
     }
     if service_id:
         metadata["service-id"] = service_id
+    if delegated_litellm_api_key:
+        metadata["auth-source"] = "litellm"
+        metadata["litellm-key-prefix"] = hash_api_key(delegated_litellm_api_key)[:18]
+        return metadata
     identity = auth_context.identity
     if identity is not None:
         metadata["app"] = str(identity.name)
@@ -18513,6 +18637,7 @@ def _start_litellm_route_receipt(
     requested_model: str,
     protocol: str | None = None,
     intent: str | None = None,
+    delegated_litellm_api_key: str = "",
 ) -> RouteReceipt:
     if protocol is None or intent is None:
         protocol, intent = _OPENAI_PROXY_POLICY.get(
@@ -18520,6 +18645,27 @@ def _start_litellm_route_receipt(
             ("openai.chat", "chat.generate"),
         )
     profile = _profile_for_auth_context(auth_context)
+    if delegated_litellm_api_key:
+        receipt = RouteReceipt(
+            protocol=protocol,
+            path=request_path,
+            intent=intent,
+            backend="litellm",
+            requested_model=requested_model,
+            app_profile="litellm",
+            app_id=None,
+            api_key_name="litellm-virtual-key",
+            visibility=profile.status_visibility.level,
+        )
+        receipt.set_policy_decision("allowed", source="litellm:virtual-key")
+        receipt.metadata.update(
+            {
+                "execution_backend": "litellm",
+                "auth_source": "litellm",
+                "litellm_key_prefix": hash_api_key(delegated_litellm_api_key)[:18],
+            }
+        )
+        return receipt
     receipt = RouteReceipt(
         protocol=protocol,
         path=request_path,
@@ -18612,9 +18758,13 @@ async def _forward_current_loaded_openai_request(
     request_path: str,
     auth_context: AuthContext,
     body_json: Mapping[str, Any],
+    enforce_gateway_policy: bool = True,
 ) -> Response:
     requested_alias = body_json.get("model")
-    target, target_error = await _current_loaded_llm_target(auth_context)
+    target, target_error = await _current_loaded_llm_target(
+        auth_context,
+        enforce_gateway_policy=enforce_gateway_policy,
+    )
     if target_error is not None:
         return target_error
     assert target is not None
@@ -18783,6 +18933,7 @@ async def _forward_litellm_proxy_request(
     body_json: Mapping[str, Any],
     runtime_config,
     requested_embedding_dimensions: int | None = None,
+    delegated_litellm_api_key: str = "",
 ) -> Response:
     model_name = body_json.get("model")
     if not isinstance(model_name, str) or not model_name:
@@ -18809,6 +18960,7 @@ async def _forward_litellm_proxy_request(
         request_path=request_path,
         auth_context=auth_context,
         requested_model=model_name,
+        delegated_litellm_api_key=delegated_litellm_api_key,
     )
     body_for_litellm = body_json
     if request_path == "/v1/chat/completions":
@@ -18845,6 +18997,7 @@ async def _forward_litellm_proxy_request(
         auth_context,
         request_path=request_path,
         service_id=runtime.service_id,
+        delegated_litellm_api_key=delegated_litellm_api_key,
     )
     read_timeout = (
         EMBEDDINGS_TIMEOUT
@@ -18862,6 +19015,7 @@ async def _forward_litellm_proxy_request(
             request.headers,
             api_key=runtime.api_key,
             gateway_metadata=gateway_metadata,
+            delegated_api_key=delegated_litellm_api_key,
         ),
         body=body,
         read_timeout=read_timeout,
@@ -19010,9 +19164,14 @@ async def _handle_openai_litellm_request(
     request: Request,
     request_path: str,
 ) -> Response:
-    auth_context = authenticate_request(request, request_path)
-    if isinstance(auth_context, Response):
-        return auth_context
+    route_auth = authenticate_runtime_or_litellm_request(
+        request,
+        request_path,
+        allow_litellm_delegation=True,
+    )
+    if isinstance(route_auth, Response):
+        return route_auth
+    auth_context = route_auth.auth_context
 
     if not any(request_path.startswith(p) for p in NO_ACTIVITY_PATHS):
         state.update_activity()
@@ -19030,7 +19189,10 @@ async def _handle_openai_litellm_request(
         if dimensions_error is not None:
             return dimensions_error
 
-    if not _is_internal_protocol_forward(request):
+    if (
+        not route_auth.delegated_to_litellm
+        and not _is_internal_protocol_forward(request)
+    ):
         policy_decision = _openai_proxy_policy_decision(
             auth_context,
             request_path,
@@ -19040,6 +19202,8 @@ async def _handle_openai_litellm_request(
             return _policy_denied_response(policy_decision)
 
     if (
+        not route_auth.delegated_to_litellm
+        and
         request_path in {"/v1/chat/completions", "/v1/completions"}
         and _is_use_loaded_model_alias(parsed_body.get("model"))
     ):
@@ -19065,6 +19229,7 @@ async def _handle_openai_litellm_request(
                 auth_context,
                 request_path=request_path,
                 body_json=parsed_body,
+                enforce_gateway_policy=not route_auth.delegated_to_litellm,
             )
             if activation_error is not None:
                 return activation_error
@@ -19076,6 +19241,7 @@ async def _handle_openai_litellm_request(
         body_json=litellm_body,
         runtime_config=litellm_runtime,
         requested_embedding_dimensions=requested_embedding_dimensions,
+        delegated_litellm_api_key=route_auth.delegated_litellm_api_key or "",
     )
 
 
@@ -19186,6 +19352,63 @@ async def _forward_internal_litellm_local_chat_completions(
         status_code=resp.status_code,
         headers=response_headers,
         media_type=content_type,
+    )
+
+
+@app.post(
+    "/internal/litellm/current/v1/chat/completions",
+    include_in_schema=False,
+)
+async def internal_litellm_current_chat_completions(request: Request):
+    if not _is_internal_litellm_lifecycle_request(request):
+        return openai_error_response(
+            "Internal LiteLLM lifecycle key is missing or invalid.",
+            status_code=401,
+            error_type="authentication_error",
+            code="invalid_api_key",
+        )
+    body_or_error = await _read_json_object(request)
+    if isinstance(body_or_error, Response):
+        return body_or_error
+    body = dict(body_or_error)
+    target_model = _normalize_litellm_local_model_name(body.get("model"))
+    if target_model not in USE_LOADED_MODEL_ALIASES:
+        body["model"] = USE_LOADED_MODEL_ALIAS
+    else:
+        body["model"] = target_model
+    return await _forward_current_loaded_openai_request(
+        request,
+        request_path="/v1/chat/completions",
+        auth_context=NO_AUTH_CONTEXT,
+        body_json=body,
+        enforce_gateway_policy=False,
+    )
+
+
+@app.post(
+    "/internal/litellm/current/v1/completions",
+    include_in_schema=False,
+)
+async def internal_litellm_current_completions(request: Request):
+    if not _is_internal_litellm_lifecycle_request(request):
+        return openai_error_response(
+            "Internal LiteLLM lifecycle key is missing or invalid.",
+            status_code=401,
+            error_type="authentication_error",
+            code="invalid_api_key",
+        )
+    body_or_error = await _read_json_object(request)
+    if isinstance(body_or_error, Response):
+        return body_or_error
+    body = dict(body_or_error)
+    target_model = _normalize_litellm_local_model_name(body.get("model"))
+    body["model"] = target_model if target_model in USE_LOADED_MODEL_ALIASES else USE_LOADED_MODEL_ALIAS
+    return await _forward_current_loaded_openai_request(
+        request,
+        request_path="/v1/completions",
+        auth_context=NO_AUTH_CONTEXT,
+        body_json=body,
+        enforce_gateway_policy=False,
     )
 
 

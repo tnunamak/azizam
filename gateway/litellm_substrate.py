@@ -32,7 +32,9 @@ from gateway.service_registry import (
 OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", "openai-compatible"})
 SECRET_PLACEHOLDER = "<external-secret>"
 DEFAULT_GATEWAY_LIFECYCLE_BASE_URL = "http://127.0.0.1:5000/internal/litellm/local"
+DEFAULT_GATEWAY_CURRENT_BASE_URL = "http://127.0.0.1:5000/internal/litellm/current/v1"
 DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF = "os.environ/AI_GATEWAY_INTERNAL_LITELLM_KEY"
+DEFAULT_LITELLM_KEY_HEADER = "X-Litellm-Key"
 # Bare filename: the artifact lives in the caller-provided ``base_dir`` (the
 # gateway's state dir — next to ``admin.db``), so it follows the same isolation
 # as every other store instead of being pinned to the repo ``data/`` directory.
@@ -57,11 +59,15 @@ def compile_litellm_substrate_config(
         if not deployments:
             continue
         entries.extend(_model_list_entries(service, deployments))
+    entries.extend(_current_loaded_entries(service_records))
 
     return {
         "model_list": entries,
         "litellm_settings": {
             "drop_params": True,
+        },
+        "general_settings": {
+            "litellm_key_header_name": DEFAULT_LITELLM_KEY_HEADER,
         },
     }
 
@@ -198,6 +204,47 @@ def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def _current_loaded_service(service_records: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    for service in sorted(service_records, key=lambda row: (row["priority"], row["id"])):
+        if not service.get("enabled", True):
+            continue
+        config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+        if not config.get("gateway_lifecycle"):
+            continue
+        if _is_openai_compatible(service):
+            return service
+    return None
+
+
+def _current_loaded_entries(service_records: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    service = _current_loaded_service(service_records)
+    if service is None:
+        return []
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    api_key_ref = str(
+        config.get("gateway_lifecycle_api_key_ref")
+        or DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF
+    )
+    entries: list[dict[str, Any]] = []
+    for alias, fast in (("current", False), ("current-fast", True)):
+        entries.append(
+            {
+                "model_name": alias,
+                "litellm_params": {
+                    "model": f"openai/{alias}",
+                    "api_base": DEFAULT_GATEWAY_CURRENT_BASE_URL,
+                    "api_key": api_key_ref,
+                },
+                "model_info": {
+                    "gateway_current_loaded": True,
+                    "gateway_current_loaded_fast": fast,
+                    "gateway_lifecycle": True,
+                },
+            }
+        )
+    return entries
 
 
 def _model_list_entries(

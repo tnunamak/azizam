@@ -123,7 +123,35 @@ def test_keeps_litellm_settings_minimal() -> None:
     )
 
     assert compiled["litellm_settings"] == {"drop_params": True}
+    assert compiled["general_settings"] == {"litellm_key_header_name": "X-Litellm-Key"}
     assert "metadata" not in compiled
+
+
+def test_lifecycle_service_exposes_current_loaded_aliases() -> None:
+    compiled = compile_litellm_substrate_config(
+        {
+            "local": {
+                "id": "local",
+                "name": "Local mutable engine",
+                "capabilities": ["openai"],
+                "config": {
+                    "protocol": "openai-compatible",
+                    "gateway_lifecycle": True,
+                    "models": [{"id": "default", "upstream_model": "loaded.gguf"}],
+                },
+            }
+        }
+    )
+
+    entries = {entry["model_name"]: entry for entry in compiled["model_list"]}
+    assert entries["current"]["litellm_params"] == {
+        "model": "openai/current",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/current/v1",
+        "api_key": "os.environ/AI_GATEWAY_INTERNAL_LITELLM_KEY",
+    }
+    assert entries["current"]["model_info"]["gateway_current_loaded"] is True
+    assert entries["current-fast"]["litellm_params"]["model"] == "openai/current-fast"
+    assert entries["current-fast"]["model_info"]["gateway_current_loaded_fast"] is True
 
 
 def test_references_external_secrets_without_exposing_secret_values() -> None:
