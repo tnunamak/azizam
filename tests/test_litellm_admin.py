@@ -100,7 +100,7 @@ class LiteLLMKeyAdminClientTests(unittest.IsolatedAsyncioTestCase):
         req = _FakeAsyncClient.captured[0]
         self.assertEqual(req["method"], "GET")
         self.assertIn("/key/list", req["url"])
-        self.assertEqual(req["headers"]["authorization"], "Bearer sk-master")
+        self.assertEqual(req["headers"]["X-Litellm-Key"], "Bearer sk-master")
 
     async def test_list_keys_accepts_bare_list(self) -> None:
         resp = _FakeResponse(200, [{"key_alias": "x"}])

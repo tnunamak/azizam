@@ -30,7 +30,11 @@ from urllib.parse import urlencode
 
 import httpx
 
-from gateway.backends.llm_execution import LiteLlmRuntimeConfig, litellm_url
+from gateway.backends.llm_execution import (
+    LITELLM_DELEGATED_KEY_HEADER,
+    LiteLlmRuntimeConfig,
+    litellm_url,
+)
 
 # A short timeout: these are local management calls against the sidecar, run
 # synchronously inside an admin request. They must never hang the admin UI.
@@ -145,7 +149,7 @@ class LiteLLMKeyAdminClient:
             )
         url = litellm_url(base_url=self._config.base_url, path=path, query=query)
         headers = {
-            "authorization": f"Bearer {self._config.api_key}",
+            LITELLM_DELEGATED_KEY_HEADER: f"Bearer {self._config.api_key}",
             "content-type": "application/json",
             "accept": "application/json",
         }

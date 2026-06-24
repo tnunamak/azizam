@@ -7,3 +7,4 @@ websockets>=12.0
 Pillow>=10.0
 authlib>=1.7.2
 litellm[proxy]>=1.77.0
+prisma>=0.15.0

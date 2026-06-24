@@ -95,6 +95,48 @@ def test_litellm_virtual_key_does_not_unlock_gateway_media_routes() -> None:
     assert response.status_code == 401
 
 
+def test_litellm_virtual_key_rejected_on_durable_media_job_routes() -> None:
+    """A LiteLLM virtual key is for metered LLM execution only — it must never
+    authorize the gateway-owned durable media/job surface.
+
+    Delegation (``allow_litellm_delegation=True``) is wired only into the
+    LLM-execution routes; the ``/gateway/v1/media/jobs*`` routes authenticate
+    through ``_gateway_auth_context`` (``authenticate_request``, no delegation),
+    so an ``sk-``-prefixed virtual key that is not a real gateway credential
+    must be rejected with 401. LAN bypass is forced off so the boundary is
+    asserted purely on the credential, independent of local config.
+    """
+    media_job_routes = [
+        ("POST", "/gateway/v1/media/jobs"),
+        ("GET", "/gateway/v1/media/jobs"),
+        ("POST", "/gateway/v1/media/jobs/image-generations"),
+        ("GET", "/gateway/v1/media/jobs/mj_probe"),
+        ("GET", "/gateway/v1/media/jobs/mj_probe/events"),
+        ("POST", "/gateway/v1/media/jobs/mj_probe/events"),
+        ("POST", "/gateway/v1/media/jobs/mj_probe/cancel"),
+        ("GET", "/gateway/v1/media/jobs/mj_probe/content"),
+    ]
+
+    client = TestClient(proxy.app)
+    with (
+        patch.object(proxy, "AUTH_ENABLED", True),
+        patch.object(proxy, "_client_is_lan", lambda _request: False),
+        patch.object(proxy, "runtime_identity_for_app_credential_hash", lambda *a, **k: None),
+    ):
+        for method, path in media_job_routes:
+            response = client.request(
+                method,
+                path,
+                headers={"Authorization": "Bearer sk-virtual-test"},
+                json={} if method == "POST" else None,
+            )
+            assert response.status_code == 401, (
+                f"{method} {path} accepted a LiteLLM virtual key "
+                f"(status {response.status_code}); delegated keys must not "
+                "unlock gateway-owned media/job routes"
+            )
+
+
 def test_litellm_virtual_key_model_list_is_litellm_catalog_only() -> None:
     captured = []
 
