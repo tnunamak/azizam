@@ -31,6 +31,8 @@ from gateway.service_registry import (
 
 OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", "openai-compatible"})
 SECRET_PLACEHOLDER = "<external-secret>"
+DEFAULT_GATEWAY_LIFECYCLE_BASE_URL = "http://127.0.0.1:5000/internal/litellm/local"
+DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF = "os.environ/AI_GATEWAY_INTERNAL_LITELLM_KEY"
 # Bare filename: the artifact lives in the caller-provided ``base_dir`` (the
 # gateway's state dir — next to ``admin.db``), so it follows the same isolation
 # as every other store instead of being pinned to the repo ``data/`` directory.
@@ -182,6 +184,17 @@ def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "id": str(item.get("id") or f"{service['id']}:{index}"),
                 "model_group": model_group,
                 "upstream_model": upstream_model,
+                "gateway_lifecycle": bool(
+                    item.get("gateway_lifecycle")
+                    or item.get("local_lifecycle")
+                    or item.get("lifecycle_backed")
+                ),
+                "gateway_backend": str(
+                    item.get("gateway_backend")
+                    or item.get("backend")
+                    or item.get("service_id")
+                    or service["id"]
+                ),
             }
         )
     return out
@@ -200,23 +213,57 @@ def _model_list_entries(
 
     out: list[dict[str, Any]] = []
     for deployment in deployments:
-        litellm_params: dict[str, Any] = {
-            "model": _litellm_model_name(str(deployment["upstream_model"])),
-        }
-        if base_url:
-            litellm_params["api_base"] = base_url
-        if api_key_ref:
-            litellm_params["api_key"] = api_key_ref
-        elif _is_loopback_url(base_url):
-            litellm_params["api_key"] = "sk-local"
-
-        out.append(
-            {
-                "model_name": str(deployment["model_group"]),
-                "litellm_params": litellm_params,
-            }
+        lifecycle_backed = bool(
+            deployment.get("gateway_lifecycle") or config.get("gateway_lifecycle")
         )
+        upstream_model = str(deployment["upstream_model"])
+        gateway_backend = str(deployment.get("gateway_backend") or service["id"])
+        litellm_params: dict[str, Any] = {
+            "model": _litellm_model_name(upstream_model),
+        }
+        model_info: dict[str, Any] = {}
+        if lifecycle_backed:
+            litellm_params["api_base"] = _gateway_lifecycle_api_base(
+                config,
+                backend=gateway_backend,
+            )
+            litellm_params["api_key"] = str(
+                config.get("gateway_lifecycle_api_key_ref")
+                or DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF
+            )
+            model_info.update(
+                {
+                    "gateway_lifecycle": True,
+                    "gateway_backend": gateway_backend,
+                    "gateway_upstream_model": upstream_model,
+                }
+            )
+        else:
+            if base_url:
+                litellm_params["api_base"] = base_url
+            if api_key_ref:
+                litellm_params["api_key"] = api_key_ref
+            elif _is_loopback_url(base_url):
+                litellm_params["api_key"] = "sk-local"
+
+        entry: dict[str, Any] = {
+            "model_name": str(deployment["model_group"]),
+            "litellm_params": litellm_params,
+        }
+        if model_info:
+            entry["model_info"] = model_info
+        out.append(entry)
     return out
+
+
+def _gateway_lifecycle_api_base(config: Mapping[str, Any], *, backend: str) -> str:
+    base = str(
+        config.get("gateway_lifecycle_base_url")
+        or DEFAULT_GATEWAY_LIFECYCLE_BASE_URL
+    ).rstrip("/")
+    if base.endswith("/v1"):
+        return base
+    return f"{base}/{backend}/v1"
 
 
 def _litellm_model_name(upstream_model: str) -> str:

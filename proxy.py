@@ -18329,6 +18329,7 @@ _OPENAI_PROXY_POLICY = route_registry.openai_proxy_policy(
 _INTERNAL_PROTOCOL_FORWARD_HEADER = "x-vivid-fish-internal-protocol-forward"
 _INTERNAL_PROTOCOL_FORWARD_SECRET = secrets.token_urlsafe(32)
 _INTERNAL_PROTOCOL_FORWARD_HOSTS = frozenset({"127.0.0.1", "::1"})
+_INTERNAL_LITELLM_KEY_ENV = "AI_GATEWAY_INTERNAL_LITELLM_KEY"
 
 
 def _is_internal_protocol_forward(request: Request) -> bool:
@@ -18343,6 +18344,54 @@ def _is_internal_protocol_forward(request: Request) -> bool:
         return False
     client = getattr(request, "client", None)
     return getattr(client, "host", None) in _INTERNAL_PROTOCOL_FORWARD_HOSTS
+
+
+def _is_internal_litellm_lifecycle_request(request: Request) -> bool:
+    expected = os.environ.get(_INTERNAL_LITELLM_KEY_ENV, "").strip()
+    if not expected:
+        return False
+    auth = request.headers.get("authorization", "")
+    scheme, _, token = auth.partition(" ")
+    return scheme.lower() == "bearer" and secrets.compare_digest(token.strip(), expected)
+
+
+def _normalize_litellm_local_model_name(value: Any) -> str:
+    model = str(value or "").strip()
+    if model.startswith("openai/"):
+        return model.removeprefix("openai/").strip()
+    return model
+
+
+def _litellm_local_activation_target(
+    backend: str,
+    requested_model: str,
+) -> tuple[str, str | None]:
+    backend_cfg = config.get("backends", {}).get(backend, {})
+    if not isinstance(backend_cfg, Mapping):
+        return requested_model, None
+    requested = normalize_model_id(requested_model)
+    for item in _service_model_records(backend_cfg):
+        candidates = {
+            item.get("id"),
+            item.get("model_group"),
+            item.get("model"),
+            item.get("upstream_model"),
+            item.get("activation_model"),
+        }
+        activation_model = str(
+            item.get("activation_model")
+            or item.get("model")
+            or item.get("upstream_model")
+            or ""
+        ).strip()
+        if activation_model:
+            candidates.add(os.path.basename(activation_model))
+        if requested in {normalize_model_id(candidate) for candidate in candidates if candidate}:
+            activation_mmproj = str(
+                item.get("activation_mmproj") or item.get("mmproj") or ""
+            ).strip()
+            return activation_model or requested_model, activation_mmproj or None
+    return requested_model, None
 
 
 def _openai_proxy_policy_decision(
@@ -19027,6 +19076,127 @@ async def _handle_openai_litellm_request(
         body_json=litellm_body,
         runtime_config=litellm_runtime,
         requested_embedding_dimensions=requested_embedding_dimensions,
+    )
+
+
+async def _forward_internal_litellm_local_chat_completions(
+    request: Request,
+    *,
+    backend: str,
+) -> Response | StreamingResponse:
+    if not _is_internal_litellm_lifecycle_request(request):
+        return openai_error_response(
+            "Internal LiteLLM lifecycle key is missing or invalid.",
+            status_code=401,
+            error_type="authentication_error",
+            code="invalid_api_key",
+        )
+
+    backend = normalize_model_id(backend)
+    upstream_base = LLM_BACKEND_HOSTS.get(backend, "").rstrip("/")
+    if not upstream_base:
+        return openai_error_response(
+            f"Unknown local LLM backend: {backend!r}.",
+            status_code=404,
+            error_type="invalid_request_error",
+            code="backend_not_found",
+        )
+
+    body_or_error = await _read_json_object(request)
+    if isinstance(body_or_error, Response):
+        return body_or_error
+    body = dict(body_or_error)
+    target_model = _normalize_litellm_local_model_name(body.get("model"))
+    if not target_model:
+        return openai_error_response(
+            "Missing required parameter: 'model'.",
+            status_code=400,
+            param="model",
+            code="missing_required_parameter",
+        )
+    activation_model, activation_mmproj = _litellm_local_activation_target(
+        backend,
+        target_model,
+    )
+
+    availability = _service_availability_response(backend, service_label=backend)
+    if availability is not None:
+        return availability
+    if not await ensure_target(backend, activation_model, activation_mmproj):
+        return _litellm_activation_failure_response(
+            requested_model=str(body.get("model") or target_model),
+            backend=backend,
+            target_model=activation_model,
+        )
+
+    body["model"] = target_model
+    execution_request = LlmExecutionRequest(
+        method="POST",
+        url=f"{upstream_base}/v1/chat/completions",
+        headers={"content-type": "application/json"},
+        body=json.dumps(body).encode("utf-8"),
+        read_timeout=UPSTREAM_READ_TIMEOUT,
+    )
+
+    try:
+        client, resp = await send_llm_execution_request(execution_request)
+    except httpx.TimeoutException:
+        return openai_error_response(
+            "Local LLM request timed out.",
+            status_code=504,
+            error_type="api_error",
+            code="timeout",
+        )
+    except httpx.ConnectError:
+        response = openai_error_response(
+            f"Local backend {backend!r} is unavailable.",
+            status_code=503,
+            error_type="service_unavailable",
+            code="backend_unavailable",
+        )
+        response.headers["Retry-After"] = "10"
+        return response
+
+    content_type = resp.headers.get("content-type", "application/json")
+    excluded = ("content-length", "transfer-encoding", "content-type")
+    response_headers = {
+        key: value for key, value in resp.headers.items() if key.lower() not in excluded
+    }
+    if body.get("stream") is True:
+        async def stream_response():
+            try:
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+            finally:
+                await resp.aclose()
+                await client.aclose()
+
+        return StreamingResponse(
+            stream_response(),
+            status_code=resp.status_code,
+            headers=response_headers,
+            media_type=content_type,
+        )
+
+    content = await resp.aread()
+    await resp.aclose()
+    await client.aclose()
+    return Response(
+        content=content,
+        status_code=resp.status_code,
+        headers=response_headers,
+        media_type=content_type,
+    )
+
+
+@app.post(
+    "/internal/litellm/local/{backend}/v1/chat/completions",
+    include_in_schema=False,
+)
+async def internal_litellm_local_chat_completions(backend: str, request: Request):
+    return await _forward_internal_litellm_local_chat_completions(
+        request,
+        backend=backend,
     )
 
 

@@ -41,6 +41,11 @@ print('sk-local-' + secrets.token_urlsafe(24))
 PY
 )}"
 export LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-$AI_GATEWAY_LITELLM_API_KEY}"
+export AI_GATEWAY_INTERNAL_LITELLM_KEY="${AI_GATEWAY_INTERNAL_LITELLM_KEY:-$(python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(32))
+PY
+)}"
 
 if [ "${AI_GATEWAY_MANAGE_LITELLM:-true}" != "false" ]; then
     LITELLM_CONFIG_PATH="${AI_GATEWAY_LITELLM_CONFIG_PATH:-data/litellm.config.yaml}"

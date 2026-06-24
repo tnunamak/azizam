@@ -195,3 +195,68 @@ def test_litellm_config_path_defaults_under_base_dir(tmp_path) -> None:
     path = litellm_config_path_from_registry({"services": {}}, base_dir=tmp_path)
 
     assert path == tmp_path / "litellm.config.yaml"
+
+
+def test_lifecycle_backed_models_route_through_gateway_internal_target() -> None:
+    compiled = compile_litellm_substrate_config(
+        {
+            "local-kobold": {
+                "id": "local-kobold",
+                "name": "Local mutable GGUF engine",
+                "capabilities": ["openai"],
+                "config": {
+                    "protocol": "openai-compatible",
+                    "base_url": "http://127.0.0.1:5051/v1",
+                    "models": [
+                        {
+                            "id": "coder",
+                            "model_group": "coder",
+                            "upstream_model": "Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf",
+                            "gateway_lifecycle": True,
+                            "gateway_backend": "kobold",
+                        }
+                    ],
+                },
+            }
+        }
+    )
+
+    assert compiled is not None
+    entry = compiled["model_list"][0]
+    assert entry["model_name"] == "coder"
+    assert entry["litellm_params"] == {
+        "model": "openai/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+        "api_key": "os.environ/AI_GATEWAY_INTERNAL_LITELLM_KEY",
+    }
+    assert entry["model_info"] == {
+        "gateway_lifecycle": True,
+        "gateway_backend": "kobold",
+        "gateway_upstream_model": "Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf",
+    }
+
+
+def test_lifecycle_backed_service_can_override_gateway_internal_target() -> None:
+    compiled = compile_litellm_substrate_config(
+        {
+            "local": {
+                "id": "local",
+                "name": "Local mutable engine",
+                "capabilities": ["openai"],
+                "config": {
+                    "protocol": "openai-compatible",
+                    "gateway_lifecycle": True,
+                    "gateway_lifecycle_base_url": "http://gateway.internal/v1",
+                    "gateway_lifecycle_api_key_ref": "os.environ/CUSTOM_INTERNAL_KEY",
+                    "models": {"default": "loaded-model.gguf"},
+                },
+            }
+        }
+    )
+
+    assert compiled is not None
+    entry = compiled["model_list"][0]
+    assert entry["litellm_params"]["api_base"] == "http://gateway.internal/v1"
+    assert entry["litellm_params"]["api_key"] == "os.environ/CUSTOM_INTERNAL_KEY"
+    assert entry["model_info"]["gateway_lifecycle"] is True
+    assert entry["model_info"]["gateway_backend"] == "local"
