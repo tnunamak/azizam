@@ -37,6 +37,7 @@ from gateway.policy import (
     evaluate,
 )
 from gateway.litellm_substrate import compile_litellm_substrate_config
+from gateway.backends.litellm_admin import LiteLLMAdminError
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway import extension_packages, service_registry
 
@@ -231,6 +232,12 @@ AdminAuth = Callable[[Request], AdminContext]
 ProfileResolver = Callable[[str], AppProfile | None]
 # async (host, port, path) -> {ok, status, error, url}
 ServiceProbe = Callable[[str, "int | None", str], "Awaitable[Mapping[str, Any]]"]
+# Injected client over the LiteLLM sidecar virtual-key admin API. Duck-typed to
+# gateway.backends.litellm_admin.LiteLLMKeyAdminClient: an ``enabled`` property
+# plus async list_keys / generate_key / key_info / delete_keys raising
+# LiteLLMAdminError. Kept as a parameter (like ``service_probe``) so this module
+# never reads os.environ or touches proxy.py to find the sidecar.
+LiteLLMKeyClient = Any
 
 
 _AUDIT_DEFAULT_LIMIT = 50
@@ -397,6 +404,113 @@ class _RouteError(Exception):
 
 def _error_payload(code: str, message: str) -> dict[str, Any]:
     return {"error": {"code": code, "message": message}}
+
+
+def _litellm_admin_error(exc: LiteLLMAdminError) -> JSONResponse:
+    """Render a sidecar key-API failure as a protocol-shaped admin response."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=_error_payload(exc.code, exc.message),
+    )
+
+
+# Fields the operator may set when minting a virtual key. Anything else in the
+# request body is dropped — we never pass arbitrary operator input straight to
+# the sidecar. Mirrors the documented /key/generate parameters.
+_LITELLM_KEY_STRING_FIELDS = ("key_alias", "team_id", "user_id", "duration")
+_LITELLM_KEY_SECRET_FIELDS = frozenset({"key", "token"})
+
+
+def _validate_litellm_key_form(body: Mapping[str, Any]) -> dict[str, Any]:
+    """Sanitize a /key/generate request body from operator input.
+
+    Allows the documented, safe fields only: a string alias/team/user/duration,
+    a numeric ``max_budget``, and a ``models`` allow-list. Rejects attempts to
+    pass a pre-set secret ``key``/``token`` (the sidecar mints the secret).
+    """
+    if not isinstance(body, Mapping):
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST, "invalid_key", "request body must be an object"
+        )
+    for forbidden in _LITELLM_KEY_SECRET_FIELDS:
+        if body.get(forbidden):
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_key",
+                "the key secret is minted by LiteLLM and must not be supplied",
+            )
+    spec: dict[str, Any] = {}
+    for field_name in _LITELLM_KEY_STRING_FIELDS:
+        value = body.get(field_name)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            spec[field_name] = text
+    budget = body.get("max_budget")
+    if budget is not None and str(budget).strip() != "":
+        try:
+            spec["max_budget"] = float(budget)
+        except (TypeError, ValueError) as exc:
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_key",
+                "max_budget must be a number",
+            ) from exc
+    models = body.get("models")
+    if isinstance(models, (list, tuple)):
+        cleaned = [str(m).strip() for m in models if str(m).strip()]
+        if cleaned:
+            spec["models"] = cleaned
+    return spec
+
+
+def _validate_litellm_key_delete(
+    body: Mapping[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Extract (keys, key_aliases) from a delete request; require at least one."""
+    def _string_list(raw: Any) -> list[str]:
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, (list, tuple)):
+            return []
+        return [str(item).strip() for item in raw if str(item).strip()]
+
+    keys = _string_list(body.get("keys") or body.get("key"))
+    aliases = _string_list(body.get("key_aliases") or body.get("key_alias"))
+    if not keys and not aliases:
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_key",
+            "delete requires at least one key or key_alias",
+        )
+    return keys, aliases
+
+
+def _redact_litellm_key(key: Mapping[str, Any]) -> dict[str, Any]:
+    """Strip any secret material from a /key/list row before returning it.
+
+    LiteLLM key objects carry a hashed ``token`` and a ``key_name`` like
+    ``sk-...abcd`` (already masked). Defensive belt-and-suspenders: drop any
+    field that could carry a raw secret, and never echo a full ``sk-`` value.
+    """
+    out: dict[str, Any] = {}
+    for name, value in key.items():
+        lowered = str(name).lower()
+        if lowered in {"key", "api_key", "secret"}:
+            continue
+        if lowered == "token" and isinstance(value, str) and value.startswith("sk-"):
+            # A raw secret leaked into the list payload — mask it.
+            out["token"] = _mask_secret(value)
+            continue
+        out[name] = value
+    return out
+
+
+def _mask_secret(value: str) -> str:
+    if len(value) <= 8:
+        return "sk-****"
+    return f"{value[:5]}…{value[-4:]}"
 
 
 def _auth_error_response(exc: AdminAuthError) -> JSONResponse:
@@ -958,6 +1072,7 @@ def create_admin_router(
     auth: AdminAuth,
     profile_resolver: ProfileResolver | None = None,
     service_probe: ServiceProbe | None = None,
+    litellm_key_client: LiteLLMKeyClient | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -968,7 +1083,10 @@ def create_admin_router(
     profile id (string) rather than an inline profile dict. ``service_probe`` is
     an optional ``async (host, port, path) -> {ok, status, error, url}`` used by
     the backend "Test connection" control; when absent that route reports the
-    capability is unavailable rather than failing.
+    capability is unavailable rather than failing. ``litellm_key_client`` is an
+    optional client over the LiteLLM sidecar's virtual-key admin API (the
+    "LiteLLM owns LLM runtime keys" split); when absent the
+    ``/operator/litellm/*`` key routes report the capability is unavailable.
     """
 
     router = APIRouter(prefix=prefix, tags=["admin"])
@@ -1850,6 +1968,85 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"litellm_config": compiled},
+        )
+
+    # -- LiteLLM virtual-key admin ------------------------------------------
+    # The "LiteLLM owns LLM runtime keys" split: the gateway owns durable App
+    # keys / Profiles / policy; LiteLLM mints and meters the *virtual execution
+    # keys* used for commodity LLM calls. These routes are the operator surface
+    # over the sidecar's /key/* API, via the injected ``litellm_key_client``.
+
+    def _key_client_or_unavailable() -> "LiteLLMKeyClient | JSONResponse":
+        if litellm_key_client is None or not getattr(
+            litellm_key_client, "enabled", False
+        ):
+            return _RouteError(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "litellm_unconfigured",
+                "LiteLLM virtual-key management is unavailable: the LiteLLM "
+                "execution substrate is not configured in this gateway.",
+            ).as_response()
+        return litellm_key_client
+
+    @router.get("/operator/litellm/keys")
+    async def list_litellm_keys(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        client = _key_client_or_unavailable()
+        if isinstance(client, JSONResponse):
+            return client
+        try:
+            keys = await client.list_keys()
+        except LiteLLMAdminError as exc:
+            return _litellm_admin_error(exc)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"keys": [_redact_litellm_key(k) for k in keys]},
+        )
+
+    @router.post("/operator/litellm/keys")
+    async def create_litellm_key(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        client = _key_client_or_unavailable()
+        if isinstance(client, JSONResponse):
+            return client
+        try:
+            body = await _read_json_body(request)
+            spec = _validate_litellm_key_form(body)
+            created = await client.generate_key(spec)
+        except _RouteError as exc:
+            return exc.as_response()
+        except LiteLLMAdminError as exc:
+            return _litellm_admin_error(exc)
+        # The secret ``key`` is returned exactly once (reveal-once); the panel
+        # shows it to the operator and never persists it.
+        return JSONResponse(
+            status_code=status.HTTP_201_CREATED,
+            content={"key": created},
+        )
+
+    @router.post("/operator/litellm/keys/delete")
+    async def delete_litellm_keys(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        client = _key_client_or_unavailable()
+        if isinstance(client, JSONResponse):
+            return client
+        try:
+            body = await _read_json_body(request)
+            keys, aliases = _validate_litellm_key_delete(body)
+            result = await client.delete_keys(keys=keys, key_aliases=aliases)
+        except _RouteError as exc:
+            return exc.as_response()
+        except LiteLLMAdminError as exc:
+            return _litellm_admin_error(exc)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"deleted": result},
         )
 
     @router.get("/extensions")

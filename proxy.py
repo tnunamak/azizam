@@ -138,6 +138,7 @@ from gateway.backends.llm_execution import (
     litellm_url,
     send_llm_execution_request,
 )
+from gateway.backends.litellm_admin import LiteLLMKeyAdminClient
 from gateway.capabilities import (
     Capability,
     ResourceEstimate,
@@ -9548,12 +9549,46 @@ def _require_user_self_service() -> None:
         )
 
 
+class _LiveLiteLLMKeyClient:
+    """Admin key client that re-resolves the runtime config on every call.
+
+    The registry (and thus the sidecar base_url / master key) can change while
+    the gateway runs. Rather than freeze a client at boot, this thin facade
+    builds a fresh :class:`LiteLLMKeyAdminClient` from the live
+    ``_litellm_runtime_config()`` for each operation, so the admin key panel
+    always reflects the current substrate. It exposes the duck-typed surface
+    ``gateway.admin_api`` expects (``enabled`` + the async ops). The referenced
+    globals resolve at call time (request time), so defining this above
+    ``_litellm_runtime_config`` in source order is fine.
+    """
+
+    @property
+    def enabled(self) -> bool:
+        return LiteLLMKeyAdminClient(_litellm_runtime_config()).enabled
+
+    async def list_keys(self, **kwargs):
+        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).list_keys(**kwargs)
+
+    async def generate_key(self, spec):
+        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).generate_key(spec)
+
+    async def key_info(self, key):
+        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).key_info(key)
+
+    async def delete_keys(self, **kwargs):
+        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).delete_keys(**kwargs)
+
+
+_LITELLM_KEY_CLIENT = _LiveLiteLLMKeyClient()
+
+
 app.include_router(
     create_admin_router(
         ADMIN_STORE,
         auth=ADMIN_AUTH,
         profile_resolver=ADMIN_STORE.profile_for_id,
         service_probe=probe_backend,
+        litellm_key_client=_LITELLM_KEY_CLIENT,
     )
 )
 

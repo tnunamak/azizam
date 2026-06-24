@@ -1436,6 +1436,75 @@ def _service_crud_panel(services: list[Mapping[str, Any]]) -> str:
     )
 
 
+def _litellm_keys_panel() -> str:
+    """Operator panel for LiteLLM virtual (execution) keys.
+
+    The "LiteLLM owns LLM runtime keys" split: durable App keys / Profiles /
+    policy stay in the gateway; LiteLLM mints and meters the per-model/per-budget
+    *virtual keys* used for commodity LLM execution. This panel lists, mints, and
+    revokes those keys via ``/admin/api/operator/litellm/keys``.
+
+    The list is loaded client-side (fetch-on-open, like the service editor) so a
+    slow or unconfigured sidecar never blocks the admin page render. A minted
+    key's secret is shown exactly once via the page's reveal-once helper.
+    """
+    return (
+        '<div class="litellm-keys" data-litellm-keys>'
+        '<p class="service-crud-intro">These are LiteLLM’s virtual '
+        "execution keys — the per-budget keys the substrate mints and meters "
+        "for LLM calls. They are separate from the gateway’s own App keys and "
+        "Profiles; revoking one here stops it at the execution layer.</p>"
+        '<form class="vf-form litellm-key-form" data-litellm-key-create '
+        'action="/admin/api/operator/litellm/keys" method="post">'
+        '<div class="vf-field">'
+        '<label for="litellm-key-alias">Alias <span class="muted">(optional)</span></label>'
+        '<input type="text" id="litellm-key-alias" name="key_alias" '
+        'placeholder="e.g. nightly-batch" autocomplete="off"></div>'
+        '<div class="vf-field">'
+        '<label for="litellm-key-budget">Max budget USD <span class="muted">(optional)</span></label>'
+        '<input type="number" id="litellm-key-budget" name="max_budget" '
+        'min="0" step="0.01" placeholder="unlimited"></div>'
+        '<div class="vf-field">'
+        '<label for="litellm-key-models">Models <span class="muted">(comma-separated, optional)</span></label>'
+        '<input type="text" id="litellm-key-models" name="models" '
+        'placeholder="all models if blank" autocomplete="off"></div>'
+        '<button type="submit" class="vf-button vf-button-sm">Mint key</button>'
+        "</form>"
+        '<div id="litellm-keys-message" class="message"></div>'
+        '<div id="litellm-keys-list" data-litellm-keys-list>'
+        '<p class="muted">Loading keys…</p></div>'
+        "</div>"
+    )
+
+
+# Client helpers for the LiteLLM virtual-key panel, spliced into the admin page
+# script (which provides json(), showError(), showSecret(), esc()). Keys load on
+# demand; mint uses the reveal-once secret helper; delete posts the masked name.
+_LITELLM_KEYS_JS = (
+    "function esc(s){return String(s==null?'':s).replace(/[&<>\"']/g,function(c){"
+    "return{'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]})}"
+    "async function loadLitellmKeys(){"
+    "const host=document.getElementById('litellm-keys-list');if(!host)return;"
+    "try{const r=await fetch('/admin/api/operator/litellm/keys',{credentials:'same-origin',"
+    "cache:'no-store',headers:{'x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken}});"
+    "const data=await r.json();if(!r.ok){throw data}"
+    "renderLitellmKeys(host,(data&&data.keys)||[])}"
+    "catch(err){host.innerHTML='<p class=\"bad\">'+esc((err&&err.error&&(err.error.message||err.error.code))||'Could not load keys')+'</p>'}}"
+    "function renderLitellmKeys(host,keys){"
+    "if(!keys.length){host.innerHTML='<p class=\"muted\">No virtual keys yet.</p>';return}"
+    "const rows=keys.map(function(k){"
+    "const name=esc(k.key_alias||k.key_name||k.token||'(unnamed)');"
+    "const spend=(k.spend!=null)?('$'+Number(k.spend).toFixed(2)):'—';"
+    "const budget=(k.max_budget!=null)?('$'+Number(k.max_budget).toFixed(2)):'—';"
+    "const id=esc(k.token||k.key_name||k.key_alias||'');"
+    "const byAlias=(!k.token&&!k.key_name&&k.key_alias)?'1':'';"
+    "return '<tr><td>'+name+'</td><td>'+spend+' / '+budget+"
+    "'</td><td><button type=\"button\" class=\"vf-button vf-button-ghost vf-button-sm\" "
+    "data-litellm-key-delete=\"'+id+'\" data-by-alias=\"'+byAlias+'\">Revoke</button></td></tr>'}).join('');"
+    "host.innerHTML='<table class=\"vf-table\"><thead><tr><th>Key</th><th>Spend / budget</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'}"
+)
+
+
 # Client helpers for the backend CRUD UI, spliced into the admin page script
 # (which provides json(), refreshMain(), show(), showError()). The single
 # server-rendered form (#service-form-host .service-form) is reused for both add
@@ -2837,6 +2906,11 @@ def render_admin_dashboard(
             intro="The model/inference systems this gateway calls. Services you add here can be edited or removed; ones provisioned from config or built in can be enabled or disabled here and changed in the config file. The table shows every service's source, status, and capabilities.",
         )
         + _subsection(
+            "LiteLLM execution keys",
+            _litellm_keys_panel(),
+            intro="Virtual keys the LiteLLM substrate mints and meters for LLM execution. Separate from the gateway's own App keys; revoke one to stop it at the execution layer. Hidden actions still work if the substrate is unconfigured — the list will say so.",
+        )
+        + _subsection(
             "Sources of Truth",
             config_sources_panel,
             intro="Shows which settings are dashboard-managed, which are provisioned from files/env/manifests, and what requires restart or reload.",
@@ -2964,13 +3038,20 @@ def render_admin_dashboard(
         "const refreshMain=async()=>{const r=await fetch('/admin',{credentials:'same-origin',cache:'no-store'});"
         "if(!r.ok)return;const html=await r.text();const doc=new DOMParser().parseFromString(html,'text/html');"
         "const next=doc.querySelector('main.shell-main'),main=document.querySelector('main.shell-main');"
-        "if(next&&main){main.replaceWith(next);initProfileForm();if(window.__adminNavInit)window.__adminNavInit()}};"
+        "if(next&&main){main.replaceWith(next);initProfileForm();if(window.__adminNavInit)window.__adminNavInit();if(document.getElementById('litellm-keys-list'))loadLitellmKeys()}};"
         "const json=async(url,body,method='POST')=>{const r=await fetch(url,{method,credentials:'same-origin',headers:{'content-type':'application/json','x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken},body:JSON.stringify(body)});"
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(!r.ok){throw data}return data};"
         "document.addEventListener('submit',async e=>{"
-        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]'),operatorForm=e.target.closest('[data-operator-control]'),oidcForm=e.target.closest('[data-oidc-config]'),extensionForm=e.target.closest('[data-extension-package]'),serviceForm=e.target.closest('[data-service-form]');"
-        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm&&!operatorForm&&!oidcForm&&!extensionForm&&!serviceForm)return;e.preventDefault();"
+        "const adminKeyForm=e.target.closest('[data-create-admin-key]'),profileForm=e.target.closest('[data-create-profile]'),simForm=e.target.closest('[data-simulate-policy]'),appForm=e.target.closest('[data-create-app]'),keyForm=e.target.closest('[data-mint-key]'),mappingForm=e.target.closest('[data-create-runtime-mapping]'),appProfileForm=e.target.closest('[data-update-app-profile]'),operatorForm=e.target.closest('[data-operator-control]'),oidcForm=e.target.closest('[data-oidc-config]'),extensionForm=e.target.closest('[data-extension-package]'),serviceForm=e.target.closest('[data-service-form]'),litellmKeyForm=e.target.closest('[data-litellm-key-create]');"
+        "if(!adminKeyForm&&!profileForm&&!simForm&&!appForm&&!keyForm&&!mappingForm&&!appProfileForm&&!operatorForm&&!oidcForm&&!extensionForm&&!serviceForm&&!litellmKeyForm)return;e.preventDefault();"
+        "if(litellmKeyForm){const f=litellmKeyForm,fd=new FormData(f),body={};"
+        "const alias=String(fd.get('key_alias')||'').trim();if(alias)body.key_alias=alias;"
+        "const budget=String(fd.get('max_budget')||'').trim();if(budget)body.max_budget=Number(budget);"
+        "const models=String(fd.get('models')||'').split(/[\\s,]+/).map(x=>x.trim()).filter(Boolean);if(models.length)body.models=models;"
+        "try{const data=await json(f.action,body);f.reset();await loadLitellmKeys();"
+        "showSecret({key:{credential:{api_key:(data&&data.key&&data.key.key)||''}}},'Virtual key minted. Copy it now; LiteLLM will not show it again.','Use this key as the LLM API key against this gateway. Revoke it from this panel to stop it.')}"
+        "catch(err){showError(err)}return}"
         "if(adminKeyForm){const f=adminKeyForm,fd=new FormData(f);const body={name:fd.get('name'),role:fd.get('role')||'admin'};try{const data=await json(f.action,body);f.reset();await refreshMain();showSecret(data,'Admin automation key created. Copy it now; it will not be shown again.','Use this admin key only for /admin/api and /status. Never paste it into chat apps, SDK tools, browser code, prompts, logs, or issue trackers.')}catch(err){showError(err)}return}"
         "if(oidcForm){const f=oidcForm,fd=new FormData(f);const body={enabled:fd.get('enabled')==='on'};"
         "['issuer','client_id','redirect_uri','authorization_endpoint','token_endpoint','jwks_uri'].forEach(k=>{body[k]=String(fd.get(k)||'').trim()});"
@@ -3025,12 +3106,18 @@ def render_admin_dashboard(
         "if(svcEdit){e.preventDefault();await editService(svcEdit.dataset.serviceEdit);return}"
         "if(svcDelete){e.preventDefault();const id=svcDelete.dataset.serviceDelete,nm=svcDelete.dataset.serviceName||id;if(!confirm('Delete service '+nm+'? It is removed from the gateway and takes effect on restart.'))return;try{await json('/admin/api/operator/services/'+encodeURIComponent(id),{},'DELETE');await refreshMain();showRestartBanner()}catch(err){showError(err)}return}"
         "if(svcToggle){e.preventDefault();const id=svcToggle.dataset.serviceToggle,enabled=svcToggle.dataset.enabled==='1';try{await json('/admin/api/operator/services/'+encodeURIComponent(id)+'/enabled',{enabled:!enabled});await refreshMain();showRestartBanner()}catch(err){showError(err)}return}"
+        "const llmKeyDelete=e.target.closest('[data-litellm-key-delete]');"
+        "if(llmKeyDelete){e.preventDefault();const id=llmKeyDelete.dataset.litellmKeyDelete,byAlias=llmKeyDelete.dataset.byAlias==='1';if(!id){return}if(!confirm('Revoke this LiteLLM virtual key? It stops working immediately.'))return;const body=byAlias?{key_aliases:[id]}:{keys:[id]};try{await json('/admin/api/operator/litellm/keys/delete',body);await loadLitellmKeys()}catch(err){showError(err)}return}"
         "if(!revoke&&!disable&&!appDisable)return;"
         "if(revoke){const id=revoke.dataset.revokeCredential;try{const data=await json('/admin/api/credentials/'+encodeURIComponent(id)+'/revoke',{});await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(appDisable){const id=appDisable.dataset.disableApp;try{const data=await json('/admin/api/apps/'+encodeURIComponent(id),{},'DELETE');await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(disable){const id=disable.dataset.disableRuntimeMapping;try{const r=await fetch('/admin/api/runtime-profile-mappings/'+encodeURIComponent(id),{method:'DELETE',credentials:'same-origin',headers:{'x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken}});const text=await r.text();const data=text?JSON.parse(text):{};if(!r.ok)throw data;await refreshMain();show(data)}catch(err){showError(err)}}});"
         "document.addEventListener('change',e=>{const p=e.target.closest('[data-service-preset]');if(p)applyServicePreset(p.value)});"
         + _SERVICE_CRUD_JS
+        + _LITELLM_KEYS_JS
+        # Load the virtual-key list on first paint; refreshMain() (which replaces
+        # <main>) re-runs it so the freshly-rendered list host gets populated.
+        + "if(document.getElementById('litellm-keys-list'))loadLitellmKeys();"
         + "});"
         "</script>"
         "</head><body>"
