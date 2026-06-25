@@ -58,7 +58,27 @@ def ensure_service_registry(
 
     record = admin_store.get_operator_setting(SERVICE_REGISTRY_SETTING_KEY, path=path)
     if record is not None and isinstance(record.get("value"), Mapping):
-        return backfill_seed_catalog_metadata(record["value"], proxy_config=proxy_config)
+        registry = backfill_seed_catalog_metadata(record["value"], proxy_config=proxy_config)
+        if stable_hash(registry) != stable_hash(record["value"]):
+            admin_store.put_operator_setting(
+                SERVICE_REGISTRY_SETTING_KEY,
+                registry,
+                updated_by=actor,
+                path=path,
+            )
+            admin_store.record_audit(
+                "operator.service_registry.backfill",
+                actor_kind="admin",
+                actor_id=actor,
+                target_kind="operator_setting",
+                target_id=SERVICE_REGISTRY_SETTING_KEY,
+                metadata={
+                    "service_count": len(registry.get("services") or {}),
+                    "protocol_frontend_count": len(registry.get("protocol_frontends") or {}),
+                },
+                path=path,
+            )
+        return registry
 
     registry = build_service_registry_seed(proxy_config)
     admin_store.put_operator_setting(
@@ -190,6 +210,10 @@ def backfill_seed_catalog_metadata(
         out["services"],
         catalogs.get("services") or {},
     )
+    _backfill_service_metadata(
+        out["services"],
+        catalogs.get("services") or {},
+    )
     _backfill_collection_metadata(
         out["protocol_frontends"],
         catalogs.get("protocol_frontends") or {},
@@ -205,6 +229,31 @@ def _backfill_missing_records(
     for record_id, seed in seeds.items():
         if record_id not in records and isinstance(seed, Mapping):
             records[record_id] = copy.deepcopy(dict(seed))
+
+
+def _backfill_service_metadata(
+    records: dict[str, dict[str, Any]],
+    seeds: Mapping[str, Any],
+) -> None:
+    for record_id, record in records.items():
+        seed = seeds.get(record_id)
+        if not isinstance(seed, Mapping):
+            continue
+        record_source = str(record.get("source") or "").strip()
+        seed_source = str(seed.get("source") or "").strip()
+        if record_source and seed_source and record_source != seed_source:
+            continue
+        _merge_missing_fields(record, seed)
+
+
+def _merge_missing_fields(target: dict[str, Any], seed: Mapping[str, Any]) -> None:
+    for key, seed_value in seed.items():
+        if key not in target:
+            target[key] = copy.deepcopy(seed_value)
+            continue
+        target_value = target.get(key)
+        if isinstance(target_value, dict) and isinstance(seed_value, Mapping):
+            _merge_missing_fields(target_value, seed_value)
 
 
 def _backfill_collection_metadata(
@@ -1275,6 +1324,8 @@ def resource_summary(
     """
     fields = _RESOURCE_ADMIN_FIELDS if audience in ("admin", "internal") else _RESOURCE_CLIENT_FIELDS
     out: dict[str, Any] = {k: service[k] for k in fields if k in service}
+    if "kind" in out:
+        out["type"] = out["kind"]
     if status is not None:
         out["status"] = status
     if queue_depth is not None:

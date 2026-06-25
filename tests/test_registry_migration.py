@@ -419,6 +419,132 @@ class TestCheckServiceHealth(unittest.TestCase):
 
         self.assertFalse(result)
 
+    def test_runtime_fact_maps_degraded_status(self) -> None:
+        backends = {
+            "myservice": {"host": "127.0.0.1", "port": 9000, "health_endpoint": "/health"}
+        }
+
+        class _FakeResponse:
+            status_code = 503
+
+        class _FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                pass
+
+            async def get(self, url, timeout=None):
+                return _FakeResponse()
+
+        with patch.dict(proxy.config, {"backends": backends}, clear=False):
+            with patch("proxy.httpx.AsyncClient", return_value=_FakeClient()):
+                result = self._run(proxy._service_resource_runtime_fact("myservice"))
+
+        self.assertEqual(result, {"status": "degraded"})
+
+    def test_runtime_fact_uses_registry_only_service_base_url(self) -> None:
+        registry = {
+            "services": {
+                "substrate": {
+                    "id": "substrate",
+                    "name": "Substrate",
+                    "enabled": True,
+                    "config": {
+                        "default_base_url": "http://127.0.0.1:4011",
+                        "health_endpoint": "/health/liveliness",
+                    },
+                }
+            }
+        }
+        captured_urls = []
+
+        class _FakeResponse:
+            status_code = 200
+
+        class _FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                pass
+
+            async def get(self, url, timeout=None):
+                captured_urls.append(url)
+                return _FakeResponse()
+
+        with patch.dict(proxy.config, {"backends": {}}, clear=False):
+            with patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry):
+                with patch("proxy.httpx.AsyncClient", return_value=_FakeClient()):
+                    result = self._run(proxy._service_resource_runtime_fact("substrate"))
+
+        self.assertEqual(result, {"status": "available"})
+        self.assertEqual(captured_urls, ["http://127.0.0.1:4011/health/liveliness"])
+
+    def test_runtime_fact_env_base_url_overrides_registry_default(self) -> None:
+        registry = {
+            "services": {
+                "substrate": {
+                    "id": "substrate",
+                    "name": "Substrate",
+                    "enabled": True,
+                    "config": {
+                        "base_url_env": "AI_GATEWAY_TEST_SUBSTRATE_BASE_URL",
+                        "default_base_url": "http://127.0.0.1:4011",
+                        "health_endpoint": "ready",
+                    },
+                }
+            }
+        }
+        captured_urls = []
+
+        class _FakeResponse:
+            status_code = 200
+
+        class _FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                pass
+
+            async def get(self, url, timeout=None):
+                captured_urls.append(url)
+                return _FakeResponse()
+
+        with patch.dict(proxy.config, {"backends": {}}, clear=False):
+            with patch.dict("os.environ", {"AI_GATEWAY_TEST_SUBSTRATE_BASE_URL": "http://127.0.0.1:4999"}, clear=False):
+                with patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry):
+                    with patch("proxy.httpx.AsyncClient", return_value=_FakeClient()):
+                        result = self._run(proxy._service_resource_runtime_fact("substrate"))
+
+        self.assertEqual(result, {"status": "available"})
+        self.assertEqual(captured_urls, ["http://127.0.0.1:4999/ready"])
+
+    def test_gateway_resource_lister_enriches_registry_with_runtime_status(self) -> None:
+        registry = {
+            "services": {
+                "svc-a": {
+                    "id": "svc-a",
+                    "name": "Service A",
+                    "kind": "provider",
+                    "enabled": True,
+                    "capabilities": ["chat"],
+                }
+            }
+        }
+
+        async def fake_fact(service_id: str) -> dict[str, str]:
+            self.assertEqual(service_id, "svc-a")
+            return {"status": "available"}
+
+        with patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry):
+            with patch.object(proxy, "_service_resource_runtime_fact", side_effect=fake_fact):
+                result = self._run(proxy._gateway_resource_lister(audience="client"))
+
+        self.assertEqual(result[0]["id"], "svc-a")
+        self.assertEqual(result[0]["status"], "available")
+
     def test_returns_false_on_connection_error(self) -> None:
         backends = {
             "myservice": {"host": "127.0.0.1", "port": 9001, "health_endpoint": "/health"}

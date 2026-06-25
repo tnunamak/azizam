@@ -14,6 +14,7 @@ records:
       protocol: litellm
       base_url_env: AI_GATEWAY_LITELLM_BASE_URL
       default_base_url: http://127.0.0.1:4011
+      health_endpoint: /health/liveliness
       api_key_env: AI_GATEWAY_LITELLM_API_KEY
       # Resolved relative to the gateway state dir (ADMIN_DB_PATH.parent, i.e.
       # data/), so this is a bare filename — NOT "data/litellm.config.yaml",

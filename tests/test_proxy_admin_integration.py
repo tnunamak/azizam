@@ -1535,19 +1535,24 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             "/admin",
         )
 
-    def test_login_falls_back_to_setup_message_when_oidc_disabled(self) -> None:
-        # OIDC disabled -> /login returns a 501 that points operators to /setup
-        # and clarifies that the CLI is recovery, not the normal path.
+    def test_login_redirects_to_setup_when_oidc_disabled(self) -> None:
+        # OIDC disabled + browser (no Authorization header) -> /setup, where
+        # local-owner sign-in or first-run creation lives.
         response = self.client.get("/login", follow_redirects=False)
+        self.assertEqual(response.status_code, 302, response.text)
+        self.assertEqual(response.headers["location"], "/setup")
+
+    def test_login_returns_501_for_api_callers_when_oidc_disabled(self) -> None:
+        # OIDC disabled + API caller -> explicit machine-readable failure.
+        response = self.client.get(
+            "/login",
+            headers={"Authorization": "Bearer opk_test"},
+            follow_redirects=False,
+        )
         self.assertEqual(response.status_code, 501, response.text)
         body = response.text
         self.assertIn("/setup", body)
         self.assertIn("recovery and headless automation", body)
-        # No longer frames the CLI as the primary way in.
-        self.assertNotIn(
-            "Use `python proxy.py generate-admin-key <name>` for /admin/api",
-            body,
-        )
 
     def test_setup_login_link_uses_setup_return_to(self) -> None:
         self._enable_oidc()

@@ -42,6 +42,7 @@ def test_litellm_substrate_service_is_seed_data() -> None:
     assert service["config"]["execution_substrate"] == "litellm"
     assert service["config"]["base_url_env"] == "AI_GATEWAY_LITELLM_BASE_URL"
     assert service["config"]["default_base_url"] == "http://127.0.0.1:4011"
+    assert service["config"]["health_endpoint"] == "/health/liveliness"
 
 
 def test_litellm_detection_does_not_treat_every_llm_execution_provider_as_substrate() -> None:
@@ -421,6 +422,7 @@ def test_resource_summary_client_hides_admin_fields() -> None:
     assert s["id"] == "comfyui-local"
     assert s["name"] == "ComfyUI Local"
     assert s["kind"] == "comfyui"
+    assert s["type"] == "comfyui"
     assert s["enabled"] is True
     assert "source" not in s
     assert "priority" not in s
@@ -906,6 +908,86 @@ def test_backfill_seed_catalog_metadata_never_overwrites_operator_edits() -> Non
     assert result["services"]["litellm"]["name"] == "My Custom LiteLLM Name", (
         "backfill must not overwrite operator-edited name"
     )
+    # Missing bundled config fields should still be added.
+    assert (
+        result["services"]["litellm"]["config"]["health_endpoint"]
+        == "/health/liveliness"
+    )
+
+
+def test_backfill_seed_catalog_metadata_skips_different_source_records() -> None:
+    """A user-owned row with a seed-colliding id must not inherit builtin data."""
+    existing_registry = {
+        "schema_version": 1,
+        "services": {
+            "litellm": {
+                "id": "litellm",
+                "name": "User-owned service named litellm",
+                "kind": "provider",
+                "source": "ui",
+                "enabled": True,
+                "config": {"base_url": "http://example.invalid"},
+            }
+        },
+        "protocol_frontends": {},
+        "workflows": {},
+        "capabilities": {},
+    }
+
+    result = service_registry.backfill_seed_catalog_metadata(existing_registry, proxy_config={})
+
+    service = result["services"]["litellm"]
+    assert service["source"] == "ui"
+    assert service["kind"] == "provider"
+    assert service["config"] == {"base_url": "http://example.invalid"}
+
+
+def test_ensure_service_registry_persists_seed_catalog_backfill(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    existing_registry = {
+        "schema_version": 1,
+        "services": {
+            "litellm": {
+                "id": "litellm",
+                "name": "LiteLLM",
+                "kind": "llm-substrate",
+                "source": "builtin",
+                "editable": False,
+                "enabled": True,
+                "priority": 10,
+                "role": "required",
+                "capabilities": ["llm.execution"],
+                "config": {
+                    "execution_substrate": "litellm",
+                    "protocol": "litellm",
+                    "base_url_env": "AI_GATEWAY_LITELLM_BASE_URL",
+                    "default_base_url": "http://127.0.0.1:4011",
+                },
+                "secret_refs": {},
+                "lifecycle": {"type": "external", "managed": False, "service_name": "litellm"},
+                "provenance": {},
+            }
+        },
+        "protocol_frontends": {},
+        "workflows": {},
+        "capabilities": {},
+    }
+    admin_store.put_operator_setting(
+        service_registry.SERVICE_REGISTRY_SETTING_KEY,
+        existing_registry,
+        updated_by="test",
+        path=db,
+    )
+
+    result = service_registry.ensure_service_registry({}, path=db, actor="startup")
+    stored = admin_store.get_operator_setting(
+        service_registry.SERVICE_REGISTRY_SETTING_KEY,
+        path=db,
+    )["value"]
+
+    assert result["services"]["litellm"]["config"]["health_endpoint"] == "/health/liveliness"
+    assert stored["services"]["litellm"]["config"]["health_endpoint"] == "/health/liveliness"
 
 
 def test_models_list_round_trips_through_form_to_raw_to_litellm(tmp_path: Path) -> None:

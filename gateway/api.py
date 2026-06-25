@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Awaitable, Callable, Iterable, Mapping, Sequence
 
 from fastapi import APIRouter, Body, Query, Request, status
 from fastapi.responses import JSONResponse
@@ -54,7 +54,7 @@ AudienceResolver = Callable[[Request], str]
 CapabilitiesProvider = Callable[[Request], Sequence[Capability] | Iterable[Capability]]
 ReceiptGetter = Callable[..., dict[str, Any] | None]
 ReceiptLister = Callable[..., list[dict[str, Any]]]
-ResourceLister = Callable[..., list[dict[str, Any]]]
+ResourceLister = Callable[..., list[dict[str, Any]] | Awaitable[list[dict[str, Any]]]]
 MediaJobCreator = Callable[..., dict[str, Any]]
 MediaJobGetter = Callable[..., dict[str, Any] | None]
 MediaJobLister = Callable[..., list[dict[str, Any]]]
@@ -451,13 +451,16 @@ def create_gateway_router(
         return JSONResponse(status_code=status.HTTP_200_OK, content=row)
 
     @router.get("/resources")
-    def list_resources(request: Request) -> JSONResponse:
+    async def list_resources(request: Request) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
         try:
             if resource_lister is None:
                 resources: list[dict[str, Any]] = []
             else:
-                resources = list(resource_lister(audience=audience))
+                listed = resource_lister(audience=audience)
+                if inspect.isawaitable(listed):
+                    listed = await listed
+                resources = list(listed)
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
         return JSONResponse(

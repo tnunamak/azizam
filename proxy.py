@@ -3340,32 +3340,96 @@ async def probe_backend(
         return {"ok": False, "status": None, "error": str(exc) or type(exc).__name__, "url": url, "body": None}
 
 
-async def check_service_health(service_id: str) -> bool:
-    """Generic health probe driven by the registry-projected config["backends"] entry.
+async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
+    """Return a generic runtime status fact for a configured service.
 
-    Reads host, port, health_endpoint, and timeout from config["backends"][service_id].
-    Default health_endpoint is "/health"; default timeout is HEALTH_CHECK_TIMEOUT.
-    Returns False when the service_id is not present in config["backends"].
+    The fact is intentionally derived only from the service's configured
+    transport fields. That keeps the gateway from learning engine-specific
+    health semantics in code; richer queue/admission facts can be added as
+    data on the service record.
     """
-    bcfg = (config.get("backends") or {}).get(service_id)
+    bcfg = _service_resource_probe_config(service_id)
     if not isinstance(bcfg, Mapping):
-        return False
-    host = bcfg.get("host", "127.0.0.1")
-    port = bcfg.get("port")
-    if not port:
-        return False
-    endpoint = bcfg.get("health_endpoint", "/health")
-    timeout = int(bcfg.get("timeout") or HEALTH_CHECK_TIMEOUT)
+        return {"status": "unknown"}
+    url = _service_resource_probe_url(bcfg)
+    if not url:
+        return {"status": "unknown"}
+    try:
+        timeout = float(bcfg.get("timeout") or HEALTH_CHECK_TIMEOUT)
+    except (TypeError, ValueError):
+        timeout = HEALTH_CHECK_TIMEOUT
     # Cap the health-check timeout at HEALTH_CHECK_TIMEOUT so callers don't
     # accidentally inherit very long service timeouts (e.g. TTS: 86400 s).
     timeout = min(timeout, HEALTH_CHECK_TIMEOUT)
-    url = f"http://{host}:{port}{endpoint}"
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, timeout=timeout)
-            return resp.status_code == 200
+            if 200 <= resp.status_code < 300:
+                return {"status": "available"}
+            if resp.status_code in {502, 503, 504}:
+                return {"status": "degraded"}
+            return {"status": "unavailable"}
+    except httpx.TimeoutException:
+        return {"status": "degraded"}
     except Exception:
-        return False
+        return {"status": "unavailable"}
+
+
+def _service_resource_probe_config(service_id: str) -> Mapping[str, Any] | None:
+    """Return generic transport config for a resource health probe."""
+    bcfg = (config.get("backends") or {}).get(service_id)
+    if isinstance(bcfg, Mapping):
+        return bcfg
+    try:
+        registry = ADMIN_STORE.get_service_registry()
+    except Exception:  # noqa: BLE001
+        return None
+    services = registry.get("services") if isinstance(registry, Mapping) else {}
+    service = (services or {}).get(service_id)
+    if not isinstance(service, Mapping):
+        return None
+    scfg = service.get("config")
+    if isinstance(scfg, Mapping):
+        return scfg
+    return None
+
+
+def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
+    """Build a health URL from generic service transport fields."""
+    endpoint = str(service_config.get("health_endpoint") or "/health").strip() or "/health"
+    if endpoint.startswith(("http://", "https://")):
+        return endpoint
+
+    env_name = str(service_config.get("base_url_env") or service_config.get("api_base_env") or "").strip()
+    env_base_url = str(os.environ.get(env_name) or "").strip() if env_name else ""
+    base_url = str(
+        env_base_url
+        or service_config.get("base_url")
+        or service_config.get("api_base")
+        or service_config.get("default_base_url")
+        or ""
+    ).strip()
+    if base_url:
+        return f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+
+    host = str(service_config.get("host") or "127.0.0.1").strip()
+    port = service_config.get("port")
+    if not host or port in (None, ""):
+        return ""
+    scheme = str(service_config.get("scheme") or "http").strip() or "http"
+    return f"{scheme}://{host}:{port}/{endpoint.lstrip('/')}"
+
+
+async def check_service_health(service_id: str) -> bool:
+    """Generic health probe driven by configured service transport fields.
+
+    Reads host, port, base_url/default_base_url, health_endpoint, and timeout
+    from config["backends"][service_id], falling back to the registry service
+    record when the service is not projected into config["backends"].
+    Default health_endpoint is "/health"; default timeout is HEALTH_CHECK_TIMEOUT.
+    Returns False when the service has no probeable transport fields.
+    """
+    return (await _service_resource_runtime_fact(service_id)).get("status") == "available"
 
 
 async def check_tabby_health() -> bool:
@@ -9295,12 +9359,33 @@ async def _gateway_auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-def _gateway_resource_lister(*, audience: str) -> list:
+async def _gateway_resource_lister(*, audience: str) -> list:
     try:
         reg = ADMIN_STORE.get_service_registry()
     except Exception:  # noqa: BLE001
         return []
-    return service_registry.list_resource_summaries(reg, audience=audience)
+    services = reg.get("services") if isinstance(reg, Mapping) else {}
+    service_ids = [
+        str(service_id)
+        for service_id, service in (services or {}).items()
+        if isinstance(service, Mapping)
+        and service_registry.bool_from_config(service.get("enabled"), True)
+    ]
+    facts_list = await asyncio.gather(
+        *[_service_resource_runtime_fact(service_id) for service_id in service_ids],
+        return_exceptions=True,
+    )
+    runtime_facts: dict[str, Mapping[str, Any]] = {}
+    for service_id, fact in zip(service_ids, facts_list):
+        if isinstance(fact, Mapping):
+            runtime_facts[service_id] = fact
+        else:
+            runtime_facts[service_id] = {"status": "unknown"}
+    return service_registry.list_resource_summaries(
+        reg,
+        audience=audience,
+        runtime_facts=runtime_facts,
+    )
 
 
 app.include_router(
@@ -10615,6 +10700,11 @@ async def admin_dashboard(request: Request):
 
 async def _start_browser_login(request: Request, *, default_return_to: str) -> Response:
     if not _effective_admin_oidc_config().enabled:
+        # OIDC is not configured. Browser users who land on /login should go
+        # to /setup, where local-owner sign-in or first-run creation lives.
+        # API callers keep the explicit machine-readable 501 below.
+        if not request.headers.get("authorization"):
+            return RedirectResponse("/setup", status_code=302)
         return Response(
             content=(
                 "OIDC browser login is not configured on this gateway yet. "

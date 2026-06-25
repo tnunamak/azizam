@@ -1,6 +1,11 @@
 # Version control
 .git/
 
+# Operator-local config and secrets -- never bake into the image
+proxy_config.yml
+.env.local
+*.local
+
 # Claude Code / worktree tooling
 .claude/
 

@@ -767,6 +767,25 @@ class GatewayResourcesEndpointTests(unittest.TestCase):
         client.get("/gateway/v1/resources")
         self.assertEqual(captured.get("audience"), "admin")
 
+    def test_async_resource_lister_is_supported(self) -> None:
+        async def lister(*, audience):
+            return [
+                {
+                    "id": "svc-a",
+                    "name": "Service A",
+                    "kind": "provider",
+                    "enabled": True,
+                    "status": "available",
+                }
+            ]
+
+        client = _make_resources_client(resource_lister=lister)
+        response = client.get("/gateway/v1/resources")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["resources"][0]["id"], "svc-a")
+        self.assertEqual(body["resources"][0]["status"], "available")
+
 
 def _make_media_jobs_client(
     *,
