@@ -192,7 +192,7 @@ from gateway.image_extensions import (
     detect_unknown_top_level_fields,
     record_image_extension_binding,
 )
-from gateway.litellm_substrate import write_litellm_config_artifact
+from gateway.litellm_substrate import litellm_known_model_names, write_litellm_config_artifact
 from gateway.manifests import (
     ManifestError,
     bind_backend_request,
@@ -9589,6 +9589,9 @@ app.include_router(
         profile_resolver=ADMIN_STORE.profile_for_id,
         service_probe=probe_backend,
         litellm_key_client=_LITELLM_KEY_CLIENT,
+        known_model_names_getter=lambda: litellm_known_model_names(
+            ADMIN_STORE.get_service_registry()
+        ),
     )
 )
 

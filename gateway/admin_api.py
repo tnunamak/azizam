@@ -207,6 +207,10 @@ class AdminStore(Protocol):
         self, *, source: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
+    def remove_extension_package(
+        self, *, package_id: str, actor: AdminContext
+    ) -> dict[str, Any]: ...
+
     def get_oidc_config_setting(self) -> dict[str, Any] | None: ...
 
     def update_oidc_config_setting(
@@ -421,12 +425,21 @@ _LITELLM_KEY_STRING_FIELDS = ("key_alias", "team_id", "user_id", "duration")
 _LITELLM_KEY_SECRET_FIELDS = frozenset({"key", "token"})
 
 
-def _validate_litellm_key_form(body: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_litellm_key_form(
+    body: Mapping[str, Any],
+    *,
+    known_models: frozenset[str] | None = None,
+) -> dict[str, Any]:
     """Sanitize a /key/generate request body from operator input.
 
     Allows the documented, safe fields only: a string alias/team/user/duration,
     a numeric ``max_budget``, and a ``models`` allow-list. Rejects attempts to
     pass a pre-set secret ``key``/``token`` (the sidecar mints the secret).
+
+    When ``known_models`` is a non-empty frozenset, every entry in the
+    ``models`` allow-list is validated against it and unknown names are rejected
+    with an ``unknown_model`` error. When it is ``None`` or empty the check is
+    skipped (catalog unavailable).
     """
     if not isinstance(body, Mapping):
         raise _RouteError(
@@ -461,6 +474,15 @@ def _validate_litellm_key_form(body: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(models, (list, tuple)):
         cleaned = [str(m).strip() for m in models if str(m).strip()]
         if cleaned:
+            if known_models:
+                unknown = sorted(m for m in cleaned if m not in known_models)
+                if unknown:
+                    raise _RouteError(
+                        status.HTTP_400_BAD_REQUEST,
+                        "unknown_model",
+                        f"model(s) not in gateway catalog: {unknown}; "
+                        f"known models: {sorted(known_models)}",
+                    )
             spec["models"] = cleaned
     return spec
 
@@ -1073,6 +1095,7 @@ def create_admin_router(
     profile_resolver: ProfileResolver | None = None,
     service_probe: ServiceProbe | None = None,
     litellm_key_client: LiteLLMKeyClient | None = None,
+    known_model_names_getter: Callable[[], frozenset[str]] | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -1087,6 +1110,10 @@ def create_admin_router(
     optional client over the LiteLLM sidecar's virtual-key admin API (the
     "LiteLLM owns LLM runtime keys" split); when absent the
     ``/operator/litellm/*`` key routes report the capability is unavailable.
+    ``known_model_names_getter`` is an optional zero-arg callable that returns
+    the current set of model names in the compiled LiteLLM catalog; when
+    provided and non-empty, virtual-key ``models`` allowlists are validated
+    against it at mint time.
     """
 
     router = APIRouter(prefix=prefix, tags=["admin"])
@@ -2015,7 +2042,12 @@ def create_admin_router(
             return client
         try:
             body = await _read_json_body(request)
-            spec = _validate_litellm_key_form(body)
+            known = (
+                known_model_names_getter()
+                if known_model_names_getter is not None
+                else None
+            )
+            spec = _validate_litellm_key_form(body, known_models=known)
             created = await client.generate_key(spec)
         except _RouteError as exc:
             return exc.as_response()
@@ -2127,6 +2159,25 @@ def create_admin_router(
             status_code=status.HTTP_200_OK,
             content=result,
         )
+
+    @router.delete("/extensions/{package_id}")
+    async def remove_extension_package(
+        request: Request, package_id: str
+    ) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            result = store.remove_extension_package(
+                package_id=package_id, actor=ctx
+            )
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "extension_package_not_found",
+                str(exc),
+            ).as_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
 
     @router.put("/operator/media-job-admission")
     async def update_media_job_admission_overrides(

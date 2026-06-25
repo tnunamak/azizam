@@ -51,13 +51,19 @@ class _FakeKeyClient:
         return {"deleted": True}
 
 
-def _make(client: _FakeKeyClient | None) -> TestClient:
+def _make(
+    client: _FakeKeyClient | None,
+    *,
+    known_models: frozenset[str] | None = None,
+) -> TestClient:
     app = FastAPI()
+    getter = (lambda: known_models) if known_models is not None else None
     app.include_router(
         create_admin_router(
             FakeAdminStore(),
             auth=_admin_auth,
             litellm_key_client=client,
+            known_model_names_getter=getter,
         )
     )
     return TestClient(app)
@@ -196,6 +202,96 @@ class LiteLLMKeyEndpointTests(unittest.TestCase):
         resp = client.get("/admin/api/operator/litellm/keys", headers=_auth())
         self.assertEqual(resp.status_code, 502, resp.text)
         self.assertEqual(resp.json()["error"]["code"], "litellm_key_api_error")
+
+
+class LiteLLMKeyModelValidationTests(unittest.TestCase):
+    """Model allowlist validation against the gateway catalog."""
+
+    _CATALOG = frozenset({"gpt-4o", "claude-3-opus"})
+
+    def test_known_model_passes(self) -> None:
+        fake = _FakeKeyClient()
+        client = _make(fake, known_models=self._CATALOG)
+        resp = client.post(
+            "/admin/api/operator/litellm/keys",
+            headers=_auth(),
+            json={"key_alias": "ok", "models": ["gpt-4o"]},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(fake.generated[0]["models"], ["gpt-4o"])
+
+    def test_unknown_model_rejected(self) -> None:
+        client = _make(_FakeKeyClient(), known_models=self._CATALOG)
+        resp = client.post(
+            "/admin/api/operator/litellm/keys",
+            headers=_auth(),
+            json={"models": ["gpt-x"]},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        body = resp.json()
+        self.assertEqual(body["error"]["code"], "unknown_model")
+        self.assertIn("gpt-x", body["error"]["message"])
+
+    def test_multiple_unknown_models_all_reported(self) -> None:
+        client = _make(_FakeKeyClient(), known_models=self._CATALOG)
+        resp = client.post(
+            "/admin/api/operator/litellm/keys",
+            headers=_auth(),
+            json={"models": ["gpt-x", "llama-99", "gpt-4o"]},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        msg = resp.json()["error"]["message"]
+        self.assertIn("gpt-x", msg)
+        self.assertIn("llama-99", msg)
+        # The unknown-list portion comes before the "known models:" label.
+        unknown_section = msg.split("known models:")[0]
+        self.assertNotIn("gpt-4o", unknown_section)
+
+    def test_no_catalog_skips_validation(self) -> None:
+        # known_model_names_getter=None → no catalog → any model name accepted.
+        fake = _FakeKeyClient()
+        client = _make(fake)  # no known_models
+        resp = client.post(
+            "/admin/api/operator/litellm/keys",
+            headers=_auth(),
+            json={"models": ["totally-made-up-model"]},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(fake.generated[0]["models"], ["totally-made-up-model"])
+
+    def test_empty_catalog_skips_validation(self) -> None:
+        # Empty frozenset → catalog not yet populated → skip validation.
+        fake = _FakeKeyClient()
+        client = _make(fake, known_models=frozenset())
+        resp = client.post(
+            "/admin/api/operator/litellm/keys",
+            headers=_auth(),
+            json={"models": ["unknown-model"]},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+
+    def test_multiple_known_models_all_pass(self) -> None:
+        fake = _FakeKeyClient()
+        client = _make(fake, known_models=self._CATALOG)
+        resp = client.post(
+            "/admin/api/operator/litellm/keys",
+            headers=_auth(),
+            json={"models": ["gpt-4o", "claude-3-opus"]},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(sorted(fake.generated[0]["models"]), ["claude-3-opus", "gpt-4o"])
+
+    def test_no_models_field_skips_validation(self) -> None:
+        # No ``models`` key at all → unrestricted key, no validation needed.
+        fake = _FakeKeyClient()
+        client = _make(fake, known_models=self._CATALOG)
+        resp = client.post(
+            "/admin/api/operator/litellm/keys",
+            headers=_auth(),
+            json={"key_alias": "unrestricted"},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertNotIn("models", fake.generated[0])
 
 
 if __name__ == "__main__":

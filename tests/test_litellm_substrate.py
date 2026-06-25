@@ -4,6 +4,7 @@ from gateway.litellm_substrate import (
     compile_litellm_config_from_registry,
     compile_litellm_substrate_config,
     litellm_config_path_from_registry,
+    litellm_known_model_names,
     write_litellm_config_artifact,
 )
 
@@ -288,3 +289,45 @@ def test_lifecycle_backed_service_can_override_gateway_internal_target() -> None
     assert entry["litellm_params"]["api_key"] == "os.environ/CUSTOM_INTERNAL_KEY"
     assert entry["model_info"]["gateway_lifecycle"] is True
     assert entry["model_info"]["gateway_backend"] == "local"
+
+
+def test_litellm_known_model_names_returns_model_name_set() -> None:
+    registry = {
+        "services": {
+            "openai-compat": {
+                "name": "Test Backend",
+                "enabled": True,
+                "capabilities": ["chat"],
+                "config": {
+                    "protocol": "openai",
+                    "host": "localhost",
+                    "port": 11434,
+                    "models": {"llama3": "llama3:8b", "mistral": "mistral:7b"},
+                },
+            }
+        }
+    }
+    names = litellm_known_model_names(registry)
+    assert isinstance(names, frozenset)
+    assert "llama3" in names
+    assert "mistral" in names
+
+
+def test_litellm_known_model_names_empty_for_no_services() -> None:
+    names = litellm_known_model_names({})
+    assert names == frozenset()
+
+
+def test_litellm_known_model_names_empty_for_non_openai_service() -> None:
+    registry = {
+        "services": {
+            "comfyui": {
+                "name": "ComfyUI",
+                "enabled": True,
+                "capabilities": ["image_generation"],
+                "config": {"protocol": "comfyui", "host": "localhost"},
+            }
+        }
+    }
+    names = litellm_known_model_names(registry)
+    assert names == frozenset()

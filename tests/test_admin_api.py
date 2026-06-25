@@ -554,6 +554,26 @@ class FakeAdminStore:
             "extension_packages": self.extension_package_index,
         }
 
+    def remove_extension_package(
+        self, *, package_id: str, actor: AdminContext
+    ) -> dict[str, Any]:
+        try:
+            self.extension_package_index = extension_packages.remove_extension_package(
+                self.extension_package_index,
+                package_id,
+            )
+        except KeyError as exc:
+            raise ValueError(str(exc)) from exc
+        self.audit.append(
+            {
+                "at": "2026-05-17T01:00:00Z",
+                "actor": actor.subject,
+                "action": "operator.extension_package.remove",
+                "target": package_id,
+            }
+        )
+        return {"extension_packages": self.extension_package_index}
+
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
         return list(self.audit[-limit:])
 
@@ -2068,6 +2088,48 @@ execution: job
                 "resolved_ref"
             ],
             "reviewed-commit",
+        )
+
+    def test_admin_can_remove_extension_package_from_index(self) -> None:
+        client, store = _make_client()
+        store.extension_package_index = {
+            "packages": {
+                "demo-package": {
+                    "id": "demo-package",
+                    "version": "0.1.0",
+                    "enabled": True,
+                    "source": {"type": "local_directory", "path": "/tmp/demo"},
+                }
+            },
+            "sources": [],
+            "updated_at": 1,
+        }
+
+        resp = client.delete(
+            "/admin/api/extensions/demo-package",
+            headers=_auth(),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertNotIn("demo-package", resp.json()["extension_packages"]["packages"])
+        self.assertNotIn("demo-package", store.extension_package_index["packages"])
+        self.assertIn(
+            "operator.extension_package.remove",
+            [event["action"] for event in store.audit],
+        )
+
+    def test_remove_extension_package_returns_404_for_unknown_id(self) -> None:
+        client, _ = _make_client()
+
+        resp = client.delete(
+            "/admin/api/extensions/missing-package",
+            headers=_auth(),
+        )
+
+        self.assertEqual(resp.status_code, 404, resp.text)
+        self.assertEqual(
+            resp.json()["error"]["code"],
+            "extension_package_not_found",
         )
 
     def test_operator_override_write_requires_admin(self) -> None:

@@ -48,6 +48,26 @@ PY
 )}"
 
 if [ "${AI_GATEWAY_MANAGE_LITELLM:-true}" != "false" ]; then
+    # LiteLLM's virtual-key DB path shells out to the Prisma CLI when
+    # DATABASE_URL is set. In systemd, nvm-managed node is not on PATH, so
+    # prisma-client-py falls back to ~/.cache/prisma-python/nodeenv. If a prior
+    # nodeenv install was interrupted, Prisma raises "Target `bin` directory
+    # does not exist" and LiteLLM may continue with an unmigrated schema. Repair
+    # that exact broken cache and fail fast if Prisma still cannot start.
+    if [ -n "${DATABASE_URL:-}" ]; then
+        PRISMA_NODEENV_DIR="${PRISMA_NODEENV_DIR:-$HOME/.cache/prisma-python/nodeenv}"
+        if ! command -v node >/dev/null 2>&1 \
+            && [ -d "$PRISMA_NODEENV_DIR" ] \
+            && [ ! -x "$PRISMA_NODEENV_DIR/bin/node" ]; then
+            echo "[start] Removing incomplete Prisma nodeenv cache: $PRISMA_NODEENV_DIR" >&2
+            rm -rf "$PRISMA_NODEENV_DIR"
+        fi
+        if ! timeout "${AI_GATEWAY_PRISMA_PREFLIGHT_TIMEOUT:-90}" python3 -m prisma --version >/dev/null; then
+            echo "[start] Prisma CLI preflight failed; refusing to start LiteLLM with an unchecked DB schema." >&2
+            exit 1
+        fi
+    fi
+
     LITELLM_CONFIG_PATH="${AI_GATEWAY_LITELLM_CONFIG_PATH:-data/litellm.config.yaml}"
     mkdir -p "$(dirname "$LITELLM_CONFIG_PATH")"
     LITELLM_PID_FILE="${AI_GATEWAY_LITELLM_PID_FILE:-data/litellm.pid}"

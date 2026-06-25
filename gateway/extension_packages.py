@@ -359,6 +359,22 @@ def merge_package_index(
     return out
 
 
+def remove_extension_package(
+    index: Mapping[str, Any],
+    package_id: str,
+) -> dict[str, Any]:
+    """Return a new index with the named package removed.
+
+    Raises ``KeyError`` if ``package_id`` is not present.
+    """
+    out = normalize_extension_package_index(index)
+    if package_id not in out["packages"]:
+        raise KeyError(f"extension package not found: {package_id!r}")
+    del out["packages"][package_id]
+    out["updated_at"] = int(time.time())
+    return out
+
+
 def review_local_directory_package(package_dir: str | Path) -> dict[str, Any]:
     """Return a validation review for a local data-only extension package."""
 

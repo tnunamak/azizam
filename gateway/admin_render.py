@@ -1498,10 +1498,12 @@ _LITELLM_KEYS_JS = (
     "const budget=(k.max_budget!=null)?('$'+Number(k.max_budget).toFixed(2)):'—';"
     "const id=esc(k.token||k.key_name||k.key_alias||'');"
     "const byAlias=(!k.token&&!k.key_name&&k.key_alias)?'1':'';"
+    "const lu=k.last_used_at?new Date(k.last_used_at).toLocaleString():(k.last_used_at===null?'never':'—');"
     "return '<tr><td>'+name+'</td><td>'+spend+' / '+budget+"
-    "'</td><td><button type=\"button\" class=\"vf-button vf-button-ghost vf-button-sm\" "
+    "'</td><td>'+lu+'</td>"
+    "<td><button type=\"button\" class=\"vf-button vf-button-ghost vf-button-sm\" "
     "data-litellm-key-delete=\"'+id+'\" data-by-alias=\"'+byAlias+'\">Revoke</button></td></tr>'}).join('');"
-    "host.innerHTML='<table class=\"vf-table\"><thead><tr><th>Key</th><th>Spend / budget</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'}"
+    "host.innerHTML='<table class=\"vf-table\"><thead><tr><th>Key</th><th>Spend / budget</th><th>Last used</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'}"
 )
 
 
@@ -1954,6 +1956,14 @@ def _extension_package_row(record: Mapping[str, Any]) -> str:
         )
         if part
     )
+    raw_id = str(record.get("id") or "")
+    remove_btn = (
+        f'<button type="button" class="vf-button vf-button-ghost vf-button-sm" '
+        f'data-extension-package-remove="{_esc(raw_id)}" '
+        f'title="Remove this extension package from the index">Remove</button>'
+        if raw_id
+        else "—"
+    )
     return (
         "<tr>"
         f'<td><div class="cell-main">{name}</div><div class="cell-sub"><code>{package_id}</code></div></td>'
@@ -1961,6 +1971,7 @@ def _extension_package_row(record: Mapping[str, Any]) -> str:
         f'<td><span class="badge {status_class}">{status}</span></td>'
         f"<td><code>{source_label}</code></td>"
         f"<td>{_esc(details or '—')}</td>"
+        f"<td>{remove_btn}</td>"
         "</tr>"
     )
 
@@ -1970,7 +1981,7 @@ def _extension_package_panel(index: Mapping[str, Any] | None) -> str:
     if not isinstance(packages, Mapping):
         packages = {}
     package_rows = _table(
-        ["Package", "Version", "Status", "Source", "Objects"],
+        ["Package", "Version", "Status", "Source", "Objects", ""],
         (
             _extension_package_row({"id": package_id, **package})
             for package_id, package in sorted(packages.items())
@@ -3108,6 +3119,8 @@ def render_admin_dashboard(
         "if(svcToggle){e.preventDefault();const id=svcToggle.dataset.serviceToggle,enabled=svcToggle.dataset.enabled==='1';try{await json('/admin/api/operator/services/'+encodeURIComponent(id)+'/enabled',{enabled:!enabled});await refreshMain();showRestartBanner()}catch(err){showError(err)}return}"
         "const llmKeyDelete=e.target.closest('[data-litellm-key-delete]');"
         "if(llmKeyDelete){e.preventDefault();const id=llmKeyDelete.dataset.litellmKeyDelete,byAlias=llmKeyDelete.dataset.byAlias==='1';if(!id){return}if(!confirm('Revoke this LiteLLM virtual key? It stops working immediately.'))return;const body=byAlias?{key_aliases:[id]}:{keys:[id]};try{await json('/admin/api/operator/litellm/keys/delete',body);await loadLitellmKeys()}catch(err){showError(err)}return}"
+        "const extPkgRemove=e.target.closest('[data-extension-package-remove]');"
+        "if(extPkgRemove){e.preventDefault();const id=extPkgRemove.dataset.extensionPackageRemove;if(!id)return;if(!confirm('Remove extension package '+id+'? This removes it from the index. Registry records it imported remain until you edit them.'))return;try{await json('/admin/api/extensions/'+encodeURIComponent(id),{},'DELETE');await refreshMain()}catch(err){showError(err)}return}"
         "if(!revoke&&!disable&&!appDisable)return;"
         "if(revoke){const id=revoke.dataset.revokeCredential;try{const data=await json('/admin/api/credentials/'+encodeURIComponent(id)+'/revoke',{});await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(appDisable){const id=appDisable.dataset.disableApp;try{const data=await json('/admin/api/apps/'+encodeURIComponent(id),{},'DELETE');await refreshMain();show(data)}catch(err){showError(err)}return}"

@@ -79,6 +79,21 @@ def compile_litellm_config_from_registry(
     return compile_litellm_substrate_config(services if isinstance(services, Mapping) else {})
 
 
+def litellm_known_model_names(registry: Mapping[str, Any]) -> frozenset[str]:
+    """Return the set of ``model_name`` values in the compiled LiteLLM config.
+
+    These are the IDs a virtual-key ``models`` allowlist entry must match.
+    Returns an empty frozenset when the registry has no LiteLLM-routable models
+    (caller should treat empty as "no catalog available, skip validation").
+    """
+    compiled = compile_litellm_config_from_registry(registry)
+    return frozenset(
+        str(entry["model_name"])
+        for entry in compiled.get("model_list", [])
+        if isinstance(entry, Mapping) and entry.get("model_name")
+    )
+
+
 def litellm_config_path_from_registry(
     registry: Mapping[str, Any],
     *,

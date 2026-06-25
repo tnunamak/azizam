@@ -11,6 +11,7 @@ from gateway.extension_packages import (
     merge_package_index,
     normalize_extension_package_index,
     package_index_record,
+    remove_extension_package,
     review_local_directory_package,
     validate_extension_package_source,
 )
@@ -846,3 +847,19 @@ objects: {}
     assert record["source"] == source
     assert index["packages"]["indexed-package"]["package_hash"] == review["package_hash"]
     assert index["sources"] == [source]
+
+    removed = remove_extension_package(index, "indexed-package")
+
+    assert removed["packages"] == {}
+    assert removed["updated_at"] >= index["updated_at"]
+
+
+def test_remove_extension_package_rejects_unknown_package() -> None:
+    index = empty_extension_package_index()
+
+    try:
+        remove_extension_package(index, "missing-package")
+    except KeyError as exc:
+        assert "missing-package" in str(exc)
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("expected KeyError")

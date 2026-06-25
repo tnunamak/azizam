@@ -944,6 +944,33 @@ class AdminSQLiteStore:
             "extension_packages": index_record["value"],
         }
 
+    def remove_extension_package(
+        self, *, package_id: str, actor: AdminContext
+    ) -> dict[str, Any]:
+        """Remove an extension package from the index by id."""
+        try:
+            package_index = extension_packages.remove_extension_package(
+                self.get_extension_package_index(), package_id
+            )
+        except KeyError as exc:
+            raise ValueError(str(exc)) from exc
+        index_record = admin_store.put_operator_setting(
+            EXTENSION_PACKAGE_INDEX_SETTING_KEY,
+            package_index,
+            updated_by=actor.subject,
+            path=self.path,
+        )
+        admin_store.record_audit(
+            "operator.extension_package.remove",
+            actor_kind="admin",
+            actor_id=actor.subject,
+            target_kind="extension_package",
+            target_id=package_id,
+            metadata={},
+            path=self.path,
+        )
+        return {"extension_packages": index_record["value"]}
+
     def get_oidc_config_setting(self) -> dict[str, Any] | None:
         """Return the DB-stored OIDC provider config with secrets redacted.
 
