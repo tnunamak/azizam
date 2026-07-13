@@ -22,6 +22,7 @@ documents what wiring is missing.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import sys
@@ -88,6 +89,21 @@ class _FakeStreamResponse:
 class _FakeStreamClient:
     async def aclose(self):
         return None
+
+
+class _DoneThenBlocksStreamResponse:
+    status_code = 200
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def aiter_bytes(self):
+        yield b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        yield b"data: [DONE]\n\n"
+        await asyncio.Event().wait()
+
+    async def aclose(self):
+        self.closed = True
 
 
 class _FakeLiteLLMResponse:
@@ -838,6 +854,26 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(responses.json()["output_text"], "pong")
         self.assertEqual([call["model"] for call in chat_calls], ["default", "default"])
         self.assertEqual(chat_calls[0]["reasoning_effort"], "minimal")
+
+    def test_streaming_responses_ends_at_upstream_done_without_tcp_eof(self) -> None:
+        upstream = _DoneThenBlocksStreamResponse()
+
+        async def fake_chat_forward(_request, _auth_context, _cc_body, *, stream):
+            self.assertTrue(stream)
+            return _FakeStreamClient(), upstream
+
+        client = TestClient(proxy.app)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy, "_forward_chat_completions", fake_chat_forward
+        ):
+            response = client.post(
+                "/v1/responses",
+                json={"model": "default", "input": "ping", "stream": True, "store": False},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("response.completed", response.text)
+        self.assertTrue(upstream.closed)
 
     def test_litellm_substrate_suppresses_anthropic_local_reasoning_chatter(self) -> None:
         chat_calls: list[dict[str, Any]] = []

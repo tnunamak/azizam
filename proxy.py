@@ -133,9 +133,11 @@ from gateway.backends.embeddings import build_embeddings_loopback_request
 from gateway.backends.llm_execution import (
     LITELLM_BODY_EXECUTION_PATHS,
     LlmExecutionRequest,
+    iter_llm_response_bytes,
     litellm_headers,
     litellm_runtime_from_registry,
     litellm_url,
+    read_llm_response_body,
     send_llm_execution_request,
 )
 from gateway.backends.litellm_admin import LiteLLMKeyAdminClient
@@ -16713,7 +16715,13 @@ async def _litellm_models_payload(
         client, resp = await send_llm_execution_request(execution_request)
         if resp.status_code != 200:
             return None
-        content = await resp.aread()
+        content = await read_llm_response_body(
+            client,
+            resp,
+            is_downstream_disconnected=request.is_disconnected,
+        )
+        if content is None:
+            return None
         payload = json.loads(content.decode("utf-8") or "{}")
         if isinstance(payload, dict):
             payload["x_ai_gateway_llm_execution"] = "litellm"
@@ -18353,7 +18361,11 @@ async def create_response(request: Request):
                 try:
                     for ev in translator.start():
                         yield ev
-                    async for chunk in upstream.aiter_bytes():
+                    async for chunk in iter_llm_response_bytes(
+                        client,
+                        upstream,
+                        is_downstream_disconnected=request.is_disconnected,
+                    ):
                         for ev in translator.feed(chunk):
                             yield ev
                     for ev in translator.finish():
@@ -18974,7 +18986,13 @@ async def _forward_current_loaded_openai_request(
 
             async def stream_response():
                 try:
-                    async for chunk in _tc_detector.wrap(resp.aiter_bytes()):
+                    async for chunk in _tc_detector.wrap(
+                        iter_llm_response_bytes(
+                            client,
+                            resp,
+                            is_downstream_disconnected=request.is_disconnected,
+                        )
+                    ):
                         if request_path == "/v1/chat/completions":
                             chunk = _normalize_chat_completion_sse_chunk(chunk)
                         yield chunk
@@ -18998,7 +19016,13 @@ async def _forward_current_loaded_openai_request(
                 media_type=content_type,
             )
 
-        content = await resp.aread()
+        content = await read_llm_response_body(
+            client,
+            resp,
+            is_downstream_disconnected=request.is_disconnected,
+        )
+        if content is None:
+            return Response(status_code=499)
         await resp.aclose()
         await client.aclose()
         if "application/json" in content_type:
@@ -19174,7 +19198,13 @@ async def _forward_litellm_proxy_request(
 
             async def stream_response():
                 try:
-                    async for chunk in _tc_detector.wrap(resp.aiter_bytes()):
+                    async for chunk in _tc_detector.wrap(
+                        iter_llm_response_bytes(
+                            client,
+                            resp,
+                            is_downstream_disconnected=request.is_disconnected,
+                        )
+                    ):
                         if request_path == "/v1/chat/completions":
                             chunk = _normalize_chat_completion_sse_chunk(chunk)
                         yield chunk
@@ -19203,7 +19233,13 @@ async def _forward_litellm_proxy_request(
                 media_type=content_type,
             )
 
-        content = await resp.aread()
+        content = await read_llm_response_body(
+            client,
+            resp,
+            is_downstream_disconnected=request.is_disconnected,
+        )
+        if content is None:
+            return Response(status_code=499)
         await resp.aclose()
         await client.aclose()
         if "application/json" in content_type:
@@ -19459,7 +19495,11 @@ async def _forward_internal_litellm_local_chat_completions(
     if body.get("stream") is True:
         async def stream_response():
             try:
-                async for chunk in resp.aiter_bytes():
+                async for chunk in iter_llm_response_bytes(
+                    client,
+                    resp,
+                    is_downstream_disconnected=request.is_disconnected,
+                ):
                     yield chunk
             finally:
                 await resp.aclose()
@@ -19472,7 +19512,13 @@ async def _forward_internal_litellm_local_chat_completions(
             media_type=content_type,
         )
 
-    content = await resp.aread()
+    content = await read_llm_response_body(
+        client,
+        resp,
+        is_downstream_disconnected=request.is_disconnected,
+    )
+    if content is None:
+        return Response(status_code=499)
     await resp.aclose()
     await client.aclose()
     return Response(
@@ -20219,10 +20265,12 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         if "text/event-stream" in content_type:
             async def stream_response():
                 try:
-                    async for chunk in resp.aiter_bytes():
+                    async for chunk in iter_llm_response_bytes(
+                        client,
+                        resp,
+                        is_downstream_disconnected=request.is_disconnected,
+                    ):
                         yield chunk
-                except:
-                    pass
                 finally:
                     await resp.aclose()
                     await client.aclose()
@@ -20234,7 +20282,13 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                 media_type=content_type
             )
 
-        content = await resp.aread()
+        content = await read_llm_response_body(
+            client,
+            resp,
+            is_downstream_disconnected=request.is_disconnected,
+        )
+        if content is None:
+            return Response(status_code=499)
         await resp.aclose()
         await client.aclose()
         return Response(
