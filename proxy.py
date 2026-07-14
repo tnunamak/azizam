@@ -18892,6 +18892,18 @@ def _forward_query_without_client_api_key(raw_query: str) -> str:
     return urlencode(pairs)
 
 
+async def _await_pre_response_disconnect(request: Request) -> bool:
+    """Wait for a disconnect after this route has consumed the request body.
+
+    ``Request.is_disconnected`` is deliberately non-blocking.  That is right
+    while ``StreamingResponse`` owns ASGI receive, but a non-stream response
+    needs one blocking receiver while it waits for the upstream body.  The
+    current-loaded routes have already parsed their complete request body, so
+    this watcher is the sole remaining consumer and can observe disconnects.
+    """
+    return (await request.receive()).get("type") == "http.disconnect"
+
+
 async def _forward_current_loaded_openai_request(
     request: Request,
     *,
@@ -19019,7 +19031,7 @@ async def _forward_current_loaded_openai_request(
         content = await read_llm_response_body(
             client,
             resp,
-            is_downstream_disconnected=request.is_disconnected,
+            is_downstream_disconnected=lambda: _await_pre_response_disconnect(request),
         )
         if content is None:
             return Response(status_code=499)

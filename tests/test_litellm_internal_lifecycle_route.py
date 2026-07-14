@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import unittest
 from unittest.mock import AsyncMock, patch
 
 from fastapi import Response
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 import proxy
 
@@ -33,6 +36,78 @@ class _FakeExecutionResponse:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+class _BodyThenDisconnect:
+    def __init__(self, payload: dict) -> None:
+        self._body = json.dumps(payload).encode("utf-8")
+        self._body_sent = False
+        self.abort = asyncio.Event()
+        self.receive_calls = 0
+        self.body_deliveries = 0
+
+    async def receive(self) -> dict:
+        self.receive_calls += 1
+        if not self._body_sent:
+            self._body_sent = True
+            self.body_deliveries += 1
+            return {"type": "http.request", "body": self._body, "more_body": False}
+        await self.abort.wait()
+        return {"type": "http.disconnect"}
+
+
+class _NonBlockingDisconnectRequest(Request):
+    async def is_disconnected(self) -> bool:
+        return False
+
+
+class _FakeInferenceTask:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.read_cancelled = asyncio.Event()
+        self.released = asyncio.Event()
+
+
+class _BlockingInferenceResponse:
+    status_code = 200
+    headers = {"content-type": "application/json"}
+
+    def __init__(self, task: _FakeInferenceTask) -> None:
+        self._task = task
+        self._never = asyncio.Event()
+        self.closed = False
+
+    async def aread(self) -> bytes:
+        self._task.started.set()
+        try:
+            await self._never.wait()
+        except asyncio.CancelledError:
+            self._task.read_cancelled.set()
+            raise
+        return b"unreachable"
+
+    async def aclose(self) -> None:
+        self.closed = True
+        self._task.released.set()
+
+
+def _internal_current_request(receiver: _BodyThenDisconnect) -> Request:
+    return _NonBlockingDisconnectRequest(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/internal/litellm/current/v1/chat/completions",
+            "raw_path": b"/internal/litellm/current/v1/chat/completions",
+            "query_string": b"",
+            "headers": [(b"content-type", b"application/json")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+        },
+        receive=receiver.receive,
+    )
 
 
 def test_internal_litellm_local_route_requires_internal_key() -> None:
@@ -239,3 +314,82 @@ def test_internal_litellm_current_route_does_not_enforce_gateway_profile_policy(
     assert captured["auth_context"] == proxy.NO_AUTH_CONTEXT
     assert captured["body_json"]["model"] == "current-fast"
     assert captured["enforce_gateway_policy"] is False
+
+
+class InternalCurrentLoadedCancellationTests(unittest.IsolatedAsyncioTestCase):
+    def _patches(self, send):
+        return (
+            patch.object(proxy, "_is_internal_litellm_lifecycle_request", return_value=True),
+            patch.object(
+                proxy,
+                "_current_loaded_llm_target",
+                AsyncMock(
+                    return_value=(
+                        proxy.CurrentLoadedLlmTarget(
+                            backend="local",
+                            host="http://upstream.test",
+                            model="loaded.gguf",
+                        ),
+                        None,
+                    )
+                ),
+            ),
+            patch.object(proxy, "prepare_downstream_headers", return_value={}),
+            patch.object(proxy, "send_llm_execution_request", send),
+        )
+
+    async def test_abort_releases_current_loaded_upstream_task_after_body_read(self) -> None:
+        receiver = _BodyThenDisconnect(
+            {"model": "current", "messages": [{"role": "user", "content": "hi"}]}
+        )
+        task = _FakeInferenceTask()
+        upstream = _BlockingInferenceResponse(task)
+        client = _FakeExecutionClient()
+
+        async def fake_send(_execution_request):
+            return client, upstream
+
+        patches = self._patches(fake_send)
+        with patches[0], patches[1], patches[2], patches[3]:
+            route_task = asyncio.create_task(
+                proxy.internal_litellm_current_chat_completions(
+                    _internal_current_request(receiver)
+                )
+            )
+            await asyncio.wait_for(task.started.wait(), timeout=0.25)
+            receiver.abort.set()
+            response = await asyncio.wait_for(route_task, timeout=0.25)
+
+        self.assertEqual(response.status_code, 499)
+        self.assertEqual(receiver.body_deliveries, 1)
+        self.assertEqual(receiver.receive_calls, 2)
+        self.assertTrue(task.read_cancelled.is_set())
+        self.assertTrue(task.released.is_set())
+        self.assertTrue(upstream.closed)
+        self.assertTrue(client.closed)
+
+    async def test_current_loaded_non_stream_response_completes_without_a_second_body_read(self) -> None:
+        receiver = _BodyThenDisconnect(
+            {"model": "current", "messages": [{"role": "user", "content": "hi"}]}
+        )
+        upstream = _FakeExecutionResponse({"id": "chatcmpl_123", "choices": []})
+        client = _FakeExecutionClient()
+
+        async def fake_send(_execution_request):
+            return client, upstream
+
+        patches = self._patches(fake_send)
+        with patches[0], patches[1], patches[2], patches[3]:
+            response = await asyncio.wait_for(
+                proxy.internal_litellm_current_chat_completions(
+                    _internal_current_request(receiver)
+                ),
+                timeout=0.25,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.body), {"id": "chatcmpl_123", "choices": []})
+        self.assertEqual(receiver.body_deliveries, 1)
+        self.assertLessEqual(receiver.receive_calls, 2)
+        self.assertTrue(upstream.closed)
+        self.assertTrue(client.closed)
