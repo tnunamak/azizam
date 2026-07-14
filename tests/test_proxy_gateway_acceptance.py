@@ -473,8 +473,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(forwarded["model"], "Manual-Experiment.gguf")
         self.assertNotIn("_vf_requested_model", forwarded)
         self.assertNotIn("reasoning_effort", forwarded)
-        # Suppression is via chat_template_kwargs.enable_thinking=False only; no /no_think injection
-        self.assertFalse(forwarded["chat_template_kwargs"]["enable_thinking"])
+        # Minimal is a positive distinct reasoning budget; only none suppresses thinking.
+        self.assertEqual(forwarded["thinking_budget_tokens"], 2048)
         for msg in forwarded["messages"]:
             self.assertNotIn("/no_think", msg.get("content", ""))
 
@@ -735,8 +735,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
         forwarded = json.loads(calls[0].body.decode())
         self.assertEqual(forwarded["model"], "default")
         self.assertNotIn("reasoning_effort", forwarded)
-        # Suppression is via chat_template_kwargs.enable_thinking=False only; no /no_think injection
-        self.assertFalse(forwarded["chat_template_kwargs"]["enable_thinking"])
+        # Minimal is a positive distinct reasoning budget; only none suppresses thinking.
+        self.assertEqual(forwarded["thinking_budget_tokens"], 2048)
         for msg in forwarded["messages"]:
             self.assertNotIn("/no_think", msg.get("content", ""))
 
