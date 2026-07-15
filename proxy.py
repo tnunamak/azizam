@@ -2977,6 +2977,7 @@ async def _prepare_litellm_local_llm_request(
     request_path: str,
     body_json: Mapping[str, Any],
     enforce_gateway_policy: bool = True,
+    activate_target: bool = True,
 ) -> tuple[Response | None, Mapping[str, Any]]:
     """Apply gateway-owned local readiness before LiteLLM execution.
 
@@ -3080,7 +3081,7 @@ async def _prepare_litellm_local_llm_request(
     if policy_error is not None:
         return policy_error, body
 
-    if not target_backend or (
+    if not activate_target or not target_backend or (
         enforce_gateway_policy and _profile_target_activation(auth_context) == "existing_only"
     ):
         return None, body
@@ -3094,6 +3095,35 @@ async def _prepare_litellm_local_llm_request(
         enforce_gateway_policy=enforce_gateway_policy,
     )
     return response, body
+
+
+async def _activate_prepared_litellm_local_target(
+    auth_context: AuthContext,
+    *,
+    requested_model: str,
+    enforce_gateway_policy: bool,
+) -> Response | None:
+    """Activate only after preparation has made the accepted receipt durable."""
+    try:
+        resolved_target = _resolve_request_target(requested_model, aliases_only=True)
+    except AliasPolicyResolutionError as error:
+        return _alias_policy_configuration_response(error)
+    target_backend, target_model, target_mmproj = _configured_litellm_local_model_target(
+        requested_model,
+        service_id=(resolved_target.logical_service_id if resolved_target else None),
+    )
+    if not target_backend or (
+        enforce_gateway_policy and _profile_target_activation(auth_context) == "existing_only"
+    ):
+        return None
+    return await _ensure_litellm_local_backend_target(
+        auth_context,
+        requested_model=requested_model,
+        backend=target_backend,
+        target_model=target_model,
+        target_mmproj=target_mmproj,
+        enforce_gateway_policy=enforce_gateway_policy,
+    )
 
 
 async def get_tabby_loaded_model_id() -> str:
@@ -19798,6 +19828,7 @@ async def _forward_litellm_proxy_request(
     requested_embedding_dimensions: int | None = None,
     delegated_litellm_api_key: str = "",
     parent_request_id: str = "",
+    activate_local_target: bool = False,
 ) -> Response:
     model_name = body_json.get("model")
     if not isinstance(model_name, str) or not model_name:
@@ -19896,6 +19927,22 @@ async def _forward_litellm_proxy_request(
     # The accepted outer action is durable before this route opens an upstream
     # connection or starts the disconnect watcher that owns that wait.
     _begin_route_receipt(receipt, route="LiteLLM")
+
+    if activate_local_target:
+        activation_error = await _activate_prepared_litellm_local_target(
+            auth_context,
+            requested_model=model_name,
+            enforce_gateway_policy=not bool(delegated_litellm_api_key),
+        )
+        if activation_error is not None:
+            receipt.metadata["terminal_reason"] = "failed"
+            record_request_shape_stage(
+                receipt.metadata, "terminal", body_for_litellm,
+                extra={"terminal_reason": "failed"},
+            )
+            receipt.finish("failed")
+            _finalize_route_receipt(receipt, route="LiteLLM")
+            return activation_error
 
     cancellation_span = _OuterCancellationSpan(receipt.request_id, receive=request.receive)
 
@@ -20200,6 +20247,7 @@ async def _handle_openai_litellm_request(
 
     litellm_runtime = _litellm_runtime_config()
     litellm_body: Mapping[str, Any] = parsed_body
+    prepared_local_llm = False
     if litellm_runtime.enabled:
         litellm_service_response = _service_availability_response(
             litellm_runtime.service_id or "litellm",
@@ -20214,9 +20262,11 @@ async def _handle_openai_litellm_request(
                 request_path=request_path,
                 body_json=parsed_body,
                 enforce_gateway_policy=not route_auth.delegated_to_litellm,
+                activate_target=False,
             )
             if activation_error is not None:
                 return activation_error
+            prepared_local_llm = True
 
     return await _forward_litellm_proxy_request(
         request,
@@ -20227,6 +20277,7 @@ async def _handle_openai_litellm_request(
         requested_embedding_dimensions=requested_embedding_dimensions,
         delegated_litellm_api_key=route_auth.delegated_litellm_api_key or "",
         parent_request_id=trusted_parent_request_id,
+        activate_local_target=prepared_local_llm,
     )
 
 
