@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any, Mapping
@@ -14,13 +15,14 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import extension_packages, service_registry  # noqa: E402
+from gateway import admin_store, extension_packages, service_registry  # noqa: E402
 from gateway.admin_api import (  # noqa: E402
     AdminAuthError,
     AdminContext,
     create_admin_router,
     derive_admin_attention,
 )
+from gateway.admin_runtime import AdminSQLiteStore  # noqa: E402
 from gateway.policy import AppProfile  # noqa: E402
 
 
@@ -544,9 +546,17 @@ class FakeAdminStore:
     def get_service_registry(self) -> dict[str, Any]:
         return dict(self.service_registry)
 
+    def _registry_write_result(self) -> dict[str, Any]:
+        return {
+            "value": dict(self.service_registry),
+            "operator_settings_generation": 1,
+        }
+
     def update_service_registry(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
+        del expected_generation
         self.service_registry = dict(data)
         self.audit.append(
             {
@@ -556,24 +566,28 @@ class FakeAdminStore:
                 "target": "service_registry",
             }
         )
-        return dict(self.service_registry)
+        return self._registry_write_result()
 
     # The single-service CRUD methods delegate to the real registry ops so the
     # route tests exercise actual validation, guards, and error mapping.
     def add_service(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
+        del expected_generation
         service_id = service_registry.normalize_id(data.get("id") or data.get("name"))
         raw = service_registry.service_form_to_raw(data)
         registry, _ = service_registry.upsert_service_in_registry(
             self.service_registry, service_id=service_id, raw=raw, source="ui"
         )
         self.service_registry = registry
-        return dict(registry)
+        return self._registry_write_result()
 
     def update_service(
-        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext
+        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
+        del expected_generation
         raw = service_registry.service_form_to_raw(data)
         registry, _ = service_registry.upsert_service_in_registry(
             self.service_registry,
@@ -583,23 +597,27 @@ class FakeAdminStore:
             replace=True,
         )
         self.service_registry = registry
-        return dict(registry)
+        return self._registry_write_result()
 
     def remove_service(
-        self, *, service_id: str, actor: AdminContext
+        self, *, service_id: str, actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
+        del expected_generation
         self.service_registry = service_registry.remove_service_from_registry(
             self.service_registry, service_id
         )
-        return dict(self.service_registry)
+        return self._registry_write_result()
 
     def set_service_enabled(
-        self, *, service_id: str, enabled: bool, actor: AdminContext
+        self, *, service_id: str, enabled: bool, actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
+        del expected_generation
         self.service_registry = service_registry.set_service_enabled(
             self.service_registry, service_id, enabled
         )
-        return dict(self.service_registry)
+        return self._registry_write_result()
 
     def get_extension_package_index(self) -> dict[str, Any]:
         return dict(self.extension_package_index)
@@ -611,8 +629,10 @@ class FakeAdminStore:
         return extension_packages.validate_extension_package_source(source)
 
     def enable_extension_package(
-        self, *, source: Mapping[str, Any], actor: AdminContext
+        self, *, source: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
+        del expected_generation
         review = extension_packages.validate_extension_package_source(source)
         if not review.get("ok"):
             return {
@@ -647,6 +667,7 @@ class FakeAdminStore:
             "extension_package": self.extension_package_index["packages"][package_id],
             "review": review,
             "service_registry": self.service_registry,
+            "operator_settings_generation": 1,
             "extension_packages": self.extension_package_index,
         }
 
@@ -812,7 +833,10 @@ def _make_client(
 
 
 def _auth() -> dict[str, str]:
-    return {"Authorization": "Bearer admin-token"}
+    # Registry writers now require this global snapshot precondition.  The
+    # fake store deliberately holds generation 1 for ordinary route tests;
+    # real-store CAS races have focused tests below.
+    return {"Authorization": "Bearer admin-token", "If-Match": '"os-1"'}
 
 
 class AdminAuthTests(unittest.TestCase):
@@ -2387,6 +2411,168 @@ execution: job
             media_resp.json()["error"]["code"],
             "invalid_operator_override",
         )
+
+
+class AdminRegistrySQLiteCASTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "admin.db"
+        admin_store.init_db(self.db)
+        self.store = AdminSQLiteStore(self.db)
+        self.store.write_litellm_config = lambda _registry: self.db.parent / "litellm.config.yaml"  # type: ignore[method-assign]
+        admin_store.write_service_registry(
+            {
+                "schema_version": 1,
+                "services": {
+                    "one": {
+                        "id": "one",
+                        "name": "One",
+                        "source": "ui",
+                        "enabled": True,
+                        "capabilities": [],
+                        "config": {"base_url": "http://127.0.0.1:9000/v1"},
+                    }
+                },
+                "protocol_frontends": {},
+                "workflows": {},
+                "capabilities": {},
+            },
+            expected_generation=0,
+            path=self.db,
+        )
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _client(self) -> TestClient:
+        app = FastAPI()
+        app.include_router(
+            create_admin_router(
+                self.store, auth=_admin_auth, service_probe=_fake_probe
+            )
+        )
+        return TestClient(app)
+
+    def test_real_sqlite_registry_writers_require_and_advance_exact_etag(self) -> None:
+        client = self._client()
+        read = client.get("/admin/api/operator/service-registry", headers=_auth())
+        self.assertEqual(read.status_code, 200, read.text)
+        self.assertEqual(read.headers["etag"], '"os-1"')
+
+        registry = read.json()["service_registry"]
+        registry["services"]["one"]["name"] = "One updated"
+        put = client.put(
+            "/admin/api/operator/service-registry",
+            json=registry,
+            headers={**_auth(), "If-Match": '"os-1"'},
+        )
+        self.assertEqual(put.status_code, 200, put.text)
+        self.assertEqual(put.headers["etag"], '"os-2"')
+
+        stale = client.patch(
+            "/admin/api/operator/services/one",
+            json={"name": "stale write"},
+            headers={**_auth(), "If-Match": '"os-1"'},
+        )
+        self.assertEqual(stale.status_code, 412, stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "generation_mismatch")
+
+        add = client.post(
+            "/admin/api/operator/services",
+            json={"name": "two", "base_url": "http://127.0.0.1:9001/v1"},
+            headers={**_auth(), "If-Match": '"os-2"'},
+        )
+        self.assertEqual(add.status_code, 201, add.text)
+        self.assertEqual(add.headers["etag"], '"os-3"')
+
+        edit = client.patch(
+            "/admin/api/operator/services/one",
+            json={"name": "One final"},
+            headers={**_auth(), "If-Match": '"os-3"'},
+        )
+        self.assertEqual(edit.status_code, 200, edit.text)
+        self.assertEqual(edit.headers["etag"], '"os-4"')
+
+        toggle = client.post(
+            "/admin/api/operator/services/one/enabled",
+            json={"enabled": False},
+            headers={**_auth(), "If-Match": '"os-4"'},
+        )
+        self.assertEqual(toggle.status_code, 200, toggle.text)
+        self.assertEqual(toggle.headers["etag"], '"os-5"')
+
+        remove = client.delete(
+            "/admin/api/operator/services/two",
+            headers={**_auth(), "If-Match": '"os-5"'},
+        )
+        self.assertEqual(remove.status_code, 200, remove.text)
+        self.assertEqual(remove.headers["etag"], '"os-6"')
+
+        current = admin_store.get_service_registry_with_generation(path=self.db)
+        assert current is not None
+        self.assertEqual(current["operator_settings_generation"], 6)
+        self.assertEqual(current["value"]["services"]["one"]["name"], "One final")
+        self.assertFalse(current["value"]["services"]["one"]["enabled"])
+        self.assertEqual(len(admin_store.list_audit(path=self.db)), 5)
+
+    def test_real_sqlite_registry_routes_reject_missing_if_match(self) -> None:
+        client = self._client()
+        registry = client.get(
+            "/admin/api/operator/service-registry", headers=_auth()
+        ).json()["service_registry"]
+        requests = (
+            ("put", "/admin/api/operator/service-registry", registry),
+            ("post", "/admin/api/operator/services", {"name": "two", "base_url": "http://h:1/v1"}),
+            ("patch", "/admin/api/operator/services/one", {"name": "two"}),
+            ("delete", "/admin/api/operator/services/one", None),
+            ("post", "/admin/api/operator/services/one/enabled", {"enabled": False}),
+            ("post", "/admin/api/extensions/enable", {}),
+        )
+        for method, path, body in requests:
+            response = client.request(
+                method,
+                path,
+                json=body,
+                headers={"Authorization": "Bearer admin-token"},
+            )
+            self.assertEqual(response.status_code, 412, response.text)
+            self.assertEqual(response.json()["error"]["code"], "generation_mismatch")
+
+    def test_extension_enable_uses_real_registry_cas_writer(self) -> None:
+        client = self._client()
+        review = {
+            "ok": True,
+            "package": {"id": "demo", "version": "1.0.0"},
+            "package_hash": "a" * 64,
+            "services": [{"id": "imported", "name": "Imported", "config": {"base_url": "http://h:2/v1"}}],
+            "protocol_frontends": [],
+            "workflows": [],
+            "capabilities": [],
+            "adapters": [],
+            "translators": [],
+            "code_objects": [],
+            "requires_code_trust": False,
+            "warnings": [],
+            "errors": [],
+            "object_counts": {"services": 1, "protocol_frontends": 0, "workflows": 0, "capabilities": 0},
+        }
+        source = {"type": "local_directory", "path": str(self.db.parent / "package")}
+        with patch.object(
+            extension_packages,
+            "validate_extension_package_source",
+            return_value=review,
+        ):
+            response = client.post(
+                "/admin/api/extensions/enable",
+                json={"source": source},
+                headers={**_auth(), "If-Match": '"os-1"'},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["etag"], '"os-2"')
+        self.assertIn("imported", response.json()["service_registry"]["services"])
+        current = admin_store.get_service_registry_with_generation(path=self.db)
+        assert current is not None
+        self.assertEqual(current["operator_settings_generation"], 2)
 
 
 class AdminServiceCrudTests(unittest.TestCase):

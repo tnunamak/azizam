@@ -1497,33 +1497,60 @@ def record_audit(
     if not action:
         raise ValueError("action is required")
     ts = _now() if now is None else int(now)
-    aud_id = _gen_id("aud")
-    payload = (
-        json.dumps(dict(metadata), ensure_ascii=False, sort_keys=True)
-        if metadata
-        else None
-    )
     with _conn(path) as conn:
-        conn.execute(
-            "INSERT INTO audit_events(id, created_at, actor_kind, actor_id, "
-            "action, target_kind, target_id, metadata_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                aud_id,
-                ts,
-                actor_kind,
-                actor_id,
-                action,
-                target_kind,
-                target_id,
-                payload,
-            ),
+        aud_id = _record_audit_in_transaction(
+            conn,
+            action,
+            actor_kind=actor_kind,
+            actor_id=actor_id,
+            target_kind=target_kind,
+            target_id=target_id,
+            metadata=metadata,
+            now=ts,
         )
         conn.commit()
         row = conn.execute(
             "SELECT * FROM audit_events WHERE id = ?", (aud_id,)
         ).fetchone()
     return _audit_row_to_dict(row)
+
+
+def _record_audit_in_transaction(
+    conn: sqlite3.Connection,
+    action: str,
+    *,
+    actor_kind: str | None,
+    actor_id: str | None,
+    target_kind: str | None,
+    target_id: str | None,
+    metadata: Mapping[str, Any] | None,
+    now: int,
+) -> str:
+    """Insert one audit fact into a transaction the caller owns."""
+    if not action:
+        raise ValueError("action is required")
+    aud_id = _gen_id("aud")
+    payload = (
+        json.dumps(dict(metadata), ensure_ascii=False, sort_keys=True)
+        if metadata
+        else None
+    )
+    conn.execute(
+        "INSERT INTO audit_events(id, created_at, actor_kind, actor_id, "
+        "action, target_kind, target_id, metadata_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            aud_id,
+            now,
+            actor_kind,
+            actor_id,
+            action,
+            target_kind,
+            target_id,
+            payload,
+        ),
+    )
+    return aud_id
 
 
 def list_audit(
@@ -1629,10 +1656,10 @@ def put_operator_setting(
         raise ValueError("operator setting key is required")
     if not isinstance(value, Mapping):
         raise ValueError("operator setting value must be a mapping")
-    # Compatibility for historical test/bootstrap callers.  Production
-    # registry writers use write_service_registry, which advances the CAS.
     if setting_key == "service_registry":
-        return write_service_registry(value, updated_by=updated_by, now=now, path=path)
+        raise ValueError(
+            "service_registry must be written through the registry transaction primitive"
+        )
     ts = _now() if now is None else int(now)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     with _conn(path) as conn:
@@ -1678,7 +1705,7 @@ def get_service_registry_with_generation(*, path: Path = DB_PATH) -> dict[str, A
 
 def write_service_registry(
     value: Mapping[str, Any], *, updated_by: str | None = None,
-    expected_generation: int | None = None, now: int | None = None,
+    expected_generation: int, now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Atomically write the active registry and advance its only CAS counter.
@@ -1700,12 +1727,67 @@ def write_service_registry(
             "updated_by": updated_by, "operator_settings_generation": next_generation}
 
 
+def write_service_registry_with_audit(
+    value: Mapping[str, Any],
+    *,
+    expected_generation: int,
+    updated_by: str | None,
+    audit_action: str,
+    audit_actor_kind: str | None,
+    audit_target_kind: str | None,
+    audit_target_id: str | None,
+    audit_metadata: Mapping[str, Any] | None = None,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Commit one registry revision, generation, and audit fact atomically.
+
+    This is the production writer for ordinary registry mutations.  Artifact
+    publication and reload stay outside this transaction because they observe
+    the committed registry rather than participating in SQLite atomicity.
+    """
+    if not isinstance(value, Mapping):
+        raise ValueError("service registry value must be a mapping")
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            next_generation = write_service_registry_in_transaction(
+                conn,
+                value,
+                updated_by=updated_by,
+                expected_generation=expected_generation,
+                now=ts,
+            )
+            _record_audit_in_transaction(
+                conn,
+                audit_action,
+                actor_kind=audit_actor_kind,
+                actor_id=updated_by,
+                target_kind=audit_target_kind,
+                target_id=audit_target_id,
+                metadata=audit_metadata,
+                now=ts,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return {
+        "key": "service_registry",
+        "value": dict(value),
+        "updated_at": ts,
+        "updated_by": updated_by,
+        "operator_settings_generation": next_generation,
+    }
+
+
 def write_service_registry_in_transaction(
     conn: sqlite3.Connection,
     value: Mapping[str, Any],
     *,
     updated_by: str | None,
-    expected_generation: int | None,
+    expected_generation: int,
     now: int,
 ) -> int:
     """Write the registry and increment its generation in a caller-owned transaction.
@@ -1719,7 +1801,7 @@ def write_service_registry_in_transaction(
         "WHERE setting_key = 'service_registry'"
     ).fetchone()
     generation = int(generation_row[0]) if generation_row else 0
-    if expected_generation is not None and generation != expected_generation:
+    if generation != expected_generation:
         raise OperatorSettingsGenerationConflict(
             f"operator settings generation mismatch: current={generation}"
         )
@@ -1823,6 +1905,7 @@ __all__ = [
     "put_operator_setting",
     "get_service_registry_with_generation",
     "write_service_registry",
+    "write_service_registry_with_audit",
     "write_service_registry_in_transaction",
     "OperatorSettingsGenerationConflict",
     "get_operator_setting",

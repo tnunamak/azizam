@@ -1,10 +1,115 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
 
 from gateway import admin_store, service_registry
+from tests.registry_test_helpers import write_service_registry_for_test
+
+
+def _run_concurrent_ensure(
+    *, proxy_config: dict, path: Path, monkeypatch: pytest.MonkeyPatch
+) -> list[dict]:
+    original_get = admin_store.get_service_registry_with_generation
+    first_reads = threading.Barrier(2)
+    read_count = 0
+    read_lock = threading.Lock()
+
+    def synchronized_get(*, path: Path) -> dict | None:
+        nonlocal read_count
+        with read_lock:
+            should_wait = read_count < 2
+            read_count += 1
+        if should_wait:
+            first_reads.wait(timeout=5)
+        return original_get(path=path)
+
+    monkeypatch.setattr(admin_store, "get_service_registry_with_generation", synchronized_get)
+    results: list[dict] = []
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            results.append(
+                service_registry.ensure_service_registry(
+                    proxy_config, path=path, actor="boot"
+                )
+            )
+        except BaseException as exc:  # assertion below makes failures visible
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert all(not thread.is_alive() for thread in threads)
+    assert not errors
+    return results
+
+
+def test_concurrent_seed_retries_real_sqlite_cas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    catalog_dir = tmp_path / "catalog"
+    catalog_dir.mkdir()
+
+    results = _run_concurrent_ensure(
+        proxy_config={"registry": {"catalog_dir": str(catalog_dir)}, "backends": {}},
+        path=db,
+        monkeypatch=monkeypatch,
+    )
+
+    assert len(results) == 2
+    record = admin_store.get_service_registry_with_generation(path=db)
+    assert record is not None
+    assert record["operator_settings_generation"] == 1
+    assert len(admin_store.list_audit(action_prefix="operator.service_registry.seed", path=db)) == 1
+
+
+def test_concurrent_backfill_retries_real_sqlite_cas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    catalog_dir = tmp_path / "catalog"
+    catalog_dir.mkdir()
+    (catalog_dir / "services.yml").write_text(
+        "records:\n  - id: existing\n    name: Existing\n    source: ui\n    config:\n      seeded_field: seeded-value\n",
+        encoding="utf-8",
+    )
+    write_service_registry_for_test(
+        {
+            "schema_version": 1,
+            "services": {
+                "existing": {
+                    "id": "existing",
+                    "name": "Existing",
+                    "source": "ui",
+                    "config": {"base_url": "http://127.0.0.1:9000/v1"},
+                }
+            },
+            "protocol_frontends": {},
+            "workflows": {},
+            "capabilities": {},
+        },
+        path=db,
+    )
+
+    proxy_config = {"registry": {"catalog_dir": str(catalog_dir)}, "backends": {}}
+    results = _run_concurrent_ensure(
+        proxy_config=proxy_config, path=db, monkeypatch=monkeypatch
+    )
+
+    assert len(results) == 2
+    record = admin_store.get_service_registry_with_generation(path=db)
+    assert record is not None
+    assert record["operator_settings_generation"] == 2
+    assert (
+        record["value"]["services"]["existing"]["config"]["seeded_field"]
+        == "seeded-value"
+    )
+    assert len(admin_store.list_audit(action_prefix="operator.service_registry.backfill", path=db)) == 1
 
 
 def test_protocol_frontends_are_seed_data_not_python_defaults(tmp_path: Path) -> None:
@@ -852,8 +957,7 @@ def test_remove_config_sourced_service_not_resurrected_on_reboot(tmp_path: Path)
 
     # Operator removes the service.
     updated = service_registry.remove_service_from_registry(registry, "my-vllm")
-    admin_store.put_operator_setting(
-        service_registry.SERVICE_REGISTRY_SETTING_KEY,
+    write_service_registry_for_test(
         updated,
         updated_by="test",
         path=db,
@@ -891,8 +995,7 @@ def test_existing_registry_model_rows_are_not_silently_upgraded_from_yaml(tmp_pa
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     old_registry = service_registry.build_service_registry_seed(old_config)
-    admin_store.put_operator_setting(
-        service_registry.SERVICE_REGISTRY_SETTING_KEY,
+    write_service_registry_for_test(
         old_registry,
         updated_by="test",
         path=db,
@@ -1012,8 +1115,7 @@ def test_ensure_service_registry_persists_seed_catalog_backfill(tmp_path: Path) 
         "workflows": {},
         "capabilities": {},
     }
-    admin_store.put_operator_setting(
-        service_registry.SERVICE_REGISTRY_SETTING_KEY,
+    write_service_registry_for_test(
         existing_registry,
         updated_by="test",
         path=db,

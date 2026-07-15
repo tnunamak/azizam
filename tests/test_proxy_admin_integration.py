@@ -2309,6 +2309,17 @@ class ConfigExportTests(unittest.TestCase):
         proxy.ADMIN_STORE.path = self.db
         proxy.AUTH_ENABLED = True
         admin_store.init_db(self.db)
+        admin_store.write_service_registry(
+            {
+                "schema_version": 1,
+                "services": {},
+                "protocol_frontends": {},
+                "workflows": {},
+                "capabilities": {},
+            },
+            expected_generation=0,
+            path=self.db,
+        )
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
@@ -2354,6 +2365,10 @@ class ConfigExportTests(unittest.TestCase):
         import yaml
 
         # Add a service via the admin API (same path the UI uses)
+        registry_resp = self.client.get(
+            "/admin/api/operator/service-registry", headers=self._auth()
+        )
+        self.assertEqual(registry_resp.status_code, 200, registry_resp.text)
         add_resp = self.client.post(
             "/admin/api/operator/services",
             json={
@@ -2362,7 +2377,7 @@ class ConfigExportTests(unittest.TestCase):
                 "capabilities": ["chat", "completions"],
                 "protocol": "openai-compatible",
             },
-            headers=self._auth(),
+            headers={**self._auth(), "If-Match": registry_resp.headers["etag"]},
         )
         self.assertIn(add_resp.status_code, (200, 201))
 

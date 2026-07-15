@@ -20,7 +20,7 @@ import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { adminFetch, ApiError } from "@/lib/api";
+import { adminFetch, adminRegistryMutation, ApiError } from "@/lib/api";
 import {
   Badge,
   Button,
@@ -164,7 +164,7 @@ async function enableExtension(
   source: ExtensionSource,
   review: ExtensionReview,
 ): Promise<void> {
-  await adminFetch("/admin/api/extensions/enable", {
+  await adminRegistryMutation("/admin/api/extensions/enable", {
     method: "POST",
     body: { source, review: { resolved_source: review.resolved_source } },
   });
@@ -201,7 +201,12 @@ async function saveMediaAdmission(
 // Shared helpers
 
 function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
+  if (error instanceof ApiError) {
+    if (error.status === 412) {
+      return "The service registry changed elsewhere (412 Precondition Failed). Refresh and retry.";
+    }
+    return error.message;
+  }
   return "Something went wrong. Please try again.";
 }
 

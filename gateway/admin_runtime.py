@@ -733,21 +733,19 @@ class AdminSQLiteStore:
         )
 
     def update_service_registry(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
         value = service_registry.normalize_service_registry(data)
-        record = admin_store.write_service_registry(
+        record = admin_store.write_service_registry_with_audit(
             value,
+            expected_generation=expected_generation,
             updated_by=actor.subject,
-            path=self.path,
-        )
-        admin_store.record_audit(
-            "operator.service_registry.update",
-            actor_kind="admin",
-            actor_id=actor.subject,
-            target_kind="operator_setting",
-            target_id=SERVICE_REGISTRY_SETTING_KEY,
-            metadata={
+            audit_action="operator.service_registry.update",
+            audit_actor_kind="admin",
+            audit_target_kind="operator_setting",
+            audit_target_id=SERVICE_REGISTRY_SETTING_KEY,
+            audit_metadata={
                 "service_count": len(value.get("services") or {}),
                 "protocol_frontend_count": len(value.get("protocol_frontends") or {}),
                 "workflow_count": len(value.get("workflows") or {}),
@@ -757,7 +755,7 @@ class AdminSQLiteStore:
         )
         self.write_litellm_config(record["value"])
         self._fire_registry_changed()
-        return record["value"]
+        return record
 
     # -- single-service CRUD -------------------------------------------------
     # Granular operator edits on one backend service. Each persists the new
@@ -789,29 +787,30 @@ class AdminSQLiteStore:
         action: str,
         actor: AdminContext,
         service_id: str,
+        expected_generation: int,
         extra: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         value = service_registry.normalize_service_registry(registry)
-        record = admin_store.write_service_registry(
+        record = admin_store.write_service_registry_with_audit(
             value,
+            expected_generation=expected_generation,
             updated_by=actor.subject,
-            path=self.path,
-        )
-        admin_store.record_audit(
-            action,
-            actor_kind="admin",
-            actor_id=actor.subject,
-            target_kind="service",
-            target_id=service_id,
-            metadata={"service_count": len(value.get("services") or {}), **(extra or {})},
+            audit_action=action,
+            audit_actor_kind="admin",
+            audit_target_kind="service",
+            audit_target_id=service_id,
+            audit_metadata={
+                "service_count": len(value.get("services") or {}), **(extra or {})
+            },
             path=self.path,
         )
         self.write_litellm_config(record["value"])
         self._fire_registry_changed()
-        return record["value"]
+        return record
 
     def add_service(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
         service_id = service_registry.normalize_id(
             data.get("id") or data.get("name")
@@ -828,10 +827,12 @@ class AdminSQLiteStore:
             action="operator.service.added",
             actor=actor,
             service_id=service_id,
+            expected_generation=expected_generation,
         )
 
     def update_service(
-        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext
+        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
         # Merge PATCH data onto the existing record so a partial update (e.g.
         # models-only) doesn't lose existing name, base_url, capabilities, etc.
@@ -884,10 +885,12 @@ class AdminSQLiteStore:
             action="operator.service.updated",
             actor=actor,
             service_id=service_registry.normalize_id(service_id),
+            expected_generation=expected_generation,
         )
 
     def remove_service(
-        self, *, service_id: str, actor: AdminContext
+        self, *, service_id: str, actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
         registry = service_registry.remove_service_from_registry(
             self.get_service_registry(), service_id
@@ -897,10 +900,12 @@ class AdminSQLiteStore:
             action="operator.service.removed",
             actor=actor,
             service_id=service_registry.normalize_id(service_id),
+            expected_generation=expected_generation,
         )
 
     def set_service_enabled(
-        self, *, service_id: str, enabled: bool, actor: AdminContext
+        self, *, service_id: str, enabled: bool, actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
         registry = service_registry.set_service_enabled(
             self.get_service_registry(), service_id, enabled
@@ -910,6 +915,7 @@ class AdminSQLiteStore:
             action="operator.service.toggled",
             actor=actor,
             service_id=service_registry.normalize_id(service_id),
+            expected_generation=expected_generation,
             extra={"enabled": bool(enabled)},
         )
 
@@ -928,7 +934,8 @@ class AdminSQLiteStore:
         return extension_packages.validate_extension_package_source(source)
 
     def enable_extension_package(
-        self, *, source: Mapping[str, Any], actor: AdminContext
+        self, *, source: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]:
         review = extension_packages.validate_extension_package_source(
             source,
@@ -950,7 +957,11 @@ class AdminSQLiteStore:
             workflows=imported["workflows"],
             capabilities=imported["capabilities"],
         )
-        registry_record = self.update_service_registry(data=registry, actor=actor)
+        registry_record = self.update_service_registry(
+            data=registry,
+            actor=actor,
+            expected_generation=expected_generation,
+        )
         package_index = extension_packages.merge_package_index(
             self.get_extension_package_index(),
             review,
@@ -981,7 +992,10 @@ class AdminSQLiteStore:
         return {
             "extension_package": (index_record["value"].get("packages") or {}).get(package_id),
             "review": review,
-            "service_registry": registry_record,
+            "service_registry": registry_record["value"],
+            "operator_settings_generation": registry_record[
+                "operator_settings_generation"
+            ],
             "extension_packages": index_record["value"],
         }
 

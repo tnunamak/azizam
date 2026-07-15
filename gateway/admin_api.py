@@ -179,23 +179,28 @@ class AdminStore(Protocol):
     def get_service_registry(self) -> dict[str, Any]: ...
 
     def update_service_registry(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]: ...
 
     def add_service(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]: ...
 
     def update_service(
-        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext
+        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]: ...
 
     def remove_service(
-        self, *, service_id: str, actor: AdminContext
+        self, *, service_id: str, actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]: ...
 
     def set_service_enabled(
-        self, *, service_id: str, enabled: bool, actor: AdminContext
+        self, *, service_id: str, enabled: bool, actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]: ...
 
     def get_extension_package_index(self) -> dict[str, Any]: ...
@@ -205,7 +210,8 @@ class AdminStore(Protocol):
     ) -> dict[str, Any]: ...
 
     def enable_extension_package(
-        self, *, source: Mapping[str, Any], actor: AdminContext
+        self, *, source: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int,
     ) -> dict[str, Any]: ...
 
     def remove_extension_package(
@@ -1909,6 +1915,46 @@ def create_admin_router(
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    def _registry_match(request: Request) -> int:
+        """Parse the one global registry precondition, ``If-Match: \"os-N\"``."""
+        raw = request.headers.get("if-match", "")
+        if not raw.startswith('"os-') or not raw.endswith('"'):
+            raise _RouteError(
+                status.HTTP_412_PRECONDITION_FAILED,
+                "generation_mismatch",
+                'If-Match: "os-N" is required',
+            )
+        generation_text = raw[4:-1]
+        if not generation_text.isascii() or not generation_text.isdecimal():
+            raise _RouteError(
+                status.HTTP_412_PRECONDITION_FAILED,
+                "generation_mismatch",
+                'If-Match: "os-N" is required',
+            )
+        return int(generation_text)
+
+    def _registry_response(
+        record: Mapping[str, Any], *, response_status: int = status.HTTP_200_OK
+    ) -> JSONResponse:
+        response = JSONResponse(
+            status_code=response_status,
+            content={"service_registry": record["value"]},
+        )
+        response.headers.update(
+            {
+                "ETag": f'"os-{record["operator_settings_generation"]}"',
+                "Cache-Control": "no-store",
+            }
+        )
+        return response
+
+    def _registry_conflict_response() -> JSONResponse:
+        return _RouteError(
+            status.HTTP_412_PRECONDITION_FAILED,
+            "generation_mismatch",
+            "service registry changed; refresh and retry",
+        ).as_response()
+
     def _operation_path() -> Any:
         path = getattr(store, "path", None)
         if path is None:
@@ -2063,21 +2109,25 @@ def create_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
+            expected_generation = _registry_match(request)
             body = await _read_json_body(request)
             registry = _validate_service_registry(body)
-            record = store.update_service_registry(data=registry, actor=ctx)
+            record = store.update_service_registry(
+                data=registry,
+                actor=ctx,
+                expected_generation=expected_generation,
+            )
         except _RouteError as exc:
             return exc.as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
                 "invalid_service_registry",
                 str(exc),
             ).as_response()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"service_registry": record},
-        )
+        return _registry_response(record)
 
     def _service_op_error(exc: ValueError) -> JSONResponse:
         """Map a registry-op ValueError to the right operator-facing status."""
@@ -2136,17 +2186,21 @@ def create_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
+            expected_generation = _registry_match(request)
             body = await _read_json_body(request)
             form = _validate_service_form(body)
-            record = store.add_service(data=form, actor=ctx)
+            record = store.add_service(
+                data=form,
+                actor=ctx,
+                expected_generation=expected_generation,
+            )
         except _RouteError as exc:
             return exc.as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
         except ValueError as exc:
             return _service_op_error(exc)
-        return JSONResponse(
-            status_code=status.HTTP_201_CREATED,
-            content={"service_registry": record},
-        )
+        return _registry_response(record, response_status=status.HTTP_201_CREATED)
 
     @router.patch("/operator/services/{service_id}")
     async def update_service(service_id: str, request: Request) -> JSONResponse:
@@ -2154,6 +2208,7 @@ def create_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
+            expected_generation = _registry_match(request)
             body = await _read_json_body(request)
             # Endpoint is only required for full edits; metadata-only edits (name,
             # enabled, note — the only fields allowed for managed-substrate rows)
@@ -2162,15 +2217,19 @@ def create_admin_router(
             has_url = bool(str(body.get("base_url") or "").strip())
             require_endpoint = has_host or has_url
             form = _validate_service_form(body, require_endpoint=require_endpoint, require_name=False)
-            record = store.update_service(service_id=service_id, data=form, actor=ctx)
+            record = store.update_service(
+                service_id=service_id,
+                data=form,
+                actor=ctx,
+                expected_generation=expected_generation,
+            )
         except _RouteError as exc:
             return exc.as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
         except ValueError as exc:
             return _service_op_error(exc)
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"service_registry": record},
-        )
+        return _registry_response(record)
 
     @router.delete("/operator/services/{service_id}")
     def remove_service(service_id: str, request: Request) -> JSONResponse:
@@ -2178,13 +2237,18 @@ def create_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            record = store.remove_service(service_id=service_id, actor=ctx)
+            record = store.remove_service(
+                service_id=service_id,
+                actor=ctx,
+                expected_generation=_registry_match(request),
+            )
+        except _RouteError as exc:
+            return exc.as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
         except ValueError as exc:
             return _service_op_error(exc)
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"service_registry": record},
-        )
+        return _registry_response(record)
 
     @router.post("/operator/services/{service_id}/enabled")
     async def set_service_enabled(service_id: str, request: Request) -> JSONResponse:
@@ -2192,19 +2256,22 @@ def create_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
+            expected_generation = _registry_match(request)
             body = await _read_json_body(request)
             enabled = bool(body.get("enabled"))
             record = store.set_service_enabled(
-                service_id=service_id, enabled=enabled, actor=ctx
+                service_id=service_id,
+                enabled=enabled,
+                actor=ctx,
+                expected_generation=expected_generation,
             )
         except _RouteError as exc:
             return exc.as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
         except ValueError as exc:
             return _service_op_error(exc)
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"service_registry": record},
-        )
+        return _registry_response(record)
 
     @router.post("/operator/services/test")
     async def test_service_connection(request: Request) -> JSONResponse:
@@ -2439,6 +2506,7 @@ def create_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
+            expected_generation = _registry_match(request)
             body = await _read_json_body(request)
             validated = _validate_extension_package_source(body)
             source = dict(validated["source"])
@@ -2455,6 +2523,7 @@ def create_admin_router(
             result = store.enable_extension_package(
                 source=source,
                 actor=ctx,
+                expected_generation=expected_generation,
             )
             review = result.get("review") if isinstance(result, Mapping) else None
             if isinstance(review, Mapping) and not review.get("ok"):
@@ -2472,16 +2541,23 @@ def create_admin_router(
                 "extension_package_conflict",
                 str(exc),
             ).as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
                 "invalid_extension_package",
                 str(exc),
             ).as_response()
-        return JSONResponse(
+        response = JSONResponse(
             status_code=status.HTTP_200_OK,
             content=result,
         )
+        generation = result.get("operator_settings_generation")
+        if generation is not None:
+            response.headers["ETag"] = f'"os-{generation}"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @router.delete("/extensions/{package_id}")
     async def remove_extension_package(

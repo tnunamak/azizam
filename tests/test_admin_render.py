@@ -631,6 +631,9 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn('name="subdir"', services_section)
         self.assertIn("extensionForm", html)
         self.assertIn("const source={type}", html)
+        self.assertIn("let serviceRegistryEtag=null", html)
+        self.assertIn("headers['If-Match']=serviceRegistryEtag||''", html)
+        self.assertIn("412 Precondition Failed", html)
 
     def test_admin_dashboard_renders_config_sources(self) -> None:
         snapshot = _snapshot()

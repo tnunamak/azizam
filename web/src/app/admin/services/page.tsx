@@ -134,7 +134,12 @@ function capabilityLabel(cap: string): string {
 // Helpers
 
 function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
+  if (error instanceof ApiError) {
+    if (error.status === 412) {
+      return "The service registry changed elsewhere (412 Precondition Failed). Refresh and retry.";
+    }
+    return error.message;
+  }
   return "Something went wrong. Please try again.";
 }
 

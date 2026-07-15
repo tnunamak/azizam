@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -121,6 +122,46 @@ class TestOperatorSettings(AdminStoreTestBase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["updated_at"], 2)
         self.assertEqual(rows[0]["value"]["openai"]["state"], "maintenance")
+
+    def test_service_registry_is_protected_from_generic_setting_writes(self) -> None:
+        with self.assertRaisesRegex(ValueError, "registry transaction primitive"):
+            admin_store.put_operator_setting(
+                "service_registry", {"services": {}}, path=self.db
+            )
+
+    def test_registry_audit_rolls_back_with_registry_and_generation(self) -> None:
+        initial = admin_store.write_service_registry(
+            {"schema_version": 1, "services": {}},
+            expected_generation=0,
+            updated_by="seed",
+            now=1,
+            path=self.db,
+        )
+        before = admin_store.get_service_registry_with_generation(path=self.db)
+        before_audit = admin_store.list_audit(path=self.db)
+
+        with patch.object(
+            admin_store,
+            "_record_audit_in_transaction",
+            side_effect=RuntimeError("injected audit failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected audit failure"):
+                admin_store.write_service_registry_with_audit(
+                    {"schema_version": 1, "services": {"new": {"id": "new"}}},
+                    expected_generation=initial["operator_settings_generation"],
+                    updated_by="writer",
+                    audit_action="operator.service_registry.update",
+                    audit_actor_kind="admin",
+                    audit_target_kind="operator_setting",
+                    audit_target_id="service_registry",
+                    now=2,
+                    path=self.db,
+                )
+
+        self.assertEqual(
+            admin_store.get_service_registry_with_generation(path=self.db), before
+        )
+        self.assertEqual(admin_store.list_audit(path=self.db), before_audit)
 
 
 class TestOidcUpsert(AdminStoreTestBase):

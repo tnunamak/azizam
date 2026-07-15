@@ -29,6 +29,25 @@ from gateway.admin_runtime import (  # noqa: E402
     service_account_session_subject,
 )
 from gateway.runtime_auth import hash_api_key  # noqa: E402
+from tests.registry_test_helpers import write_service_registry_for_test  # noqa: E402
+
+
+def _install_registry_writer_test_helpers(store: AdminSQLiteStore, path: Path) -> None:
+    """Keep legacy direct-runtime tests explicit about their current CAS token."""
+    for name in ("add_service", "update_service", "remove_service", "set_service_enabled"):
+        writer = getattr(store, name)
+
+        def write(*, _writer=writer, **kwargs):
+            current = admin_store.get_service_registry_with_generation(path=path)
+            result = _writer(
+                **kwargs,
+                expected_generation=(
+                    int(current["operator_settings_generation"]) if current else 0
+                ),
+            )
+            return result["value"]
+
+        setattr(store, name, write)
 
 
 class AdminRuntimeTests(unittest.TestCase):
@@ -625,6 +644,7 @@ class AdminRuntimeTests(unittest.TestCase):
                     }
                 },
             },
+            headers={"If-Match": '"os-0"'},
         )
 
         self.assertEqual(resp.status_code, 200, resp.text)
@@ -725,6 +745,7 @@ execution: job
         enable_resp = client.post(
             "/admin/api/extensions/enable",
             json={"source": source},
+            headers={"If-Match": '"os-0"'},
         )
 
         self.assertEqual(validate_resp.status_code, 200, validate_resp.text)
@@ -925,6 +946,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         admin_store.init_db(self.db)
         self.store = AdminSQLiteStore(self.db)
         self.ctx = AdminContext(subject="owner", roles=frozenset({"owner"}))
+        _install_registry_writer_test_helpers(self.store, self.db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -1176,8 +1198,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
             reg, service_id="future-svc", raw=raw, source="ui"
         )
         import gateway.admin_store as _admin_store
-        _admin_store.put_operator_setting(
-            sr.SERVICE_REGISTRY_SETTING_KEY,
+        write_service_registry_for_test(
             registry,
             updated_by="test",
             path=self.db,
@@ -1215,6 +1236,7 @@ class ServiceModelRoutabilityTests(unittest.TestCase):
         admin_store.init_db(self.db)
         self.store = AdminSQLiteStore(self.db)
         self.ctx = AdminContext(subject="owner", roles=frozenset({"owner"}))
+        _install_registry_writer_test_helpers(self.store, self.db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

@@ -12,6 +12,35 @@
 
 import { QueryClient } from "@tanstack/react-query";
 
+const SERVICE_REGISTRY_PATH = "/admin/api/operator/service-registry";
+let serviceRegistryEtag: string | null = null;
+
+function isServiceRegistryMutation(path: string, method: string): boolean {
+  if (method === "PUT" && path === SERVICE_REGISTRY_PATH) return true;
+  if (method === "POST" && path === "/admin/api/operator/services") return true;
+  if (
+    (method === "PATCH" || method === "DELETE") &&
+    /^\/admin\/api\/operator\/services\/[^/]+$/.test(path)
+  ) {
+    return true;
+  }
+  if (
+    method === "POST" &&
+    /^\/admin\/api\/operator\/services\/[^/]+\/enabled$/.test(path)
+  ) {
+    return true;
+  }
+  return method === "POST" && path === "/admin/api/extensions/enable";
+}
+
+function isServiceRegistryResponse(path: string, method: string): boolean {
+  return path === SERVICE_REGISTRY_PATH || isServiceRegistryMutation(path, method);
+}
+
+function hasHeader(headers: Record<string, string> | undefined, name: string): boolean {
+  return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === name.toLowerCase());
+}
+
 // ---------------------------------------------------------------------------
 // Error envelope
 
@@ -546,13 +575,28 @@ export async function adminFetch<T>(
 ): Promise<T> {
   const method = init.method ?? "GET";
   const isWrite = method !== "GET";
+  const isRegistryMutation = isServiceRegistryMutation(path, method);
+  let requestInit = init;
+  if (isRegistryMutation && !hasHeader(init.headers, "If-Match")) {
+    if (!serviceRegistryEtag) {
+      throw new ApiError(
+        "generation_mismatch",
+        "The service registry is not loaded yet. Refresh and try again (412 Precondition Failed).",
+        412,
+      );
+    }
+    requestInit = {
+      ...init,
+      headers: { ...(init.headers ?? {}), "If-Match": serviceRegistryEtag },
+    };
+  }
 
   let csrfToken: string | null = null;
   if (isWrite) {
     csrfToken = (await fetchSession()).actor.csrf_token || null;
   }
 
-  let response = await rawFetch(path, init, csrfToken);
+  let response = await rawFetch(path, requestInit, csrfToken);
   let payload: unknown =
     response.status === 204
       ? undefined
@@ -566,7 +610,7 @@ export async function adminFetch<T>(
     payload.error.code === CSRF_REQUIRED_CODE
   ) {
     const fresh = await fetchSession({ force: true });
-    response = await rawFetch(path, init, fresh.actor.csrf_token || null);
+    response = await rawFetch(path, requestInit, fresh.actor.csrf_token || null);
     payload =
       response.status === 204
         ? undefined
@@ -587,7 +631,31 @@ export async function adminFetch<T>(
       response.status,
     );
   }
+  if (isServiceRegistryResponse(path, method)) {
+    const etag = response.headers.get("etag");
+    if (etag) serviceRegistryEtag = etag;
+  }
   return payload as T;
+}
+
+/** Run a registry mutation against the latest known snapshot ETag. */
+export async function adminRegistryMutation<T>(
+  path: string,
+  init: AdminFetchInit,
+): Promise<T> {
+  if (!serviceRegistryEtag) {
+    await adminFetch<ServiceRegistryResponse>(SERVICE_REGISTRY_PATH);
+  }
+  try {
+    return await adminFetch<T>(path, init);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 412) {
+      // Refresh the retained ETag so the next operator retry has a current
+      // precondition, while preserving the conflict for the UI to surface.
+      await adminFetch<ServiceRegistryResponse>(SERVICE_REGISTRY_PATH).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -746,22 +814,22 @@ export const api = {
         "/admin/api/operator/service-presets",
       ),
     add: (input: Record<string, unknown>) =>
-      adminFetch<ServiceRegistryResponse>("/admin/api/operator/services", {
+      adminRegistryMutation<ServiceRegistryResponse>("/admin/api/operator/services", {
         method: "POST",
         body: input,
       }).then((r) => r.service_registry),
     edit: (serviceId: string, input: Record<string, unknown>) =>
-      adminFetch<ServiceRegistryResponse>(
+      adminRegistryMutation<ServiceRegistryResponse>(
         `/admin/api/operator/services/${serviceId}`,
         { method: "PATCH", body: input },
       ).then((r) => r.service_registry),
     remove: (serviceId: string) =>
-      adminFetch<ServiceRegistryResponse>(
+      adminRegistryMutation<ServiceRegistryResponse>(
         `/admin/api/operator/services/${serviceId}`,
         { method: "DELETE" },
       ).then((r) => r.service_registry),
     toggleEnabled: (serviceId: string, enabled: boolean) =>
-      adminFetch<ServiceRegistryResponse>(
+      adminRegistryMutation<ServiceRegistryResponse>(
         `/admin/api/operator/services/${serviceId}/enabled`,
         { method: "POST", body: { enabled } },
       ).then((r) => r.service_registry),

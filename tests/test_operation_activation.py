@@ -53,7 +53,7 @@ def _registry() -> dict:
 def _ready_target(tmp_path: Path) -> tuple[Path, dict]:
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
-    admin_store.write_service_registry(_registry(), path=path)
+    admin_store.write_service_registry(_registry(), expected_generation=0, path=path)
     target = stage(
         path=path, service_id="service", alias_id="alias", base_model_id="base",
         overlay={"compaction_safety": _record()},
@@ -90,7 +90,7 @@ def test_forward_schema_has_exactly_five_operation_tables(tmp_path: Path) -> Non
 def test_v1_database_migrates_forward_without_losing_registry(tmp_path: Path) -> None:
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
-    admin_store.write_service_registry(_registry(), path=path)
+    admin_store.write_service_registry(_registry(), expected_generation=0, path=path)
     with admin_store._conn(path) as conn:
         conn.execute("DROP TABLE operation_idempotency")
         conn.execute("UPDATE schema_version SET version=1")
@@ -136,7 +136,7 @@ def test_evidence_rejects_float() -> None:
 def test_recovery_never_loads_candidate_and_marks_missing_artifact_for_retry(tmp_path: Path) -> None:
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
-    admin_store.write_service_registry({"schema_version": 1, "services": {}, "protocol_frontends": {}, "workflows": {}, "capabilities": {}}, path=path)
+    admin_store.write_service_registry({"schema_version": 1, "services": {}, "protocol_frontends": {}, "workflows": {}, "capabilities": {}}, expected_generation=0, path=path)
     with admin_store._conn(path) as conn:
         conn.execute("INSERT INTO operation_target_current(service_id,alias_id,target_generation,candidate_state,prepared_artifact_digest,prepared_artifact_relpath,updated_at) VALUES ('service','alias',1,'preparing','abc','operation-prepared/abc.json',1)")
         conn.commit()
@@ -147,7 +147,7 @@ def test_recovery_never_loads_candidate_and_marks_missing_artifact_for_retry(tmp
 def test_recovery_marks_corrupt_prepared_artifact_for_reprepare(tmp_path: Path) -> None:
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
-    admin_store.write_service_registry(_registry(), path=path)
+    admin_store.write_service_registry(_registry(), expected_generation=0, path=path)
     artifact = tmp_path / "operation-prepared" / "receipt.json"
     artifact.parent.mkdir()
     artifact.write_bytes(b"corrupt")
@@ -166,7 +166,7 @@ def test_recovery_marks_corrupt_prepared_artifact_for_reprepare(tmp_path: Path) 
 def test_reload_ack_only_records_the_current_effective_generation(tmp_path: Path) -> None:
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
-    admin_store.write_service_registry({"schema_version": 1, "services": {}, "protocol_frontends": {}, "workflows": {}, "capabilities": {}}, path=path)
+    admin_store.write_service_registry({"schema_version": 1, "services": {}, "protocol_frontends": {}, "workflows": {}, "capabilities": {}}, expected_generation=0, path=path)
     with admin_store._conn(path) as conn:
         conn.execute("INSERT INTO operation_target_current(service_id,alias_id,target_generation,effective_operator_settings_generation,candidate_state,updated_at) VALUES ('service','alias',1,7,'none',1)")
         conn.commit()
@@ -231,7 +231,7 @@ def test_concurrent_same_idempotency_key_creates_one_effective_revision(tmp_path
 def test_evidence_expiry_between_stage_and_cutover_never_changes_registry(tmp_path: Path) -> None:
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
-    admin_store.write_service_registry(_registry(), path=path)
+    admin_store.write_service_registry(_registry(), expected_generation=0, path=path)
     target = stage(path=path, service_id="service", alias_id="alias", base_model_id="base",
                    overlay={"compaction_safety": _record()}, evidence={"expires_at": 1}, actor="test",
                    expected_target=None, expected_registry=None)
@@ -392,7 +392,7 @@ def test_stale_target_writer_loses_without_replacing_candidate(tmp_path: Path) -
 def test_registry_generation_is_shared_and_stale_writer_loses(tmp_path: Path) -> None:
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
-    first = admin_store.write_service_registry(_registry(), path=path)
+    first = admin_store.write_service_registry(_registry(), expected_generation=0, path=path)
     replacement = _registry()
     replacement["services"]["service"]["name"] = "Changed"
     second = admin_store.write_service_registry(

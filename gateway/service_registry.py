@@ -56,50 +56,45 @@ def ensure_service_registry(
     path: Path = admin_store.DB_PATH,
     actor: str = "system",
 ) -> dict[str, Any]:
-    """Return the DB-owned registry, seeding it from config if absent."""
+    """Return the DB-owned registry, seeding/backfilling with bounded CAS retry."""
 
-    record = admin_store.get_operator_setting(SERVICE_REGISTRY_SETTING_KEY, path=path)
-    if record is not None and isinstance(record.get("value"), Mapping):
-        registry = backfill_seed_catalog_metadata(record["value"], proxy_config=proxy_config)
-        if stable_hash(registry) != stable_hash(record["value"]):
-            admin_store.write_service_registry(
+    # Concurrent boots are legitimate: one can seed or backfill while another
+    # process gets far enough to observe the previous document.  Recompute
+    # from the winner's document rather than overwriting it.
+    for _attempt in range(3):
+        record = admin_store.get_service_registry_with_generation(path=path)
+        if record is not None:
+            current = record["value"]
+            registry = backfill_seed_catalog_metadata(current, proxy_config=proxy_config)
+            if stable_hash(registry) == stable_hash(current):
+                return registry
+            action = "operator.service_registry.backfill"
+            expected_generation = int(record["operator_settings_generation"])
+        else:
+            registry = build_service_registry_seed(proxy_config)
+            action = "operator.service_registry.seed"
+            expected_generation = 0
+
+        try:
+            written = admin_store.write_service_registry_with_audit(
                 registry,
+                expected_generation=expected_generation,
                 updated_by=actor,
-                path=path,
-            )
-            admin_store.record_audit(
-                "operator.service_registry.backfill",
-                actor_kind="admin",
-                actor_id=actor,
-                target_kind="operator_setting",
-                target_id=SERVICE_REGISTRY_SETTING_KEY,
-                metadata={
+                audit_action=action,
+                audit_actor_kind="admin",
+                audit_target_kind="operator_setting",
+                audit_target_id=SERVICE_REGISTRY_SETTING_KEY,
+                audit_metadata={
                     "service_count": len(registry.get("services") or {}),
                     "protocol_frontend_count": len(registry.get("protocol_frontends") or {}),
                 },
                 path=path,
             )
-        return registry
+        except admin_store.OperatorSettingsGenerationConflict:
+            continue
+        return written["value"]
 
-    registry = build_service_registry_seed(proxy_config)
-    admin_store.write_service_registry(
-        registry,
-        updated_by=actor,
-        path=path,
-    )
-    admin_store.record_audit(
-        "operator.service_registry.seed",
-        actor_kind="admin",
-        actor_id=actor,
-        target_kind="operator_setting",
-        target_id=SERVICE_REGISTRY_SETTING_KEY,
-        metadata={
-            "service_count": len(registry.get("services") or {}),
-            "protocol_frontend_count": len(registry.get("protocol_frontends") or {}),
-        },
-        path=path,
-    )
-    return registry
+    raise RuntimeError("service registry changed during bounded startup retry")
 
 
 def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any] | None:
