@@ -18953,7 +18953,11 @@ def _model_policy_schema_error(service_id: str) -> ModelPolicySchemaError | None
     if not isinstance(service_cfg, Mapping):
         return ModelPolicySchemaError(f"service {service_id!r} is not configured")
     version = service_cfg.get("model_policy_schema_version")
-    if version == service_registry.MODEL_POLICY_SCHEMA_VERSION:
+    if (
+        isinstance(version, int)
+        and not isinstance(version, bool)
+        and version == service_registry.MODEL_POLICY_SCHEMA_VERSION
+    ):
         return None
     found = "missing" if version is None else repr(version)
     return ModelPolicySchemaError(

@@ -523,11 +523,11 @@ def test_unknown_remote_litellm_body_and_existing_only_path_remain_unchanged() -
     assert prepared == remote_body
 
 
-@pytest.mark.parametrize("schema_marker", [None, 0])
-def test_pre_slice_default_fast_collection_fails_closed_before_egress(
-    schema_marker: int | None,
+@pytest.mark.parametrize("schema_marker", [None, 0, True, 1.0])
+def test_unmigrated_or_invalid_default_fast_collection_fails_closed_before_egress(
+    schema_marker: object,
 ) -> None:
-    """The actual pre-slice default-fast row is unsafe until the DB collection migrates."""
+    """Direct runtime model data must reject legacy and invalid schema markers."""
     old_db_service = _service_config()
     old_db_service.pop("model_policy_schema_version")
     if schema_marker is not None:
