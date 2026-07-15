@@ -25,3 +25,35 @@ For offline evidence canonicalization use:
 
 The CLI reads only the explicit local path supplied by its user. The HTTP API
 does not accept paths, URLs, commands, or evidence bodies in status responses.
+
+## Offline compaction enrollment
+
+Before a context-compaction overlay can be staged, build its operator evidence
+with the offline-only enrollment boundary. It takes an explicit non-secret JSON
+manifest and output directory; it does not read the registry, authenticate,
+send HTTP, start a server, or perform inference.
+
+```sh
+./venv/bin/python scripts/compaction_enrollment.py collect \
+  --manifest enrollment-manifest.json --output enrollment-proof
+./venv/bin/python scripts/compaction_enrollment.py verify \
+  --manifest enrollment-manifest.json --output enrollment-proof
+./venv/bin/python scripts/compaction_enrollment.py package \
+  --manifest enrollment-manifest.json --output enrollment-proof
+./venv/bin/python scripts/operation_evidence.py enrollment-proof/evidence.json \
+  --overlay enrollment-proof/overlay.json --base-model-id '<base-model-id>'
+```
+
+`collect` produces deterministic, redacted `evidence.json`, `overlay.json`, and
+`proofs.json`. `verify` recomputes every binding and rejects tampering, expired
+evidence, artifact/runtime drift, non-parity, floats, credentials, and prompt
+persistence. `package` runs verification first and writes an activation-package
+copy for review; the separate `evidence.json` and `overlay.json` are directly
+consumable by `operation_evidence.py`.
+
+The evidence is a bounded deployment observation, not lasting runtime
+attestation. Renewal is a new evidence revision: re-collect all declared local
+artifacts and transcripts, verify, package, replace the normal service evidence
+through the supported registry writer, then stage and activate the matching
+overlay. Never edit an expiry timestamp, use direct SQL, or reuse evidence after
+the declared runtime/template/tokenizer binding has changed.

@@ -69,11 +69,18 @@ from gateway import (
 from gateway import operation_activation
 from gateway.compaction_safety import (
     AdmissionError as CompactionAdmissionError,
-    CompactionContract,
     ContractError as CompactionContractError,
-    contract_from_data,
     consumer_request_construction_contract,
     prepare_admitted_body,
+)
+from gateway.operation_candidate import (
+    AliasPolicyResolutionError,
+    ResolvedRequestTarget,
+    per_backend_transform_specs as _pure_per_backend_transform_specs,
+    prepare_operation_candidate_body as _prepare_operation_candidate_body,
+    resolve_request_target as _pure_resolve_request_target,
+    service_model_records as _pure_service_model_records,
+    transform_specs as _pure_transform_specs,
 )
 from gateway.admin_api import (
     AdminAuthError,
@@ -2842,17 +2849,7 @@ def parse_openai_json_body(body: bytes) -> tuple[dict[str, Any] | None, Response
 
 
 def _service_model_records(service_cfg: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    raw_models = service_cfg.get("models")
-    if isinstance(raw_models, Mapping):
-        return [
-            {"id": model_id, **dict(raw)}
-            if isinstance(raw, Mapping)
-            else {"id": model_id, "upstream_model": raw}
-            for model_id, raw in raw_models.items()
-        ]
-    if isinstance(raw_models, list):
-        return [raw for raw in raw_models if isinstance(raw, Mapping)]
-    return []
+    return _pure_service_model_records(service_cfg)
 
 
 def _backend_default_model_to_load(backend: str) -> Optional[str]:
@@ -18982,13 +18979,7 @@ def _toolcall_backend_hint(service_id: str) -> str:
 
 def _transform_specs(raw: Any) -> list[str | dict[str, Any]]:
     """Keep valid named or inline declarative transform specs from service data."""
-    if not isinstance(raw, list):
-        return []
-    return [
-        copy.deepcopy(spec)
-        for spec in raw
-        if (isinstance(spec, str) and spec) or isinstance(spec, Mapping)
-    ]
+    return _pure_transform_specs(raw)
 
 
 def _per_backend_transform_specs(
@@ -19004,42 +18995,12 @@ def _per_backend_transform_specs(
     only for an exact public id/model_group match, so a shared upstream model
     cannot inherit another public model's policy.
     """
-    if not service_id:
-        return []
     source = runtime_config if runtime_config is not None else config
-    bcfg = (source.get("backends") or {}).get(service_id) or {}
-    if not isinstance(bcfg, Mapping):
-        return []
-    specs = _transform_specs(bcfg.get("transforms"))
-    if not model_name:
-        return specs
-
-    normalized_model = normalize_model_id(model_name)
-    for item in _service_model_records(bcfg):
-        public_names = (item.get("model_group"), item.get("id"))
-        if any(
-            normalize_model_id(str(name or "")) == normalized_model
-            for name in public_names
-        ):
-            specs.extend(_transform_specs(item.get("transforms")))
-            break
-    return specs
-
-
-@dataclass(frozen=True)
-class ResolvedRequestTarget:
-    """The one data-derived request-policy target for a public model name."""
-
-    requested_model: str
-    logical_service_id: str
-    base_model_id: str
-    base_transform_specs: tuple[str | dict[str, Any], ...]
-    alias_overlay_specs: tuple[str | dict[str, Any], ...]
-    operation_contract: CompactionContract | None = None
-
-
-class AliasPolicyResolutionError(ValueError):
-    """A required public alias has no single declared logical policy."""
+    return _pure_per_backend_transform_specs(
+        service_id,
+        model_name=model_name,
+        runtime_config=source,
+    )
 
 
 class ModelPolicySchemaError(ValueError):
@@ -19097,92 +19058,13 @@ def _resolve_request_target(
     Physical upstream/activation names intentionally do not participate in this
     lookup: a shared filename is routing data, never logical policy identity.
     """
-    if not isinstance(requested_model, str) or not requested_model:
-        return None
     source = runtime_config if runtime_config is not None else config
-    backends = source.get("backends") if isinstance(source.get("backends"), Mapping) else {}
-    candidates = [service_id] if service_id else list(backends)
-    normalized_requested = normalize_model_id(requested_model)
-    matches: list[tuple[str, Mapping[str, Any], Mapping[str, Any]]] = []
-    for candidate_service_id in candidates:
-        if not candidate_service_id:
-            continue
-        service_cfg = backends.get(candidate_service_id)
-        if not isinstance(service_cfg, Mapping):
-            continue
-        records = _service_model_records(service_cfg)
-        by_id = {
-            str(record.get("id") or "").strip(): record
-            for record in records
-            if str(record.get("id") or "").strip()
-        }
-        matching_records = [
-            record
-            for record in records
-            if not aliases_only or record.get("base_model_id") not in (None, "")
-            if normalized_requested
-            in {
-                normalize_model_id(str(record.get("id") or "")),
-                normalize_model_id(str(record.get("model_group") or "")),
-            }
-        ]
-        if not matching_records:
-            continue
-        if len(matching_records) != 1:
-            raise AliasPolicyResolutionError(
-                f"model {requested_model!r} is ambiguous within service {candidate_service_id!r}"
-            )
-        alias = matching_records[0]
-        alias_id = str(alias.get("id") or "").strip()
-        base_id = str(alias.get("base_model_id") or alias_id).strip()
-        base = by_id.get(base_id)
-        if base is None:
-            raise AliasPolicyResolutionError(
-                f"model {requested_model!r} in service {candidate_service_id!r} "
-                f"has no declared base policy {base_id!r}"
-            )
-        matches.append((str(candidate_service_id), alias, base))
-
-    if not matches:
-        if required:
-            raise AliasPolicyResolutionError(
-                f"model {requested_model!r} has no declared logical alias policy"
-            )
-        return None
-    if len(matches) != 1:
-        services = sorted(service for service, _, _ in matches)
-        raise AliasPolicyResolutionError(
-            f"model {requested_model!r} has ambiguous logical alias policies in {services}"
-        )
-
-    logical_service_id, alias, base = matches[0]
-    alias_id = str(alias.get("id") or "").strip()
-    base_id = str(alias.get("base_model_id") or alias_id).strip()
-    operation_contract = None
-    if "compaction_safety" in alias:
-        service_cfg = backends.get(logical_service_id) or {}
-        try:
-            operation_contract = contract_from_data(
-                alias["compaction_safety"],
-                service_id=logical_service_id,
-                service_controlled_deployment_evidence=service_cfg.get(
-                    "controlled_deployment_evidence"
-                ),
-                service_deployment_generation=service_cfg.get("deployment_generation"),
-                service_evidence_registry_revision=service_cfg.get(
-                    "evidence_registry_revision"
-                ),
-                base_model_id=base_id,
-            )
-        except CompactionContractError as exc:
-            raise AliasPolicyResolutionError(f"operation contract is unavailable: {exc}") from exc
-    return ResolvedRequestTarget(
-        requested_model=requested_model,
-        logical_service_id=logical_service_id,
-        base_model_id=base_id,
-        base_transform_specs=tuple(_transform_specs(base.get("transforms"))),
-        alias_overlay_specs=tuple(_transform_specs(alias.get("policy_overlay"))),
-        operation_contract=operation_contract,
+    return _pure_resolve_request_target(
+        requested_model,
+        service_id=service_id,
+        required=required,
+        aliases_only=aliases_only,
+        runtime_config=source,
     )
 
 
@@ -19241,23 +19123,6 @@ def _prepare_resolved_openai_request(
             ), prepared, None
         return None, prepared, admitted_bytes
     return None, prepared, None
-
-
-def _prepare_operation_candidate_body(
-    body: Mapping[str, Any], service_id: str, alias_id: str,
-    runtime_config: Mapping[str, Any],
-) -> bytes:
-    """Pure reuse seam for admin validation; it never reads or mutates globals."""
-    target = _resolve_request_target(
-        alias_id, service_id=service_id, required=True, runtime_config=runtime_config
-    )
-    error, _prepared, admitted = _prepare_resolved_openai_request(
-        body, request_path="/v1/chat/completions", target=target,
-        execution_service_id=service_id, runtime_config=runtime_config,
-    )
-    if error is not None or admitted is None:
-        raise ValueError("operation request preparation rejected candidate")
-    return admitted
 
 
 def _resolved_operation_requires_current_loaded(model: Any) -> bool:

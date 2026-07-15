@@ -1,0 +1,244 @@
+"""Pure request preparation for a data-declared operation candidate.
+
+This module owns the value-only policy path used to validate a candidate
+operation configuration.  It deliberately has no access to gateway startup,
+stores, registry recovery, runtime-config generation, or network clients.
+"""
+from __future__ import annotations
+
+import copy
+from dataclasses import dataclass
+from typing import Any, Mapping
+
+from gateway.compaction_safety import (
+    AdmissionError,
+    CompactionContract,
+    ContractError,
+    contract_from_data,
+    prepare_admitted_body,
+)
+from gateway.transforms import (
+    REGISTRY,
+    ReasoningEffortTransform,
+    TransformContext,
+    run_request_pipeline,
+)
+
+
+@dataclass(frozen=True)
+class ResolvedRequestTarget:
+    """The one data-derived request-policy target for a public model name."""
+
+    requested_model: str
+    logical_service_id: str
+    base_model_id: str
+    base_transform_specs: tuple[str | dict[str, Any], ...]
+    alias_overlay_specs: tuple[str | dict[str, Any], ...]
+    operation_contract: CompactionContract | None = None
+
+
+class AliasPolicyResolutionError(ValueError):
+    """A required public alias has no single declared logical policy."""
+
+
+class CandidatePreparationError(ValueError):
+    """A data-only operation candidate cannot produce an admitted request."""
+
+
+def service_model_records(service_cfg: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Normalize the supported in-memory model-record shapes."""
+    raw_models = service_cfg.get("models")
+    if isinstance(raw_models, Mapping):
+        return [
+            {"id": model_id, **dict(raw)}
+            if isinstance(raw, Mapping)
+            else {"id": model_id, "upstream_model": raw}
+            for model_id, raw in raw_models.items()
+        ]
+    if isinstance(raw_models, list):
+        return [raw for raw in raw_models if isinstance(raw, Mapping)]
+    return []
+
+
+def transform_specs(raw: Any) -> list[str | dict[str, Any]]:
+    """Keep the declared request-transform specs without interpreting them."""
+    if not isinstance(raw, list):
+        return []
+    return [
+        copy.deepcopy(spec)
+        for spec in raw
+        if (isinstance(spec, str) and spec) or isinstance(spec, Mapping)
+    ]
+
+
+def per_backend_transform_specs(
+    service_id: str,
+    *,
+    model_name: str = "",
+    runtime_config: Mapping[str, Any],
+) -> list[str | dict[str, Any]]:
+    """Return service then exact-public-model transform specs from data."""
+    if not service_id:
+        return []
+    backends = runtime_config.get("backends")
+    if not isinstance(backends, Mapping):
+        return []
+    service_cfg = backends.get(service_id)
+    if not isinstance(service_cfg, Mapping):
+        return []
+    specs = transform_specs(service_cfg.get("transforms"))
+    if not model_name:
+        return specs
+    normalized_model = _normalize_model_id(model_name)
+    for item in service_model_records(service_cfg):
+        public_names = (item.get("model_group"), item.get("id"))
+        if any(_normalize_model_id(str(name or "")) == normalized_model for name in public_names):
+            specs.extend(transform_specs(item.get("transforms")))
+            break
+    return specs
+
+
+def resolve_request_target(
+    requested_model: Any,
+    *,
+    runtime_config: Mapping[str, Any],
+    service_id: str | None = None,
+    required: bool = False,
+    aliases_only: bool = False,
+) -> ResolvedRequestTarget | None:
+    """Resolve a public model to one service-scoped base and alias overlay."""
+    if not isinstance(requested_model, str) or not requested_model:
+        return None
+    backends = runtime_config.get("backends")
+    if not isinstance(backends, Mapping):
+        backends = {}
+    candidates = [service_id] if service_id else list(backends)
+    normalized_requested = _normalize_model_id(requested_model)
+    matches: list[tuple[str, Mapping[str, Any], Mapping[str, Any]]] = []
+    for candidate_service_id in candidates:
+        if not candidate_service_id:
+            continue
+        service_cfg = backends.get(candidate_service_id)
+        if not isinstance(service_cfg, Mapping):
+            continue
+        records = service_model_records(service_cfg)
+        by_id = {
+            str(record.get("id") or "").strip(): record
+            for record in records
+            if str(record.get("id") or "").strip()
+        }
+        matching_records = [
+            record
+            for record in records
+            if not aliases_only or record.get("base_model_id") not in (None, "")
+            if normalized_requested in {
+                _normalize_model_id(str(record.get("id") or "")),
+                _normalize_model_id(str(record.get("model_group") or "")),
+            }
+        ]
+        if not matching_records:
+            continue
+        if len(matching_records) != 1:
+            raise AliasPolicyResolutionError(
+                f"model {requested_model!r} is ambiguous within service {candidate_service_id!r}"
+            )
+        alias = matching_records[0]
+        alias_id = str(alias.get("id") or "").strip()
+        base_id = str(alias.get("base_model_id") or alias_id).strip()
+        base = by_id.get(base_id)
+        if base is None:
+            raise AliasPolicyResolutionError(
+                f"model {requested_model!r} in service {candidate_service_id!r} "
+                f"has no declared base policy {base_id!r}"
+            )
+        matches.append((str(candidate_service_id), alias, base))
+    if not matches:
+        if required:
+            raise AliasPolicyResolutionError(
+                f"model {requested_model!r} has no declared logical alias policy"
+            )
+        return None
+    if len(matches) != 1:
+        services = sorted(service for service, _, _ in matches)
+        raise AliasPolicyResolutionError(
+            f"model {requested_model!r} has ambiguous logical alias policies in {services}"
+        )
+    logical_service_id, alias, base = matches[0]
+    alias_id = str(alias.get("id") or "").strip()
+    base_id = str(alias.get("base_model_id") or alias_id).strip()
+    operation_contract = None
+    if "compaction_safety" in alias:
+        service_cfg = backends.get(logical_service_id) or {}
+        try:
+            operation_contract = contract_from_data(
+                alias["compaction_safety"],
+                service_id=logical_service_id,
+                service_controlled_deployment_evidence=service_cfg.get(
+                    "controlled_deployment_evidence"
+                ),
+                service_deployment_generation=service_cfg.get("deployment_generation"),
+                service_evidence_registry_revision=service_cfg.get(
+                    "evidence_registry_revision"
+                ),
+                base_model_id=base_id,
+            )
+        except ContractError as exc:
+            raise AliasPolicyResolutionError(
+                f"operation contract is unavailable: {exc}"
+            ) from exc
+    return ResolvedRequestTarget(
+        requested_model=requested_model,
+        logical_service_id=logical_service_id,
+        base_model_id=base_id,
+        base_transform_specs=tuple(transform_specs(base.get("transforms"))),
+        alias_overlay_specs=tuple(transform_specs(alias.get("policy_overlay"))),
+        operation_contract=operation_contract,
+    )
+
+
+def prepare_operation_candidate_body(
+    body: Mapping[str, Any],
+    service_id: str,
+    alias_id: str,
+    runtime_config: Mapping[str, Any],
+) -> bytes:
+    """Prepare the exact admitted bytes for an in-memory operation candidate.
+
+    All inputs are values supplied by the caller; this function has no runtime
+    configuration fallback and no side effects.  It is deliberately the same
+    policy pipeline used by proxy validation and the offline enrollment CLI.
+    """
+    target = resolve_request_target(
+        alias_id,
+        service_id=service_id,
+        required=True,
+        runtime_config=runtime_config,
+    )
+    if target is None or target.operation_contract is None:
+        raise CandidatePreparationError("operation request preparation rejected candidate")
+    prepared = copy.deepcopy(dict(body))
+    specs = per_backend_transform_specs(
+        service_id,
+        runtime_config=runtime_config,
+    )
+    specs.extend(target.base_transform_specs)
+    specs.extend(target.alias_overlay_specs)
+    if specs:
+        prepared = run_request_pipeline(specs, prepared, TransformContext(), REGISTRY)
+    if prepared.get("reasoning_effort") not in (None, "none"):
+        raise CandidatePreparationError("operation request preparation rejected candidate")
+    prepared["reasoning_effort"] = target.operation_contract.reasoning_effort_default
+    reasoning_error = ReasoningEffortTransform(
+        runtime_config.get("reasoning") if isinstance(runtime_config.get("reasoning"), dict) else None
+    ).apply(prepared)
+    if reasoning_error:
+        raise CandidatePreparationError("operation request preparation rejected candidate")
+    try:
+        _, admitted = prepare_admitted_body(prepared, target.operation_contract)
+    except AdmissionError as exc:
+        raise CandidatePreparationError("operation request preparation rejected candidate") from exc
+    return admitted
+
+
+def _normalize_model_id(model_name: str) -> str:
+    return (model_name or "").strip().lower()
