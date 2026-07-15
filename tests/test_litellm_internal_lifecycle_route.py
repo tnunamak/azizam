@@ -443,7 +443,7 @@ class InternalCurrentLoadedCancellationTests(unittest.IsolatedAsyncioTestCase):
         upstream = _BlockingInferenceResponse(task)
         client = _FakeExecutionClient()
 
-        async def fake_send(_execution_request, *, disconnect_watcher=None, on_signal=None):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return client, upstream
 
         patches = self._patches(fake_send)
@@ -472,7 +472,7 @@ class InternalCurrentLoadedCancellationTests(unittest.IsolatedAsyncioTestCase):
         upstream = _FakeExecutionResponse({"id": "chatcmpl_123", "choices": []})
         client = _FakeExecutionClient()
 
-        async def fake_send(_execution_request, *, disconnect_watcher=None, on_signal=None):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return client, upstream
 
         patches = self._patches(fake_send)

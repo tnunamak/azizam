@@ -701,8 +701,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
             # This test covers the no-activation contract, not the exact
             # preflight (see TestExactPreflight) — keep it scoped to that.
             proxy,
-            "_backend_supports_exact_preflight",
-            lambda backend: False,
+            "_exact_preflight_capability",
+            lambda backend: None,
         ), patch.object(
             proxy,
             "send_llm_execution_request",
@@ -760,8 +760,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
             lambda *_args, **_kwargs: None,
         ), patch.object(
             proxy,
-            "_backend_supports_exact_preflight",
-            lambda backend: False,
+            "_exact_preflight_capability",
+            lambda backend: None,
         ), patch.object(
             proxy,
             "send_llm_execution_request",
@@ -810,8 +810,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
             lambda *_args, **_kwargs: None,
         ), patch.object(
             proxy,
-            "_backend_supports_exact_preflight",
-            lambda backend: False,
+            "_exact_preflight_capability",
+            lambda backend: None,
         ), patch.object(
             proxy,
             "send_llm_execution_request",
@@ -868,8 +868,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
             forbidden_activation,
         ), patch.object(
             proxy,
-            "_backend_supports_exact_preflight",
-            lambda backend: False,
+            "_exact_preflight_capability",
+            lambda backend: None,
         ), patch.object(
             proxy,
             "send_llm_execution_request",

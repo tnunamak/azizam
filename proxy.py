@@ -161,6 +161,8 @@ from gateway.backends.exact_preflight import (
     PreflightUnavailable,
     check_context_fit,
     exact_input_token_count,
+    is_text_only_chat_body,
+    resolve_output_allowance,
 )
 from gateway.backends.llm_execution import (
     ClientDisconnectedBeforeHeaders,
@@ -628,10 +630,18 @@ SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 # legitimate work and tight enough that a hung backend frees the socket promptly.
 UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cfg.get("upstream_read_timeout", 600)))
 # The exact preflight's own apply-template/tokenize calls are no-inference
-# (see bee-exact-count-latency-0715.md: sub-50ms p95 at ~102k tokens) so a
-# fixed, tight local timeout is enough — no operator-configurable surface
-# needed for two loopback calls with a known cheap cost profile.
+# (see bee-exact-count-latency-0715.md: sub-50ms p95 at ~102k tokens), so a
+# fixed, tight budget is enough — no operator-configurable surface needed
+# for two loopback calls with a known cheap cost profile. Two DIFFERENT
+# numbers, deliberately: PREFLIGHT_READ_TIMEOUT is httpx's per-call
+# read-idle budget (passed as LlmExecutionRequest.read_timeout — connect/
+# write still use the transport's own 10s/60s defaults per call); the
+# preflight as a whole (both apply-template AND tokenize, sequentially) is
+# additionally wrapped in one PREFLIGHT_WALL_CLOCK_DEADLINE-second
+# asyncio.timeout scope, so the combined preflight cannot exceed 20s even
+# though the two per-call socket budgets alone could sum higher.
 PREFLIGHT_READ_TIMEOUT = 20.0
+PREFLIGHT_WALL_CLOCK_DEADLINE = 20.0
 
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
 # hardcoding a filename. Roles map to a backend type ("kobold", "tabby", or any enabled
@@ -1062,29 +1072,96 @@ _BACKEND_STATE_STRATEGIES: dict = {
     },
 }
 
-# Which `state_type`s expose the generic, no-inference `/apply-template` +
-# `/tokenize` pair the exact preflight (see gateway/backends/exact_preflight.py)
-# needs. This is a capability declaration keyed by the SAME data field an
-# operator already sets on a backend record above — not a new engine literal
-# or activation framework. A backend whose `state_type` is absent here is
-# simply unguarded by the preflight; existing behavior is unchanged for it.
-_STATE_TYPES_SUPPORTING_EXACT_PREFLIGHT: frozenset[str] = frozenset({"llama_cpp"})
+# A backend declares the exact-preflight capability with its OWN explicit,
+# operator-authored config block — not inferred from `state_type` (that
+# field only ever meant "how to probe the loaded-model id"; a backend can be
+# `state_type: llama_cpp` for that purpose while running a build/version/
+# reverse-proxy that lacks one of the two endpoints, or gates them behind
+# auth). This is the same shape as `auth_inject` above: opt-in data an
+# operator adds to their own backend record, never inferred from engine
+# name/family. Example (see proxy_config.yml's `kobold` record):
+#
+#   exact_preflight:
+#     apply_template_path: /apply-template
+#     tokenize_path: /tokenize
+#     output_limit_precedence: [n_predict, max_completion_tokens, max_tokens]
+#
+# Every field, INCLUDING output_limit_precedence, is REQUIRED and validated:
+# an incomplete or malformed block disables the capability rather than
+# silently filling in a default path or guessing a precedence order — see
+# `_exact_preflight_capability`. There is deliberately no "precedence
+# omitted" fallback: a service's real override semantics must be stated
+# explicitly, never inferred as "check these fields in some default order."
+_ALLOWED_OUTPUT_LIMIT_FIELDS = frozenset({"max_tokens", "max_completion_tokens", "n_predict"})
 
 
-def _backend_supports_exact_preflight(backend: str) -> bool:
-    """Whether `backend` declares the apply-template/tokenize preflight contract.
+@dataclass(frozen=True)
+class ExactPreflightCapability:
+    apply_template_path: str
+    tokenize_path: str
+    output_limit_precedence: tuple[str, ...]
 
-    Reads the same operator-authored `state_type` field used to select a
-    loaded-model probe strategy — an operator configuring their own backend
-    already sets this; nothing new to author. Unsupported backends are
-    honestly unguarded: this returns False and the existing execution path
-    proceeds exactly as it does today.
+
+def _valid_capability_path(value: Any) -> str | None:
+    """A declared endpoint path must be a non-empty absolute path; else invalid."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value.startswith("/") or value == "/":
+        return None
+    return value
+
+
+def _valid_output_limit_precedence(value: Any) -> tuple[str, ...] | None:
+    """A declared precedence is REQUIRED: must be a non-empty list of unique,
+    known output-limit field names, or the whole capability is invalid.
+    Omission, an empty list, and any other shape are all invalid — never
+    silently defaulted to a check order the operator did not state.
+    """
+    if not isinstance(value, (list, tuple)) or not value:
+        return None
+    fields = tuple(str(item) for item in value)
+    if len(set(fields)) != len(fields):
+        return None
+    if any(field not in _ALLOWED_OUTPUT_LIMIT_FIELDS for field in fields):
+        return None
+    return fields
+
+
+def _exact_preflight_capability(backend: str) -> ExactPreflightCapability | None:
+    """Return `backend`'s explicit, VALIDATED exact-preflight capability, or None.
+
+    Returns None (preflight skipped, existing behavior preserved) unless the
+    operator has added a complete, well-formed `exact_preflight` block to
+    that backend's own config record: both paths present as non-empty
+    absolute paths, AND `output_limit_precedence` present as a non-empty
+    list of unique known output-limit fields. ANY malformed, incomplete, or
+    omitted field disables the capability rather than overclaiming it with
+    an inferred default. There is no state_type/engine-name inference and
+    no blind endpoint probe used as policy.
     """
     backend_cfg = (config.get("backends") or {}).get(backend, {})
     if not isinstance(backend_cfg, Mapping):
-        return False
-    state_type = str(backend_cfg.get("state_type") or "openai_compatible")
-    return state_type in _STATE_TYPES_SUPPORTING_EXACT_PREFLIGHT
+        return None
+    declared = backend_cfg.get("exact_preflight")
+    if not isinstance(declared, Mapping):
+        return None
+
+    apply_template_path = _valid_capability_path(declared.get("apply_template_path"))
+    if apply_template_path is None:
+        return None
+    tokenize_path = _valid_capability_path(declared.get("tokenize_path"))
+    if tokenize_path is None:
+        return None
+    precedence = _valid_output_limit_precedence(declared.get("output_limit_precedence"))
+    if precedence is None:
+        return None
+
+    return ExactPreflightCapability(
+        apply_template_path=apply_template_path,
+        tokenize_path=tokenize_path,
+        output_limit_precedence=precedence,
+    )
 
 
 def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
@@ -19444,18 +19521,25 @@ class _OuterCancellationSpan:
         cancellation_registry().signal(self.request_id)
 
     async def dispatch(self, execution_request: "LlmExecutionRequest"):
-        """Send the upstream request, racing pre-header client disconnect.
+        """Send the upstream request, racing pre-header client disconnect/cancel.
 
-        Raises ``ClientDisconnectedBeforeHeaders`` if the client disconnects
-        before upstream response headers arrive. Signalling happens inside
-        ``send_llm_execution_request`` via ``on_signal`` — before it cancels
-        the in-flight send or closes the client — so any internal-hop reader
-        racing the same id wakes immediately rather than after teardown.
+        Raises ``ClientDisconnectedBeforeHeaders`` if the client disconnects,
+        or if a cross-hop cancel (``cancellation_registry().signal``) fires,
+        before upstream response headers arrive. Both ``disconnect_watcher``
+        (local ASGI disconnect) and ``cancellation_token`` (the registry
+        token — the load-bearing signal for a hop with no local downstream
+        client, e.g. behind LiteLLM) race the same pre-header wait, matching
+        ``read_body`` below, which already races both for the body-read
+        phase. Signalling happens inside ``send_llm_execution_request`` via
+        ``on_signal`` — before it cancels the in-flight send or closes the
+        client — so any internal-hop reader racing the same id wakes
+        immediately rather than after teardown.
         """
         try:
             return await send_llm_execution_request(
                 execution_request,
                 disconnect_watcher=self.watcher,
+                cancellation_token=self.token,
                 on_signal=self._signal,
             )
         except BaseException:
@@ -19526,6 +19610,8 @@ async def _exact_preflight_check(
     *,
     target: "CurrentLoadedLlmTarget",
     cancellation_span: "_OuterCancellationSpan",
+    auth_context: AuthContext,
+    request_headers: Mapping[str, str],
 ) -> Response | None:
     """Guard the current-loaded text chat path: never dispatch an uncounted request.
 
@@ -19533,38 +19619,45 @@ async def _exact_preflight_check(
     guarded request this function cannot positively prove fits:
 
     * ``context_length_exceeded`` if the exact input-token count plus the
-      requested output allowance exceeds the resolved context window (Pi maps
-      this to its provider-overflow compact-and-retry path).
+      canonical output allowance exceeds the resolved context window, or the
+      input alone is already at/past the context window (Pi maps this to its
+      provider-overflow compact-and-retry path).
     * a distinct ``preflight_unavailable`` (503) if the exact count itself
-      could not be obtained — a missing context window, a non-2xx/malformed
-      ``/apply-template`` or ``/tokenize`` response, or any other transport
-      failure. This is a hard fail-closed: forwarding an uncounted request
-      would silently drop the prevention guarantee this preflight exists for,
-      so an availability failure must never be forwarded as if it were a fit,
-      and must use a code Pi will not misclassify as context overflow.
+      could not be obtained — a missing context window, exceeding the
+      shared wall-clock deadline, a non-2xx/malformed ``/apply-template`` or
+      ``/tokenize`` response, or any other transport failure. This is a hard
+      fail-closed: forwarding an uncounted request would silently drop the
+      prevention guarantee this preflight exists for, so an availability
+      failure must never be forwarded as if it were a fit, and must use a
+      code Pi will not misclassify as context overflow.
 
     Returns ``None`` (proceed with the existing, unguarded execution path)
     for a request this preflight explicitly does not cover:
 
-    * multimodal content, where ``/apply-template`` is not proven exact (it
-      renders with a dummy files vector — see
-      ``gateway/backends/exact_preflight.py``); or
-    * a target backend that has not declared the apply-template/tokenize
-      contract via ``state_type`` (``_backend_supports_exact_preflight`` —
-      an ordinary, already-existing operator-authored config field, not a
-      backend-name branch). Such a backend is honestly unguarded: existing
-      behavior for it is unchanged.
+    * anything other than a positively-identified text-only chat body
+      (``is_text_only_chat_body`` — image/audio/unknown/malformed content
+      blocks all take this path unchanged: ``/apply-template`` is not proven
+      exact for non-text content, see ``gateway/backends/exact_preflight.py``); or
+    * a target backend with no explicit, validated ``exact_preflight``
+      capability declared on its own service config
+      (``_exact_preflight_capability`` — operator-authored data, never
+      inferred from ``state_type``/engine name). Such a backend is honestly
+      unguarded: existing behavior for it is unchanged.
 
     A client disconnect/cross-hop cancel observed during the preflight's own
-    HTTP calls propagates as ``ClientDisconnectedBeforeHeaders``, exactly as
-    it would from the real dispatch — never folded into either error
-    response above. Consumes no completion/generation slot on the backend
-    (``/apply-template`` and ``/tokenize`` are documented no-inference
-    endpoints).
+    HTTP calls (including while waiting for headers — both the local ASGI
+    disconnect watcher AND the cross-hop cancellation-registry token race
+    the header wait, matching the real dispatch) propagates as
+    ``ClientDisconnectedBeforeHeaders``, exactly as it would from the real
+    dispatch — never folded into either error response above. Consumes no
+    completion/generation slot on the backend (``/apply-template`` and
+    ``/tokenize`` are documented no-inference endpoints). Both calls share
+    one 20-second wall-clock deadline (not 20s per call).
     """
-    if has_vision_content(body.get("messages")):
+    if not is_text_only_chat_body(body):
         return None
-    if not _backend_supports_exact_preflight(target.backend):
+    capability = _exact_preflight_capability(target.backend)
+    if capability is None:
         return None
 
     def _unavailable(reason: str) -> Response:
@@ -19580,11 +19673,18 @@ async def _exact_preflight_check(
     if context_window is None:
         return _unavailable("no resolved context window for the active model")
 
+    output_allowance = resolve_output_allowance(
+        body, precedence=capability.output_limit_precedence
+    )
+
     async def post_json(path: str, json_body: Mapping[str, Any]) -> tuple[int, Any]:
+        headers = prepare_downstream_headers(request_headers, auth_context, target.backend, path)
+        headers.setdefault("content-type", "application/json")
+        headers.setdefault("accept", "application/json")
         request = LlmExecutionRequest(
             method="POST",
             url=f"{target.host}{path}",
-            headers={"content-type": "application/json", "accept": "application/json"},
+            headers=headers,
             body=json.dumps(json_body).encode(),
             read_timeout=PREFLIGHT_READ_TIMEOUT,
         )
@@ -19604,16 +19704,26 @@ async def _exact_preflight_check(
             return resp.status_code, None
 
     try:
-        count = await exact_input_token_count(body=body, post_json=post_json)
+        async with asyncio.timeout(PREFLIGHT_WALL_CLOCK_DEADLINE):
+            count = await exact_input_token_count(
+                body=body,
+                apply_template_path=capability.apply_template_path,
+                tokenize_path=capability.tokenize_path,
+                post_json=post_json,
+            )
     except PreflightCancelled:
         raise ClientDisconnectedBeforeHeaders() from None
+    except TimeoutError:
+        return _unavailable(
+            f"preflight exceeded its {PREFLIGHT_WALL_CLOCK_DEADLINE:.0f}s wall-clock deadline"
+        )
 
     if isinstance(count, PreflightUnavailable):
         return _unavailable(count.reason)
 
     overflow = check_context_fit(
         input_tokens=count.input_tokens,
-        output_allowance=effective_output_limit(body) or 0,
+        output_allowance=output_allowance.tokens,
         context_window=context_window,
     )
     if overflow is None:
@@ -19761,6 +19871,8 @@ async def _forward_current_loaded_openai_request(
                         body,
                         target=target,
                         cancellation_span=cancellation_span,
+                        auth_context=auth_context,
+                        request_headers=request.headers,
                     )
                 except ClientDisconnectedBeforeHeaders:
                     await cancellation_span.aclose()
