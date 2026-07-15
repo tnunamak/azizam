@@ -80,6 +80,12 @@ class TestStoreEnvOverrides(unittest.TestCase):
     def test_metrics_store_default(self) -> None:
         self._assert_default_unchanged("metrics_store", "AI_GATEWAY_METRICS_DB")
 
+    def test_admin_store_override(self) -> None:
+        self._assert_override("gateway.admin_store", "AI_GATEWAY_ADMIN_DB")
+
+    def test_admin_store_default(self) -> None:
+        self._assert_default_unchanged("gateway.admin_store", "AI_GATEWAY_ADMIN_DB")
+
     def test_responses_store_override(self) -> None:
         self._assert_override("responses_store", "AI_GATEWAY_RESPONSES_DB")
 

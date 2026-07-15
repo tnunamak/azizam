@@ -32,6 +32,7 @@ of scope here — this module is the durable substrate those routes call into.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import shutil
 import sqlite3
@@ -40,7 +41,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "admin.db"
+_default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
+DB_PATH = Path(os.environ["AI_GATEWAY_ADMIN_DB"]) if os.environ.get("AI_GATEWAY_ADMIN_DB") else _default_db
 
 SCHEMA_VERSION = 2
 
