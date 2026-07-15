@@ -156,6 +156,12 @@ from gateway.backends.request_shape import (
     request_body_byte_count,
     request_shape_fields,
 )
+from gateway.backends.exact_preflight import (
+    PreflightCancelled,
+    PreflightUnavailable,
+    check_context_fit,
+    exact_input_token_count,
+)
 from gateway.backends.llm_execution import (
     ClientDisconnectedBeforeHeaders,
     GATEWAY_REQUEST_ID_HEADER,
@@ -621,6 +627,11 @@ SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 # at >5 tok/s never approach this. 600s (10 min) of silence is well past any
 # legitimate work and tight enough that a hung backend frees the socket promptly.
 UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cfg.get("upstream_read_timeout", 600)))
+# The exact preflight's own apply-template/tokenize calls are no-inference
+# (see bee-exact-count-latency-0715.md: sub-50ms p95 at ~102k tokens) so a
+# fixed, tight local timeout is enough — no operator-configurable surface
+# needed for two loopback calls with a known cheap cost profile.
+PREFLIGHT_READ_TIMEOUT = 20.0
 
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
 # hardcoding a filename. Roles map to a backend type ("kobold", "tabby", or any enabled
@@ -1050,6 +1061,30 @@ _BACKEND_STATE_STRATEGIES: dict = {
         "mmproj_pgrep": False,
     },
 }
+
+# Which `state_type`s expose the generic, no-inference `/apply-template` +
+# `/tokenize` pair the exact preflight (see gateway/backends/exact_preflight.py)
+# needs. This is a capability declaration keyed by the SAME data field an
+# operator already sets on a backend record above — not a new engine literal
+# or activation framework. A backend whose `state_type` is absent here is
+# simply unguarded by the preflight; existing behavior is unchanged for it.
+_STATE_TYPES_SUPPORTING_EXACT_PREFLIGHT: frozenset[str] = frozenset({"llama_cpp"})
+
+
+def _backend_supports_exact_preflight(backend: str) -> bool:
+    """Whether `backend` declares the apply-template/tokenize preflight contract.
+
+    Reads the same operator-authored `state_type` field used to select a
+    loaded-model probe strategy — an operator configuring their own backend
+    already sets this; nothing new to author. Unsupported backends are
+    honestly unguarded: this returns False and the existing execution path
+    proceeds exactly as it does today.
+    """
+    backend_cfg = (config.get("backends") or {}).get(backend, {})
+    if not isinstance(backend_cfg, Mapping):
+        return False
+    state_type = str(backend_cfg.get("state_type") or "openai_compatible")
+    return state_type in _STATE_TYPES_SUPPORTING_EXACT_PREFLIGHT
 
 
 def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
@@ -19486,6 +19521,117 @@ class _OuterCancellationSpan:
         await self.aclose()
 
 
+async def _exact_preflight_check(
+    body: Mapping[str, Any],
+    *,
+    target: "CurrentLoadedLlmTarget",
+    cancellation_span: "_OuterCancellationSpan",
+) -> Response | None:
+    """Guard the current-loaded text chat path: never dispatch an uncounted request.
+
+    Returns an OpenAI-compatible error Response — never ``None`` — for any
+    guarded request this function cannot positively prove fits:
+
+    * ``context_length_exceeded`` if the exact input-token count plus the
+      requested output allowance exceeds the resolved context window (Pi maps
+      this to its provider-overflow compact-and-retry path).
+    * a distinct ``preflight_unavailable`` (503) if the exact count itself
+      could not be obtained — a missing context window, a non-2xx/malformed
+      ``/apply-template`` or ``/tokenize`` response, or any other transport
+      failure. This is a hard fail-closed: forwarding an uncounted request
+      would silently drop the prevention guarantee this preflight exists for,
+      so an availability failure must never be forwarded as if it were a fit,
+      and must use a code Pi will not misclassify as context overflow.
+
+    Returns ``None`` (proceed with the existing, unguarded execution path)
+    for a request this preflight explicitly does not cover:
+
+    * multimodal content, where ``/apply-template`` is not proven exact (it
+      renders with a dummy files vector — see
+      ``gateway/backends/exact_preflight.py``); or
+    * a target backend that has not declared the apply-template/tokenize
+      contract via ``state_type`` (``_backend_supports_exact_preflight`` —
+      an ordinary, already-existing operator-authored config field, not a
+      backend-name branch). Such a backend is honestly unguarded: existing
+      behavior for it is unchanged.
+
+    A client disconnect/cross-hop cancel observed during the preflight's own
+    HTTP calls propagates as ``ClientDisconnectedBeforeHeaders``, exactly as
+    it would from the real dispatch — never folded into either error
+    response above. Consumes no completion/generation slot on the backend
+    (``/apply-template`` and ``/tokenize`` are documented no-inference
+    endpoints).
+    """
+    if has_vision_content(body.get("messages")):
+        return None
+    if not _backend_supports_exact_preflight(target.backend):
+        return None
+
+    def _unavailable(reason: str) -> Response:
+        return openai_error_response(
+            f"Exact context-length preflight unavailable: {reason}. "
+            "Refusing to forward an uncounted request.",
+            status_code=503,
+            error_type="service_unavailable",
+            code="preflight_unavailable",
+        )
+
+    context_window = await _context_window_for_model_id(target.model)
+    if context_window is None:
+        return _unavailable("no resolved context window for the active model")
+
+    async def post_json(path: str, json_body: Mapping[str, Any]) -> tuple[int, Any]:
+        request = LlmExecutionRequest(
+            method="POST",
+            url=f"{target.host}{path}",
+            headers={"content-type": "application/json", "accept": "application/json"},
+            body=json.dumps(json_body).encode(),
+            read_timeout=PREFLIGHT_READ_TIMEOUT,
+        )
+        try:
+            client, resp = await cancellation_span.dispatch(request)
+        except ClientDisconnectedBeforeHeaders:
+            raise PreflightCancelled() from None
+        content = await cancellation_span.read_body(client, resp)
+        if content is None:
+            # read_body already closed client/resp on this path (see its
+            # docstring) — nothing left to tear down here.
+            raise PreflightCancelled()
+        await close_llm_response(client, resp)
+        try:
+            return resp.status_code, json.loads(content)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return resp.status_code, None
+
+    try:
+        count = await exact_input_token_count(body=body, post_json=post_json)
+    except PreflightCancelled:
+        raise ClientDisconnectedBeforeHeaders() from None
+
+    if isinstance(count, PreflightUnavailable):
+        return _unavailable(count.reason)
+
+    overflow = check_context_fit(
+        input_tokens=count.input_tokens,
+        output_allowance=effective_output_limit(body) or 0,
+        context_window=context_window,
+    )
+    if overflow is None:
+        return None
+
+    return openai_error_response(
+        (
+            f"This model's maximum context length is {overflow.context_window} tokens. "
+            f"This request requires {overflow.input_tokens} tokens for the messages and "
+            f"reserves {overflow.output_allowance} tokens for the response, which exceeds "
+            "the limit. Please reduce the length of the messages or the requested output."
+        ),
+        status_code=400,
+        error_type="invalid_request_error",
+        code="context_length_exceeded",
+    )
+
+
 async def _forward_current_loaded_openai_request(
     request: Request,
     *,
@@ -19609,6 +19755,21 @@ async def _forward_current_loaded_openai_request(
         )
 
         try:
+            if request_path == "/v1/chat/completions":
+                try:
+                    overflow_error = await _exact_preflight_check(
+                        body,
+                        target=target,
+                        cancellation_span=cancellation_span,
+                    )
+                except ClientDisconnectedBeforeHeaders:
+                    await cancellation_span.aclose()
+                    owner.report(status="cancelled", reason="cancelled")
+                    return Response(status_code=499)
+                if overflow_error is not None:
+                    await cancellation_span.aclose()
+                    owner.report(status="failed", reason="failed")
+                    return overflow_error
 
             try:
                 client, resp = await cancellation_span.dispatch(execution_request)
