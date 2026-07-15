@@ -115,6 +115,31 @@ def _call_reload_with_config(effective_cfg: dict[str, Any]) -> dict[str, Any]:
         return proxy.reload_runtime_config()
 
 
+def _snapshot_reload_derived_state() -> dict[str, Any]:
+    """Snapshot every module global reload_runtime_config() may reassign.
+
+    reload_runtime_config() atomically swaps `config` plus every name in
+    _derive_backend_constants()'s return (TABBY_HOST, LLM_BACKEND_HOSTS, ...).
+    Any test that calls it (directly or via _call_reload_with_config) must
+    restore all of these, not a hand-picked subset, or it leaks derived
+    globals (e.g. TTS_HOST, LLM_BACKEND_HOSTS) into unrelated tests.
+    """
+    snapshot = {"config": copy.deepcopy(dict(proxy.config))}
+    for name in proxy._derive_backend_constants(proxy.config):
+        value = getattr(proxy, name)
+        snapshot[name] = copy.deepcopy(value) if isinstance(value, dict) else value
+    return snapshot
+
+
+def _restore_reload_derived_state(snapshot: dict[str, Any]) -> None:
+    proxy.config.clear()
+    proxy.config.update(snapshot["config"])
+    for name, value in snapshot.items():
+        if name == "config":
+            continue
+        setattr(proxy, name, value)
+
+
 # ---------------------------------------------------------------------------
 # 1. GOLDEN PARITY
 # ---------------------------------------------------------------------------
@@ -123,27 +148,10 @@ class TestGoldenParity(unittest.TestCase):
     """Reload with same config is a no-op: every constant stays byte-identical."""
 
     def setUp(self):
-        # Snapshot all HOST globals before the test.
-        self._before = {
-            "TABBY_HOST": proxy.TABBY_HOST,
-            "KOBOLD_HOST": proxy.KOBOLD_HOST,
-            "TTS_HOST": proxy.TTS_HOST,
-            "STT_HOST": proxy.STT_HOST,
-            "EMBEDDINGS_HOST": proxy.EMBEDDINGS_HOST,
-            "COMFY_HOST": proxy.COMFY_HOST,
-            "LLM_BACKEND_HOSTS": dict(proxy.LLM_BACKEND_HOSTS),
-            "TTS_ENABLED": proxy.TTS_ENABLED,
-            "STT_ENABLED": proxy.STT_ENABLED,
-            "EMBEDDINGS_ENABLED": proxy.EMBEDDINGS_ENABLED,
-            "COMFY_ENABLED": proxy.COMFY_ENABLED,
-        }
+        self._before = _snapshot_reload_derived_state()
 
     def tearDown(self):
-        # Restore all HOST globals so subsequent tests see a clean state.
-        for name, value in self._before.items():
-            setattr(proxy, name, copy.deepcopy(value))
-        proxy.config.clear()
-        proxy.config.update(proxy._bootstrap_config)
+        _restore_reload_derived_state(self._before)
 
     def test_reload_same_config_is_noop(self):
         """Reloading with the current live config leaves every HOST constant identical.
@@ -193,18 +201,10 @@ class TestLiveAdd(unittest.TestCase):
     """Adding a new openai-compatible backend propagates to LLM_BACKEND_HOSTS."""
 
     def setUp(self):
-        self._orig_llm_hosts = dict(proxy.LLM_BACKEND_HOSTS)
-        self._orig_tabby = proxy.TABBY_HOST
-        self._orig_kobold = proxy.KOBOLD_HOST
-        self._orig_config = copy.deepcopy(dict(proxy.config))
+        self._before = _snapshot_reload_derived_state()
 
     def tearDown(self):
-        # Restore module globals.
-        proxy.LLM_BACKEND_HOSTS = self._orig_llm_hosts
-        proxy.TABBY_HOST = self._orig_tabby
-        proxy.KOBOLD_HOST = self._orig_kobold
-        proxy.config.clear()
-        proxy.config.update(self._orig_config)
+        _restore_reload_derived_state(self._before)
 
     def test_new_backend_appears_in_llm_backend_hosts(self):
         """After reload with new backend, LLM_BACKEND_HOSTS contains the new entry."""
@@ -267,13 +267,10 @@ class TestLiveRemoveDisable(unittest.TestCase):
     """Disabling or removing a backend removes it from live lookups after reload."""
 
     def setUp(self):
-        self._orig_llm_hosts = dict(proxy.LLM_BACKEND_HOSTS)
-        self._orig_config = copy.deepcopy(dict(proxy.config))
+        self._before = _snapshot_reload_derived_state()
 
     def tearDown(self):
-        proxy.LLM_BACKEND_HOSTS = self._orig_llm_hosts
-        proxy.config.clear()
-        proxy.config.update(self._orig_config)
+        _restore_reload_derived_state(self._before)
 
     def test_disabled_backend_removed_from_llm_backend_hosts(self):
         """Setting enabled=False removes a backend from LLM_BACKEND_HOSTS."""
@@ -330,17 +327,10 @@ class TestReadSiteLiveness(unittest.TestCase):
     """
 
     def setUp(self):
-        self._orig_llm_hosts = dict(proxy.LLM_BACKEND_HOSTS)
-        self._orig_tabby = proxy.TABBY_HOST
-        self._orig_kobold = proxy.KOBOLD_HOST
-        self._orig_config = copy.deepcopy(dict(proxy.config))
+        self._before = _snapshot_reload_derived_state()
 
     def tearDown(self):
-        proxy.LLM_BACKEND_HOSTS = self._orig_llm_hosts
-        proxy.TABBY_HOST = self._orig_tabby
-        proxy.KOBOLD_HOST = self._orig_kobold
-        proxy.config.clear()
-        proxy.config.update(self._orig_config)
+        _restore_reload_derived_state(self._before)
 
     def test_backend_for_host_uses_new_host_after_reload(self):
         """backend_for_host() resolves the NEW host URL after reload (not import-time value)."""
@@ -480,13 +470,10 @@ class TestAtomicity(unittest.TestCase):
     """
 
     def setUp(self):
-        self._orig_config = copy.deepcopy(dict(proxy.config))
-        self._orig_llm_hosts = dict(proxy.LLM_BACKEND_HOSTS)
+        self._before = _snapshot_reload_derived_state()
 
     def tearDown(self):
-        proxy.config.clear()
-        proxy.config.update(self._orig_config)
-        proxy.LLM_BACKEND_HOSTS = self._orig_llm_hosts
+        _restore_reload_derived_state(self._before)
 
     def test_config_not_empty_after_reload(self):
         """config is non-empty after a successful reload."""
@@ -549,17 +536,10 @@ class TestMutationHook(unittest.TestCase):
     """ADMIN_STORE.on_service_registry_changed is wired to reload_runtime_config."""
 
     def setUp(self):
-        self._orig_tabby = proxy.TABBY_HOST
-        self._orig_kobold = proxy.KOBOLD_HOST
-        self._orig_llm_hosts = dict(proxy.LLM_BACKEND_HOSTS)
-        self._orig_config = copy.deepcopy(dict(proxy.config))
+        self._before = _snapshot_reload_derived_state()
 
     def tearDown(self):
-        proxy.TABBY_HOST = self._orig_tabby
-        proxy.KOBOLD_HOST = self._orig_kobold
-        proxy.LLM_BACKEND_HOSTS = self._orig_llm_hosts
-        proxy.config.clear()
-        proxy.config.update(self._orig_config)
+        _restore_reload_derived_state(self._before)
 
     def test_hook_is_wired(self):
         """ADMIN_STORE.on_service_registry_changed is set to reload_runtime_config."""
