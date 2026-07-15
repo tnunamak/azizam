@@ -26,6 +26,23 @@ from gateway.admin_oidc import (  # noqa: E402
 from gateway.admin_runtime import create_admin_service_account_key  # noqa: E402
 
 
+def assert_authenticated_admin_dashboard(
+    test_case: unittest.TestCase, client: TestClient
+) -> None:
+    """Assert authenticated browser access for both optional UI mount modes."""
+    for web_ui_mounted in (True, False):
+        with test_case.subTest(web_ui_mounted=web_ui_mounted), patch.object(
+            proxy, "WEB_UI_MOUNTED", web_ui_mounted
+        ):
+            dashboard = client.get("/admin", follow_redirects=False)
+            if web_ui_mounted:
+                test_case.assertEqual(dashboard.status_code, 302, dashboard.text)
+                test_case.assertEqual(dashboard.headers["location"], "/ui/admin/")
+            else:
+                test_case.assertEqual(dashboard.status_code, 200, dashboard.text)
+                test_case.assertIn("AI Gateway Admin", dashboard.text)
+
+
 class ProxyAdminIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -271,9 +288,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(callback.status_code, 302, callback.text)
         self.assertIn(cfg.cookie.name, callback.headers.get("set-cookie", ""))
 
-        dashboard = self.client.get("/admin", follow_redirects=False)
-        self.assertEqual(dashboard.status_code, 302, dashboard.text)
-        self.assertEqual(dashboard.headers["location"], "/ui/admin/")
+        assert_authenticated_admin_dashboard(self, self.client)
         users = admin_store.list_users(path=self.db)
         self.assertEqual(len(users), 1)
         apps = admin_store.list_apps_for_user(users[0]["id"], path=self.db)
@@ -332,9 +347,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(callback.status_code, 302, callback.text)
 
-        dashboard = self.client.get("/admin", follow_redirects=False)
-        self.assertEqual(dashboard.status_code, 302, dashboard.text)
-        self.assertEqual(dashboard.headers["location"], "/ui/admin/")
+        assert_authenticated_admin_dashboard(self, self.client)
         user = admin_store.list_users(path=self.db)[0]
         roles = admin_store.list_admin_roles(
             subject_kind="user",
@@ -1656,9 +1669,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         console = self.client.get("/setup?operator=1")
         self.assertEqual(console.status_code, 200, console.text)
         self.assertIn("Mint a key from the console", console.text)
-        admin = self.client.get("/admin", follow_redirects=False)
-        self.assertEqual(admin.status_code, 302, admin.text)
-        self.assertEqual(admin.headers["location"], "/ui/admin/")
+        assert_authenticated_admin_dashboard(self, self.client)
 
     def test_admin_section_aliases_require_auth_and_redirect_signed_in_admin(self) -> None:
         unauth = self.client.get("/admin/services", follow_redirects=False)
