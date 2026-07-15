@@ -66,6 +66,13 @@ from gateway import (
     video_media_job_http,
     video_media_jobs,
 )
+from gateway.compaction_safety import (
+    AdmissionError as CompactionAdmissionError,
+    CompactionContract,
+    ContractError as CompactionContractError,
+    contract_from_data,
+    prepare_admitted_body,
+)
 from gateway.admin_api import (
     AdminAuthError,
     AdminContext,
@@ -3072,7 +3079,7 @@ async def _prepare_litellm_local_llm_request(
                     if field not in body:
                         body[field] = value
 
-    policy_error, body = _prepare_resolved_openai_request(
+    policy_error, body, _ = _prepare_resolved_openai_request(
         body,
         request_path=request_path,
         target=resolved_target,
@@ -16969,6 +16976,48 @@ def _current_loaded_model_entries() -> list[dict[str, Any]]:
     ]
 
 
+def _operation_contract_model_entries() -> list[dict[str, Any]]:
+    """Project valid, data-declared operation targets for generic discovery."""
+    entries: list[dict[str, Any]] = []
+    backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
+    for service_id, service_cfg in backends.items():
+        if not isinstance(service_cfg, Mapping):
+            continue
+        for record in _service_model_records(service_cfg):
+            raw_contract = record.get("compaction_safety")
+            if raw_contract is None:
+                continue
+            base_id = str(record.get("base_model_id") or record.get("id") or "").strip()
+            model_id = str(record.get("id") or "").strip()
+            try:
+                contract = contract_from_data(
+                    raw_contract,
+                    service_id=str(service_id),
+                    service_generation=service_cfg.get("deployment_generation"),
+                    base_model_id=base_id,
+                )
+            except CompactionContractError:
+                continue
+            if not model_id:
+                continue
+            entries.append({
+                "id": model_id,
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "gateway",
+                "capabilities": ["chat", "completion"],
+                "vivid_fish_operation": {
+                    "id": contract.id,
+                    "purpose": contract.purpose,
+                    "guarantee": "conservative rendered-token bound; not exact token counting",
+                    "max_final_body_utf8_bytes": contract.max_final_body_utf8_bytes,
+                    "reserved_output_tokens": contract.reserved_output_tokens,
+                },
+                "vivid_fish_current_loaded": contract.current_loaded_only,
+            })
+    return entries
+
+
 @app.get("/anthropic/v1/models")
 async def anthropic_models(request: Request):
     """Anthropic-compatible model list projected from the gateway catalog."""
@@ -17082,6 +17131,10 @@ async def list_models(request: Request):
         if current_entry["id"] not in existing_ids:
             data.insert(0, current_entry)
             existing_ids.add(current_entry["id"])
+    for entry in _operation_contract_model_entries():
+        if entry["id"] not in existing_ids:
+            data.insert(0, entry)
+            existing_ids.add(entry["id"])
     for entry in workflow_entries:
         if entry["id"] not in existing_ids:
             data.insert(0, entry)
@@ -18965,6 +19018,7 @@ class ResolvedRequestTarget:
     base_model_id: str
     base_transform_specs: tuple[str | dict[str, Any], ...]
     alias_overlay_specs: tuple[str | dict[str, Any], ...]
+    operation_contract: CompactionContract | None = None
 
 
 class AliasPolicyResolutionError(ValueError):
@@ -19085,12 +19139,25 @@ def _resolve_request_target(
     logical_service_id, alias, base = matches[0]
     alias_id = str(alias.get("id") or "").strip()
     base_id = str(alias.get("base_model_id") or alias_id).strip()
+    operation_contract = None
+    if "compaction_safety" in alias:
+        service_cfg = backends.get(logical_service_id) or {}
+        try:
+            operation_contract = contract_from_data(
+                alias["compaction_safety"],
+                service_id=logical_service_id,
+                service_generation=service_cfg.get("deployment_generation"),
+                base_model_id=base_id,
+            )
+        except CompactionContractError as exc:
+            raise AliasPolicyResolutionError(f"operation contract is unavailable: {exc}") from exc
     return ResolvedRequestTarget(
         requested_model=requested_model,
         logical_service_id=logical_service_id,
         base_model_id=base_id,
         base_transform_specs=tuple(_transform_specs(base.get("transforms"))),
         alias_overlay_specs=tuple(_transform_specs(alias.get("policy_overlay"))),
+        operation_contract=operation_contract,
     )
 
 
@@ -19100,11 +19167,11 @@ def _prepare_resolved_openai_request(
     request_path: str,
     target: ResolvedRequestTarget | None,
     execution_service_id: str = "",
-) -> tuple[Response | None, Mapping[str, Any]]:
+) -> tuple[Response | None, Mapping[str, Any], bytes | None]:
     """Apply the one request-policy pipeline, then generic reasoning handling."""
     prepared = copy.deepcopy(dict(body))
     if target is None:
-        return None, prepared
+        return None, prepared, None
     specs = _per_backend_transform_specs(execution_service_id)
     specs.extend(target.base_transform_specs)
     specs.extend(target.alias_overlay_specs)
@@ -19127,8 +19194,25 @@ def _prepare_resolved_openai_request(
                 }}),
                 status_code=400,
                 media_type="application/json",
-            ), prepared
-    return None, prepared
+            ), prepared, None
+    if target.operation_contract is not None:
+        try:
+            prepared, admitted_bytes = prepare_admitted_body(prepared, target.operation_contract)
+        except CompactionAdmissionError as exc:
+            return openai_error_response(
+                f"Operation contract rejected request: {exc}",
+                status_code=400,
+                error_type="invalid_request_error",
+                code="operation_contract_rejected",
+            ), prepared, None
+        return None, prepared, admitted_bytes
+    return None, prepared, None
+
+
+def _resolved_operation_requires_current_loaded(model: Any) -> bool:
+    """Whether a resolved data contract selects existing-current execution."""
+    target = _resolve_request_target(model, aliases_only=True)
+    return bool(target and target.operation_contract and target.operation_contract.current_loaded_only)
 
 
 def _litellm_gateway_metadata(
@@ -19564,7 +19648,8 @@ async def _forward_current_loaded_openai_request(
 
         body = copy.deepcopy(dict(body_for_backend))
         body.pop("_vf_requested_model", None)
-        policy_error, body = _prepare_resolved_openai_request(
+        body["model"] = target.model
+        policy_error, body, execution_body = _prepare_resolved_openai_request(
             body,
             request_path=request_path,
             target=logical_target,
@@ -19574,8 +19659,6 @@ async def _forward_current_loaded_openai_request(
         if policy_error is not None:
             owner.report(status="failed", reason="failed")
             return policy_error
-        body["model"] = target.model
-
         query = _forward_query_without_client_api_key(request.url.query)
         url = f"{target.host}{request_path}"
         if query:
@@ -19590,7 +19673,8 @@ async def _forward_current_loaded_openai_request(
         headers.setdefault("content-type", "application/json")
         headers.setdefault("accept", "application/json")
 
-        execution_body = json.dumps(body).encode()
+        if execution_body is None:
+            execution_body = json.dumps(body).encode()
         execution_request = LlmExecutionRequest(
             method=request.method,
             url=url,
@@ -20136,11 +20220,21 @@ async def _handle_openai_litellm_request(
         if policy_decision is not None and policy_decision.denied:
             return _policy_denied_response(policy_decision)
 
+    try:
+        operation_requires_current_loaded = _resolved_operation_requires_current_loaded(
+            parsed_body.get("model")
+        )
+    except AliasPolicyResolutionError as error:
+        return _alias_policy_configuration_response(error)
+
     if (
         not route_auth.delegated_to_litellm
         and
         request_path in {"/v1/chat/completions", "/v1/completions"}
-        and _is_use_loaded_model_alias(parsed_body.get("model"))
+        and (
+            _is_use_loaded_model_alias(parsed_body.get("model"))
+            or operation_requires_current_loaded
+        )
     ):
         return await _forward_current_loaded_openai_request(
             request,
