@@ -17000,6 +17000,8 @@ def _operation_contract_model_entries() -> list[dict[str, Any]]:
                     service_controlled_deployment_evidence=service_cfg.get(
                         "controlled_deployment_evidence"
                     ),
+                    service_deployment_generation=service_cfg.get("deployment_generation"),
+                    service_registry_generation=service_cfg.get("registry_generation"),
                     base_model_id=base_id,
                 )
             except CompactionContractError:
@@ -19156,6 +19158,8 @@ def _resolve_request_target(
                 service_controlled_deployment_evidence=service_cfg.get(
                     "controlled_deployment_evidence"
                 ),
+                service_deployment_generation=service_cfg.get("deployment_generation"),
+                service_registry_generation=service_cfg.get("registry_generation"),
                 base_model_id=base_id,
             )
         except CompactionContractError as exc:
@@ -19191,6 +19195,13 @@ def _prepare_resolved_openai_request(
             _TransformContext(),
             _TRANSFORM_REGISTRY,
         )
+    if target.operation_contract is not None:
+        if prepared.get("reasoning_effort") not in (None, "none"):
+            return openai_error_response(
+                "Operation contract requires reasoning none.", status_code=400,
+                error_type="invalid_request_error", code="operation_contract_rejected",
+            ), prepared, None
+        prepared["reasoning_effort"] = target.operation_contract.reasoning_effort_default
     if request_path == "/v1/chat/completions":
         reasoning_error = _ReasoningEffortTransform(config.get("reasoning") or {}).apply(prepared)
         if reasoning_error:
@@ -19869,6 +19880,18 @@ async def _forward_litellm_proxy_request(
             status_code=400,
             param="model",
             code="missing_required_parameter",
+        )
+
+    try:
+        logical_target = _resolve_request_target(model_name, aliases_only=True)
+    except AliasPolicyResolutionError as error:
+        return _alias_policy_configuration_response(error)
+    if logical_target is not None and logical_target.operation_contract is not None:
+        return openai_error_response(
+            "This declared operation target requires gateway-owned direct current-loaded egress.",
+            status_code=422,
+            error_type="invalid_request_error",
+            code="compaction_route_unsupported",
         )
 
     if _profile_target_activation(auth_context) == "existing_only":

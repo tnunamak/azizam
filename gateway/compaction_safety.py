@@ -21,6 +21,8 @@ from typing import Any, Mapping
 
 SCHEMA_VERSION = 1
 PURPOSE = "context_compaction"
+OUTPUT_CAP_FIELDS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
+FINAL_BODY_BASE_FIELDS = frozenset({"model", "messages", "max_tokens", "stream"})
 
 
 class ContractError(ValueError):
@@ -46,6 +48,7 @@ class CompactionContract:
     expires_at: str
     reasoning_effort_default: str
     current_loaded_only: bool
+    final_reasoning_control: Mapping[str, Any]
 
 
 def contract_from_data(
@@ -53,6 +56,8 @@ def contract_from_data(
     *,
     service_id: str,
     service_controlled_deployment_evidence: Any,
+    service_deployment_generation: Any,
+    service_registry_generation: Any,
     base_model_id: str,
     now: float | None = None,
 ) -> CompactionContract:
@@ -109,7 +114,7 @@ def contract_from_data(
     _required_strings(tokenizer, ("architecture", "tokenizer_model", "pretokenizer", "vocabulary_payload_sha256", "merge_payload_sha256", "byte_fallback_proof_digest"))
     _exact_int(tokenizer.get("vocabulary_entries"), "tokenizer_contract.vocabulary_entries", minimum=1)
     _exact_int(tokenizer.get("merge_entries"), "tokenizer_contract.merge_entries", minimum=0)
-    _required_strings(template, ("revision", "sha256", "render_bound_proof_digest"))
+    _required_strings(template, ("revision", "sha256", "render_bound_proof_digest", "mode"))
     if not isinstance(template.get("kwargs"), Mapping):
         raise ContractError("template_contract.kwargs must be an object")
     _required_strings(
@@ -122,7 +127,8 @@ def contract_from_data(
             "service_id",
             "deployment_generation",
             "evidence_revision",
-            "evidence_receipt_identity",
+            "evidence_receipt_identity", "evidence_receipt_expires_at",
+            "registry_generation", "model_artifact_sha256", "base_model_id",
             "unit_wrapper_contract_digest",
             "declared_runtime_revision",
         ),
@@ -133,7 +139,8 @@ def contract_from_data(
             "service_id",
             "deployment_generation",
             "evidence_revision",
-            "evidence_receipt_identity",
+            "evidence_receipt_identity", "evidence_receipt_expires_at",
+            "registry_generation", "model_artifact_sha256", "base_model_id",
             "unit_wrapper_contract_digest",
             "declared_runtime_revision",
         ),
@@ -146,26 +153,77 @@ def contract_from_data(
         deployment_reference.get("template_contract"),
         "controlled_deployment_reference.template_contract",
     )
-    _required_strings(evidence_template, ("revision", "sha256", "render_bound_proof_digest"))
-    _required_strings(reference_template, ("revision", "sha256", "render_bound_proof_digest"))
+    _required_strings(evidence_template, ("revision", "sha256", "render_bound_proof_digest", "mode"))
+    _required_strings(reference_template, ("revision", "sha256", "render_bound_proof_digest", "mode"))
     if service_evidence["service_id"] != service_id:
         raise ContractError("service controlled deployment evidence does not match service")
+    if (
+        not isinstance(service_deployment_generation, str)
+        or service_evidence["deployment_generation"] != service_deployment_generation
+    ):
+        raise ContractError("service controlled deployment evidence does not match deployment generation")
+    if (
+        not isinstance(service_registry_generation, str)
+        or service_evidence["registry_generation"] != service_registry_generation
+    ):
+        raise ContractError("service controlled deployment evidence does not match registry generation")
     for field in (
         "deployment_generation",
         "evidence_revision",
         "evidence_receipt_identity",
+        "evidence_receipt_expires_at",
+        "registry_generation",
+        "model_artifact_sha256",
+        "base_model_id",
         "unit_wrapper_contract_digest",
         "declared_runtime_revision",
     ):
         if deployment_reference[field] != service_evidence[field]:
             raise ContractError(f"controlled deployment {field} does not match service evidence")
-    for field in ("revision", "sha256", "render_bound_proof_digest"):
+    if service_evidence["base_model_id"] != declared_base:
+        raise ContractError("service controlled deployment evidence base_model_id does not match contract")
+    for field in ("revision", "sha256", "render_bound_proof_digest", "mode"):
         if reference_template[field] != service_evidence["template_contract"][field]:
             raise ContractError(f"controlled deployment template {field} does not match service evidence")
         if template[field] != service_evidence["template_contract"][field]:
             raise ContractError(f"template_contract {field} does not match service evidence")
+    if template["kwargs"] != evidence_template.get("kwargs") or template["kwargs"] != reference_template.get("kwargs"):
+        raise ContractError("template_contract kwargs do not match service evidence")
+    for field in ("tokenizer_contract", "request_preparation_contract", "numeric_bounds"):
+        reference_value = _mapping(deployment_reference.get(field), f"controlled_deployment_reference.{field}")
+        evidence_value = _mapping(service_evidence.get(field), f"service controlled_deployment_evidence.{field}")
+        if reference_value != evidence_value:
+            raise ContractError(f"controlled deployment {field} does not match service evidence")
+    reference_reasoning = _mapping(
+        deployment_reference.get("final_reasoning_control"),
+        "controlled_deployment_reference.final_reasoning_control",
+    )
+    evidence_reasoning = _mapping(
+        service_evidence.get("final_reasoning_control"),
+        "service controlled_deployment_evidence.final_reasoning_control",
+    )
+    if not evidence_reasoning or reference_reasoning != evidence_reasoning:
+        raise ContractError("final_reasoning_control does not match service evidence")
+    if tokenizer != service_evidence["tokenizer_contract"]:
+        raise ContractError("tokenizer_contract does not match service evidence")
+    expected_bounds = {
+        "context_window_tokens": context,
+        "reserved_output_tokens": output,
+        "reserved_headroom_tokens": headroom,
+        "max_tokens_per_final_utf8_byte": ratio,
+        "max_template_overhead_tokens": overhead,
+        "max_final_body_utf8_bytes": ceiling,
+    }
+    if service_evidence["numeric_bounds"] != expected_bounds:
+        raise ContractError("numeric_bounds do not match contract")
+    preparation = service_evidence["request_preparation_contract"]
+    _required_strings(preparation, ("wrapper_server_request_preparation_digest", "apply_template_path"))
+    if preparation.get("context_window_tokens") != context:
+        raise ContractError("request preparation context window does not match contract")
     if validation["evidence_revision"] != service_evidence["evidence_revision"]:
         raise ContractError("validation evidence_revision does not match service evidence")
+    if validation["expires_at"] != service_evidence["evidence_receipt_expires_at"]:
+        raise ContractError("validation expiry does not match service evidence")
     generation = service_evidence["deployment_generation"]
     current_time = time.time() if now is None else now
     validated_at = _timestamp(validation["validated_at"])
@@ -175,7 +233,7 @@ def contract_from_data(
         raise ContractError("contract is expired")
     return CompactionContract(contract_id, PURPOSE, declared_base, context, output, headroom,
                               ratio, overhead, ceiling, generation, expires_at,
-                              reasoning_default, True)
+                              reasoning_default, True, dict(evidence_reasoning))
 
 
 def prepare_admitted_body(
@@ -183,12 +241,15 @@ def prepare_admitted_body(
 ) -> tuple[dict[str, Any], bytes]:
     """Validate strict chat shape and return the exact compact UTF-8 egress bytes."""
     prepared = dict(body)
+    _normalize_output_cap(prepared, contract)
+    if set(prepared) - (FINAL_BODY_BASE_FIELDS | set(contract.final_reasoning_control)):
+        raise AdmissionError("context compaction final body contains unsupported controls")
+    if not isinstance(prepared.get("model"), str) or not prepared["model"]:
+        raise AdmissionError("context compaction requires a final model")
     _validate_chat_shape(prepared)
-    _validate_reasoning(prepared, contract)
-    _validate_output_limit(prepared, contract)
-    prepared.setdefault("reasoning_effort", contract.reasoning_effort_default)
-    if "max_tokens" not in prepared and "max_completion_tokens" not in prepared:
-        prepared["max_tokens"] = contract.reserved_output_tokens
+    if "stream" in prepared and prepared["stream"] is not False:
+        raise AdmissionError("context compaction permits stream only when false")
+    _validate_final_reasoning_control(prepared, contract)
     try:
         encoded = json.dumps(
             prepared, ensure_ascii=False, separators=(",", ":"), allow_nan=False
@@ -227,10 +288,11 @@ def _validate_chat_shape(body: Mapping[str, Any]) -> None:
             raise AdmissionError(f"context compaction forbids {forbidden}")
 
 
-def _validate_reasoning(body: Mapping[str, Any], contract: CompactionContract) -> None:
-    for field in ("reasoning_effort", "reasoning"):
-        if field in body and body[field] not in (None, contract.reasoning_effort_default):
-            raise AdmissionError("context compaction requires reasoning none")
+def _validate_final_reasoning_control(body: Mapping[str, Any], contract: CompactionContract) -> None:
+    """Require the operator-declared final reasoning-off representation exactly."""
+    actual = {field: body.get(field) for field in contract.final_reasoning_control}
+    if actual != contract.final_reasoning_control:
+        raise AdmissionError("context compaction final reasoning control does not match contract")
 
 
 def _validate_output_limit(body: Mapping[str, Any], contract: CompactionContract) -> None:
@@ -245,6 +307,25 @@ def _validate_output_limit(body: Mapping[str, Any], contract: CompactionContract
             or value > contract.reserved_output_tokens
         ):
             raise AdmissionError(f"{field} must be an integer between 0 and {contract.reserved_output_tokens}")
+
+
+def _normalize_output_cap(body: dict[str, Any], contract: CompactionContract) -> None:
+    """Collapse compatible OpenAI cap aliases before one final serialization."""
+    supplied = [(field, body[field]) for field in OUTPUT_CAP_FIELDS if field in body]
+    if not supplied:
+        body["max_tokens"] = contract.reserved_output_tokens
+        return
+    values = [value for _, value in supplied]
+    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in values):
+        raise AdmissionError("output cap aliases must be non-negative integers")
+    if len(set(values)) != 1:
+        raise AdmissionError("output cap aliases must be identical")
+    cap = values[0]
+    if cap > contract.reserved_output_tokens:
+        raise AdmissionError(f"output cap must be at most {contract.reserved_output_tokens}")
+    for field, _ in supplied:
+        body.pop(field)
+    body["max_tokens"] = cap
 
 
 def _mapping(value: Any, field: str) -> Mapping[str, Any]:

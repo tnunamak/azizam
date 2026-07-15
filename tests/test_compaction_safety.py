@@ -4,10 +4,13 @@ import ast
 import asyncio
 import json
 import subprocess
+from urllib.parse import urlsplit
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import httpx
+from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 from gateway import service_registry
@@ -16,19 +19,62 @@ from gateway.policy import AppProfile, TargetPolicy
 import proxy
 
 
+class _InProcessLoopbackClient:
+    """Run the Responses loopback through the same ASGI app without a port."""
+
+    def __init__(self, **_kwargs):
+        pass
+
+    async def post(self, url, *, headers, content):
+        inner = TestClient(proxy.app, client=("127.0.0.1", 48123))
+        response = inner.post(urlsplit(url).path, headers=headers, content=content)
+        return httpx.Response(response.status_code, content=response.content,
+                              headers={"content-type": response.headers.get("content-type", "application/json")},
+                              request=httpx.Request("POST", url))
+
+    async def aclose(self):
+        return None
+
+
 _DEFAULT_EVIDENCE = object()
 
 
 def _service_evidence(**overrides):
+    tokenizer = {
+        "architecture": "operator-declared", "tokenizer_model": "byte-bpe",
+        "pretokenizer": "operator-declared", "vocabulary_entries": 256,
+        "vocabulary_payload_sha256": "a", "merge_entries": 0,
+        "merge_payload_sha256": "b", "byte_fallback_proof_digest": "c",
+    }
+    template = {
+        "revision": "r", "sha256": "d", "kwargs": {"enable_thinking": False},
+        "render_bound_proof_digest": "e", "mode": "generation",
+    }
+    bounds = {
+        "context_window_tokens": 102400, "reserved_output_tokens": 8192,
+        "reserved_headroom_tokens": 16384, "max_tokens_per_final_utf8_byte": 1,
+        "max_template_overhead_tokens": 320, "max_final_body_utf8_bytes": 77504,
+    }
     evidence = {
         "service_id": "service",
         "deployment_generation": "g1",
+        "registry_generation": "registry-g1",
         "evidence_revision": "receipt",
         "evidence_receipt_identity": "receipt-identity",
+        "evidence_receipt_expires_at": "2030-01-01T00:00:00Z",
+        "model_artifact_sha256": "model-sha",
+        "base_model_id": "base",
         "unit_wrapper_contract_digest": "f",
         "declared_runtime_revision": "g",
-        "template_contract": {
-            "revision": "r", "sha256": "d", "render_bound_proof_digest": "e",
+        "template_contract": template,
+        "tokenizer_contract": tokenizer,
+        "request_preparation_contract": {
+            "wrapper_server_request_preparation_digest": "prep-sha",
+            "apply_template_path": "declared-path", "context_window_tokens": 102400,
+        },
+        "numeric_bounds": bounds,
+        "final_reasoning_control": {
+            "thinking_budget_tokens": 0, "chat_template_kwargs": {"enable_thinking": False},
         },
     }
     evidence.update(overrides)
@@ -54,20 +100,26 @@ def _record(**overrides):
         "reserved_output_tokens": 8192,
         "reserved_headroom_tokens": 16384,
         "max_tokens_per_final_utf8_byte": 1,
-        "max_template_overhead_tokens": 128,
-        "max_final_body_utf8_bytes": 77696,
+        "max_template_overhead_tokens": 320,
+        "max_final_body_utf8_bytes": 77504,
         "tokenizer_contract": {
             "architecture": "operator-declared", "tokenizer_model": "byte-bpe",
             "pretokenizer": "operator-declared", "vocabulary_entries": 256,
             "vocabulary_payload_sha256": "a", "merge_entries": 0,
             "merge_payload_sha256": "b", "byte_fallback_proof_digest": "c",
         },
-        "template_contract": {"revision": "r", "sha256": "d", "kwargs": {}, "render_bound_proof_digest": "e"},
+        "template_contract": {"revision": "r", "sha256": "d", "kwargs": {"enable_thinking": False}, "render_bound_proof_digest": "e", "mode": "generation"},
         "controlled_deployment_reference": {
             "service_id": "service", "deployment_generation": "g1",
             "evidence_revision": "receipt", "evidence_receipt_identity": "receipt-identity",
+            "evidence_receipt_expires_at": "2030-01-01T00:00:00Z",
+            "registry_generation": "registry-g1", "model_artifact_sha256": "model-sha", "base_model_id": "base",
             "unit_wrapper_contract_digest": "f", "declared_runtime_revision": "g",
-            "template_contract": {"revision": "r", "sha256": "d", "render_bound_proof_digest": "e"},
+            "template_contract": {"revision": "r", "sha256": "d", "kwargs": {"enable_thinking": False}, "render_bound_proof_digest": "e", "mode": "generation"},
+            "tokenizer_contract": _service_evidence()["tokenizer_contract"],
+            "request_preparation_contract": _service_evidence()["request_preparation_contract"],
+            "numeric_bounds": _service_evidence()["numeric_bounds"],
+            "final_reasoning_control": _service_evidence()["final_reasoning_control"],
         },
         "validation": {"evidence_revision": "receipt", "validated_at": "2026-07-14T00:00:00Z", "expires_at": "2030-01-01T00:00:00Z", "validator_version": "v1"},
     }
@@ -82,13 +134,15 @@ def _contract(record=None, evidence=_DEFAULT_EVIDENCE):
         service_controlled_deployment_evidence=(
             _service_evidence() if evidence is _DEFAULT_EVIDENCE else evidence
         ),
+        service_deployment_generation="g1",
+        service_registry_generation="registry-g1",
         base_model_id="base",
         now=1_800_000_000,
     )
 
 
 def _body(**overrides):
-    body = {"model": "physical-model", "messages": [{"role": "system", "content": "summarize"}, {"role": "user", "content": "history"}]}
+    body = {"model": "physical-model", "messages": [{"role": "system", "content": "summarize"}, {"role": "user", "content": "history"}], "thinking_budget_tokens": 0, "chat_template_kwargs": {"enable_thinking": False}}
     body.update(overrides)
     return body
 
@@ -110,13 +164,27 @@ def test_record_recomputes_ceiling_and_rejects_lifecycle_mismatches():
     "path, changed_value",
     [
         (("deployment_generation",), "other-generation"),
+        (("registry_generation",), "other-registry-generation"),
         (("evidence_revision",), "other-evidence"),
         (("evidence_receipt_identity",), "other-receipt"),
+        (("evidence_receipt_expires_at",), "2031-01-01T00:00:00Z"),
+        (("model_artifact_sha256",), "other-model-artifact"),
         (("declared_runtime_revision",), "other-runtime"),
         (("unit_wrapper_contract_digest",), "other-wrapper"),
         (("template_contract", "revision"), "other-template-revision"),
         (("template_contract", "sha256"), "other-template-digest"),
         (("template_contract", "render_bound_proof_digest"), "other-template-proof"),
+        (("template_contract", "mode"), "other-template-mode"),
+        (("tokenizer_contract", "architecture"), "other-architecture"),
+        (("tokenizer_contract", "vocabulary_payload_sha256"), "other-vocab"),
+        (("tokenizer_contract", "merge_payload_sha256"), "other-merge"),
+        (("tokenizer_contract", "pretokenizer"), "other-pretokenizer"),
+        (("tokenizer_contract", "byte_fallback_proof_digest"), "other-byte-proof"),
+        (("request_preparation_contract", "wrapper_server_request_preparation_digest"), "other-wrapper-path"),
+        (("request_preparation_contract", "apply_template_path"), "other-apply-template"),
+        (("request_preparation_contract", "context_window_tokens"), 999),
+        (("numeric_bounds", "reserved_output_tokens"), 999),
+        (("final_reasoning_control", "thinking_budget_tokens"), 1),
     ],
 )
 def test_operation_reference_must_match_separate_service_controlled_deployment_evidence(
@@ -144,6 +212,8 @@ def test_service_controlled_deployment_evidence_is_required_and_matching_succeed
 def _registry_with_operation(evidence=_DEFAULT_EVIDENCE, record=None):
     config = {
         "model_policy_schema_version": 1,
+        "deployment_generation": "g1",
+        "registry_generation": "registry-g1",
         "models": [
             {"id": "base"},
             {"id": "operator-target", "base_model_id": "base", "compaction_safety": record or _record()},
@@ -183,6 +253,45 @@ def test_explicit_output_caps_are_preserved(cap):
     assert json.loads(encoded)["max_tokens"] == cap
 
 
+@pytest.mark.parametrize("field", ["max_tokens", "max_completion_tokens", "max_output_tokens"])
+def test_output_cap_aliases_normalize_to_one_canonical_final_field(field):
+    prepared, encoded = prepare_admitted_body(_body(**{field: 19}), _contract())
+    assert prepared["max_tokens"] == 19
+    assert set(prepared).issuperset({"model", "messages", "max_tokens", "thinking_budget_tokens"})
+    assert all(alias not in prepared for alias in ("max_completion_tokens", "max_output_tokens"))
+    assert json.loads(encoded) == prepared
+
+
+def test_output_cap_is_normalized_after_generic_request_transforms():
+    target = proxy.ResolvedRequestTarget(
+        "operator-target", "service", "base",
+        ({"kind": "default-params", "set": {"max_output_tokens": 19}},), (),
+        operation_contract=_contract(),
+    )
+    error, prepared, encoded = proxy._prepare_resolved_openai_request(
+        _body(model="physical-model"), request_path="/v1/chat/completions",
+        target=target, execution_service_id="",
+    )
+    assert error is None
+    assert prepared["max_tokens"] == 19
+    assert "max_output_tokens" not in prepared
+    assert prepared["thinking_budget_tokens"] == 0
+    assert prepared["chat_template_kwargs"] == {"enable_thinking": False}
+    assert json.loads(encoded) == prepared
+
+
+@pytest.mark.parametrize("change", [
+    {"max_tokens": 0, "max_output_tokens": 19},
+    {"max_tokens": True}, {"max_output_tokens": -1}, {"max_completion_tokens": 8193},
+    {"chat_template_kwargs": {}}, {"tools": []}, {"response_format": {"type": "json_object"}},
+    {"modalities": ["text"]}, {"stream": True},
+    {"messages": [{"role": "system", "content": "x", "name": "extra"}, {"role": "user", "content": "y"}]},
+])
+def test_final_body_schema_and_output_cap_admission_fail_closed(change):
+    with pytest.raises(AdmissionError):
+        prepare_admitted_body(_body(**change), _contract())
+
+
 @pytest.mark.parametrize("change", [
     {"reasoning_effort": "high"},
     {"max_tokens": 8193},
@@ -199,7 +308,7 @@ def test_boundary_and_same_immutable_bytes_are_admitted_once():
     contract = _contract()
     body = _body()
     body["messages"][1]["content"] = ""
-    fixed = len(json.dumps(body | {"reasoning_effort": "none", "max_tokens": 8192}, ensure_ascii=False, separators=(",", ":")).encode())
+    fixed = len(json.dumps(body | {"max_tokens": 8192}, ensure_ascii=False, separators=(",", ":")).encode())
     body["messages"][1]["content"] = "x" * (contract.max_final_body_utf8_bytes - fixed)
     _, admitted = prepare_admitted_body(body, contract)
     assert len(admitted) == contract.max_final_body_utf8_bytes
@@ -210,7 +319,7 @@ def test_boundary_and_same_immutable_bytes_are_admitted_once():
 def test_unicode_and_escaping_are_measured_as_final_utf8_not_prompt_text():
     body = _body(messages=[{"role": "system", "content": "\u0000\\\""}, {"role": "user", "content": "👩🏽‍💻 العربية e\u0301"}])
     _, encoded = prepare_admitted_body(body, _contract())
-    assert json.loads(encoded) == body | {"reasoning_effort": "none", "max_tokens": 8192}
+    assert json.loads(encoded) == body | {"max_tokens": 8192}
 
 
 def test_resolved_target_selects_data_contract_without_alias_name_policy():
@@ -218,6 +327,7 @@ def test_resolved_target_selects_data_contract_without_alias_name_policy():
         "backends": {
             "service": {
                 "deployment_generation": "g1",
+                "registry_generation": "registry-g1",
                 "controlled_deployment_evidence": _service_evidence(),
                 "models": [
                     {"id": "base"},
@@ -246,6 +356,7 @@ def test_discovery_exposes_only_valid_authorized_operation_targets():
         "backends": {
             "service": {
                 "deployment_generation": "g1",
+                "registry_generation": "registry-g1",
                 "controlled_deployment_evidence": _service_evidence(),
                 "models": [
                     {"id": "base"},
@@ -263,7 +374,7 @@ def test_discovery_exposes_only_valid_authorized_operation_targets():
         "purpose": "context_compaction",
         "guarantee": "conservative rendered-token bound; not exact token counting",
         "deployment_binding": "controlled registry generation; not runtime attestation",
-        "max_final_body_utf8_bytes": 77696,
+        "max_final_body_utf8_bytes": 77504,
         "reserved_output_tokens": 8192,
     }
 
@@ -294,6 +405,78 @@ def test_discovery_omits_operation_when_service_controlled_deployment_evidence_i
     }
     with patch.object(proxy, "config", config):
         assert proxy._operation_contract_model_entries() == []
+
+
+def test_named_litellm_refuses_operation_before_receipt_or_activation():
+    request = SimpleNamespace(method="POST")
+    auth = proxy.NO_AUTH_CONTEXT
+    runtime = SimpleNamespace(enabled=True)
+    config = {
+        "backends": {
+            "service": {
+                "deployment_generation": "g1", "registry_generation": "registry-g1",
+                "controlled_deployment_evidence": _service_evidence(),
+                "models": [
+                    {"id": "base"},
+                    {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()},
+                ],
+            }
+        }
+    }
+    with patch.object(proxy, "config", config), patch.object(
+        proxy, "_start_litellm_route_receipt", side_effect=AssertionError("receipt created")
+    ):
+        response = asyncio.run(proxy._forward_litellm_proxy_request(
+            request, request_path="/v1/chat/completions", auth_context=auth,
+            body_json=_body(model="operator-target"), runtime_config=runtime,
+        ))
+    assert response.status_code == 422
+
+
+def test_responses_loopback_routes_logical_target_to_one_owned_admission():
+    admissions: list[bytes] = []
+    config = {"backends": {"service": {
+        "deployment_generation": "g1", "registry_generation": "registry-g1",
+        "controlled_deployment_evidence": _service_evidence(),
+        "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
+    }}}
+
+    async def current_forward(_request, **kwargs):
+        target = proxy._resolve_request_target("operator-target", required=True, aliases_only=True)
+        error, _prepared, encoded = proxy._prepare_resolved_openai_request(
+            kwargs["body_json"] | {"model": "physical-model"},
+            request_path="/v1/chat/completions", target=target, execution_service_id="",
+        )
+        assert error is None and encoded is not None
+        admissions.append(encoded)
+        return proxy.Response(content=json.dumps({"id": "chat", "object": "chat.completion", "model": "physical-model", "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]}), media_type="application/json")
+
+    with patch.object(proxy, "config", config), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        proxy.httpx, "AsyncClient", _InProcessLoopbackClient
+    ), patch.object(proxy, "_forward_current_loaded_openai_request", current_forward):
+        response = TestClient(proxy.app).post("/v1/responses", json={
+            "model": "operator-target", "instructions": "summarize", "input": "history", "store": False,
+        })
+    assert response.status_code == 200, response.text
+    assert len(admissions) == 1
+
+
+def test_runtime_reload_drops_stale_service_evidence_before_resolution():
+    previous = dict(proxy.config)
+    stale = {"backends": {"service": {
+        "deployment_generation": "g1", "registry_generation": "registry-g1",
+        "controlled_deployment_evidence": _service_evidence(evidence_revision="stale"),
+        "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
+    }}}
+    try:
+        with patch.object(proxy, "_load_effective_runtime_config", return_value=stale):
+            proxy.reload_runtime_config()
+        assert proxy._operation_contract_model_entries() == []
+        with pytest.raises(proxy.AliasPolicyResolutionError):
+            proxy._resolve_request_target("operator-target", required=True, aliases_only=True)
+    finally:
+        proxy.config.clear()
+        proxy.config.update(previous)
 
 
 def test_operation_discovery_uses_the_shared_profile_model_allowlist():
@@ -402,7 +585,7 @@ def test_current_loaded_transport_receives_the_admitted_bytes_without_reserializ
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
 
-    config = {"backends": {"service": {"model_policy_schema_version": 1, "deployment_generation": "g1", "controlled_deployment_evidence": _service_evidence(), "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}]}}}
+    config = {"backends": {"service": {"model_policy_schema_version": 1, "deployment_generation": "g1", "registry_generation": "registry-g1", "controlled_deployment_evidence": _service_evidence(), "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}]}}}
     request = proxy.Request({"type": "http", "method": "POST", "path": "/v1/chat/completions", "headers": [], "query_string": b"", "scheme": "http", "server": ("test", 80)}, receive)
     with patch.object(proxy, "config", config), patch.object(proxy, "_current_loaded_llm_target", current_target), patch.object(proxy, "_OuterCancellationSpan", Span), patch.object(proxy, "ReceiptLifecycleOwner", Owner), patch.object(proxy, "_profile_for_auth_context", lambda _auth: proxy.DEFAULT_PROFILE), patch.object(proxy, "prepare_downstream_headers", lambda *_args: {}), patch.object(proxy, "close_llm_response", close), patch.object(proxy, "prepare_admitted_body", admit):
         response = asyncio.run(proxy._forward_current_loaded_openai_request(request, request_path="/v1/chat/completions", auth_context=SimpleNamespace(identity=None), body_json=_body(model="operator-target")))
