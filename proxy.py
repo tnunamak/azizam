@@ -19285,20 +19285,6 @@ def _normalize_litellm_error_envelope(
         error["param"] = None
 
 
-def _begin_route_receipt(receipt: RouteReceipt, *, route: str) -> None:
-    try:
-        receipt_store.begin(receipt)
-    except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Could not begin {route} route receipt: {e}", flush=True)
-
-
-def _finalize_route_receipt(receipt: RouteReceipt, *, route: str) -> None:
-    try:
-        receipt_store.finalize(receipt)
-    except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Could not finalize {route} route receipt: {e}", flush=True)
-
-
 def _record_internal_hop_receipt(
     *,
     request_path: str,
@@ -19431,11 +19417,15 @@ class _OuterCancellationSpan:
         the in-flight send or closes the client — so any internal-hop reader
         racing the same id wakes immediately rather than after teardown.
         """
-        return await send_llm_execution_request(
-            execution_request,
-            disconnect_watcher=self.watcher,
-            on_signal=self._signal,
-        )
+        try:
+            return await send_llm_execution_request(
+                execution_request,
+                disconnect_watcher=self.watcher,
+                on_signal=self._signal,
+            )
+        except BaseException:
+            await self.aclose()
+            raise
 
     async def read_body(self, client: httpx.AsyncClient, response: httpx.Response) -> bytes | None:
         """Read a non-stream response body, signalling on disconnect/cancel.
@@ -19446,13 +19436,17 @@ class _OuterCancellationSpan:
         response/client. No separate poll, no pre-wait snapshot for callers
         to go stale against.
         """
-        return await read_llm_response_body(
-            client,
-            response,
-            disconnect_watcher=self.watcher,
-            cancellation_token=self.token,
-            on_signal=self._signal,
-        )
+        try:
+            return await read_llm_response_body(
+                client,
+                response,
+                disconnect_watcher=self.watcher,
+                cancellation_token=self.token,
+                on_signal=self._signal,
+            )
+        except BaseException:
+            await self.aclose()
+            raise
 
     async def stop_watcher_for_streaming_handoff(self) -> None:
         """Retire this span's watcher before Starlette owns ASGI receive.
@@ -19869,41 +19863,63 @@ async def _forward_litellm_proxy_request(
         read_timeout=read_timeout,
     )
 
-    # The accepted outer action is durable before this route opens an upstream
-    # connection or starts the disconnect watcher that owns that wait.
-    _begin_route_receipt(receipt, route="LiteLLM")
+    terminal_body = body_for_litellm
 
-    if activate_local_target:
-        activation_error = await _activate_prepared_litellm_local_target(
-            auth_context,
-            requested_model=model_name,
-            enforce_gateway_policy=not bool(delegated_litellm_api_key),
+    def _record_litellm_terminal(_receipt: RouteReceipt, terminal_reason: str) -> None:
+        record_request_shape_stage(
+            receipt.metadata,
+            "terminal",
+            terminal_body,
+            extra={"terminal_reason": terminal_reason},
         )
-        if activation_error is not None:
-            receipt.metadata["terminal_reason"] = "failed"
-            record_request_shape_stage(
-                receipt.metadata, "terminal", body_for_litellm,
-                extra={"terminal_reason": "failed"},
+
+    # The owner admits after auth, policy, and pure request preparation, but
+    # before activation, connection, or the disconnect watcher can await.
+    owner = ReceiptLifecycleOwner(receipt, on_terminal=_record_litellm_terminal)
+    async with owner:
+        if activate_local_target:
+            activation_error = await _activate_prepared_litellm_local_target(
+                auth_context,
+                requested_model=model_name,
+                enforce_gateway_policy=not bool(delegated_litellm_api_key),
             )
-            receipt.finish("failed")
-            _finalize_route_receipt(receipt, route="LiteLLM")
-            return activation_error
+            if activation_error is not None:
+                owner.report(status="failed", reason="failed")
+                return activation_error
 
-    cancellation_span = _OuterCancellationSpan(receipt.request_id, receive=request.receive)
+        cancellation_span = _OuterCancellationSpan(receipt.request_id, receive=request.receive)
 
-    try:
         try:
             client, resp = await cancellation_span.dispatch(execution_request)
         except ClientDisconnectedBeforeHeaders:
             await cancellation_span.aclose()
-            receipt.metadata["terminal_reason"] = "cancelled"
-            record_request_shape_stage(
-                receipt.metadata, "terminal", body_for_litellm,
-                extra={"terminal_reason": "cancelled"},
-            )
-            receipt.finish("cancelled")
-            _finalize_route_receipt(receipt, route="LiteLLM")
+            owner.report(status="cancelled", reason="cancelled")
             return Response(status_code=499)
+        except httpx.TimeoutException:
+            await cancellation_span.aclose()
+            receipt.add_warning("LiteLLM execution timed out")
+            owner.report(status="failed", reason="idle_timeout")
+            return Response(
+                content=json.dumps({"detail": "Request timeout"}),
+                status_code=504,
+                media_type="application/json",
+            )
+        except httpx.ConnectError:
+            await cancellation_span.aclose()
+            receipt.add_warning("LiteLLM execution backend is unavailable")
+            owner.report(status="failed", reason="connect_error")
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": "LiteLLM execution backend is unavailable.",
+                        "type": "service_unavailable",
+                        "code": "backend_unavailable",
+                    }
+                }),
+                status_code=503,
+                media_type="application/json",
+                headers={"Retry-After": "10"},
+            )
         content_type = resp.headers.get("content-type", "") or "application/json"
         excluded = ("content-length", "transfer-encoding", "content-type")
         response_headers = {
@@ -19936,7 +19952,6 @@ async def _forward_litellm_proxy_request(
             await cancellation_span.stop_watcher_for_streaming_handoff()
 
             async def stream_response():
-                stream_error: BaseException | None = None
                 try:
                     async for chunk in _tc_detector.wrap(
                         iter_llm_response_bytes(
@@ -19952,37 +19967,12 @@ async def _forward_litellm_proxy_request(
                 except asyncio.CancelledError:
                     cancellation_span.mark_stream_cancelled()
                     raise
-                except BaseException as exc:
-                    stream_error = exc
-                    raise
+                else:
+                    owner.report(
+                        status="succeeded" if 200 <= resp.status_code < 400 else "failed",
+                        reason="completed" if 200 <= resp.status_code < 400 else "failed",
+                    )
                 finally:
-                    # Terminal outcome is read from the token only after the
-                    # stream has actually unwound — a cancellation observed
-                    # here always wins over the upstream status code, so
-                    # "cancelled" and "succeeded" can never both be recorded
-                    # for the same request. A generic stream failure (no
-                    # cancellation, but the read itself raised) is likewise
-                    # never reported as a completion just because headers
-                    # already carried a 2xx status.
-                    was_cancelled = cancellation_span.token.cancelled
-                    terminal_reason = (
-                        "cancelled" if was_cancelled
-                        else "read_error" if stream_error is not None
-                        else "completed" if 200 <= resp.status_code < 400
-                        else "failed"
-                    )
-                    receipt.metadata["terminal_reason"] = terminal_reason
-                    record_request_shape_stage(
-                        receipt.metadata, "terminal", body_for_litellm,
-                        extra={"terminal_reason": terminal_reason},
-                    )
-                    receipt.finish(
-                        "cancelled" if was_cancelled
-                        else "failed" if stream_error is not None
-                        else "succeeded" if 200 <= resp.status_code < 400
-                        else "failed"
-                    )
-                    _finalize_route_receipt(receipt, route="LiteLLM")
                     # Emit toolcall advisory via log at stream close.
                     _tc_advisory = _tc_detector.advisory()
                     if _tc_advisory:
@@ -19998,13 +19988,39 @@ async def _forward_litellm_proxy_request(
                     await cancellation_span.aclose()
 
             return StreamingResponse(
-                stream_response(),
+                owner.handoff_stream(stream_response()),
                 status_code=resp.status_code,
                 headers=response_headers,
                 media_type=content_type,
             )
 
-        content = await cancellation_span.read_body(client, resp)
+        try:
+            content = await cancellation_span.read_body(client, resp)
+        except httpx.TimeoutException:
+            await cancellation_span.aclose()
+            receipt.add_warning("LiteLLM execution timed out")
+            owner.report(status="failed", reason="idle_timeout")
+            return Response(
+                content=json.dumps({"detail": "Request timeout"}),
+                status_code=504,
+                media_type="application/json",
+            )
+        except httpx.ConnectError:
+            await cancellation_span.aclose()
+            receipt.add_warning("LiteLLM execution backend is unavailable")
+            owner.report(status="failed", reason="connect_error")
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": "LiteLLM execution backend is unavailable.",
+                        "type": "service_unavailable",
+                        "code": "backend_unavailable",
+                    }
+                }),
+                status_code=503,
+                media_type="application/json",
+                headers={"Retry-After": "10"},
+            )
         # Terminal outcome read after the wait completes — the token is the
         # single source of truth here too, so a cancellation observed during
         # the read is never overwritten by a later "succeeded" write.
@@ -20012,13 +20028,7 @@ async def _forward_litellm_proxy_request(
         await cancellation_span.aclose()
         if content is None:
             terminal_reason = "cancelled" if was_cancelled else "disconnected"
-            receipt.metadata["terminal_reason"] = terminal_reason
-            record_request_shape_stage(
-                receipt.metadata, "terminal", body_for_litellm,
-                extra={"terminal_reason": terminal_reason},
-            )
-            receipt.finish("cancelled")
-            _finalize_route_receipt(receipt, route="LiteLLM")
+            owner.report(status="cancelled", reason=terminal_reason)
             return Response(status_code=499)
         await close_llm_response(client, resp)
         if "application/json" in content_type:
@@ -20059,6 +20069,7 @@ async def _forward_litellm_proxy_request(
                                 requested_embedding_dimensions,
                             )
                             if dimensions_error is not None:
+                                owner.report(status="failed", reason="failed")
                                 return dimensions_error
                     else:
                         _normalize_litellm_error_envelope(
@@ -20068,67 +20079,16 @@ async def _forward_litellm_proxy_request(
                     content = json.dumps(response_json).encode()
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
-        terminal_reason = "completed" if 200 <= resp.status_code < 400 else "failed"
-        receipt.metadata["terminal_reason"] = terminal_reason
-        record_request_shape_stage(
-            receipt.metadata, "terminal", body_for_litellm,
-            extra={"terminal_reason": terminal_reason},
+        owner.report(
+            status="succeeded" if 200 <= resp.status_code < 400 else "failed",
+            reason="completed" if 200 <= resp.status_code < 400 else "failed",
         )
-        receipt.finish("succeeded" if 200 <= resp.status_code < 400 else "failed")
-        _finalize_route_receipt(receipt, route="LiteLLM")
         return Response(
             content=content,
             status_code=resp.status_code,
             headers=response_headers,
             media_type=content_type,
         )
-    except httpx.TimeoutException:
-        await cancellation_span.aclose()
-        receipt.metadata["terminal_reason"] = "idle_timeout"
-        record_request_shape_stage(
-            receipt.metadata, "terminal", body_for_litellm,
-            extra={"terminal_reason": "idle_timeout"},
-        )
-        receipt.finish("failed")
-        receipt.add_warning("LiteLLM execution timed out")
-        _finalize_route_receipt(receipt, route="LiteLLM")
-        return Response(
-            content=json.dumps({"detail": "Request timeout"}),
-            status_code=504,
-            media_type="application/json",
-        )
-    except httpx.ConnectError:
-        await cancellation_span.aclose()
-        receipt.metadata["terminal_reason"] = "connect_error"
-        record_request_shape_stage(
-            receipt.metadata, "terminal", body_for_litellm,
-            extra={"terminal_reason": "connect_error"},
-        )
-        receipt.finish("failed")
-        receipt.add_warning("LiteLLM execution backend is unavailable")
-        _finalize_route_receipt(receipt, route="LiteLLM")
-        return Response(
-            content=json.dumps({
-                "error": {
-                    "message": "LiteLLM execution backend is unavailable.",
-                    "type": "service_unavailable",
-                    "code": "backend_unavailable",
-                }
-            }),
-            status_code=503,
-            media_type="application/json",
-            headers={"Retry-After": "10"},
-        )
-    except BaseException:
-        await cancellation_span.aclose()
-        receipt.metadata["terminal_reason"] = "internal_error"
-        record_request_shape_stage(
-            receipt.metadata, "terminal", body_for_litellm,
-            extra={"terminal_reason": "internal_error"},
-        )
-        receipt.finish("failed")
-        _finalize_route_receipt(receipt, route="LiteLLM")
-        raise
 
 
 async def _handle_openai_litellm_request(

@@ -32,11 +32,13 @@ import unittest
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi import Response
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -97,6 +99,32 @@ class _FakeStreamResponse:
 
 class _FakeStreamClient:
     async def aclose(self):
+        return None
+
+
+class _ReceiptSpan:
+    """Inert cancellation span used to pin LiteLLM receipt ownership."""
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        self.token = SimpleNamespace(cancelled=False)
+        self.closed = False
+
+    async def dispatch(self, request):
+        return await type(self).dispatch_result(request)
+
+    async def read_body(self, client, response):
+        return await type(self).read_result(client, response)
+
+    async def aclose(self):
+        self.closed = True
+
+    async def stop_watcher_for_streaming_handoff(self):
+        return None
+
+    def mark_stream_cancelled(self):
+        self.token.cancelled = True
+
+    async def _signal(self):
         return None
 
 
@@ -255,6 +283,158 @@ class _FakeLiteLLMModelsResponse:
 # ---------------------------------------------------------------------------
 # Gateway router: mounted before catch-all, unauth requests rejected
 # ---------------------------------------------------------------------------
+
+
+class TestLiteLLMReceiptLifecycle(unittest.IsolatedAsyncioTestCase):
+    def _request(self) -> Request:
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        return Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/v1/chat/completions",
+                "raw_path": b"/v1/chat/completions",
+                "query_string": b"",
+                "headers": [],
+                "server": ("testserver", 80),
+                "client": ("testclient", 1234),
+            },
+            receive,
+        )
+
+    async def _forward(
+        self,
+        *,
+        parent_request_id: str = "",
+        activate_local_target: bool = False,
+    ) -> tuple[list[Any], list[Any], Any]:
+        self.begun: list[Any] = []
+        self.finalized: list[Any] = []
+        runtime = SimpleNamespace(
+            enabled=True,
+            base_url="http://litellm.invalid",
+            api_key="test",
+            service_id="litellm",
+        )
+        with patch.object(proxy.receipt_store, "begin", side_effect=self.begun.append), patch.object(
+            proxy.receipt_store, "finalize", side_effect=self.finalized.append
+        ):
+            response = await proxy._forward_litellm_proxy_request(
+                self._request(),
+                request_path="/v1/chat/completions",
+                auth_context=proxy.NO_AUTH_CONTEXT,
+                body_json={"model": "test", "messages": []},
+                runtime_config=runtime,
+                parent_request_id=parent_request_id,
+                activate_local_target=activate_local_target,
+            )
+        return self.begun, self.finalized, response
+
+    def _assert_owned(self, begun: list[Any], finalized: list[Any], status: str) -> None:
+        self.assertEqual(len(begun), 1)
+        self.assertEqual(finalized, begun)
+        self.assertEqual(begun[0].status, status)
+
+    async def test_activation_failures_are_finalized_once(self) -> None:
+        for error in (asyncio.CancelledError(), KeyboardInterrupt("stop")):
+            with self.subTest(error=type(error).__name__):
+                async def fail_activation(*_args, **_kwargs):
+                    raise error
+
+                with patch.object(proxy, "_activate_prepared_litellm_local_target", fail_activation):
+                    with self.assertRaises(type(error)):
+                        await self._forward(activate_local_target=True)
+                self._assert_owned(
+                    self.begun,
+                    self.finalized,
+                    "cancelled" if isinstance(error, asyncio.CancelledError) else "failed",
+                )
+
+    async def test_dispatch_failures_are_finalized_once(self) -> None:
+        for error in (asyncio.CancelledError(), KeyboardInterrupt("stop")):
+            with self.subTest(error=type(error).__name__):
+                async def fail_dispatch(_request):
+                    raise error
+
+                _ReceiptSpan.dispatch_result = fail_dispatch
+                with patch.object(proxy, "_OuterCancellationSpan", _ReceiptSpan):
+                    with self.assertRaises(type(error)):
+                        await self._forward()
+                self._assert_owned(
+                    self.begun,
+                    self.finalized,
+                    "cancelled" if isinstance(error, asyncio.CancelledError) else "failed",
+                )
+
+    async def test_read_failures_are_finalized_once(self) -> None:
+        async def dispatch(_request):
+            return _FakeStreamClient(), _FakeLiteLLMResponse()
+
+        for error in (asyncio.CancelledError(), KeyboardInterrupt("stop")):
+            with self.subTest(error=type(error).__name__):
+                async def fail_read(_client, _response):
+                    raise error
+
+                _ReceiptSpan.dispatch_result = dispatch
+                _ReceiptSpan.read_result = fail_read
+                with patch.object(proxy, "_OuterCancellationSpan", _ReceiptSpan):
+                    with self.assertRaises(type(error)):
+                        await self._forward()
+                self._assert_owned(
+                    self.begun,
+                    self.finalized,
+                    "cancelled" if isinstance(error, asyncio.CancelledError) else "failed",
+                )
+
+    async def test_stream_failures_are_finalized_once(self) -> None:
+        for error in (asyncio.CancelledError(), KeyboardInterrupt("stop")):
+            with self.subTest(error=type(error).__name__):
+                class BrokenStream(_FakeStreamResponse):
+                    headers = {"content-type": "text/event-stream"}
+
+                    def __init__(self):
+                        super().__init__([])
+
+                async def dispatch(_request):
+                    return _FakeStreamClient(), BrokenStream()
+
+                async def fail_stream(*_args, **_kwargs):
+                    raise error
+                    yield b""  # pragma: no cover - makes this an async generator
+
+                _ReceiptSpan.dispatch_result = dispatch
+                with patch.object(proxy, "_OuterCancellationSpan", _ReceiptSpan), patch.object(
+                    proxy, "iter_llm_response_bytes", fail_stream
+                ):
+                    begun, finalized, response = await self._forward()
+                    self.assertEqual(finalized, [])
+                    with self.assertRaises(type(error)):
+                        async for _chunk in response.body_iterator:
+                            pass
+                self._assert_owned(
+                    begun,
+                    finalized,
+                    "cancelled" if isinstance(error, asyncio.CancelledError) else "failed",
+                )
+
+    async def test_trusted_hidden_child_keeps_parent_and_one_terminal_row(self) -> None:
+        async def dispatch(_request):
+            return _FakeStreamClient(), _FakeLiteLLMResponse()
+
+        async def read(_client, response):
+            return await response.aread()
+
+        _ReceiptSpan.dispatch_result = dispatch
+        _ReceiptSpan.read_result = read
+        with patch.object(proxy, "_OuterCancellationSpan", _ReceiptSpan):
+            begun, finalized, response = await self._forward(parent_request_id="req_parent")
+        self.assertEqual(response.status_code, 200)
+        self._assert_owned(begun, finalized, "succeeded")
+        self.assertEqual(begun[0].parent_request_id, "req_parent")
+        self.assertEqual(begun[0].visibility, "internal")
 
 
 class TestGatewayRouterMounting(unittest.TestCase):
