@@ -121,17 +121,17 @@ def init_db(path: Path = DB_PATH) -> None:
         conn.close()
 
 
-def open_writer(path: Path = DB_PATH) -> sqlite3.Connection:
+def open_writer(path: Optional[Path] = None) -> sqlite3.Connection:
     """Long-lived writer connection. Caller owns it; close on shutdown."""
-    conn = sqlite3.connect(str(path), timeout=5.0, isolation_level=None)
+    conn = sqlite3.connect(str(path if path is not None else DB_PATH), timeout=5.0, isolation_level=None)
     _apply_pragmas(conn)
     return conn
 
 
 @contextmanager
-def reader(path: Path = DB_PATH):
+def reader(path: Optional[Path] = None):
     """Short-lived read connection. WAL makes this cheap."""
-    conn = sqlite3.connect(str(path), timeout=2.0)
+    conn = sqlite3.connect(str(path if path is not None else DB_PATH), timeout=2.0)
     try:
         _apply_pragmas(conn)
         yield conn

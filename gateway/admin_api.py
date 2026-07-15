@@ -26,6 +26,7 @@ import json
 import hmac
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
@@ -219,6 +220,8 @@ class AdminStore(Protocol):
 
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]: ...
 
+    def get_audit_event(self, event_id: str) -> dict[str, Any] | None: ...
+
     def list_audit_page(
         self,
         *,
@@ -236,6 +239,7 @@ AdminAuth = Callable[[Request], AdminContext]
 ProfileResolver = Callable[[str], AppProfile | None]
 # async (host, port, path) -> {ok, status, error, url}
 ServiceProbe = Callable[[str, "int | None", str], "Awaitable[Mapping[str, Any]]"]
+StatusProvider = Callable[[], "Awaitable[Mapping[str, Any]]"]
 # Injected client over the LiteLLM sidecar virtual-key admin API. Duck-typed to
 # gateway.backends.litellm_admin.LiteLLMKeyAdminClient: an ``enabled`` property
 # plus async list_keys / generate_key / key_info / delete_keys raising
@@ -273,6 +277,53 @@ def _attention_app_profile_id(record: Mapping[str, Any]) -> str:
     return str(profile_id) if profile_id else "default-local"
 
 
+def _attention_href(section: str, target_kind: str | None, target_id: str | None) -> str:
+    base = {
+        "apps-keys": "/admin/apps",
+        "services": "/admin/services",
+        "profiles": "/admin/profiles",
+        "users": "/admin/users",
+        "audit": "/admin/audit",
+        "settings": "/admin/settings",
+    }.get(section, "/admin")
+    if not target_kind or not target_id:
+        return base
+    param = {
+        "app": "app",
+        "service": "service",
+        "profile": "profile",
+        "user": "user",
+        "audit": "event",
+    }.get(target_kind)
+    if not param:
+        return base
+    return f"{base}?{param}={quote(target_id, safe='')}"
+
+
+def _attention_item(
+    *,
+    kind: str,
+    severity: str,
+    section: str,
+    title: str,
+    detail: str,
+    target_kind: str | None = None,
+    target_id: str | None = None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "kind": kind,
+        "severity": severity,
+        "section": section,
+        "title": title,
+        "detail": detail,
+    }
+    if target_kind and target_id:
+        item["href"] = _attention_href(section, target_kind, target_id)
+        item["target_kind"] = target_kind
+        item["target_id"] = target_id
+    return item
+
+
 def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return "things that want a look" — the operator's actual landing screen.
 
@@ -280,13 +331,19 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     admin HTML overview and the ``/admin/api/overview`` JSON (the migration-safe
     seam). Each item is ``{kind, severity, title, detail, section}`` where
     ``severity`` is ``"problem"`` (broken — needs fixing) or ``"attention"``
-    (works but incomplete). An EMPTY list means everything's healthy — and the
-    overview says so, rather than padding the screen with green stat cards.
+    (works but incomplete). Rows with a resolved object target also carry
+    ``href`` plus ``target_kind`` / ``target_id`` so the UI can open the fixing
+    section with that row selected.
+    An EMPTY list means everything's healthy — and the overview says so, rather
+    than padding the screen with green stat cards.
 
     Signals mirror the per-row statuses the detail tables already show, so the
     overview never disagrees with the sections:
-      * Apps: disabled, no profile, profile missing, or no active key.
+      * Apps: profile missing, or no active key. Apps without an explicit
+        profile use the built-in default profile. Disabled Apps are an operator
+        state, not a per-row incident.
       * Services: ``down`` (problem) or ``degraded`` (attention).
+      * Live status: API/host health and high-error/high-latency Apps.
     """
     items: list[dict[str, Any]] = []
 
@@ -294,6 +351,7 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     profiles = [p for p in snapshot.get("profiles", []) if isinstance(p, Mapping)]
     profile_ids = {str(p.get("id")) for p in profiles if p.get("id")}
     credentials = [c for c in snapshot.get("credentials", []) if isinstance(c, Mapping)]
+    status_payload = snapshot.get("status") if isinstance(snapshot.get("status"), Mapping) else {}
     active_keys_by_app: dict[str, int] = {}
     for cred in credentials:
         if cred.get("revoked_at"):
@@ -307,47 +365,102 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
         name = str(app.get("name") or app_id or "App")
         profile_id = _attention_app_profile_id(app)
         if app.get("disabled_at"):
-            items.append({
-                "kind": "app", "severity": "problem", "section": "apps-keys",
-                "title": f"{name} is disabled",
-                "detail": "Re-enable it or remove it.",
-            })
-        elif not profile_id:
-            items.append({
-                "kind": "app", "severity": "problem", "section": "apps-keys",
-                "title": f"{name} has no permission profile",
-                "detail": "Assign a profile so its keys can be used.",
-            })
+            continue
         elif profile_id != "default-local" and profile_id not in profile_ids:
-            items.append({
-                "kind": "app", "severity": "problem", "section": "apps-keys",
-                "title": f"{name}'s profile is missing",
-                "detail": "Its profile was deleted; assign a new one.",
-            })
+            items.append(_attention_item(
+                kind="app", severity="problem", section="apps-keys",
+                title=f"{name}'s profile is missing",
+                detail="Its profile was deleted; assign a new one.",
+                target_kind="app", target_id=app_id,
+            ))
         elif active_keys_by_app.get(app_id, 0) < 1:
-            items.append({
-                "kind": "app", "severity": "attention", "section": "apps-keys",
-                "title": f"{name} has no active key",
-                "detail": "Mint a key so it can reach the gateway.",
-            })
+            items.append(_attention_item(
+                kind="app", severity="attention", section="apps-keys",
+                title=f"{name} has no active key",
+                detail="Mint a key so it can reach the gateway.",
+                target_kind="app", target_id=app_id,
+            ))
+
+    status_banner = str(status_payload.get("banner") or "ok").lower()
+    if status_banner in {"bad", "warn"}:
+        reasons = [
+            str(reason) for reason in (status_payload.get("banner_reasons") or [])
+            if reason
+        ]
+        items.append(_attention_item(
+            kind="status",
+            severity="problem" if status_banner == "bad" else "attention",
+            section="services",
+            title="API health is degraded",
+            detail="; ".join(reasons[:3]) if reasons else "Status endpoint reports degraded API health.",
+        ))
+
+    system_health = str(status_payload.get("system_health") or "ok").lower()
+    if system_health in {"bad", "warn"}:
+        reasons = [
+            str(reason) for reason in (status_payload.get("system_health_reasons") or [])
+            if reason
+        ]
+        items.append(_attention_item(
+            kind="status",
+            severity="problem" if system_health == "bad" else "attention",
+            section="services",
+            title="Host health needs attention",
+            detail="; ".join(reasons[:3]) if reasons else "Status endpoint reports host health issues.",
+        ))
+
+    for key in status_payload.get("auth_keys") or []:
+        if not isinstance(key, Mapping):
+            continue
+        name = str(key.get("name") or "An app")
+        requests = key.get("requests_24h")
+        errors_4xx = key.get("errors_4xx_24h")
+        errors_5xx = key.get("errors_5xx_24h")
+        p50 = key.get("latency_ms_p50")
+        request_count = requests if isinstance(requests, (int, float)) else 0
+        error_count = (
+            (errors_4xx if isinstance(errors_4xx, (int, float)) else 0)
+            + (errors_5xx if isinstance(errors_5xx, (int, float)) else 0)
+        )
+        target_id = key.get("app_id")
+        if request_count >= 10 and error_count / max(request_count, 1) >= 0.2:
+            pct = round((error_count / request_count) * 100)
+            items.append(_attention_item(
+                kind="app", severity="problem", section="apps-keys",
+                title=f"{name} has a high error rate",
+                detail=f"{pct}% errors across {int(request_count)} requests in the last 24h.",
+                target_kind="app", target_id=str(target_id) if target_id else None,
+            ))
+        if isinstance(p50, (int, float)) and p50 >= 30_000:
+            items.append(_attention_item(
+                kind="app", severity="attention", section="apps-keys",
+                title=f"{name} is slow",
+                detail=f"Median latency is {round(p50 / 1000, 1)}s.",
+                target_kind="app", target_id=str(target_id) if target_id else None,
+            ))
 
     for svc in snapshot.get("services", []):
         if not isinstance(svc, Mapping):
             continue
         state = str(svc.get("status") or "").lower()
         label = str(svc.get("name") or svc.get("key") or "A service")
+        target_id = str(svc.get("id") or "")
+        last_error = " ".join(str(svc.get("last_error") or "").split())
+        error_detail = last_error[:180] if last_error else ""
         if state == "down":
-            items.append({
-                "kind": "service", "severity": "problem", "section": "services",
-                "title": f"{label} is down",
-                "detail": "Requests that need it will fail until it's back.",
-            })
+            items.append(_attention_item(
+                kind="service", severity="problem", section="services",
+                title=f"{label} is down",
+                detail=error_detail or "Requests that need it will fail until it's back.",
+                target_kind="service", target_id=target_id,
+            ))
         elif state == "degraded":
-            items.append({
-                "kind": "service", "severity": "attention", "section": "services",
-                "title": f"{label} is degraded",
-                "detail": "It's reachable but not fully healthy.",
-            })
+            items.append(_attention_item(
+                kind="service", severity="attention", section="services",
+                title=f"{label} is degraded",
+                detail=error_detail or "It's reachable but not fully healthy.",
+                target_kind="service", target_id=target_id,
+            ))
 
     order = {"problem": 0, "attention": 1}
     items.sort(key=lambda i: order.get(str(i["severity"]), 2))
@@ -1094,6 +1207,7 @@ def create_admin_router(
     auth: AdminAuth,
     profile_resolver: ProfileResolver | None = None,
     service_probe: ServiceProbe | None = None,
+    status_provider: StatusProvider | None = None,
     litellm_key_client: LiteLLMKeyClient | None = None,
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
     prefix: str = "/admin/api",
@@ -1106,9 +1220,12 @@ def create_admin_router(
     profile id (string) rather than an inline profile dict. ``service_probe`` is
     an optional ``async (host, port, path) -> {ok, status, error, url}`` used by
     the backend "Test connection" control; when absent that route reports the
-    capability is unavailable rather than failing. ``litellm_key_client`` is an
-    optional client over the LiteLLM sidecar's virtual-key admin API (the
-    "LiteLLM owns LLM runtime keys" split); when absent the
+    capability is unavailable rather than failing. ``status_provider`` supplies
+    the cached operator status payload for browser-session admin UI consumers;
+    it is injected so this router remains decoupled from ``proxy.py`` and the
+    status builder. ``litellm_key_client`` is an optional client over the
+    LiteLLM sidecar's virtual-key admin API (the "LiteLLM owns LLM runtime
+    keys" split); when absent the
     ``/operator/litellm/*`` key routes report the capability is unavailable.
     ``known_model_names_getter`` is an optional zero-arg callable that returns
     the current set of model names in the compiled LiteLLM catalog; when
@@ -1146,7 +1263,7 @@ def create_admin_router(
         )
 
     @router.get("/overview")
-    def overview(request: Request) -> JSONResponse:
+    async def overview(request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
@@ -1167,14 +1284,34 @@ def create_admin_router(
             1 for svc in services_map.values()
             if isinstance(svc, dict) and svc.get("enabled", True)
         )
-        # "Things that want a look" — the operator's real landing list, derived
-        # from the same data the detail tables show. Service health needs a live
-        # status fetch this read-only endpoint doesn't do, so the JSON exposes
-        # the App-level signals; the HTML overview adds service signals on top.
+        # Enrich attention with live service health from the cached status
+        # snapshot (12-15s cache, so the extra call is nearly free).
+        live_services: list[dict] = []
+        status_snap: Mapping[str, Any] = {}
+        if status_provider is not None:
+            try:
+                status_snap = await status_provider()
+                for b in (status_snap.get("backends") or []):
+                    if not isinstance(b, dict):
+                        continue
+                    backend_name = str(b.get("name") or b.get("role") or "service")
+                    raw_service_id = str(b.get("service_id") or b.get("key") or "")
+                    service_id = raw_service_id if raw_service_id in services_map else None
+                    live_services.append({
+                        "id": service_id,
+                        "name": backend_name,
+                        "key": service_id or str(b.get("name") or backend_name),
+                        "status": b.get("live_status") or b.get("status") or "unknown",
+                        "last_error": b.get("last_error"),
+                    })
+            except Exception:
+                pass  # degraded attention signal is better than a broken overview
         attention = derive_admin_attention({
             "apps": apps,
             "profiles": profiles,
             "credentials": credentials,
+            "services": live_services,
+            "status": status_snap,
         })
         payload = {
             "actor": {
@@ -1197,6 +1334,36 @@ def create_admin_router(
             "runtime_profile_mappings": runtime_mappings,
         }
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
+
+    @router.get("/status")
+    async def status_payload(request: Request) -> JSONResponse:
+        """Cached operator status for the React admin UI.
+
+        ``/v1/status`` stays a runtime API route. This endpoint gives the
+        browser-session admin UI the same data through the admin API namespace.
+        """
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if status_provider is None:
+            return _RouteError(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "status_unavailable",
+                "status provider is not configured",
+            ).as_response()
+        try:
+            payload = await status_provider()
+        except Exception:  # noqa: BLE001
+            return _RouteError(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "status_unavailable",
+                "status cache is unavailable",
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"status": payload},
+            headers={"cache-control": "no-store"},
+        )
 
     @router.get("/users")
     def list_users(request: Request) -> JSONResponse:
@@ -2317,6 +2484,23 @@ def create_admin_router(
     def audit_events(request: Request) -> JSONResponse:
         """Canonical noun-based alias for GET /audit."""
         return audit(request)
+
+    @router.get("/audit/{event_id}")
+    def audit_event(request: Request, event_id: str) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = store.get_audit_event(event_id)
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "audit_event_not_found",
+                "Audit event not found.",
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"event": record},
+        )
 
     @router.post("/policy/simulate")
     async def simulate(request: Request) -> JSONResponse:

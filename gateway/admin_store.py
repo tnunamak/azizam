@@ -1510,6 +1510,17 @@ def list_audit(
     return [_audit_row_to_dict(r) for r in rows]
 
 
+def get_audit_event(event_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Return one audit event by id, or None when it is not present."""
+    if not event_id:
+        return None
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM audit_events WHERE id = ?", (event_id,)
+        ).fetchone()
+    return _audit_row_to_dict(row) if row else None
+
+
 def _audit_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     data = {k: row[k] for k in row.keys()}
     raw = data.pop("metadata_json", None)
@@ -1647,4 +1658,5 @@ __all__ = [
     "list_operator_settings",
     "record_audit",
     "list_audit",
+    "get_audit_event",
 ]

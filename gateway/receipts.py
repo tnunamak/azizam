@@ -8,8 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any
+from typing import Any, Mapping
 from uuid import uuid4
+
+from gateway.backends.request_shape import (
+    TERMINAL_REASONS,
+    sanitize_request_shape_fields_for_admin,
+    sanitize_request_shape_stages_for_admin,
+)
 
 CLIENT_VISIBLE_FIELDS = {
     "request_id",
@@ -29,6 +35,84 @@ CLIENT_VISIBLE_FIELDS = {
     "latency_ms",
     "job_id",
 }
+
+# Metadata keys promoted to top-level fields for the "admin" audience even
+# though the rest of ``metadata`` is hidden there (a free-text ops note is
+# not assumed operator-safe just because a caller happened to write one
+# today). These specific keys are written only by the request-shape/staged
+# observability path (gateway/backends/request_shape.py) and its terminal
+# outcome — always structural, never a raw note — so they're safe to
+# special-case rather than trust the whole metadata dict.
+ADMIN_VISIBLE_METADATA_FIELDS = {
+    "request_shape",
+    "request_shape_stages",
+    "terminal_reason",
+    "litellm",
+    "status_code",
+}
+
+# Canonical allowlist for metadata["litellm"] — mirrors the keys
+# proxy.py's _attach_litellm_response_metadata already restricts itself to
+# (small bounded scalars: a model name/group, a cost, a duration, a
+# retry/fallback count). Deliberately excludes any call-id/URL-shaped key —
+# see independent-gate-3.md finding 4 (admin_model_api_base,
+# admin_call_id_length). Re-declared here, not imported from proxy.py, so
+# this module has no dependency on the application entrypoint; the two
+# lists are kept in sync manually since call sites for each rarely change.
+_LITELLM_ADMIN_SAFE_FIELDS = frozenset(
+    {
+        "model_id",
+        "model_group",
+        "response_cost",
+        "response_duration_ms",
+        "attempted_retries",
+        "attempted_fallbacks",
+    }
+)
+_LITELLM_ADMIN_MAX_VALUE_LENGTH = 128
+
+
+def _sanitize_litellm_metadata_for_admin(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, Mapping):
+        return None
+    out: dict[str, str] = {}
+    for key in _LITELLM_ADMIN_SAFE_FIELDS:
+        raw = value.get(key)
+        if isinstance(raw, str) and raw:
+            out[key] = raw[:_LITELLM_ADMIN_MAX_VALUE_LENGTH]
+    return out or None
+
+
+def sanitize_admin_metadata(metadata: Any) -> dict[str, Any]:
+    """Re-parse ``RouteReceipt.metadata`` for the admin audience.
+
+    This is the single trust boundary for what an admin-audience receipt
+    view may expose from ``metadata`` — every field is re-derived from a
+    closed per-field schema, independent of whatever internal callers
+    happened to write into ``metadata``. See
+    ``gateway/backends/request_shape.py`` for the stage/shape schemas this
+    delegates to, and independent-gate-3.md finding 4 for the exploit this
+    replaces (verbatim promotion of unvalidated nested metadata).
+    """
+    if not isinstance(metadata, Mapping):
+        return {}
+    out: dict[str, Any] = {}
+    shape = sanitize_request_shape_fields_for_admin(metadata.get("request_shape"))
+    if shape:
+        out["request_shape"] = shape
+    stages = sanitize_request_shape_stages_for_admin(metadata.get("request_shape_stages"))
+    if stages:
+        out["request_shape_stages"] = stages
+    terminal_reason = metadata.get("terminal_reason")
+    if isinstance(terminal_reason, str) and terminal_reason in TERMINAL_REASONS:
+        out["terminal_reason"] = terminal_reason
+    status_code = metadata.get("status_code")
+    if isinstance(status_code, int) and not isinstance(status_code, bool):
+        out["status_code"] = status_code
+    litellm_meta = _sanitize_litellm_metadata_for_admin(metadata.get("litellm"))
+    if litellm_meta:
+        out["litellm"] = litellm_meta
+    return out
 
 
 def new_request_id() -> str:
@@ -169,7 +253,8 @@ class RouteReceipt:
             return data
         if audience == "admin":
             data = dict(data)
-            data.pop("metadata", None)
+            metadata = data.pop("metadata", None)
+            data.update(sanitize_admin_metadata(metadata))
             return data
         return {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
 

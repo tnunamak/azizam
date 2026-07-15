@@ -213,7 +213,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
                 }
             }
 
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _Client(), _Response()
 
         with patch.object(proxy, "AUTH_ENABLED", False), patch.object(

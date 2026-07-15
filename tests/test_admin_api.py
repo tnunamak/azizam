@@ -40,30 +40,126 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                 {"id": "a2", "name": "MissingProf", "default_profile_id": "p_gone"},
                 {"id": "a3", "name": "NoKey", "default_profile_id": "p1"},
                 {"id": "a4", "name": "Healthy", "default_profile_id": "p1"},
+                {"id": "a5", "name": "paperless", "default_profile_id": "p1"},
             ],
             "profiles": [{"id": "p1"}],
-            "credentials": [{"app_id": "a4", "revoked_at": None}],
-            "services": [
-                {"key": "comfy", "name": "ComfyUI", "status": "down"},
-                {"key": "tabby", "name": "TabbyAPI", "status": "degraded"},
-                {"key": "ok", "name": "Fine", "status": "up"},
+            "credentials": [
+                {"app_id": "a4", "revoked_at": None},
+                {"app_id": "a5", "revoked_at": None},
             ],
+            "services": [
+                {"id": "comfy", "key": "comfy", "name": "ComfyUI", "status": "down"},
+                {"id": "tabby", "key": "tabby", "name": "TabbyAPI", "status": "degraded"},
+                {"id": "ok", "key": "ok", "name": "Fine", "status": "up"},
+            ],
+            "status": {
+                "banner": "bad",
+                "banner_reasons": ["required backend down"],
+                "system_health": "warn",
+                "system_health_reasons": ["disk / 91% full"],
+                "auth_keys": [
+                    {
+                        "name": "paperless",
+                        "app_id": "a5",
+                        "requests_24h": 40,
+                        "errors_4xx_24h": 3,
+                        "errors_5xx_24h": 30,
+                        "latency_ms_p50": 600_200,
+                    },
+                    {
+                        "name": "brother-chat",
+                        "requests_24h": 10,
+                        "errors_4xx_24h": 5,
+                        "errors_5xx_24h": 0,
+                        "latency_ms_p50": 100,
+                    }
+                ],
+            },
         }
         items = derive_admin_attention(snap)
         # Problems sort before attention; healthy app + up service produce nothing.
         severities = [i["severity"] for i in items]
         self.assertEqual(severities, sorted(severities, key=lambda s: 0 if s == "problem" else 1))
         titles = " | ".join(i["title"] for i in items)
-        self.assertIn("Disabled is disabled", titles)
+        self.assertNotIn("Disabled is disabled", titles)
         self.assertIn("MissingProf's profile is missing", titles)
         self.assertIn("NoKey has no active key", titles)
         self.assertIn("ComfyUI is down", titles)
         self.assertIn("TabbyAPI is degraded", titles)
+        self.assertIn("API health is degraded", titles)
+        self.assertIn("Host health needs attention", titles)
+        self.assertIn("paperless has a high error rate", titles)
+        self.assertIn("brother-chat has a high error rate", titles)
+        self.assertIn("paperless is slow", titles)
         self.assertNotIn("Healthy", titles)
         self.assertNotIn("Fine", titles)
         # Each item routes to the section that fixes it.
         sections = {i["section"] for i in items}
         self.assertEqual(sections, {"apps-keys", "services"})
+        by_title = {i["title"]: i for i in items}
+        self.assertEqual(by_title["MissingProf's profile is missing"]["target_id"], "a2")
+        self.assertEqual(
+            by_title["MissingProf's profile is missing"]["href"],
+            "/admin/apps?app=a2",
+        )
+        self.assertEqual(by_title["ComfyUI is down"]["target_id"], "comfy")
+        self.assertEqual(
+            by_title["ComfyUI is down"]["href"],
+            "/admin/services?service=comfy",
+        )
+        self.assertEqual(
+            by_title["TabbyAPI is degraded"]["href"],
+            "/admin/services?service=tabby",
+        )
+        self.assertEqual(
+            by_title["paperless has a high error rate"]["href"],
+            "/admin/apps?app=a5",
+        )
+        self.assertEqual(by_title["paperless has a high error rate"]["target_id"], "a5")
+        self.assertEqual(
+            by_title["paperless is slow"]["href"],
+            "/admin/apps?app=a5",
+        )
+        self.assertNotIn("href", by_title["brother-chat has a high error rate"])
+        self.assertNotIn("target_id", by_title["brother-chat has a high error rate"])
+        self.assertNotIn("href", by_title["API health is degraded"])
+        self.assertNotIn("href", by_title["Host health needs attention"])
+
+    def test_auth_key_attention_does_not_guess_app_by_name(self) -> None:
+        snap = {
+            "apps": [{"id": "a1", "name": "paperless", "default_profile_id": "p1"}],
+            "profiles": [{"id": "p1"}],
+            "credentials": [{"app_id": "a1", "revoked_at": None}],
+            "status": {
+                "auth_keys": [
+                    {
+                        "name": "paperless",
+                        "requests_24h": 30,
+                        "errors_4xx_24h": 0,
+                        "errors_5xx_24h": 30,
+                    }
+                ],
+            },
+        }
+
+        item = next(
+            i for i in derive_admin_attention(snap)
+            if i["title"] == "paperless has a high error rate"
+        )
+        self.assertNotIn("href", item)
+        self.assertNotIn("target_id", item)
+
+    def test_service_attention_does_not_link_without_resolved_service_id(self) -> None:
+        snap = {
+            "services": [
+                {"key": "probe-only", "name": "Probe-only backend", "status": "down"},
+            ],
+        }
+
+        item = derive_admin_attention(snap)[0]
+        self.assertEqual(item["title"], "Probe-only backend is down")
+        self.assertNotIn("href", item)
+        self.assertNotIn("target_id", item)
 
 
 class FakeAdminStore:
@@ -577,6 +673,12 @@ class FakeAdminStore:
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
         return list(self.audit[-limit:])
 
+    def get_audit_event(self, event_id: str) -> dict[str, Any] | None:
+        for event in self.audit:
+            if event.get("id") == event_id:
+                return event
+        return None
+
     def list_audit_page(
         self,
         *,
@@ -693,6 +795,7 @@ def _make_client(
     *,
     profile_resolver=None,
     service_probe=_fake_probe,
+    status_provider=None,
 ) -> tuple[TestClient, FakeAdminStore]:
     store = store or FakeAdminStore()
     app = FastAPI()
@@ -702,6 +805,7 @@ def _make_client(
             auth=_admin_auth,
             profile_resolver=profile_resolver,
             service_probe=service_probe,
+            status_provider=status_provider,
         )
     )
     return TestClient(app), store
@@ -792,6 +896,97 @@ class AdminAuthTests(unittest.TestCase):
         counts = resp.json()["counts"]
         self.assertEqual(counts["services_total"], 3)
         self.assertEqual(counts["services_enabled"], 2)
+
+    def test_overview_links_live_service_attention_to_registry_id(self) -> None:
+        async def status_provider() -> Mapping[str, Any]:
+            return {
+                "backends": [
+                    {
+                        "key": "svc_comfy",
+                        "service_id": "svc_comfy",
+                        "name": "ComfyUI",
+                        "live_status": "down",
+                        "last_error": "connection refused on port 8188",
+                    },
+                ],
+            }
+
+        client, store = _make_client(status_provider=status_provider)
+        store.service_registry = {
+            "schema_version": 1,
+            "services": {
+                "svc_comfy": {"id": "svc_comfy", "name": "ComfyUI", "enabled": True},
+            },
+            "protocol_frontends": {},
+            "workflows": {},
+            "capabilities": {},
+        }
+
+        resp = client.get("/admin/api/overview", headers=_auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        by_title = {i["title"]: i for i in resp.json()["attention"]}
+        self.assertEqual(
+            by_title["ComfyUI is down"]["href"],
+            "/admin/services?service=svc_comfy",
+        )
+        self.assertEqual(by_title["ComfyUI is down"]["target_id"], "svc_comfy")
+        self.assertEqual(
+            by_title["ComfyUI is down"]["detail"],
+            "connection refused on port 8188",
+        )
+
+    def test_overview_does_not_link_unresolved_live_service_attention(self) -> None:
+        async def status_provider() -> Mapping[str, Any]:
+            return {
+                "backends": [
+                    {
+                        "key": "probe-only",
+                        "service_id": "probe-only",
+                        "name": "Probe-only backend",
+                        "live_status": "down",
+                    },
+                ],
+            }
+
+        client, _store = _make_client(status_provider=status_provider)
+
+        resp = client.get("/admin/api/overview", headers=_auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        by_title = {i["title"]: i for i in resp.json()["attention"]}
+        item = by_title["Probe-only backend is down"]
+        self.assertNotIn("href", item)
+        self.assertNotIn("target_id", item)
+
+    def test_admin_status_returns_cached_payload(self) -> None:
+        async def status_provider() -> Mapping[str, Any]:
+            return {"banner": "ok", "backends": [{"name": "ComfyUI"}]}
+
+        client, _store = _make_client(status_provider=status_provider)
+
+        resp = client.get("/admin/api/status", headers=_auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.headers["cache-control"], "no-store")
+        self.assertEqual(
+            resp.json(),
+            {"status": {"banner": "ok", "backends": [{"name": "ComfyUI"}]}},
+        )
+
+    def test_admin_status_503_when_provider_missing(self) -> None:
+        client, _store = _make_client()
+
+        resp = client.get("/admin/api/status", headers=_auth())
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.json()["error"]["code"], "status_unavailable")
+
+    def test_admin_status_503_when_provider_raises(self) -> None:
+        async def status_provider() -> Mapping[str, Any]:
+            raise RuntimeError("boom")
+
+        client, _store = _make_client(status_provider=status_provider)
+
+        resp = client.get("/admin/api/status", headers=_auth())
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.json()["error"]["code"], "status_unavailable")
 
     def test_owner_role_is_admin_capable(self) -> None:
         def owner_auth(_request: Request) -> AdminContext:
@@ -1467,6 +1662,25 @@ class AdminAuditTests(unittest.TestCase):
         body = resp.json()
         self.assertIn("records", body)
         self.assertEqual(len(body["records"]), 3)
+
+    def test_audit_event_lookup_by_id(self) -> None:
+        client, store = _make_client()
+        store.audit.append({
+            "action": "old_event",
+            "created_at": 1,
+            "id": "aud_old",
+            "actor_id": "usr_old",
+        })
+        resp = client.get("/admin/api/audit/aud_old", headers=_auth())
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["event"]["id"], "aud_old")
+        self.assertEqual(resp.json()["event"]["action"], "old_event")
+
+    def test_audit_event_lookup_404_for_missing(self) -> None:
+        client, _store = _make_client()
+        resp = client.get("/admin/api/audit/aud_missing", headers=_auth())
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json()["error"]["code"], "audit_event_not_found")
 
     def test_audit_pagination_reaches_oldest_event(self) -> None:
         """Paging via next_cursor must reach events older than the first page."""

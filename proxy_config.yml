@@ -69,6 +69,16 @@ backends:
         upstream_model: Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
+        # Aggregate completion guard for the selected default model only.
+        # This is canonical after protocol normalization; an explicit caller
+        # max_tokens (or equivalent frontend field) wins by setdefault.
+        transforms:
+          - kind: param-map
+            from: max_completion_tokens
+            to: max_tokens
+            only_if_destination_absent: true
+          - kind: default-params
+            set: {max_tokens: 16384}
       - id: coder
         model_group: coder
         upstream_model: Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
@@ -208,14 +218,29 @@ model_routing:
   # Per-chunk (idle) read timeout for /v1/chat/completions and /v1/completions
   # forwarding. NOT a wall-clock cap — this is the max silence between bytes
   # from the backend. Covers prompt-processing latency on reasoning/vision
-  # models (Qwen3.6 27B PP on a 4K-token vision prompt ≈ 150s). 600s is well
-  # past any legitimate work and tight enough to release a wedged backend.
+  # models (Qwen3.6 27B PP on a 4K-token vision prompt ≈ 150s). BeeLlama
+  # currently buffers tool-call argument JSON, so a legitimate 16K-token write
+  # can produce no upstream bytes for far longer than five minutes. Keep the
+  # finite liveness boundary here, above the worst credible full completion,
+  # while Pi's client-side idle timeout is disabled for this local backend.
   # Env override: UPSTREAM_READ_TIMEOUT.
-  upstream_read_timeout: 600
+  upstream_read_timeout: 1800
 routing:
   default_backend: kobold
   audio_backend: tts
   check_interval: 30
+
+# Local reasoning policy. Pi sends qualitative effort; the native gateway
+# translates it to BeeLlama's numeric per-request thinking budget.
+reasoning:
+  default_effort: high
+  effort_budgets:
+    none: 0
+    minimal: 2048
+    low: 4096
+    medium: 6144
+    high: 8192
+    xhigh: unlimited
 roles:
   default:
     backend: kobold
@@ -368,7 +393,7 @@ audio:
     tangoflux:
       file: workflows/audio/tangoflux.json
       max_seconds: 30
-      min_seconds: 0.5
+      min_seconds: 1
   aliases:
     ace-step: ace-step-1.5-xl-turbo
     ace-step-1.5: ace-step-1.5-xl-turbo

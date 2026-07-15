@@ -183,13 +183,14 @@ class TestNormalizeChatCompletionPayload:
         # existing reasoning_content preserved (not overwritten by split reasoning)
         assert msg["reasoning_content"] == "existing reasoning"
 
-    def test_case2_reasoning_content_set_empty_content(self) -> None:
-        """Case 2: reasoning_content set, content empty → mirror to content."""
+    def test_reasoning_only_content_is_preserved(self) -> None:
+        """Reasoning-only responses must not expose reasoning as visible text."""
         p = _payload(_message_choice(content="", reasoning_content="visible reply"))
         changed = normalize_chat_completion_payload(p)
-        assert changed
+        assert not changed
         msg = p["choices"][0]["message"]
-        assert msg["content"] == "visible reply"
+        assert msg["content"] == ""
+        assert msg["reasoning_content"] == "visible reply"
 
     def test_case2_reasoning_content_with_think_tags(self) -> None:
         """Case 2 where reasoning_content itself has think tags → extract visible."""
@@ -218,12 +219,12 @@ class TestNormalizeChatCompletionPayload:
         assert changed
         assert p["choices"][0]["delta"]["content"] == "V"
 
-    def test_delta_case2_reasoning_content_no_content(self) -> None:
-        """Delta Case 2: delta.reasoning_content set, no content → mirror."""
+    def test_delta_reasoning_only_is_preserved(self) -> None:
+        """Reasoning-only deltas must not become visible content."""
         p = _payload(_delta_choice(reasoning_content="streaming token"))
         changed = normalize_chat_completion_payload(p)
-        assert changed
-        assert p["choices"][0]["delta"]["content"] == "streaming token"
+        assert not changed
+        assert p["choices"][0]["delta"] == {"reasoning_content": "streaming token"}
 
     def test_delta_case2_content_present_no_mirror(self) -> None:
         """Delta with both content and reasoning_content → no change."""
@@ -242,7 +243,7 @@ class TestNormalizeChatCompletionPayload:
         changed = normalize_chat_completion_payload(p)
         assert changed
         assert p["choices"][0]["message"]["content"] == "V1"
-        assert p["choices"][1]["message"]["content"] == "V2"
+        assert p["choices"][1]["message"]["content"] == ""
 
     def test_non_dict_choice_skipped(self) -> None:
         """Non-dict entries in choices list must be skipped safely."""
@@ -333,11 +334,13 @@ class TestStreamingThinkSplitTransform:
         # Per-chunk normalize without SST
         result = proxy._normalize_chat_completion_sse_chunk(chunk)
         parsed = _parse_sse_chunk(result)
-        assert parsed["choices"][0]["delta"]["content"] == "visible token"
+        assert "content" not in parsed["choices"][0]["delta"]
+        assert parsed["choices"][0]["delta"]["reasoning_content"] == "visible token"
         # Same result from normalize_chat_completion_payload applied to same data
         p_copy = copy.deepcopy(payload)
         normalize_chat_completion_payload(p_copy)
-        assert p_copy["choices"][0]["delta"]["content"] == "visible token"
+        assert "content" not in p_copy["choices"][0]["delta"]
+        assert p_copy["choices"][0]["delta"]["reasoning_content"] == "visible token"
 
     def test_response_noop(self) -> None:
         """on_response shim must be a no-op for registry protocol compliance."""

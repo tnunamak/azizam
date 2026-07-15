@@ -20,6 +20,45 @@ class _FakeExecutionClient:
         self.closed = True
 
 
+class _TrackedCloseClient:
+    def __init__(self) -> None:
+        self.close_attempted = False
+
+    async def aclose(self) -> None:
+        self.close_attempted = True
+
+
+class _RaisingCloseExecutionResponse:
+    """A successful nonstream response whose own aclose() fails.
+
+    Proves the internal-litellm-local route routes cleanup through the
+    shared close_llm_response helper: client teardown must still be
+    attempted even though the response's own close raised.
+    """
+
+    status_code = 200
+    headers = {"content-type": "application/json"}
+
+    async def aread(self) -> bytes:
+        return json.dumps(
+            {
+                "id": "chatcmpl_internal_close_probe",
+                "object": "chat.completion",
+                "model": "Qwen.gguf",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        ).encode("utf-8")
+
+    async def aclose(self) -> None:
+        raise RuntimeError("response close failed")
+
+
 class _FakeExecutionResponse:
     status_code = 200
     headers = {
@@ -127,7 +166,7 @@ def test_internal_litellm_local_route_activates_and_forwards_directly() -> None:
     client = TestClient(proxy.app)
     captured = {}
 
-    async def fake_send(execution_request):
+    async def fake_send(execution_request, *, cancellation_token=None):
         captured["request"] = execution_request
         return _FakeExecutionClient(), _FakeExecutionResponse(
             {
@@ -185,6 +224,47 @@ def test_internal_litellm_local_route_activates_and_forwards_directly() -> None:
     assert response.json()["choices"][0]["message"]["content"] == "ok"
 
 
+def test_internal_litellm_local_route_still_closes_client_when_response_close_fails() -> None:
+    client = TestClient(proxy.app, raise_server_exceptions=False)
+    tracked_client = _TrackedCloseClient()
+
+    async def fake_send(_execution_request, *, cancellation_token=None):
+        return tracked_client, _RaisingCloseExecutionResponse()
+
+    with patch.dict(
+        os.environ,
+        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        clear=False,
+    ), patch.dict(
+        proxy.LLM_BACKEND_HOSTS,
+        {"kobold": "http://127.0.0.1:5051"},
+        clear=True,
+    ), patch.object(
+        proxy,
+        "_service_availability_response",
+        return_value=None,
+    ), patch.object(
+        proxy,
+        "ensure_target",
+        AsyncMock(return_value=True),
+    ), patch.object(
+        proxy,
+        "send_llm_execution_request",
+        fake_send,
+    ):
+        response = client.post(
+            "/internal/litellm/local/kobold/v1/chat/completions",
+            headers={"Authorization": "Bearer internal-secret"},
+            json={
+                "model": "openai/Qwen.gguf",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+    assert response.status_code == 500, response.text
+    assert tracked_client.close_attempted is True
+
+
 def test_internal_litellm_local_route_reports_activation_failure() -> None:
     client = TestClient(proxy.app)
 
@@ -221,7 +301,7 @@ def test_internal_litellm_local_route_resolves_activation_path_from_model_data()
     activation_path = "/models/Qwen.gguf"
     activation_mmproj = "/models/Qwen-mmproj.gguf"
 
-    async def fake_send(execution_request):
+    async def fake_send(execution_request, *, cancellation_token=None):
         captured["request"] = execution_request
         return _FakeExecutionClient(), _FakeExecutionResponse({"ok": True})
 
@@ -278,13 +358,16 @@ def test_internal_litellm_local_route_resolves_activation_path_from_model_data()
 def test_internal_litellm_current_route_does_not_enforce_gateway_profile_policy() -> None:
     captured = {}
 
-    async def fake_forward(request, *, request_path, auth_context, body_json, enforce_gateway_policy=True):
+    async def fake_forward(
+        request, *, request_path, auth_context, body_json, enforce_gateway_policy=True, request_id=""
+    ):
         captured.update(
             {
                 "request_path": request_path,
                 "auth_context": auth_context,
                 "body_json": body_json,
                 "enforce_gateway_policy": enforce_gateway_policy,
+                "request_id": request_id,
             }
         )
         return Response(
@@ -346,7 +429,7 @@ class InternalCurrentLoadedCancellationTests(unittest.IsolatedAsyncioTestCase):
         upstream = _BlockingInferenceResponse(task)
         client = _FakeExecutionClient()
 
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, on_signal=None):
             return client, upstream
 
         patches = self._patches(fake_send)
@@ -375,7 +458,7 @@ class InternalCurrentLoadedCancellationTests(unittest.IsolatedAsyncioTestCase):
         upstream = _FakeExecutionResponse({"id": "chatcmpl_123", "choices": []})
         client = _FakeExecutionClient()
 
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, on_signal=None):
             return client, upstream
 
         patches = self._patches(fake_send)

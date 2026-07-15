@@ -38,7 +38,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Iterable, Mapping, Optional
+from typing import Any, Awaitable, Callable, Iterable, Mapping, Optional
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode
 
 import httpx
@@ -107,7 +107,10 @@ from gateway.admin_runtime import (
     AdminSQLiteStore,
     USER_ACCESS_DEFAULTS_SETTING_KEY,
     create_admin_service_account_key,
+    is_human_user_record,
     runtime_identity_for_app_credential_hash,
+    service_account_session_subject,
+    session_admin_role_subject,
 )
 from gateway.api import create_gateway_router
 from gateway import engine_quarantine
@@ -130,9 +133,19 @@ from gateway.audio_extensions import (
 )
 from gateway.backends.chat import build_chat_loopback_request
 from gateway.backends.embeddings import build_embeddings_loopback_request
+from gateway.backends.cancellation import cancellation_registry
+from gateway.backends.request_shape import (
+    record_request_shape_stage,
+    request_body_byte_count,
+    request_shape_fields,
+)
 from gateway.backends.llm_execution import (
+    ClientDisconnectedBeforeHeaders,
+    GATEWAY_REQUEST_ID_HEADER,
     LITELLM_BODY_EXECUTION_PATHS,
     LlmExecutionRequest,
+    RequestDisconnectWatcher,
+    close_llm_response,
     iter_llm_response_bytes,
     litellm_headers,
     litellm_runtime_from_registry,
@@ -221,7 +234,7 @@ from gateway.openai_media_schemas import (
     VOICES_LIST_OPENAPI,
 )
 from gateway.policy import DEFAULT_PROFILE, DENIED, PolicyDecision
-from gateway.receipts import RouteReceipt
+from gateway.receipts import RouteReceipt, new_request_id
 from gateway.runtime_auth import (
     RuntimeIdentity,
     discovery_audience_for_profile,
@@ -1736,7 +1749,7 @@ def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
     if not owner_user_id:
         return None
     user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
-    if user is None:
+    if user is None or not is_human_user_record(user):
         return None
     oidc_access = _stored_oidc_access_names_for_user(owner_user_id)
     return _default_profile_id_for_user(
@@ -1752,6 +1765,8 @@ def _provision_existing_user_personal_apps() -> int:
         return 0
     created = 0
     for user in admin_store.list_users(path=ADMIN_STORE.path):
+        if not is_human_user_record(user):
+            continue
         user_id = str(user.get("id") or "")
         if not user_id:
             continue
@@ -2398,6 +2413,13 @@ def handle_cli_command() -> bool:
         if not name:
             print("Service account name cannot be empty.", file=sys.stderr)
             sys.exit(2)
+        if name.startswith("-"):
+            print(
+                "Service account name cannot start with '-'. "
+                "Usage: python3 proxy.py generate-admin-key <service-account-name> [role]",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         if role not in {"owner", "admin"}:
             print("Role must be one of: owner, admin.", file=sys.stderr)
             sys.exit(2)
@@ -3038,7 +3060,8 @@ async def _prepare_litellm_local_llm_request(
     if request_path == "/v1/chat/completions":
         # Step 2: reasoning_effort handled by the reasoning-effort built-in.
         # Body mutation goes through the transform; 400 plumbing stays here.
-        reasoning_error = _ReasoningEffortTransform().apply(body)
+        reasoning_cfg = config.get("reasoning") or {}
+        reasoning_error = _ReasoningEffortTransform(reasoning_cfg).apply(body)
         if reasoning_error:
             return Response(
                 content=json.dumps({"error": {
@@ -8826,6 +8849,21 @@ app = FastAPI(lifespan=lifespan)
 WEB_UI_DIR = Path(__file__).resolve().parent / "web" / "out"
 
 
+@app.middleware("http")
+async def _guard_admin_static_ui(request: Request, call_next):
+    path = request.url.path
+    if path == "/ui/admin" or path.startswith("/ui/admin/"):
+        try:
+            ADMIN_AUTH(request)
+        except AdminAuthError as exc:
+            return _admin_auth_failure_response(
+                request,
+                exc,
+                return_to=_path_with_query(request),
+            )
+    return await call_next(request)
+
+
 def mount_web_ui(target_app: FastAPI, directory: Path = WEB_UI_DIR) -> bool:
     """Mount the static Next.js export at /ui when it exists.
 
@@ -9501,6 +9539,8 @@ async def _oidc_verify_id_token(id_token: str, *, config) -> Mapping[str, Any]:
 def _existing_admin_roles_by_email() -> dict[str, str]:
     roles_by_email: dict[str, str] = {}
     for user in admin_store.list_users(path=ADMIN_STORE.path):
+        if not is_human_user_record(user):
+            continue
         email = str(user.get("email") or "").strip().lower()
         if not email:
             continue
@@ -9537,12 +9577,49 @@ def _safe_admin_return_to(value: str | None, *, default: str = "/admin") -> str:
         return value
     if value.startswith("/admin"):
         return value
+    if value == "/ui/admin" or value.startswith("/ui/admin/"):
+        return value
     return default
 
 
 def _login_url(*, return_to: str) -> str:
     safe_return_to = _safe_admin_return_to(return_to, default="/")
     return f"/login?return_to={quote(safe_return_to, safe='')}"
+
+
+def _path_with_query(request: Request) -> str:
+    query = f"?{request.url.query}" if request.url.query else ""
+    return f"{request.url.path}{query}"
+
+
+def _admin_auth_failure_response(
+    request: Request,
+    exc: AdminAuthError,
+    *,
+    return_to: str,
+) -> Response:
+    # A browser should never see a raw JSON 401/403 dead end on admin pages.
+    # Only genuine API callers presenting a Bearer token get the JSON error.
+    is_browser = not request.headers.get("authorization")
+    if is_browser and exc.status_code == 401:
+        if _effective_admin_oidc_config().enabled:
+            return RedirectResponse(
+                _login_url(return_to=return_to), status_code=302
+            )
+        return RedirectResponse("/setup", status_code=302)
+    if is_browser and exc.status_code == 403:
+        return RedirectResponse("/", status_code=302)
+    return Response(
+        content=json.dumps({
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+            }
+        }),
+        status_code=exc.status_code,
+        media_type="application/json",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def _browser_admin_session_signing_key() -> bytes | None:
@@ -9675,6 +9752,7 @@ app.include_router(
         auth=ADMIN_AUTH,
         profile_resolver=ADMIN_STORE.profile_for_id,
         service_probe=probe_backend,
+        status_provider=lambda: status_endpoint.get_cached_status(config),
         litellm_key_client=_LITELLM_KEY_CLIENT,
         known_model_names_getter=lambda: litellm_known_model_names(
             ADMIN_STORE.get_service_registry()
@@ -10628,31 +10706,13 @@ async def admin_dashboard(request: Request):
     try:
         actor = ADMIN_AUTH(request)
     except AdminAuthError as exc:
-        # A BROWSER (no Authorization header) should never see a raw JSON 401/403
-        # dead end on /admin. Only genuine API callers (presenting a Bearer
-        # token) get the JSON error.
-        is_browser = not request.headers.get("authorization")
-        if is_browser and exc.status_code == 401:
-            # Not signed in -> send to the right sign-in entry for the auth mode.
-            if _effective_admin_oidc_config().enabled:
-                return RedirectResponse(
-                    _login_url(return_to="/admin"), status_code=302
-                )
-            return RedirectResponse("/setup", status_code=302)
-        if is_browser and exc.status_code == 403:
-            # Signed in but not an admin -> their home is the portal, not /admin.
-            return RedirectResponse("/", status_code=302)
-        return Response(
-            content=json.dumps({
-                "error": {
-                    "code": exc.code,
-                    "message": exc.message,
-                }
-            }),
-            status_code=exc.status_code,
-            media_type="application/json",
-            headers={"WWW-Authenticate": "Bearer"},
+        return _admin_auth_failure_response(
+            request,
+            exc,
+            return_to="/admin",
         )
+    if WEB_UI_MOUNTED and not request.headers.get("authorization"):
+        return RedirectResponse("/ui/admin/", status_code=302)
     snapshot = ADMIN_STORE.dashboard_snapshot(actor)
     try:
         status_payload = await status_endpoint.get_cached_status(config)
@@ -10660,6 +10720,7 @@ async def admin_dashboard(request: Request):
         print(f"[proxy] admin status enrichment failed: {e}", flush=True)
         status_payload = {}
     snapshot["api_surfaces"] = _admin_api_surfaces()
+    snapshot["status"] = status_payload
     snapshot["services"] = _admin_services(status_payload)
     workflow_inventory = _admin_workflow_inventory()
     snapshot["workflow_inventory"] = workflow_inventory
@@ -10698,6 +10759,32 @@ async def admin_dashboard(request: Request):
         media_type="text/html; charset=utf-8",
         headers={"cache-control": "no-store"},
     )
+
+
+@app.get("/admin/services", include_in_schema=False)
+@app.get("/admin/services/", include_in_schema=False)
+@app.get("/admin/apps", include_in_schema=False)
+@app.get("/admin/apps/", include_in_schema=False)
+@app.get("/admin/profiles", include_in_schema=False)
+@app.get("/admin/profiles/", include_in_schema=False)
+@app.get("/admin/users", include_in_schema=False)
+@app.get("/admin/users/", include_in_schema=False)
+@app.get("/admin/audit", include_in_schema=False)
+@app.get("/admin/audit/", include_in_schema=False)
+@app.get("/admin/settings", include_in_schema=False)
+@app.get("/admin/settings/", include_in_schema=False)
+async def admin_react_section_redirect(request: Request):
+    section = request.url.path.removeprefix("/admin").strip("/")
+    query = f"?{request.url.query}" if request.url.query else ""
+    try:
+        ADMIN_AUTH(request)
+    except AdminAuthError as exc:
+        return _admin_auth_failure_response(
+            request,
+            exc,
+            return_to=_path_with_query(request),
+        )
+    return RedirectResponse(f"/ui/admin/{section}/{query}", status_code=302)
 
 
 async def _start_browser_login(request: Request, *, default_return_to: str) -> Response:
@@ -10775,12 +10862,39 @@ def _setup_admin_counts() -> tuple[int, int]:
 def _setup_personal_app_for_session(session) -> Mapping[str, Any] | None:
     if session is None:
         return None
+    subject_kind, subject_id = session_admin_role_subject(
+        str(getattr(session, "subject", "") or "")
+    )
+    if subject_kind != "user":
+        return None
     for app in admin_store.list_apps_for_user(
-        str(getattr(session, "subject", "") or ""),
+        subject_id,
         path=ADMIN_STORE.path,
     ):
         if app.get("kind") == "personal" and not app.get("disabled_at"):
             return app
+    return None
+
+
+def _setup_live_admin_session_target(session) -> str | None:
+    """Return the post-setup landing target for a live admin browser session."""
+    if session is None or session.role not in {"owner", "admin", "superadmin"}:
+        return None
+    subject_kind, subject_id = session_admin_role_subject(
+        str(getattr(session, "subject", "") or "")
+    )
+    roles = admin_store.list_admin_roles(
+        subject_kind=subject_kind,
+        subject_id=subject_id,
+        path=ADMIN_STORE.path,
+    )
+    role_names = {str(role.get("role") or "") for role in roles}
+    if not {"owner", "admin", "superadmin"} & role_names:
+        return None
+    if subject_kind == "user" and admin_store.get_user(subject_id, path=ADMIN_STORE.path):
+        return "/"
+    if subject_kind == "service_account":
+        return "/ui/admin/"
     return None
 
 
@@ -10987,23 +11101,12 @@ async def setup_page(request: Request):
     # — for headless/recovery use — but they're never the default landing.
     session = _oidc_session_from_request(request)
     wants_operator_console = request.query_params.get("operator") == "1"
-    # Only redirect when the cookie resolves to a REAL, still-existing user.
-    # A stale/orphaned cookie (e.g. from a prior instance whose DB was reset)
-    # passes the signature check but its user is gone — redirecting it to "/"
-    # would loop (/ can't resolve the user → shows the door → click sign-in →
-    # /setup → redirect → …). Falling through to the sign-in form breaks the
-    # loop and lets them sign in fresh.
-    session_user_exists = bool(
-        session is not None
-        and admin_store.get_user(session.subject, path=ADMIN_STORE.path)
-    )
-    if (
-        session is not None
-        and session.role in {"owner", "admin", "superadmin"}
-        and session_user_exists
-        and not wants_operator_console
-    ):
-        return RedirectResponse("/", status_code=303)
+    # Only redirect when the cookie resolves to a live admin principal. People
+    # go to their portal; service-account recovery sessions go to Admin. A
+    # stale/orphaned cookie falls through to the sign-in form instead of looping.
+    live_admin_target = _setup_live_admin_session_target(session)
+    if live_admin_target and not wants_operator_console:
+        return RedirectResponse(live_admin_target, status_code=303)
     return await _setup_page_response(request)
 
 
@@ -11088,35 +11191,31 @@ async def setup_claim_admin_key(request: Request):
             claim_error="That admin key does not have owner or admin permission.",
             status_code=403,
         )
-    user = admin_store.upsert_oidc_user(
-        "local-admin-key",
-        f"{subject_kind}:{subject_id}",
-        email="local-admin",
-        display_name="Local admin key",
-        path=ADMIN_STORE.path,
+    session_subject = (
+        service_account_session_subject(subject_id)
+        if subject_kind == "service_account"
+        else subject_id
     )
-    admin_store.assign_admin_role(
-        role=role,
-        subject_kind="user",
-        subject_id=str(user["id"]),
-        granted_by="setup-claim",
-        path=ADMIN_STORE.path,
+    session_email = (
+        str(credential.get("display_name") or "admin key")
+        if subject_kind == "service_account"
+        else "local-admin"
     )
     admin_store.record_audit(
         "setup.claim",
         actor_kind=subject_kind,
         actor_id=subject_id,
-        target_kind="user",
-        target_id=str(user["id"]),
+        target_kind=subject_kind,
+        target_id=subject_id,
         metadata={"role": role, "credential_prefix": credential.get("prefix")},
         path=ADMIN_STORE.path,
     )
     session = session_from_claims(
-        {"sub": str(user["id"]), "email": "local-admin"},
+        {"sub": session_subject, "email": session_email},
         role=role,
         cookie=_browser_admin_cookie_config(),
     )
-    response = RedirectResponse("/setup", status_code=303)
+    response = RedirectResponse("/ui/admin/", status_code=303)
     cookie = _browser_admin_cookie_config()
     response.set_cookie(
         cookie.name,
@@ -11417,7 +11516,14 @@ async def setup_create_first_app(request: Request):
             status_code=400,
         )
     try:
-        if session is not None and _user_self_service_enabled():
+        session_subject_kind, _session_subject_id = session_admin_role_subject(
+            str(getattr(session, "subject", "") or "")
+        ) if session is not None else ("", "")
+        if (
+            session is not None
+            and session_subject_kind == "user"
+            and _user_self_service_enabled()
+        ):
             app_record = _setup_personal_app_for_session(session)
             if app_record is None:
                 payload = request_user_access(
@@ -16039,6 +16145,39 @@ async def proxy_audio_generate(request: Request, auth_context):
             status_code=400,
             media_type="application/json"
         )
+    try:
+        if isinstance(duration, bool):
+            raise ValueError
+        duration_value = float(duration)
+    except (TypeError, ValueError):
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "duration must be a number",
+                    "type": "invalid_request_error",
+                    "param": "duration",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+    min_seconds = float(workflow_cfg.get("min_seconds", 1))
+    max_seconds = float(workflow_cfg.get("max_seconds", 300))
+    if duration_value < min_seconds or duration_value > max_seconds:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": (
+                        f"duration must be between {min_seconds:g} and {max_seconds:g} "
+                        f"for model {workflow_name}"
+                    ),
+                    "type": "invalid_request_error",
+                    "param": "duration",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
 
     workflow = _load_audio_workflow_file(workflow_cfg)
     if not workflow:
@@ -16109,10 +16248,7 @@ async def proxy_audio_generate(request: Request, auth_context):
 
     for node_id, key in _injection_targets(meta.get("duration_node"), "duration"):
         if node_id in workflow:
-            try:
-                workflow[node_id]["inputs"][key] = float(duration)
-            except (TypeError, ValueError):
-                pass
+            workflow[node_id]["inputs"][key] = duration_value
 
     seed_targets = _injection_targets(meta.get("seed_node"), "seed")
     if seed_targets:
@@ -16718,7 +16854,6 @@ async def _litellm_models_payload(
         content = await read_llm_response_body(
             client,
             resp,
-            is_downstream_disconnected=request.is_disconnected,
         )
         if content is None:
             return None
@@ -18364,7 +18499,6 @@ async def create_response(request: Request):
                     async for chunk in iter_llm_response_bytes(
                         client,
                         upstream,
-                        is_downstream_disconnected=request.is_disconnected,
                     ):
                         for ev in translator.feed(chunk):
                             yield ev
@@ -18728,21 +18862,58 @@ def _toolcall_backend_hint(service_id: str) -> str:
     return str(bcfg.get("preset") or service_id)
 
 
-def _per_backend_transform_ids(service_id: str) -> list[str]:
-    """Return the list of transform ids declared on a backend's config (data).
+def _transform_specs(raw: Any) -> list[str | dict[str, Any]]:
+    """Keep valid named or inline declarative transform specs from service data."""
+    if not isinstance(raw, list):
+        return []
+    return [
+        copy.deepcopy(spec)
+        for spec in raw
+        if (isinstance(spec, str) and spec) or isinstance(spec, Mapping)
+    ]
 
-    A service record may carry config["transforms"]: a list of registered
-    transform ids (the engine-agnostic primitives + named built-ins). Pure DATA
-    on the service — resolved and run by id, no engine-specific code. See
-    docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md. Returns [] when absent/malformed.
+
+def _per_backend_transform_specs(
+    service_id: str,
+    *,
+    model_name: str = "",
+) -> list[str | dict[str, Any]]:
+    """Return service then exact-model transform specs from backend config data.
+
+    Inline mappings are instances of the fixed transform primitive vocabulary;
+    strings select reviewed named built-ins. Model attachments are considered
+    only for an exact public id/model_group match, so a shared upstream model
+    cannot inherit another public model's policy.
     """
     if not service_id:
         return []
     bcfg = (config.get("backends") or {}).get(service_id) or {}
-    raw = bcfg.get("transforms")
-    if not isinstance(raw, list):
+    if not isinstance(bcfg, Mapping):
         return []
-    return [str(t) for t in raw if isinstance(t, str) and t]
+    specs = _transform_specs(bcfg.get("transforms"))
+    if not model_name:
+        return specs
+
+    normalized_model = normalize_model_id(model_name)
+    for item in _service_model_records(bcfg):
+        public_names = (item.get("model_group"), item.get("id"))
+        if any(
+            normalize_model_id(str(name or "")) == normalized_model
+            for name in public_names
+        ):
+            specs.extend(_transform_specs(item.get("transforms")))
+            break
+    return specs
+
+
+def _local_model_transform_specs(model_name: Any) -> list[str | dict[str, Any]]:
+    """Resolve a local model's transform attachments without backend literals."""
+    if not isinstance(model_name, str) or not model_name:
+        return []
+    backend, _, _ = _configured_litellm_local_model_target(model_name)
+    if not backend:
+        return []
+    return _per_backend_transform_specs(backend, model_name=model_name)
 
 
 def _litellm_gateway_metadata(
@@ -18822,26 +18993,38 @@ def _start_litellm_route_receipt(
     return receipt
 
 
+_LITELLM_METADATA_MAX_VALUE_LENGTH = 128
+
+# Deliberately excludes "x-litellm-call-id" (an opaque upstream-assigned id
+# with no length bound of its own — admin_stage_list_bypass/
+# admin_exposes_unbounded_call_id_length in the reliability audit) and
+# "x-litellm-model-api-base" (the upstream URL LiteLLM actually dispatched
+# to, which can carry embedded userinfo/query credentials —
+# admin_exposes_model_api_base in the same audit). Every remaining key is a
+# small, bounded scalar fact (a model name/group, a cost, a duration, a
+# retry/fallback count) safe to admin-promote as-is.
+_LITELLM_METADATA_ADMIN_SAFE_KEYS = (
+    "x-litellm-model-id",
+    "x-litellm-model-group",
+    "x-litellm-response-cost",
+    "x-litellm-response-duration-ms",
+    "x-litellm-attempted-retries",
+    "x-litellm-attempted-fallbacks",
+)
+
+
 def _attach_litellm_response_metadata(
     receipt: RouteReceipt,
     headers: Mapping[str, str],
 ) -> None:
-    keys = (
-        "x-litellm-call-id",
-        "x-litellm-model-id",
-        "x-litellm-model-group",
-        "x-litellm-model-api-base",
-        "x-litellm-response-cost",
-        "x-litellm-response-duration-ms",
-        "x-litellm-attempted-retries",
-        "x-litellm-attempted-fallbacks",
-    )
     facts: dict[str, str] = {}
     lowered = {key.lower(): value for key, value in headers.items()}
-    for key in keys:
+    for key in _LITELLM_METADATA_ADMIN_SAFE_KEYS:
         value = lowered.get(key)
         if value:
-            facts[key.removeprefix("x-litellm-").replace("-", "_")] = value
+            facts[key.removeprefix("x-litellm-").replace("-", "_")] = (
+                str(value)[:_LITELLM_METADATA_MAX_VALUE_LENGTH]
+            )
     if facts:
         receipt.metadata["litellm"] = facts
 
@@ -18881,6 +19064,65 @@ def _record_litellm_route_receipt(receipt: RouteReceipt) -> None:
         print(f"[proxy] Could not record LiteLLM route receipt: {e}", flush=True)
 
 
+def _record_internal_hop_receipt(
+    *,
+    request_path: str,
+    parent_request_id: str,
+    body: Mapping[str, Any] | None,
+    status_code: int | None,
+    terminal_reason: str,
+) -> None:
+    """Record a small internal-gateway-hop receipt linked to the outer request.
+
+    The internal LiteLLM hop (``/internal/litellm/...``) runs in the same
+    process but is reached through a second, independent HTTP round trip via
+    LiteLLM's sidecar — it never receives the outer route's ``RouteReceipt``
+    object, only the forwarded ``X-AI-Gateway-Request-Id`` string. Recording
+    a second, small receipt here — linked via ``parent_request_id`` rather
+    than overwriting the outer receipt's row — keeps internal_ingress/
+    backend_egress/terminal facts queryable through the existing receipt
+    store without a parallel observability subsystem or cross-process state.
+    A missing/unknown parent id (a caller that bypassed the outer route, or
+    an older LiteLLM build) is a no-op — there is nothing to link to.
+    """
+    if not parent_request_id:
+        return
+    receipt = RouteReceipt(
+        protocol="openai.chat",
+        path=request_path,
+        intent="chat.generate",
+        parent_request_id=parent_request_id,
+        visibility="internal",
+    )
+    record_request_shape_stage(
+        receipt.metadata,
+        "internal_ingress",
+        body,
+    )
+    record_request_shape_stage(
+        receipt.metadata,
+        "backend_egress",
+        body,
+        extra={"status_code": status_code} if status_code is not None else None,
+    )
+    record_request_shape_stage(
+        receipt.metadata,
+        "terminal",
+        body,
+        extra={"terminal_reason": terminal_reason},
+    )
+    receipt.metadata["terminal_reason"] = terminal_reason
+    receipt.finish(
+        "cancelled" if terminal_reason == "cancelled"
+        else "succeeded" if terminal_reason == "completed"
+        else "failed"
+    )
+    try:
+        receipt_store.record(receipt)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Could not record internal-hop receipt: {e}", flush=True)
+
+
 def _forward_query_without_client_api_key(raw_query: str) -> str:
     if not raw_query:
         return ""
@@ -18892,16 +19134,127 @@ def _forward_query_without_client_api_key(raw_query: str) -> str:
     return urlencode(pairs)
 
 
-async def _await_pre_response_disconnect(request: Request) -> bool:
-    """Wait for a disconnect after this route has consumed the request body.
+def _gateway_request_id_metadata(request_id: str) -> dict[str, str]:
+    return {"request-id": request_id}
 
-    ``Request.is_disconnected`` is deliberately non-blocking.  That is right
-    while ``StreamingResponse`` owns ASGI receive, but a non-stream response
-    needs one blocking receiver while it waits for the upstream body.  The
-    current-loaded routes have already parsed their complete request body, so
-    this watcher is the sole remaining consumer and can observe disconnects.
+
+def _internal_request_id_from_headers(headers: Mapping[str, str]) -> str:
+    lowered = {str(key).lower(): str(value) for key, value in headers.items()}
+    return lowered.get(GATEWAY_REQUEST_ID_HEADER.lower(), "")
+
+
+class _OuterCancellationSpan:
+    """Own one outer-route request's disconnect watcher and cancellation handle.
+
+    Built once per request, after the request body has already been fully
+    consumed, so its ``RequestDisconnectWatcher`` is the sole consumer of the
+    ASGI receive channel while it is alive. That watcher covers pre-header
+    dispatch (``dispatch``) and, for a response that turns out to be
+    non-streaming, the body read (``read_body``) too.
+
+    A response that turns out to stream must hand ASGI receive over to
+    Starlette's own ``StreamingResponse`` disconnect listener exclusively —
+    call ``stop_watcher_for_streaming_handoff`` the moment the content type is
+    known to be a stream and before constructing ``StreamingResponse``, so
+    this span's background watcher task is fully torn down first and never
+    runs concurrently with Starlette's. Any disconnect the watcher already
+    observed up to that point is signalled immediately during the handoff;
+    after that, the streaming generator's own cancellation (delivered via
+    Starlette, once it sees ``http.disconnect``) is the sole remaining
+    disconnect signal — report it with ``mark_stream_cancelled``.
+
+    Registers ``request_id`` in the shared ``CancellationRegistry`` and wires
+    every disconnect this span itself observes to ``signal()``, so the
+    internal gateway hop's reader (reached through LiteLLM's forwarded
+    ``X-AI-Gateway-Request-Id``) wakes even though it has no direct view of
+    this ASGI connection. ``aclose`` releases the registry handle and closes
+    the watcher (a no-op if already stopped) on every terminal path.
     """
-    return (await request.receive()).get("type") == "http.disconnect"
+
+    def __init__(self, request_id: str, *, receive: Callable[[], Awaitable[Mapping[str, Any]]]) -> None:
+        self.request_id = request_id
+        self._handle = cancellation_registry().register(request_id)
+        self.token = self._handle.token
+        self.watcher = RequestDisconnectWatcher(receive)
+
+    async def _signal(self) -> None:
+        """Signal the registry immediately — the sole place this span does so.
+
+        Passed as ``on_signal`` to the transport helpers below so the signal
+        fires the instant a disconnect/cancel wins its race, strictly before
+        those helpers begin any response/client teardown that can block.
+        Cross-hop propagation must never wait behind local cleanup.
+        """
+        cancellation_registry().signal(self.request_id)
+
+    async def dispatch(self, execution_request: "LlmExecutionRequest"):
+        """Send the upstream request, racing pre-header client disconnect.
+
+        Raises ``ClientDisconnectedBeforeHeaders`` if the client disconnects
+        before upstream response headers arrive. Signalling happens inside
+        ``send_llm_execution_request`` via ``on_signal`` — before it cancels
+        the in-flight send or closes the client — so any internal-hop reader
+        racing the same id wakes immediately rather than after teardown.
+        """
+        return await send_llm_execution_request(
+            execution_request,
+            disconnect_watcher=self.watcher,
+            on_signal=self._signal,
+        )
+
+    async def read_body(self, client: httpx.AsyncClient, response: httpx.Response) -> bytes | None:
+        """Read a non-stream response body, signalling on disconnect/cancel.
+
+        Delegates to ``read_llm_response_body``, which races this span's
+        watcher and cancellation token internally and calls ``on_signal``
+        the instant either fires — before it cancels the read or closes the
+        response/client. No separate poll, no pre-wait snapshot for callers
+        to go stale against.
+        """
+        return await read_llm_response_body(
+            client,
+            response,
+            disconnect_watcher=self.watcher,
+            cancellation_token=self.token,
+            on_signal=self._signal,
+        )
+
+    async def stop_watcher_for_streaming_handoff(self) -> None:
+        """Retire this span's watcher before Starlette owns ASGI receive.
+
+        Must be called once the response is known to stream and before
+        ``StreamingResponse`` is constructed — never while it, or any other
+        consumer, might also be calling ``receive()``. Signals immediately if
+        the watcher already caught a disconnect (pre-header or the brief
+        window between headers and the streaming decision); otherwise this is
+        silent handoff, since a normal in-flight request is not a disconnect.
+        """
+        already_disconnected = self.watcher.disconnected
+        await self.watcher.aclose()
+        if already_disconnected:
+            cancellation_registry().signal(self.request_id)
+
+    def mark_stream_cancelled(self) -> None:
+        """Signal the registry that the streaming generator was cancelled.
+
+        Call from the streaming generator's own ``except asyncio.CancelledError``
+        handling — once ``stop_watcher_for_streaming_handoff`` has run,
+        Starlette's disconnect listener (racing the same ASGI receive
+        channel) is the sole remaining source of a mid-stream disconnect
+        signal, and it surfaces as this generator being cancelled by
+        Starlette's task group. There is no separate poll.
+        """
+        cancellation_registry().signal(self.request_id)
+
+    async def aclose(self) -> None:
+        await self.watcher.aclose()
+        self._handle.release()
+
+    async def __aenter__(self) -> "_OuterCancellationSpan":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.aclose()
 
 
 async def _forward_current_loaded_openai_request(
@@ -18911,6 +19264,7 @@ async def _forward_current_loaded_openai_request(
     auth_context: AuthContext,
     body_json: Mapping[str, Any],
     enforce_gateway_policy: bool = True,
+    request_id: str = "",
 ) -> Response:
     requested_alias = body_json.get("model")
     target, target_error = await _current_loaded_llm_target(
@@ -18938,7 +19292,8 @@ async def _forward_current_loaded_openai_request(
     if request_path == "/v1/chat/completions":
         if _is_use_loaded_fast_model_alias(requested_alias):
             body["reasoning_effort"] = "none"
-        reasoning_error = _ReasoningEffortTransform().apply(body)
+        reasoning_cfg = config.get("reasoning") or {}
+        reasoning_error = _ReasoningEffortTransform(reasoning_cfg).apply(body)
         if reasoning_error:
             return Response(
                 content=json.dumps({"error": {
@@ -18965,17 +19320,71 @@ async def _forward_current_loaded_openai_request(
     headers.setdefault("content-type", "application/json")
     headers.setdefault("accept", "application/json")
 
+    execution_body = json.dumps(body).encode()
     execution_request = LlmExecutionRequest(
         method=request.method,
         url=url,
         headers=headers,
-        body=json.dumps(body).encode(),
+        body=execution_body,
         read_timeout=UPSTREAM_READ_TIMEOUT,
     )
 
+    # ``request_id`` non-empty means this call arrived through the internal
+    # LiteLLM hop (an outer route already recorded its own accepted/
+    # outer_egress receipt and forwarded X-AI-Gateway-Request-Id) — this
+    # function's own receipt must correlate to that parent rather than look
+    # like a second independent outer request, and its stages describe the
+    # internal hop it actually is (internal_ingress/backend_egress/terminal),
+    # not accepted/outer_egress which the parent already recorded.
+    is_internal_hop = bool(request_id)
+    receipt = RouteReceipt(
+        protocol="openai.chat",
+        path=request_path,
+        intent="chat.generate",
+        backend=target.backend,
+        requested_model=str(requested_alias) if requested_alias else None,
+        resolved_model=target.model,
+        parent_request_id=request_id if is_internal_hop else None,
+        visibility="internal",
+    )
+    receipt.metadata.update({"execution_backend": "current-loaded"})
+    if is_internal_hop:
+        record_request_shape_stage(receipt.metadata, "internal_ingress", body_json)
+    else:
+        record_request_shape_stage(receipt.metadata, "accepted", body_json)
+        record_request_shape_stage(
+            receipt.metadata, "outer_egress", body,
+            extra={"body_bytes": request_body_byte_count(execution_body)},
+        )
+
+    def _finish_current_loaded_receipt(*, terminal_reason: str, status: str) -> None:
+        receipt.metadata["terminal_reason"] = terminal_reason
+        record_request_shape_stage(
+            receipt.metadata, "terminal", body,
+            extra={"terminal_reason": terminal_reason},
+        )
+        receipt.finish(status)
+        try:
+            receipt_store.record(receipt)
+        except Exception as e:  # noqa: BLE001
+            print(f"[proxy] Could not record current-loaded route receipt: {e}", flush=True)
+
+    cancellation_span = _OuterCancellationSpan(
+        request_id or new_request_id(), receive=request.receive
+    )
+
     try:
-        client, resp = await send_llm_execution_request(execution_request)
+        try:
+            client, resp = await cancellation_span.dispatch(execution_request)
+        except ClientDisconnectedBeforeHeaders:
+            await cancellation_span.aclose()
+            _finish_current_loaded_receipt(terminal_reason="cancelled", status="cancelled")
+            return Response(status_code=499)
         content_type = resp.headers.get("content-type", "") or "application/json"
+        record_request_shape_stage(
+            receipt.metadata, "backend_egress", body,
+            extra={"status_code": resp.status_code},
+        )
         excluded = ("content-length", "transfer-encoding", "content-type")
         response_headers = {
             k: v for k, v in resp.headers.items() if k.lower() not in excluded
@@ -18995,19 +19404,31 @@ async def _forward_current_loaded_openai_request(
                 had_tools=_tc_had_tools,
                 backend_hint=_tc_backend_hint,
             )
+            # Hand ASGI receive over to Starlette's own disconnect listener
+            # before it exists: this span's watcher must never run
+            # concurrently with StreamingResponse's receive loop.
+            await cancellation_span.stop_watcher_for_streaming_handoff()
 
             async def stream_response():
+                stream_error: BaseException | None = None
                 try:
                     async for chunk in _tc_detector.wrap(
                         iter_llm_response_bytes(
                             client,
                             resp,
-                            is_downstream_disconnected=request.is_disconnected,
+                            cancellation_token=cancellation_span.token,
+                            on_signal=cancellation_span._signal,
                         )
                     ):
                         if request_path == "/v1/chat/completions":
                             chunk = _normalize_chat_completion_sse_chunk(chunk)
                         yield chunk
+                except asyncio.CancelledError:
+                    cancellation_span.mark_stream_cancelled()
+                    raise
+                except BaseException as exc:
+                    stream_error = exc
+                    raise
                 finally:
                     _tc_advisory = _tc_detector.advisory()
                     if _tc_advisory:
@@ -19020,6 +19441,22 @@ async def _forward_current_loaded_openai_request(
                         )
                     await resp.aclose()
                     await client.aclose()
+                    await cancellation_span.aclose()
+                    was_cancelled = cancellation_span.token.cancelled
+                    _finish_current_loaded_receipt(
+                        terminal_reason=(
+                            "cancelled" if was_cancelled
+                            else "read_error" if stream_error is not None
+                            else "completed" if 200 <= resp.status_code < 400
+                            else "failed"
+                        ),
+                        status=(
+                            "cancelled" if was_cancelled
+                            else "failed" if stream_error is not None
+                            else "succeeded" if 200 <= resp.status_code < 400
+                            else "failed"
+                        ),
+                    )
 
             return StreamingResponse(
                 stream_response(),
@@ -19028,15 +19465,16 @@ async def _forward_current_loaded_openai_request(
                 media_type=content_type,
             )
 
-        content = await read_llm_response_body(
-            client,
-            resp,
-            is_downstream_disconnected=lambda: _await_pre_response_disconnect(request),
-        )
+        content = await cancellation_span.read_body(client, resp)
+        was_cancelled = cancellation_span.token.cancelled
+        await cancellation_span.aclose()
         if content is None:
+            _finish_current_loaded_receipt(
+                terminal_reason="cancelled" if was_cancelled else "disconnected",
+                status="cancelled",
+            )
             return Response(status_code=499)
-        await resp.aclose()
-        await client.aclose()
+        await close_llm_response(client, resp)
         if "application/json" in content_type:
             try:
                 response_json = json.loads(content)
@@ -19046,7 +19484,7 @@ async def _forward_current_loaded_openai_request(
                         _normalize_toolcall_args(response_json)
                         _normalize_toolcall_finish_reason(response_json)
                         # Per-backend response transforms (data-driven; see ENGINE_KNOWLEDGE_BOUNDARY.md).
-                        _resp_tx = _per_backend_transform_ids(target.backend)
+                        _resp_tx = _per_backend_transform_specs(target.backend)
                         if _resp_tx:
                             response_json = _run_response_pipeline(
                                 _resp_tx, response_json, _TransformContext(), _TRANSFORM_REGISTRY,
@@ -19065,6 +19503,10 @@ async def _forward_current_loaded_openai_request(
                     content = json.dumps(response_json).encode()
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
+        _finish_current_loaded_receipt(
+            terminal_reason="completed" if 200 <= resp.status_code < 400 else "failed",
+            status="succeeded" if 200 <= resp.status_code < 400 else "failed",
+        )
         return Response(
             content=content,
             status_code=resp.status_code,
@@ -19072,6 +19514,8 @@ async def _forward_current_loaded_openai_request(
             media_type=content_type,
         )
     except httpx.TimeoutException:
+        await cancellation_span.aclose()
+        _finish_current_loaded_receipt(terminal_reason="idle_timeout", status="failed")
         return openai_error_response(
             "Current loaded LLM request timed out.",
             status_code=504,
@@ -19079,6 +19523,8 @@ async def _forward_current_loaded_openai_request(
             code="timeout",
         )
     except httpx.ConnectError:
+        await cancellation_span.aclose()
+        _finish_current_loaded_receipt(terminal_reason="connect_error", status="failed")
         response = openai_error_response(
             f"Active backend {target.backend!r} is unavailable.",
             status_code=503,
@@ -19087,6 +19533,10 @@ async def _forward_current_loaded_openai_request(
         )
         response.headers["Retry-After"] = "10"
         return response
+    except BaseException:
+        await cancellation_span.aclose()
+        _finish_current_loaded_receipt(terminal_reason="internal_error", status="failed")
+        raise
 
 
 async def _forward_litellm_proxy_request(
@@ -19143,11 +19593,14 @@ async def _forward_litellm_proxy_request(
         body_for_litellm.pop("dimensions", None)
 
     # Per-backend request transforms (engine-agnostic, data-driven):
-    # a service record may declare config["transforms"] — a list of transform
-    # ids resolved from the registry. Applied here so a backend's quirk handling
-    # is DATA on the service, never engine-specific code in the dispatch path.
+    # services and exact public models may declare transform specs. Applied here
+    # after frontend normalization, so policy is DATA rather than a backend
+    # branch in the dispatch path.
     # See docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md.
-    _backend_transforms = _per_backend_transform_ids(runtime.service_id)
+    _backend_transforms = _per_backend_transform_specs(runtime.service_id)
+    _backend_transforms.extend(
+        _local_model_transform_specs(body_for_litellm.get("model"))
+    )
     if _backend_transforms:
         body_for_litellm = _run_request_pipeline(
             _backend_transforms,
@@ -19157,12 +19610,26 @@ async def _forward_litellm_proxy_request(
         )
 
     body = json.dumps(dict(body_for_litellm)).encode()
+    receipt.metadata["request_shape"] = request_shape_fields(body_for_litellm)
+    receipt.metadata["request_shape"]["body_bytes"] = request_body_byte_count(body)
+    record_request_shape_stage(
+        receipt.metadata,
+        "accepted",
+        body_json,
+    )
+    record_request_shape_stage(
+        receipt.metadata,
+        "outer_egress",
+        body_for_litellm,
+        extra={"body_bytes": request_body_byte_count(body)},
+    )
     gateway_metadata = _litellm_gateway_metadata(
         auth_context,
         request_path=request_path,
         service_id=runtime.service_id,
         delegated_litellm_api_key=delegated_litellm_api_key,
     )
+    gateway_metadata.update(_gateway_request_id_metadata(receipt.request_id))
     read_timeout = (
         EMBEDDINGS_TIMEOUT
         if request_path == "/v1/embeddings"
@@ -19185,8 +19652,21 @@ async def _forward_litellm_proxy_request(
         read_timeout=read_timeout,
     )
 
+    cancellation_span = _OuterCancellationSpan(receipt.request_id, receive=request.receive)
+
     try:
-        client, resp = await send_llm_execution_request(execution_request)
+        try:
+            client, resp = await cancellation_span.dispatch(execution_request)
+        except ClientDisconnectedBeforeHeaders:
+            await cancellation_span.aclose()
+            receipt.metadata["terminal_reason"] = "cancelled"
+            record_request_shape_stage(
+                receipt.metadata, "terminal", body_for_litellm,
+                extra={"terminal_reason": "cancelled"},
+            )
+            receipt.finish("cancelled")
+            _record_litellm_route_receipt(receipt)
+            return Response(status_code=499)
         content_type = resp.headers.get("content-type", "") or "application/json"
         excluded = ("content-length", "transfer-encoding", "content-type")
         response_headers = {
@@ -19194,6 +19674,12 @@ async def _forward_litellm_proxy_request(
         }
         response_headers["X-AI-Gateway-LLM-Execution"] = "litellm"
         _attach_litellm_response_metadata(receipt, resp.headers)
+        record_request_shape_stage(
+            receipt.metadata,
+            "backend_egress",
+            body_for_litellm,
+            extra={"status_code": resp.status_code},
+        )
 
         # Derive backend hint for toolcall advisory (preset id or service id).
         _tc_backend_hint = _toolcall_backend_hint(runtime.service_id)
@@ -19207,22 +19693,57 @@ async def _forward_litellm_proxy_request(
                 had_tools=_tc_had_tools,
                 backend_hint=_tc_backend_hint,
             )
+            # Hand ASGI receive over to Starlette's own disconnect listener
+            # before it exists: this span's watcher must never run
+            # concurrently with StreamingResponse's receive loop.
+            await cancellation_span.stop_watcher_for_streaming_handoff()
 
             async def stream_response():
+                stream_error: BaseException | None = None
                 try:
                     async for chunk in _tc_detector.wrap(
                         iter_llm_response_bytes(
                             client,
                             resp,
-                            is_downstream_disconnected=request.is_disconnected,
+                            cancellation_token=cancellation_span.token,
+                            on_signal=cancellation_span._signal,
                         )
                     ):
                         if request_path == "/v1/chat/completions":
                             chunk = _normalize_chat_completion_sse_chunk(chunk)
                         yield chunk
+                except asyncio.CancelledError:
+                    cancellation_span.mark_stream_cancelled()
+                    raise
+                except BaseException as exc:
+                    stream_error = exc
+                    raise
                 finally:
+                    # Terminal outcome is read from the token only after the
+                    # stream has actually unwound — a cancellation observed
+                    # here always wins over the upstream status code, so
+                    # "cancelled" and "succeeded" can never both be recorded
+                    # for the same request. A generic stream failure (no
+                    # cancellation, but the read itself raised) is likewise
+                    # never reported as a completion just because headers
+                    # already carried a 2xx status.
+                    was_cancelled = cancellation_span.token.cancelled
+                    terminal_reason = (
+                        "cancelled" if was_cancelled
+                        else "read_error" if stream_error is not None
+                        else "completed" if 200 <= resp.status_code < 400
+                        else "failed"
+                    )
+                    receipt.metadata["terminal_reason"] = terminal_reason
+                    record_request_shape_stage(
+                        receipt.metadata, "terminal", body_for_litellm,
+                        extra={"terminal_reason": terminal_reason},
+                    )
                     receipt.finish(
-                        "succeeded" if 200 <= resp.status_code < 400 else "failed"
+                        "cancelled" if was_cancelled
+                        else "failed" if stream_error is not None
+                        else "succeeded" if 200 <= resp.status_code < 400
+                        else "failed"
                     )
                     _record_litellm_route_receipt(receipt)
                     # Emit toolcall advisory via log at stream close.
@@ -19237,6 +19758,7 @@ async def _forward_litellm_proxy_request(
                         )
                     await resp.aclose()
                     await client.aclose()
+                    await cancellation_span.aclose()
 
             return StreamingResponse(
                 stream_response(),
@@ -19245,15 +19767,23 @@ async def _forward_litellm_proxy_request(
                 media_type=content_type,
             )
 
-        content = await read_llm_response_body(
-            client,
-            resp,
-            is_downstream_disconnected=request.is_disconnected,
-        )
+        content = await cancellation_span.read_body(client, resp)
+        # Terminal outcome read after the wait completes — the token is the
+        # single source of truth here too, so a cancellation observed during
+        # the read is never overwritten by a later "succeeded" write.
+        was_cancelled = cancellation_span.token.cancelled
+        await cancellation_span.aclose()
         if content is None:
+            terminal_reason = "cancelled" if was_cancelled else "disconnected"
+            receipt.metadata["terminal_reason"] = terminal_reason
+            record_request_shape_stage(
+                receipt.metadata, "terminal", body_for_litellm,
+                extra={"terminal_reason": terminal_reason},
+            )
+            receipt.finish("cancelled")
+            _record_litellm_route_receipt(receipt)
             return Response(status_code=499)
-        await resp.aclose()
-        await client.aclose()
+        await close_llm_response(client, resp)
         if "application/json" in content_type:
             try:
                 response_json = json.loads(content)
@@ -19266,7 +19796,7 @@ async def _forward_litellm_proxy_request(
                             _normalize_toolcall_args(response_json)
                             _normalize_toolcall_finish_reason(response_json)
                             # Per-backend response transforms (data-driven; see ENGINE_KNOWLEDGE_BOUNDARY.md).
-                            _resp_tx = _per_backend_transform_ids(runtime.service_id)
+                            _resp_tx = _per_backend_transform_specs(runtime.service_id)
                             if _resp_tx:
                                 response_json = _run_response_pipeline(
                                     _resp_tx, response_json, _TransformContext(), _TRANSFORM_REGISTRY,
@@ -19301,6 +19831,12 @@ async def _forward_litellm_proxy_request(
                     content = json.dumps(response_json).encode()
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
+        terminal_reason = "completed" if 200 <= resp.status_code < 400 else "failed"
+        receipt.metadata["terminal_reason"] = terminal_reason
+        record_request_shape_stage(
+            receipt.metadata, "terminal", body_for_litellm,
+            extra={"terminal_reason": terminal_reason},
+        )
         receipt.finish("succeeded" if 200 <= resp.status_code < 400 else "failed")
         _record_litellm_route_receipt(receipt)
         return Response(
@@ -19310,6 +19846,12 @@ async def _forward_litellm_proxy_request(
             media_type=content_type,
         )
     except httpx.TimeoutException:
+        await cancellation_span.aclose()
+        receipt.metadata["terminal_reason"] = "idle_timeout"
+        record_request_shape_stage(
+            receipt.metadata, "terminal", body_for_litellm,
+            extra={"terminal_reason": "idle_timeout"},
+        )
         receipt.finish("failed")
         receipt.add_warning("LiteLLM execution timed out")
         _record_litellm_route_receipt(receipt)
@@ -19319,6 +19861,12 @@ async def _forward_litellm_proxy_request(
             media_type="application/json",
         )
     except httpx.ConnectError:
+        await cancellation_span.aclose()
+        receipt.metadata["terminal_reason"] = "connect_error"
+        record_request_shape_stage(
+            receipt.metadata, "terminal", body_for_litellm,
+            extra={"terminal_reason": "connect_error"},
+        )
         receipt.finish("failed")
         receipt.add_warning("LiteLLM execution backend is unavailable")
         _record_litellm_route_receipt(receipt)
@@ -19334,6 +19882,16 @@ async def _forward_litellm_proxy_request(
             media_type="application/json",
             headers={"Retry-After": "10"},
         )
+    except BaseException:
+        await cancellation_span.aclose()
+        receipt.metadata["terminal_reason"] = "internal_error"
+        record_request_shape_stage(
+            receipt.metadata, "terminal", body_for_litellm,
+            extra={"terminal_reason": "internal_error"},
+        )
+        receipt.finish("failed")
+        _record_litellm_route_receipt(receipt)
+        raise
 
 
 async def _handle_openai_litellm_request(
@@ -19480,65 +20038,167 @@ async def _forward_internal_litellm_local_chat_completions(
         read_timeout=UPSTREAM_READ_TIMEOUT,
     )
 
+    # This route runs behind LiteLLM's own httpx client, not the original
+    # outer client's ASGI connection — the outer route's disconnect watchers
+    # never fire here directly. The only cross-hop cancellation signal is the
+    # gateway request id LiteLLM forwards via forward_client_headers_to_llm_api
+    # (see gateway/litellm_substrate.py). A missing/unknown id (a caller that
+    # bypassed the outer route, or an older LiteLLM build) degrades to no
+    # cancellation token, matching prior behavior for this route.
+    internal_request_id = _internal_request_id_from_headers(request.headers)
+    cancellation_handle = (
+        cancellation_registry().register(internal_request_id)
+        if internal_request_id
+        else None
+    )
+    cancellation_token = cancellation_handle.token if cancellation_handle else None
+
     try:
-        client, resp = await send_llm_execution_request(execution_request)
-    except httpx.TimeoutException:
-        return openai_error_response(
-            "Local LLM request timed out.",
-            status_code=504,
-            error_type="api_error",
-            code="timeout",
-        )
-    except httpx.ConnectError:
-        response = openai_error_response(
-            f"Local backend {backend!r} is unavailable.",
-            status_code=503,
-            error_type="service_unavailable",
-            code="backend_unavailable",
-        )
-        response.headers["Retry-After"] = "10"
-        return response
+        try:
+            client, resp = await send_llm_execution_request(
+                execution_request, cancellation_token=cancellation_token
+            )
+        except ClientDisconnectedBeforeHeaders:
+            _record_internal_hop_receipt(
+                request_path="/v1/chat/completions",
+                parent_request_id=internal_request_id,
+                body=body,
+                status_code=None,
+                terminal_reason="cancelled",
+            )
+            return Response(status_code=499)
+        except httpx.TimeoutException:
+            _record_internal_hop_receipt(
+                request_path="/v1/chat/completions",
+                parent_request_id=internal_request_id,
+                body=body,
+                status_code=None,
+                terminal_reason="idle_timeout",
+            )
+            return openai_error_response(
+                "Local LLM request timed out.",
+                status_code=504,
+                error_type="api_error",
+                code="timeout",
+            )
+        except httpx.ConnectError:
+            _record_internal_hop_receipt(
+                request_path="/v1/chat/completions",
+                parent_request_id=internal_request_id,
+                body=body,
+                status_code=None,
+                terminal_reason="connect_error",
+            )
+            response = openai_error_response(
+                f"Local backend {backend!r} is unavailable.",
+                status_code=503,
+                error_type="service_unavailable",
+                code="backend_unavailable",
+            )
+            response.headers["Retry-After"] = "10"
+            return response
 
-    content_type = resp.headers.get("content-type", "application/json")
-    excluded = ("content-length", "transfer-encoding", "content-type")
-    response_headers = {
-        key: value for key, value in resp.headers.items() if key.lower() not in excluded
-    }
-    if body.get("stream") is True:
-        async def stream_response():
-            try:
-                async for chunk in iter_llm_response_bytes(
-                    client,
-                    resp,
-                    is_downstream_disconnected=request.is_disconnected,
-                ):
-                    yield chunk
-            finally:
-                await resp.aclose()
-                await client.aclose()
+        content_type = resp.headers.get("content-type", "application/json")
+        excluded = ("content-length", "transfer-encoding", "content-type")
+        response_headers = {
+            key: value for key, value in resp.headers.items() if key.lower() not in excluded
+        }
+        if body.get("stream") is True:
+            async def stream_response():
+                stream_error: BaseException | None = None
+                try:
+                    async for chunk in iter_llm_response_bytes(
+                        client,
+                        resp,
+                        cancellation_token=cancellation_token,
+                    ):
+                        yield chunk
+                except asyncio.CancelledError:
+                    raise
+                except BaseException as exc:
+                    stream_error = exc
+                    raise
+                finally:
+                    await resp.aclose()
+                    await client.aclose()
+                    was_cancelled = cancellation_token.cancelled if cancellation_token else False
+                    _record_internal_hop_receipt(
+                        request_path="/v1/chat/completions",
+                        parent_request_id=internal_request_id,
+                        body=body,
+                        status_code=resp.status_code,
+                        terminal_reason=(
+                            "cancelled" if was_cancelled
+                            else "read_error" if stream_error is not None
+                            else "completed" if 200 <= resp.status_code < 400
+                            else "failed"
+                        ),
+                    )
+                    if cancellation_handle is not None:
+                        cancellation_handle.release()
 
-        return StreamingResponse(
-            stream_response(),
+            return StreamingResponse(
+                stream_response(),
+                status_code=resp.status_code,
+                headers=response_headers,
+                media_type=content_type,
+            )
+
+        content = await read_llm_response_body(
+            client,
+            resp,
+            cancellation_token=cancellation_token,
+        )
+        was_cancelled = cancellation_token.cancelled if cancellation_token else False
+        if content is None:
+            _record_internal_hop_receipt(
+                request_path="/v1/chat/completions",
+                parent_request_id=internal_request_id,
+                body=body,
+                status_code=resp.status_code,
+                terminal_reason="cancelled" if was_cancelled else "disconnected",
+            )
+            return Response(status_code=499)
+        await close_llm_response(client, resp)
+        _record_internal_hop_receipt(
+            request_path="/v1/chat/completions",
+            parent_request_id=internal_request_id,
+            body=body,
+            status_code=resp.status_code,
+            terminal_reason="completed" if 200 <= resp.status_code < 400 else "failed",
+        )
+        return Response(
+            content=content,
             status_code=resp.status_code,
             headers=response_headers,
             media_type=content_type,
         )
-
-    content = await read_llm_response_body(
-        client,
-        resp,
-        is_downstream_disconnected=request.is_disconnected,
-    )
-    if content is None:
-        return Response(status_code=499)
-    await resp.aclose()
-    await client.aclose()
-    return Response(
-        content=content,
-        status_code=resp.status_code,
-        headers=response_headers,
-        media_type=content_type,
-    )
+    except BaseException:
+        # No prior branch above owns this outcome (httpx.TimeoutException/
+        # ConnectError/ClientDisconnectedBeforeHeaders are already handled)
+        # — a generic exception here (backend protocol error, cancellation
+        # raised directly into this coroutine, ...) must still terminalize
+        # the internal-hop receipt rather than leave the request permanently
+        # unresolved in the store. Re-raised unchanged after recording.
+        _record_internal_hop_receipt(
+            request_path="/v1/chat/completions",
+            parent_request_id=internal_request_id,
+            body=body,
+            status_code=None,
+            terminal_reason=(
+                "cancelled" if (cancellation_token.cancelled if cancellation_token else False)
+                else "internal_error"
+            ),
+        )
+        raise
+    finally:
+        # The streaming path releases in its own generator finally (its
+        # lifetime outlives this function's return); only release here for
+        # every path that terminates before reaching that generator —
+        # early returns above, and the non-stream path (released
+        # immediately since it has no generator to defer to).
+        if cancellation_handle is not None and body.get("stream") is not True:
+            cancellation_handle.release()
 
 
 @app.post(
@@ -19568,6 +20228,7 @@ async def internal_litellm_current_chat_completions(request: Request):
         auth_context=NO_AUTH_CONTEXT,
         body_json=body,
         enforce_gateway_policy=False,
+        request_id=_internal_request_id_from_headers(request.headers),
     )
 
 
@@ -19595,6 +20256,7 @@ async def internal_litellm_current_completions(request: Request):
         auth_context=NO_AUTH_CONTEXT,
         body_json=body,
         enforce_gateway_policy=False,
+        request_id=_internal_request_id_from_headers(request.headers),
     )
 
 
@@ -20257,60 +20919,164 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         request_path,
     )
 
+    # Staged request-shape observability, scoped to the chat/completions
+    # paths this catch-all also serves (MODEL_REQUIRED_PATHS) — the rest of
+    # this route forwards arbitrary non-LLM passthrough (health checks,
+    # TTS, ...) that request_shape_fields cannot meaningfully describe, and
+    # a receipt for those adds parallel bookkeeping without a matching
+    # observability contract. ``None`` (parse failure, or a path this
+    # doesn't apply to) means the receipt calls below become no-ops.
+    _native_shape_body: Mapping[str, Any] | None = None
+    if request_path in MODEL_REQUIRED_PATHS:
+        _parsed, _parse_error = parse_openai_json_body(body_peek)
+        if _parse_error is None:
+            _native_shape_body = _parsed
+    native_receipt = (
+        RouteReceipt(
+            protocol="openai.chat",
+            path=request_path,
+            intent="chat.generate",
+            backend=target_service,
+            requested_model=(
+                str(_native_shape_body.get("model"))
+                if _native_shape_body and _native_shape_body.get("model") else None
+            ),
+            visibility="internal",
+        )
+        if _native_shape_body is not None else None
+    )
+    if native_receipt is not None:
+        native_receipt.metadata.update({"execution_backend": "native"})
+        record_request_shape_stage(native_receipt.metadata, "accepted", _native_shape_body)
+        record_request_shape_stage(
+            native_receipt.metadata, "outer_egress", _native_shape_body,
+            extra={"body_bytes": request_body_byte_count(body)},
+        )
+
+    def _finish_native_receipt(*, terminal_reason: str, status: str) -> None:
+        if native_receipt is None:
+            return
+        native_receipt.metadata["terminal_reason"] = terminal_reason
+        record_request_shape_stage(
+            native_receipt.metadata, "terminal", _native_shape_body,
+            extra={"terminal_reason": terminal_reason},
+        )
+        native_receipt.finish(status)
+        try:
+            receipt_store.record(native_receipt)
+        except Exception as e:  # noqa: BLE001
+            print(f"[proxy] Could not record native route receipt: {e}", flush=True)
+
+    # Pre-header disconnect coverage: this route has no LiteLLM/internal hop
+    # behind it (native_passthrough talks straight to the backend), so it
+    # needs the local ASGI disconnect watcher only — no cross-hop
+    # cancellation registry. Built before dispatch so a client abort during
+    # connect/header-wait stops the backend request instead of leaving it
+    # running unobserved (the gap this route previously had).
+    native_disconnect_watcher = RequestDisconnectWatcher(request.receive)
     try:
-        # connect tight (local backend should accept instantly), read generous
-        # (covers slow prompt-processing on reasoning/vision), write tight
-        # (request bodies are small even with base64 images), no pool budget
-        # (fresh client per request — no shared pool to wait on).
-        client = httpx.AsyncClient(timeout=httpx.Timeout(
-            connect=10.0,
-            read=UPSTREAM_READ_TIMEOUT,
-            write=60.0,
-            pool=None,
-        ))
-        req = client.build_request(method=request.method, url=url, headers=headers, content=body)
-        resp = await client.send(req, stream=True)
+        try:
+            # connect tight (local backend should accept instantly), read generous
+            # (covers slow prompt-processing on reasoning/vision), write tight
+            # (request bodies are small even with base64 images), no pool budget
+            # (fresh client per request — no shared pool to wait on).
+            execution_request = LlmExecutionRequest(
+                method=request.method,
+                url=url,
+                headers=headers,
+                body=body,
+                read_timeout=UPSTREAM_READ_TIMEOUT,
+            )
+            try:
+                client, resp = await send_llm_execution_request(
+                    execution_request, disconnect_watcher=native_disconnect_watcher
+                )
+            except ClientDisconnectedBeforeHeaders:
+                _finish_native_receipt(terminal_reason="cancelled", status="cancelled")
+                return Response(status_code=499)
 
-        content_type = resp.headers.get("content-type", "") or "application/json"
-        excluded = ('content-length', 'transfer-encoding', 'content-type')
-        response_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
-        if "text/event-stream" in content_type:
-            async def stream_response():
-                try:
-                    async for chunk in iter_llm_response_bytes(
-                        client,
-                        resp,
-                        is_downstream_disconnected=request.is_disconnected,
-                    ):
-                        yield chunk
-                finally:
-                    await resp.aclose()
-                    await client.aclose()
+            content_type = resp.headers.get("content-type", "") or "application/json"
+            excluded = ('content-length', 'transfer-encoding', 'content-type')
+            response_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
+            if native_receipt is not None:
+                record_request_shape_stage(
+                    native_receipt.metadata, "backend_egress", _native_shape_body,
+                    extra={"status_code": resp.status_code},
+                )
+            if "text/event-stream" in content_type:
+                # Hand ASGI receive over to Starlette's own disconnect
+                # listener before it exists: this watcher must never run
+                # concurrently with StreamingResponse's receive loop.
+                await native_disconnect_watcher.aclose()
 
-            return StreamingResponse(
-                stream_response(),
+                async def stream_response():
+                    was_cancelled = False
+                    stream_error: BaseException | None = None
+                    try:
+                        async for chunk in iter_llm_response_bytes(
+                            client,
+                            resp,
+                        ):
+                            yield chunk
+                    except asyncio.CancelledError:
+                        was_cancelled = True
+                        raise
+                    except BaseException as exc:
+                        stream_error = exc
+                        raise
+                    finally:
+                        await resp.aclose()
+                        await client.aclose()
+                        _finish_native_receipt(
+                            terminal_reason=(
+                                "cancelled" if was_cancelled
+                                else "read_error" if stream_error is not None
+                                else "completed" if 200 <= resp.status_code < 400
+                                else "failed"
+                            ),
+                            status=(
+                                "cancelled" if was_cancelled
+                                else "failed" if stream_error is not None
+                                else "succeeded" if 200 <= resp.status_code < 400
+                                else "failed"
+                            ),
+                        )
+
+                return StreamingResponse(
+                    stream_response(),
+                    status_code=resp.status_code,
+                    headers=response_headers,
+                    media_type=content_type
+                )
+
+            content = await read_llm_response_body(
+                client,
+                resp,
+                disconnect_watcher=native_disconnect_watcher,
+            )
+            if content is None:
+                _finish_native_receipt(terminal_reason="disconnected", status="cancelled")
+                return Response(status_code=499)
+            await close_llm_response(client, resp)
+            _finish_native_receipt(
+                terminal_reason="completed" if 200 <= resp.status_code < 400 else "failed",
+                status="succeeded" if 200 <= resp.status_code < 400 else "failed",
+            )
+            return Response(
+                content=content,
                 status_code=resp.status_code,
                 headers=response_headers,
                 media_type=content_type
             )
-
-        content = await read_llm_response_body(
-            client,
-            resp,
-            is_downstream_disconnected=request.is_disconnected,
-        )
-        if content is None:
-            return Response(status_code=499)
-        await resp.aclose()
-        await client.aclose()
-        return Response(
-            content=content,
-            status_code=resp.status_code,
-            headers=response_headers,
-            media_type=content_type
-        )
+        finally:
+            # Idempotent: already-stopped (streaming handoff, or the
+            # non-stream read's own watcher use) is a no-op. Guarantees the
+            # watcher task never outlives this function on any exit path,
+            # including the exception branches below.
+            await native_disconnect_watcher.aclose()
 
     except httpx.TimeoutException:
+        _finish_native_receipt(terminal_reason="idle_timeout", status="failed")
         return Response(
             content=json.dumps({"detail": "Request timeout"}),
             status_code=504,
@@ -20321,6 +21087,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         # Re-probe health generically: if the local-swap backend is reachable
         # again, tell the client to retry (503); otherwise it's a hard connection
         # failure (502). The gateway does not restart backends — supervisors do.
+        _finish_native_receipt(terminal_reason="connect_error", status="failed")
         if engine_quarantine.is_local_swap_backend(target_service) and await check_service_health(target_service):
             return Response(
                 content=json.dumps({"detail": f"{target_service} is reachable again, please retry"}),
@@ -20333,6 +21100,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             media_type="application/json"
         )
     except Exception as e:
+        _finish_native_receipt(terminal_reason="internal_error", status="failed")
         return Response(
             content=json.dumps({"detail": f"Proxy error: {str(e)}"}),
             status_code=502,

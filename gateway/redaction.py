@@ -113,8 +113,12 @@ def find_forbidden_keys(
 ) -> list[str]:
     """Return a sorted, deduplicated list of forbidden keys present in ``data``.
 
-    When ``recurse`` is true, looks one level into nested mappings as well.
-    Returns ``[]`` when ``data`` is None, empty, or not a mapping.
+    When ``recurse`` is true, looks one level into nested mappings — and into
+    mappings nested inside a list at that same level (a list of stage/event
+    dicts is exactly the shape this module's own callers produce, e.g.
+    ``request_shape_stages``; scanning only bare nested mappings would miss a
+    forbidden key smuggled in there) — as well. Returns ``[]`` when ``data``
+    is None, empty, or not a mapping.
     """
     if not isinstance(data, Mapping):
         return []
@@ -122,11 +126,27 @@ def find_forbidden_keys(
     for k, v in data.items():
         if is_forbidden_key(k):
             found.add(str(k).lower())
-        if recurse and isinstance(v, Mapping):
-            for nk in v.keys():
+        if not recurse:
+            continue
+        for nested_mapping in _one_level_of_nested_mappings(v):
+            for nk in nested_mapping.keys():
                 if is_forbidden_key(nk):
                     found.add(str(nk).lower())
     return sorted(found)
+
+
+def _one_level_of_nested_mappings(value: Any) -> list[Mapping[Any, Any]]:
+    """Return the mappings directly reachable one level below ``value``.
+
+    ``value`` itself if it is a mapping, or every mapping element of
+    ``value`` if it is a list/tuple — never deeper than that, matching this
+    module's "one level of nesting" contract.
+    """
+    if isinstance(value, Mapping):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [item for item in value if isinstance(item, Mapping)]
+    return []
 
 
 def assert_safe_mapping(
@@ -148,8 +168,8 @@ def assert_safe_mapping(
         raise ValueError(f"{label} contains forbidden keys: {bad} {_REJECTION_REASON}")
     if recurse:
         for v in data.values():
-            if isinstance(v, Mapping):
-                nested = find_forbidden_keys(v, recurse=False)
+            for nested_mapping in _one_level_of_nested_mappings(v):
+                nested = find_forbidden_keys(nested_mapping, recurse=False)
                 if nested:
                     raise ValueError(
                         f"{label} contains forbidden nested keys: {nested} {_REJECTION_REASON}"

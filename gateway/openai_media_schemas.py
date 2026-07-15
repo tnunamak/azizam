@@ -381,7 +381,7 @@ def _audio_generate_request_schema() -> JsonObjectSchema:
             "model": {"type": "string", "description": "Audio generation workflow id."},
             "tags": {"type": "string"},
             "lyrics": {"type": "string"},
-            "seconds": {"type": "number"},
+            "duration": {"type": "number"},
             "seed": {"type": "integer"},
             "response_format": {"type": "string"},
         },

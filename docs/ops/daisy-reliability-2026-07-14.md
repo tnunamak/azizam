@@ -27,9 +27,32 @@ Gateway policy translates `reasoning_effort` into `thinking_budget_tokens`: `non
 
 Bee's service default may be unlimited, but a request budget overrides it. The incident proved finite overrides reached Bee: low used 4,096 and high used 8,192. Do not diagnose a request as unlimited from the service default alone.
 
+### Finite aggregate-output handoff
+
+**Owner:** the Vivid Fish gateway service/model configuration owns the omitted-client aggregate-output default. Pi/Daisy must not infer it from model metadata, LiteLLM must not own it globally, and no Pi or Bee patch owns this policy.
+
+Pi's `model.maxTokens` is capability/listing metadata. Normal Pi turns omit an active `max_tokens` cap unless the caller supplies one, so the displayed 16,384 value alone did not limit a normal Daisy turn. Bee's `thinking_budget_tokens` is a separate reasoning-quality control: it is per recognized reasoning block and re-arms for a later block. It is therefore orthogonal to the aggregate completion ceiling.
+
+Only the selected public `default` model receives this declarative attachment; `coder`, `default-fast`, and `rp` are unaffected:
+
+```yaml
+- kind: param-map
+  from: max_completion_tokens
+  to: max_tokens
+  only_if_destination_absent: true
+- kind: default-params
+  set: {max_tokens: 16384}
+```
+
+The attachment runs after frontend normalization. It applies 16,384 only when the cap is omitted; explicit Chat `max_tokens`/`max_completion_tokens`, Responses `max_output_tokens`/`max_completion_tokens`, Anthropic `max_tokens`, and Ollama `options.num_predict` (including `0`) remain authoritative. When both Responses spellings are supplied, `max_output_tokens` wins. Source references: gateway commits `08225f0` and `05f43dd`.
+
+For a populated installation, `admin.db` is the source of truth: apply or remove the same selected-model attachment through `AdminSQLiteStore.update_service_registry`, not by editing the bootstrap YAML. The bootstrap seed path is `proxy_config.yml → backends.kobold.models[id=default].transforms`.
+
+Operator-observed live acceptance on 2026-07-14: one gateway-only restart loaded the attachment. Receipt `req_dbe23e6989b6429c96884b8257d1ceb3` recorded `max_tokens: 16384` through both gateway hops, cancellation released Bee task `380822`, explicit `0` remained unchanged, and a Responses `max_completion_tokens: 19` remained unchanged. These live observations are not a repository-replayable artifact.
+
 ## Verification evidence
 
-- Gateway recorded full-suite result: **2,148 passed, 1 skipped, 387 subtests**. This handoff also reran `./venv/bin/python -m pytest -q tests/test_litellm_internal_lifecycle_route.py`: **7 passed**. The regression exercises post-body client abort, status 499, canceled upstream read, release/close, and ordinary non-stream completion.
+- Gateway source-level evidence is in commits `08225f0` and `05f43dd`. Focused-test evidence covers the finite-output request shape, Responses normalization, reasoning mapping, engine boundary, and cancellation lifecycle. The cancellation regression is `./venv/bin/python -m pytest -q tests/test_litellm_internal_lifecycle_route.py`; it exercises post-body client abort, status 499, canceled upstream read, release/close, and ordinary non-stream completion. Do not treat any historical full-suite count as environment-independent evidence.
 - Bee `006023532` adds a production HTTP visible-periodic-tail test with slot-release assertion, C++ visible-region oracles, and coverage through the grammar/reasoning, loop-guard, and MTP replay focused suites. The existing focused CTest set (`test-mtp-loop-guard-rollback`, `test-reasoning-budget`, `test-server-loop-guard`, `test-dflash-plumbing`) previously passed in both Debug and Release builds.
 - Daisy `ba2d383` reports 14 focused tests for failure cancellation, preservation, and retry behavior. The compaction audit also reran the existing Daisy compaction suite: 6 passed.
 - The public context-clamp extension has handler-contract coverage and a real-session audit-only integration test. It is installed audit-only, so it records no prompt, payload body, headers, or credentials.
@@ -74,6 +97,7 @@ The Bee scenario forces a hidden-thinking close, biases a repeated visible tail,
 Rollback is per component and should be deliberate:
 
 - Gateway: revert `a22482b` to restore the former current-loaded disconnect behavior. `f3f7e35` changes tests only.
+- Finite output default: either restore the exact registry mapping snapshot `/home/tnunamak/.tmp/openai-proxy-registry-before-finite-output-20260714-180841.json` through `AdminSQLiteStore.update_service_registry`, or remove the selected model's output-cap attachment, then perform one gateway-only restart. `/home/tnunamak/.tmp/openai-proxy-admin-before-finite-output-20260714-180841.db` is the separate full database backup, not input to `AdminSQLiteStore.update_service_registry`. No LiteLLM, Pi, or Bee global setting is part of this rollback.
 - BeeLlama: revert `006023532` to restore pre-fix visible-tail behavior; this also restores the known post-force-close loop risk.
 - Daisy: revert `42a8dab`, `ba2d383`, and `5c831c7` in reverse dependency/order as appropriate. Reverting the 7,500 setting restores a known undercount risk; reverting transactional compaction restores the lossy-fallback risk.
 

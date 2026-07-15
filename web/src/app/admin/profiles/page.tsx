@@ -25,13 +25,10 @@
  *
  * All mutations use api.profiles.* and api.policy.simulate from lib/api.ts. */
 
-import { useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   ApiError,
@@ -45,8 +42,6 @@ import {
   Button,
   Checkbox,
   ConfirmDialog,
-  DataTable,
-  type DataTableColumn,
   Dialog,
   DialogBody,
   DialogContent,
@@ -55,16 +50,19 @@ import {
   DialogForm,
   DialogHeader,
   DialogTitle,
-  EmptyState,
-  EntityRef,
+  EmptyOperationalState,
   Field,
+  IncidentBanner,
   Input,
+  NoticeBanner,
   OverflowMenu,
   OverflowMenuItem,
   OverflowMenuSeparator,
-  SectionHeader,
+  RelativeTime,
+  SectionActionHeader,
   Select,
   Skeleton,
+  SummaryStrip,
   toast,
 } from "@/components/ui";
 
@@ -76,20 +74,43 @@ function errorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
+function normalizedRouteTarget(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+}
+
+function profileMatchesRouteTarget(profile: Profile, target: string): boolean {
+  const wanted = normalizedRouteTarget(target);
+  return [profile.id, profile.name].some(
+    (candidate) => normalizedRouteTarget(candidate) === wanted,
+  );
+}
+
+function RouteProfileTargetSync({
+  onChange,
+}: {
+  onChange: (target: string | null) => void;
+}) {
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    onChange(searchParams.get("profile"));
+  }, [onChange, searchParams]);
+  return null;
+}
+
 /** Known gateway protocols in a human order. */
 const KNOWN_PROTOCOLS = ["openai", "anthropic", "google", "azure"];
 
 /** Known intents mapped to human-readable capability names. */
 const INTENT_LABELS: Record<string, string> = {
   "chat.completions": "chat",
-  "completions": "completions",
-  "embeddings": "embeddings",
+  completions: "completions",
+  embeddings: "embeddings",
   "images.generate": "images",
   "images.edit": "image edit",
   "audio.speech": "speech",
   "audio.transcriptions": "transcriptions",
   "video.generate": "video",
-  "moderations": "moderations",
+  moderations: "moderations",
 };
 
 /** Derive the human access summary from a profile.
@@ -135,11 +156,64 @@ function accessSummary(profile: Profile): string {
   return `${modelPart} · ${intentPart}${intentSuffix}`;
 }
 
+/** Structured access facets for an operational row (badges, not just a string). */
+interface ProfileFacets {
+  /** "all models" or "N models". */
+  modelScope: string;
+  /** Whether the model scope is unrestricted (used for tone). */
+  unrestrictedModels: boolean;
+  /** Human capability labels (chat, images, …) — capped for display. */
+  capabilities: string[];
+  /** Protocol front doors (openai, anthropic, …). */
+  protocols: string[];
+  /** True when nothing is restricted at all. */
+  fullAccess: boolean;
+}
+
+function profileFacets(profile: Profile): ProfileFacets {
+  const allow = profile.profile?.allow as
+    | { intents?: string[]; models?: string[] }
+    | undefined;
+
+  const capabilities: string[] = [];
+  if (allow?.intents && allow.intents.length > 0) {
+    for (const intent of allow.intents) {
+      const label = INTENT_LABELS[intent] ?? intent.replace(".", " ");
+      if (!capabilities.includes(label)) capabilities.push(label);
+    }
+  } else if (profile.workflows && profile.workflows.length > 0) {
+    capabilities.push(...profile.workflows.map((w) => w.replace(/-/g, " ")));
+  }
+
+  const models = allow?.models;
+  const unrestrictedModels = !models || models.length === 0;
+  const modelScope = unrestrictedModels
+    ? "all models"
+    : `${models!.length} ${models!.length === 1 ? "model" : "models"}`;
+
+  const fullAccess =
+    unrestrictedModels &&
+    capabilities.length === 0 &&
+    profile.protocols.length === 0;
+
+  return {
+    modelScope,
+    unrestrictedModels,
+    capabilities,
+    protocols: profile.protocols,
+    fullAccess,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The surface
 
 export default function AdminProfilesPage() {
   const queryClient = useQueryClient();
+  const [routeProfileTarget, setRouteProfileTarget] = useState<string | null>(
+    null,
+  );
+  const consumedProfileTargetRef = useRef<string | null>(null);
 
   const {
     data: profilesData,
@@ -193,60 +267,63 @@ export default function AdminProfilesPage() {
   });
 
   const profiles = useMemo(
-    () =>
-      [...(profilesData ?? [])].sort((a, b) => b.created_at - a.created_at),
+    () => [...(profilesData ?? [])].sort((a, b) => b.created_at - a.created_at),
     [profilesData],
   );
+  const appsUsingProfiles = useMemo(
+    () =>
+      Array.from(appCountByProfile.values()).reduce(
+        (total, count) => total + count,
+        0,
+      ),
+    [appCountByProfile],
+  );
+  const unrestrictedProfiles = profiles.filter(
+    (profile) => accessSummary(profile) === "all access",
+  ).length;
+  const protocolCount = new Set(
+    profiles.flatMap((profile) => profile.protocols),
+  ).size;
 
   const loading = profilesPending;
   const failed = profilesIsError && !profilesData;
 
-  const columns: DataTableColumn<Profile>[] = [
-    {
-      id: "profile",
-      header: "Profile",
-      cell: (profile) => (
-        <EntityRef name={profile.name} id={profile.id} />
-      ),
-    },
-    {
-      id: "access",
-      header: "Access",
-      cell: (profile) => (
-        <span className="text-vf-small text-vf-muted">{accessSummary(profile)}</span>
-      ),
-    },
-    {
-      id: "apps",
-      header: "Apps using it",
-      cell: (profile) => {
-        if (appsPending) return <Skeleton className="h-4 w-8" />;
-        const count = appCountByProfile.get(profile.id) ?? 0;
-        return (
-          <span className="text-vf-small text-vf-muted tabular-nums">
-            {count === 0 ? (
-              <span className="text-vf-subtle">—</span>
-            ) : (
-              `${count} ${count === 1 ? "app" : "apps"}`
-            )}
-          </span>
-        );
-      },
-    },
-    {
-      id: "created",
-      header: "Created",
-      value: (profile) => profile.created_at,
-      hideOnMobile: true,
-    },
-  ];
+  const routeSelectedProfile = useMemo(() => {
+    if (!routeProfileTarget) return null;
+    return (
+      profiles.find((profile) =>
+        profileMatchesRouteTarget(profile, routeProfileTarget),
+      ) ?? null
+    );
+  }, [profiles, routeProfileTarget]);
+
+  useEffect(() => {
+    if (!routeProfileTarget) {
+      consumedProfileTargetRef.current = null;
+      return;
+    }
+    if (consumedProfileTargetRef.current === routeProfileTarget) return;
+    if (!routeSelectedProfile) return;
+    setEditTarget(routeSelectedProfile);
+    consumedProfileTargetRef.current = routeProfileTarget;
+  }, [routeProfileTarget, routeSelectedProfile]);
+
+  const missingRouteProfile =
+    routeProfileTarget !== null &&
+    routeSelectedProfile === null &&
+    !profilesPending &&
+    profiles.length > 0;
 
   return (
-    <main className="mx-auto flex w-full max-w-[1080px] flex-col gap-10 px-4 py-8 md:px-6">
+    <div className="flex w-full flex-col gap-8">
+      <Suspense fallback={null}>
+        <RouteProfileTargetSync onChange={setRouteProfileTarget} />
+      </Suspense>
       <section className="flex flex-col gap-4">
-        <SectionHeader
+        <SectionActionHeader
           kicker="access"
           title="Profiles"
+          count={profiles.length > 0 ? profiles.length : undefined}
           description="A profile defines what a caller is allowed to reach — which models, protocols, and capabilities."
           action={
             <div className="flex gap-2">
@@ -264,46 +341,78 @@ export default function AdminProfilesPage() {
           }
         />
 
+        <SummaryStrip
+          items={[
+            {
+              label: "profiles",
+              value: String(profiles.length),
+              detail: "access policies",
+              tone: "info",
+              badge: "live",
+            },
+            {
+              label: "assigned apps",
+              value: String(appsUsingProfiles),
+              detail: "explicit profile",
+              tone: "accent",
+              badge: "live",
+            },
+            {
+              label: "protocols",
+              value: String(protocolCount),
+              detail: "represented",
+              tone: "neutral",
+              badge: "scope",
+            },
+            {
+              label: "unrestricted",
+              value: String(unrestrictedProfiles),
+              detail: "broad access",
+              tone: unrestrictedProfiles > 0 ? "warn" : "ok",
+              badge: unrestrictedProfiles > 0 ? "review" : "none",
+            },
+          ]}
+        />
+        {missingRouteProfile && (
+          <IncidentBanner
+            tone="warn"
+            title="No profile matches this link"
+            detail={`The profile target "${routeProfileTarget}" is not in the current profile list.`}
+          />
+        )}
+
         {failed ? (
           <ErrorBanner onRetry={() => void refetchProfiles()}>
             Couldn&apos;t load profiles. {errorMessage(profilesError)}
           </ErrorBanner>
-        ) : (
-          <DataTable
-            label="Profiles"
-            columns={columns}
-            rows={profiles}
-            rowKey={(profile) => profile.id}
-            loading={loading}
-            empty={
-              <EmptyState
-                action={
-                  <Button onClick={() => setCreateOpen(true)}>
-                    Create profile
-                  </Button>
-                }
-              >
-                No profiles yet. Create one to control what callers can reach.
-              </EmptyState>
+        ) : loading ? (
+          <div className="vf-feed-panel flex flex-col gap-0" aria-busy="true">
+            <Skeleton className="h-16 w-full rounded-none border-b border-[var(--vf-border)]" />
+            <Skeleton className="h-16 w-full rounded-none border-b border-[var(--vf-border)]" />
+            <Skeleton className="h-16 w-full rounded-none" />
+          </div>
+        ) : profiles.length === 0 ? (
+          <EmptyOperationalState
+            title="No profiles yet"
+            detail="Create one to control what callers can reach."
+            action={
+              <Button onClick={() => setCreateOpen(true)}>Create profile</Button>
             }
-            rowMenu={(profile) => (
-              <OverflowMenu label={`Actions for ${profile.name}`}>
-                <OverflowMenuItem onSelect={() => setEditTarget(profile)}>
-                  Edit…
-                </OverflowMenuItem>
-                <OverflowMenuItem onSelect={() => setTestTarget(profile)}>
-                  Test access…
-                </OverflowMenuItem>
-                <OverflowMenuSeparator />
-                <OverflowMenuItem
-                  danger
-                  onSelect={() => setDeleteTarget(profile)}
-                >
-                  Delete…
-                </OverflowMenuItem>
-              </OverflowMenu>
-            )}
           />
+        ) : (
+          <div className="vf-feed-panel overflow-hidden">
+            {profiles.map((profile) => (
+              <ProfileRow
+                key={profile.id}
+                profile={profile}
+                appCount={appCountByProfile.get(profile.id) ?? 0}
+                appsPending={appsPending}
+                onEdit={() => setEditTarget(profile)}
+                onTest={() => setTestTarget(profile)}
+                onDelete={() => setDeleteTarget(profile)}
+              />
+            ))}
+          </div>
         )}
       </section>
 
@@ -346,9 +455,7 @@ export default function AdminProfilesPage() {
       <DeleteProfileDialog
         profile={deleteTarget}
         appsUsingIt={
-          deleteTarget
-            ? (appCountByProfile.get(deleteTarget.id) ?? 0)
-            : 0
+          deleteTarget ? (appCountByProfile.get(deleteTarget.id) ?? 0) : 0
         }
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null);
@@ -357,7 +464,116 @@ export default function AdminProfilesPage() {
           if (deleteTarget) deleteProfile.mutate(deleteTarget);
         }}
       />
-    </main>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ProfileRow — operational list row (replaces a flat table cell)
+//
+// Line 1: name + id ref, apps-using count, overflow menu.
+// Line 2: access facets as badges (model scope, capabilities, protocols) —
+//         derived from existing profile fields only; no invented policy data.
+
+function ProfileRow({
+  profile,
+  appCount,
+  appsPending,
+  onEdit,
+  onTest,
+  onDelete,
+}: {
+  profile: Profile;
+  appCount: number;
+  appsPending: boolean;
+  onEdit: () => void;
+  onTest: () => void;
+  onDelete: () => void;
+}) {
+  const facets = profileFacets(profile);
+  const caps = facets.capabilities.slice(0, 4);
+  const capOverflow = facets.capabilities.length - caps.length;
+
+  return (
+    <div className="vf-service-row">
+      {/* Top line: identity + apps-using + actions */}
+      <div className="vf-service-row-main">
+        <button
+          type="button"
+          className="min-w-0 flex-1 cursor-pointer text-left"
+          onClick={onEdit}
+          aria-label={`${profile.name} — edit access`}
+        >
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-vf-body text-vf-text shrink-0 font-semibold">
+              {profile.name}
+            </span>
+            <span className="text-vf-micro text-vf-subtle shrink-0 font-mono">
+              {profile.id}
+            </span>
+          </span>
+        </button>
+        <div
+          className="vf-service-row-actions shrink-0"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="text-vf-micro text-vf-muted hidden font-mono tabular-nums sm:inline">
+            {appsPending ? (
+              <Skeleton className="h-4 w-10" />
+            ) : appCount === 0 ? (
+              <span className="text-vf-subtle">unused</span>
+            ) : (
+              `${appCount} ${appCount === 1 ? "app" : "apps"}`
+            )}
+          </span>
+          <OverflowMenu label={`Actions for ${profile.name}`}>
+            <OverflowMenuItem onSelect={onEdit}>Edit…</OverflowMenuItem>
+            <OverflowMenuItem onSelect={onTest}>Test access…</OverflowMenuItem>
+            <OverflowMenuSeparator />
+            <OverflowMenuItem danger onSelect={onDelete}>
+              Delete…
+            </OverflowMenuItem>
+          </OverflowMenu>
+        </div>
+      </div>
+
+      {/* Second line: access facets as badges */}
+      <div className="flex min-h-0 flex-wrap items-center gap-1.5">
+        {facets.fullAccess ? (
+          <Badge sm tone="warn">
+            all access
+          </Badge>
+        ) : (
+          <>
+            <Badge sm tone={facets.unrestrictedModels ? "neutral" : "info"}>
+              {facets.modelScope}
+            </Badge>
+            {caps.map((cap) => (
+              <Badge key={cap} sm tone="neutral">
+                {cap}
+              </Badge>
+            ))}
+            {capOverflow > 0 && (
+              <span className="text-vf-micro text-vf-muted font-mono">
+                +{capOverflow}
+              </span>
+            )}
+            {facets.protocols.map((p) => (
+              <span
+                key={p}
+                className="text-vf-micro text-vf-subtle font-mono"
+                title={`protocol: ${p}`}
+              >
+                {p}
+              </span>
+            ))}
+          </>
+        )}
+        <span className="text-vf-micro text-vf-muted ml-auto font-mono">
+          <RelativeTime ts={profile.created_at} />
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -372,15 +588,16 @@ function ErrorBanner({
   onRetry: () => void;
 }) {
   return (
-    <div
-      role="alert"
-      className="rounded-vf-md border-vf-bad/40 bg-vf-bad/10 flex flex-wrap items-center justify-between gap-3 border p-4"
+    <NoticeBanner
+      tone="bad"
+      action={
+        <Button size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      }
     >
-      <p className="text-vf-small text-vf-text">{children}</p>
-      <Button size="sm" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
+      {children}
+    </NoticeBanner>
   );
 }
 
@@ -419,6 +636,24 @@ function defaultFormState(profile?: Profile): ProfileFormState {
     intents: allow?.intents ?? [],
     statusVisibility: profile.status_visibility ?? "basic",
   };
+}
+
+function profileFormSummary(form: ProfileFormState): string {
+  const protocols =
+    form.protocols.length > 0 ? form.protocols.join(", ") : "no protocols";
+  const modelCount = form.models
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean).length;
+  const models =
+    modelCount === 0
+      ? "all models"
+      : `${modelCount} ${modelCount === 1 ? "model" : "models"}`;
+  const capabilities =
+    form.intents.length === 0
+      ? "all capabilities"
+      : `${form.intents.length} ${form.intents.length === 1 ? "capability" : "capabilities"}`;
+  return `${protocols} · ${models} · ${capabilities}`;
 }
 
 function ProfileDialog({
@@ -579,26 +814,40 @@ function ProfileDialogContent({
             />
           </Field>
 
-          {/* Progressive disclosure: advanced access rules */}
+          <div className="rounded-vf-md border-vf-border bg-vf-surface-2/50 flex flex-col gap-1 border p-3">
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+              Current access
+            </span>
+            <span className="text-vf-small text-vf-text">
+              {profileFormSummary(form)}
+            </span>
+          </div>
+
+          {/* Progressive disclosure: customization rules */}
           <div className="border-vf-border rounded-vf-md border">
-            <button
-              type="button"
-              className="text-vf-small text-vf-muted hover:text-vf-text flex w-full items-center justify-between rounded-[inherit] px-4 py-3 transition-colors"
-              onClick={() => setAdvancedOpen((v) => !v)}
-              aria-expanded={advancedOpen}
-            >
-              <span className="font-medium">Access rules</span>
-              <span className="text-vf-micro font-mono tracking-wider uppercase">
-                {advancedOpen ? "collapse" : "expand"}
+              <button
+                type="button"
+                className="text-vf-small text-vf-muted hover:text-vf-text rounded-vf-md flex w-full items-center justify-between px-4 py-3 transition-colors"
+                onClick={() => setAdvancedOpen((v) => !v)}
+                aria-expanded={advancedOpen}
+              >
+              <span className="font-medium">Customize access</span>
+              <span className="text-vf-micro font-mono uppercase">
+                {advancedOpen ? "hide" : "edit"}
               </span>
             </button>
 
             {advancedOpen && (
               <div className="border-vf-border flex flex-col gap-4 border-t px-4 py-4">
+                <p className="text-vf-small text-vf-muted">
+                  Start broad and add restrictions only when this caller should
+                  be denied a protocol, capability, or model.
+                </p>
+
                 {/* Protocols */}
                 <Field
-                  label="Protocols"
-                  help="Which API protocols this profile allows. At least one required."
+                  label="API protocols"
+                  help="The protocol front doors this profile can use."
                 >
                   <div className="flex flex-wrap gap-3">
                     {KNOWN_PROTOCOLS.map((p) => (
@@ -635,7 +884,7 @@ function ProfileDialogContent({
 
                 {/* Model allowlist */}
                 <Field
-                  label="Model allowlist"
+                  label="Allowed models"
                   help="Comma-separated model IDs. Leave blank to allow all models."
                 >
                   <Input
@@ -715,9 +964,8 @@ function DeleteProfileDialog({
             <DialogHeader>
               <DialogTitle>Can&apos;t delete {profile.name}</DialogTitle>
               <DialogDescription>
-                {appsUsingIt}{" "}
-                {appsUsingIt === 1 ? "app is" : "apps are"} still using this
-                profile. Reassign{" "}
+                {appsUsingIt} {appsUsingIt === 1 ? "app is" : "apps are"} still
+                using this profile. Reassign{" "}
                 {appsUsingIt === 1 ? "that app" : "those apps"} to a different
                 profile before deleting this one.
               </DialogDescription>
@@ -741,8 +989,8 @@ function DeleteProfileDialog({
       description={
         profile ? (
           <>
-            <strong>{profile.name}</strong> will be permanently deleted. Any
-            app that was using it will fall back to the gateway default.
+            <strong>{profile.name}</strong> will be permanently deleted. Any app
+            that was using it will fall back to the gateway default.
           </>
         ) : undefined
       }
@@ -767,8 +1015,18 @@ const SIMULATE_PROTOCOLS = KNOWN_PROTOCOLS;
  */
 function TestAccessDialog(
   props:
-    | { profile: Profile; profiles?: never; open: boolean; onOpenChange: (open: boolean) => void }
-    | { profile?: never; profiles: Profile[]; open: boolean; onOpenChange: (open: boolean) => void },
+    | {
+        profile: Profile;
+        profiles?: never;
+        open: boolean;
+        onOpenChange: (open: boolean) => void;
+      }
+    | {
+        profile?: never;
+        profiles: Profile[];
+        open: boolean;
+        onOpenChange: (open: boolean) => void;
+      },
 ) {
   const { open, onOpenChange } = props;
   // When a fixed profile is provided (row mode) we don't render the profile Select.
@@ -796,7 +1054,8 @@ function TestAccessDialog(
 
   const simulate = useMutation({
     mutationFn: () => {
-      if (!activeProfileId) return Promise.reject(new Error("No profile selected"));
+      if (!activeProfileId)
+        return Promise.reject(new Error("No profile selected"));
       return api.policy.simulate({
         profile: activeProfileId,
         request: {
@@ -860,7 +1119,7 @@ function TestAccessDialog(
             aria-expanded={expanded}
           >
             <span className="font-medium">Request parameters</span>
-            <span className="text-vf-micro font-mono tracking-wider uppercase">
+            <span className="text-vf-micro font-mono uppercase">
               {expanded ? "collapse" : "expand"}
             </span>
           </button>
@@ -905,9 +1164,7 @@ function TestAccessDialog(
           )}
 
           {/* Result */}
-          {result && (
-            <SimulateResultView result={result} />
-          )}
+          {result && <SimulateResultView result={result} />}
 
           {simError && (
             <p role="alert" className="text-vf-small text-vf-bad">
@@ -954,10 +1211,7 @@ function SimulateResultView({ result }: { result: SimulateResult }) {
       {decision.reasons.length > 0 && (
         <ul className="flex flex-col gap-1">
           {decision.reasons.map((reason, i) => (
-            <li
-              key={i}
-              className="text-vf-small text-vf-muted font-mono"
-            >
+            <li key={i} className="text-vf-small text-vf-muted font-mono">
               {reason}
             </li>
           ))}

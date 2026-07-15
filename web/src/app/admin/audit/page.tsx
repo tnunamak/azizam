@@ -18,8 +18,9 @@
  * chips show the families seen in the loaded pages. A note makes this clear
  * when a family filter is active. */
 
-import { useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
 import {
@@ -30,20 +31,23 @@ import {
   type User,
 } from "@/lib/api";
 import {
+  ActivityFeedRow,
   Button,
   CopyButton,
-  DataTable,
-  type DataTableColumn,
-  EmptyState,
+  EmptyOperationalState,
   EntityRef,
+  FilterToolbar,
+  IncidentBanner,
   RelativeTime,
-  SectionHeader,
+  SectionActionHeader,
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
+  Skeleton,
 } from "@/components/ui";
+import { adminTargetHref } from "@/lib/admin-links";
 
 // ---------------------------------------------------------------------------
 // Action phrase map — raw event type → sentence-case human phrase + family
@@ -59,27 +63,51 @@ interface ActionMeta {
 }
 
 const ACTION_PHRASES: Record<string, ActionMeta> = {
-  "app.create":                               { phrase: "Created app",             family: "app" },
-  "app.disable":                              { phrase: "Disabled app",             family: "app" },
-  "app.enable":                               { phrase: "Re-enabled app",           family: "app" },
-  "credential.create":                        { phrase: "Created key",              family: "key" },
-  "credential.revoke":                        { phrase: "Revoked key",              family: "key" },
-  "profile.create":                           { phrase: "Created profile",          family: "profile" },
-  "profile.update":                           { phrase: "Updated profile",          family: "profile" },
-  "profile.delete":                           { phrase: "Deleted profile",          family: "profile" },
-  "admin_key.create":                         { phrase: "Created admin key",        family: "key" },
-  "runtime_profile_mapping.create":           { phrase: "Added access mapping",     family: "access" },
-  "runtime_profile_mapping.disable":          { phrase: "Removed access mapping",   family: "access" },
-  "operator.user_access_defaults.update":     { phrase: "Updated user defaults",    family: "operator" },
-  "operator.service_availability.update":     { phrase: "Updated service status",   family: "operator" },
-  "operator.media_job_admission.update":      { phrase: "Updated media admission",  family: "operator" },
-  "operator.service_registry.update":         { phrase: "Updated service registry", family: "operator" },
-  "operator.service.added":                   { phrase: "Added service",            family: "operator" },
-  "operator.service.updated":                 { phrase: "Updated service",          family: "operator" },
-  "operator.service.removed":                 { phrase: "Removed service",          family: "operator" },
-  "operator.service.toggled":                 { phrase: "Toggled service",          family: "operator" },
-  "operator.extension_package.enable":        { phrase: "Enabled extension",        family: "operator" },
-  "operator.oidc_provider_config.update":     { phrase: "Updated OIDC config",      family: "operator" },
+  "app.create": { phrase: "Created app", family: "app" },
+  "app.disable": { phrase: "Disabled app", family: "app" },
+  "app.enable": { phrase: "Re-enabled app", family: "app" },
+  "credential.create": { phrase: "Created key", family: "key" },
+  "credential.revoke": { phrase: "Revoked key", family: "key" },
+  "profile.create": { phrase: "Created profile", family: "profile" },
+  "profile.update": { phrase: "Updated profile", family: "profile" },
+  "profile.delete": { phrase: "Deleted profile", family: "profile" },
+  "admin_key.create": { phrase: "Created admin key", family: "key" },
+  "runtime_profile_mapping.create": {
+    phrase: "Added access mapping",
+    family: "access",
+  },
+  "runtime_profile_mapping.disable": {
+    phrase: "Removed access mapping",
+    family: "access",
+  },
+  "operator.user_access_defaults.update": {
+    phrase: "Updated user defaults",
+    family: "operator",
+  },
+  "operator.service_availability.update": {
+    phrase: "Updated service status",
+    family: "operator",
+  },
+  "operator.media_job_admission.update": {
+    phrase: "Updated media admission",
+    family: "operator",
+  },
+  "operator.service_registry.update": {
+    phrase: "Updated service registry",
+    family: "operator",
+  },
+  "operator.service.added": { phrase: "Added service", family: "operator" },
+  "operator.service.updated": { phrase: "Updated service", family: "operator" },
+  "operator.service.removed": { phrase: "Removed service", family: "operator" },
+  "operator.service.toggled": { phrase: "Toggled service", family: "operator" },
+  "operator.extension_package.enable": {
+    phrase: "Enabled extension",
+    family: "operator",
+  },
+  "operator.oidc_provider_config.update": {
+    phrase: "Updated OIDC config",
+    family: "operator",
+  },
 };
 
 function actionMeta(action: string): ActionMeta {
@@ -131,6 +159,32 @@ function userLabel(user: User | undefined): string {
   return user?.display_name ?? user?.email ?? "Unknown user";
 }
 
+function actorDisplayLabel(
+  entry: AuditEntry,
+  usersById: Map<string, User>,
+): string {
+  if (entry.actor_id === "cli" || entry.actor_kind === "cli") return "System";
+  const user = usersById.get(entry.actor_id);
+  if (user) return userLabel(user);
+  if (entry.actor_kind === "service_account" || entry.actor_id.startsWith("svc_")) {
+    return "Admin key";
+  }
+  if (entry.actor_kind === "admin") return "Admin";
+  return "Unknown user";
+}
+
+function RouteEventTargetSync({
+  onChange,
+}: {
+  onChange: (target: string | null) => void;
+}) {
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    onChange(searchParams.get("event"));
+  }, [onChange, searchParams]);
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Page
 
@@ -152,6 +206,8 @@ export default function AdminAuditPage() {
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [detailEntry, setDetailEntry] = useState<AuditEntry | null>(null);
+  const [routeEventTarget, setRouteEventTarget] = useState<string | null>(null);
+  const consumedEventTargetRef = useRef<string | null>(null);
 
   // Build the query params for the FIRST page
   const firstPageParams = {
@@ -167,7 +223,10 @@ export default function AdminAuditPage() {
     refetch: refetchFirst,
     isFetching: firstPageFetching,
   } = useQuery({
-    queryKey: queryKeys.audit({ actorId: actorFilter, actionPrefix: familyFilter }),
+    queryKey: queryKeys.audit({
+      actorId: actorFilter,
+      actionPrefix: familyFilter,
+    }),
     queryFn: async () => {
       const result = await api.audit.list(firstPageParams);
       // On first page response, reset accumulated state
@@ -180,10 +239,42 @@ export default function AdminAuditPage() {
     staleTime: 0,
   });
 
+  useEffect(() => {
+    if (!routeEventTarget) {
+      consumedEventTargetRef.current = null;
+      return;
+    }
+    if (consumedEventTargetRef.current === routeEventTarget) return;
+    const target = allEntries.find((entry) => entry.id === routeEventTarget);
+    if (!target) return;
+    setDetailEntry(target);
+    consumedEventTargetRef.current = routeEventTarget;
+  }, [allEntries, routeEventTarget]);
+
+  const routeEventInLoadedPage = useMemo(() => {
+    if (!routeEventTarget) return null;
+    return allEntries.find((entry) => entry.id === routeEventTarget) ?? null;
+  }, [allEntries, routeEventTarget]);
+
   const {
-    data: usersData,
-    isPending: usersPending,
+    data: routeEvent,
+    isError: routeEventIsError,
+    isFetching: routeEventFetching,
   } = useQuery({
+    queryKey: queryKeys.auditEvent(routeEventTarget),
+    queryFn: () => api.audit.get(routeEventTarget ?? ""),
+    enabled: routeEventTarget !== null && routeEventInLoadedPage === null,
+  });
+
+  useEffect(() => {
+    if (!routeEventTarget || !routeEvent) return;
+    if (detailEntry?.id !== routeEvent.id) {
+      setDetailEntry(routeEvent);
+    }
+    consumedEventTargetRef.current = routeEventTarget;
+  }, [detailEntry?.id, routeEvent, routeEventTarget]);
+
+  const { data: usersData, isPending: usersPending } = useQuery({
     queryKey: ["users"] as const,
     queryFn: api.users.list,
   });
@@ -197,9 +288,10 @@ export default function AdminAuditPage() {
   const actorOptions = useMemo(() => {
     const seen = new Map<string, string>(); // actor_id → display label
     for (const entry of allEntries) {
-      if (!seen.has(entry.actor_id)) {
-        seen.set(entry.actor_id, actorDisplayLabel(entry, usersById));
-      }
+      if (seen.has(entry.actor_id)) continue;
+      const label = actorDisplayLabel(entry, usersById);
+      if (label === "Unknown user") continue;
+      seen.set(entry.actor_id, label);
     }
     return Array.from(seen.entries()).map(([id, label]) => ({ id, label }));
   }, [allEntries, usersById]);
@@ -249,108 +341,177 @@ export default function AdminAuditPage() {
   const hasFilter = Boolean(actorFilter ?? familyFilter);
   // Exhausted = last page returned null cursor (and we've seen at least one page)
   const exhausted = nextCursor === null && !firstPagePending;
-
-  const columns: DataTableColumn<AuditEntry>[] = [
-    {
-      id: "when",
-      header: "When",
-      cell: (entry) => <RelativeTime ts={entry.created_at} />,
-      hideOnMobile: false,
-    },
-    {
-      id: "actor",
-      header: "Actor",
-      cell: (entry) => <ActorCell entry={entry} usersById={usersById} />,
-    },
-    {
-      id: "action",
-      header: "Action",
-      cell: (entry) => <ActionCell entry={entry} />,
-    },
-    {
-      id: "target",
-      header: "Target",
-      cell: (entry) => <TargetCell entry={entry} />,
-      hideOnMobile: true,
-    },
-  ];
+  const missingRouteEvent =
+    routeEventTarget !== null &&
+    routeEventInLoadedPage === null &&
+    routeEventIsError &&
+    !routeEventFetching;
 
   return (
-    <main className="mx-auto flex w-full max-w-[1080px] flex-col gap-8 px-4 py-8 md:px-6">
-      <SectionHeader
+    <div className="flex w-full flex-col gap-8">
+      <Suspense fallback={null}>
+        <RouteEventTargetSync onChange={setRouteEventTarget} />
+      </Suspense>
+      <SectionActionHeader
         kicker="activity"
         title="Audit"
         description="A record of who changed what, when. Newest first."
       />
 
       {firstPageIsError && allEntries.length === 0 ? (
-        <ErrorBanner onRetry={() => void refetchFirst()}>
-          Couldn&apos;t load audit events. {errorMessage(firstPageError)}
-        </ErrorBanner>
+        <IncidentBanner
+          tone="bad"
+          title="Couldn't load audit events."
+          detail={errorMessage(firstPageError)}
+          actions={
+            <Button size="sm" onClick={() => void refetchFirst()}>
+              Retry
+            </Button>
+          }
+        />
       ) : (
         <>
-          {/* Filter chips — drive the server query (not client-side slice). */}
-          {!loading && (actorOptions.length > 0 || actionFamilies.length > 0) && (
-            <FilterBar
-              actorOptions={actorOptions}
-              actorFilter={actorFilter}
-              onActorChange={handleActorChange}
-              actionFamilies={actionFamilies}
-              familyFilter={familyFilter}
-              onFamilyChange={handleFamilyChange}
+          {missingRouteEvent && (
+            <IncidentBanner
+              tone="warn"
+              title="No audit event matches this link"
+              detail={`The audit event "${routeEventTarget}" is not in the current audit log.`}
             />
           )}
 
-          <DataTable
-            label="Audit events"
-            columns={columns}
-            rows={allEntries}
-            rowKey={(entry) => entry.id}
-            loading={loading || (firstPageFetching && allEntries.length === 0)}
-            skeletonRows={8}
-            empty={
-              hasFilter ? (
-                <EmptyState
-                  action={
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        handleActorChange(null);
-                        handleFamilyChange(null);
-                      }}
-                    >
-                      Clear filters
-                    </Button>
-                  }
-                >
-                  No events match the current filters.
-                </EmptyState>
-              ) : (
-                <EmptyState>No audit events yet.</EmptyState>
-              )
-            }
-            rowMenu={(entry) => (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-vf-small h-7 px-2"
-                onClick={() => setDetailEntry(entry)}
-                aria-label="View full event record"
-              >
-                Details
-              </Button>
+          {/* Filter chips — drive the server query (not client-side slice). */}
+          {!loading &&
+            (actorOptions.length > 0 || actionFamilies.length > 0) && (
+              <FilterToolbar
+                filters={
+                  <>
+                    {actorOptions.length > 1 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                          Actor:
+                        </span>
+                        <FilterChip
+                          active={actorFilter === null}
+                          onClick={() => handleActorChange(null)}
+                        >
+                          All
+                        </FilterChip>
+                        {actorOptions.map(({ id, label }) => (
+                          <FilterChip
+                            key={id}
+                            active={actorFilter === id}
+                            onClick={() => handleActorChange(actorFilter === id ? null : id)}
+                          >
+                            {label}
+                          </FilterChip>
+                        ))}
+                      </div>
+                    )}
+                    {actionFamilies.length > 1 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                          Category:
+                        </span>
+                        <FilterChip
+                          active={familyFilter === null}
+                          onClick={() => handleFamilyChange(null)}
+                        >
+                          All
+                        </FilterChip>
+                        {actionFamilies.map((family) => (
+                          <FilterChip
+                            key={family}
+                            active={familyFilter === family}
+                            onClick={() =>
+                              handleFamilyChange(familyFilter === family ? null : family)
+                            }
+                          >
+                            {family}
+                          </FilterChip>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                }
+              />
             )}
-          />
+
+          {loading || (firstPageFetching && allEntries.length === 0) ? (
+            <div className="vf-activity-feed" aria-busy="true">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="vf-activity-row">
+                  <Skeleton className="mt-1 h-2 w-2 shrink-0 rounded-full" />
+                  <div className="flex flex-1 flex-col gap-1">
+                    <Skeleton className="h-4 w-48" />
+                    <Skeleton className="h-3 w-32" />
+                  </div>
+                  <Skeleton className="h-3 w-16 shrink-0" />
+                </div>
+              ))}
+            </div>
+          ) : allEntries.length === 0 ? (
+            hasFilter ? (
+              <EmptyOperationalState
+                title="No events match the current filters."
+                action={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      handleActorChange(null);
+                      handleFamilyChange(null);
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyOperationalState title="No audit events yet." />
+            )
+          ) : (
+            <div className="vf-activity-feed">
+              {allEntries.map((entry) => {
+                const { phrase } = actionMeta(entry.action);
+                const actor = actorDisplayLabel(entry, usersById);
+                const target = entry.target_id
+                  ? (entry.metadata &&
+                      typeof entry.metadata["name"] === "string"
+                      ? entry.metadata["name"]
+                      : entry.target_kind
+                        ? entry.target_kind.replace(/_/g, " ")
+                        : entry.target_id)
+                  : undefined;
+                return (
+                  <ActivityFeedRow
+                    key={entry.id}
+                    title={phrase}
+                    detail={target ? `${target} · ${entry.action}` : entry.action}
+                    actor={actor}
+                    time={<RelativeTime ts={entry.created_at} />}
+                    stat={
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-vf-small h-7 px-2"
+                        onClick={() => setDetailEntry(entry)}
+                        aria-label="View full event record"
+                      >
+                        Details
+                      </Button>
+                    }
+                  />
+                );
+              })}
+            </div>
+          )}
 
           {/* Load more / End of log — honest end state per the honesty law */}
           {!loading && allEntries.length > 0 && (
             <div className="flex justify-center pt-2">
               {exhausted ? (
                 <p className="text-vf-small text-vf-subtle">
-                  {hasFilter
-                    ? "No more matching events"
-                    : "End of audit log"}
+                  {hasFilter ? "No more matching events" : "End of audit log"}
                 </p>
               ) : nextCursor !== undefined ? (
                 <Button
@@ -377,9 +538,7 @@ export default function AdminAuditPage() {
         {detailEntry && (
           <SheetContent>
             <SheetHeader>
-              <SheetTitle>
-                {actionMeta(detailEntry.action).phrase}
-              </SheetTitle>
+              <SheetTitle>{actionMeta(detailEntry.action).phrase}</SheetTitle>
               <SheetDescription>
                 Full event record — <RelativeTime ts={detailEntry.created_at} />
               </SheetDescription>
@@ -388,162 +547,6 @@ export default function AdminAuditPage() {
           </SheetContent>
         )}
       </Sheet>
-    </main>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Actor cell — resolves "cli" as "System"; resolves user ids via the users
-// cache; falls back gracefully when the user isn't found.
-
-function actorDisplayLabel(
-  entry: AuditEntry,
-  usersById: Map<string, User>,
-): string {
-  if (entry.actor_id === "cli") return "System";
-  const user = usersById.get(entry.actor_id);
-  return userLabel(user);
-}
-
-function ActorCell({
-  entry,
-  usersById,
-}: {
-  entry: AuditEntry;
-  usersById: Map<string, User>;
-}) {
-  if (entry.actor_id === "cli") {
-    return <span className="text-vf-small text-vf-muted">System</span>;
-  }
-  const user = usersById.get(entry.actor_id);
-  const name = userLabel(user);
-  return (
-    <EntityRef name={name} id={entry.actor_id} idVisibility="hover" />
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Action cell — human phrase + raw type as micro mono detail.
-
-function ActionCell({ entry }: { entry: AuditEntry }) {
-  const { phrase } = actionMeta(entry.action);
-  return (
-    <span className="flex flex-col gap-0.5">
-      <span className="text-vf-small text-vf-text">{phrase}</span>
-      <span className="text-vf-micro text-vf-subtle font-mono">
-        {entry.action}
-      </span>
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Target cell — EntityRef when we have a target_id; friendly fallback when
-// the event has no target (e.g. operator-wide settings updates).
-
-function TargetCell({ entry }: { entry: AuditEntry }) {
-  if (!entry.target_id) {
-    return <span className="text-vf-subtle">—</span>;
-  }
-  // Prefer a name from metadata (e.g. {name: "brother-laptop"}); fall back to
-  // the kind label, then to the raw id as the display name.
-  const metaName =
-    entry.metadata && typeof entry.metadata["name"] === "string"
-      ? entry.metadata["name"]
-      : null;
-  const displayName =
-    metaName ??
-    (entry.target_kind
-      ? `${entry.target_kind.replace(/_/g, " ")}`
-      : entry.target_id);
-
-  return <EntityRef name={displayName} id={entry.target_id} />;
-}
-
-// ---------------------------------------------------------------------------
-// Filter bar — actor chip group + action-family chip group.
-//
-// Families are derived from the loaded set. Because the log is server-
-// paginated we cannot enumerate all families cheaply. Chips show what's
-// been seen in the loaded pages; filtering searches the WHOLE log server-side.
-
-function FilterBar({
-  actorOptions,
-  actorFilter,
-  onActorChange,
-  actionFamilies,
-  familyFilter,
-  onFamilyChange,
-}: {
-  actorOptions: { id: string; label: string }[];
-  actorFilter: string | null;
-  onActorChange: (id: string | null) => void;
-  actionFamilies: string[];
-  familyFilter: string | null;
-  onFamilyChange: (family: string | null) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-4">
-      {/* Actor filter */}
-      {actorOptions.length > 1 && (
-        <ChipGroup label="Actor">
-          <FilterChip
-            active={actorFilter === null}
-            onClick={() => onActorChange(null)}
-          >
-            All
-          </FilterChip>
-          {actorOptions.map(({ id, label }) => (
-            <FilterChip
-              key={id}
-              active={actorFilter === id}
-              onClick={() => onActorChange(actorFilter === id ? null : id)}
-            >
-              {label}
-            </FilterChip>
-          ))}
-        </ChipGroup>
-      )}
-
-      {/* Action family filter */}
-      {actionFamilies.length > 1 && (
-        <ChipGroup label="Category">
-          <FilterChip
-            active={familyFilter === null}
-            onClick={() => onFamilyChange(null)}
-          >
-            All
-          </FilterChip>
-          {actionFamilies.map((family) => (
-            <FilterChip
-              key={family}
-              active={familyFilter === family}
-              onClick={() =>
-                onFamilyChange(familyFilter === family ? null : family)
-              }
-            >
-              {family}
-            </FilterChip>
-          ))}
-        </ChipGroup>
-      )}
-    </div>
-  );
-}
-
-function ChipGroup({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-vf-micro text-vf-subtle font-mono tracking-wider uppercase">
-        {label}:
-      </span>
-      {children}
     </div>
   );
 }
@@ -577,6 +580,13 @@ function FilterChip({
 
 function AuditDetailPanel({ entry }: { entry: AuditEntry }) {
   const json = JSON.stringify(entry, null, 2);
+  const targetHref = adminTargetHref(entry.target_kind, entry.target_id);
+  const targetName =
+    (entry.metadata &&
+      typeof entry.metadata["name"] === "string" &&
+      entry.metadata["name"]) ||
+    entry.target_id ||
+    "target";
 
   return (
     <div className="flex flex-col gap-4 pt-2">
@@ -590,15 +600,16 @@ function AuditDetailPanel({ entry }: { entry: AuditEntry }) {
         </DetailRow>
         {entry.target_id && (
           <DetailRow label="Target">
-            <EntityRef
-              name={
-                (entry.metadata &&
-                  typeof entry.metadata["name"] === "string" &&
-                  entry.metadata["name"]) ||
-                entry.target_id
-              }
-              id={entry.target_id}
-            />
+            {targetHref ? (
+              <a
+                href={targetHref}
+                className="text-vf-accent hover:text-vf-text no-underline"
+              >
+                <EntityRef name={targetName} id={entry.target_id} />
+              </a>
+            ) : (
+              <EntityRef name={targetName} id={entry.target_id} />
+            )}
           </DetailRow>
         )}
         {entry.actor_id && (
@@ -611,7 +622,7 @@ function AuditDetailPanel({ entry }: { entry: AuditEntry }) {
       {/* Full raw record */}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-vf-micro text-vf-subtle font-mono tracking-wider uppercase">
+          <span className="text-vf-micro text-vf-subtle font-mono uppercase">
             Full record
           </span>
           <CopyButton value={json} aria-label="Copy event JSON" />
@@ -633,35 +644,12 @@ function DetailRow({
 }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <dt className="text-vf-micro text-vf-subtle shrink-0 font-mono tracking-wider uppercase">
+      <dt className="text-vf-micro text-vf-subtle shrink-0 font-mono uppercase">
         {label}
       </dt>
       <dd className="text-vf-small text-vf-text min-w-0 text-right">
         {children}
       </dd>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Designed error state.
-
-function ErrorBanner({
-  children,
-  onRetry,
-}: {
-  children: ReactNode;
-  onRetry: () => void;
-}) {
-  return (
-    <div
-      role="alert"
-      className="rounded-vf-md border-vf-bad/40 bg-vf-bad/10 flex flex-wrap items-center justify-between gap-3 border p-4"
-    >
-      <p className="text-vf-small text-vf-text">{children}</p>
-      <Button size="sm" onClick={onRetry}>
-        Retry
-      </Button>
     </div>
   );
 }

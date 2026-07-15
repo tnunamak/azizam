@@ -35,7 +35,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping
 
-from gateway.receipts import CLIENT_VISIBLE_FIELDS, RouteReceipt
+from gateway.receipts import CLIENT_VISIBLE_FIELDS, RouteReceipt, sanitize_admin_metadata
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
 
 _default_db = Path(__file__).resolve().parent.parent / "data" / "receipts.db"
@@ -207,7 +207,8 @@ def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, An
         return dict(data)
     if audience == "admin":
         out = dict(data)
-        out.pop("metadata", None)
+        metadata = out.pop("metadata", None)
+        out.update(sanitize_admin_metadata(metadata))
         return out
     return {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
 

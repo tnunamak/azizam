@@ -13,7 +13,7 @@ from gateway.transforms import normalize_chat_completion_payload
 
 
 class ChatResponseNormalizationTests(unittest.TestCase):
-    def test_message_reasoning_content_fills_empty_content(self) -> None:
+    def test_message_reasoning_content_does_not_fill_empty_content(self) -> None:
         payload = {
             "choices": [
                 {
@@ -28,9 +28,9 @@ class ChatResponseNormalizationTests(unittest.TestCase):
 
         changed = normalize_chat_completion_payload(payload)
 
-        self.assertTrue(changed)
+        self.assertFalse(changed)
         message = payload["choices"][0]["message"]
-        self.assertEqual(message["content"], "visible reply")
+        self.assertEqual(message["content"], "")
         self.assertEqual(message["reasoning_content"], "visible reply")
 
     def test_think_tags_split_reasoning_from_visible_content(self) -> None:
@@ -71,7 +71,7 @@ class ChatResponseNormalizationTests(unittest.TestCase):
         self.assertFalse(changed)
         self.assertEqual(payload["choices"][0]["message"]["content"], "already visible")
 
-    def test_streaming_delta_reasoning_content_is_mirrored_to_content(self) -> None:
+    def test_streaming_delta_reasoning_content_stays_private(self) -> None:
         event = {
             "choices": [
                 {
@@ -87,10 +87,7 @@ class ChatResponseNormalizationTests(unittest.TestCase):
 
         line = normalized.decode("utf-8").splitlines()[0]
         payload = json.loads(line.removeprefix("data: "))
-        self.assertEqual(
-            payload["choices"][0]["delta"],
-            {"reasoning_content": "visible token", "content": "visible token"},
-        )
+        self.assertEqual(payload["choices"][0]["delta"], {"reasoning_content": "visible token"})
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ Data-plane copy uses **App**, not "Client", per the project convention.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Iterable, Mapping
 
 from gateway import service_registry
@@ -429,6 +430,16 @@ _PAGE_CSS = """
       padding: 0.3rem 0;
       overflow-wrap: anywhere;
       white-space: normal;
+    }
+    .admin-content tbody td[data-label]::before {
+      content: attr(data-label);
+      display: block;
+      margin-bottom: 0.15rem;
+      color: var(--soft);
+      font-size: 0.68rem;
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
     .admin-content tbody td:not(:last-child) { border-bottom: 1px solid var(--line); }
     /* Long ids / tokens and form controls inside cards must never force width. */
@@ -883,12 +894,75 @@ def _is_revoked(record: Mapping[str, Any]) -> bool:
     return bool(record.get("revoked_at") or record.get("revoked"))
 
 
+def _td(label: str, html: str) -> str:
+    """Table cell with a mobile card label.
+
+    Admin rows collapse into stacked cards on narrow screens; data-label keeps
+    the meaning of timestamp/status cells visible after the header row hides.
+    """
+    return f'<td data-label="{_esc(label)}">{html}</td>'
+
+
+def _epoch_seconds(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_timestamp(value: Any) -> str:
+    epoch = _epoch_seconds(value)
+    if epoch is not None:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(epoch))
+    text = str(value or "").strip()
+    if not text:
+        return "—"
+    if text.endswith("Z"):
+        text = text[:-1]
+    return text.replace("T", " ")[:16] or "—"
+
+
+def _relative_time(value: Any) -> str:
+    epoch = _epoch_seconds(value)
+    if epoch is None:
+        return ""
+    seconds = int(time.time()) - epoch
+    if seconds < 0:
+        seconds = 0
+    if seconds < 45:
+        return "just now"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    if days < 7:
+        return f"{days}d ago"
+    weeks = days // 7
+    if weeks < 5:
+        return f"{weeks}w ago"
+    months = days // 30
+    if months < 12:
+        return f"{months}mo ago"
+    return f"{days // 365}y ago"
+
+
+def _last_used_label(value: Any) -> str:
+    rel = _relative_time(value)
+    return f"Used {rel}" if rel else "Never used"
+
+
 def _credential_row(record: Mapping[str, Any]) -> str:
     cred_id = _esc(record.get("id") or record.get("credential_id"))
     raw_cred_id = str(record.get("id") or record.get("credential_id") or "")
     app_id = _esc(record.get("app_id"))
     label = _esc(record.get("label") or record.get("display_name") or record.get("name") or "—")
-    created = _esc(record.get("created_at") or "—")
+    created = _esc(_format_timestamp(record.get("created_at")))
+    last_used = _esc(_last_used_label(record.get("last_used_at")))
     revoked = _is_revoked(record)
     badge_class = "revoked" if revoked else "active"
     badge_text = "revoked" if revoked else "active"
@@ -905,13 +979,14 @@ def _credential_row(record: Mapping[str, Any]) -> str:
     )
     return (
         "<tr>"
-        f"<td><code>{cred_id}</code></td>"
-        f"<td><code>{app_id}</code></td>"
-        f"<td>{label}</td>"
-        f"<td>{created}</td>"
-        f'<td><span class="badge {badge_class}">{badge_text}</span></td>'
-        f"<td>{action}</td>"
-        "</tr>"
+        + _td("ID", f"<code>{cred_id}</code>")
+        + _td("App", f"<code>{app_id}</code>")
+        + _td("Label", label)
+        + _td("Created", created)
+        + _td("Last used", last_used)
+        + _td("Status", f'<span class="badge {badge_class}">{badge_text}</span>')
+        + _td("Action", action)
+        + "</tr>"
     )
 
 
@@ -960,6 +1035,7 @@ def _app_row(
     profiles: list[Mapping[str, Any]],
     profiles_by_id: Mapping[str, Mapping[str, Any]],
     active_keys_by_app: Mapping[str, int],
+    last_used_by_app: Mapping[str, int],
     update_app_action_template: str,
 ) -> str:
     raw_app_id = str(record.get("id") or "")
@@ -1014,17 +1090,19 @@ def _app_row(
             + '">Disable</button>'
         )
     )
-    created = _esc(record.get("created_at") or "—")
+    created = _esc(_format_timestamp(record.get("created_at")))
+    last_used = _esc(_last_used_label(last_used_by_app.get(raw_app_id)))
     return (
         "<tr>"
-        f'<td><div class="cell-main">{name}</div><div class="cell-sub"><code>{app_id}</code></div></td>'
-        f"<td>{owner}</td>"
-        f'<td><div><code>{_esc(profile_label)}</code></div>{profile_controls}</td>'
-        f"<td>{_esc(active_keys)} active</td>"
-        f'<td><span class="badge {status_class}">{status_text}</span></td>'
-        f"<td>{created}</td>"
-        f"<td>{action}</td>"
-        "</tr>"
+        + _td("App", f'<div class="cell-main">{name}</div><div class="cell-sub"><code>{app_id}</code></div>')
+        + _td("Owner", owner)
+        + _td("Effective access", f'<div><code>{_esc(profile_label)}</code></div>{profile_controls}')
+        + _td("Keys", f"{_esc(active_keys)} active")
+        + _td("Last used", last_used)
+        + _td("Status", f'<span class="badge {status_class}">{status_text}</span>')
+        + _td("Created", created)
+        + _td("Action", action)
+        + "</tr>"
     )
 
 
@@ -2796,21 +2874,28 @@ def render_admin_dashboard(
     csrf_json = _json_for_script(str(actor.get("csrf_token") or ""))
     profiles_by_id = {_profile_id(p): p for p in profiles}
     active_keys_by_app: dict[str, int] = {}
+    last_used_by_app: dict[str, int] = {}
     for credential in credentials:
         if _is_revoked(credential):
             continue
         app_id = str(credential.get("app_id") or "")
         if app_id:
             active_keys_by_app[app_id] = active_keys_by_app.get(app_id, 0) + 1
+            last_used_at = _epoch_seconds(credential.get("last_used_at"))
+            if last_used_at is not None:
+                last_used_by_app[app_id] = max(
+                    last_used_by_app.get(app_id, 0), last_used_at
+                )
 
     apps_table = _table(
-        ["App", "Owner", "Effective access", "Keys", "Status", "Created", "Action"],
+        ["App", "Owner", "Effective access", "Keys", "Last used", "Status", "Created", "Action"],
         (
             _app_row(
                 a,
                 profiles=profiles,
                 profiles_by_id=profiles_by_id,
                 active_keys_by_app=active_keys_by_app,
+                last_used_by_app=last_used_by_app,
                 update_app_action_template=update_app_action_template,
             )
             for a in apps
@@ -2825,7 +2910,7 @@ def render_admin_dashboard(
         (_profile_row(p) for p in profiles),
     )
     credentials_table = _table(
-        ["ID", "App", "Label", "Created", "Status", "Action"],
+        ["ID", "App", "Label", "Created", "Last used", "Status", "Action"],
         (_credential_row(c) for c in credentials),
     )
     audit_table = _table(

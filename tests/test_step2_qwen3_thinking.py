@@ -8,8 +8,8 @@ Test cases cover:
   - None value       → no-op (pop, then treat None as absent)
   - invalid (not str)  → same 400 error message
   - invalid (wrong str) → same 400 error message
-  - low/medium/high/xhigh → param stripped, no suppression injected
-  - none/minimal → enable_thinking=False set via chat_template_kwargs; NO /no_think text injected
+  - all configured efforts → param stripped and numeric thinking budget emitted
+  - none → enable_thinking=False set via chat_template_kwargs; NO /no_think text injected
   - chat_template_kwargs already present with enable_thinking=True → must NOT overwrite
   - messages absent/not-a-list → body unchanged (except reasoning_effort popped)
 """
@@ -115,11 +115,14 @@ class TestQwen3ThinkingParityInvalid:
 # ---------------------------------------------------------------------------
 
 
-class TestQwen3ThinkingParityStrip:
-    """low/medium/high/xhigh: strip param only, no suppression."""
+class TestQwen3ThinkingParityBudget:
+    """Configured effort levels become BeeLlama request budgets."""
 
-    @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh"])
-    def test_strip_only(self, effort: str) -> None:
+    @pytest.mark.parametrize(
+        ("effort", "budget"),
+        [("low", 4096), ("medium", 6144), ("high", 8192), ("xhigh", -1)],
+    )
+    def test_budget_is_forwarded(self, effort: str, budget: int) -> None:
         body = {
             "model": "qwen3",
             "reasoning_effort": effort,
@@ -129,16 +132,44 @@ class TestQwen3ThinkingParityStrip:
         b, err = _apply(body)
         assert err is None
         assert "reasoning_effort" not in b
+        assert b["thinking_budget_tokens"] == budget
         assert "chat_template_kwargs" not in b
         # No system message inserted
         assert all(m.get("role") != "system" for m in b.get("messages", []))
 
+    def test_translated_budget_is_idempotent_across_internal_gateway_hops(self) -> None:
+        transform = ReasoningEffortTransform({"default_effort": "high"})
+        body = {
+            "model": "qwen3",
+            "thinking_budget_tokens": 0,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+
+        error = transform.apply(body)
+
+        assert error is None
+        assert body["thinking_budget_tokens"] == 0
+        assert body["chat_template_kwargs"]["enable_thinking"] is False
+        assert "reasoning_effort" not in body
+
+    @pytest.mark.parametrize("budget", [None, True, "unlimited", -2])
+    def test_invalid_translated_budget_is_rejected(self, budget: object) -> None:
+        transform = ReasoningEffortTransform({"default_effort": "high"})
+        body = {"model": "qwen3", "thinking_budget_tokens": budget}
+
+        error = transform.apply(body)
+
+        assert error is not None
+        assert "thinking_budget_tokens" in error
+
     @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh"])
-    def test_strip_only_no_messages(self, effort: str) -> None:
+    def test_budget_no_messages(self, effort: str) -> None:
         body = {"model": "qwen3", "reasoning_effort": effort}
         b, err = _apply(body)
         assert err is None
         assert "reasoning_effort" not in b
+        assert "thinking_budget_tokens" in b
         assert "chat_template_kwargs" not in b
 
 
@@ -148,11 +179,11 @@ class TestQwen3ThinkingParityStrip:
 
 
 class TestQwen3ThinkingParitySuppress:
-    """none/minimal: full suppression path — kwarg only, no prompt-string injection."""
+    """none: full suppression path — kwarg only, no prompt-string injection."""
 
-    @pytest.mark.parametrize("effort", ["none", "minimal"])
-    def test_suppress_sets_enable_thinking_false(self, effort: str) -> None:
-        """none/minimal → chat_template_kwargs.enable_thinking=False set."""
+    @pytest.mark.parametrize(("effort", "budget"), [("none", 0), ("minimal", 2048)])
+    def test_suppress_sets_budget(self, effort: str, budget: int) -> None:
+        """none/minimal → configured budget; only none suppresses thinking."""
         body = {
             "model": "qwen3",
             "reasoning_effort": effort,
@@ -161,9 +192,13 @@ class TestQwen3ThinkingParitySuppress:
         b, err = _apply(body)
         assert err is None
         assert "reasoning_effort" not in b
-        assert b["chat_template_kwargs"]["enable_thinking"] is False
+        assert b["thinking_budget_tokens"] == budget
+        if budget == 0:
+            assert b["chat_template_kwargs"]["enable_thinking"] is False
+        else:
+            assert "chat_template_kwargs" not in b
 
-    @pytest.mark.parametrize("effort", ["none", "minimal"])
+    @pytest.mark.parametrize("effort", ["none"])
     def test_suppress_no_system_message_inserted(self, effort: str) -> None:
         """No system message → NO /no_think inserted; messages unchanged except reasoning_effort gone."""
         body = {
@@ -178,7 +213,7 @@ class TestQwen3ThinkingParitySuppress:
         # User message untouched
         assert b["messages"][0] == {"role": "user", "content": "Hello"}
 
-    @pytest.mark.parametrize("effort", ["none", "minimal"])
+    @pytest.mark.parametrize("effort", ["none"])
     def test_suppress_existing_system_message_unchanged(self, effort: str) -> None:
         """Existing system message → NOT modified; no /no_think appended."""
         body = {
@@ -196,7 +231,7 @@ class TestQwen3ThinkingParitySuppress:
         assert sys_msg["content"] == "You are helpful."
         assert "/no_think" not in sys_msg["content"]
 
-    @pytest.mark.parametrize("effort", ["none", "minimal"])
+    @pytest.mark.parametrize("effort", ["none"])
     def test_suppress_no_no_think_text_anywhere(self, effort: str) -> None:
         """Verify /no_think text never appears in any message after suppression."""
         body = {
@@ -215,7 +250,7 @@ class TestQwen3ThinkingParitySuppress:
                 f"Found /no_think in message: {msg!r}"
             )
 
-    @pytest.mark.parametrize("effort", ["none", "minimal"])
+    @pytest.mark.parametrize("effort", ["none"])
     def test_suppress_no_messages_key(self, effort: str) -> None:
         """No messages key → only chat_template_kwargs mutation."""
         body = {"model": "qwen3", "reasoning_effort": effort}
@@ -224,7 +259,7 @@ class TestQwen3ThinkingParitySuppress:
         assert b["chat_template_kwargs"]["enable_thinking"] is False
         assert "messages" not in b
 
-    @pytest.mark.parametrize("effort", ["none", "minimal"])
+    @pytest.mark.parametrize("effort", ["none"])
     def test_suppress_messages_not_a_list(self, effort: str) -> None:
         """messages is not a list → only chat_template_kwargs mutation."""
         body = {"model": "qwen3", "reasoning_effort": effort, "messages": "invalid"}

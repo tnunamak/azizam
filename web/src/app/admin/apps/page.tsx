@@ -10,13 +10,10 @@
  * destructive actions, one OverflowMenu per row. The one-time minted key is
  * shown exactly once in the reveal dialog and never logged. */
 
-import { useMemo, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   api,
@@ -27,15 +24,18 @@ import {
   type Credential,
   type MintedCredential,
   type Profile,
+  type StatusPayload,
   type User,
 } from "@/lib/api";
 import {
+  AppAccessRow,
+  AppAccessRowHeader,
+  Avatar,
+  avatarToneFor,
   Badge,
   Button,
   ConfirmDialog,
   CopyButton,
-  DataTable,
-  type DataTableColumn,
   Dialog,
   DialogBody,
   DialogContent,
@@ -44,18 +44,23 @@ import {
   DialogForm,
   DialogHeader,
   DialogTitle,
-  EmptyState,
-  EntityRef,
+  EmptyOperationalState,
   Field,
+  FilterToolbar,
   Input,
+  KeyRevealBlock,
+  IncidentBanner,
   OverflowMenu,
   OverflowMenuItem,
   OverflowMenuSeparator,
   RadioCard,
   RadioCards,
   RelativeTime,
+  RightContextPanel,
+  type RightContextPanelSection,
   SecretMask,
-  SectionHeader,
+  SectionActionHeader,
+  SummaryStrip,
   Select,
   Sheet,
   SheetContent,
@@ -63,8 +68,73 @@ import {
   SheetHeader,
   SheetTitle,
   Skeleton,
+  StatusDotLabel,
   toast,
 } from "@/components/ui";
+
+// ---------------------------------------------------------------------------
+// Telemetry helpers
+
+interface AppTelemetry {
+  requests_24h: number | null;
+  errors_4xx_24h: number | null;
+  errors_5xx_24h: number | null;
+  latency_ms_p50: number | null;
+  last_seen: number | null;
+}
+
+type AppStatusFilter = "active" | "disabled" | "all";
+
+function buildAppTelemetryMap(status: StatusPayload | undefined): Map<string, AppTelemetry> {
+  const map = new Map<string, AppTelemetry>();
+  for (const entry of status?.auth_keys ?? []) {
+    if (!entry.app_id) continue;
+    map.set(entry.app_id, {
+      requests_24h: entry.requests_24h ?? null,
+      errors_4xx_24h: entry.errors_4xx_24h ?? null,
+      errors_5xx_24h: entry.errors_5xx_24h ?? null,
+      latency_ms_p50: entry.latency_ms_p50 ?? null,
+      last_seen: entry.last_seen ?? null,
+    });
+  }
+  return map;
+}
+
+/** True when an app has any real metric-column telemetry — not just
+ * placeholder nulls. Gates the Requests/Errors/P50 row columns and the
+ * Summary telemetry cards (a wall of em-dashes is decorative noise, not honest
+ * data). Deliberately excludes last_seen: it only feeds the separate "Last
+ * used" field, never the metric columns. */
+function hasMetricTelemetry(t: AppTelemetry | undefined): boolean {
+  if (!t) return false;
+  return (
+    t.requests_24h !== null ||
+    t.errors_4xx_24h !== null ||
+    t.errors_5xx_24h !== null ||
+    t.latency_ms_p50 !== null
+  );
+}
+
+function fmtRequests(n: number | null): string {
+  if (n === null) return "—";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function fmtLatency(ms: number | null): string {
+  if (ms === null) return "—";
+  if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
+function fmtErrorRate(t: AppTelemetry | undefined): string {
+  if (!t) return "—";
+  const total = t.requests_24h;
+  const errs = (t.errors_4xx_24h ?? 0) + (t.errors_5xx_24h ?? 0);
+  if (total === null || total === 0) return errs > 0 ? "—" : "—";
+  return `${((errs / total) * 100).toFixed(1)}%`;
+}
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -84,6 +154,29 @@ function errorMessage(error: unknown): string {
 
 function userLabel(user: User | undefined): string {
   return user?.display_name ?? user?.email ?? "Unknown user";
+}
+
+function normalizedRouteTarget(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+}
+
+function appMatchesRouteTarget(app: App, target: string): boolean {
+  const wanted = normalizedRouteTarget(target);
+  return [app.id, app.name].some(
+    (candidate) => normalizedRouteTarget(candidate) === wanted,
+  );
+}
+
+function RouteAppTargetSync({
+  onChange,
+}: {
+  onChange: (target: string | null) => void;
+}) {
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    onChange(searchParams.get("app"));
+  }, [onChange, searchParams]);
+  return null;
 }
 
 function isActiveKey(credential: Credential): boolean {
@@ -118,6 +211,7 @@ interface RevealedKey {
 
 export default function AdminAppsPage() {
   const queryClient = useQueryClient();
+  const [routeAppTarget, setRouteAppTarget] = useState<string | null>(null);
 
   const {
     data: appsData,
@@ -128,7 +222,6 @@ export default function AdminAppsPage() {
   } = useQuery({ queryKey: queryKeys.apps, queryFn: api.apps.list });
   const {
     data: usersData,
-    isPending: usersPending,
     isError: usersIsError,
     refetch: refetchUsers,
   } = useQuery({ queryKey: queryKeys.users, queryFn: api.users.list });
@@ -149,6 +242,11 @@ export default function AdminAppsPage() {
   const { data: sessionData } = useQuery({
     queryKey: queryKeys.session,
     queryFn: api.session,
+  });
+  const { data: statusData } = useQuery({
+    queryKey: queryKeys.status,
+    queryFn: api.status,
+    staleTime: 30_000,
   });
 
   const apps = useMemo(
@@ -178,6 +276,21 @@ export default function AdminAppsPage() {
       ),
     [credentialsData],
   );
+  const activeAdminKeys = useMemo(
+    () => adminKeys.filter(isActiveKey),
+    [adminKeys],
+  );
+  const revokedAdminKeys = useMemo(
+    () => adminKeys.filter((credential) => !isActiveKey(credential)),
+    [adminKeys],
+  );
+
+  // Telemetry by app id from /admin/api/status auth_keys snapshot. Rows without
+  // a resolved app_id are intentionally not attached to an app row.
+  const appTelemetryByAppId = useMemo(
+    () => buildAppTelemetryMap(statusData),
+    [statusData],
+  );
 
   // Dialog / panel state. Targets hold the full row so dialogs can show
   // names without re-deriving.
@@ -189,6 +302,12 @@ export default function AdminAppsPage() {
   const [revokeTarget, setRevokeTarget] = useState<Credential | null>(null);
   const [keysAppId, setKeysAppId] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<RevealedKey | null>(null);
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false); // used by mobile Sheet trigger on row tap
+  const [appSearch, setAppSearch] = useState("");
+  const [appStatusFilter, setAppStatusFilter] = useState<AppStatusFilter>("active");
+  const [showRevokedAdminKeys, setShowRevokedAdminKeys] = useState(false);
+  const consumedAppTargetRef = useRef<string | null>(null);
 
   const keysApp = keysAppId
     ? (apps.find((app) => app.id === keysAppId) ?? null)
@@ -301,7 +420,332 @@ export default function AdminAppsPage() {
       queryClient.invalidateQueries({ queryKey: queryKeys.credentials }),
   });
 
-  const loading = appsPending || usersPending || credentialsPending;
+  const selectedApp = selectedAppId
+    ? (apps.find((a) => a.id === selectedAppId) ?? null)
+    : null;
+
+  const filteredApps = useMemo(() => {
+    const statusFiltered = apps.filter((app) => {
+      if (appStatusFilter === "active") return app.disabled_at === null;
+      if (appStatusFilter === "disabled") return app.disabled_at !== null;
+      return true;
+    });
+    if (!appSearch.trim()) return statusFiltered;
+    const q = appSearch.toLowerCase();
+    return statusFiltered.filter(
+      (a) =>
+        a.name.toLowerCase().includes(q) ||
+        userLabel(usersById.get(a.owner_user_id ?? "")).toLowerCase().includes(q),
+    );
+  }, [apps, appSearch, appStatusFilter, usersById]);
+
+  const routeSelectedApp = useMemo(() => {
+    if (!routeAppTarget) return null;
+    return apps.find((app) => appMatchesRouteTarget(app, routeAppTarget)) ?? null;
+  }, [apps, routeAppTarget]);
+
+  // Only render the row metric columns when at least one visible app has real
+  // telemetry; otherwise the columns are a wall of em-dashes (data-honesty).
+  const anyVisibleTelemetry = useMemo(
+    () =>
+      filteredApps.some((app) =>
+        hasMetricTelemetry(appTelemetryByAppId.get(app.id)),
+      ),
+    [filteredApps, appTelemetryByAppId],
+  );
+
+  useEffect(() => {
+    if (!routeAppTarget) {
+      consumedAppTargetRef.current = null;
+      return;
+    }
+    if (consumedAppTargetRef.current === routeAppTarget || !routeSelectedApp) {
+      return;
+    }
+    if (routeSelectedApp.disabled_at !== null && appStatusFilter === "active") {
+      setAppStatusFilter("all");
+    }
+    if (selectedAppId !== routeSelectedApp.id) {
+      setSelectedAppId(routeSelectedApp.id);
+    }
+    consumedAppTargetRef.current = routeAppTarget;
+  }, [appStatusFilter, routeAppTarget, routeSelectedApp, selectedAppId]);
+
+  useEffect(() => {
+    if (routeAppTarget) {
+      if (!routeSelectedApp && selectedAppId !== null) {
+        setSelectedAppId(null);
+      }
+      return;
+    }
+    if (filteredApps.length === 0) {
+      if (selectedAppId !== null) setSelectedAppId(null);
+      return;
+    }
+    if (!selectedAppId || !filteredApps.some((app) => app.id === selectedAppId)) {
+      setSelectedAppId(filteredApps[0]!.id);
+    }
+  }, [filteredApps, routeAppTarget, routeSelectedApp, selectedAppId]);
+
+  // Build a map from profile id → Profile for the panel scope lookup.
+  const profilesById = useMemo(
+    () => new Map((profilesData ?? []).map((p) => [p.id, p])),
+    [profilesData],
+  );
+  const missingRouteApp =
+    routeAppTarget !== null &&
+    routeSelectedApp === null &&
+    !appsPending &&
+    apps.length > 0;
+
+  const appPanelSections = useMemo((): RightContextPanelSection[] => {
+    if (!selectedApp) return [];
+    const appKeys = sortKeys(appKeysByApp.get(selectedApp.id) ?? []);
+    const activeKeys = appKeys.filter(isActiveKey);
+    const activeKeyCount = activeKeys.length;
+    const lastUsed = appKeys.reduce<number | null>((best, k) => {
+      if (k.last_used_at === null) return best;
+      return best === null || k.last_used_at > best ? k.last_used_at : best;
+    }, null);
+    const telemetry = appTelemetryByAppId.get(selectedApp.id);
+    const sections: RightContextPanelSection[] = [];
+
+    // Derive scope tags from the app's effective profile.
+    const effectiveProfile = selectedApp.effective_profile_id
+      ? profilesById.get(selectedApp.effective_profile_id)
+      : undefined;
+    const scopeTags: string[] = [];
+    if (effectiveProfile) {
+      // Top-level protocols (e.g. "openai", "chat")
+      for (const p of effectiveProfile.protocols ?? []) scopeTags.push(p);
+      // allow.intents nested inside profile.profile
+      const allow = (effectiveProfile.profile as { allow?: { intents?: string[] } })?.allow;
+      for (const intent of allow?.intents ?? []) scopeTags.push(intent);
+    }
+
+    // About: type / profile / owner / status in a compact KV grid
+    sections.push({
+      title: "About",
+      content: (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">Type</span>
+            <Badge sm>{selectedApp.kind === "personal" ? "Personal" : "Shared"}</Badge>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">Profile</span>
+            <span className="text-vf-small text-vf-text truncate max-w-[140px]">
+              {profileLabel(selectedApp)}
+            </span>
+          </div>
+          {selectedApp.owner_user_id && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-vf-micro text-vf-subtle font-mono uppercase">Owner</span>
+              <span className="text-vf-small text-vf-text truncate max-w-[140px]">
+                {userLabel(usersById.get(selectedApp.owner_user_id))}
+              </span>
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">Status</span>
+            <StatusDotLabel
+              tone={selectedApp.disabled_at !== null ? "warn" : "ok"}
+              label={selectedApp.disabled_at !== null ? "disabled" : "active"}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">Last used</span>
+            <span className="text-vf-small text-vf-text">
+              <RelativeTime
+                ts={
+                  telemetry?.last_seen
+                    ? Math.floor(telemetry.last_seen)
+                    : lastUsed
+                }
+                fallback="Never"
+              />
+            </span>
+          </div>
+        </div>
+      ),
+    });
+
+    // Scope: capability tags from the effective profile (only if data available).
+    if (scopeTags.length > 0) {
+      sections.push({
+        title: "Scope",
+        content: (
+          <div className="flex flex-wrap gap-1.5">
+            {scopeTags.map((tag) => (
+              <Badge key={tag} sm>
+                {tag}
+              </Badge>
+            ))}
+          </div>
+        ),
+      });
+    } else if (
+      effectiveProfile === undefined &&
+      selectedApp.effective_profile_id &&
+      // The fallback profile isn't in GET /profiles; don't show placeholder for it.
+      selectedApp.effective_profile_source !== "fallback"
+    ) {
+      sections.push({
+        title: "Scope",
+        content: (
+          <span className="text-vf-micro text-vf-muted">
+            Loading profile capabilities…
+          </span>
+        ),
+      });
+    }
+
+    // Summary stat grid — Active keys always; telemetry cards only when the
+    // selected app has real telemetry (no decorative em-dash cards otherwise).
+    const selectedHasTelemetry = hasMetricTelemetry(telemetry);
+    sections.push({
+      title: "Summary",
+      content: (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-0.5 rounded border border-vf-border bg-vf-surface-2/60 p-2.5">
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">Active keys</span>
+            <span className="text-vf-title text-vf-text font-mono font-bold tabular-nums">
+              {activeKeyCount}
+            </span>
+          </div>
+          {selectedHasTelemetry && (
+            <>
+              <div className="flex flex-col gap-0.5 rounded border border-vf-border bg-vf-surface-2/60 p-2.5">
+                <span className="text-vf-micro text-vf-subtle font-mono uppercase">Requests 24h</span>
+                <span className="text-vf-title text-vf-text font-mono font-bold tabular-nums">
+                  {fmtRequests(telemetry?.requests_24h ?? null)}
+                </span>
+              </div>
+              <div className="flex flex-col gap-0.5 rounded border border-vf-border bg-vf-surface-2/60 p-2.5">
+                <span className="text-vf-micro text-vf-subtle font-mono uppercase">Latency p50</span>
+                <span className="text-vf-title text-vf-text font-mono font-bold tabular-nums">
+                  {fmtLatency(telemetry?.latency_ms_p50 ?? null)}
+                </span>
+              </div>
+              <div className="flex flex-col gap-0.5 rounded border border-vf-border bg-vf-surface-2/60 p-2.5">
+                <span className="text-vf-micro text-vf-subtle font-mono uppercase">Error rate</span>
+                <span
+                  className={`text-vf-title font-mono font-bold tabular-nums ${
+                    fmtErrorRate(telemetry) !== "—" &&
+                    fmtErrorRate(telemetry) !== "0.0%"
+                      ? "text-vf-warn"
+                      : "text-vf-text"
+                  }`}
+                >
+                  {fmtErrorRate(telemetry)}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+      ),
+    });
+
+    // Linked API keys with inline revoke
+    sections.push({
+      title: `Linked API keys${activeKeyCount > 0 ? ` · ${activeKeyCount} active` : ""}`,
+      content:
+        appKeys.length === 0 ? (
+          <span className="text-vf-micro text-vf-muted">No keys yet.</span>
+        ) : (
+          <ul className="flex flex-col">
+            {appKeys.slice(0, 6).map((k) => (
+              <li
+                key={k.id}
+                className="flex items-center justify-between gap-2 border-t border-vf-border/60 py-2 first:border-t-0"
+              >
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-vf-small text-vf-text truncate">{k.display_name}</span>
+                  <SecretMask prefix={k.prefix} />
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Badge sm tone={isActiveKey(k) ? "ok" : undefined}>
+                    {isActiveKey(k) ? "active" : "revoked"}
+                  </Badge>
+                  {isActiveKey(k) && (
+                    <button
+                      type="button"
+                      className="vf-button vf-button-ghost vf-button-sm px-2 text-vf-bad hover:text-vf-bad"
+                      onClick={() => setRevokeTarget(k)}
+                      aria-label={`Revoke ${k.display_name}`}
+                    >
+                      Revoke
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+            {appKeys.length > 6 && (
+              <li className="pt-2">
+                <button
+                  type="button"
+                  className="text-vf-micro text-vf-accent hover:underline"
+                  onClick={() => {
+                    setKeysAppId(selectedApp.id);
+                    setSelectedAppId(null);
+                  }}
+                >
+                  View all {appKeys.length} keys →
+                </button>
+              </li>
+            )}
+          </ul>
+        ),
+    });
+
+    // Actions
+    sections.push({
+      title: "Actions",
+      content: (
+        <div className="flex flex-wrap gap-2">
+          {selectedApp.disabled_at === null && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setMintTarget(selectedApp)}
+            >
+              Mint key…
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              setKeysAppId(selectedApp.id);
+              setSelectedAppId(null);
+            }}
+          >
+            View all keys
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setProfileTarget(selectedApp)}
+          >
+            Change profile…
+          </Button>
+          {selectedApp.disabled_at === null && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setDisableTarget(selectedApp)}
+            >
+              Disable…
+            </Button>
+          )}
+        </div>
+      ),
+    });
+
+    return sections;
+  }, [selectedApp, appKeysByApp, usersById, appTelemetryByAppId, profilesById]);
+
+  const loading = appsPending;
   const appsFailed = appsIsError && !appsData;
   const joinsFailed = !appsFailed && (usersIsError || credentialsIsError);
 
@@ -312,116 +756,17 @@ export default function AdminAppsPage() {
     void refetchProfiles();
   }
 
-  const appColumns: DataTableColumn<App>[] = [
-    {
-      id: "app",
-      header: "App",
-      cell: (app) => (
-        <span className="flex min-w-0 items-start gap-2">
-          <EntityRef name={app.name} id={app.id} />
-          <span className="mt-0.5 flex shrink-0 items-center gap-1">
-            <Badge sm>{app.kind === "personal" ? "personal" : "shared"}</Badge>
-            {app.disabled_at !== null && (
-              <Badge sm tone="warn">
-                disabled
-              </Badge>
-            )}
-          </span>
-        </span>
-      ),
-    },
-    {
-      id: "owner",
-      header: "Owner",
-      cell: (app) =>
-        app.owner_user_id ? (
-          <EntityRef
-            name={userLabel(usersById.get(app.owner_user_id))}
-            id={app.owner_user_id}
-            idVisibility="hover"
-          />
-        ) : (
-          <span className="text-vf-muted">Shared</span>
-        ),
-    },
-    {
-      id: "profile",
-      header: "Profile",
-      cell: (app) => (
-        <span className="inline-flex items-center gap-1">
-          <span className="min-w-0 truncate">{profileLabel(app)}</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-vf-small h-6 shrink-0 px-1.5"
-            onClick={() => setProfileTarget(app)}
-            aria-label={`Change profile for ${app.name}`}
-          >
-            Change
-          </Button>
-        </span>
-      ),
-    },
-    {
-      id: "keys",
-      header: "Keys",
-      cell: (app) => {
-        if (credentialsPending) return <Skeleton className="h-4 w-10" />;
-        const count = (appKeysByApp.get(app.id) ?? []).filter(
-          isActiveKey,
-        ).length;
-        // H4: "0 keys" is only a button when it does something.
-        // If disabled, it can't get a key — render plain text.
-        // If 0 active keys and app is live, clicking mints the first key.
-        // If >0 keys, clicking opens the keys panel.
-        if (app.disabled_at !== null) {
-          return (
-            <span className="text-vf-small text-vf-muted">
-              {count} {count === 1 ? "key" : "keys"}
-            </span>
-          );
-        }
-        if (count === 0) {
-          return (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-vf-small h-6 px-1.5"
-              onClick={() => setMintTarget(app)}
-              aria-label={`Mint first key for ${app.name}`}
-            >
-              Mint key
-            </Button>
-          );
-        }
-        return (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-vf-small h-6 px-1.5"
-            onClick={() => setKeysAppId(app.id)}
-            aria-label={`View keys for ${app.name}`}
-          >
-            {count} {count === 1 ? "key" : "keys"}
-          </Button>
-        );
-      },
-    },
-    {
-      id: "created",
-      header: "Created",
-      value: (app) => app.created_at,
-      hideOnMobile: true,
-    },
-  ];
-
   return (
-    <main className="mx-auto flex w-full max-w-[1080px] flex-col gap-10 px-4 py-8 md:px-6">
+    <div className="flex w-full flex-col gap-8">
+      <Suspense fallback={null}>
+        <RouteAppTargetSync onChange={setRouteAppTarget} />
+      </Suspense>
       <section className="flex flex-col gap-4">
-        <SectionHeader
+        <SectionActionHeader
           kicker="access"
           title="Apps & keys"
           description="Apps connect callers to the gateway; every key belongs to an app."
+          count={apps.length}
           action={
             <Button variant="primary" onClick={() => setCreateOpen(true)}>
               Create app
@@ -429,104 +774,428 @@ export default function AdminAppsPage() {
           }
         />
 
+        <SummaryStrip
+          items={[
+            {
+              label: "Active",
+              value: apps.filter((a) => a.disabled_at === null).length,
+            },
+            {
+              label: "Disabled",
+              value: apps.filter((a) => a.disabled_at !== null).length,
+            },
+            {
+              label: "Active keys",
+              value: (credentialsData ?? []).filter(
+                (c) => c.subject_kind === "app" && c.revoked_at === null,
+              ).length,
+            },
+            {
+              label: "Admin keys",
+              value: activeAdminKeys.length,
+            },
+          ]}
+        />
+
         {joinsFailed && (
-          <ErrorBanner onRetry={retryAll}>
-            Some details couldn&apos;t load — owner names or key counts may be
-            incomplete.
-          </ErrorBanner>
+          <ErrorBanner
+            onRetry={retryAll}
+            title="Some details couldn't load"
+            detail="Owner names or key counts may be incomplete."
+          />
         )}
 
         {appsFailed ? (
-          <ErrorBanner onRetry={retryAll}>
-            Couldn&apos;t load apps. {errorMessage(appsError)}
-          </ErrorBanner>
+          <ErrorBanner
+            onRetry={retryAll}
+            title="Couldn't load apps"
+            detail={errorMessage(appsError)}
+          />
         ) : (
-          <DataTable
-            label="Apps"
-            columns={appColumns}
-            rows={apps}
-            rowKey={(app) => app.id}
-            loading={loading}
-            empty={
-              <EmptyState
-                action={
-                  <Button onClick={() => setCreateOpen(true)}>
-                    Create app
+          <div className="flex gap-4">
+            <div className="min-w-0 flex-1 flex flex-col gap-3">
+              <FilterToolbar
+                search={
+                  <input
+                    type="search"
+                    className="vf-field-input w-full"
+                    placeholder="Filter apps…"
+                    value={appSearch}
+                    onChange={(e) => setAppSearch(e.target.value)}
+                    aria-label="Filter apps"
+                  />
+                }
+                filters={
+                  <>
+                    {([
+                      ["active", `Active ${apps.filter((app) => app.disabled_at === null).length}`],
+                      ["disabled", `Disabled ${apps.filter((app) => app.disabled_at !== null).length}`],
+                      ["all", `All ${apps.length}`],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className="vf-filter-chip"
+                        aria-pressed={appStatusFilter === value}
+                        onClick={() => setAppStatusFilter(value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </>
+                }
+              />
+              {missingRouteApp && (
+                <IncidentBanner
+                  tone="warn"
+                  title="No app matches this link"
+                  detail={`The app target "${routeAppTarget}" is not in the current app list.`}
+                />
+              )}
+              {loading ? (
+                <div className="flex flex-col gap-2" aria-busy="true">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-14 w-full" />
+                </div>
+              ) : filteredApps.length === 0 ? (
+                apps.length === 0 ? (
+                  <EmptyOperationalState
+                    title="No apps yet"
+                    detail="Create an app to hand out its first key."
+                    action={
+                      <Button onClick={() => setCreateOpen(true)}>
+                        Create app
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <EmptyOperationalState
+                    title="No apps match the filter"
+                    detail={
+                      appStatusFilter === "active"
+                        ? "No active apps match the current search."
+                        : appStatusFilter === "disabled"
+                          ? "No disabled apps match the current search."
+                          : undefined
+                    }
+                    action={
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setAppSearch("");
+                          setAppStatusFilter("active");
+                        }}
+                      >
+                        Clear filter
+                      </Button>
+                    }
+                  />
+                )
+              ) : (
+                <div className="vf-panel p-0 overflow-hidden">
+                  <AppAccessRowHeader
+                    metricLabels={
+                      anyVisibleTelemetry
+                        ? ["Requests", "Errors", "P50"]
+                        : undefined
+                    }
+                  />
+                  {filteredApps.map((app) => {
+                    const activeKeyCount = (appKeysByApp.get(app.id) ?? []).filter(isActiveKey).length;
+                    const isSelected = selectedAppId === app.id;
+                    return (
+                      <div
+                        key={app.id}
+                        role="button"
+                        tabIndex={0}
+                        className={`cursor-pointer transition-colors ${isSelected ? "bg-vf-row-hover ring-vf-accent/30 ring-1 ring-inset" : ""}`}
+                        onClick={() => {
+                          setSelectedAppId(app.id);
+                          setMobileDetailOpen(true);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            setSelectedAppId(app.id);
+                            setMobileDetailOpen(true);
+                          }
+                        }}
+                      >
+                        <AppAccessRow
+                          name={app.name}
+                          avatar={
+                            <Avatar
+                              initials={app.name.slice(0, 2)}
+                              tone={avatarToneFor(app.name)}
+                            />
+                          }
+                          owner={
+                            app.owner_user_id
+                              ? userLabel(usersById.get(app.owner_user_id))
+                              : undefined
+                          }
+                          profile={profileLabel(app)}
+                          keyCount={activeKeyCount}
+                          metrics={!anyVisibleTelemetry ? undefined : (() => {
+                            const t = appTelemetryByAppId.get(app.id);
+                            const req = fmtRequests(t?.requests_24h ?? null);
+                            const lat = fmtLatency(t?.latency_ms_p50 ?? null);
+                            const errRate = fmtErrorRate(t);
+                            return (
+                              <>
+                                <span className="flex flex-col items-end">
+                                  <span className="text-vf-small text-vf-text tabular-nums font-mono">{req}</span>
+                                  <span className="text-vf-micro text-vf-subtle font-mono uppercase">reqs 24h</span>
+                                </span>
+                                <span className="flex flex-col items-end">
+                                  <span className={`text-vf-small tabular-nums font-mono ${errRate !== "—" && errRate !== "0.0%" ? "text-vf-warn" : "text-vf-text"}`}>{errRate}</span>
+                                  <span className="text-vf-micro text-vf-subtle font-mono uppercase">errors</span>
+                                </span>
+                                <span className="flex flex-col items-end">
+                                  <span className="text-vf-small text-vf-text tabular-nums font-mono">{lat}</span>
+                                  <span className="text-vf-micro text-vf-subtle font-mono uppercase">p50</span>
+                                </span>
+                              </>
+                            );
+                          })()}
+                          lastUsedLabel={(() => {
+                            // Prefer status snapshot last_seen (float epoch seconds);
+                            // fall back to credential last_used_at (int epoch seconds).
+                            const t = appTelemetryByAppId.get(app.id);
+                            const lastSeenTs = t?.last_seen ? Math.floor(t.last_seen) : null;
+                            const keys = appKeysByApp.get(app.id) ?? [];
+                            const credTs = keys.reduce<number | null>((best, k) => {
+                              if (k.last_used_at === null) return best;
+                              return best === null || k.last_used_at > best ? k.last_used_at : best;
+                            }, null);
+                            const ts = lastSeenTs ?? credTs;
+                            if (!ts) return "Never";
+                            const diffSec = Math.floor(Date.now() / 1000) - ts;
+                            if (diffSec < 60) return "just now";
+                            if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+                            if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+                            return `${Math.floor(diffSec / 86400)}d ago`;
+                          })()}
+                          status={app.disabled_at !== null ? "warn" : "ok"}
+                          statusLabel={app.disabled_at !== null ? "disabled" : "active"}
+                          actions={
+                            <span className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                              <span className="vf-access-row-kind-badge">
+                                <Badge sm tone={app.kind === "personal" ? "info" : undefined}>
+                                  {app.kind === "personal" ? "Personal" : "Shared"}
+                                </Badge>
+                              </span>
+                              <OverflowMenu label={`Actions for ${app.name}`}>
+                                <OverflowMenuItem
+                                  disabled={app.disabled_at !== null}
+                                  onSelect={() => setMintTarget(app)}
+                                >
+                                  Mint key…
+                                </OverflowMenuItem>
+                                <OverflowMenuItem onSelect={() => setKeysAppId(app.id)}>
+                                  View keys
+                                </OverflowMenuItem>
+                                <OverflowMenuItem onSelect={() => setProfileTarget(app)}>
+                                  Change profile…
+                                </OverflowMenuItem>
+                                <OverflowMenuSeparator />
+                                <OverflowMenuItem
+                                  danger
+                                  disabled={app.disabled_at !== null}
+                                  onSelect={() => setDisableTarget(app)}
+                                >
+                                  Disable app…
+                                </OverflowMenuItem>
+                              </OverflowMenu>
+                            </span>
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {selectedApp && (
+              <RightContextPanel
+                title={selectedApp.name}
+                subtitle={profileLabel(selectedApp)}
+                status={
+                  <Avatar
+                    initials={selectedApp.name.slice(0, 2)}
+                    tone={avatarToneFor(selectedApp.name)}
+                    size="sm"
+                  />
+                }
+                actions={
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    disabled={selectedApp.disabled_at !== null}
+                    onClick={() => setMintTarget(selectedApp)}
+                  >
+                    Mint key
                   </Button>
                 }
-              >
-                No apps yet. Create one to hand out its first key.
-              </EmptyState>
-            }
-            rowMenu={(app) => (
-              <OverflowMenu label={`Actions for ${app.name}`}>
-                <OverflowMenuItem
-                  disabled={app.disabled_at !== null}
-                  onSelect={() => setMintTarget(app)}
-                >
-                  Mint key…
-                </OverflowMenuItem>
-                <OverflowMenuItem onSelect={() => setKeysAppId(app.id)}>
-                  View keys
-                </OverflowMenuItem>
-                <OverflowMenuItem onSelect={() => setProfileTarget(app)}>
-                  Change profile…
-                </OverflowMenuItem>
-                <OverflowMenuSeparator />
-                <OverflowMenuItem
-                  danger
-                  disabled={app.disabled_at !== null}
-                  onSelect={() => setDisableTarget(app)}
-                >
-                  Disable app…
-                </OverflowMenuItem>
-              </OverflowMenu>
+                sections={appPanelSections}
+                className="w-72 shrink-0 hidden lg:flex lg:flex-col"
+              />
             )}
-          />
+          </div>
         )}
       </section>
 
-      {/* Admin automation keys — quiet subsection, same patterns. */}
+      {/* App detail sheet — mobile/tablet only (lg+ shows inline panel) */}
+      <Sheet
+        open={mobileDetailOpen && selectedApp !== null}
+        onOpenChange={(open) => {
+          if (!open) setMobileDetailOpen(false);
+        }}
+      >
+        {selectedApp && (
+          <SheetContent className="lg:hidden overflow-y-auto">
+            <SheetHeader>
+              <div className="flex items-center gap-3">
+                <Avatar
+                  initials={selectedApp.name.slice(0, 2)}
+                  tone={avatarToneFor(selectedApp.name)}
+                />
+                <div className="min-w-0 flex-1">
+                  <SheetTitle className="truncate">{selectedApp.name}</SheetTitle>
+                  <SheetDescription className="truncate">{profileLabel(selectedApp)}</SheetDescription>
+                </div>
+              </div>
+            </SheetHeader>
+            <div className="flex flex-col gap-0 mt-4">
+              {appPanelSections.map((section, i) => (
+                <div key={i} className="flex flex-col gap-2 py-3 border-t border-vf-border/60 first:border-t-0">
+                  {section.title && (
+                    <p className="text-vf-micro text-vf-subtle font-mono uppercase">{section.title}</p>
+                  )}
+                  {section.content}
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 pt-4 border-t border-vf-border/60">
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={selectedApp.disabled_at !== null}
+                onClick={() => {
+                  setMobileDetailOpen(false);
+                  setMintTarget(selectedApp);
+                }}
+              >
+                Mint key
+              </Button>
+            </div>
+          </SheetContent>
+        )}
+      </Sheet>
+
+      {/* Admin automation keys — compact subsection, not a full table. */}
       <section className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="flex min-w-0 flex-col gap-1">
-            <h3 className="text-vf-heading text-vf-text">
-              Admin automation keys
-            </h3>
-            <p className="text-vf-small text-vf-muted">
-              For scripts and CI that call the admin API. Not tied to an app.
-            </p>
-          </div>
-          <Button size="sm" onClick={() => setAdminKeyOpen(true)}>
-            Create admin key
-          </Button>
-        </div>
+        <SectionActionHeader
+          kicker="automation"
+          title="Admin keys"
+          description={
+            revokedAdminKeys.length > 0
+              ? `${activeAdminKeys.length} active, ${revokedAdminKeys.length} revoked hidden.`
+              : "For scripts and CI that call the admin API. Not tied to an app."
+          }
+          action={
+            <div className="flex items-center gap-2">
+              {revokedAdminKeys.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setShowRevokedAdminKeys((value) => !value)}
+                >
+                  {showRevokedAdminKeys ? "Hide revoked" : "Show revoked"}
+                </Button>
+              )}
+              <Button size="sm" onClick={() => setAdminKeyOpen(true)}>
+                Create admin key
+              </Button>
+            </div>
+          }
+        />
 
         {credentialsIsError && !credentialsData ? (
-          <ErrorBanner onRetry={retryAll}>
-            Couldn&apos;t load admin keys. {errorMessage(credentialsError)}
-          </ErrorBanner>
-        ) : (
-          <DataTable
-            label="Admin automation keys"
-            columns={adminKeyColumns}
-            rows={adminKeys}
-            rowKey={(credential) => credential.id}
-            loading={credentialsPending}
-            skeletonRows={2}
-            empty={<EmptyState>No admin automation keys.</EmptyState>}
-            rowMenu={(credential) => (
-              <OverflowMenu label={`Actions for ${credential.display_name}`}>
-                <OverflowMenuItem
-                  danger
-                  disabled={!isActiveKey(credential)}
-                  onSelect={() => setRevokeTarget(credential)}
-                >
-                  Revoke key…
-                </OverflowMenuItem>
-              </OverflowMenu>
-            )}
+          <ErrorBanner
+            onRetry={retryAll}
+            title="Couldn't load admin keys"
+            detail={errorMessage(credentialsError)}
           />
+        ) : credentialsPending ? (
+          <div className="vf-feed-panel flex flex-col gap-0" aria-busy="true">
+            <Skeleton className="h-14 w-full rounded-none border-b border-[var(--vf-border)]" />
+            <Skeleton className="h-14 w-full rounded-none" />
+          </div>
+        ) : adminKeys.length === 0 ? (
+          <EmptyOperationalState
+            title="No admin automation keys"
+            detail="Create one to let scripts and CI call the admin API."
+            action={
+              <Button size="sm" onClick={() => setAdminKeyOpen(true)}>
+                Create admin key
+              </Button>
+            }
+          />
+        ) : !showRevokedAdminKeys && activeAdminKeys.length === 0 ? (
+          <EmptyOperationalState
+            title="No active admin keys"
+            detail="Revoked admin keys are hidden by default."
+            action={
+              <Button size="sm" variant="secondary" onClick={() => setShowRevokedAdminKeys(true)}>
+                Show revoked
+              </Button>
+            }
+          />
+        ) : (
+          <div className="vf-feed-panel overflow-hidden">
+            <ul>
+              {(showRevokedAdminKeys ? adminKeys : activeAdminKeys).map((credential) => (
+                <li
+                  key={credential.id}
+                  className="flex items-center gap-3 border-b border-[var(--vf-border)] px-4 py-3 last:border-b-0"
+                >
+                  {/* Key identity */}
+                  <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                    <span className="text-vf-small text-vf-text font-medium truncate">
+                      {credential.display_name}
+                    </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <SecretMask prefix={credential.prefix} />
+                      {credential.scopes.length > 0 && (
+                        <span className="text-vf-micro text-vf-muted font-mono">
+                          {credential.scopes.join(", ")}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Last used */}
+                  <span className="text-vf-micro text-vf-muted hidden sm:block shrink-0 tabular-nums">
+                    <RelativeTime ts={credential.last_used_at} fallback="Never" />
+                  </span>
+                  {/* Status badge */}
+                  <KeyStatusBadge credential={credential} />
+                  {/* Actions */}
+                  <OverflowMenu label={`Actions for ${credential.display_name}`}>
+                    <OverflowMenuItem
+                      danger
+                      disabled={!isActiveKey(credential)}
+                      onSelect={() => setRevokeTarget(credential)}
+                    >
+                      Revoke key…
+                    </OverflowMenuItem>
+                  </OverflowMenu>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </section>
 
@@ -631,40 +1300,10 @@ export default function AdminAppsPage() {
           if (revokeTarget) revokeKey.mutate(revokeTarget);
         }}
       />
-    </main>
+    </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Admin keys table columns (module scope: no per-render identity churn)
-
-const adminKeyColumns: DataTableColumn<Credential>[] = [
-  {
-    id: "key",
-    header: "Key",
-    cell: (credential) => (
-      <EntityRef name={credential.display_name} id={credential.id} />
-    ),
-  },
-  {
-    id: "secret",
-    header: "Secret",
-    cell: (credential) => <SecretMask prefix={credential.prefix} />,
-  },
-  {
-    id: "last_used",
-    header: "Last used",
-    cell: (credential) => (
-      <RelativeTime ts={credential.last_used_at} fallback="Never" />
-    ),
-    hideOnMobile: true,
-  },
-  {
-    id: "status",
-    header: "Status",
-    cell: (credential) => <KeyStatusBadge credential={credential} />,
-  },
-];
 
 function KeyStatusBadge({ credential }: { credential: Credential }) {
   return isActiveKey(credential) ? (
@@ -680,22 +1319,25 @@ function KeyStatusBadge({ credential }: { credential: Credential }) {
 // Designed error state (spec #4: error banner with retry)
 
 function ErrorBanner({
-  children,
+  title,
+  detail,
   onRetry,
 }: {
-  children: ReactNode;
+  title?: string;
+  detail?: string;
   onRetry: () => void;
 }) {
   return (
-    <div
-      role="alert"
-      className="rounded-vf-md border-vf-bad/40 bg-vf-bad/10 flex flex-wrap items-center justify-between gap-3 border p-4"
-    >
-      <p className="text-vf-small text-vf-text">{children}</p>
-      <Button size="sm" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
+    <IncidentBanner
+      tone="bad"
+      title={title ?? "Something went wrong"}
+      detail={detail}
+      actions={
+        <Button size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      }
+    />
   );
 }
 
@@ -726,7 +1368,13 @@ function AppKeysPanel({
 
   if (keys.length === 0) {
     return (
-      <EmptyState
+      <EmptyOperationalState
+        title="No keys yet"
+        detail={
+          app.disabled_at === null
+            ? "Mint a key to let this app call the gateway."
+            : undefined
+        }
         action={
           app.disabled_at === null ? (
             <Button size="sm" onClick={onMint}>
@@ -734,9 +1382,7 @@ function AppKeysPanel({
             </Button>
           ) : undefined
         }
-      >
-        No keys yet.
-      </EmptyState>
+      />
     );
   }
 
@@ -1350,7 +1996,11 @@ function RevealKeyDialogContent({
         </DialogDescription>
       </DialogHeader>
       <DialogBody>
-        <CopyBlock label="Your key" value={credential.api_key} />
+        <KeyRevealBlock
+          secret={credential.api_key}
+          label="Your key"
+          canCopy
+        />
         <CopyBlock label="Run this" value={curl} />
       </DialogBody>
       <DialogFooter>
@@ -1367,7 +2017,7 @@ function CopyBlock({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-vf-micro text-vf-subtle font-mono tracking-wider uppercase">
+        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
           {label}
         </span>
         <CopyButton value={value} aria-label={`Copy ${label.toLowerCase()}`} />

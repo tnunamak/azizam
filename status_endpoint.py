@@ -23,7 +23,7 @@ import subprocess
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import httpx
 import yaml
@@ -153,6 +153,19 @@ def _truncate(s: Optional[str], n: int = 160) -> Optional[str]:
     return s if len(s) <= n else s[:n] + "..."
 
 
+def _attach_unique_app_ids_to_auth_keys(
+    auth_keys: list[dict],
+    app_ids_by_label: Mapping[str, set[str]],
+) -> None:
+    """Attach app_id to per-key status rows only when the label is unambiguous."""
+    for row in auth_keys:
+        if not isinstance(row, dict) or row.get("app_id"):
+            continue
+        ids = app_ids_by_label.get(str(row.get("name") or "").strip()) or set()
+        if len(ids) == 1:
+            row["app_id"] = next(iter(ids))
+
+
 # --- backend probes -------------------------------------------------------
 
 _ROLE_ORDER = {"required": 0, "optional": 1, "standby": 2}
@@ -161,12 +174,20 @@ _VALID_ROLES = {"required", "optional", "standby"}
 
 async def _probe(
     client: httpx.AsyncClient,
+    key: str,
     name: str,
     url: str,
     role: str,
     note: Optional[str],
 ) -> dict[str, Any]:
-    base = {"name": name, "url": url, "role": role, "note": note}
+    base = {
+        "key": key,
+        "service_id": key,
+        "name": name,
+        "url": url,
+        "role": role,
+        "note": note,
+    }
     t0 = time.monotonic()
     try:
         r = await client.get(url)
@@ -222,7 +243,10 @@ async def _backend_grid(config: dict) -> list[dict]:
     targets = _resolve_backend_targets(config)
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         results = await asyncio.gather(
-            *[_probe(client, t["name"], t["url"], t["role"], t["note"]) for t in targets],
+            *[
+                _probe(client, t["key"], t["name"], t["url"], t["role"], t["note"])
+                for t in targets
+            ],
             return_exceptions=False,
         )
     return list(results)
@@ -231,7 +255,18 @@ async def _backend_grid(config: dict) -> list[dict]:
 # --- llama.cpp /props + /slots -------------------------------------------
 
 async def _llama_props_and_slots() -> tuple[Optional[dict], Optional[list[dict]]]:
-    """Fetch /props and /slots in parallel. Returns (props|None, slots|None)."""
+    """Fetch non-invasive llama-server metadata.
+
+    ``/slots`` is deliberately not queried here. llama-server implements that
+    endpoint by posting a high-priority task to the inference queue. If a
+    monitoring client times out while generation is busy, disconnect handling
+    posts cancellation work back into the same queue. Repeated polling can
+    therefore perturb or wedge the workload it is meant to observe.
+
+    Slot activity must come from gateway-owned request telemetry, never by
+    probing the engine's inference queue. Keep the tuple return shape for the
+    existing status renderer; slot data is unavailable rather than guessed.
+    """
     async def _get(client, url):
         try:
             r = await client.get(url)
@@ -241,13 +276,8 @@ async def _llama_props_and_slots() -> tuple[Optional[dict], Optional[list[dict]]
 
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            props, slots = await asyncio.gather(
-                _get(client, "http://127.0.0.1:5051/props"),
-                _get(client, "http://127.0.0.1:5051/slots"),
-            )
-            if not isinstance(slots, list):
-                slots = None
-            return props, slots
+            props = await _get(client, "http://127.0.0.1:5051/props")
+            return props, None
     except Exception:
         return None, None
 
@@ -2861,7 +2891,113 @@ def _live_video_jobs(proxy_module, video_meta: dict[str, dict]) -> list[dict]:
 
 # --- top-level builder ----------------------------------------------------
 
-def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict]) -> dict:
+_SERVICE_STATUS_VALUE = {"up": 1.0, "degraded": 0.5, "down": 0.0}
+
+# Error kind codes stored as a float in metrics_store (no string column).
+_ERROR_KIND_NONE = 0.0
+_ERROR_KIND_CONNECT_REFUSED = 1.0
+_ERROR_KIND_TIMEOUT = 2.0
+_ERROR_KIND_HTTP_5XX = 3.0
+_ERROR_KIND_OTHER = 4.0
+_ERROR_KIND_LABELS = {
+    _ERROR_KIND_NONE: None,
+    _ERROR_KIND_CONNECT_REFUSED: "connect_refused",
+    _ERROR_KIND_TIMEOUT: "timeout",
+    _ERROR_KIND_HTTP_5XX: "http_5xx",
+    _ERROR_KIND_OTHER: "error",
+}
+
+
+def _classify_backend_error(status: str, last_error: Optional[str]) -> float:
+    """Map probe outcome to a numeric error-kind code for time-series storage."""
+    if status == "up":
+        return _ERROR_KIND_NONE
+    err = (last_error or "").lower()
+    if "connect" in err or "refused" in err:
+        return _ERROR_KIND_CONNECT_REFUSED
+    if "timeout" in err:
+        return _ERROR_KIND_TIMEOUT
+    if err.startswith("http 5") or err.startswith("http 502") or err.startswith("http 503") or err.startswith("http 504"):
+        return _ERROR_KIND_HTTP_5XX
+    return _ERROR_KIND_OTHER
+
+
+def _backend_history_tags(backend: Mapping[str, Any]) -> dict[str, str]:
+    key = str(backend.get("key") or backend.get("name") or "unknown")
+    name = str(backend.get("name") or key)
+    role = str(backend.get("role") or "required")
+    return {"backend": key, "name": name, "role": role}
+
+
+def _record_backend_health_samples(backends: Optional[list[dict]]) -> None:
+    if not backends:
+        return
+    try:
+        import metrics_store  # local import; metrics_store is in the same package
+    except Exception:
+        return
+
+    now = int(time.time())
+    samples: list[tuple[int, str, str, float]] = []
+    for backend in backends:
+        if not isinstance(backend, Mapping):
+            continue
+        status = str(
+            backend.get("live_status") or backend.get("status") or "down"
+        ).lower()
+        status_value = _SERVICE_STATUS_VALUE.get(status, 0.0)
+        tags = json.dumps(
+            _backend_history_tags(backend), sort_keys=True, separators=(",", ":")
+        )
+        samples.append((now, "service_up", tags, 1.0 if status == "up" else 0.0))
+        samples.append((now, "service_status_code", tags, status_value))
+        latency = backend.get("latency_ms")
+        if isinstance(latency, (int, float)) and latency >= 0:
+            samples.append((now, "service_latency_ms", tags, float(latency)))
+        error_kind = _classify_backend_error(status, backend.get("last_error"))
+        samples.append((now, "service_error_kind", tags, error_kind))
+    if not samples:
+        return
+    conn = None
+    try:
+        conn = metrics_store.open_writer()
+        metrics_store.record_samples(conn, samples)
+        conn.commit()
+    except Exception:
+        return
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+
+def _backend_p95_latency_ms(tags_filter: dict, since_s: int) -> Optional[int]:
+    """Compute p95 latency from raw samples for one backend over the given window.
+
+    Returns None when fewer than 2 latency samples exist (no meaningful p95).
+    """
+    try:
+        import metrics_store as _ms
+        cutoff = int(time.time()) - since_s
+        tags_json = json.dumps(tags_filter, sort_keys=True, separators=(",", ":"))
+        with _ms.reader() as c:
+            rows = c.execute(
+                "SELECT value FROM samples WHERE metric='service_latency_ms' AND ts >= ? AND tags = ? "
+                "ORDER BY value",
+                (cutoff, tags_json),
+            ).fetchall()
+        if len(rows) < 2:
+            return None
+        vals = [r[0] for r in rows]
+        p95_idx = max(0, int(len(vals) * 0.95) - 1)
+        return int(vals[p95_idx])
+    except Exception:
+        return None
+
+
+def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends: Optional[list[dict]] = None) -> dict:
     """Build the time-series-derived `metrics` block.
 
     Reads from ``metrics_store`` (SQLite). Each query opens a short-lived
@@ -2873,7 +3009,14 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict]) -> dict:
     except Exception as e:  # noqa: BLE001
         return {"available": False, "error": _safe_err(e)}
 
-    out: dict[str, Any] = {"available": True, "gpus": [], "cpu": {}, "disk": {}, "trends": {}}
+    out: dict[str, Any] = {
+        "available": True,
+        "gpus": [],
+        "cpu": {},
+        "disk": {},
+        "services": {},
+        "trends": {},
+    }
 
     def _agg_fallback(metric: str, since_s: int, op: str, tags: Optional[dict] = None):
         """Try samples_1min first; fall back to raw samples if rollup is empty.
@@ -3050,6 +3193,54 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict]) -> dict:
     except Exception as e:  # noqa: BLE001
         trends["error"] = _safe_err(e)
     out["trends"] = trends
+
+    # Service health history. This is intentionally small product-native
+    # operational memory, not a general metrics dashboard.
+    services_history: dict[str, Any] = {"window_s": 86400, "backends": {}}
+    try:
+        for backend in backends or []:
+            if not isinstance(backend, Mapping):
+                continue
+            key = str(backend.get("key") or backend.get("name") or "")
+            if not key:
+                continue
+            tags = _backend_history_tags(backend)
+            uptime_24h = _agg_fallback("service_up", since_s=86400, op="avg", tags=tags)
+            uptime_7d = _agg_fallback("service_up", since_s=7 * 86400, op="avg", tags=tags)
+            sample_count_24h = _agg_fallback(
+                "service_status_code", since_s=86400, op="count", tags=tags
+            )
+            avg_latency_24h = _agg_fallback("service_latency_ms", since_s=86400, op="avg", tags=tags)
+            p95_latency_24h = _backend_p95_latency_ms(tags, since_s=86400)
+            avg_latency_7d = _agg_fallback("service_latency_ms", since_s=7 * 86400, op="avg", tags=tags)
+            p95_latency_7d = _backend_p95_latency_ms(tags, since_s=7 * 86400)
+            services_history["backends"][key] = {
+                "key": key,
+                "name": backend.get("name") or key,
+                "role": backend.get("role"),
+                "uptime_pct_24h": round(float(uptime_24h) * 100.0, 3)
+                if isinstance(uptime_24h, (int, float))
+                else None,
+                "uptime_pct_7d": round(float(uptime_7d) * 100.0, 3)
+                if isinstance(uptime_7d, (int, float))
+                else None,
+                "sample_count_24h": int(sample_count_24h)
+                if isinstance(sample_count_24h, (int, float))
+                else 0,
+                "avg_latency_ms_24h": int(avg_latency_24h) if isinstance(avg_latency_24h, (int, float)) else None,
+                "p95_latency_ms_24h": p95_latency_24h,
+                "avg_latency_ms_7d": int(avg_latency_7d) if isinstance(avg_latency_7d, (int, float)) else None,
+                "p95_latency_ms_7d": p95_latency_7d,
+                "status_24h_series": _series_fallback(
+                    "service_status_code", since_s=86400, points=96, tags=tags, op="avg"
+                ),
+                "latency_ms_24h_series": _series_fallback(
+                    "service_latency_ms", since_s=86400, points=96, tags=tags, op="avg"
+                ),
+            }
+    except Exception as e:  # noqa: BLE001
+        services_history["error"] = _safe_err(e)
+    out["services"] = services_history
 
     # DB health.
     try:
@@ -3239,6 +3430,7 @@ async def build_status_payload(config: dict) -> dict:
     auth_keys: list[dict] = []
     auth_keys_window: dict[str, Any] = {}
     known_names: list[str] = []
+    app_ids_by_label: dict[str, set[str]] = {}
     if proxy_module is not None:
         try:
             from gateway import admin_store as _admin_store  # noqa: WPS433
@@ -3258,9 +3450,12 @@ async def build_status_payload(config: dict) -> dict:
                 label = str(app_name or display_name or "").strip()
                 if label:
                     names.add(label)
+                    if app_id:
+                        app_ids_by_label.setdefault(label, set()).add(str(app_id))
             known_names = sorted(names)
         except Exception:
             known_names = []
+            app_ids_by_label = {}
     if firehose_metrics is not None:
         try:
             auth_keys = firehose_metrics.snapshot_per_key(known_names)
@@ -3289,6 +3484,7 @@ async def build_status_payload(config: dict) -> dict:
             }
             for n in known_names
         ]
+    _attach_unique_app_ids_to_auth_keys(auth_keys, app_ids_by_label)
 
     recent_events: list[dict] = []
     if firehose_metrics is not None:
@@ -3377,7 +3573,41 @@ async def build_status_payload(config: dict) -> dict:
     except Exception:
         pass
 
-    metrics_block = sync_section("metrics", lambda: _metrics_section(gpus_raw, disk)) or {}
+    sync_section("service_health_samples", lambda: _record_backend_health_samples(backends))
+    metrics_block = sync_section(
+        "metrics", lambda: _metrics_section(gpus_raw, disk, backends)
+    ) or {}
+
+    # Enrich each backend entry with typed history for UI service rows.
+    # Sourced from the already-computed metrics.services block — no extra I/O.
+    try:
+        services_history_map = (metrics_block.get("services") or {}).get("backends") or {}
+        if backends and services_history_map:
+            enriched_backends: list[dict] = []
+            for b in backends:
+                key = str(b.get("key") or b.get("name") or "")
+                hist = services_history_map.get(key)
+                if hist is not None:
+                    enriched_backends.append({
+                        **b,
+                        "history": {
+                            "uptime_pct_24h": hist.get("uptime_pct_24h"),
+                            "uptime_pct_7d": hist.get("uptime_pct_7d"),
+                            "avg_latency_ms_24h": hist.get("avg_latency_ms_24h"),
+                            "p95_latency_ms_24h": hist.get("p95_latency_ms_24h"),
+                            "avg_latency_ms_7d": hist.get("avg_latency_ms_7d"),
+                            "p95_latency_ms_7d": hist.get("p95_latency_ms_7d"),
+                            "sample_count_24h": hist.get("sample_count_24h", 0),
+                            "status_series": hist.get("status_24h_series", []),
+                            "latency_series": hist.get("latency_ms_24h_series", []),
+                        },
+                    })
+                else:
+                    enriched_backends.append(b)
+            backends = enriched_backends
+    except Exception:
+        pass  # degrade silently — live status still present without history
+
     daisy = sync_section("daisy_audit", _daisy_audit_summary) or {}
     # Augment the daisy summary with two extra signals the audit identified.
     # Both are synchronous + cheap; sync_section guarantees they never escape.

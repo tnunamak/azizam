@@ -336,7 +336,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "messages": [{"role": "user", "content": "hello"}],
         }
 
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _CaptureForwardClient(), _ForwardModelsResponse(["claude-local"])
 
         with authenticated_profile(anthropic_only), patch.object(
@@ -607,7 +607,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             id="full-openai",
             protocols=frozenset({"openai"}),
         )
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _CaptureForwardClient(), _ForwardModelsResponse(["default"])
 
         with authenticated_profile(full_profile), patch.object(
@@ -626,7 +626,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             protocols=frozenset({"openai"}),
             models=frozenset({"default"}),
         )
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _CaptureForwardClient(), _ForwardModelsResponse(["default", "rp"])
 
         with authenticated_profile(model_locked), patch.object(
@@ -652,7 +652,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             protocols=frozenset({"openai"}),
             model_access=ModelAccessPolicy(mode="current_loaded"),
         )
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _CaptureForwardClient(), _ForwardModelsResponse(["default", "rp"])
 
         with authenticated_profile(current_loaded), patch.object(
@@ -875,7 +875,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             protocols=frozenset({"openai.chat"}),
             backends=frozenset({"kobold"}),
         )
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _CaptureForwardClient(), _ForwardResponse()
 
         def fake_registry():

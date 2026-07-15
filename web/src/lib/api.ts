@@ -301,12 +301,15 @@ export interface AttentionItem {
   title: string;
   detail: string;
   section: string;
+  href?: string;
+  target_kind?: string | null;
+  target_id?: string | null;
 }
 
 export interface AuditEntry {
   id: string;
   created_at: number;
-  actor_kind: "admin" | "cli" | null;
+  actor_kind: "admin" | "cli" | "service_account" | "user" | null;
   actor_id: string;
   action: string;
   target_kind: string | null;
@@ -345,6 +348,90 @@ export interface Overview {
   };
   attention: AttentionItem[];
   runtime_profile_mappings: Record<string, string>;
+}
+
+export interface StatusSeriesPoint extends Array<number> {
+  0: number;
+  1: number;
+}
+
+export interface BackendHistory {
+  uptime_pct_24h: number | null;
+  uptime_pct_7d: number | null;
+  avg_latency_ms_24h: number | null;
+  p95_latency_ms_24h: number | null;
+  avg_latency_ms_7d: number | null;
+  p95_latency_ms_7d: number | null;
+  sample_count_24h: number;
+  /** [timestamp_s, status_code] pairs; 1=up, 0.5=degraded, 0=down */
+  status_series: StatusSeriesPoint[];
+  /** [timestamp_s, latency_ms] pairs */
+  latency_series: StatusSeriesPoint[];
+}
+
+export interface StatusPayload {
+  banner?: "ok" | "warn" | "bad" | string;
+  banner_reasons?: string[];
+  system_health?: "ok" | "warn" | "bad" | string;
+  system_health_reasons?: string[];
+  generated_at?: number;
+	  backends?: Array<{
+	    key?: string;
+	    service_id?: string;
+	    name?: string;
+	    url?: string;
+	    role?: string;
+    live_status?: string;
+    status?: string;
+    latency_ms?: number | null;
+    last_error?: string | null;
+    history?: BackendHistory;
+  }>;
+	  auth_keys?: Array<{
+	    name?: string;
+	    app_id?: string | null;
+	    requests_24h?: number | null;
+    errors_4xx_24h?: number | null;
+    errors_5xx_24h?: number | null;
+    latency_ms_p50?: number | null;
+    latency_ms_p95?: number | null;
+    last_seen?: number | null;
+    active?: boolean | null;
+  }>;
+  metrics?: {
+    available?: boolean;
+    gpus?: Array<{
+      index?: number;
+      vram_pct_24h_series?: StatusSeriesPoint[];
+      temp_24h_series?: StatusSeriesPoint[];
+      vram_pct_max_24h?: number | null;
+      temp_max_24h_c?: number | null;
+    }>;
+    cpu?: {
+      load_avg_24h_series?: StatusSeriesPoint[];
+      temp_max_24h_c?: number | null;
+    };
+    disk?: Record<
+      string,
+      {
+        series_24h?: StatusSeriesPoint[];
+        avail_change_24h_gb?: number | null;
+        time_to_full_estimate_hours?: number | null;
+      }
+    >;
+    trends?: {
+      per_key_request_series_1h?: Record<string, StatusSeriesPoint[]>;
+      per_key_rpm_5min?: Record<string, number | null>;
+      xid_109_hourly_24h?: StatusSeriesPoint[];
+      xid_109_24h_count?: number | null;
+      xid_109_60min_count?: number | null;
+    };
+  };
+  [key: string]: unknown;
+}
+
+export interface StatusResponse {
+  status: StatusPayload;
 }
 
 // ---------------------------------------------------------------------------
@@ -680,6 +767,8 @@ export const api = {
   },
 
   overview: () => adminFetch<Overview>("/admin/api/overview"),
+  status: () =>
+    adminFetch<StatusResponse>("/admin/api/status").then((r) => r.status),
 
   audit: {
     /** Paginated fetch. Returns {records, next_cursor}. */
@@ -692,6 +781,10 @@ export const api = {
       const qs = q.toString();
       return adminFetch<AuditPage>(`/admin/api/audit${qs ? `?${qs}` : ""}`);
     },
+    get: (eventId: string) =>
+      adminFetch<{ event: AuditEntry }>(
+        `/admin/api/audit/${encodeURIComponent(eventId)}`,
+      ).then((r) => r.event),
   },
 };
 
@@ -713,8 +806,10 @@ export const queryKeys = {
    * component state, not in separate cache entries. */
   audit: (params: { actorId: string | null; actionPrefix: string | null }) =>
     ["audit", params] as const,
+  auditEvent: (eventId: string | null) => ["audit", "event", eventId] as const,
   serviceRegistry: ["serviceRegistry"] as const,
   servicePresets: ["servicePresets"] as const,
+  status: ["status"] as const,
   litellmConfig: ["litellmConfig"] as const,
   operatorOverrides: ["operator", "overrides"] as const,
   runtimeProfileMappings: ["runtime-profile-mappings"] as const,

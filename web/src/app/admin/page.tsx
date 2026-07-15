@@ -1,48 +1,63 @@
 "use client";
 
-/** Admin → Overview (docs/design/WEB_UI_STEERING.md — "Overview" surface spec).
+/** Admin → Overview.
  *
- * Single job: "Does anything need me?" — attention list, quiet stat strip,
- * 3 most recent audit rows. NOTHING else; resist dashboard-itis. */
+ * Two-column working page: left = quickstart + metric strip + apps table;
+ * right = recent activity. Bottom row: base URL + health/services summary.
+ * No marketing copy; no decorative charts — only real status, auth, and
+ * activity series. Empty/loading states are distinct from errors.
+ */
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import {
+  ActivityFeedRow,
+  AppAccessRow,
+  Avatar,
+  avatarToneFor,
   Badge,
   Button,
-  EmptyState,
-  EntityRef,
+  CopyField,
+  EmptyOperationalState,
+  IncidentBanner,
+  MetricStrip,
+  ObjectList,
+  ObjectRow,
+  PanelHeader,
+  ProductPanel,
+  QuickStartChecklist,
   RelativeTime,
-  SectionHeader,
+  SectionActionHeader,
+  ServicesIcon,
   Skeleton,
+  StatusAdvisory,
+  StatusDotLabel,
+  type HealthTone,
+  type ChartPoint,
 } from "@/components/ui";
 import {
   api,
   queryKeys,
   type AttentionItem,
   type AuditEntry,
+  type Credential,
+  type Service,
+  type StatusPayload,
+  type StatusSeriesPoint,
   type User,
 } from "@/lib/api";
+import {
+  adminAppHref,
+  adminAuditHref,
+  adminServiceHref,
+  adminTargetHref,
+} from "@/lib/admin-links";
 
 // ---------------------------------------------------------------------------
-// Section → route mapping (attention items carry a "section" slug)
+// Human phrases for audit action types
 
-const SECTION_ROUTES: Record<string, string> = {
-  "apps-keys": "/admin/apps",
-  services: "/admin/services",
-  profiles: "/admin/profiles",
-  users: "/admin/users",
-  audit: "/admin/audit",
-  settings: "/admin/settings",
-};
-
-function sectionHref(section: string): string {
-  return SECTION_ROUTES[section] ?? "/admin";
-}
-
-// Sentence-case human phrases for audit action types
 const ACTION_LABELS: Record<string, string> = {
   "app.create": "Created app",
   "app.disable": "Disabled app",
@@ -68,10 +83,9 @@ const ACTION_LABELS: Record<string, string> = {
   "operator.extension_package.enable": "Enabled extension",
   "operator.oidc_provider_config.update": "Updated sign-in config",
   "setup.local_owner_create": "Created local owner account",
-  "setup.local_owner_login": "Signed in (local)",
+  "setup.local_owner_login": "Signed in locally",
 };
 
-/** Human-readable fallback: capitalise the last dot-segment and replace underscores. */
 function actionLabel(action: string): string {
   if (action in ACTION_LABELS) return ACTION_LABELS[action]!;
   const parts = action.split(".");
@@ -79,154 +93,402 @@ function actionLabel(action: string): string {
   return last.charAt(0).toUpperCase() + last.slice(1).replace(/_/g, " ");
 }
 
-// ---------------------------------------------------------------------------
-// Attention row
+function isActiveKey(credential: Credential): boolean {
+  return credential.revoked_at === null;
+}
 
-function AttentionRow({ item }: { item: AttentionItem }) {
-  const tone = item.severity === "problem" ? "bad" : "warn";
-
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-3 py-3">
-      <div className="flex min-w-0 items-start gap-2.5">
-        <Badge tone={tone} sm className="mt-0.5 shrink-0">
-          {item.severity === "problem" ? "problem" : "attention"}
-        </Badge>
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-vf-body text-vf-text">{item.title}</span>
-          <span className="text-vf-small text-vf-muted">{item.detail}</span>
-        </div>
-      </div>
-      <Button variant="secondary" size="sm" className="shrink-0" asChild>
-        <Link href={sectionHref(item.section)}>
-          Go to {item.section.replace("-", " & ")}
-        </Link>
-      </Button>
-    </div>
+function serviceList(
+  registry: Awaited<ReturnType<typeof api.services.registry>> | undefined,
+): Service[] {
+  return Object.values(registry?.services ?? {}).sort((a, b) =>
+    a.name.localeCompare(b.name),
   );
 }
 
-// ---------------------------------------------------------------------------
-// Stat strip
-
-interface StatStripProps {
-  servicesUp: number;
-  servicesTotal: number;
-  apps: number;
-  activeKeys: number;
+function asChartSeries(series: StatusSeriesPoint[] | undefined): ChartPoint[] {
+  return (series ?? [])
+    .filter(
+      (point) =>
+        Array.isArray(point) &&
+        point.length >= 2 &&
+        Number.isFinite(point[0]) &&
+        Number.isFinite(point[1]),
+    )
+    .map(([ts, value]) => ({
+      x: ts,
+      y: value,
+      label: new Date(ts * 1000).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    }));
 }
 
-function StatStrip({
-  servicesUp,
-  servicesTotal,
-  apps,
-  activeKeys,
-}: StatStripProps) {
-  return (
-    <div className="flex flex-wrap gap-6">
-      <StatItem
-        label="services"
-        value={`${servicesUp} / ${servicesTotal} enabled`}
-      />
-      <StatItem label="apps" value={String(apps)} />
-      <StatItem label="active keys" value={String(activeKeys)} />
-    </div>
+function sumSeries(
+  seriesByName: Record<string, StatusSeriesPoint[]> | undefined,
+): ChartPoint[] {
+  const buckets = new Map<number, number>();
+  for (const series of Object.values(seriesByName ?? {})) {
+    for (const point of series) {
+      if (
+        !Array.isArray(point) ||
+        point.length < 2 ||
+        !Number.isFinite(point[0]) ||
+        !Number.isFinite(point[1])
+      ) {
+        continue;
+      }
+      buckets.set(point[0], (buckets.get(point[0]) ?? 0) + point[1]);
+    }
+  }
+  return [...buckets.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([ts, value]) => ({
+      x: ts,
+      y: value,
+      label: new Date(ts * 1000).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    }));
+}
+
+function latestValue(series: ChartPoint[]): number | null {
+  const last = series.at(-1);
+  return last && Number.isFinite(last.y) ? last.y : null;
+}
+
+function formatCompact(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat(undefined, {
+    notation: Math.abs(value) >= 10_000 ? "compact" : "standard",
+    maximumFractionDigits: value < 10 ? 1 : 0,
+  }).format(value);
+}
+
+function healthTone(value: unknown): HealthTone {
+  if (value === "bad") return "bad";
+  if (value === "warn") return "warn";
+  if (value === "ok") return "ok";
+  return "neutral";
+}
+
+function maxHealthTone(a: HealthTone, b: HealthTone): HealthTone {
+  const rank: Record<HealthTone, number> = {
+    neutral: 0,
+    info: 0,
+    ok: 1,
+    warn: 2,
+    bad: 3,
+  };
+  return rank[b] > rank[a] ? b : a;
+}
+
+function healthWord(tone: HealthTone): string {
+  if (tone === "bad") return "bad";
+  if (tone === "warn") return "degraded";
+  if (tone === "ok") return "ok";
+  return "unknown";
+}
+
+function healthSummary(status: StatusPayload | undefined, error: boolean) {
+  if (error) {
+    return {
+      tone: "bad" as HealthTone,
+      label: "Status unavailable",
+      detail: "The admin status endpoint did not respond.",
+      apiTone: "neutral" as HealthTone,
+      hostTone: "neutral" as HealthTone,
+    };
+  }
+  if (!status) {
+    return {
+      tone: "neutral" as HealthTone,
+      label: "Loading status",
+      detail: "Checking API and host health.",
+      apiTone: "neutral" as HealthTone,
+      hostTone: "neutral" as HealthTone,
+    };
+  }
+  const apiTone = healthTone(status.banner ?? "ok");
+  const hostTone = healthTone(status.system_health ?? "ok");
+  const tone = maxHealthTone(apiTone, hostTone);
+  const reasons = [
+    ...(status.banner_reasons ?? []),
+    ...(status.system_health_reasons ?? []),
+  ].filter(Boolean);
+  if (tone === "ok") {
+    return {
+      tone,
+      label: "API and host healthy",
+      detail: "No incidents detected.",
+      apiTone,
+      hostTone,
+    };
+  }
+  return {
+    tone,
+    label: tone === "bad" ? "Action needed" : "Degraded",
+    detail: reasons.slice(0, 3).join("; ") || "Review live status for details.",
+    apiTone,
+    hostTone,
+  };
+}
+
+function buildTelemetryCards(status: StatusPayload | undefined) {
+  const requestSeries = sumSeries(
+    status?.metrics?.trends?.per_key_request_series_1h,
   );
+  const requests24h = (status?.auth_keys ?? []).reduce((sum, key) => {
+    const value = key.requests_24h;
+    return sum + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  }, 0);
+
+  const firstGpu = status?.metrics?.gpus?.[0];
+  const vramSeries = asChartSeries(firstGpu?.vram_pct_24h_series);
+  const tempSeries = asChartSeries(firstGpu?.temp_24h_series);
+  const xidSeries = asChartSeries(status?.metrics?.trends?.xid_109_hourly_24h);
+  const xid24h = status?.metrics?.trends?.xid_109_24h_count;
+
+  return {
+    requestSeries,
+    requests24h,
+    vramSeries,
+    vramValue: latestValue(vramSeries) ?? firstGpu?.vram_pct_max_24h ?? null,
+    tempSeries,
+    tempValue: latestValue(tempSeries) ?? firstGpu?.temp_max_24h_c ?? null,
+    xidSeries,
+    xid24h:
+      typeof xid24h === "number" && Number.isFinite(xid24h) ? xid24h : null,
+  };
 }
 
-function StatItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-vf-micro text-vf-subtle font-mono tracking-wider uppercase">
-        {label}
-      </span>
-      <span className="text-vf-body text-vf-text font-medium">{value}</span>
-    </div>
-  );
+function userLabel(user: User | undefined): string {
+  return user?.display_name ?? user?.email ?? "Unknown user";
+}
+
+function auditActorLabel(
+  entry: AuditEntry,
+  usersById: Map<string, User>,
+): string {
+  if (entry.actor_id === "cli" || entry.actor_kind === "cli") return "System";
+  const user = usersById.get(entry.actor_id);
+  if (user) return userLabel(user);
+  if (entry.actor_kind === "service_account" || entry.actor_id.startsWith("svc_")) {
+    return "Admin key";
+  }
+  if (entry.actor_kind === "admin") return "Admin";
+  return "Unknown user";
 }
 
 // ---------------------------------------------------------------------------
-// Recent audit row
+// Attention section — one IncidentBanner per item, or an all-clear card
 
-function AuditRow({
-  entry,
-  usersById,
+function AttentionSection({
+  items,
+  loading,
+  error,
 }: {
-  entry: AuditEntry;
-  usersById: Map<string, User>;
+  items: AttentionItem[];
+  loading: boolean;
+  error: boolean;
 }) {
-  const label = actionLabel(entry.action);
+  if (error) {
+    return (
+      <IncidentBanner
+        tone="bad"
+        title="Couldn't load attention items"
+        detail="Check the gateway log for errors."
+      />
+    );
+  }
+  if (loading) {
+    return null;
+  }
+  if (items.length === 0) return null;
 
-  // Resolve actor: "cli" → "System"; user id → display_name ?? email ?? id
-  let actorName: string;
-  if (entry.actor_id === "cli") {
-    actorName = "System";
-  } else {
-    const user = usersById.get(entry.actor_id);
-    actorName = user?.display_name ?? user?.email ?? entry.actor_id;
+  const problemCount = items.filter((i) => i.severity === "problem").length;
+  const tone = problemCount > 0 ? ("bad" as const) : ("warn" as const);
+  const headline = `${items.length} item${items.length === 1 ? "" : "s"} need${items.length === 1 ? "s" : ""} attention`;
+
+  return (
+    <StatusAdvisory
+      tone={tone}
+      title={headline}
+      items={items.map((item) => {
+        const href = item.href ?? undefined;
+        return {
+          title: item.title,
+          detail: item.detail,
+          tone: item.severity === "problem" ? "bad" : "warn",
+          href,
+          side: href ? "View →" : undefined,
+        };
+      })}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Apps table (compact list for the left column)
+
+function AppsSection({
+  apps,
+  credentialsData,
+  usersById,
+  statusData,
+}: {
+  apps: Awaited<ReturnType<typeof api.apps.list>>;
+  credentialsData: Credential[] | undefined;
+  usersById: Map<string, User>;
+  statusData: StatusPayload | undefined;
+}) {
+  if (apps.length === 0) {
+    return (
+      <EmptyOperationalState
+        title="No apps yet."
+        detail="Create an app to start routing requests."
+        action={
+          <Button asChild variant="primary" size="sm">
+            <Link href="/admin/apps">Create app</Link>
+          </Button>
+        }
+      />
+    );
   }
 
-  // Resolve target display name only from metadata (e.g. {name: "home-desktop"}).
-  // Do NOT fall back to target_kind — that produces dangling raw strings like "user".
-  // The row reads: RelativeTime · actor · human action phrase (+ named target when known).
-  const targetName =
-    entry.metadata && typeof entry.metadata["name"] === "string"
-      ? entry.metadata["name"]
-      : null;
-
   return (
-    <div className="flex flex-wrap items-center gap-3 py-2.5">
-      <RelativeTime
-        ts={entry.created_at}
-        className="text-vf-small text-vf-muted w-20 shrink-0"
-      />
-      <EntityRef
-        name={actorName}
-        id={entry.actor_id}
-        idVisibility="hover"
-        className="min-w-0 shrink"
-      />
-      <span className="text-vf-small text-vf-text flex-1">{label}</span>
-      {entry.target_id && targetName && (
-        <EntityRef
-          name={targetName}
-          id={entry.target_id}
-          idVisibility="hover"
-          className="text-vf-small text-vf-muted hidden min-w-0 md:flex"
-        />
-      )}
+    <div className="overflow-hidden rounded-md border border-[var(--vf-border)]">
+      {/* Column header row */}
+      <div className="hidden md:flex items-center gap-2.5 px-3 py-1.5 border-b border-[var(--vf-border)] bg-[var(--vf-surface-1)]">
+        <span className="shrink-0 w-[34px]" />
+        <span className="flex-1 min-w-0 text-vf-micro text-vf-subtle font-mono uppercase">App name</span>
+        <span className="shrink-0 text-vf-micro text-vf-subtle font-mono uppercase w-20 text-right">Last used</span>
+        <span className="shrink-0 text-vf-micro text-vf-subtle font-mono uppercase w-14 text-right">Status</span>
+      </div>
+      <div className="vf-activity-feed">
+        {apps.slice(0, 5).map((app) => {
+          const appActiveKeys = (credentialsData ?? [])
+            .filter((c) => c.subject_kind === "app" && c.app_id === app.id && c.revoked_at === null)
+            .length;
+          const t = statusData?.auth_keys?.find((k) => k.app_id === app.id);
+          const lastSeenTs = t?.last_seen ? Math.floor(t.last_seen) : null;
+          const credTs = (credentialsData ?? [])
+            .filter((c) => c.subject_kind === "app" && c.app_id === app.id && c.last_used_at !== null)
+            .reduce<number | null>((best, c) => {
+              const v = c.last_used_at!;
+              return best === null || v > best ? v : best;
+            }, null);
+          const ts = lastSeenTs ?? credTs;
+          const lastUsedLabel = ts
+            ? (() => {
+                const diffSec = Math.floor(Date.now() / 1000) - ts;
+                if (diffSec < 60) return "just now";
+                if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+                if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+                return `${Math.floor(diffSec / 86400)}d ago`;
+              })()
+            : undefined;
+          return (
+            <AppAccessRow
+              key={app.id}
+              name={app.name}
+              avatar={
+                <Avatar
+                  initials={app.name.slice(0, 2)}
+                  tone={avatarToneFor(app.name)}
+                />
+              }
+              owner={
+                app.owner_user_id
+                  ? userLabel(usersById.get(app.owner_user_id))
+                  : undefined
+              }
+              profile={app.effective_profile_name}
+              keyCount={appActiveKeys}
+              lastUsedLabel={lastUsedLabel}
+              status={app.disabled_at !== null ? "warn" : "ok"}
+              statusLabel={app.disabled_at !== null ? "disabled" : "active"}
+              href={adminAppHref(app.id)}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Skeleton rows
+// Recent activity feed (right rail)
 
-function AttentionSkeleton() {
+function RecentActivitySection({
+  entries,
+  usersById,
+  loading,
+  error,
+}: {
+  entries: AuditEntry[] | undefined;
+  usersById: Map<string, User>;
+  loading: boolean;
+  error: boolean;
+}) {
+  if (error) {
+    return (
+      <div className="rounded-md border border-[var(--vf-border)] px-4 py-3">
+        <IncidentBanner
+          tone="bad"
+          title="Couldn't load recent activity"
+          detail="Check the gateway log for errors."
+        />
+      </div>
+    );
+  }
+  if (loading) {
+    return (
+      <div className="rounded-md border border-[var(--vf-border)]">
+        <EmptyOperationalState
+          title="Loading activity"
+          detail="Recent gateway events will appear here."
+          tone="info"
+        />
+      </div>
+    );
+  }
+  if (!entries || entries.length === 0) {
+    return (
+      <div className="rounded-md border border-[var(--vf-border)]">
+        <EmptyOperationalState
+          title="No activity yet."
+          detail="Control-plane changes will appear here."
+        />
+      </div>
+    );
+  }
   return (
-    <div className="flex flex-col divide-y divide-vf-border/60">
-      {[1, 2].map((i) => (
-        <div key={i} className="flex items-start gap-3 py-3">
-          <Skeleton className="mt-0.5 h-5 w-16 shrink-0" />
-          <div className="flex flex-1 flex-col gap-1.5">
-            <Skeleton className="h-4 w-2/3" />
-            <Skeleton className="h-3.5 w-1/2" />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function AuditSkeleton() {
-  return (
-    <div className="flex flex-col divide-y divide-vf-border/60">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="flex items-center gap-3 py-2.5">
-          <Skeleton className="h-4 w-16 shrink-0" />
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-4 flex-1" />
-        </div>
-      ))}
+    <div className="rounded-md border border-[var(--vf-border)] overflow-hidden">
+      <div className="vf-activity-feed">
+        {entries.map((entry) => {
+          const actor = auditActorLabel(entry, usersById);
+          const targetName =
+            entry.metadata && typeof entry.metadata["name"] === "string"
+              ? entry.metadata["name"]
+              : undefined;
+          return (
+            <ActivityFeedRow
+              key={entry.id}
+              href={
+                adminTargetHref(entry.target_kind, entry.target_id) ??
+                adminAuditHref(entry.id)
+              }
+              tone="info"
+              title={actionLabel(entry.action)}
+              detail={targetName ?? undefined}
+              actor={actor !== "Unknown user" ? actor : undefined}
+              time={<RelativeTime ts={entry.created_at} />}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -235,6 +497,7 @@ function AuditSkeleton() {
 // Page
 
 export default function AdminOverviewPage() {
+  const [baseUrl, setBaseUrl] = useState("/v1");
   const {
     data: overview,
     isPending: overviewPending,
@@ -250,94 +513,364 @@ export default function AdminOverviewPage() {
     isError: auditError,
   } = useQuery({
     queryKey: queryKeys.auditRecent,
-    queryFn: () => api.audit.list({ limit: 3 }).then((r) => r.records),
+    queryFn: () => api.audit.list({ limit: 8 }).then((r) => r.records),
   });
 
-  // Fetch users to resolve actor names in the audit teaser rows.
-  const { data: usersData } = useQuery({
-    queryKey: ["users"] as const,
+  const { data: usersData, isPending: usersPending } = useQuery({
+    queryKey: queryKeys.users,
     queryFn: api.users.list,
+  });
+  const { data: appsData } = useQuery({
+    queryKey: queryKeys.apps,
+    queryFn: api.apps.list,
+  });
+  const { data: credentialsData } = useQuery({
+    queryKey: queryKeys.credentials,
+    queryFn: api.credentials.list,
+  });
+  const { data: registry } = useQuery({
+    queryKey: queryKeys.serviceRegistry,
+    queryFn: api.services.registry,
+  });
+  const { data: statusData, isError: statusError } = useQuery({
+    queryKey: queryKeys.status,
+    queryFn: api.status,
+    staleTime: 10_000,
   });
 
   const usersById = useMemo(
-    () => new Map((usersData ?? []).map((u) => [u.id, u])),
+    () => new Map((usersData ?? []).map((user) => [user.id, user])),
     [usersData],
   );
+  const apps = useMemo(
+    () => [...(appsData ?? [])].sort((a, b) => b.created_at - a.created_at),
+    [appsData],
+  );
+  const firstApp = apps[0] ?? null;
+  const services = useMemo(() => serviceList(registry), [registry]);
+  const enabledServices = services.filter((service) => service.enabled).length;
+  const activeKeys = useMemo(
+    () => (credentialsData ?? []).filter(isActiveKey),
+    [credentialsData],
+  );
+  const telemetry = useMemo(
+    () => buildTelemetryCards(statusData),
+    [statusData],
+  );
 
-  const counts = overview?.counts;
+  // Show quickstart until all four conditions hold.
+  const setupIncomplete =
+    appsData === undefined ||
+    credentialsData === undefined ||
+    apps.length === 0 ||
+    activeKeys.length === 0 ||
+    enabledServices === 0 ||
+    telemetry.requests24h === 0;
+
   const attention = overview?.attention ?? [];
+  const hasAttention = overviewError || attention.length > 0;
+
+  useEffect(() => {
+    setBaseUrl(`${window.location.origin}/v1`);
+  }, []);
+
+  const health = useMemo(
+    () => healthSummary(statusData, statusError),
+    [statusData, statusError],
+  );
+  const liveServiceByName = useMemo(() => {
+    const map = new Map<string, NonNullable<StatusPayload["backends"]>[number]>();
+    for (const backend of statusData?.backends ?? []) {
+      const name = backend.name?.toLowerCase();
+      if (name) map.set(name, backend);
+    }
+    return map;
+  }, [statusData]);
 
   return (
-    <div className="flex flex-col gap-10">
-      <SectionHeader kicker="admin" title="Overview" />
+    <div className="flex flex-col gap-5">
+      {/* Page header */}
+      <SectionActionHeader
+        kicker="operator"
+        title="Overview"
+        action={
+          <Button asChild variant="primary">
+            <Link href="/admin/apps">+ Create app</Link>
+          </Button>
+        }
+      />
 
-      {/* Attention list */}
-      <section className="flex flex-col gap-3">
-        <h3 className="text-vf-heading text-vf-text">Attention</h3>
+      {/* Attention banners — shown only when items exist or erroring */}
+      {hasAttention && (
+        <AttentionSection
+          items={attention}
+          loading={overviewPending}
+          error={overviewError}
+        />
+      )}
 
-        {overviewError ? (
-          <p className="text-vf-small text-vf-bad">
-            Couldn&apos;t load attention items.
-          </p>
-        ) : overviewPending ? (
-          <AttentionSkeleton />
-        ) : attention.length === 0 ? (
-          <EmptyState className="py-6">All quiet.</EmptyState>
-        ) : (
-          <div className="divide-vf-border/60 flex flex-col divide-y">
-            {attention.map((item, i) => (
-              <AttentionRow key={i} item={item} />
-            ))}
-          </div>
-        )}
-      </section>
+      {/* QuickStart stepper — visible until all 4 steps complete */}
+      {setupIncomplete && (
+        <QuickStartChecklist
+          items={[
+            {
+              id: "create-app",
+              label: "Create an app",
+              detail: "Register your first caller identity.",
+              complete: apps.length > 0,
+              action: (
+                <Button asChild variant="ghost" size="sm">
+                  <Link href="/admin/apps">Create app</Link>
+                </Button>
+              ),
+            },
+            {
+              id: "mint-key",
+              label: "Generate an API key",
+              detail: "Mint a key for the app so callers can authenticate.",
+              complete: activeKeys.length > 0,
+              action: (
+                firstApp ? (
+                  <Button asChild variant="ghost" size="sm">
+                    <Link href={adminAppHref(firstApp.id)}>Create key</Link>
+                  </Button>
+                ) : (
+                  <Button variant="ghost" size="sm" disabled>
+                    Create key
+                  </Button>
+                )
+              ),
+            },
+            {
+              id: "enable-service",
+              label: "Copy base URL",
+              detail: "Use this URL as your OpenAI base URL.",
+              complete: enabledServices > 0,
+              action: (
+                <Button asChild variant="ghost" size="sm">
+                  <Link href="#base-url">Show URL</Link>
+                </Button>
+              ),
+            },
+            {
+              id: "send-request",
+              label: "Send a test request",
+              detail: "Confirm the gateway routes requests end to end.",
+              complete: telemetry.requests24h > 0,
+              action: (
+                <Button asChild variant="ghost" size="sm">
+                  <Link href="/admin/services">Docs</Link>
+                </Button>
+              ),
+            },
+          ]}
+        />
+      )}
 
-      {/* Stat strip */}
-      <section className="flex flex-col gap-3">
-        {overviewPending ? (
-          <div className="flex gap-6">
-            <Skeleton className="h-8 w-24" />
-            <Skeleton className="h-8 w-16" />
-            <Skeleton className="h-8 w-20" />
-          </div>
-        ) : counts ? (
-          <StatStrip
-            servicesUp={counts.services_enabled ?? 0}
-            servicesTotal={counts.services_total ?? 0}
-            apps={counts.apps}
-            activeKeys={counts.active_credentials}
-          />
-        ) : null}
-      </section>
+      {/* KPI strip — always visible */}
+      <MetricStrip
+        items={[
+          {
+            label: "Apps",
+            value: appsData !== undefined ? String(apps.length) : "—",
+            detail: "registered",
+          },
+          {
+            label: "Active keys",
+            value: credentialsData !== undefined ? String(activeKeys.length) : "—",
+            detail: "credentials",
+          },
+          {
+            label: "Requests",
+            value: formatCompact(telemetry.requests24h > 0 ? telemetry.requests24h : null),
+            detail: "24h",
+            tone: "info" as const,
+            series: telemetry.requestSeries.length >= 3 ? telemetry.requestSeries : undefined,
+          },
+          {
+            label: "Services on",
+            value: registry !== undefined ? `${enabledServices}/${services.length || 0}` : "—",
+            detail: "enabled",
+            tone:
+              services.length > 0 && enabledServices < services.length
+                ? ("warn" as const)
+                : services.length > 0
+                  ? ("ok" as const)
+                  : ("neutral" as const),
+          },
+        ]}
+      />
 
-      {/* Recent audit */}
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-vf-heading text-vf-text">Recent activity</h3>
-          <Link
-            href="/admin/audit"
-            className="text-vf-small text-vf-muted hover:text-vf-text transition-colors"
-          >
-            View all
-          </Link>
+      {/* Two-column body: left = apps table, right = activity feed */}
+      <div className="vf-overview-body">
+        {/* LEFT — apps table */}
+        <div className="vf-overview-left">
+          <section>
+            <SectionActionHeader
+              title="Your apps"
+              count={appsData !== undefined ? apps.length : undefined}
+              action={
+                <Link
+                  href="/admin/apps"
+                  className="text-vf-small text-vf-muted hover:text-vf-text"
+                >
+                  View all →
+                </Link>
+              }
+            />
+            <div className="mt-3">
+              {appsData === undefined ? (
+                <div className="flex flex-col gap-2">
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                </div>
+              ) : (
+                <AppsSection
+                  apps={apps}
+                  credentialsData={credentialsData}
+                  usersById={usersById}
+                  statusData={statusData}
+                />
+              )}
+            </div>
+            {appsData !== undefined && apps.length > 0 && (
+              <p className="mt-2 text-vf-micro text-vf-muted">
+                Showing {Math.min(5, apps.length)} of {apps.length} app{apps.length === 1 ? "" : "s"}
+              </p>
+            )}
+          </section>
         </div>
 
-        {auditError ? (
-          <p className="text-vf-small text-vf-bad">
-            Couldn&apos;t load recent activity.
-          </p>
-        ) : auditPending ? (
-          <AuditSkeleton />
-        ) : !auditEntries || auditEntries.length === 0 ? (
-          <EmptyState className="py-6">No activity yet.</EmptyState>
-        ) : (
-          <div className="divide-vf-border/60 flex flex-col divide-y">
-            {auditEntries.slice(0, 3).map((entry) => (
-              <AuditRow key={entry.id} entry={entry} usersById={usersById} />
-            ))}
+        {/* RIGHT — activity feed */}
+        <div className="vf-overview-right">
+          <section>
+            <SectionActionHeader
+              title="Recent activity"
+              action={
+                <Link
+                  href="/admin/audit"
+                  className="text-vf-small text-vf-muted hover:text-vf-text"
+                >
+                  View all →
+                </Link>
+              }
+            />
+            <div className="mt-3">
+              <RecentActivitySection
+                entries={auditEntries}
+                usersById={usersById}
+                loading={auditPending || usersPending}
+                error={auditError}
+              />
+            </div>
+          </section>
+        </div>
+      </div>
+
+      {/* Bottom row: Base URL (left) + Health/Services (right) */}
+      <div className="vf-overview-bottom">
+        {/* Base URL */}
+        <section id="base-url">
+          <SectionActionHeader
+            title="Base URL"
+            description="Use this URL for all API requests."
+          />
+          <div className="mt-3">
+            <ProductPanel tight>
+              <CopyField
+                value={baseUrl}
+                monospace
+                description="Works with OpenAI-compatible SDKs and tools."
+              />
+            </ProductPanel>
           </div>
-        )}
-      </section>
+        </section>
+
+        {/* API Health + Services */}
+        <section>
+          <SectionActionHeader
+            title="API Health"
+          />
+          <div className="mt-3 flex flex-col gap-3">
+            <div className="vf-health-summary">
+              <StatusDotLabel
+                tone={health.tone}
+                label={health.label}
+                pulse={health.tone === "ok"}
+              />
+              <p className="text-vf-micro text-vf-muted">{health.detail}</p>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <StatusDotLabel
+                  tone={health.apiTone}
+                  label={`API ${healthWord(health.apiTone)}`}
+                  className="text-vf-micro"
+                />
+                <StatusDotLabel
+                  tone={health.hostTone}
+                  label={`Host ${healthWord(health.hostTone)}`}
+                  className="text-vf-micro"
+                />
+              </div>
+            </div>
+
+            {services.length > 0 && (
+              <ProductPanel tight>
+                <PanelHeader
+                  title="Services"
+                  description={`${enabledServices} of ${services.length} enabled`}
+                  action={
+                    <Link
+                      href="/admin/services"
+                      className="text-vf-small text-vf-accent hover:text-vf-text"
+                    >
+                      Manage
+                    </Link>
+                  }
+                />
+                <ObjectList className="mt-2">
+                  {services.slice(0, 4).map((service) => {
+                    const live = liveServiceByName.get(service.name.toLowerCase());
+                    const liveStatus = String(
+                      live?.live_status ?? live?.status ?? "",
+                    ).toLowerCase();
+                    const tone =
+                      liveStatus === "up"
+                        ? "ok"
+                        : liveStatus === "degraded"
+                          ? "warn"
+                          : liveStatus === "down"
+                            ? "bad"
+                            : service.enabled
+                              ? "neutral"
+                              : "warn";
+                    const label = liveStatus || (service.enabled ? "on" : "off");
+                    return (
+                      <ObjectRow
+                        key={service.id}
+                        href={adminServiceHref(service.id)}
+                        icon={<ServicesIcon className="size-4" />}
+                        title={service.name}
+                        meta={
+                          live?.last_error ??
+                          service.config.base_url ??
+                          service.config.host ??
+                          "managed"
+                        }
+                        side={
+                          <Badge tone={tone} sm>
+                            {label}
+                          </Badge>
+                        }
+                      />
+                    );
+                  })}
+                </ObjectList>
+              </ProductPanel>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

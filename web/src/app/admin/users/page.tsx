@@ -20,11 +20,7 @@
 
 import { useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   ApiError,
@@ -50,16 +46,18 @@ import {
   DialogForm,
   DialogHeader,
   DialogTitle,
-  EmptyState,
+  EmptyOperationalState,
   EntityRef,
   Field,
   Input,
+  NoticeBanner,
   OverflowMenu,
   OverflowMenuItem,
   RelativeTime,
-  SectionHeader,
+  SectionActionHeader,
   Select,
   Skeleton,
+  SummaryStrip,
   Switch,
   toast,
 } from "@/components/ui";
@@ -145,7 +143,10 @@ export default function AdminUsersPage() {
     isPending: mappingsPending,
     isError: mappingsIsError,
     refetch: refetchMappings,
-  } = useQuery({ queryKey: QK_MAPPINGS, queryFn: api.runtimeProfileMappings.list });
+  } = useQuery({
+    queryKey: QK_MAPPINGS,
+    queryFn: api.runtimeProfileMappings.list,
+  });
 
   const { data: profilesData } = useQuery({
     queryKey: queryKeys.profiles,
@@ -166,14 +167,15 @@ export default function AdminUsersPage() {
   }, [appsData]);
 
   const users = useMemo(
-    () =>
-      [...(usersData ?? [])].sort((a, b) => a.created_at - b.created_at),
+    () => [...(usersData ?? [])].sort((a, b) => a.created_at - b.created_at),
     [usersData],
   );
+  const adminCount = users.filter((user) =>
+    user.roles.some((role) => role === "admin" || role === "owner"),
+  ).length;
 
   const mappings = useMemo(
-    () =>
-      [...(mappingsData ?? [])].sort((a, b) => a.created_at - b.created_at),
+    () => [...(mappingsData ?? [])].sort((a, b) => a.created_at - b.created_at),
     [mappingsData],
   );
 
@@ -188,7 +190,8 @@ export default function AdminUsersPage() {
       api.runtimeProfileMappings.disable(mapping.id),
     onMutate: async (mapping) => {
       await queryClient.cancelQueries({ queryKey: QK_MAPPINGS });
-      const previous = queryClient.getQueryData<RuntimeProfileMapping[]>(QK_MAPPINGS);
+      const previous =
+        queryClient.getQueryData<RuntimeProfileMapping[]>(QK_MAPPINGS);
       queryClient.setQueryData<RuntimeProfileMapping[]>(QK_MAPPINGS, (rows) =>
         rows?.filter((r) => r.id !== mapping.id),
       );
@@ -205,8 +208,7 @@ export default function AdminUsersPage() {
     onSuccess: () => {
       toast.success("Mapping disabled");
     },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: QK_MAPPINGS }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: QK_MAPPINGS }),
   });
 
   const loading = usersPending || appsPending;
@@ -254,8 +256,7 @@ export default function AdminUsersPage() {
       id: "apps",
       header: "Apps",
       cell: (user) => {
-        if (appsPending)
-          return <Skeleton className="h-4 w-8" />;
+        if (appsPending) return <Skeleton className="h-4 w-8" />;
         const count = appCountByUser.get(user.id) ?? 0;
         return (
           <span className="text-vf-small text-vf-muted">
@@ -268,9 +269,7 @@ export default function AdminUsersPage() {
     {
       id: "last_login",
       header: "Last sign-in",
-      cell: (user) => (
-        <RelativeTime ts={user.last_login_at} fallback="Never" />
-      ),
+      cell: (user) => <RelativeTime ts={user.last_login_at} fallback="Never" />,
       hideOnMobile: true,
     },
     {
@@ -282,13 +281,47 @@ export default function AdminUsersPage() {
   ];
 
   return (
-    <main className="mx-auto flex w-full max-w-[1080px] flex-col gap-10 px-4 py-8 md:px-6">
+    <div className="flex w-full flex-col gap-8">
       {/* People table */}
       <section className="flex flex-col gap-4">
-        <SectionHeader
+        <SectionActionHeader
           kicker="people"
           title="Users"
-          description="Everyone who has signed in. Accounts are created automatically on first sign-in — there's no manual invite flow. Roles (admin, owner) are assigned via OIDC group mappings at provisioning time; there is no role editor here."
+          count={users.length > 0 ? users.length : undefined}
+          description="Signed-in people, their gateway roles, and the default access new users receive."
+        />
+
+        <SummaryStrip
+          items={[
+            {
+              label: "users",
+              value: String(users.length),
+              detail: "signed in",
+              tone: "info",
+              badge: "live",
+            },
+            {
+              label: "admins",
+              value: String(adminCount),
+              detail: "owner or admin",
+              tone: adminCount > 0 ? "accent" : "warn",
+              badge: adminCount > 0 ? "set" : "review",
+            },
+            {
+              label: "mappings",
+              value: String(mappings.length),
+              detail: "profile rules",
+              tone: "neutral",
+              badge: "auto",
+            },
+            {
+              label: "self-service",
+              value: defaultsData?.self_service_apps ? "on" : "off",
+              detail: "app creation",
+              tone: defaultsData?.self_service_apps ? "ok" : "warn",
+              badge: defaultsData?.self_service_apps ? "enabled" : "off",
+            },
+          ]}
         />
 
         {appsJoinError && (
@@ -299,8 +332,7 @@ export default function AdminUsersPage() {
 
         {tableError ? (
           <ErrorBanner onRetry={retryAll}>
-            Couldn&apos;t load users.{" "}
-            {errorMessage(usersError)}
+            Couldn&apos;t load users. {errorMessage(usersError)}
           </ErrorBanner>
         ) : (
           <DataTable
@@ -311,10 +343,10 @@ export default function AdminUsersPage() {
             loading={loading}
             skeletonRows={4}
             empty={
-              <EmptyState>
-                No users yet. Identities appear here after the first sign-in —
-                they come from your sign-in provider, not from this page.
-              </EmptyState>
+              <EmptyOperationalState
+                title="No users yet"
+                detail="Identities appear here after the first sign-in — they come from your sign-in provider, not from this page."
+              />
             }
           />
         )}
@@ -322,24 +354,18 @@ export default function AdminUsersPage() {
 
       {/* Default access group */}
       <section className="flex flex-col gap-6">
-        <div className="flex flex-col gap-1">
-          <h3 className="text-vf-heading text-vf-text">Default access</h3>
-          <p className="text-vf-small text-vf-muted">
-            What a brand-new user gets the moment they sign in for the first
-            time.
-          </p>
-        </div>
+        <SectionActionHeader
+          kicker="policy"
+          title="Default access"
+          description="What a brand-new user gets the moment they sign in for the first time."
+        />
 
         {/* User-access-defaults editor */}
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1">
-            <h4 className="text-vf-body text-vf-text font-medium">
-              Self-service settings
-            </h4>
-            <p className="text-vf-small text-vf-muted">
-              Controls what new users can do without admin action.
-            </p>
-          </div>
+          <SectionActionHeader
+            title="Self-service settings"
+            description="Controls what new users can do without admin action."
+          />
 
           {defaultsIsError && !defaultsData ? (
             <ErrorBanner onRetry={refetchDefaults}>
@@ -357,21 +383,16 @@ export default function AdminUsersPage() {
 
         {/* Runtime profile mappings */}
         <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="flex min-w-0 flex-col gap-1">
-              <h4 className="text-vf-body text-vf-text font-medium">
-                Profile mappings
-              </h4>
-              <p className="text-vf-small text-vf-muted">
-                Map a sign-in attribute — OIDC group, email, domain — to a
-                profile. New users matching a rule get that profile
-                automatically.
-              </p>
-            </div>
-            <Button size="sm" onClick={() => setCreateMappingOpen(true)}>
-              Add mapping
-            </Button>
-          </div>
+          <SectionActionHeader
+            title="Profile mappings"
+            count={mappings.length > 0 ? mappings.length : undefined}
+            description="Map a sign-in attribute — OIDC group, email, domain — to a profile. New users matching a rule get that profile automatically."
+            action={
+              <Button size="sm" onClick={() => setCreateMappingOpen(true)}>
+                Add mapping
+              </Button>
+            }
+          />
 
           {mappingsIsError && !mappingsData ? (
             <ErrorBanner onRetry={refetchMappings}>
@@ -414,7 +435,7 @@ export default function AdminUsersPage() {
           setDisableMappingTarget(null);
         }}
       />
-    </main>
+    </div>
   );
 }
 
@@ -429,15 +450,16 @@ function ErrorBanner({
   onRetry: () => void;
 }) {
   return (
-    <div
-      role="alert"
-      className="rounded-vf-md border-vf-bad/40 bg-vf-bad/10 flex flex-wrap items-center justify-between gap-3 border p-4"
+    <NoticeBanner
+      tone="bad"
+      action={
+        <Button size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      }
     >
-      <p className="text-vf-small text-vf-text">{children}</p>
-      <Button size="sm" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
+      {children}
+    </NoticeBanner>
   );
 }
 
@@ -452,8 +474,9 @@ function DefaultsEditor({
   loading: boolean;
 }) {
   const queryClient = useQueryClient();
-  const [localDefaults, setLocalDefaults] =
-    useState<UserAccessDefaults | null>(null);
+  const [localDefaults, setLocalDefaults] = useState<UserAccessDefaults | null>(
+    null,
+  );
   const [formError, setFormError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -465,7 +488,10 @@ function DefaultsEditor({
     mutationFn: (input: Partial<UserAccessDefaults>) =>
       api.userAccessDefaults.update(input),
     onSuccess: (serverDefaults) => {
-      queryClient.setQueryData<UserAccessDefaults>(QK_OVERRIDES, serverDefaults);
+      queryClient.setQueryData<UserAccessDefaults>(
+        QK_OVERRIDES,
+        serverDefaults,
+      );
       setLocalDefaults(null);
       setFormError(null);
       setSaved(true);
@@ -482,15 +508,13 @@ function DefaultsEditor({
     save.mutate(localDefaults);
   }
 
-  function toggle(
-    key: keyof UserAccessDefaults,
-    value: boolean,
-  ) {
+  function toggle(key: keyof UserAccessDefaults, value: boolean) {
     setLocalDefaults((prev) => ({
-      ...(prev ?? defaults ?? {
-        self_service_apps: false,
-        auto_create_personal_app: false,
-      }),
+      ...(prev ??
+        defaults ?? {
+          self_service_apps: false,
+          auto_create_personal_app: false,
+        }),
       [key]: value,
     }));
     setSaved(false);
@@ -522,9 +546,7 @@ function DefaultsEditor({
           description="A personal app is created automatically the first time a user signs in."
           checked={effective?.auto_create_personal_app ?? false}
           disabled={save.isPending}
-          onCheckedChange={(value) =>
-            toggle("auto_create_personal_app", value)
-          }
+          onCheckedChange={(value) => toggle("auto_create_personal_app", value)}
         />
       </div>
 
@@ -543,9 +565,7 @@ function DefaultsEditor({
         >
           Save
         </Button>
-        {saved && (
-          <span className="text-vf-small text-vf-ok">Saved</span>
-        )}
+        {saved && <span className="text-vf-small text-vf-ok">Saved</span>}
       </div>
     </form>
   );
@@ -584,15 +604,17 @@ function SwitchRow({
 // ---------------------------------------------------------------------------
 // Mappings table
 
-const SOURCE_KIND_OPTIONS: { value: RuntimeMappingSourceKind; label: string }[] =
-  [
-    { value: "oidc_group", label: "OIDC group" },
-    { value: "oidc_role", label: "OIDC role" },
-    { value: "email", label: "Email address" },
-    { value: "domain", label: "Email domain" },
-    { value: "gateway_role", label: "Gateway role" },
-    { value: "all_users", label: "All users (catch-all)" },
-  ];
+const SOURCE_KIND_OPTIONS: {
+  value: RuntimeMappingSourceKind;
+  label: string;
+}[] = [
+  { value: "oidc_group", label: "OIDC group" },
+  { value: "oidc_role", label: "OIDC role" },
+  { value: "email", label: "Email address" },
+  { value: "domain", label: "Email domain" },
+  { value: "gateway_role", label: "Gateway role" },
+  { value: "all_users", label: "All users (catch-all)" },
+];
 
 interface MappingRow {
   mapping: RuntimeProfileMapping;
@@ -641,7 +663,11 @@ function MappingsTable({
       id: "created_by",
       header: "Created by",
       cell: ({ mapping }) => (
-        <EntityRef name={mapping.created_by} id={mapping.created_by} idVisibility="hover" />
+        <EntityRef
+          name={mapping.created_by}
+          id={mapping.created_by}
+          idVisibility="hover"
+        />
       ),
       hideOnMobile: true,
     },
@@ -662,17 +688,14 @@ function MappingsTable({
       loading={loading}
       skeletonRows={3}
       empty={
-        <EmptyState>
-          No profile mappings. Add one to automatically assign a profile to new
-          users based on their sign-in attributes.
-        </EmptyState>
+        <EmptyOperationalState
+          title="No profile mappings"
+          detail="Add one to automatically assign a profile to new users based on their sign-in attributes."
+        />
       }
       rowMenu={({ mapping }) => (
         <OverflowMenu label={`Actions for mapping ${mappingLabel(mapping)}`}>
-          <OverflowMenuItem
-            danger
-            onSelect={() => onDisable(mapping)}
-          >
+          <OverflowMenuItem danger onSelect={() => onDisable(mapping)}>
             Disable mapping…
           </OverflowMenuItem>
         </OverflowMenu>
@@ -845,11 +868,7 @@ function CreateMappingDialogContent({
           >
             Cancel
           </Button>
-          <Button
-            type="submit"
-            variant="primary"
-            loading={create.isPending}
-          >
+          <Button type="submit" variant="primary" loading={create.isPending}>
             Add mapping
           </Button>
         </DialogFooter>

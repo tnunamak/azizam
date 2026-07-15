@@ -14,8 +14,8 @@ Public surface
 - TransformContext             — opaque bag passed through the pipeline
 - TransformRegistry            — load / resolve named transforms
 - REGISTRY                     — module-level singleton
-- run_request_pipeline(ids, body, ctx, registry) -> body
-- run_response_pipeline(ids, payload, ctx, registry) -> payload
+- run_request_pipeline(specs, body, ctx, registry) -> body
+- run_response_pipeline(specs, payload, ctx, registry) -> payload
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ from __future__ import annotations
 import copy
 import json
 import re
-from typing import Any, Optional, Protocol, runtime_checkable
+from collections.abc import Mapping
+from typing import Any, Optional, Protocol, TypeAlias, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # Context
@@ -68,6 +69,13 @@ class Transform(Protocol):
     ) -> dict[str, Any]:
         """Apply this transform to a response payload.  Return the (mutated) payload."""
         ...
+
+
+# A service/model attachment is either a reviewed named built-in or one inline
+# instance of the fixed declarative primitive vocabulary. This lets ordinary
+# policy remain in service data rather than requiring a Python registration for
+# every configuration value.
+TransformSpec: TypeAlias = str | Mapping[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -302,18 +310,32 @@ class ParamMapTransform(_Primitive):
           kind: param-map
           from: response_format.json_schema.schema
           to:   guided_json
+
+        completion-cap-canonicalize:
+          kind: param-map
+          from: max_completion_tokens
+          to: max_tokens
+          only_if_destination_absent: true
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
         super().__init__(cfg)
         self._from: str = cfg["from"]
         self._to: str = cfg["to"]
+        self._only_if_destination_absent = bool(
+            cfg.get("only_if_destination_absent", False)
+        )
 
     def _apply(self, body: dict[str, Any]) -> dict[str, Any]:
         value = _get_nested(body, self._from)
         if value is _MISSING:
             return body
         _del_nested(body, self._from)
+        if (
+            self._only_if_destination_absent
+            and _get_nested(body, self._to) is not _MISSING
+        ):
+            return body
         _set_nested(body, self._to, value)
         return body
 
@@ -480,40 +502,48 @@ class TransformRegistry:
 
 
 def run_request_pipeline(
-    transform_ids: list[str],
+    transform_specs: list[TransformSpec],
     body: dict[str, Any],
     ctx: TransformContext | None = None,
     registry: TransformRegistry | None = None,
 ) -> dict[str, Any]:
-    """Apply the request phase of each named transform in order.
+    """Apply request transforms in order.
 
-    Returns the (possibly mutated) body dict.  The input dict is modified
-    in-place; callers that need the original must deepcopy before calling.
+    Each spec is either a named built-in id or an inline declarative primitive
+    mapping from a service/model record. The input body is modified in-place.
     """
     if ctx is None:
         ctx = TransformContext()
     if registry is None:
         registry = REGISTRY
-    for tid in transform_ids:
-        primitives = registry.resolve(tid)
+    for spec in transform_specs:
+        primitives = (
+            registry.resolve(spec)
+            if isinstance(spec, str)
+            else [_build_primitive(dict(spec))]
+        )
         for primitive in primitives:
             body = primitive.on_request(body, ctx)
     return body
 
 
 def run_response_pipeline(
-    transform_ids: list[str],
+    transform_specs: list[TransformSpec],
     payload: dict[str, Any],
     ctx: TransformContext | None = None,
     registry: TransformRegistry | None = None,
 ) -> dict[str, Any]:
-    """Apply the response phase of each named transform in order."""
+    """Apply response transforms in order; see :func:`run_request_pipeline`."""
     if ctx is None:
         ctx = TransformContext()
     if registry is None:
         registry = REGISTRY
-    for tid in transform_ids:
-        primitives = registry.resolve(tid)
+    for spec in transform_specs:
+        primitives = (
+            registry.resolve(spec)
+            if isinstance(spec, str)
+            else [_build_primitive(dict(spec))]
+        )
         for primitive in primitives:
             payload = primitive.on_response(payload, ctx)
     return payload
@@ -550,7 +580,7 @@ def apply_thinking_suppression(body: dict[str, Any]) -> None:
 
 
 class ReasoningEffortTransform:
-    """Named built-in: reproduce apply_chat_completions_reasoning_effort() exactly.
+    """Translate qualitative effort into the configured backend budget.
 
     Registered as "reasoning-effort" in REGISTRY.
 
@@ -562,22 +592,52 @@ class ReasoningEffortTransform:
       1. reasoning_effort absent → no-op.
       2. Pop reasoning_effort. If None → no-op (treat as absent after pop).
       3. If not str or not in _REASONING_EFFORT_VALUES → return error string.
-      4. If not in {none, minimal} → strip only (already popped), no suppression.
-      5. Suppress path (none/minimal):
-         body.setdefault("chat_template_kwargs", {}) then
-         kwargs.setdefault("enable_thinking", False).
-         No prompt-string injection — the kwarg is the sole suppression mechanism.
+      4. Translate the configured effort to ``thinking_budget_tokens``.
+      5. For zero budget, also set ``enable_thinking=False``.
     """
 
     # The valid set — matches _REASONING_EFFORT_VALUES in proxy.py:5235
     _VALID: frozenset[str] = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
     # Efforts that suppress thinking
-    _SUPPRESS: frozenset[str] = frozenset({"none", "minimal"})
+    _DEFAULT_BUDGETS: dict[str, int | str] = {
+        "none": 0,
+        "minimal": 2048,
+        "low": 4096,
+        "medium": 6144,
+        "high": 8192,
+        "xhigh": "unlimited",
+    }
+
+    def __init__(self, policy: dict[str, Any] | None = None) -> None:
+        policy = policy or {}
+        raw_budgets = policy.get("effort_budgets")
+        budgets = raw_budgets if isinstance(raw_budgets, dict) else self._DEFAULT_BUDGETS
+        self._budgets: dict[str, int | str] = dict(budgets)
+        self._default_effort = policy.get("default_effort")
 
     def apply(self, body: dict[str, Any]) -> str | None:
         """Mutate body in-place.  Return an error string or None."""
         if "reasoning_effort" not in body:
-            return None
+            # Internal routing can pass through the gateway more than once
+            # (gateway -> LiteLLM -> gateway -> engine).  A concrete budget is
+            # the output of this transform, so preserve it instead of applying
+            # the default policy a second time.
+            if "thinking_budget_tokens" in body:
+                existing_budget = body["thinking_budget_tokens"]
+                if (
+                    not isinstance(existing_budget, int)
+                    or isinstance(existing_budget, bool)
+                    or existing_budget < -1
+                ):
+                    return (
+                        "Invalid value for 'thinking_budget_tokens': "
+                        f"{existing_budget!r}. Expected an integer >= -1."
+                    )
+                return None
+            if isinstance(self._default_effort, str):
+                body["reasoning_effort"] = self._default_effort
+            else:
+                return None
         effort = body.pop("reasoning_effort")
         if effort is None:
             return None
@@ -586,11 +646,14 @@ class ReasoningEffortTransform:
                 f"Invalid value for 'reasoning_effort': {effort!r}. "
                 f"Expected one of: {sorted(self._VALID)}."
             )
-        if effort not in self._SUPPRESS:
-            return None
-
-        # Suppress thinking — delegate to shared helper.
-        apply_thinking_suppression(body)
+        budget = self._budgets.get(effort)
+        if not isinstance(budget, (int, str)) or isinstance(budget, bool):
+            return f"No reasoning budget configured for effort {effort!r}."
+        if isinstance(budget, str) and budget != "unlimited":
+            return f"Invalid reasoning budget configured for effort {effort!r}."
+        body["thinking_budget_tokens"] = -1 if budget == "unlimited" else budget
+        if budget == 0:
+            apply_thinking_suppression(body)
         return None
 
     # Transform protocol shim — lets this live in the registry alongside
@@ -642,7 +705,13 @@ def normalize_chat_completion_payload(payload: dict[str, Any]) -> bool:
 
     Two cases handled for both ``message`` and ``delta`` in each choice:
       1. ``</think>`` leaked into content → strip tags, promote reasoning.
-      2. ``reasoning_content`` set but ``content`` empty/absent → backfill.
+      2. ``reasoning_content`` contains ``<think>…</think>`` plus visible text
+         → split the fields while preserving the visible text.
+
+    A response with only ``reasoning_content`` and empty/absent ``content`` is
+    already a valid thinking-only response.  Do not copy private reasoning
+    into visible content: doing so leaks chain-of-thought to clients and makes
+    streaming reasoning appear as repeated assistant output.
 
     This is a detect-and-normalize (Revision D) — it inspects the payload and
     acts when the canonical shape is absent, regardless of any capability flag.
@@ -667,18 +736,14 @@ def normalize_chat_completion_payload(payload: dict[str, Any]) -> bool:
                         message["reasoning_content"] = split_reasoning
                     changed = True
             elif isinstance(reasoning, str) and reasoning and not content:
-                # Case 2: reasoning_content set but content empty/absent.
-                # Backfill content: if reasoning_content itself has think tags,
-                # extract only the visible portion; otherwise mirror as-is.
+                # Case 2: some backends put both reasoning and visible text in
+                # reasoning_content. Recover only that explicitly marked
+                # visible suffix; plain reasoning-only content stays private.
                 split_r, visible = split_reasoning_visible_text(reasoning)
-                if visible is not None:
-                    # reasoning_content had think tags — split it
+                if "</think>" in reasoning.lower() and visible is not None:
                     message["content"] = visible
                     message["reasoning_content"] = split_r or reasoning
-                else:
-                    # No think tags — mirror reasoning_content into content
-                    message["content"] = reasoning
-                changed = True
+                    changed = True
         delta = choice.get("delta")
         if isinstance(delta, dict):
             content = delta.get("content")
@@ -689,10 +754,8 @@ def normalize_chat_completion_payload(payload: dict[str, Any]) -> bool:
                 if visible is not None:
                     delta["content"] = visible
                     changed = True
-            elif isinstance(reasoning, str) and reasoning and not content:
-                # Case 2: delta has reasoning_content but no content — mirror it.
-                delta["content"] = reasoning
-                changed = True
+            # A reasoning-only delta is valid. Never mirror it into visible
+            # content; clients may render the two fields separately.
     return changed
 
 

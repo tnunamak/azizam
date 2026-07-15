@@ -47,7 +47,7 @@ def _litellm_registry() -> dict:
 def test_litellm_virtual_key_reaches_litellm_with_delegated_header() -> None:
     captured = []
 
-    async def fake_send(request):
+    async def fake_send(request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
         captured.append(request)
         return _FakeClient(), _FakeResponse(
             b'{"id":"chatcmpl_test","object":"chat.completion",'
@@ -75,8 +75,8 @@ def test_litellm_virtual_key_reaches_litellm_with_delegated_header() -> None:
     assert response.status_code == 200, response.text
     assert captured
     headers = captured[0].headers
-    assert headers["authorization"] == "Bearer sk-master"
     assert headers["X-Litellm-Key"] == "Bearer sk-virtual-test"
+    assert "authorization" not in headers
 
 
 def test_litellm_virtual_key_does_not_unlock_gateway_media_routes() -> None:
@@ -140,7 +140,7 @@ def test_litellm_virtual_key_rejected_on_durable_media_job_routes() -> None:
 def test_litellm_virtual_key_model_list_is_litellm_catalog_only() -> None:
     captured = []
 
-    async def fake_send(request):
+    async def fake_send(request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
         captured.append(request)
         return _FakeClient(), _FakeResponse(
             b'{"object":"list","data":[{"id":"allowed-model","object":"model"}]}'

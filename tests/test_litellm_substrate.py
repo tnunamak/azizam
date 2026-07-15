@@ -124,8 +124,22 @@ def test_keeps_litellm_settings_minimal() -> None:
     )
 
     assert compiled["litellm_settings"] == {"drop_params": True}
-    assert compiled["general_settings"] == {"litellm_key_header_name": "X-Litellm-Key"}
+    assert compiled["general_settings"] == {
+        "litellm_key_header_name": "X-Litellm-Key",
+        "forward_client_headers_to_llm_api": True,
+    }
     assert "metadata" not in compiled
+
+
+def test_forwards_gateway_request_id_header_through_litellm() -> None:
+    """LiteLLM 1.86.2 is a separate sidecar; the gateway relies on this
+    setting to carry its cancellation-correlation header
+    (X-AI-Gateway-Request-Id) through to the internal gateway hop behind
+    LiteLLM, since LiteLLM does not propagate a cancel signal of its own on
+    this version. See gateway/backends/cancellation.py.
+    """
+    compiled = compile_litellm_substrate_config({})
+    assert compiled["general_settings"]["forward_client_headers_to_llm_api"] is True
 
 
 def test_lifecycle_service_exposes_current_loaded_aliases() -> None:

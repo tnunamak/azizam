@@ -28,11 +28,11 @@ export function SectionHeader({
     >
       <div className="flex min-w-0 flex-col gap-1">
         {kicker && (
-          <p className="text-vf-micro text-vf-subtle font-mono tracking-wider uppercase">
+          <p className="text-vf-micro text-vf-subtle font-mono uppercase">
             {kicker}
           </p>
         )}
-        <h2 className="text-vf-title text-vf-text">{title}</h2>
+        <h2 className="text-vf-title text-vf-text font-semibold">{title}</h2>
         {description && (
           <p className="text-vf-small text-vf-muted">{description}</p>
         )}

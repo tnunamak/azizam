@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import unittest
+from pathlib import Path
 
 from starlette.responses import StreamingResponse
 
+from gateway.backends.cancellation import CancellationRegistry
 from gateway.backends.llm_execution import (
     LITELLM_BODY_EXECUTION_PATHS,
+    ClientDisconnectedBeforeHeaders,
+    RequestDisconnectWatcher,
+    close_llm_response,
     iter_llm_response_bytes,
     litellm_headers,
     litellm_runtime_from_registry,
     read_llm_response_body,
+    send_llm_execution_request,
 )
 
 
@@ -147,6 +154,18 @@ class _CloseFailingPrefetchedErrorResponse:
         raise RuntimeError("upstream close failed")
 
 
+class _ImmediateReadResponse:
+    def __init__(self, payload: bytes = b'{"ok":true}') -> None:
+        self._payload = payload
+        self.closed = False
+
+    async def aread(self) -> bytes:
+        return self._payload
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 class _LiveReadResponse:
     def __init__(self) -> None:
         self.read_started = asyncio.Event()
@@ -192,11 +211,12 @@ def test_litellm_headers_do_not_forward_client_runtime_key() -> None:
         },
     )
 
-    assert headers["authorization"] == "Bearer sk-litellm-internal"
+    assert headers["X-Litellm-Key"] == "Bearer sk-litellm-internal"
     assert headers["content-type"] == "application/json"
     assert headers["x-ai-gateway-execution"] == "litellm"
     assert headers["x-ai-gateway-profile"] == "family"
     assert headers["x-ai-gateway-key-prefix"] == "sha256:abcdef"
+    assert "authorization" not in headers
     assert "x-api-key" not in headers
 
 
@@ -307,7 +327,6 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             async for chunk in iter_llm_response_bytes(
                 client,
                 upstream,
-                is_downstream_disconnected=self._must_not_poll_disconnect,
             )
         ]
 
@@ -331,7 +350,6 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             async for chunk in iter_llm_response_bytes(
                 client,
                 upstream,
-                is_downstream_disconnected=self._must_not_poll_disconnect,
             )
         ]
 
@@ -349,7 +367,6 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             async for chunk in iter_llm_response_bytes(
                 client,
                 upstream,
-                is_downstream_disconnected=self._must_not_poll_disconnect,
             )
         ]
 
@@ -366,7 +383,6 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
         chunks = iter_llm_response_bytes(
             client,
             _CloseFailingPrefetchedErrorResponse(),
-            is_downstream_disconnected=self._must_not_poll_disconnect,
         )
 
         self.assertEqual(await chunks.__anext__(), b"data: partial\n\n")
@@ -394,7 +410,6 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             iter_llm_response_bytes(
                 client,
                 upstream,
-                is_downstream_disconnected=self._must_not_poll_disconnect,
             )
         )
         response_task = asyncio.create_task(
@@ -435,7 +450,6 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             iter_llm_response_bytes(
                 client,
                 upstream,
-                is_downstream_disconnected=self._must_not_poll_disconnect,
             )
         )
         response_task = asyncio.create_task(
@@ -474,7 +488,6 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             iter_llm_response_bytes(
                 client,
                 upstream,
-                is_downstream_disconnected=self._must_not_poll_disconnect,
             )
         )
         await asyncio.wait_for(
@@ -491,9 +504,6 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(upstream.closed.is_set())
         self.assertTrue(client.closed)
 
-    async def _must_not_poll_disconnect(self) -> bool:
-        self.fail("stream adapter must not compete for the ASGI receive channel")
-
     async def test_stream_forwards_all_bytes_and_closes_at_upstream_eof(self) -> None:
         client = _ClosableClient()
         response = _FiniteChunkResponse()
@@ -503,7 +513,6 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             async for chunk in iter_llm_response_bytes(
                 client,
                 response,
-                is_downstream_disconnected=self._must_not_poll_disconnect,
             )
         ]
 
@@ -514,38 +523,33 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_body_read_closes_upstream_when_downstream_disconnects(self) -> None:
         client = _ClosableClient()
         response = _BlockingResponse()
-        disconnected = False
+        disconnect_event = asyncio.Event()
 
-        async def is_disconnected() -> bool:
-            return disconnected
+        async def receive():
+            await disconnect_event.wait()
+            return {"type": "http.disconnect"}
 
+        watcher = RequestDisconnectWatcher(receive)
         read_task = asyncio.create_task(
             read_llm_response_body(
                 client,
                 response,
-                is_downstream_disconnected=is_disconnected,
-                poll_interval=0.001,
+                disconnect_watcher=watcher,
             )
         )
         await asyncio.sleep(0.01)
-        disconnected = True
+        disconnect_event.set()
 
         self.assertIsNone(await asyncio.wait_for(read_task, timeout=1))
         self.assertTrue(response.closed)
         self.assertTrue(client.closed)
+        await watcher.aclose()
 
     async def test_stream_iteration_closes_upstream_when_handler_is_cancelled(self) -> None:
         client = _ClosableClient()
         response = _ChunkResponse()
-        async def is_disconnected() -> bool:
-            return False
 
-        chunks = iter_llm_response_bytes(
-            client,
-            response,
-            is_downstream_disconnected=is_disconnected,
-            poll_interval=0.001,
-        )
+        chunks = iter_llm_response_bytes(client, response)
         next_chunk = asyncio.create_task(chunks.__anext__())
         await asyncio.sleep(0.01)
         next_chunk.cancel()
@@ -559,15 +563,10 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
         client = _ClosableClient()
         response = _BlockingResponse()
 
-        async def is_disconnected() -> bool:
-            return False
-
         read_task = asyncio.create_task(
             read_llm_response_body(
                 client,
                 response,
-                is_downstream_disconnected=is_disconnected,
-                poll_interval=0.001,
             )
         )
         await asyncio.sleep(0.01)
@@ -577,3 +576,831 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             await read_task
         self.assertTrue(response.closed)
         self.assertTrue(client.closed)
+
+    async def test_body_read_closes_upstream_when_cancellation_token_signals(self) -> None:
+        """A cross-hop cancel (see gateway/backends/cancellation.py) must stop
+        a non-stream backend read even though the local ASGI disconnect watcher
+        never fires — the two signals are independent."""
+        client = _ClosableClient()
+        response = _BlockingResponse()
+        registry = CancellationRegistry()
+        handle = registry.register("req-nonstream")
+
+        async def never_disconnects():
+            await asyncio.Event().wait()
+            return {"type": "http.disconnect"}
+
+        watcher = RequestDisconnectWatcher(never_disconnects)
+        read_task = asyncio.create_task(
+            read_llm_response_body(
+                client,
+                response,
+                disconnect_watcher=watcher,
+                cancellation_token=handle.token,
+            )
+        )
+        await asyncio.sleep(0.01)
+        registry.signal("req-nonstream")
+
+        self.assertIsNone(await asyncio.wait_for(read_task, timeout=1))
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+        await watcher.aclose()
+
+    async def test_body_read_ignores_cancellation_token_for_a_different_request(self) -> None:
+        client = _ClosableClient()
+        response = _ImmediateReadResponse()
+        registry = CancellationRegistry()
+        handle = registry.register("req-a")
+        registry.signal("req-b")
+
+        content = await read_llm_response_body(
+            client,
+            response,
+            cancellation_token=handle.token,
+        )
+
+        self.assertEqual(content, b'{"ok":true}')
+
+    async def test_stream_closes_upstream_when_cancellation_token_signals(self) -> None:
+        """A cross-hop cancel must stop a streaming backend read that has no
+        local downstream client to disconnect from — e.g. the internal
+        gateway hop running behind LiteLLM's own httpx client."""
+        client = _ClosableClient()
+        response = _ChunkResponse()
+        registry = CancellationRegistry()
+        handle = registry.register("req-stream")
+
+        chunks = iter_llm_response_bytes(
+            client,
+            response,
+            cancellation_token=handle.token,
+        )
+        next_chunk = asyncio.create_task(chunks.__anext__())
+        await asyncio.sleep(0.01)
+        registry.signal("req-stream")
+
+        with self.assertRaises(StopAsyncIteration):
+            await asyncio.wait_for(next_chunk, timeout=1)
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+
+    async def test_stream_ignores_cancellation_token_for_a_different_request(self) -> None:
+        client = _ClosableClient()
+        response = _FiniteChunkResponse()
+        registry = CancellationRegistry()
+        handle = registry.register("req-a")
+        registry.signal("req-b")
+
+        chunks = [
+            chunk
+            async for chunk in iter_llm_response_bytes(
+                client,
+                response,
+                cancellation_token=handle.token,
+            )
+        ]
+
+        self.assertEqual(chunks, [b"data: first\n\n", b"data: [DONE]\n\n"])
+
+
+class RequestDisconnectWatcherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_wait_resolves_on_http_disconnect(self) -> None:
+        receive_calls = 0
+        disconnect_now = asyncio.Event()
+
+        async def receive():
+            nonlocal receive_calls
+            receive_calls += 1
+            await disconnect_now.wait()
+            return {"type": "http.disconnect"}
+
+        watcher = RequestDisconnectWatcher(receive)
+        self.assertFalse(watcher.disconnected)
+        disconnect_now.set()
+        await asyncio.wait_for(watcher.wait(), timeout=1)
+        self.assertTrue(watcher.disconnected)
+        self.assertEqual(receive_calls, 1)
+        await watcher.aclose()
+
+    async def test_issues_exactly_one_receive_call_across_a_long_wait(self) -> None:
+        """Regression: the rejected implementation wrapped every poll tick in
+        asyncio.wait_for(receive(), timeout=...), cancelling and restarting
+        receive() every tick (proven: 5 receive starts / 5 cancels in 40ms).
+        The persistent watcher must call receive() exactly once and keep
+        awaiting that same call across an arbitrarily long idle period."""
+        receive_calls = 0
+        never = asyncio.Event()
+
+        async def receive():
+            nonlocal receive_calls
+            receive_calls += 1
+            await never.wait()
+            return {"type": "http.disconnect"}
+
+        watcher = RequestDisconnectWatcher(receive)
+        for _ in range(20):
+            await asyncio.sleep(0)
+        self.assertEqual(receive_calls, 1)
+        self.assertFalse(watcher.disconnected)
+        await watcher.aclose()
+        self.assertEqual(receive_calls, 1)
+
+    async def test_aclose_is_idempotent_and_safe_without_wait(self) -> None:
+        async def receive():
+            await asyncio.Event().wait()
+            return {"type": "http.disconnect"}
+
+        watcher = RequestDisconnectWatcher(receive)
+        await watcher.aclose()
+        await watcher.aclose()  # must not raise
+
+    async def test_non_disconnect_message_does_not_signal_and_receive_continues(self) -> None:
+        messages = [{"type": "http.request", "more_body": False}, {"type": "http.disconnect"}]
+
+        async def receive():
+            return messages.pop(0)
+
+        watcher = RequestDisconnectWatcher(receive)
+        await asyncio.wait_for(watcher.wait(), timeout=1)
+        self.assertTrue(watcher.disconnected)
+        await watcher.aclose()
+
+
+class PreHeaderDisconnectRaceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_client_disconnect_before_headers_cancels_dispatch_and_closes_client(self) -> None:
+        import gateway.backends.llm_execution as llm_execution_module
+        from gateway.backends.llm_execution import LlmExecutionRequest
+
+        class _StallingClient:
+            def __init__(self) -> None:
+                self.closed = False
+                self.send_cancelled = asyncio.Event()
+
+            def build_request(self, **kwargs):
+                return object()
+
+            async def send(self, req, stream=True):
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    self.send_cancelled.set()
+                    raise
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        stalling_client = _StallingClient()
+        original_async_client = llm_execution_module.httpx.AsyncClient
+        llm_execution_module.httpx.AsyncClient = lambda **kwargs: stalling_client
+        try:
+            disconnect_now = asyncio.Event()
+
+            async def receive():
+                await disconnect_now.wait()
+                return {"type": "http.disconnect"}
+
+            watcher = RequestDisconnectWatcher(receive)
+            execution_request = LlmExecutionRequest(
+                method="POST",
+                url="http://127.0.0.1:1/v1/chat/completions",
+                headers={},
+                body=b"{}",
+                read_timeout=5.0,
+            )
+            dispatch_task = asyncio.create_task(
+                send_llm_execution_request(execution_request, disconnect_watcher=watcher)
+            )
+            await asyncio.sleep(0.01)
+            disconnect_now.set()
+
+            with self.assertRaises(ClientDisconnectedBeforeHeaders):
+                await asyncio.wait_for(dispatch_task, timeout=1)
+            self.assertTrue(await asyncio.wait_for(stalling_client.send_cancelled.wait(), timeout=1))
+            self.assertTrue(stalling_client.closed)
+            await watcher.aclose()
+        finally:
+            llm_execution_module.httpx.AsyncClient = original_async_client
+
+    async def test_normal_dispatch_without_disconnect_returns_response(self) -> None:
+        import gateway.backends.llm_execution as llm_execution_module
+        from gateway.backends.llm_execution import LlmExecutionRequest
+
+        class _RespondingClient:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def build_request(self, **kwargs):
+                return object()
+
+            async def send(self, req, stream=True):
+                return "a-response"
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        responding_client = _RespondingClient()
+        original_async_client = llm_execution_module.httpx.AsyncClient
+        llm_execution_module.httpx.AsyncClient = lambda **kwargs: responding_client
+        try:
+            async def never_disconnects():
+                await asyncio.Event().wait()
+                return {"type": "http.disconnect"}
+
+            watcher = RequestDisconnectWatcher(never_disconnects)
+            execution_request = LlmExecutionRequest(
+                method="POST",
+                url="http://127.0.0.1:1/v1/chat/completions",
+                headers={},
+                body=b"{}",
+                read_timeout=5.0,
+            )
+            client, resp = await send_llm_execution_request(
+                execution_request, disconnect_watcher=watcher
+            )
+            self.assertIs(client, responding_client)
+            self.assertEqual(resp, "a-response")
+            self.assertFalse(responding_client.closed)
+            await watcher.aclose()
+        finally:
+            llm_execution_module.httpx.AsyncClient = original_async_client
+
+    async def test_send_failure_closes_client_when_racing_a_watcher(self) -> None:
+        """A pre-header protocol failure (connect error, TLS failure, ...)
+        must close the client even when a disconnect_watcher/cancellation_token
+        was supplied — the failing branch used to return early via
+        ``send_task.result()`` re-raising without ever calling ``aclose()``."""
+        import gateway.backends.llm_execution as llm_execution_module
+        from gateway.backends.llm_execution import LlmExecutionRequest
+
+        class _FailingClient:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def build_request(self, **kwargs):
+                return object()
+
+            async def send(self, req, stream=True):
+                raise RuntimeError("protocol failure")
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        failing_client = _FailingClient()
+        original_async_client = llm_execution_module.httpx.AsyncClient
+        llm_execution_module.httpx.AsyncClient = lambda **kwargs: failing_client
+        try:
+            async def never_disconnects():
+                await asyncio.Event().wait()
+                return {"type": "http.disconnect"}
+
+            watcher = RequestDisconnectWatcher(never_disconnects)
+            execution_request = LlmExecutionRequest(
+                method="POST",
+                url="http://127.0.0.1:1/v1/chat/completions",
+                headers={},
+                body=b"{}",
+                read_timeout=5.0,
+            )
+            with self.assertRaises(RuntimeError):
+                await send_llm_execution_request(
+                    execution_request, disconnect_watcher=watcher
+                )
+            self.assertTrue(failing_client.closed)
+            await watcher.aclose()
+        finally:
+            llm_execution_module.httpx.AsyncClient = original_async_client
+
+    async def test_send_failure_without_any_watcher_still_closes_client(self) -> None:
+        import gateway.backends.llm_execution as llm_execution_module
+        from gateway.backends.llm_execution import LlmExecutionRequest
+
+        class _FailingClient:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def build_request(self, **kwargs):
+                return object()
+
+            async def send(self, req, stream=True):
+                raise RuntimeError("protocol failure")
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        failing_client = _FailingClient()
+        original_async_client = llm_execution_module.httpx.AsyncClient
+        llm_execution_module.httpx.AsyncClient = lambda **kwargs: failing_client
+        try:
+            execution_request = LlmExecutionRequest(
+                method="POST",
+                url="http://127.0.0.1:1/v1/chat/completions",
+                headers={},
+                body=b"{}",
+                read_timeout=5.0,
+            )
+            with self.assertRaises(RuntimeError):
+                await send_llm_execution_request(execution_request)
+            self.assertTrue(failing_client.closed)
+        finally:
+            llm_execution_module.httpx.AsyncClient = original_async_client
+
+    async def test_disconnect_in_same_tick_as_headers_still_wins(self) -> None:
+        """If the watcher's disconnect and the send both become ready in the
+        same asyncio.wait tick, the disconnect must still win — a response
+        must never be handed to a caller whose client already vanished."""
+        import gateway.backends.llm_execution as llm_execution_module
+        from gateway.backends.llm_execution import LlmExecutionRequest
+
+        class _InstantRespondingClient:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def build_request(self, **kwargs):
+                return object()
+
+            async def send(self, req, stream=True):
+                return "a-response"
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        responding_client = _InstantRespondingClient()
+        original_async_client = llm_execution_module.httpx.AsyncClient
+        llm_execution_module.httpx.AsyncClient = lambda **kwargs: responding_client
+        try:
+            already_disconnected = asyncio.Event()
+            already_disconnected.set()
+
+            async def already_disconnected_receive():
+                return {"type": "http.disconnect"}
+
+            watcher = RequestDisconnectWatcher(already_disconnected_receive)
+            # Give the watcher's background task a chance to observe the
+            # disconnect before dispatch starts, so both the send and the
+            # watcher are complete before send_llm_execution_request's own
+            # asyncio.wait is even reached.
+            await asyncio.sleep(0)
+            execution_request = LlmExecutionRequest(
+                method="POST",
+                url="http://127.0.0.1:1/v1/chat/completions",
+                headers={},
+                body=b"{}",
+                read_timeout=5.0,
+            )
+            with self.assertRaises(ClientDisconnectedBeforeHeaders):
+                await send_llm_execution_request(
+                    execution_request, disconnect_watcher=watcher
+                )
+            self.assertTrue(responding_client.closed)
+            await watcher.aclose()
+        finally:
+            llm_execution_module.httpx.AsyncClient = original_async_client
+
+
+class SimultaneousCompletionCancellationTests(unittest.IsolatedAsyncioTestCase):
+    """A disconnect/cancel observed in the same tick a read/chunk also
+    completes must still be treated as a cancellation — a request must never
+    be reported "succeeded" merely because its body happened to finish
+    reading in the same instant its client vanished."""
+
+    async def test_body_read_prefers_cancellation_over_a_simultaneously_ready_read(self) -> None:
+        class _AlreadyDoneResponse:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def aread(self) -> bytes:
+                return b"already ready"
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        client = _ClosableClient()
+        response = _AlreadyDoneResponse()
+
+        class _AlreadySignalledWatcher:
+            disconnected = True
+
+            async def wait(self) -> None:
+                return None
+
+        content = await read_llm_response_body(
+            client, response, disconnect_watcher=_AlreadySignalledWatcher()
+        )
+        self.assertIsNone(content)
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+
+    async def test_stream_prefers_cancellation_over_a_simultaneously_ready_chunk(self) -> None:
+        registry = CancellationRegistry()
+        handle = registry.register("req-tie")
+        registry.signal("req-tie")  # already cancelled before iteration starts
+
+        client = _ClosableClient()
+        response = _FiniteChunkResponse()
+        chunks = [
+            chunk
+            async for chunk in iter_llm_response_bytes(
+                client, response, cancellation_token=handle.token
+            )
+        ]
+        self.assertEqual(chunks, [])
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+        handle.release()
+
+
+class BlockedTeardownSignalOrderingTests(unittest.IsolatedAsyncioTestCase):
+    """Deterministic proof that ``on_signal`` fires BEFORE teardown, not as a
+    side effect of it — for all three transport helpers.
+
+    Each probe makes the relevant close call (``client.aclose()`` for the
+    pre-header path, ``response.aclose()``/``client.aclose()`` for the
+    nonstream and streaming reads) block forever on an event the test never
+    sets. If ``on_signal`` were only called after teardown completed (the
+    rejected ordering — see
+    ``/home/tnunamak/.tmp/gateway-reliability-0714/independent-gate-3.md``
+    finding 1), the signal would never be observed since the blocking close
+    never returns. Observing the signal fire while the close is still
+    provably blocked is the only way to prove the ordering rather than infer
+    it from timing.
+    """
+
+    async def test_preheader_signal_fires_while_client_close_is_still_blocked(self) -> None:
+        import gateway.backends.llm_execution as llm_execution_module
+        from gateway.backends.llm_execution import LlmExecutionRequest
+
+        class _BlockingCloseClient:
+            def __init__(self) -> None:
+                self.close_started = asyncio.Event()
+                self.release_close = asyncio.Event()
+                self.closed = False
+
+            def build_request(self, **kwargs):
+                return object()
+
+            async def send(self, req, stream=True):
+                await asyncio.Event().wait()
+
+            async def aclose(self) -> None:
+                self.close_started.set()
+                await self.release_close.wait()
+                self.closed = True
+
+        blocking_client = _BlockingCloseClient()
+        original_async_client = llm_execution_module.httpx.AsyncClient
+        llm_execution_module.httpx.AsyncClient = lambda **kwargs: blocking_client
+        try:
+            disconnect_now = asyncio.Event()
+            signalled = asyncio.Event()
+
+            async def receive():
+                await disconnect_now.wait()
+                return {"type": "http.disconnect"}
+
+            async def on_signal():
+                signalled.set()
+
+            watcher = RequestDisconnectWatcher(receive)
+            execution_request = LlmExecutionRequest(
+                method="POST",
+                url="http://127.0.0.1:1/v1/chat/completions",
+                headers={},
+                body=b"{}",
+                read_timeout=5.0,
+            )
+            dispatch_task = asyncio.create_task(
+                send_llm_execution_request(
+                    execution_request, disconnect_watcher=watcher, on_signal=on_signal
+                )
+            )
+            await asyncio.sleep(0.01)
+            disconnect_now.set()
+
+            # The signal must be observable while the client's own close is
+            # still provably stuck — not merely "eventually", which could
+            # also be explained by the rejected after-teardown ordering
+            # racing a fast test.
+            await asyncio.wait_for(blocking_client.close_started.wait(), timeout=1)
+            await asyncio.wait_for(signalled.wait(), timeout=1)
+            self.assertFalse(blocking_client.closed)
+
+            blocking_client.release_close.set()
+            with self.assertRaises(ClientDisconnectedBeforeHeaders):
+                await asyncio.wait_for(dispatch_task, timeout=1)
+            self.assertTrue(blocking_client.closed)
+            await watcher.aclose()
+        finally:
+            llm_execution_module.httpx.AsyncClient = original_async_client
+
+    async def test_nonstream_signal_fires_while_response_close_is_still_blocked(self) -> None:
+        class _BlockingCloseResponse:
+            def __init__(self) -> None:
+                self.close_started = asyncio.Event()
+                self.release_close = asyncio.Event()
+                self.closed = False
+
+            async def aread(self) -> bytes:
+                await asyncio.Event().wait()
+
+            async def aclose(self) -> None:
+                self.close_started.set()
+                await self.release_close.wait()
+                self.closed = True
+
+        client = _ClosableClient()
+        response = _BlockingCloseResponse()
+        disconnect_event = asyncio.Event()
+        signalled = asyncio.Event()
+
+        async def receive():
+            await disconnect_event.wait()
+            return {"type": "http.disconnect"}
+
+        async def on_signal():
+            signalled.set()
+
+        watcher = RequestDisconnectWatcher(receive)
+        read_task = asyncio.create_task(
+            read_llm_response_body(
+                client, response, disconnect_watcher=watcher, on_signal=on_signal
+            )
+        )
+        await asyncio.sleep(0.01)
+        disconnect_event.set()
+
+        await asyncio.wait_for(response.close_started.wait(), timeout=1)
+        await asyncio.wait_for(signalled.wait(), timeout=1)
+        self.assertFalse(response.closed)
+        self.assertFalse(client.closed)
+
+        response.release_close.set()
+        self.assertIsNone(await asyncio.wait_for(read_task, timeout=1))
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+        await watcher.aclose()
+
+    async def test_stream_signal_fires_while_upstream_close_is_still_blocked(self) -> None:
+        class _BlockingCloseChunkResponse:
+            def __init__(self) -> None:
+                self.close_started = asyncio.Event()
+                self.release_close = asyncio.Event()
+                self.closed = False
+
+            def aiter_bytes(self):
+                return self._iter()
+
+            async def _iter(self):
+                await asyncio.Event().wait()
+                yield b"unreachable"
+
+            async def aclose(self) -> None:
+                self.close_started.set()
+                await self.release_close.wait()
+                self.closed = True
+
+        client = _ClosableClient()
+        response = _BlockingCloseChunkResponse()
+        registry = CancellationRegistry()
+        handle = registry.register("req-blocked-teardown")
+        signalled = asyncio.Event()
+
+        async def on_signal():
+            signalled.set()
+
+        chunks = iter_llm_response_bytes(
+            client, response, cancellation_token=handle.token, on_signal=on_signal
+        )
+        next_chunk = asyncio.create_task(chunks.__anext__())
+        await asyncio.sleep(0.01)
+        registry.signal("req-blocked-teardown")
+
+        await asyncio.wait_for(response.close_started.wait(), timeout=1)
+        await asyncio.wait_for(signalled.wait(), timeout=1)
+        self.assertFalse(response.closed)
+        self.assertFalse(client.closed)
+
+        response.release_close.set()
+        with self.assertRaises(StopAsyncIteration):
+            await asyncio.wait_for(next_chunk, timeout=1)
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+        handle.release()
+
+    async def test_stream_signal_fires_on_generator_cancellation_while_upstream_close_is_blocked(self) -> None:
+        """The local-ASGI-disconnect path (Starlette cancelling this
+        generator directly, not the cross-hop token) must also signal before
+        teardown — the same ordering guarantee, reached via
+        ``asyncio.CancelledError`` instead of ``cancellation_token``."""
+        class _BlockingCloseChunkResponse:
+            def __init__(self) -> None:
+                self.close_started = asyncio.Event()
+                self.release_close = asyncio.Event()
+                self.closed = False
+                self.read_started = asyncio.Event()
+
+            def aiter_bytes(self):
+                return self._iter()
+
+            async def _iter(self):
+                self.read_started.set()
+                await asyncio.Event().wait()
+                yield b"unreachable"
+
+            async def aclose(self) -> None:
+                self.close_started.set()
+                await self.release_close.wait()
+                self.closed = True
+
+        client = _ClosableClient()
+        response = _BlockingCloseChunkResponse()
+        signalled = asyncio.Event()
+
+        async def on_signal():
+            signalled.set()
+
+        chunks = iter_llm_response_bytes(client, response, on_signal=on_signal)
+        next_chunk = asyncio.create_task(chunks.__anext__())
+        await asyncio.wait_for(response.read_started.wait(), timeout=1)
+        next_chunk.cancel()
+
+        await asyncio.wait_for(response.close_started.wait(), timeout=1)
+        await asyncio.wait_for(signalled.wait(), timeout=1)
+        self.assertFalse(response.closed)
+        self.assertFalse(client.closed)
+
+        response.release_close.set()
+        with self.assertRaises(asyncio.CancelledError):
+            await next_chunk
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+
+
+class CloseLlmResponseTests(unittest.IsolatedAsyncioTestCase):
+    """Unit coverage for the shared cleanup primitive itself.
+
+    The four gate-flagged proxy.py nonstream routes are proven to call this
+    exact helper by ``ProxyNonstreamCloseSiteTests`` below (AST-level, so it
+    survives refactors); this class proves the helper's own contract once,
+    at the source of truth.
+    """
+
+    async def test_response_close_failure_still_attempts_client_close_and_propagates(self) -> None:
+        client = _ClosableClient()
+
+        class _RaisingResponse:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def aclose(self) -> None:
+                self.closed = True
+                raise RuntimeError("response close failed")
+
+        response = _RaisingResponse()
+        with self.assertRaises(RuntimeError):
+            await close_llm_response(client, response)
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+
+    async def test_client_close_failure_propagates_and_chains_response_error(self) -> None:
+        class _RaisingClient:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def aclose(self) -> None:
+                self.closed = True
+                raise RuntimeError("client close failed")
+
+        class _RaisingResponse:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def aclose(self) -> None:
+                self.closed = True
+                raise ValueError("response close failed")
+
+        client = _RaisingClient()
+        response = _RaisingResponse()
+        with self.assertRaises(RuntimeError) as ctx:
+            await close_llm_response(client, response)
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+        self.assertIsInstance(ctx.exception.__cause__, ValueError)
+
+    async def test_both_close_successfully_when_neither_raises(self) -> None:
+        client = _ClosableClient()
+
+        class _OkResponse:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        response = _OkResponse()
+        await close_llm_response(client, response)
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+
+
+class ProxyNonstreamCloseSiteTests(unittest.TestCase):
+    """AST invariant: every successful nonstream route in proxy.py must
+    route response/client cleanup through the shared close_llm_response
+    helper, never a bare sequential resp.aclose()/client.aclose() pair.
+
+    A sequential pair skips client.aclose() (leaking the connection-pool
+    transport) whenever resp.aclose() raises. This is a source-level
+    boundary check rather than N duplicated end-to-end tests per route: it
+    fails the moment any current or future nonstream route reintroduces the
+    unguarded pattern, regardless of which route added it.
+    """
+
+    def test_no_bare_sequential_resp_and_client_aclose_outside_generators(self) -> None:
+        proxy_path = Path(__file__).resolve().parent.parent / "proxy.py"
+        tree = ast.parse(proxy_path.read_text(encoding="utf-8"), filename=str(proxy_path))
+
+        violations: list[int] = []
+
+        def _is_generator(node: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
+            found = False
+
+            class _OwnBodyYieldFinder(ast.NodeVisitor):
+                def visit_FunctionDef(self, _n: ast.FunctionDef) -> None:
+                    pass  # nested def's yields belong to it, not this function
+
+                def visit_AsyncFunctionDef(self, _n: ast.AsyncFunctionDef) -> None:
+                    pass
+
+                def visit_Lambda(self, _n: ast.Lambda) -> None:
+                    pass
+
+                def visit_Yield(self, _n: ast.Yield) -> None:
+                    nonlocal found
+                    found = True
+
+                def visit_YieldFrom(self, _n: ast.YieldFrom) -> None:
+                    nonlocal found
+                    found = True
+
+            for stmt in node.body:
+                _OwnBodyYieldFinder().visit(stmt)
+            return found
+
+        class _FunctionScanner(ast.NodeVisitor):
+            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+                # Generators (stream_response/_provider_native_body_stream/etc.)
+                # own their own try/finally cleanup and are out of scope — this
+                # invariant is about ordinary nonstream request handlers.
+                if not _is_generator(node):
+                    self._scan_body(node.body, skip_nested_defs=True)
+                self.generic_visit(node)
+
+            def _scan_body(self, body: list[ast.stmt], *, skip_nested_defs: bool) -> None:
+                for prev, curr in zip(body, body[1:]):
+                    if _is_resp_aclose_call(prev) and _is_client_aclose_call(curr):
+                        violations.append(curr.lineno)
+                for stmt in body:
+                    if skip_nested_defs and isinstance(
+                        stmt, (ast.FunctionDef, ast.AsyncFunctionDef)
+                    ):
+                        # Nested defs (e.g. stream_response()) are scanned by
+                        # their own visit_AsyncFunctionDef call, with their own
+                        # generator check — don't double-scan them here.
+                        continue
+                    for child_body in _nested_bodies(stmt):
+                        self._scan_body(child_body, skip_nested_defs=skip_nested_defs)
+
+        def _is_await_call_on(stmt: ast.stmt, obj_name: str, method_name: str) -> bool:
+            if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Await):
+                return False
+            call = stmt.value.value
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+                return False
+            if call.func.attr != method_name:
+                return False
+            return isinstance(call.func.value, ast.Name) and call.func.value.id == obj_name
+
+        def _is_resp_aclose_call(stmt: ast.stmt) -> bool:
+            return _is_await_call_on(stmt, "resp", "aclose")
+
+        def _is_client_aclose_call(stmt: ast.stmt) -> bool:
+            return _is_await_call_on(stmt, "client", "aclose")
+
+        def _nested_bodies(stmt: ast.stmt):
+            for field in ("body", "orelse", "finalbody"):
+                block = getattr(stmt, field, None)
+                if block:
+                    yield block
+            for handler in getattr(stmt, "handlers", []) or []:
+                yield handler.body
+
+        _FunctionScanner().visit(tree)
+
+        self.assertEqual(
+            violations,
+            [],
+            "Found bare sequential 'await resp.aclose()' followed by "
+            "'await client.aclose()' at proxy.py line(s) "
+            f"{violations} — route cleanup through close_llm_response so "
+            "client teardown isn't skipped when response close raises.",
+        )

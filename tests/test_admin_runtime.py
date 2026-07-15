@@ -26,6 +26,7 @@ from gateway.admin_runtime import (  # noqa: E402
     SERVICE_REGISTRY_SETTING_KEY,
     create_admin_service_account_key,
     runtime_identity_for_app_credential_hash,
+    service_account_session_subject,
 )
 from gateway.runtime_auth import hash_api_key  # noqa: E402
 
@@ -70,6 +71,41 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         session = session_from_claims(
             {"sub": user_id, "email": "owner@example.com"},
+            role=role,
+            cookie=cookie,
+        )
+        client = TestClient(app)
+        client.cookies.set(
+            cookie.name,
+            encode_session_cookie(session, signing_key=signing_key),
+        )
+        return client
+
+    def _service_account_session_client(
+        self,
+        *,
+        service_account_id: str,
+        role: str = "owner",
+    ) -> TestClient:
+        signing_key = b"s" * 32
+        cookie = CookieConfig(secure=False)
+        app = FastAPI()
+        app.include_router(
+            create_admin_router(
+                self.store,
+                auth=AdminAuthenticator(
+                    self.store,
+                    signing_key=signing_key,
+                    cookie=cookie,
+                ),
+                profile_resolver=self.store.profile_for_id,
+            )
+        )
+        session = session_from_claims(
+            {
+                "sub": service_account_session_subject(service_account_id),
+                "email": "owner-cli admin key",
+            },
             role=role,
             cookie=cookie,
         )
@@ -293,6 +329,59 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         allowed = self._session_client(user_id=user["id"]).get("/admin/api/overview")
         self.assertEqual(allowed.status_code, 200, allowed.text)
+
+    def test_service_account_browser_session_uses_service_account_roles(self) -> None:
+        _admin_key, credential, _assignment = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._service_account_session_client(
+            service_account_id=str(credential["subject_id"])
+        )
+        allowed = client.get("/admin/api/overview")
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+        self.assertEqual(admin_store.list_users(path=self.db), [])
+
+    def test_admin_store_hides_legacy_local_admin_key_personal_apps(self) -> None:
+        placeholder = admin_store.upsert_oidc_user(
+            "local-admin-key",
+            "service_account:svc_legacy",
+            email="local-admin",
+            display_name="Local admin key",
+            path=self.db,
+        )
+        real_user = admin_store.upsert_oidc_user(
+            "https://idp.example",
+            "owner-subject",
+            email="owner@example.com",
+            display_name="Owner",
+            path=self.db,
+        )
+        admin_store.ensure_personal_app_for_user(
+            placeholder["id"],
+            name="local-admin personal access",
+            path=self.db,
+        )
+        admin_store.ensure_personal_app_for_user(
+            real_user["id"],
+            name="owner personal access",
+            path=self.db,
+        )
+        service_account = admin_store.ensure_service_account(
+            "shared-service", path=self.db
+        )
+        admin_store.create_app(
+            "shared service",
+            kind="service",
+            owner_service_account_id=service_account["id"],
+            path=self.db,
+        )
+
+        raw_names = {app["name"] for app in admin_store.list_apps(path=self.db)}
+        self.assertIn("local-admin personal access", raw_names)
+        visible_names = {app["name"] for app in self.store.list_apps()}
+        self.assertNotIn("local-admin personal access", visible_names)
+        self.assertIn("owner personal access", visible_names)
+        self.assertIn("shared service", visible_names)
 
     def test_admin_store_app_key_builds_runtime_identity_with_profile(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(

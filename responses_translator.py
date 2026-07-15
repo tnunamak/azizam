@@ -18,6 +18,7 @@ Mapping summary (Responses -> Chat Completions, on request):
   text.format.type=json_object  -> response_format={"type": "json_object"}
   text.format.type=json_schema  -> response_format={"type": "json_schema", ...}
   max_output_tokens             -> max_tokens
+  max_completion_tokens         -> max_tokens (fallback spelling)
   temperature/top_p/metadata    -> pass through
   reasoning.effort=none|minimal -> append "/no_think" to system prompt
                                    + chat_template_kwargs.enable_thinking=false
@@ -448,7 +449,6 @@ def to_chat_completions(
     for k_in, k_out in (
         ("temperature", "temperature"),
         ("top_p", "top_p"),
-        ("max_output_tokens", "max_tokens"),
         ("parallel_tool_calls", "parallel_tool_calls"),
         ("seed", "seed"),
         ("metadata", "metadata"),
@@ -456,6 +456,14 @@ def to_chat_completions(
     ):
         if k_in in req and req[k_in] is not None:
             cc[k_out] = req[k_in]
+
+    # Normalize both Responses aggregate-output spellings before model-scoped
+    # request transforms run. Keep max_output_tokens authoritative when both
+    # are present, preserving the established Responses spelling's behavior.
+    if req.get("max_output_tokens") is not None:
+        cc["max_tokens"] = req["max_output_tokens"]
+    elif req.get("max_completion_tokens") is not None:
+        cc["max_tokens"] = req["max_completion_tokens"]
 
     # Tools
     tools = _translate_tools(req.get("tools"))

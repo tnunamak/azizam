@@ -60,7 +60,9 @@ def test_status_css_uses_shell_tokens_without_legacy_dive_palette_or_stripes() -
     assert "--dive-" not in html
     assert "var(--panel)" in html
     assert "var(--line)" in html
-    assert "border-left" not in html
+    # border-left is now legitimately used by vf-copy-field-button (separator);
+    # assert that old per-row stripe accent borders are gone instead.
+    assert "border-left: 3px solid" not in html
     assert "overflow-x:auto" in html
     assert "overflow-x:hidden" in html
 
@@ -69,7 +71,9 @@ def test_empty_status_sections_are_hidden_until_they_have_signal() -> None:
     html = render_html(_payload(), host="gateway.local")
 
     assert "Live activity" not in html
-    assert "Health" not in html
+    # "Health" now appears in vendored brand CSS comments (SystemHealthBand,
+    # ServiceHealthRow) — check rendered section headings are absent instead.
+    assert ">Health<" not in html
     assert "Resources" not in html
     assert "Capabilities" not in html
     assert "Recent output" not in html

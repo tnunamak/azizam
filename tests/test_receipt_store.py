@@ -144,7 +144,13 @@ class TestReceiptStore(unittest.TestCase):
         self.assertIn("metadata", internal)
         self.assertEqual(internal["metadata"], {"internal_note": "for ops only"})
 
+        # Free-text metadata (e.g. an ops note) stays hidden from admin —
+        # only the specific structural keys in ADMIN_VISIBLE_METADATA_FIELDS
+        # (request_shape, request_shape_stages, terminal_reason, ...) are
+        # promoted, since those are written exclusively by the privacy-safe
+        # request-shape path and never carry free text.
         self.assertNotIn("metadata", admin)
+        self.assertNotIn("internal_note", admin)
         self.assertEqual(admin["backend"], "openai.local")
 
         self.assertNotIn("backend", client)
@@ -152,6 +158,60 @@ class TestReceiptStore(unittest.TestCase):
         self.assertEqual(client["request_id"], r.request_id)
         self.assertEqual(client["status"], "ok")
         self.assertEqual(client["resolved_model"], "gpt-4o-mini")
+
+    def test_admin_audience_still_sees_request_shape_stage_metadata(self) -> None:
+        r = _make_receipt()
+        r.metadata["internal_note"] = "for ops only"
+        r.metadata["terminal_reason"] = "completed"
+        r.metadata["request_shape_stages"] = [{"stage": "accepted", "stream": True}]
+        receipt_store.record(r, path=self.db)
+
+        admin = receipt_store.get(r.request_id, audience="admin", path=self.db)
+
+        self.assertNotIn("metadata", admin)
+        self.assertNotIn("internal_note", admin)
+        self.assertEqual(admin["terminal_reason"], "completed")
+        self.assertEqual(admin["request_shape_stages"], [{"stage": "accepted", "stream": True}])
+
+    def test_admin_audience_promotes_production_failed_terminal_reason(self) -> None:
+        # "failed" is written by production nonstream routes whenever the
+        # upstream responds with a non-2xx/3xx status (e.g. proxy.py's
+        # `"completed" if 200 <= resp.status_code < 400 else "failed"`).
+        # It must survive the admin sanitizer's closed enum, both at the
+        # top-level terminal_reason and inside a terminal-stage entry —
+        # dropping it silently hid genuine upstream failures from admins.
+        r = _make_receipt()
+        r.metadata["terminal_reason"] = "failed"
+        r.metadata["request_shape_stages"] = [
+            {"stage": "terminal", "status_code": 502, "terminal_reason": "failed"},
+        ]
+        receipt_store.record(r, path=self.db)
+
+        admin = receipt_store.get(r.request_id, audience="admin", path=self.db)
+
+        self.assertEqual(admin["terminal_reason"], "failed")
+        self.assertEqual(
+            admin["request_shape_stages"],
+            [{"stage": "terminal", "status_code": 502, "terminal_reason": "failed"}],
+        )
+
+    def test_admin_audience_still_drops_hostile_terminal_reason_values(self) -> None:
+        # The enum must stay strict — only real production values are
+        # admitted, not arbitrary strings a caller might smuggle in.
+        r = _make_receipt()
+        r.metadata["terminal_reason"] = "<script>alert(1)</script>"
+        r.metadata["request_shape_stages"] = [
+            {"stage": "terminal", "status_code": 500, "terminal_reason": "totally-made-up"},
+        ]
+        receipt_store.record(r, path=self.db)
+
+        admin = receipt_store.get(r.request_id, audience="admin", path=self.db)
+
+        self.assertNotIn("terminal_reason", admin)
+        self.assertEqual(
+            admin["request_shape_stages"],
+            [{"stage": "terminal", "status_code": 500}],
+        )
 
     def test_invalid_audience_raises(self) -> None:
         r = _make_receipt()
@@ -328,6 +388,67 @@ class TestReceiptStore(unittest.TestCase):
         deleted = receipt_store.prune(retain_s=150, path=self.db)
         self.assertEqual(deleted, 2)
         self.assertEqual(receipt_store.count(self.db), 1)
+
+    # ---- request-shape observability (structural-only fields) ----
+
+    def test_unbounded_nonstream_request_shape_is_directly_queryable(self) -> None:
+        """The abnormal shape flagged in the reliability audit — stream:false
+        with an absent/-1 token limit — must be readable back from a stored
+        receipt without inspecting prompt content."""
+        r = _make_receipt()
+        r.metadata["request_shape"] = {
+            "stream": False,
+            "n_predict": -1,
+            "message_count": 3,
+            "is_unbounded_nonstream": True,
+        }
+        receipt_store.record(r, path=self.db)
+
+        stored = receipt_store.get(r.request_id, path=self.db)
+        self.assertIsNotNone(stored)
+        self.assertTrue(stored["metadata"]["request_shape"]["is_unbounded_nonstream"])
+        self.assertEqual(stored["metadata"]["request_shape"]["stream"], False)
+        self.assertEqual(stored["metadata"]["request_shape"]["n_predict"], -1)
+
+    def test_bounded_stream_request_shape_round_trips(self) -> None:
+        r = _make_receipt()
+        r.metadata["request_shape"] = {
+            "stream": True,
+            "max_tokens": 512,
+            "message_count": 2,
+            "is_unbounded_nonstream": False,
+        }
+        receipt_store.record(r, path=self.db)
+
+        stored = receipt_store.get(r.request_id, path=self.db)
+        self.assertFalse(stored["metadata"]["request_shape"]["is_unbounded_nonstream"])
+
+    def test_request_shape_metadata_never_admits_forbidden_keys(self) -> None:
+        r = _make_receipt()
+        r.metadata["request_shape"] = {
+            "stream": False,
+            "messages": [{"role": "user", "content": "should never be here"}],
+        }
+        with self.assertRaises(ValueError):
+            receipt_store.record(r, path=self.db)
+
+    def test_terminal_reason_metadata_round_trips(self) -> None:
+        r = _make_receipt()
+        r.metadata["terminal_reason"] = "cancelled"
+        receipt_store.record(r, path=self.db)
+
+        stored = receipt_store.get(r.request_id, path=self.db)
+        self.assertEqual(stored["metadata"]["terminal_reason"], "cancelled")
+
+    def test_client_audience_never_exposes_request_shape_metadata(self) -> None:
+        """Metadata (which carries request_shape) is internal/admin-only —
+        the client-facing receipt view must not leak it."""
+        r = _make_receipt()
+        r.metadata["request_shape"] = {"stream": False, "is_unbounded_nonstream": True}
+        receipt_store.record(r, path=self.db)
+
+        stored = receipt_store.get(r.request_id, audience="client", path=self.db)
+        self.assertNotIn("metadata", stored)
 
 
 if __name__ == "__main__":

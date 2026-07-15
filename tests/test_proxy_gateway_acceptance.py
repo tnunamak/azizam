@@ -91,6 +91,46 @@ class _FakeStreamClient:
         return None
 
 
+class _TrackedCloseClient:
+    def __init__(self) -> None:
+        self.close_attempted = False
+
+    async def aclose(self):
+        self.close_attempted = True
+
+
+class _RaisingCloseNonStreamResponse:
+    """A successful nonstream response whose own aclose() fails.
+
+    Used to prove the four generic nonstream routes route cleanup through
+    the shared close_llm_response helper: client teardown must still be
+    attempted (and the connection-pool leak avoided) even though the
+    response's own close raised.
+    """
+
+    status_code = 200
+    headers = {"content-type": "application/json"}
+
+    async def aread(self):
+        return json.dumps(
+            {
+                "id": "chatcmpl_close_probe",
+                "object": "chat.completion",
+                "model": "assistant-default",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "pong"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        ).encode()
+
+    async def aclose(self):
+        raise RuntimeError("response close failed")
+
+
 class _DoneThenBlocksStreamResponse:
     status_code = 200
 
@@ -108,7 +148,11 @@ class _DoneThenBlocksStreamResponse:
 
 class _FakeLiteLLMResponse:
     status_code = 200
-    headers = {"content-type": "application/json", "x-litellm-call-id": "call_1"}
+    headers = {
+        "content-type": "application/json",
+        "x-litellm-call-id": "call_1",
+        "x-litellm-model-id": "model_1",
+    }
 
     async def aread(self):
         return json.dumps(
@@ -342,7 +386,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         calls: list[Any] = []
         receipts: list[Any] = []
 
-        async def fake_send(execution_request):
+        async def fake_send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             calls.append(execution_request)
             return _FakeStreamClient(), _FakeLiteLLMResponse()
 
@@ -400,7 +444,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
             calls[0].url,
             "http://127.0.0.1:4011/v1/chat/completions?trace=1",
         )
-        self.assertEqual(calls[0].headers["authorization"], "Bearer sk-litellm-internal")
+        self.assertEqual(calls[0].headers["X-Litellm-Key"], "Bearer sk-litellm-internal")
+        self.assertNotIn("authorization", calls[0].headers)
         self.assertEqual(calls[0].headers["x-ai-gateway-execution"], "litellm")
         self.assertEqual(calls[0].headers["x-ai-gateway-service-id"], "litellm")
         self.assertEqual(json.loads(calls[0].body)["metadata"], {"client": "kept"})
@@ -410,12 +455,16 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(receipts[0].requested_model, "assistant-default")
         self.assertEqual(receipts[0].status, "succeeded")
         self.assertEqual(receipts[0].metadata["execution_backend"], "litellm")
-        self.assertEqual(receipts[0].metadata["litellm"]["call_id"], "call_1")
+        # An opaque, unbounded upstream call id must never be admin-exposed
+        # (see docs/ops/daisy-reliability-2026-07-14.md finding 8) — only
+        # small, bounded scalar facts like model_id are.
+        self.assertNotIn("call_id", receipts[0].metadata["litellm"])
+        self.assertEqual(receipts[0].metadata["litellm"]["model_id"], "model_1")
 
     def test_current_model_uses_active_loaded_backend_without_activation(self) -> None:
         calls: list[Any] = []
 
-        async def fake_send(execution_request):
+        async def fake_send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             calls.append(execution_request)
             return _FakeStreamClient(), _FakeLiteLLMResponse()
 
@@ -481,7 +530,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
     def test_current_model_does_not_force_fast_path(self) -> None:
         calls: list[Any] = []
 
-        async def fake_send(execution_request):
+        async def fake_send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             calls.append(execution_request)
             return _FakeStreamClient(), _FakeLiteLLMResponse()
 
@@ -525,10 +574,52 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertNotIn("reasoning_effort", forwarded)
         self.assertNotIn("chat_template_kwargs", forwarded)
 
+    def test_current_loaded_route_still_closes_client_when_response_close_fails(self) -> None:
+        tracked_client = _TrackedCloseClient()
+
+        async def fake_send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
+            return tracked_client, _RaisingCloseNonStreamResponse()
+
+        client = TestClient(proxy.app, raise_server_exceptions=False)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy,
+            "LLM_BACKEND_HOSTS",
+            {"kobold": "http://127.0.0.1:5051"},
+        ), patch.object(
+            proxy,
+            "get_active_backend",
+            AsyncMock(return_value="kobold"),
+        ), patch.object(
+            proxy,
+            "current_llm_model_for_backend",
+            AsyncMock(return_value="Manual-Experiment.gguf"),
+        ), patch.object(
+            proxy,
+            "_service_availability_response",
+            lambda *_args, **_kwargs: None,
+        ), patch.object(
+            proxy,
+            "send_llm_execution_request",
+            fake_send,
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "current",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        # The response close failure must propagate (never a false success)...
+        self.assertEqual(response.status_code, 500, response.text)
+        # ...but client teardown must still have been attempted so the
+        # connection-pool transport isn't leaked.
+        self.assertTrue(tracked_client.close_attempted)
+
     def test_current_fast_model_uses_loaded_backend_and_forces_thinking_off(self) -> None:
         calls: list[Any] = []
 
-        async def fake_send(execution_request):
+        async def fake_send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             calls.append(execution_request)
             return _FakeStreamClient(), _FakeLiteLLMResponse()
 
@@ -687,7 +778,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         calls: list[Any] = []
         activations: list[tuple[str, str | None, str | None]] = []
 
-        async def fake_send(execution_request):
+        async def fake_send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             calls.append(execution_request)
             return _FakeStreamClient(), _FakeLiteLLMResponse()
 
@@ -743,7 +834,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
     def test_litellm_activates_mmproj_only_for_vision_requests(self) -> None:
         activations: list[tuple[str, str | None, str | None]] = []
 
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _FakeStreamClient(), _FakeLiteLLMResponse()
 
         async def fake_ensure_target(backend, model, mmproj=None):
@@ -926,7 +1017,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual([call["model"] for call in chat_calls], ["default"])
 
     def test_litellm_route_rejects_malformed_json_before_executor(self) -> None:
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             raise AssertionError("executor should not run for malformed JSON")
 
         def fake_registry():
@@ -958,7 +1049,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "invalid_json")
 
     def test_litellm_unknown_model_error_is_openai_shaped(self) -> None:
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _FakeStreamClient(), _FakeLiteLLMUnknownModelResponse()
 
         def fake_registry():
@@ -997,7 +1088,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
     def test_litellm_service_owns_openai_model_list_for_llm_models(self) -> None:
         calls: list[Any] = []
 
-        async def fake_send(execution_request):
+        async def fake_send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             calls.append(execution_request)
             return _FakeStreamClient(), _FakeLiteLLMModelsResponse()
 
@@ -1046,7 +1137,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/models")
 
     def test_litellm_model_catalog_failures_are_protocol_shaped(self) -> None:
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             raise httpx.ConnectError("litellm unavailable")
 
         def fake_registry():
@@ -1099,7 +1190,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
     def test_litellm_routes_embeddings_and_applies_requested_dimensions(self) -> None:
         calls: list[Any] = []
 
-        async def fake_send(execution_request):
+        async def fake_send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             calls.append(execution_request)
             return _FakeStreamClient(), _FakeLiteLLMEmbeddingResponse()
 
@@ -1149,7 +1240,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
                 }
             }
 
-        async def fake_connect(_execution_request):
+        async def fake_connect(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             raise httpx.ConnectError("down")
 
         client = TestClient(proxy.app)
@@ -1166,6 +1257,40 @@ class TestGatewayRouterMounting(unittest.TestCase):
 
         self.assertEqual(connect.status_code, 503, connect.text)
         self.assertEqual(connect.json()["error"]["code"], "backend_unavailable")
+
+    def test_named_litellm_route_still_closes_client_when_response_close_fails(self) -> None:
+        def fake_registry():
+            return {
+                "services": {
+                    "litellm": {
+                        "id": "litellm",
+                        "kind": "llm-substrate",
+                        "enabled": True,
+                        "capabilities": ["llm.execution"],
+                        "config": {"base_url": "http://127.0.0.1:4011"},
+                    }
+                }
+            }
+
+        tracked_client = _TrackedCloseClient()
+
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
+            return tracked_client, _RaisingCloseNonStreamResponse()
+
+        client = TestClient(proxy.app, raise_server_exceptions=False)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", fake_registry
+        ), patch.object(proxy, "send_llm_execution_request", fake_send):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "assistant-default",
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertTrue(tracked_client.close_attempted)
 
     def test_litellm_substrate_keeps_gateway_responses_store_for_retrieve_delete_cancel(self) -> None:
         async def forbidden_litellm_direct(*_args, **_kwargs):
@@ -1208,7 +1333,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(cancelled.json()["error"]["code"], "unsupported_operation")
 
     def test_ollama_tags_project_litellm_model_catalog(self) -> None:
-        async def fake_send(_execution_request):
+        async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _FakeStreamClient(), _FakeLiteLLMModelsResponse()
 
         def fake_registry():
@@ -1401,6 +1526,16 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             )
 
         with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            # Background-removal decisioning calls get_active_backend() ->
+            # check_service_health() against every configured backend host —
+            # a real network call this test must not depend on (it hangs
+            # indefinitely resolving an unreachable host outside this repo's
+            # own routing/cancellation contract, which is what this class
+            # actually tests). Disabling the feature here is the same no-op
+            # short-circuit production takes when the operator has it off
+            # (see resolve_image_background_decision's own early return).
+            proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", False
+        ), patch.object(
             proxy, "configured_downstream_headers", lambda *_a, **_kw: {}
         ), patch.object(
             proxy,
@@ -1443,6 +1578,16 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             )
 
         with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            # Background-removal decisioning calls get_active_backend() ->
+            # check_service_health() against every configured backend host —
+            # a real network call this test must not depend on (it hangs
+            # indefinitely resolving an unreachable host outside this repo's
+            # own routing/cancellation contract, which is what this class
+            # actually tests). Disabling the feature here is the same no-op
+            # short-circuit production takes when the operator has it off
+            # (see resolve_image_background_decision's own early return).
+            proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", False
+        ), patch.object(
             proxy, "configured_downstream_headers", lambda *_a, **_kw: {}
         ), patch.object(
             proxy,
@@ -1513,6 +1658,16 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             )
 
         with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            # Background-removal decisioning calls get_active_backend() ->
+            # check_service_health() against every configured backend host —
+            # a real network call this test must not depend on (it hangs
+            # indefinitely resolving an unreachable host outside this repo's
+            # own routing/cancellation contract, which is what this class
+            # actually tests). Disabling the feature here is the same no-op
+            # short-circuit production takes when the operator has it off
+            # (see resolve_image_background_decision's own early return).
+            proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", False
+        ), patch.object(
             proxy, "configured_downstream_headers", lambda *_a, **_kw: {}
         ), patch.object(
             proxy,

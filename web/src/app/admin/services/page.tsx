@@ -14,29 +14,28 @@
  * no window.confirm, destructive actions in OverflowMenu + ConfirmDialog,
  * loading skeleton + designed empty + error states. */
 
-import { useMemo, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   api,
   ApiError,
   queryKeys,
+  type BackendHistory,
   type Service,
   type ServiceRegistry,
   type ProviderPreset,
+  type StatusPayload,
+  type StatusSeriesPoint,
 } from "@/lib/api";
 import {
   Badge,
   Button,
+  type ChartPoint,
   ConfirmDialog,
   CopyButton,
-  DataTable,
-  type DataTableColumn,
   Dialog,
   DialogBody,
   DialogContent,
@@ -45,19 +44,54 @@ import {
   DialogForm,
   DialogHeader,
   DialogTitle,
-  EmptyState,
-  EntityRef,
+  EmptyOperationalState,
   Field,
+  FilterToolbar,
+  IncidentBanner,
   Input,
   OverflowMenu,
   OverflowMenuItem,
   OverflowMenuSeparator,
-  SectionHeader,
+  RightContextPanel,
+  type RightContextPanelSection,
+  SectionActionHeader,
   Select,
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
   Skeleton,
+  StatusDotLabel,
   Switch,
   toast,
+  TrendLineChart,
 } from "@/components/ui";
+
+// ---------------------------------------------------------------------------
+// History series helpers
+
+/** Convert [timestamp_s, value][] from the status API to ChartPoint[]. */
+function toChartPoints(series: StatusSeriesPoint[] | undefined): ChartPoint[] {
+  if (!series || series.length === 0) return [];
+  return series
+    .filter((pt) => Array.isArray(pt) && pt.length >= 2 && Number.isFinite(pt[1]))
+    .map((pt) => ({ x: pt[0], y: pt[1] }));
+}
+
+/** Tone for the latency sparkline based on p95. */
+function latencyTone(history: BackendHistory | undefined): "ok" | "warn" | "bad" {
+  const p95 = history?.p95_latency_ms_24h;
+  if (p95 == null) return "ok";
+  if (p95 > 2000) return "bad";
+  if (p95 > 800) return "warn";
+  return "ok";
+}
+
+/** Format uptime pct, returning null when there is no data. */
+function formatUptime(pct: number | null | undefined): string | null {
+  if (pct == null) return null;
+  return `${pct.toFixed(1)}%`;
+}
 
 // ---------------------------------------------------------------------------
 // Types used only in this surface
@@ -127,6 +161,72 @@ function servicesFromRegistry(registry: ServiceRegistry): Service[] {
   );
 }
 
+function normalizedName(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function normalizedRouteTarget(value: string | undefined): string {
+  return normalizedName(value).replace(/[\s_]+/g, "-");
+}
+
+function serviceMatchesRouteTarget(service: Service, target: string): boolean {
+  const wanted = normalizedRouteTarget(target);
+  const configName =
+    typeof service.config.name === "string" ? service.config.name : undefined;
+  return [service.id, service.name, configName].some(
+    (candidate) => normalizedRouteTarget(candidate) === wanted,
+  );
+}
+
+function RouteServiceTargetSync({
+  onChange,
+}: {
+  onChange: (target: string | null) => void;
+}) {
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    onChange(searchParams.get("service"));
+  }, [onChange, searchParams]);
+  return null;
+}
+
+function backendByServiceId(status: StatusPayload | undefined) {
+  const result = new Map<string, NonNullable<StatusPayload["backends"]>[number]>();
+  for (const backend of status?.backends ?? []) {
+    const serviceId = backend.service_id || backend.key;
+    if (serviceId) result.set(serviceId, backend);
+  }
+  return result;
+}
+
+function serviceLiveTone(
+  service: Service,
+  backend: NonNullable<StatusPayload["backends"]>[number] | undefined,
+) {
+  if (!service.enabled) {
+    return { tone: "warn" as const, label: "disabled" };
+  }
+  if (backend?.live_status === "down") {
+    return { tone: "bad" as const, label: "down" };
+  }
+  if (backend?.live_status === "degraded") {
+    return { tone: "warn" as const, label: "degraded" };
+  }
+  return { tone: "ok" as const, label: "enabled" };
+}
+
+function serviceLiveMetrics(
+  backend: NonNullable<StatusPayload["backends"]>[number] | undefined,
+): Array<{ label: string; value: string }> | undefined {
+  if (!backend) return undefined;
+  const metrics: Array<{ label: string; value: string }> = [];
+  if (typeof backend.latency_ms === "number" && backend.latency_ms !== null) {
+    metrics.push({ label: "latency", value: `${Math.round(backend.latency_ms)} ms` });
+  }
+  if (metrics.length === 0) return undefined;
+  return metrics;
+}
+
 /** True when a service is the managed LiteLLM substrate row. */
 function isManagedSubstrate(service: Service): boolean {
   return service.editable === false;
@@ -137,18 +237,28 @@ function isManagedSubstrate(service: Service): boolean {
 
 type BadgeSource = "provisioned" | "ui" | "builtin" | "imported" | "discovered";
 
-function SourceBadge({ source, managed }: { source: BadgeSource; managed: boolean }) {
+function SourceBadge({
+  source,
+  managed,
+}: {
+  source: BadgeSource;
+  managed: boolean;
+}) {
   if (managed) {
     return (
       <span title="Managed by the gateway — endpoint fields are derived">
-        <Badge sm tone="neutral">managed</Badge>
+        <Badge sm tone="neutral">
+          managed
+        </Badge>
       </span>
     );
   }
   if (source === "provisioned") {
     return (
       <span title="Imported from your config file — your YAML is not modified and will not re-import it">
-        <Badge sm tone="neutral">config</Badge>
+        <Badge sm tone="neutral">
+          config
+        </Badge>
       </span>
     );
   }
@@ -160,21 +270,268 @@ function SourceBadge({ source, managed }: { source: BadgeSource; managed: boolea
 }
 
 // ---------------------------------------------------------------------------
+// ServiceTableRow — dense table-style row with inline name/endpoint/caps header
+
+interface ServiceTableRowProps {
+  svc: Service;
+  tone: "ok" | "warn" | "bad";
+  statusLabel: string;
+  metrics: Array<{ label: string; value: string }> | undefined;
+  history?: BackendHistory;
+  isSelected: boolean;
+  togglePending: boolean;
+  onSelect: () => void;
+  onToggle: (checked: boolean) => void;
+  onEdit: () => void;
+  onModels: () => void;
+  onTest: () => void;
+  onDetect: () => void;
+  onRemove: () => void;
+}
+
+function ServiceTableRow({
+  svc,
+  tone,
+  statusLabel,
+  metrics,
+  history,
+  isSelected,
+  togglePending,
+  onSelect,
+  onToggle,
+  onEdit,
+  onModels,
+  onTest,
+  onDetect,
+  onRemove,
+}: ServiceTableRowProps) {
+  const endpoint = isManagedSubstrate(svc) ? null : endpointDisplay(svc);
+  const caps = svc.capabilities;
+  const latencyMetric = metrics?.find((m) => m.label === "latency");
+  const latencyPoints = toChartPoints(history?.latency_series);
+  const sparklineTone = latencyTone(history);
+
+  return (
+    <div
+      className={`vf-service-row transition-colors ${isSelected ? "bg-[var(--vf-row-hover)]" : ""}`}
+      aria-selected={isSelected}
+    >
+      {/* Top line: name + endpoint + caps + actions */}
+      <div className="vf-service-row-main">
+        <button
+          type="button"
+          className="min-w-0 flex-1 text-left cursor-pointer"
+          onClick={onSelect}
+          aria-label={`${svc.name} — click for details`}
+        >
+          <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-vf-body text-vf-text font-semibold shrink-0">{svc.name}</span>
+            {isManagedSubstrate(svc) ? (
+              <span className="text-vf-micro text-vf-muted font-mono shrink-0">managed</span>
+            ) : endpoint ? (
+              <span className="text-vf-micro text-vf-subtle font-mono shrink-0">{endpoint}</span>
+            ) : null}
+            {caps.length > 0 && (
+              <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+                {caps.map((c) => (
+                  <span key={c} className="text-vf-micro font-mono text-vf-info">
+                    {capabilityLabel(c)}
+                  </span>
+                ))}
+              </span>
+            )}
+          </span>
+        </button>
+        {/* Actions always on the right */}
+        <div
+          className="vf-service-row-actions shrink-0"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Switch
+            checked={svc.enabled}
+            disabled={togglePending}
+            aria-label={`Toggle ${svc.name}`}
+            onCheckedChange={onToggle}
+          />
+          <OverflowMenu label={`Actions for ${svc.name}`}>
+            <OverflowMenuItem onSelect={onEdit}>Edit…</OverflowMenuItem>
+            <OverflowMenuItem onSelect={onModels}>Models…</OverflowMenuItem>
+            <OverflowMenuItem onSelect={onTest}>Test connection…</OverflowMenuItem>
+            <OverflowMenuItem onSelect={onDetect}>Detect models…</OverflowMenuItem>
+            {isManagedSubstrate(svc) ? (
+              <>
+                <OverflowMenuSeparator />
+                <OverflowMenuItem onSelect={() => onToggle(!svc.enabled)}>
+                  {svc.enabled ? "Disable" : "Enable"}
+                </OverflowMenuItem>
+              </>
+            ) : (
+              <>
+                <OverflowMenuSeparator />
+                <OverflowMenuItem danger onSelect={onRemove}>Remove…</OverflowMenuItem>
+              </>
+            )}
+          </OverflowMenu>
+        </div>
+      </div>
+
+      {/* Secondary line: status dot + latency + sparkline */}
+      <div className="flex items-center gap-4 min-h-0">
+        <StatusDotLabel tone={tone} label={statusLabel} pulse={tone === "ok"} />
+        {latencyMetric && (
+          <span className="flex items-baseline gap-1">
+            <span className="text-vf-small text-vf-text tabular-nums font-mono">{latencyMetric.value}</span>
+            <span className="text-vf-micro text-vf-muted font-mono uppercase">latency</span>
+          </span>
+        )}
+        {latencyPoints.length >= 2 && (
+          <TrendLineChart
+            series={latencyPoints}
+            tone={sparklineTone}
+            height={24}
+            className="w-16 shrink-0"
+          />
+        )}
+        {history?.uptime_pct_24h != null && (
+          <span className="text-vf-micro text-vf-muted tabular-nums font-mono ml-auto">
+            {history.uptime_pct_24h.toFixed(1)}% up 24h
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// StatusSummaryRail — aggregate right rail when no service is selected.
+// Uses RightContextPanel sections so visual treatment matches the per-service detail panel.
+
+interface StatusSummaryRailProps {
+  enabledCount: number;
+  totalCount: number;
+  downCount: number;
+  degradedCount: number;
+  avgLatencyMs: number | null;
+  modelMappingCount: number;
+  capabilityCoverage: string[];
+  avgUptime24h: number | null;
+  avgP95Latency24h: number | null;
+}
+
+function StatusSummaryRail({
+  enabledCount,
+  totalCount,
+  downCount,
+  degradedCount,
+  avgLatencyMs,
+  modelMappingCount,
+  capabilityCoverage,
+  avgUptime24h,
+  avgP95Latency24h,
+}: StatusSummaryRailProps) {
+  const railTone = downCount > 0 ? ("bad" as const) : degradedCount > 0 ? ("warn" as const) : ("ok" as const);
+  const railTitle = downCount > 0
+    ? `${downCount} backend${downCount > 1 ? "s" : ""} down`
+    : degradedCount > 0
+      ? `${degradedCount} service${degradedCount > 1 ? "s" : ""} degraded`
+      : "All services operational";
+
+  type MetricRow = { label: string; value: string; tone?: "ok" | "warn" | "bad" };
+  const metricRows: MetricRow[] = [
+    {
+      label: "Backends enabled",
+      value: `${enabledCount} / ${totalCount}`,
+      tone: enabledCount < totalCount ? "warn" : "ok",
+    },
+    {
+      label: "Avg latency",
+      value: avgLatencyMs !== null ? `${Math.round(avgLatencyMs)} ms` : "—",
+      tone: avgLatencyMs !== null && avgLatencyMs > 1000 ? "warn" : undefined,
+    },
+    { label: "Model mappings", value: String(modelMappingCount) },
+  ];
+  if (avgUptime24h != null) {
+    metricRows.push({
+      label: "Avg uptime 24h",
+      value: `${avgUptime24h.toFixed(1)}%`,
+      tone: avgUptime24h < 95 ? "bad" : avgUptime24h < 99 ? "warn" : "ok",
+    });
+  }
+  if (avgP95Latency24h != null) {
+    metricRows.push({
+      label: "p95 latency 24h",
+      value: `${avgP95Latency24h} ms`,
+      tone: avgP95Latency24h > 2000 ? "bad" : avgP95Latency24h > 800 ? "warn" : undefined,
+    });
+  }
+  if (downCount > 0) {
+    metricRows.push({ label: "Down", value: String(downCount), tone: "bad" });
+  }
+
+  const sections: RightContextPanelSection[] = [
+    {
+      title: "Health",
+      content: (
+        <div className="flex flex-col gap-2">
+          {metricRows.map((row) => (
+            <div key={row.label} className="flex items-center justify-between gap-2">
+              <span className="text-vf-micro text-vf-subtle">{row.label}</span>
+              <span
+                className={
+                  row.tone === "bad"
+                    ? "text-vf-small font-mono tabular-nums text-vf-bad"
+                    : row.tone === "warn"
+                      ? "text-vf-small font-mono tabular-nums text-vf-warn"
+                      : row.tone === "ok"
+                        ? "text-vf-small font-mono tabular-nums text-vf-ok"
+                        : "text-vf-small font-mono tabular-nums text-vf-text"
+                }
+              >
+                {row.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    ...(capabilityCoverage.length > 0
+      ? [{
+          title: "Capabilities",
+          content: (
+            <div className="flex flex-wrap gap-1.5">
+              {capabilityCoverage.map((cap) => (
+                <span
+                  key={cap}
+                  className="text-vf-micro font-mono px-1.5 py-0.5 rounded border border-[var(--vf-border)] bg-[var(--vf-surface-2)] text-vf-subtle"
+                >
+                  {cap}
+                </span>
+              ))}
+            </div>
+          ),
+        }]
+      : []),
+  ];
+
+  return (
+    <RightContextPanel
+      title={railTitle}
+      status={<StatusDotLabel tone={railTone} label="" pulse={railTone === "ok"} />}
+      sections={sections}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Live-apply banner (shown after every write)
 
 function LiveApplyBanner({ onDismiss }: { onDismiss: () => void }) {
   return (
-    <div
-      role="status"
-      className="rounded-vf-md border-vf-ok/40 bg-vf-ok/10 flex flex-wrap items-center justify-between gap-3 border px-4 py-3"
-    >
-      <p className="text-vf-small text-vf-text">
-        Saved — applied live. No restart needed.
-      </p>
-      <Button size="sm" variant="ghost" onClick={onDismiss}>
-        Dismiss
-      </Button>
-    </div>
+    <IncidentBanner
+      tone="info"
+      title="Saved — applied live. No restart needed."
+      onDismiss={onDismiss}
+    />
   );
 }
 
@@ -182,22 +539,22 @@ function LiveApplyBanner({ onDismiss }: { onDismiss: () => void }) {
 // Error banner
 
 function ErrorBanner({
-  children,
+  title,
   onRetry,
 }: {
-  children: ReactNode;
+  title: string;
   onRetry: () => void;
 }) {
   return (
-    <div
-      role="alert"
-      className="rounded-vf-md border-vf-bad/40 bg-vf-bad/10 flex flex-wrap items-center justify-between gap-3 border p-4"
-    >
-      <p className="text-vf-small text-vf-text">{children}</p>
-      <Button size="sm" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
+    <IncidentBanner
+      tone="bad"
+      title={title}
+      actions={
+        <Button size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      }
+    />
   );
 }
 
@@ -206,6 +563,9 @@ function ErrorBanner({
 
 export default function AdminServicesPage() {
   const queryClient = useQueryClient();
+  const [routeServiceTarget, setRouteServiceTarget] = useState<string | null>(
+    null,
+  );
 
   const {
     data: registry,
@@ -217,10 +577,22 @@ export default function AdminServicesPage() {
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
   });
+  const { data: statusData } = useQuery({
+    queryKey: queryKeys.status,
+    queryFn: api.status,
+    staleTime: 10_000,
+  });
 
   const services = useMemo(
     () => (registry ? servicesFromRegistry(registry) : []),
     [registry],
+  );
+  const liveBackends = useMemo(() => backendByServiceId(statusData), [statusData]);
+  const enabledCount = services.filter((svc) => svc.enabled).length;
+  const disabledCount = services.length - enabledCount;
+  const modelMappingCount = services.reduce(
+    (count, svc) => count + (svc.config.models?.length ?? 0),
+    0,
   );
 
   const [addOpen, setAddOpen] = useState(false);
@@ -230,6 +602,9 @@ export default function AdminServicesPage() {
   const [detectTarget, setDetectTarget] = useState<Service | null>(null);
   const [modelsTarget, setModelsTarget] = useState<Service | null>(null);
   const [litellmOpen, setLitellmOpen] = useState(false);
+  const [panelService, setPanelService] = useState<Service | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const consumedServiceTargetRef = useRef<string | null>(null);
   /** Banner shown after any write confirming live apply. */
   const [restartBanner, setRestartBanner] = useState(false);
 
@@ -243,8 +618,13 @@ export default function AdminServicesPage() {
 
   // Toggle enabled — optimistic update
   const toggleMutation = useMutation({
-    mutationFn: ({ serviceId, enabled }: { serviceId: string; enabled: boolean }) =>
-      api.services.toggleEnabled(serviceId, enabled),
+    mutationFn: ({
+      serviceId,
+      enabled,
+    }: {
+      serviceId: string;
+      enabled: boolean;
+    }) => api.services.toggleEnabled(serviceId, enabled),
     onMutate: async ({ serviceId, enabled }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.serviceRegistry });
       const previous = queryClient.getQueryData<ServiceRegistry>(
@@ -271,7 +651,9 @@ export default function AdminServicesPage() {
       if (context?.previous) {
         queryClient.setQueryData(queryKeys.serviceRegistry, context.previous);
       }
-      toast.error(`Couldn't update service`, { description: errorMessage(err) });
+      toast.error(`Couldn't update service`, {
+        description: errorMessage(err),
+      });
     },
     onSuccess: (newRegistry) => {
       updateRegistry(newRegistry);
@@ -291,79 +673,315 @@ export default function AdminServicesPage() {
       setRemoveTarget(null);
     },
     onError: (err) => {
-      toast.error("Couldn't remove service", { description: errorMessage(err) });
+      toast.error("Couldn't remove service", {
+        description: errorMessage(err),
+      });
     },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry }),
   });
 
-  const columns: DataTableColumn<Service>[] = [
-    {
-      id: "service",
-      header: "Service",
-      cell: (svc) => (
-        <span className="flex min-w-0 flex-wrap items-center gap-2">
-          <EntityRef name={svc.name} id={svc.id} />
-          <SourceBadge
-            source={svc.source as BadgeSource}
-            managed={isManagedSubstrate(svc)}
-          />
-        </span>
-      ),
-    },
-    {
-      id: "endpoint",
-      header: "Endpoint",
-      cell: (svc) => (
-        <span className="text-vf-micro text-vf-subtle font-mono">
-          {isManagedSubstrate(svc) ? "managed" : endpointDisplay(svc)}
-        </span>
-      ),
-    },
-    {
-      id: "capabilities",
-      header: "Capabilities",
-      cell: (svc) => (
-        <span className="flex flex-wrap gap-1">
-          {svc.capabilities.length === 0 ? (
-            <span className="text-vf-subtle">—</span>
-          ) : (
-            svc.capabilities.map((cap) => (
-              <Badge key={cap} sm tone="neutral">
-                {capabilityLabel(cap)}
-              </Badge>
-            ))
+  const filteredServices = useMemo(() => {
+    if (!searchQuery.trim()) return services;
+    const q = searchQuery.toLowerCase();
+    return services.filter(
+      (svc) =>
+        svc.name.toLowerCase().includes(q) ||
+        endpointDisplay(svc).toLowerCase().includes(q) ||
+        svc.capabilities.some((c) => capabilityLabel(c).toLowerCase().includes(q)),
+    );
+  }, [services, searchQuery]);
+
+  const routeSelectedService = useMemo(() => {
+    if (!routeServiceTarget) return null;
+    return (
+      services.find((svc) =>
+        serviceMatchesRouteTarget(svc, routeServiceTarget),
+      ) ?? null
+    );
+  }, [routeServiceTarget, services]);
+
+  useEffect(() => {
+    if (!routeServiceTarget) {
+      consumedServiceTargetRef.current = null;
+      return;
+    }
+    if (consumedServiceTargetRef.current === routeServiceTarget) {
+      return;
+    }
+    if (!routeSelectedService) {
+      return;
+    }
+    if (panelService?.id !== routeSelectedService.id) {
+      setPanelService(routeSelectedService);
+    }
+    consumedServiceTargetRef.current = routeServiceTarget;
+  }, [panelService?.id, routeServiceTarget, routeSelectedService]);
+
+  const missingRouteService =
+    routeServiceTarget !== null &&
+    routeSelectedService === null &&
+    !isPending &&
+    services.length > 0;
+
+  useEffect(() => {
+    if (routeServiceTarget && !routeSelectedService && panelService !== null) {
+      setPanelService(null);
+    }
+  }, [panelService, routeSelectedService, routeServiceTarget]);
+
+  const panelSections = useMemo((): RightContextPanelSection[] => {
+    if (!panelService) return [];
+    const svc = panelService;
+    const backend = liveBackends.get(svc.id);
+    const sections: RightContextPanelSection[] = [];
+
+    // Connection info
+    sections.push({
+      title: "Connection",
+      content: (
+        <div className="flex flex-col gap-2">
+          {!isManagedSubstrate(svc) && (
+            <div className="text-vf-small text-vf-subtle font-mono break-all">
+              {endpointDisplay(svc)}
+            </div>
           )}
-        </span>
+          <div className="flex flex-wrap gap-1">
+            <SourceBadge
+              source={svc.source as BadgeSource}
+              managed={isManagedSubstrate(svc)}
+            />
+            {svc.role && svc.role !== "required" && (
+              <Badge sm tone="neutral">{svc.role}</Badge>
+            )}
+          </div>
+          {backend?.last_error && (
+            <p className="text-vf-micro font-mono break-all text-vf-bad">
+              {backend.last_error}
+            </p>
+          )}
+        </div>
       ),
-      hideOnMobile: true,
-    },
-    {
-      id: "enabled",
-      header: "Enabled",
-      cell: (svc) => (
-        // stopPropagation so clicking the switch does NOT open the Edit dialog
-        <span onClick={(e) => e.stopPropagation()}>
-          <Switch
-            checked={svc.enabled}
-            disabled={toggleMutation.isPending}
-            aria-label={`Toggle ${svc.name}`}
-            onCheckedChange={(checked) =>
-              toggleMutation.mutate({ serviceId: svc.id, enabled: checked })
-            }
-          />
-        </span>
+    });
+
+    // Capabilities + model count
+    if (svc.capabilities.length > 0 || (svc.config.models?.length ?? 0) > 0) {
+      sections.push({
+        title: "Routing",
+        content: (
+          <div className="flex flex-col gap-2">
+            {svc.capabilities.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {svc.capabilities.map((cap) => (
+                  <Badge key={cap} sm tone="neutral">
+                    {capabilityLabel(cap)}
+                  </Badge>
+                ))}
+              </div>
+            )}
+            {(svc.config.models?.length ?? 0) > 0 && (
+              <p className="text-vf-micro text-vf-muted">
+                {svc.config.models!.length} model{svc.config.models!.length !== 1 ? "s" : ""} mapped
+              </p>
+            )}
+          </div>
+        ),
+      });
+    }
+
+    // History — only when real sample data exists
+    const hist = backend?.history;
+    const latencyPts = toChartPoints(hist?.latency_series);
+    const statusPts = toChartPoints(hist?.status_series);
+    if (hist && (hist.sample_count_24h > 0 || latencyPts.length >= 2)) {
+      const ltTone = latencyTone(hist);
+      sections.push({
+        title: "History (24h)",
+        content: (
+          <div className="flex flex-col gap-3">
+            {/* Numeric summary row */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {hist.uptime_pct_24h != null && (
+                <>
+                  <span className="text-vf-micro text-vf-subtle">Uptime 24h</span>
+                  <span className={`text-vf-small font-mono tabular-nums text-right ${
+                    hist.uptime_pct_24h < 95 ? "text-vf-bad" : hist.uptime_pct_24h < 99 ? "text-vf-warn" : "text-vf-ok"
+                  }`}>{formatUptime(hist.uptime_pct_24h)}</span>
+                </>
+              )}
+              {hist.uptime_pct_7d != null && (
+                <>
+                  <span className="text-vf-micro text-vf-subtle">Uptime 7d</span>
+                  <span className={`text-vf-small font-mono tabular-nums text-right ${
+                    hist.uptime_pct_7d < 95 ? "text-vf-bad" : hist.uptime_pct_7d < 99 ? "text-vf-warn" : "text-vf-ok"
+                  }`}>{formatUptime(hist.uptime_pct_7d)}</span>
+                </>
+              )}
+              {hist.avg_latency_ms_24h != null && (
+                <>
+                  <span className="text-vf-micro text-vf-subtle">Avg latency 24h</span>
+                  <span className="text-vf-small font-mono tabular-nums text-vf-text text-right">{hist.avg_latency_ms_24h} ms</span>
+                </>
+              )}
+              {hist.p95_latency_ms_24h != null && (
+                <>
+                  <span className="text-vf-micro text-vf-subtle">p95 latency 24h</span>
+                  <span className={`text-vf-small font-mono tabular-nums text-right ${
+                    hist.p95_latency_ms_24h > 2000 ? "text-vf-bad" : hist.p95_latency_ms_24h > 800 ? "text-vf-warn" : "text-vf-text"
+                  }`}>{hist.p95_latency_ms_24h} ms</span>
+                </>
+              )}
+              {hist.sample_count_24h > 0 && (
+                <>
+                  <span className="text-vf-micro text-vf-subtle">Probes</span>
+                  <span className="text-vf-small font-mono tabular-nums text-vf-muted text-right">{hist.sample_count_24h}</span>
+                </>
+              )}
+            </div>
+            {/* Latency sparkline */}
+            {latencyPts.length >= 2 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-vf-micro text-vf-subtle">Latency trend (24h)</span>
+                <TrendLineChart series={latencyPts} tone={ltTone} height={36} showTooltip />
+              </div>
+            )}
+            {/* Status sparkline */}
+            {statusPts.length >= 2 && (
+              <div className="flex flex-col gap-1">
+                <span className="text-vf-micro text-vf-subtle">Status trend (24h)</span>
+                <TrendLineChart series={statusPts} tone="ok" height={24} />
+              </div>
+            )}
+          </div>
+        ),
+      });
+    }
+
+    // Operator note
+    if (svc.config.note) {
+      sections.push({
+        title: "Note",
+        content: (
+          <p className="text-vf-small text-vf-muted">{svc.config.note}</p>
+        ),
+      });
+    }
+
+    sections.push({
+      title: "Actions",
+      content: (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onClick={() => { setEditTarget(svc); setPanelService(null); }}>
+            Edit…
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => { setModelsTarget(svc); setPanelService(null); }}>
+            Models…
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => { setTestTarget(svc); setPanelService(null); }}>
+            Test connection…
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => { setDetectTarget(svc); setPanelService(null); }}>
+            Detect models…
+          </Button>
+          {!isManagedSubstrate(svc) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => { setRemoveTarget(svc); setPanelService(null); }}
+            >
+              Remove…
+            </Button>
+          )}
+        </div>
       ),
-    },
-  ];
+    });
+
+    return sections;
+  }, [panelService, liveBackends]);
+
+
+  // Derive aggregate live metrics from backend status
+  const avgLatencyMs = useMemo(() => {
+    const latencies = (statusData?.backends ?? [])
+      .map((b) => b.latency_ms)
+      .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+    if (latencies.length === 0) return null;
+    return latencies.reduce((sum, v) => sum + v, 0) / latencies.length;
+  }, [statusData]);
+
+  const downCount = useMemo(() =>
+    (statusData?.backends ?? []).filter((b) => b.live_status === "down").length,
+    [statusData],
+  );
+
+  const degradedCount = useMemo(() =>
+    (statusData?.backends ?? []).filter((b) => b.live_status === "degraded").length,
+    [statusData],
+  );
+
+  const heroTone = downCount > 0
+    ? ("bad" as const)
+    : degradedCount > 0 || disabledCount > 0
+      ? ("warn" as const)
+      : ("ok" as const);
+
+  const heroTitle = downCount > 0
+    ? `${downCount} service${downCount > 1 ? "s" : ""} down`
+    : degradedCount > 0
+      ? `${degradedCount} service${degradedCount > 1 ? "s" : ""} degraded`
+      : disabledCount > 0
+        ? `${disabledCount} service${disabledCount > 1 ? "s" : ""} disabled`
+        : "All services operational";
+
+  const unreachableCount = downCount + degradedCount;
+  const heroDetail = services.length === 0
+    ? "No services configured yet."
+    : unreachableCount > 0
+      ? `${enabledCount} of ${services.length} backends enabled · ${unreachableCount} unreachable.`
+      : `${enabledCount} of ${services.length} backends enabled and reachable.`;
+
+  // Capability coverage for the right rail
+  const capabilityCoverage = useMemo(() => {
+    const caps = new Set<string>();
+    services.filter((s) => s.enabled).forEach((s) => s.capabilities.forEach((c) => caps.add(c)));
+    return [...caps].map(capabilityLabel);
+  }, [services]);
+
+  // Services with real errors from status data
+  const servicesWithErrors = useMemo(() => {
+    return (statusData?.backends ?? []).filter(
+      (b) => b.last_error && (b.live_status === "down" || b.live_status === "degraded")
+    );
+  }, [statusData]);
+
+  // Aggregate history stats across all backends for the summary rail
+  const avgUptime24h = useMemo(() => {
+    const vals = (statusData?.backends ?? [])
+      .map((b) => b.history?.uptime_pct_24h)
+      .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+    if (vals.length === 0) return null;
+    return vals.reduce((sum, v) => sum + v, 0) / vals.length;
+  }, [statusData]);
+
+  const avgP95Latency24h = useMemo(() => {
+    const vals = (statusData?.backends ?? [])
+      .map((b) => b.history?.p95_latency_ms_24h)
+      .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+    if (vals.length === 0) return null;
+    return Math.round(vals.reduce((sum, v) => sum + v, 0) / vals.length);
+  }, [statusData]);
 
   return (
-    <main className="mx-auto flex w-full max-w-[1080px] flex-col gap-10 px-4 py-8 md:px-6">
+    <div className="flex w-full flex-col gap-8">
+      <Suspense fallback={null}>
+        <RouteServiceTargetSync onChange={setRouteServiceTarget} />
+      </Suspense>
       <section className="flex flex-col gap-4">
-        <SectionHeader
+        <SectionActionHeader
           kicker="infrastructure"
-          title="Services"
-          description="The upstream backends this gateway fronts. Changes apply live — no restart needed."
+          title="System Status"
+          description="Real-time health of your upstream backends."
+          count={services.length || undefined}
           action={
             <Button variant="primary" onClick={() => setAddOpen(true)}>
               Add service
@@ -371,76 +989,215 @@ export default function AdminServicesPage() {
           }
         />
 
+        {/* Operational status hero — vf-status-hero gives it the panel + ambient glow */}
+        <div className="vf-status-hero">
+          <div className="vf-status-hero-top">
+            <div className="flex flex-col gap-2">
+              <h2 className="vf-status-hero-title">{heroTitle}</h2>
+              <StatusDotLabel
+                tone={heroTone}
+                label={heroDetail}
+                pulse={heroTone === "ok"}
+              />
+            </div>
+          </div>
+          <div className="vf-status-hero-metrics">
+            <div className="vf-health-metric">
+              <span
+                className={`vf-health-metric-value tabular-nums ${
+                  unreachableCount > 0
+                    ? "text-vf-bad"
+                    : services.length > 0 && enabledCount === services.length
+                      ? "text-vf-ok"
+                      : disabledCount > 0
+                        ? "text-vf-warn"
+                        : ""
+                }`}
+              >
+                {enabledCount}/{services.length || "0"}
+              </span>
+              <span className="vf-health-metric-label">
+                {unreachableCount > 0
+                  ? `enabled · ${unreachableCount} unreachable`
+                  : "services enabled"}
+              </span>
+            </div>
+            <div className="vf-health-metric">
+              <span
+                className={`vf-health-metric-value tabular-nums ${
+                  avgLatencyMs !== null && avgLatencyMs > 1000 ? "text-vf-warn" : ""
+                }`}
+              >
+                {avgLatencyMs !== null ? `${Math.round(avgLatencyMs)} ms` : "—"}
+              </span>
+              <span className="vf-health-metric-label">avg latency</span>
+            </div>
+            <div className="vf-health-metric">
+              <span className="vf-health-metric-value tabular-nums">{modelMappingCount}</span>
+              <span className="vf-health-metric-label">model mappings</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Incident banner — only shown when real problems exist */}
+        {(downCount > 0 || degradedCount > 0) && servicesWithErrors.length > 0 && (
+          <IncidentBanner
+            tone={downCount > 0 ? "bad" : "warn"}
+            title={heroTitle}
+            detail={servicesWithErrors[0]?.last_error ?? undefined}
+          />
+        )}
+
         {restartBanner && (
           <LiveApplyBanner onDismiss={() => setRestartBanner(false)} />
         )}
 
         {isError && !registry ? (
-          <ErrorBanner onRetry={() => void refetch()}>
-            Couldn&apos;t load services. {errorMessage(error)}
-          </ErrorBanner>
+          <ErrorBanner
+            title={`Couldn't load services. ${errorMessage(error)}`}
+            onRetry={() => void refetch()}
+          />
         ) : (
-          <DataTable
-            label="Services"
-            columns={columns}
-            rows={services}
-            rowKey={(svc) => svc.id}
-            loading={isPending}
-            onRowClick={(svc) => setEditTarget(svc)}
-            empty={
-              <EmptyState
-                action={
-                  <Button onClick={() => setAddOpen(true)}>Add service</Button>
-                }
-              >
-                No services configured. Add one to route traffic.
-              </EmptyState>
-            }
-            rowMenu={(svc) => {
-              const managed = isManagedSubstrate(svc);
-              return (
-                <OverflowMenu label={`Actions for ${svc.name}`}>
-                  <OverflowMenuItem onSelect={() => setEditTarget(svc)}>
-                    Edit…
-                  </OverflowMenuItem>
-                  <OverflowMenuItem onSelect={() => setModelsTarget(svc)}>
-                    Models…
-                  </OverflowMenuItem>
-                  <OverflowMenuItem onSelect={() => setTestTarget(svc)}>
-                    Test connection…
-                  </OverflowMenuItem>
-                  <OverflowMenuItem onSelect={() => setDetectTarget(svc)}>
-                    Detect models…
-                  </OverflowMenuItem>
-                  {managed ? (
-                    <>
-                      <OverflowMenuSeparator />
-                      <OverflowMenuItem
-                        onSelect={() =>
-                          toggleMutation.mutate({
-                            serviceId: svc.id,
-                            enabled: !svc.enabled,
-                          })
-                        }
-                      >
-                        {svc.enabled ? "Disable" : "Enable"}
-                      </OverflowMenuItem>
-                    </>
+          <>
+            <FilterToolbar
+              search={
+                <input
+                  type="search"
+                  className="vf-field-input w-full"
+                  placeholder="Filter services…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  aria-label="Filter services"
+                />
+              }
+            />
+            {missingRouteService && (
+              <IncidentBanner
+                tone="warn"
+                title="No service matches this link"
+                detail={`The service target "${routeServiceTarget}" is not in the current service list.`}
+              />
+            )}
+
+            {/* Two-column layout: service feed left, right context rail — vf-page-layout applies brand sizing */}
+            <div className="vf-page-layout">
+              <div className="vf-page-main">
+                {isPending ? (
+                  <div className="vf-feed-panel flex flex-col gap-0" aria-busy="true">
+                    <Skeleton className="h-16 w-full rounded-none border-b border-[var(--vf-border)]" />
+                    <Skeleton className="h-16 w-full rounded-none border-b border-[var(--vf-border)]" />
+                    <Skeleton className="h-16 w-full rounded-none" />
+                  </div>
+                ) : filteredServices.length === 0 ? (
+                  services.length === 0 ? (
+                    <EmptyOperationalState
+                      title="No services configured"
+                      detail="Add an upstream backend to start routing traffic."
+                      action={
+                        <Button onClick={() => setAddOpen(true)}>Add service</Button>
+                      }
+                    />
                   ) : (
+                    <EmptyOperationalState
+                      title="No services match the filter"
+                      action={
+                        <Button variant="ghost" size="sm" onClick={() => setSearchQuery("")}>
+                          Clear filter
+                        </Button>
+                      }
+                    />
+                  )
+                ) : (
+                  <div className="vf-feed-panel overflow-hidden">
+                    {filteredServices.map((svc) => {
+                      const backend = liveBackends.get(svc.id);
+                      const { tone, label } = serviceLiveTone(svc, backend);
+                      const metrics = serviceLiveMetrics(backend);
+                      const isSelected = panelService?.id === svc.id;
+                      return (
+                        <ServiceTableRow
+                          key={svc.id}
+                          svc={svc}
+                          tone={tone}
+                          statusLabel={label}
+                          metrics={metrics}
+                          history={backend?.history}
+                          isSelected={isSelected}
+                          togglePending={toggleMutation.isPending}
+                          onSelect={() => setPanelService(isSelected ? null : svc)}
+                          onToggle={(checked) =>
+                            toggleMutation.mutate({ serviceId: svc.id, enabled: checked })
+                          }
+                          onEdit={() => setEditTarget(svc)}
+                          onModels={() => setModelsTarget(svc)}
+                          onTest={() => setTestTarget(svc)}
+                          onDetect={() => setDetectTarget(svc)}
+                          onRemove={() => setRemoveTarget(svc)}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Mobile sheet — shown when a service is tapped on small screens */}
+              <Sheet
+                open={panelService !== null}
+                onOpenChange={(open) => { if (!open) setPanelService(null); }}
+              >
+                <SheetContent>
+                  {panelService && (
                     <>
-                      <OverflowMenuSeparator />
-                      <OverflowMenuItem
-                        danger
-                        onSelect={() => setRemoveTarget(svc)}
-                      >
-                        Remove…
-                      </OverflowMenuItem>
+                      <SheetHeader>
+                        <SheetTitle>{panelService.name}</SheetTitle>
+                      </SheetHeader>
+                      <div className="mt-4">
+                        <RightContextPanel
+                          title={panelService.name}
+                          subtitle={isManagedSubstrate(panelService) ? "managed substrate" : endpointDisplay(panelService)}
+                          status={(() => {
+                            const b = liveBackends.get(panelService.id);
+                            const { tone, label } = serviceLiveTone(panelService, b);
+                            return <StatusDotLabel tone={tone} label={label} pulse={tone === "ok"} />;
+                          })()}
+                          sections={panelSections}
+                          className="border-0 shadow-none"
+                        />
+                      </div>
                     </>
                   )}
-                </OverflowMenu>
-              );
-            }}
-          />
+                </SheetContent>
+              </Sheet>
+
+              {/* Right rail: hidden on mobile (sheet handles it); vf-right-rail on md+ */}
+              <div className="vf-right-rail hidden md:flex">
+                {panelService ? (
+                  <RightContextPanel
+                    title={panelService.name}
+                    subtitle={isManagedSubstrate(panelService) ? "managed substrate" : endpointDisplay(panelService)}
+                    status={(() => {
+                      const b = liveBackends.get(panelService.id);
+                      const { tone, label } = serviceLiveTone(panelService, b);
+                      return <StatusDotLabel tone={tone} label={label} pulse={tone === "ok"} />;
+                    })()}
+                    sections={panelSections}
+                  />
+                ) : (
+                  <StatusSummaryRail
+                    enabledCount={enabledCount}
+                    totalCount={services.length}
+                    downCount={downCount}
+                    degradedCount={degradedCount}
+                    avgLatencyMs={avgLatencyMs}
+                    modelMappingCount={modelMappingCount}
+                    capabilityCoverage={capabilityCoverage}
+                    avgUptime24h={avgUptime24h}
+                    avgP95Latency24h={avgP95Latency24h}
+                  />
+                )}
+              </div>
+            </div>
+          </>
         )}
       </section>
 
@@ -471,7 +1228,9 @@ export default function AdminServicesPage() {
         onOpenChange={setAddOpen}
         onSaved={(newRegistry) => {
           updateRegistry(newRegistry);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry });
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.serviceRegistry,
+          });
           setAddOpen(false);
           showRestartBanner();
           toast.success("Service added");
@@ -485,7 +1244,9 @@ export default function AdminServicesPage() {
         }}
         onSaved={(newRegistry) => {
           updateRegistry(newRegistry);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry });
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.serviceRegistry,
+          });
           setEditTarget(null);
           showRestartBanner();
           toast.success("Service updated");
@@ -503,7 +1264,9 @@ export default function AdminServicesPage() {
         }}
         onSaved={(newRegistry) => {
           updateRegistry(newRegistry);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry });
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.serviceRegistry,
+          });
           showRestartBanner();
         }}
       />
@@ -519,16 +1282,6 @@ export default function AdminServicesPage() {
         service={detectTarget}
         onOpenChange={(open) => {
           if (!open) setDetectTarget(null);
-        }}
-        onAddModels={(models) => {
-          if (detectTarget) {
-            setModelsTarget(detectTarget);
-            setDetectTarget(null);
-            // Pass detected models into the models dialog via a ref-free approach:
-            // The models dialog opens and pre-fills from the service's existing
-            // models + the detected ones merged by the user.
-            void models; // will be offered inside ModelsDialog via detectTarget
-          }
         }}
       />
 
@@ -566,7 +1319,7 @@ export default function AdminServicesPage() {
           if (removeTarget) removeMutation.mutate(removeTarget.id);
         }}
       />
-    </main>
+    </div>
   );
 }
 
@@ -605,17 +1358,28 @@ function ServiceForm({
   testing,
   presets,
 }: ServiceFormProps) {
-  const set = (key: keyof ServiceFormState) => (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
-  ) => onChange({ ...value, [key]: e.target.value });
+  const set =
+    (key: keyof ServiceFormState) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+      onChange({ ...value, [key]: e.target.value });
 
   return (
     <div className="flex flex-col gap-4">
+      {error && (
+        <p role="alert" className="text-vf-small text-vf-bad">
+          {error}
+        </p>
+      )}
+
       <Field
         label="Provider"
         help='Choose a preset to pre-fill defaults. "Custom (OpenAI-compatible)" works with any OpenAI-compatible API.'
       >
-        <Select value={value.preset} onChange={set("preset")} disabled={disabled}>
+        <Select
+          value={value.preset}
+          onChange={set("preset")}
+          disabled={disabled}
+        >
           {presets.map((p) => (
             <option key={p.id} value={p.id}>
               {p.label}
@@ -634,7 +1398,11 @@ function ServiceForm({
         />
       </Field>
 
-      <Field label="Base URL" required help="Full URL including scheme, host, port, and path.">
+      <Field
+        label="Base URL"
+        required
+        help="Full URL including scheme, host, port, and path."
+      >
         <Input
           value={value.base_url}
           onChange={set("base_url")}
@@ -693,12 +1461,6 @@ function ServiceForm({
           )}
         </div>
       )}
-
-      {error && (
-        <p role="alert" className="text-vf-small text-vf-bad">
-          {error}
-        </p>
-      )}
     </div>
   );
 }
@@ -753,7 +1515,10 @@ function AddServiceDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open && (
-        <AddServiceDialogContent onOpenChange={onOpenChange} onSaved={onSaved} />
+        <AddServiceDialogContent
+          onOpenChange={onOpenChange}
+          onSaved={onSaved}
+        />
       )}
     </Dialog>
   );
@@ -805,7 +1570,9 @@ function AddServiceDialogContent({
     setTesting(true);
     setProbe(null);
     try {
-      const result = await api.services.testConnection({ base_url: form.base_url.trim() });
+      const result = await api.services.testConnection({
+        base_url: form.base_url.trim(),
+      });
       setProbe(result);
     } catch (err) {
       toast.error("Test failed", { description: errorMessage(err) });
@@ -838,8 +1605,7 @@ function AddServiceDialogContent({
           <DialogTitle>Add service</DialogTitle>
           <DialogDescription>
             Register an upstream backend. Select a preset to pre-fill defaults,
-            or choose{" "}
-            <strong>Custom (OpenAI-compatible)</strong> for any
+            or choose <strong>Custom (OpenAI-compatible)</strong> for any
             OpenAI-compatible API. Changes apply live — no restart needed.
           </DialogDescription>
         </DialogHeader>
@@ -937,7 +1703,10 @@ const PROTOCOL_OPTIONS = [
 // Role values per registry semantics
 const ROLE_OPTIONS = [
   { value: "required", label: "Required — gateway will error if unavailable" },
-  { value: "optional", label: "Optional — gateway routes around if unavailable" },
+  {
+    value: "optional",
+    label: "Optional — gateway routes around if unavailable",
+  },
   { value: "standby", label: "Standby — only used when explicitly requested" },
 ];
 
@@ -986,14 +1755,16 @@ function serviceToEditForm(service: Service): EditFormState {
     // ComfyUI protocol-specific fields — always hydrated from config so they
     // survive a round-trip even when the user edits another section.
     workflows_dir: cfg.workflows_dir != null ? String(cfg.workflows_dir) : "",
-    video_workflows_dir: cfg.video_workflows_dir != null ? String(cfg.video_workflows_dir) : "",
+    video_workflows_dir:
+      cfg.video_workflows_dir != null ? String(cfg.video_workflows_dir) : "",
     video_timeout: cfg.video_timeout != null ? String(cfg.video_timeout) : "",
     default_model: cfg.default_model != null ? String(cfg.default_model) : "",
     role: service.role ?? "required",
     priority: service.priority != null ? String(service.priority) : "100",
     gpu_required: Boolean(res.gpu_required),
     max_parallel: res.max_parallel != null ? String(res.max_parallel) : "",
-    vram_gb_estimate: res.vram_gb_estimate != null ? String(res.vram_gb_estimate) : "",
+    vram_gb_estimate:
+      res.vram_gb_estimate != null ? String(res.vram_gb_estimate) : "",
     duration_class: String(res.duration_class ?? "interactive"),
     note: cfg.note ?? "",
     enabled: service.enabled,
@@ -1005,9 +1776,21 @@ function serviceToEditForm(service: Service): EditFormState {
 // config" read-only disclosure (H2) so operators can see everything the record
 // holds.
 const FORM_MODELED_CONFIG_KEYS = new Set([
-  "base_url", "host", "port", "base_path", "protocol", "api_key_env",
-  "health_endpoint", "timeout", "native_passthrough", "note", "resources",
-  "models", "workflows_dir", "video_workflows_dir", "video_timeout",
+  "base_url",
+  "host",
+  "port",
+  "base_path",
+  "protocol",
+  "api_key_env",
+  "health_endpoint",
+  "timeout",
+  "native_passthrough",
+  "note",
+  "resources",
+  "models",
+  "workflows_dir",
+  "video_workflows_dir",
+  "video_timeout",
   "default_model",
 ]);
 
@@ -1030,7 +1813,8 @@ function editFormToApiBody(form: EditFormState): Record<string, unknown> {
   };
   if (form.api_key_env.trim()) body.api_key_env = form.api_key_env.trim();
   if (form.protocol) body.protocol = form.protocol;
-  if (form.health_endpoint.trim()) body.health_endpoint = form.health_endpoint.trim();
+  if (form.health_endpoint.trim())
+    body.health_endpoint = form.health_endpoint.trim();
   if (form.timeout.trim()) body.timeout = parseInt(form.timeout, 10);
   if (form.priority.trim()) body.priority = parseInt(form.priority, 10);
   if (form.note.trim()) body.note = form.note.trim();
@@ -1045,16 +1829,24 @@ function editFormToApiBody(form: EditFormState): Record<string, unknown> {
   // they round-trip even when the user edits another section (H1).
   // For non-comfyui services they are omitted entirely.
   if (isComfyUI) {
-    if (form.workflows_dir.trim()) body.workflows_dir = form.workflows_dir.trim();
-    if (form.video_workflows_dir.trim()) body.video_workflows_dir = form.video_workflows_dir.trim();
-    if (form.video_timeout.trim()) body.video_timeout = parseInt(form.video_timeout, 10);
-    if (form.default_model.trim()) body.default_model = form.default_model.trim();
+    if (form.workflows_dir.trim())
+      body.workflows_dir = form.workflows_dir.trim();
+    if (form.video_workflows_dir.trim())
+      body.video_workflows_dir = form.video_workflows_dir.trim();
+    if (form.video_timeout.trim())
+      body.video_timeout = parseInt(form.video_timeout, 10);
+    if (form.default_model.trim())
+      body.default_model = form.default_model.trim();
   }
 
   // Build resources sub-object — only include what's non-empty
-  const resources: Record<string, unknown> = { gpu_required: form.gpu_required };
-  if (form.max_parallel.trim()) resources.max_parallel = parseInt(form.max_parallel, 10);
-  if (form.vram_gb_estimate.trim()) resources.vram_gb_estimate = parseFloat(form.vram_gb_estimate);
+  const resources: Record<string, unknown> = {
+    gpu_required: form.gpu_required,
+  };
+  if (form.max_parallel.trim())
+    resources.max_parallel = parseInt(form.max_parallel, 10);
+  if (form.vram_gb_estimate.trim())
+    resources.vram_gb_estimate = parseFloat(form.vram_gb_estimate);
   if (form.duration_class) resources.duration_class = form.duration_class;
   body.resources = resources;
 
@@ -1103,10 +1895,13 @@ function EditServiceDialogContent({
     queryKey: queryKeys.servicePresets,
     queryFn: api.services.presets,
   });
-  const capabilityChoices = presetsData?.capabilities ?? CAPABILITY_CHOICES_FALLBACK;
+  const capabilityChoices =
+    presetsData?.capabilities ?? CAPABILITY_CHOICES_FALLBACK;
 
   // Full edit form state (non-managed rows)
-  const [form, setForm] = useState<EditFormState>(() => serviceToEditForm(service));
+  const [form, setForm] = useState<EditFormState>(() =>
+    serviceToEditForm(service),
+  );
   // Managed-row only fields
   const [managedName, setManagedName] = useState(service.name);
   const [managedEnabled, setManagedEnabled] = useState(service.enabled);
@@ -1120,7 +1915,11 @@ function EditServiceDialogContent({
   const unknownKeys = unknownConfigKeys(service);
 
   function set<K extends keyof EditFormState>(key: K) {
-    return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    return (
+      e: React.ChangeEvent<
+        HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      >,
+    ) => {
       setForm((prev) => ({ ...prev, [key]: e.target.value }));
     };
   }
@@ -1162,7 +1961,9 @@ function EditServiceDialogContent({
     setTesting(true);
     setProbe(null);
     try {
-      const result = await api.services.testConnection({ base_url: form.base_url.trim() });
+      const result = await api.services.testConnection({
+        base_url: form.base_url.trim(),
+      });
       setProbe(result);
     } catch (err) {
       toast.error("Test failed", { description: errorMessage(err) });
@@ -1194,7 +1995,9 @@ function EditServiceDialogContent({
                 />
               </Field>
               <div className="flex items-center justify-between gap-4">
-                <span className="text-vf-small text-vf-text font-medium">Enabled</span>
+                <span className="text-vf-small text-vf-text font-medium">
+                  Enabled
+                </span>
                 <Switch
                   checked={managedEnabled}
                   onCheckedChange={setManagedEnabled}
@@ -1216,7 +2019,7 @@ function EditServiceDialogContent({
             <div className="flex flex-col gap-6">
               {/* ── Connection ──────────────────────────────── */}
               <div className="flex flex-col gap-4">
-                <p className="text-vf-micro text-vf-muted font-semibold uppercase tracking-wide">
+                <p className="text-vf-micro text-vf-muted font-semibold uppercase">
                   Connection
                 </p>
 
@@ -1309,13 +2112,13 @@ function EditServiceDialogContent({
               {/* ── Protocol-specific section ────────────────── */}
               {isComfyUI ? (
                 <div className="flex flex-col gap-4">
-                  <p className="text-vf-micro text-vf-muted font-semibold uppercase tracking-wide">
+                  <p className="text-vf-micro text-vf-muted font-semibold uppercase">
                     ComfyUI
                   </p>
                   <p className="text-vf-small text-vf-muted rounded-vf-md border-vf-border bg-vf-surface-2 border p-3">
                     ComfyUI is reached directly — image and video jobs bypass
-                    the LiteLLM substrate entirely. Workflow graphs are edited in
-                    ComfyUI itself; this section points the gateway at the
+                    the LiteLLM substrate entirely. Workflow graphs are edited
+                    in ComfyUI itself; this section points the gateway at the
                     workflow directory and sets a default.
                   </p>
 
@@ -1373,17 +2176,20 @@ function EditServiceDialogContent({
 
               {/* ── Routing ─────────────────────────────────── */}
               <div className="flex flex-col gap-4">
-                <p className="text-vf-micro text-vf-muted font-semibold uppercase tracking-wide">
+                <p className="text-vf-micro text-vf-muted font-semibold uppercase">
                   Routing
                 </p>
 
                 <fieldset className="flex flex-col gap-2">
-                  <legend className="text-vf-small text-vf-text font-medium mb-1">
+                  <legend className="text-vf-small text-vf-text mb-1 font-medium">
                     Capabilities
                   </legend>
                   <div className="flex flex-wrap gap-x-4 gap-y-2">
                     {capabilityChoices.map((cap) => (
-                      <label key={cap.id} className="flex items-center gap-2 cursor-pointer">
+                      <label
+                        key={cap.id}
+                        className="flex cursor-pointer items-center gap-2"
+                      >
                         <input
                           type="checkbox"
                           checked={form.capabilities.includes(cap.id)}
@@ -1413,13 +2219,17 @@ function EditServiceDialogContent({
                         Native passthrough
                       </span>
                       <span className="text-vf-micro text-vf-muted">
-                        Send requests straight to this backend instead of through the LiteLLM substrate.
+                        Send requests straight to this backend instead of
+                        through the LiteLLM substrate.
                       </span>
                     </div>
                     <Switch
                       checked={form.native_passthrough}
                       onCheckedChange={(checked) =>
-                        setForm((prev) => ({ ...prev, native_passthrough: checked }))
+                        setForm((prev) => ({
+                          ...prev,
+                          native_passthrough: checked,
+                        }))
                       }
                       disabled={save.isPending}
                       aria-label="Native passthrough"
@@ -1470,8 +2280,13 @@ function EditServiceDialogContent({
                       </p>
                       <dl className="flex flex-col gap-1.5">
                         {unknownKeys.map(([key, val]) => (
-                          <div key={key} className="flex flex-wrap items-start gap-x-3 gap-y-0.5">
-                            <dt className="text-vf-micro text-vf-subtle font-mono shrink-0">{key}</dt>
+                          <div
+                            key={key}
+                            className="flex flex-wrap items-start gap-x-3 gap-y-0.5"
+                          >
+                            <dt className="text-vf-micro text-vf-subtle shrink-0 font-mono">
+                              {key}
+                            </dt>
                             <dd className="text-vf-micro text-vf-text font-mono break-all">
                               {JSON.stringify(val)}
                             </dd>
@@ -1485,7 +2300,9 @@ function EditServiceDialogContent({
 
               {/* ── Enabled ─────────────────────────────────── */}
               <div className="flex items-center justify-between gap-4">
-                <span className="text-vf-small text-vf-text font-medium">Enabled</span>
+                <span className="text-vf-small text-vf-text font-medium">
+                  Enabled
+                </span>
                 <Switch
                   checked={form.enabled}
                   onCheckedChange={(checked) =>
@@ -1514,14 +2331,17 @@ function EditServiceDialogContent({
                 </button>
 
                 {showAdvanced && (
-                  <div className="flex flex-col gap-4 pl-4 pt-2">
+                  <div className="flex flex-col gap-4 pt-2 pl-4">
                     <fieldset className="flex flex-col gap-2">
-                      <legend className="text-vf-small text-vf-text font-medium mb-1">
+                      <legend className="text-vf-small text-vf-text mb-1 font-medium">
                         Role
                       </legend>
                       <div className="flex flex-col gap-2">
                         {ROLE_OPTIONS.map((opt) => (
-                          <label key={opt.value} className="flex items-start gap-2 cursor-pointer">
+                          <label
+                            key={opt.value}
+                            className="flex cursor-pointer items-start gap-2"
+                          >
                             <input
                               type="radio"
                               name="role"
@@ -1531,13 +2351,18 @@ function EditServiceDialogContent({
                               disabled={save.isPending}
                               className="accent-vf-accent mt-0.5 h-4 w-4 shrink-0"
                             />
-                            <span className="text-vf-small text-vf-text">{opt.label}</span>
+                            <span className="text-vf-small text-vf-text">
+                              {opt.label}
+                            </span>
                           </label>
                         ))}
                       </div>
                     </fieldset>
 
-                    <Field label="Priority" help="Lower numbers are preferred (default 100).">
+                    <Field
+                      label="Priority"
+                      help="Lower numbers are preferred (default 100)."
+                    >
                       <Input
                         type="number"
                         value={form.priority}
@@ -1548,18 +2373,26 @@ function EditServiceDialogContent({
                     </Field>
 
                     <div className="flex items-center justify-between gap-4">
-                      <span className="text-vf-small text-vf-text font-medium">GPU required</span>
+                      <span className="text-vf-small text-vf-text font-medium">
+                        GPU required
+                      </span>
                       <Switch
                         checked={form.gpu_required}
                         onCheckedChange={(checked) =>
-                          setForm((prev) => ({ ...prev, gpu_required: checked }))
+                          setForm((prev) => ({
+                            ...prev,
+                            gpu_required: checked,
+                          }))
                         }
                         disabled={save.isPending}
                         aria-label="GPU required"
                       />
                     </div>
 
-                    <Field label="Max parallel" help="Maximum concurrent requests to this backend.">
+                    <Field
+                      label="Max parallel"
+                      help="Maximum concurrent requests to this backend."
+                    >
                       <Input
                         type="number"
                         min={1}
@@ -1822,10 +2655,10 @@ function ModelDisplayRow({
   return (
     <div className="border-vf-border rounded-vf-md flex items-center justify-between gap-3 border px-3 py-2">
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-vf-small text-vf-text font-medium truncate">
+        <span className="text-vf-small text-vf-text truncate font-medium">
           {model.model_group}
         </span>
-        <span className="text-vf-micro text-vf-subtle font-mono truncate">
+        <span className="text-vf-micro text-vf-subtle truncate font-mono">
           → {model.upstream_model}
         </span>
       </div>
@@ -1865,7 +2698,10 @@ function ModelEditRow({
       setErr("Upstream model name is required.");
       return;
     }
-    onSave({ model_group: publicName.trim(), upstream_model: upstreamName.trim() });
+    onSave({
+      model_group: publicName.trim(),
+      upstream_model: upstreamName.trim(),
+    });
   }
 
   return (
@@ -1917,7 +2753,10 @@ function TestConnectionDialog({
   return (
     <Dialog open={service !== null} onOpenChange={onOpenChange}>
       {service && (
-        <TestConnectionDialogContent service={service} onOpenChange={onOpenChange} />
+        <TestConnectionDialogContent
+          service={service}
+          onOpenChange={onOpenChange}
+        />
       )}
     </Dialog>
   );
@@ -1988,16 +2827,15 @@ function TestConnectionDialogContent({
 }
 
 // ---------------------------------------------------------------------------
-// Detect models dialog — after detection, offer to prefill the models mapping
+// Detect models dialog — reports upstream model names; routing is configured
+// explicitly in the Models editor.
 
 function DetectModelsDialog({
   service,
   onOpenChange,
-  onAddModels,
 }: {
   service: Service | null;
   onOpenChange: (open: boolean) => void;
-  onAddModels: (models: string[]) => void;
 }) {
   return (
     <Dialog open={service !== null} onOpenChange={onOpenChange}>
@@ -2005,7 +2843,6 @@ function DetectModelsDialog({
         <DetectModelsDialogContent
           service={service}
           onOpenChange={onOpenChange}
-          onAddModels={onAddModels}
         />
       )}
     </Dialog>
@@ -2015,15 +2852,15 @@ function DetectModelsDialog({
 function DetectModelsDialogContent({
   service,
   onOpenChange,
-  onAddModels,
 }: {
   service: Service;
   onOpenChange: (open: boolean) => void;
-  onAddModels: (models: string[]) => void;
 }) {
-  const [result, setResult] = useState<{ ok: boolean; models: string[]; error: string } | null>(
-    null,
-  );
+  const [result, setResult] = useState<{
+    ok: boolean;
+    models: string[];
+    error: string;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -2044,8 +2881,6 @@ function DetectModelsDialogContent({
     }
   }
 
-  const hasModels = result?.ok && result.models.length > 0;
-
   return (
     <DialogContent className="max-w-md">
       <DialogHeader>
@@ -2059,7 +2894,9 @@ function DetectModelsDialogContent({
           <div className="flex flex-col gap-2">
             {result.ok ? (
               result.models.length === 0 ? (
-                <p className="text-vf-small text-vf-muted">No models reported.</p>
+                <p className="text-vf-small text-vf-muted">
+                  No models reported.
+                </p>
               ) : (
                 <ul className="divide-vf-border flex flex-col divide-y">
                   {result.models.map((model) => (
@@ -2101,17 +2938,6 @@ function DetectModelsDialogContent({
         <Button variant="ghost" onClick={() => onOpenChange(false)}>
           Close
         </Button>
-        {hasModels && (
-          <Button
-            variant="secondary"
-            onClick={() => {
-              onOpenChange(false);
-              onAddModels(result!.models);
-            }}
-          >
-            Prefill models mapping
-          </Button>
-        )}
         <Button variant="primary" loading={loading} onClick={() => void run()}>
           {result ? "Re-detect" : "Detect models"}
         </Button>
@@ -2141,9 +2967,10 @@ function LiteLLMViewer() {
 
   if (isError) {
     return (
-      <ErrorBanner onRetry={() => void refetch()}>
-        Couldn&apos;t load LiteLLM config. {errorMessage(error)}
-      </ErrorBanner>
+      <ErrorBanner
+        title={`Couldn't load LiteLLM config. ${errorMessage(error)}`}
+        onRetry={() => void refetch()}
+      />
     );
   }
 
@@ -2151,7 +2978,7 @@ function LiteLLMViewer() {
 
   return (
     <div className="relative">
-      <div className="absolute right-3 top-3">
+      <div className="absolute top-3 right-3">
         <CopyButton value={json} aria-label="Copy LiteLLM config" />
       </div>
       <pre className="rounded-vf-md border-vf-border bg-vf-surface-2 text-vf-micro text-vf-text border p-4 font-mono break-all whitespace-pre-wrap">

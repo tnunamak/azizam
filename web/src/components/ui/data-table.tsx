@@ -61,7 +61,7 @@ function renderCell<T>(column: DataTableColumn<T>, row: T): ReactNode {
 }
 
 const HEADER_CELL =
-  "px-3 py-2 font-mono text-vf-micro font-normal tracking-wider uppercase text-vf-subtle";
+  "px-3 py-2 font-mono text-vf-micro font-normal uppercase text-vf-subtle";
 
 export function DataTable<T>({
   columns,
@@ -82,11 +82,11 @@ export function DataTable<T>({
   return (
     <div className={cn("w-full", className)} aria-busy={loading || undefined}>
       {/* Desktop: real table */}
-      <div className="hidden overflow-x-auto md:block">
-        <table className="w-full border-collapse">
+      <div className="vf-table-wrap hidden md:block">
+        <table className="vf-table">
           {label && <caption className="sr-only">{label}</caption>}
           <thead>
-            <tr className="border-vf-border border-b">
+            <tr>
               {columns.map((column) => (
                 <th
                   key={column.id}
@@ -109,7 +109,10 @@ export function DataTable<T>({
           <tbody>
             {loading
               ? Array.from({ length: skeletonRows }, (_, i) => (
-                  <tr key={i} className="border-vf-border/60 border-b">
+                  <tr
+                    key={i}
+                    className="border-vf-border/60 border-b last:border-b-0"
+                  >
                     {columns.map((column) => (
                       <td key={column.id} className="px-3 py-3">
                         <Skeleton className="h-4 w-24" />
@@ -126,7 +129,7 @@ export function DataTable<T>({
                   <tr
                     key={rowKey(row)}
                     className={cn(
-                      "border-vf-border/60 hover:bg-vf-surface-1 border-b transition-colors",
+                      "border-vf-border/60 hover:bg-vf-row-hover border-b transition-colors last:border-b-0",
                       onRowClick && "cursor-pointer",
                     )}
                     {...(onRowClick
@@ -172,10 +175,7 @@ export function DataTable<T>({
       <div className="flex flex-col gap-2 md:hidden">
         {loading
           ? Array.from({ length: Math.min(skeletonRows, 3) }, (_, i) => (
-              <div
-                key={i}
-                className="rounded-vf-md border-vf-border bg-vf-surface-1 border p-4"
-              >
+              <div key={i} className="vf-panel vf-panel-tight">
                 <Skeleton className="h-4 w-32" />
                 <Skeleton className="mt-3 h-3 w-full" />
                 <Skeleton className="mt-2 h-3 w-2/3" />
@@ -185,8 +185,9 @@ export function DataTable<T>({
               <div
                 key={rowKey(row)}
                 className={cn(
-                  "rounded-vf-md border-vf-border bg-vf-surface-1 border p-4",
-                  onRowClick && "cursor-pointer hover:bg-vf-surface-2 transition-colors",
+                  "vf-panel vf-panel-tight",
+                  onRowClick &&
+                    "hover:bg-vf-row-hover cursor-pointer transition-colors",
                 )}
                 {...(onRowClick
                   ? {
@@ -207,7 +208,10 @@ export function DataTable<T>({
                     {primary ? renderCell(primary, row) : null}
                   </div>
                   {rowMenu && (
-                    <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <div
+                      className="shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {rowMenu(row)}
                     </div>
                   )}
@@ -219,7 +223,7 @@ export function DataTable<T>({
                         key={column.id}
                         className="flex items-baseline justify-between gap-3"
                       >
-                        <dt className="text-vf-micro text-vf-subtle shrink-0 font-mono tracking-wider uppercase">
+                        <dt className="text-vf-micro text-vf-subtle shrink-0 font-mono uppercase">
                           {column.header}
                         </dt>
                         <dd className="text-vf-small text-vf-text min-w-0 text-right">

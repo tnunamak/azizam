@@ -18,19 +18,13 @@
 
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import {
-  adminFetch,
-  ApiError,
-} from "@/lib/api";
+import { adminFetch, ApiError } from "@/lib/api";
 import {
   Badge,
   Button,
+  CopyField,
   Dialog,
   DialogBody,
   DialogContent,
@@ -39,13 +33,17 @@ import {
   DialogForm,
   DialogHeader,
   DialogTitle,
-  EmptyState,
+  EmptyOperationalState,
   Field,
+  IncidentBanner,
   Input,
+  PanelHeader,
+  ProductPanel,
   RelativeTime,
-  SectionHeader,
+  SectionActionHeader,
   Select,
   Skeleton,
+  StatusDotLabel,
   Switch,
   toast,
 } from "@/components/ui";
@@ -137,9 +135,7 @@ async function fetchOidcConfig(): Promise<OidcConfig | null> {
   return data.oidc_config;
 }
 
-async function saveOidcConfig(
-  input: Partial<OidcConfig>,
-): Promise<OidcConfig> {
+async function saveOidcConfig(input: Partial<OidcConfig>): Promise<OidcConfig> {
   const data = await adminFetch<{ oidc_config: OidcConfig }>(
     "/admin/api/oidc-config",
     { method: "PUT", body: input },
@@ -224,22 +220,22 @@ function splitList(str: string): string[] {
 // Shared error banner
 
 function ErrorBanner({
-  children,
+  title,
   onRetry,
 }: {
-  children: ReactNode;
+  title: string;
   onRetry: () => void;
 }) {
   return (
-    <div
-      role="alert"
-      className="rounded-vf-md border-vf-bad/40 bg-vf-bad/10 flex flex-wrap items-center justify-between gap-3 border p-4"
-    >
-      <p className="text-vf-small text-vf-text">{children}</p>
-      <Button size="sm" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
+    <IncidentBanner
+      tone="bad"
+      title={title}
+      actions={
+        <Button size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      }
+    />
   );
 }
 
@@ -249,19 +245,12 @@ function ErrorBanner({
 
 function RestartBanner({ onDismiss }: { onDismiss: () => void }) {
   return (
-    <div
-      role="status"
-      className="rounded-vf-md border-vf-accent/30 bg-vf-accent/5 flex flex-wrap items-center justify-between gap-3 border p-4"
-    >
-      <p className="text-vf-small text-vf-text">
-        Saved — most sign-in settings apply immediately. If you changed the
-        signing key or cookie name, a gateway restart is required for those
-        fields to take effect.
-      </p>
-      <Button size="sm" variant="ghost" onClick={onDismiss}>
-        Dismiss
-      </Button>
-    </div>
+    <IncidentBanner
+      tone="info"
+      title="Saved — most sign-in settings apply immediately."
+      detail="If you changed the signing key or cookie name, a gateway restart is required for those fields to take effect."
+      onDismiss={onDismiss}
+    />
   );
 }
 
@@ -276,16 +265,11 @@ function SettingsCard({
   className?: string;
 }) {
   return (
-    <div
-      className={[
-        "rounded-vf-lg border-vf-border flex flex-col gap-4 border p-6",
-        className ?? "",
-      ]
-        .join(" ")
-        .trim()}
+    <ProductPanel
+      className={["flex flex-col gap-4", className ?? ""].join(" ")}
     >
       {children}
-    </div>
+    </ProductPanel>
   );
 }
 
@@ -299,15 +283,7 @@ function CardHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="flex flex-col gap-1">
-        <h3 className="text-vf-heading text-vf-text">{title}</h3>
-        {description && (
-          <p className="text-vf-small text-vf-muted">{description}</p>
-        )}
-      </div>
-      {action && <div className="shrink-0">{action}</div>}
-    </div>
+    <PanelHeader title={title} description={description} action={action} />
   );
 }
 
@@ -359,9 +335,7 @@ function SignInCard() {
           <Skeleton className="h-4 w-40" />
         </div>
       ) : isError ? (
-        <ErrorBanner onRetry={() => void refetch()}>
-          Couldn&apos;t load sign-in settings.
-        </ErrorBanner>
+        <ErrorBanner title="Couldn't load sign-in settings." onRetry={() => void refetch()} />
       ) : !isConfigured ? (
         <p className="text-vf-small text-vf-muted">
           Not configured — users sign in with local accounts only.
@@ -388,45 +362,34 @@ function SignInCard() {
 
 function OidcStatusLine({ config }: { config: OidcConfig }) {
   return (
-    <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1.5">
-      <dt className="text-vf-small text-vf-muted">Status</dt>
-      <dd>
-        <Badge sm tone={config.enabled ? "ok" : "warn"}>
-          {config.enabled ? "Enabled" : "Disabled"}
-        </Badge>
-      </dd>
-
-      <dt className="text-vf-small text-vf-muted">Issuer</dt>
-      <dd className="text-vf-small text-vf-text font-mono break-all">
-        {config.issuer || <span className="text-vf-subtle">—</span>}
-      </dd>
-
-      <dt className="text-vf-small text-vf-muted">Client ID</dt>
-      <dd className="text-vf-small text-vf-text font-mono break-all">
-        {config.client_id || <span className="text-vf-subtle">—</span>}
-      </dd>
-
-      <dt className="text-vf-small text-vf-muted">Secret</dt>
-      <dd>
-        {config.client_secret_set ? (
-          <span className="text-vf-small text-vf-text">
-            Saved{" "}
-            <span className="text-vf-subtle">(write-only — not shown)</span>
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <StatusDotLabel
+          tone={config.enabled ? "ok" : "warn"}
+          label={config.enabled ? "Enabled" : "Disabled"}
+          pulse={config.enabled}
+        />
+        {config.updated_at !== null && (
+          <span className="text-vf-micro text-vf-muted">
+            Updated <RelativeTime ts={config.updated_at} />
           </span>
-        ) : (
-          <span className="text-vf-small text-vf-subtle">Not set</span>
         )}
-      </dd>
-
-      {config.updated_at !== null && (
-        <>
-          <dt className="text-vf-small text-vf-muted">Last updated</dt>
-          <dd className="text-vf-small text-vf-text">
-            <RelativeTime ts={config.updated_at} />
-          </dd>
-        </>
+      </div>
+      {config.issuer && (
+        <CopyField label="Issuer" value={config.issuer} monospace />
       )}
-    </dl>
+      {config.client_id && (
+        <CopyField label="Client ID" value={config.client_id} monospace />
+      )}
+      <div className="text-vf-small text-vf-muted">
+        Secret:{" "}
+        {config.client_secret_set ? (
+          <span className="text-vf-text">Saved (write-only — not shown)</span>
+        ) : (
+          <span className="text-vf-subtle">Not set</span>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -639,7 +602,11 @@ function OidcEditDialogContent({
               type="password"
               value={form.client_secret}
               onChange={(e) => set("client_secret", e.target.value)}
-              placeholder={existing?.client_secret_set ? "•••• (leave blank to keep)" : "Paste secret"}
+              placeholder={
+                existing?.client_secret_set
+                  ? "•••• (leave blank to keep)"
+                  : "Paste secret"
+              }
               autoComplete="new-password"
               disabled={save.isPending}
             />
@@ -684,7 +651,7 @@ function OidcEditDialogContent({
 
           {/* Advanced — always visible but low-prominence */}
           <details className="flex flex-col gap-4">
-            <summary className="text-vf-small text-vf-muted cursor-pointer select-none py-1">
+            <summary className="text-vf-small text-vf-muted cursor-pointer py-1 select-none">
               Advanced options
             </summary>
             <div className="mt-3 flex flex-col gap-4">
@@ -747,7 +714,9 @@ function OidcEditDialogContent({
               >
                 <Input
                   value={form.authorization_endpoint}
-                  onChange={(e) => set("authorization_endpoint", e.target.value)}
+                  onChange={(e) =>
+                    set("authorization_endpoint", e.target.value)
+                  }
                   placeholder="https://accounts.google.com/o/oauth2/auth"
                   disabled={save.isPending}
                 />
@@ -844,7 +813,11 @@ function ExtensionsCard() {
         title="Extensions"
         description="Load additional services and capabilities from extension packages."
         action={
-          <Button size="sm" onClick={() => setAddOpen(true)} disabled={isPending}>
+          <Button
+            size="sm"
+            onClick={() => setAddOpen(true)}
+            disabled={isPending}
+          >
             Add extension
           </Button>
         }
@@ -856,19 +829,16 @@ function ExtensionsCard() {
           <Skeleton className="h-12 w-full" />
         </div>
       ) : isError ? (
-        <ErrorBanner onRetry={() => void refetch()}>
-          Couldn&apos;t load extensions.
-        </ErrorBanner>
+        <ErrorBanner title="Couldn't load extensions." onRetry={() => void refetch()} />
       ) : packageList.length === 0 ? (
-        <EmptyState
+        <EmptyOperationalState
+          title="No extensions installed."
           action={
             <Button size="sm" onClick={() => setAddOpen(true)}>
               Add extension
             </Button>
           }
-        >
-          No extensions installed.
-        </EmptyState>
+        />
       ) : (
         <ul className="divide-vf-border/60 flex flex-col divide-y">
           {packageList.map((pkg) => (
@@ -891,8 +861,8 @@ function ExtensionsCard() {
 function ExtensionRow({ pkg }: { pkg: ExtensionPackage }) {
   const sourceLabel =
     pkg.source.type === "local_directory"
-      ? pkg.source.path ?? "local directory"
-      : pkg.source.url ?? "git";
+      ? (pkg.source.path ?? "local directory")
+      : (pkg.source.url ?? "git");
 
   return (
     <li className="flex items-start justify-between gap-3 py-3">
@@ -962,7 +932,11 @@ function AddExtensionDialogContent({
       const source: ExtensionSource =
         sourceType === "local_directory"
           ? { type: "local_directory", path: sourcePath.trim() }
-          : { type: "git", url: gitUrl.trim(), ref: gitRef.trim() || undefined };
+          : {
+              type: "git",
+              url: gitUrl.trim(),
+              ref: gitRef.trim() || undefined,
+            };
       return validateExtension(source);
     },
     onSuccess: (result) => {
@@ -979,7 +953,11 @@ function AddExtensionDialogContent({
       const source: ExtensionSource =
         sourceType === "local_directory"
           ? { type: "local_directory", path: sourcePath.trim() }
-          : { type: "git", url: gitUrl.trim(), ref: gitRef.trim() || undefined };
+          : {
+              type: "git",
+              url: gitUrl.trim(),
+              ref: gitRef.trim() || undefined,
+            };
       return enableExtension(source, review);
     },
     onSuccess: () => onEnabled(),
@@ -1192,6 +1170,7 @@ function AddExtensionDialogContent({
 
 function MediaAdmissionCard() {
   const queryClient = useQueryClient();
+  const [editOpen, setEditOpen] = useState(false);
 
   const {
     data: admission,
@@ -1203,34 +1182,170 @@ function MediaAdmissionCard() {
     queryFn: fetchOverrides,
   });
 
-  const [formError, setFormError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-
-  // Local form state (initialised from server data, editable independently)
-  const [disabledIntents, setDisabledIntents] = useState("");
-  const [disabledResourceClasses, setDisabledResourceClasses] = useState("");
-  const [reservedTokens, setReservedTokens] = useState("");
-  const [maxQueueDepth, setMaxQueueDepth] = useState("");
-  const [retryAfterSeconds, setRetryAfterSeconds] = useState("");
-  const [initialised, setInitialised] = useState(false);
-
-  // Sync form from server data on first load (not on subsequent refetches)
-  if (admission && !initialised) {
-    setDisabledIntents(joinList(admission.disabled_intents));
-    setDisabledResourceClasses(joinList(admission.disabled_resource_classes));
-    setReservedTokens(joinList(admission.reserved_tokens));
-    setMaxQueueDepth(
-      admission.max_queue_depth !== null
-        ? String(admission.max_queue_depth)
-        : "",
-    );
-    setRetryAfterSeconds(
-      admission.retry_after_seconds !== null
-        ? String(admission.retry_after_seconds)
-        : "",
-    );
-    setInitialised(true);
+  function handleSaved(updated: MediaJobAdmission) {
+    queryClient.setQueryData(settingsQueryKeys.overrides, updated);
+    setEditOpen(false);
   }
+
+  return (
+    <SettingsCard>
+      <CardHeader
+        title="Media admission"
+        description="Control which media generation jobs the gateway admits. Changes take effect immediately."
+        action={
+          <Button
+            size="sm"
+            onClick={() => setEditOpen(true)}
+            disabled={isPending}
+          >
+            Edit
+          </Button>
+        }
+      />
+
+      {isPending ? (
+        <div className="flex flex-col gap-3" aria-busy="true">
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-3/4" />
+        </div>
+      ) : isError ? (
+        <ErrorBanner title="Couldn't load media admission settings." onRetry={() => void refetch()} />
+      ) : (
+        <MediaAdmissionSummary admission={admission} />
+      )}
+
+      <MediaAdmissionEditDialog
+        open={editOpen}
+        onOpenChange={(open) => {
+          if (!open) setEditOpen(false);
+        }}
+        admission={admission ?? null}
+        onSaved={handleSaved}
+      />
+    </SettingsCard>
+  );
+}
+
+function MediaAdmissionSummary({
+  admission,
+}: {
+  admission: MediaJobAdmission | undefined;
+}) {
+  if (!admission) {
+    return (
+      <p className="text-vf-small text-vf-muted">
+        No media admission settings are configured.
+      </p>
+    );
+  }
+
+  const rows: Array<[string, string]> = [];
+  if (admission.disabled_intents.length > 0) {
+    rows.push(["Blocked intents", joinList(admission.disabled_intents)]);
+  }
+  if (admission.disabled_resource_classes.length > 0) {
+    rows.push([
+      "Blocked resources",
+      joinList(admission.disabled_resource_classes),
+    ]);
+  }
+  if (admission.reserved_tokens.length > 0) {
+    rows.push(["Reserved tokens", joinList(admission.reserved_tokens)]);
+  }
+  if (admission.max_queue_depth !== null) {
+    rows.push(["Max queue depth", String(admission.max_queue_depth)]);
+  }
+  if (admission.retry_after_seconds !== null) {
+    rows.push(["Retry after", `${admission.retry_after_seconds}s`]);
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge sm tone="ok">
+          clear
+        </Badge>
+        <span className="text-vf-small text-vf-muted">
+          No blocked media intents, resource classes, queue caps, or retry hints
+          are configured.
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <dl className="divide-vf-border/60 flex flex-col divide-y">
+      {rows.map(([label, value]) => (
+        <div
+          key={label}
+          className="grid gap-1 py-2 sm:grid-cols-[11rem_minmax(0,1fr)]"
+        >
+          <dt className="text-vf-small text-vf-muted">{label}</dt>
+          <dd className="text-vf-small text-vf-text min-w-0 font-mono break-words">
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function MediaAdmissionEditDialog({
+  open,
+  onOpenChange,
+  admission,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  admission: MediaJobAdmission | null;
+  onSaved: (updated: MediaJobAdmission) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {open && (
+        <MediaAdmissionEditDialogContent
+          admission={admission}
+          onOpenChange={onOpenChange}
+          onSaved={onSaved}
+        />
+      )}
+    </Dialog>
+  );
+}
+
+function MediaAdmissionEditDialogContent({
+  admission,
+  onOpenChange,
+  onSaved,
+}: {
+  admission: MediaJobAdmission | null;
+  onOpenChange: (open: boolean) => void;
+  onSaved: (updated: MediaJobAdmission) => void;
+}) {
+  const [disabledIntents, setDisabledIntents] = useState(
+    joinList(admission?.disabled_intents ?? []),
+  );
+  const [disabledResourceClasses, setDisabledResourceClasses] = useState(
+    joinList(admission?.disabled_resource_classes ?? []),
+  );
+  const [reservedTokens, setReservedTokens] = useState(
+    joinList(admission?.reserved_tokens ?? []),
+  );
+  const [maxQueueDepth, setMaxQueueDepth] = useState(
+    admission?.max_queue_depth !== null &&
+      admission?.max_queue_depth !== undefined
+      ? String(admission.max_queue_depth)
+      : "",
+  );
+  const [retryAfterSeconds, setRetryAfterSeconds] = useState(
+    admission?.retry_after_seconds !== null &&
+      admission?.retry_after_seconds !== undefined
+      ? String(admission.retry_after_seconds)
+      : "",
+  );
+  const [formError, setFormError] = useState<string | null>(null);
 
   const save = useMutation({
     mutationFn: () => {
@@ -1246,45 +1361,33 @@ function MediaAdmissionCard() {
       return saveMediaAdmission(payload);
     },
     onSuccess: (updated) => {
-      queryClient.setQueryData(settingsQueryKeys.overrides, updated);
       toast.success("Media admission settings saved");
-      setSaved(true);
       setFormError(null);
+      onSaved(updated);
     },
-    onError: (error) => {
-      setFormError(errorMessage(error));
-      setSaved(false);
-    },
+    onError: (error) => setFormError(errorMessage(error)),
   });
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    setSaved(false);
+    setFormError(null);
     save.mutate();
   }
 
   return (
-    <SettingsCard>
-      <CardHeader
-        title="Media admission"
-        description="Control which media generation jobs the gateway admits. Changes take effect immediately."
-      />
-
-      {isPending ? (
-        <div className="flex flex-col gap-3" aria-busy="true">
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-3/4" />
-        </div>
-      ) : isError ? (
-        <ErrorBanner onRetry={() => void refetch()}>
-          Couldn&apos;t load media admission settings.
-        </ErrorBanner>
-      ) : (
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+    <DialogContent className="max-w-lg">
+      <DialogForm onSubmit={handleSubmit}>
+        <DialogHeader>
+          <DialogTitle>Edit media admission</DialogTitle>
+          <DialogDescription>
+            Reject expensive or unavailable media jobs before they enter the
+            queue.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody>
           <Field
             label="Blocked intents"
-            help="Comma-separated. Jobs matching these intents are rejected at the gate. Example: video.generate"
+            help="Comma-separated. Jobs matching these intents are rejected at the gate."
           >
             <Input
               value={disabledIntents}
@@ -1319,10 +1422,7 @@ function MediaAdmissionCard() {
           </Field>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field
-              label="Max queue depth"
-              help="Reject new jobs when the queue reaches this length. Leave blank for unlimited."
-            >
+            <Field label="Max queue depth" help="Leave blank for unlimited.">
               <Input
                 type="number"
                 min="0"
@@ -1335,7 +1435,7 @@ function MediaAdmissionCard() {
 
             <Field
               label="Retry after (seconds)"
-              help="Suggested retry delay sent to the caller when a job is rejected."
+              help="Suggested retry delay sent with rejections."
             >
               <Input
                 type="number"
@@ -1353,21 +1453,21 @@ function MediaAdmissionCard() {
               {formError}
             </p>
           )}
-
-          {saved && !save.isPending && (
-            <p role="status" className="text-vf-small text-vf-ok">
-              Saved.
-            </p>
-          )}
-
-          <div className="flex justify-end">
-            <Button type="submit" variant="primary" loading={save.isPending}>
-              Save
-            </Button>
-          </div>
-        </form>
-      )}
-    </SettingsCard>
+        </DialogBody>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            disabled={save.isPending}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" loading={save.isPending}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogForm>
+    </DialogContent>
   );
 }
 
@@ -1377,7 +1477,7 @@ function MediaAdmissionCard() {
 export default function AdminSettingsPage() {
   return (
     <div className="flex flex-col gap-10">
-      <SectionHeader
+      <SectionActionHeader
         kicker="gateway"
         title="Settings"
         description="Sign-in, extensions, and gateway-wide configuration."

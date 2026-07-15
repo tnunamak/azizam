@@ -106,6 +106,20 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertIn("Usage: python3 proxy.py generate-admin-key", stdout.getvalue())
         self.assertEqual(len(admin_store.list_credentials(path=self.db)), before)
 
+    def test_generate_admin_key_rejects_option_like_service_account_name(self) -> None:
+        before = len(admin_store.list_credentials(path=self.db))
+        with (
+            patch.object(proxy, "ADMIN_DB_PATH", self.db),
+            patch.object(sys, "argv", ["proxy.py", "generate-admin-key", "--role", "admin"]),
+            patch("sys.stderr", new_callable=io.StringIO) as stderr,
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                proxy.handle_cli_command()
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("cannot start with '-'", stderr.getvalue())
+        self.assertEqual(len(admin_store.list_credentials(path=self.db)), before)
+
     def test_admin_created_app_key_authenticates_runtime_with_profile(self) -> None:
         profile = self.client.post(
             "/admin/api/profiles",
@@ -257,9 +271,9 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(callback.status_code, 302, callback.text)
         self.assertIn(cfg.cookie.name, callback.headers.get("set-cookie", ""))
 
-        dashboard = self.client.get("/admin")
-        self.assertEqual(dashboard.status_code, 200, dashboard.text)
-        self.assertIn("owner@example.com", dashboard.text)
+        dashboard = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(dashboard.status_code, 302, dashboard.text)
+        self.assertEqual(dashboard.headers["location"], "/ui/admin/")
         users = admin_store.list_users(path=self.db)
         self.assertEqual(len(users), 1)
         apps = admin_store.list_apps_for_user(users[0]["id"], path=self.db)
@@ -318,9 +332,9 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(callback.status_code, 302, callback.text)
 
-        dashboard = self.client.get("/admin")
-        self.assertEqual(dashboard.status_code, 200, dashboard.text)
-        self.assertIn("simon@appears.blue", dashboard.text)
+        dashboard = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(dashboard.status_code, 302, dashboard.text)
+        self.assertEqual(dashboard.headers["location"], "/ui/admin/")
         user = admin_store.list_users(path=self.db)[0]
         roles = admin_store.list_admin_roles(
             subject_kind="user",
@@ -1631,17 +1645,71 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 303, response.text)
         self.assertIn(proxy.ADMIN_AUTH.cookie.name, response.headers.get("set-cookie", ""))
-        # A signed-in admin landing on /setup is bounced to the portal — the
-        # console isn't a place you accidentally land.
+        self.assertEqual(response.headers["location"], "/ui/admin/")
+        self.assertEqual(admin_store.list_users(path=self.db), [])
+        # A service-account recovery session landing on /setup is bounced to
+        # the admin console, not to a fake user portal.
         bounced = self.client.get("/setup", follow_redirects=False)
         self.assertEqual(bounced.status_code, 303)
-        self.assertEqual(bounced.headers["location"], "/")
+        self.assertEqual(bounced.headers["location"], "/ui/admin/")
         # The operator console is still reachable deliberately for recovery.
         console = self.client.get("/setup?operator=1")
         self.assertEqual(console.status_code, 200, console.text)
         self.assertIn("Mint a key from the console", console.text)
-        admin = self.client.get("/admin")
-        self.assertEqual(admin.status_code, 200, admin.text)
+        admin = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(admin.status_code, 302, admin.text)
+        self.assertEqual(admin.headers["location"], "/ui/admin/")
+
+    def test_admin_section_aliases_require_auth_and_redirect_signed_in_admin(self) -> None:
+        unauth = self.client.get("/admin/services", follow_redirects=False)
+        self.assertEqual(unauth.status_code, 302, unauth.text)
+        self.assertEqual(unauth.headers["location"], "/setup")
+
+        direct_ui = self.client.get("/ui/admin/services/", follow_redirects=False)
+        self.assertEqual(direct_ui.status_code, 302, direct_ui.text)
+        self.assertEqual(direct_ui.headers["location"], "/setup")
+
+        admin_key, _, _ = create_admin_service_account_key(
+            "section-owner",
+            path=self.db,
+        )
+        claimed = self.client.post(
+            "/setup/claim",
+            data={"admin_key": admin_key},
+            follow_redirects=False,
+        )
+        self.assertEqual(claimed.status_code, 303, claimed.text)
+
+        for section in (
+            "services",
+            "apps",
+            "profiles",
+            "users",
+            "audit",
+            "settings",
+        ):
+            with self.subTest(section=section):
+                response = self.client.get(f"/admin/{section}", follow_redirects=False)
+                self.assertEqual(response.status_code, 302, response.text)
+                self.assertEqual(response.headers["location"], f"/ui/admin/{section}/")
+        for path, expected in (
+            (
+                "/admin/services?service=tts",
+                "/ui/admin/services/?service=tts",
+            ),
+            (
+                "/admin/apps?app=app_123",
+                "/ui/admin/apps/?app=app_123",
+            ),
+            (
+                "/admin/audit?event=evt_123",
+                "/ui/admin/audit/?event=evt_123",
+            ),
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path, follow_redirects=False)
+                self.assertEqual(response.status_code, 302, response.text)
+                self.assertEqual(response.headers["location"], expected)
 
     def test_setup_signed_in_admin_can_create_first_personal_app_key(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
@@ -1690,7 +1758,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
 
             apps = admin_store.list_apps(path=self.db)
             self.assertEqual(len(apps), 1)
-            self.assertEqual(apps[0]["kind"], "personal")
+            self.assertEqual(apps[0]["kind"], "service")
             credentials = [
                 credential
                 for credential in admin_store.list_credentials(path=self.db)
@@ -1706,7 +1774,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             refreshed = self.client.get("/setup?operator=1")
             self.assertEqual(refreshed.status_code, 200, refreshed.text)
             self.assertNotIn(api_key, refreshed.text)
-            self.assertIn("Personal App keys: 1", refreshed.text)
+            self.assertIn("Active runtime keys: 1", refreshed.text)
 
     def test_setup_first_app_rejects_stale_csrf(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
@@ -1989,6 +2057,13 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         cfg = self._enable_oidc()
         user = admin_store.upsert_oidc_user(
             cfg.issuer, "owner-sub", email="owner@example.com", path=self.db
+        )
+        admin_store.assign_admin_role(
+            role="owner",
+            subject_kind="user",
+            subject_id=user["id"],
+            granted_by="test",
+            path=self.db,
         )
         session = session_from_claims(
             {"sub": user["id"], "email": "owner@example.com"},

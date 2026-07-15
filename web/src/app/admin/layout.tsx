@@ -8,25 +8,40 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 
 import {
+  AccountChip,
+  AmbientBackdrop,
   AuditIcon,
   AppsIcon,
+  type BadgeTone,
+  BrandLockup,
+  Button,
+  CommandSearch,
+  type CommandSearchItem,
   ExternalLinkIcon,
   IconButton,
   MenuIcon,
+  MobileTabBar,
+  MobileTopRail,
   OverviewIcon,
   ProfilesIcon,
   ServicesIcon,
   SettingsIcon,
   Sheet,
+  StatusCluster,
   Toaster,
   UsersIcon,
   XIcon,
 } from "@/components/ui";
-import { api, createQueryClient } from "@/lib/api";
+import { api, createQueryClient, queryKeys } from "@/lib/api";
+import {
+  adminAppHref,
+  adminProfileHref,
+  adminServiceHref,
+} from "@/lib/admin-links";
 
 // ---------------------------------------------------------------------------
 // Nav definition
@@ -47,6 +62,20 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Settings", href: "/admin/settings", Icon: SettingsIcon },
 ];
 
+// CommandSearch starts with real admin nav destinations and adds live objects.
+const NAV_SEARCH_ITEMS: CommandSearchItem[] = NAV_ITEMS.map((item) => ({
+  id: item.href,
+  label: item.label,
+  href: item.href,
+  description: "section",
+}));
+
+const RESOURCE_LINKS = [
+  { label: "Capabilities", href: "/gateway/v1/capabilities" },
+  { label: "llms.txt", href: "/llms.txt" },
+  { label: "API schema", href: "/openapi.json" },
+] as const;
+
 // ---------------------------------------------------------------------------
 // Nav link (active state)
 
@@ -64,12 +93,8 @@ function NavLink({ item, onClick }: { item: NavItem; onClick?: () => void }) {
     <Link
       href={item.href}
       onClick={onClick}
-      className={[
-        "rounded-vf-sm flex items-center gap-2.5 px-2.5 py-2 text-sm transition-colors",
-        isActive
-          ? "bg-vf-accent/10 text-vf-accent font-medium"
-          : "text-vf-muted hover:bg-vf-surface-2 hover:text-vf-text",
-      ].join(" ")}
+      className="vf-shell-link"
+      aria-current={isActive ? "page" : undefined}
     >
       <item.Icon className="size-4 shrink-0" />
       {item.label}
@@ -89,15 +114,33 @@ function SidebarBottom() {
   const email = sessionData?.actor.email ?? null;
 
   return (
-    <div className="border-vf-border border-t pt-4">
+    <div className="vf-sidebar-footer">
+      <div className="vf-sidebar-resource-group">
+        <p className="vf-sidebar-resource-label">Resources</p>
+        <div className="flex flex-col gap-1">
+          {RESOURCE_LINKS.map((link) => (
+            <a
+              key={link.href}
+              href={link.href}
+              className="vf-sidebar-resource-link"
+              target={link.href.startsWith("http") ? "_blank" : undefined}
+              rel={link.href.startsWith("http") ? "noreferrer" : undefined}
+            >
+              {link.label}
+            </a>
+          ))}
+        </div>
+      </div>
       {email && (
         <p className="text-vf-micro text-vf-subtle mb-3 truncate px-2.5 font-mono">
           {email}
         </p>
       )}
       <div className="flex flex-col gap-1">
+        {/* Root is the server-rendered user portal, outside the static admin app. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a
-          href="/me"
+          href="/"
           className="text-vf-muted hover:text-vf-text flex items-center gap-1.5 px-2.5 py-1.5 text-sm transition-colors"
         >
           <ExternalLinkIcon className="size-3.5 shrink-0" />
@@ -119,23 +162,15 @@ function SidebarBottom() {
 
 function SidebarNav({ onNav }: { onNav?: () => void }) {
   return (
-    <div className="flex h-full flex-col gap-6 p-4">
+    <div className="flex h-full flex-col gap-5">
       {/* Wordmark + admin kicker */}
-      <div className="flex flex-col gap-0.5 px-2.5">
-        <Link
-          href="/admin"
-          className="text-vf-text text-base font-semibold leading-tight tracking-tight"
-          onClick={onNav}
-        >
-          vivid.fish
-        </Link>
-        <p className="text-vf-micro text-vf-subtle font-mono tracking-wider uppercase">
-          admin
-        </p>
-      </div>
+      <BrandLockup href="/admin" kicker="AI Gateway" />
 
       {/* Nav items */}
-      <nav className="flex flex-1 flex-col gap-0.5" aria-label="Admin navigation">
+      <nav
+        className="flex flex-1 flex-col gap-0.5"
+        aria-label="Admin navigation"
+      >
         {NAV_ITEMS.map((item) => (
           <NavLink key={item.href} item={item} onClick={onNav} />
         ))}
@@ -147,59 +182,192 @@ function SidebarNav({ onNav }: { onNav?: () => void }) {
   );
 }
 
+function useShellStatus() {
+  const { data: overview } = useQuery({
+    queryKey: queryKeys.overview,
+    queryFn: api.overview,
+  });
+  const { data: sessionData } = useQuery({
+    queryKey: queryKeys.session,
+    queryFn: api.session,
+  });
+
+  const counts = overview?.counts;
+  const attention = overview?.attention ?? [];
+  const hasProblem = attention.some((item) => item.severity === "problem");
+  const serviceTotal = counts?.services_total ?? 0;
+  const serviceEnabled = counts?.services_enabled ?? 0;
+  const partialServices = serviceTotal > 0 && serviceEnabled < serviceTotal;
+  const statusTone: BadgeTone = hasProblem || partialServices ? "warn" : "ok";
+  const statusLabel = hasProblem
+    ? "Needs attention"
+    : partialServices
+      ? `${serviceEnabled}/${serviceTotal} enabled`
+      : "Operational";
+  const email = sessionData?.actor.email ?? "Signed in";
+  return { statusTone, statusLabel, email };
+}
+
+function useAdminSearchItems(): CommandSearchItem[] {
+  const { data: apps } = useQuery({
+    queryKey: queryKeys.apps,
+    queryFn: api.apps.list,
+    staleTime: 30_000,
+  });
+  const { data: registry } = useQuery({
+    queryKey: queryKeys.serviceRegistry,
+    queryFn: api.services.registry,
+    staleTime: 30_000,
+  });
+  const { data: profiles } = useQuery({
+    queryKey: queryKeys.profiles,
+    queryFn: api.profiles.list,
+    staleTime: 30_000,
+  });
+
+  return useMemo(() => {
+    const appItems: CommandSearchItem[] = (apps ?? []).map((app) => ({
+      id: `app:${app.id}`,
+      label: app.name,
+      href: adminAppHref(app.id),
+      description:
+        app.disabled_at === null ? "app" : "disabled app",
+    }));
+    const serviceItems: CommandSearchItem[] = Object.values(
+      registry?.services ?? {},
+    ).map((service) => ({
+      id: `service:${service.id}`,
+      label: service.name,
+      href: adminServiceHref(service.id),
+      description: service.enabled ? "service" : "disabled service",
+    }));
+    const profileItems: CommandSearchItem[] = (profiles ?? []).map(
+      (profile) => ({
+        id: `profile:${profile.id}`,
+        label: profile.name,
+        href: adminProfileHref(profile.id),
+        description: "profile",
+      }),
+    );
+    return [
+      ...NAV_SEARCH_ITEMS,
+      ...appItems,
+      ...serviceItems,
+      ...profileItems,
+    ];
+  }, [apps, profiles, registry]);
+}
+
+function TopBar() {
+  const { statusTone, statusLabel, email } = useShellStatus();
+  const searchItems = useAdminSearchItems();
+
+  return (
+    <div className="vf-console-topbar hidden md:flex">
+      <div className="flex min-w-0 items-center gap-3">
+        <Link href="/admin/services" className="text-vf-text no-underline">
+          <StatusCluster
+            tone={statusTone}
+            label={statusLabel}
+            detail="service state"
+          />
+        </Link>
+      </div>
+
+      <div className="flex flex-1 justify-center px-4">
+        <CommandSearch
+          items={searchItems}
+          placeholder="Search apps, services, profiles..."
+          className="w-full max-w-xs"
+        />
+      </div>
+
+      <div className="flex min-w-0 items-center gap-2">
+        <Button asChild variant="secondary" size="sm">
+          {/* Root is the server-rendered user portal, outside the static admin app. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+          <a href="/">Portal</a>
+        </Button>
+        <AccountChip email={email} />
+        <Button asChild variant="ghost" size="sm">
+          <a href="/me/logout">Sign out</a>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function MobileTopBar({ onOpenNav }: { onOpenNav: () => void }) {
+  const { statusTone, statusLabel } = useShellStatus();
+
+  return (
+    <MobileTopRail
+      className="md:hidden"
+      brand={<BrandLockup href="/admin" kicker="console" />}
+      account={
+        <div className="flex items-center gap-2">
+          <Link
+            href="/admin/services"
+            className="text-vf-text min-w-0 no-underline"
+          >
+            <StatusCluster
+              tone={statusTone}
+              label={statusLabel}
+              className="max-w-40"
+            />
+          </Link>
+          <IconButton
+            aria-label="Open navigation"
+            variant="ghost"
+            onClick={onOpenNav}
+          >
+            <MenuIcon className="size-5" />
+          </IconButton>
+        </div>
+      }
+    />
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Layout shell
 
 function AdminShell({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const mobileTabs = NAV_ITEMS.slice(0, 5).map((item) => ({
+    label: item.label === "Apps & keys" ? "Apps" : item.label,
+    href: item.href,
+    icon: <item.Icon />,
+  }));
 
   return (
-    <div className="bg-vf-bg min-h-screen">
-      {/* Desktop: fixed left sidebar */}
-      <aside className="bg-vf-surface-1 border-vf-border fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r md:flex">
+    <div className="vf-app vf-console-shell relative overflow-x-hidden">
+      <AmbientBackdrop />
+
+      {/* Desktop rail */}
+      <aside className="vf-console-rail">
         <SidebarNav />
       </aside>
 
-      {/* Mobile: top bar */}
-      <header className="bg-vf-surface-1 border-vf-border fixed inset-x-0 top-0 z-30 flex h-14 items-center justify-between border-b px-4 md:hidden">
-        <Link
-          href="/admin"
-          className="text-vf-text text-base font-semibold tracking-tight"
-        >
-          vivid.fish
-          <span className="text-vf-subtle ml-1.5 font-mono text-[11px] tracking-wider uppercase">
-            admin
-          </span>
-        </Link>
-        <IconButton
-          aria-label="Open navigation"
-          variant="ghost"
-          onClick={() => setMobileNavOpen(true)}
-        >
-          <MenuIcon className="size-5" />
-        </IconButton>
-      </header>
+      <div className="vf-console-stage">
+        {/* Mobile: top bar */}
+        <MobileTopBar onOpenNav={() => setMobileNavOpen(true)} />
 
-      {/* Mobile nav sheet — rendered only when open so the fixed overlay
-           does not sit on top of the desktop sidebar (z-50 fixed left-0). */}
-      {mobileNavOpen && (
-        <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-          <MobileNavSheet onClose={() => setMobileNavOpen(false)} />
-        </Sheet>
-      )}
+        {/* Mobile nav sheet — overflow routes and account actions. */}
+        {mobileNavOpen && (
+          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+            <MobileNavSheet onClose={() => setMobileNavOpen(false)} />
+          </Sheet>
+        )}
 
-      {/* Content column */}
-      <main
-        className={[
-          "flex min-h-screen flex-col",
-          "pt-14 md:pt-0",   // offset for mobile top bar
-          "md:ml-60",         // offset for desktop sidebar
-        ].join(" ")}
-      >
-        <div className="mx-auto w-full max-w-[1080px] px-4 py-8 md:px-10 md:py-12">
-          {children}
-        </div>
-      </main>
+        {/* Content column */}
+        <TopBar />
+        <main className="vf-console-main">
+          <div className="vf-console-inner">{children}</div>
+        </main>
+      </div>
+
+      <MobileTabBar items={mobileTabs} />
     </div>
   );
 }
@@ -215,7 +383,7 @@ function MobileNavSheet({ onClose }: { onClose: () => void }) {
       aria-label="Admin navigation"
     >
       <div className="flex items-center justify-between p-4">
-        <span className="text-vf-micro text-vf-subtle font-mono tracking-wider uppercase">
+        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
           Navigation
         </span>
         <IconButton
@@ -227,7 +395,9 @@ function MobileNavSheet({ onClose }: { onClose: () => void }) {
           <XIcon className="size-4" />
         </IconButton>
       </div>
-      <SidebarNav onNav={onClose} />
+      <div className="h-[calc(100%-4rem)] px-4 pb-4">
+        <SidebarNav onNav={onClose} />
+      </div>
     </div>
   );
 }

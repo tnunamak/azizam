@@ -118,6 +118,17 @@ class TestRedactionModule(unittest.TestCase):
         self.assertEqual(redaction.find_forbidden_keys(nested), ["prompt"])
         self.assertEqual(redaction.find_forbidden_keys(nested, recurse=False), [])
 
+    def test_find_forbidden_keys_recurses_into_mappings_nested_in_a_list(self) -> None:
+        # A list of stage/event dicts (e.g. request_shape_stages) is exactly
+        # the shape this module's own callers produce — a forbidden key
+        # smuggled into one list item's own mapping must still be caught.
+        nested = {"stages": [{"phase": "a"}, {"authorization": "leaked"}]}
+        self.assertEqual(redaction.find_forbidden_keys(nested), ["authorization"])
+        self.assertEqual(redaction.find_forbidden_keys(nested, recurse=False), [])
+
+    def test_find_forbidden_keys_ignores_non_mapping_list_items(self) -> None:
+        self.assertEqual(redaction.find_forbidden_keys({"tags": ["a", "b", 3]}), [])
+
     def test_find_forbidden_keys_handles_non_mapping(self) -> None:
         self.assertEqual(redaction.find_forbidden_keys(None), [])
         self.assertEqual(redaction.find_forbidden_keys([1, 2, 3]), [])  # type: ignore[arg-type]
@@ -151,6 +162,20 @@ class TestRedactionModule(unittest.TestCase):
 
     def test_assert_safe_mapping_recurse_false_skips_nested(self) -> None:
         redaction.assert_safe_mapping("meta", {"trace": {"prompt": "x"}}, recurse=False)
+
+    def test_assert_safe_mapping_rejects_forbidden_key_in_list_nested_mapping(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            redaction.assert_safe_mapping(
+                "meta", {"stages": [{"phase": "a"}, {"authorization": "leaked"}]}
+            )
+        msg = str(ctx.exception)
+        self.assertIn("authorization", msg)
+        self.assertNotIn("leaked", msg)
+
+    def test_assert_safe_mapping_accepts_safe_list_of_mappings(self) -> None:
+        redaction.assert_safe_mapping(
+            "meta", {"stages": [{"phase": "accepted"}, {"phase": "terminal"}]}
+        )
 
     def test_assert_safe_top_level_rejects_forbidden_top_keys(self) -> None:
         with self.assertRaises(ValueError) as ctx:

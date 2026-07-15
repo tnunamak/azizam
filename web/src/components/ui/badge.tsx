@@ -31,7 +31,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "rounded-vf-pill text-vf-micro inline-flex items-center gap-1 border font-mono tracking-wider uppercase",
+        "rounded-vf-pill text-vf-micro inline-flex items-center gap-1 border font-mono uppercase",
         sm ? "px-1.5 py-0" : "px-2 py-0.5",
         TONE_CLASSES[tone],
         className,

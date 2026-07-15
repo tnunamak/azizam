@@ -223,6 +223,10 @@ class TestManifestBindsToCommittedWorkflow(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.rejected.get("prompt"), "required input missing")
 
+    def test_duration_contract_matches_comfy_node_minimum(self) -> None:
+        result = validate_inputs(self.manifest, {"prompt": "x", "duration": 0.5})
+        self.assertIn("duration", result.rejected)
+
     def test_out_of_range_inputs_are_rejected(self) -> None:
         result = validate_inputs(
             self.manifest,
@@ -617,6 +621,50 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
         error = json.loads(response.body.decode("utf-8"))["error"]
         self.assertEqual(error["param"], "steps")
         self.assertIn("extensions.com.vividfish.workflow", error["message"])
+
+    async def test_invalid_duration_is_rejected_before_submit(self) -> None:
+        response, captured = await self._call(
+            {
+                "model": "ace-step-1.5-xl-turbo",
+                "prompt": "x",
+                "duration": "ten",
+            },
+            _ace_workflow(),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("payload", captured)
+        error = json.loads(response.body.decode("utf-8"))["error"]
+        self.assertEqual(error["param"], "duration")
+
+    async def test_out_of_range_duration_is_rejected_before_submit(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_client_factory(*_args: Any, **_kwargs: Any) -> _FakeAudioClient:
+            return _FakeAudioClient(captured)
+
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy,
+            "_resolve_audio_workflow",
+            return_value=("tangoflux", {"file": "unused", "min_seconds": 1, "max_seconds": 30}),
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            return_value={},
+        ), patch.object(
+            proxy.httpx,
+            "AsyncClient",
+            fake_client_factory,
+        ):
+            response = await proxy.proxy_audio_generate(
+                _JsonRequest({"model": "tangoflux", "prompt": "x", "duration": 0.5}),  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(captured, {})
+        error = json.loads(response.body.decode("utf-8"))["error"]
+        self.assertEqual(error["param"], "duration")
 
     def test_unknown_audio_field_detector_accepts_tags_and_lyrics(self) -> None:
         self.assertEqual(

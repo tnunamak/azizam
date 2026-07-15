@@ -68,6 +68,13 @@ def compile_litellm_substrate_config(
         },
         "general_settings": {
             "litellm_key_header_name": DEFAULT_LITELLM_KEY_HEADER,
+            # Forwards the gateway's cancellation-correlation header
+            # (X-AI-Gateway-Request-Id) through to the internal gateway hop
+            # behind LiteLLM. LiteLLM does not propagate a cancel signal of
+            # its own on this version (its non-stream disconnect canceller is
+            # dead code), so the gateway carries the id itself and races its
+            # own reads against it. See gateway/backends/cancellation.py.
+            "forward_client_headers_to_llm_api": True,
         },
     }
 

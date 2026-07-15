@@ -66,6 +66,7 @@ def _snapshot() -> dict:
                 "app_id": "app_1",
                 "label": "first key",
                 "created_at": "2026-05-17T00:02:00Z",
+                "last_used_at": 1779300000,
                 "revoked_at": None,
             },
             {
@@ -484,6 +485,16 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         # active and revoked badges.
         self.assertIn("active", html)
         self.assertIn("revoked", html)
+
+    def test_apps_and_keys_show_last_used_metadata(self) -> None:
+        html = render_admin_dashboard(_snapshot())
+        self.assertIn("<th>Last used</th>", html)
+        self.assertIn('data-label="Last used">Used ', html)
+        self.assertIn('data-label="Last used">Never used', html)
+        self.assertIn('data-label="Created">2026-05-17 00:02', html)
+        # The live DB stores epoch seconds; the dashboard should not leak raw
+        # epoch integers into timestamp cells.
+        self.assertNotIn(">1779300000<", html)
 
     def test_omits_discovery_links_from_clean_admin_chrome(self) -> None:
         html = render_admin_dashboard(_snapshot())

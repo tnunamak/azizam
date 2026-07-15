@@ -13,7 +13,7 @@ inputs:
     required: true
   duration:
     type: number
-    minimum: 0.5
+    minimum: 1
     maximum: 30
   steps:
     type: integer

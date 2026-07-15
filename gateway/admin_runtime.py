@@ -39,6 +39,8 @@ ADMIN_KEY_PREFIX = "oak_"
 DEFAULT_SERVICE_ACCOUNT = "gateway-admin"
 ADMIN_CONTROL_ROLES = frozenset({"owner", "admin", "superadmin"})
 ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
+SERVICE_ACCOUNT_SESSION_PREFIX = "service_account:"
+LOCAL_ADMIN_KEY_ISSUER = "local-admin-key"
 SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
 MEDIA_JOB_ADMISSION_OVERRIDES_KEY = "media_job_admission_overrides"
 USER_ACCESS_DEFAULTS_SETTING_KEY = "user_access_defaults"
@@ -66,6 +68,30 @@ OIDC_PROVIDER_FIELDS: tuple[str, ...] = (
 
 OIDC_SECRET_FIELDS: frozenset[str] = frozenset({"client_secret"})
 _OIDC_SECRET_REDACTED = "<redacted>"
+
+
+def service_account_session_subject(service_account_id: str) -> str:
+    """Encode a service-account browser admin session subject.
+
+    Signed browser admin sessions existed before they could carry an explicit
+    subject kind. Keep OIDC/local users as raw ``usr_*`` ids for compatibility,
+    and encode only service-account sessions with an unambiguous prefix.
+    """
+    return f"{SERVICE_ACCOUNT_SESSION_PREFIX}{service_account_id}"
+
+
+def session_admin_role_subject(subject: str) -> tuple[str, str]:
+    """Return the durable admin-role subject represented by a session subject."""
+    if subject.startswith(SERVICE_ACCOUNT_SESSION_PREFIX):
+        service_account_id = subject[len(SERVICE_ACCOUNT_SESSION_PREFIX):]
+        if service_account_id:
+            return "service_account", service_account_id
+    return "user", subject
+
+
+def is_human_user_record(user: Mapping[str, Any]) -> bool:
+    """True for People rows, false for legacy admin-key claim placeholders."""
+    return str(user.get("issuer") or "") != LOCAL_ADMIN_KEY_ISSUER
 
 
 def _bool_setting(value: Any, default: bool) -> bool:
@@ -218,7 +244,10 @@ class AdminSQLiteStore:
         admin_store.init_db(self.path)
 
     def list_users(self) -> list[dict[str, Any]]:
-        users = admin_store.list_users(path=self.path)
+        users = [
+            user for user in admin_store.list_users(path=self.path)
+            if is_human_user_record(user)
+        ]
         for user in users:
             roles = admin_store.list_admin_roles(
                 subject_kind="user",
@@ -245,8 +274,22 @@ class AdminSQLiteStore:
             record["effective_profile_source"] = "fallback"
         return record
 
+    def _visible_admin_app(self, record: Mapping[str, Any]) -> bool:
+        """True when an App belongs on the operator-facing Apps surface."""
+        if record.get("kind") != "personal":
+            return True
+        owner_user_id = str(record.get("owner_user_id") or "")
+        if not owner_user_id:
+            return True
+        owner = admin_store.get_user(owner_user_id, path=self.path)
+        return owner is None or is_human_user_record(owner)
+
     def list_apps(self) -> list[dict[str, Any]]:
-        return [self._enrich_app(r) for r in admin_store.list_apps(path=self.path)]
+        return [
+            self._enrich_app(r)
+            for r in admin_store.list_apps(path=self.path)
+            if self._visible_admin_app(r)
+        ]
 
     def get_app(self, app_id: str) -> dict[str, Any] | None:
         record = admin_store.get_app(app_id, path=self.path)
@@ -1140,6 +1183,9 @@ class AdminSQLiteStore:
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
         return admin_store.list_audit(limit=limit, path=self.path)
 
+    def get_audit_event(self, event_id: str) -> dict[str, Any] | None:
+        return admin_store.get_audit_event(event_id, path=self.path)
+
     def list_audit_page(
         self,
         *,
@@ -1253,9 +1299,12 @@ class AdminAuthenticator:
                         token,
                         signing_key=self.signing_key,
                     )
+                    subject_kind, subject_id = session_admin_role_subject(
+                        session.subject
+                    )
                     roles = admin_store.list_admin_roles(
-                        subject_kind="user",
-                        subject_id=session.subject,
+                        subject_kind=subject_kind,
+                        subject_id=subject_id,
                         path=self.store.path,
                     )
                     role_names = frozenset(str(role["role"]) for role in roles)

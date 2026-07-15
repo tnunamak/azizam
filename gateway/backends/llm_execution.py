@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping as MappingABC
 import os
 import re
 from typing import Any, Mapping
 
 import httpx
 
+from gateway.backends.cancellation import CancellationToken
 from gateway.service_registry import is_litellm_service_record
 
 LITELLM_BODY_EXECUTION_PATHS = frozenset(
@@ -26,9 +27,9 @@ LITELLM_BODY_EXECUTION_PATHS = frozenset(
     }
 )
 LITELLM_DELEGATED_KEY_HEADER = "X-Litellm-Key"
-DISCONNECT_POLL_INTERVAL_SECONDS = 0.1
+GATEWAY_REQUEST_ID_HEADER = "X-AI-Gateway-Request-Id"
 
-DownstreamDisconnectCheck = Callable[[], Awaitable[bool]]
+ASGIReceive = Callable[[], Awaitable[MappingABC[str, Any]]]
 
 _SSE_EVENT_END = re.compile(br"\r\n\r\n|\n\n|\r\r")
 
@@ -130,10 +131,10 @@ def litellm_headers(
         "content-type": _header(source_headers, "content-type") or "application/json",
         "accept": _header(source_headers, "accept") or "application/json",
     }
-    if api_key:
-        headers["authorization"] = f"Bearer {api_key}"
     if delegated_api_key:
         headers[LITELLM_DELEGATED_KEY_HEADER] = f"Bearer {delegated_api_key}"
+    elif api_key:
+        headers[LITELLM_DELEGATED_KEY_HEADER] = f"Bearer {api_key}"
 
     for name, value in (gateway_metadata or {}).items():
         if value:
@@ -141,9 +142,101 @@ def litellm_headers(
     return headers
 
 
+class RequestDisconnectWatcher:
+    """Own exactly one persistent ASGI ``receive()`` task for one request.
+
+    ASGI's ``receive()`` is not safe to cancel-and-reinvoke on a poll tick —
+    Starlette/uvicorn document it as a single logical stream, and repeatedly
+    wrapping it in ``asyncio.wait_for(receive(), timeout=...)`` cancels and
+    restarts it every tick. That pattern was the cause of a proven bug: a
+    deterministic probe observed five ``receive()`` starts and five
+    cancellations in 40ms of one non-stream wait. This class instead starts
+    one background task that calls ``receive()`` in a loop exactly once per
+    request, after the request body has already been fully consumed (so this
+    is the sole remaining consumer of the ASGI receive channel — competing
+    with ``StreamingResponse``'s own receive loop would strand a response
+    after headers are sent, so this watcher must never be built for a
+    streaming response).
+
+    ``wait()`` resolves when ``http.disconnect`` arrives (or immediately if it
+    already has). ``aclose()`` cancels the background task and awaits it,
+    tolerating cancellation while blocked inside ASGI ``receive()`` — the
+    background task is the sole entity that ever awaits that raw call, so
+    cancelling and awaiting *this* task (rather than a fresh
+    ``wait_for``-wrapped call every tick) does not re-enter ``receive()``.
+    Safe to call ``aclose()`` more than once, and safe to construct without
+    ever calling ``wait()``.
+    """
+
+    def __init__(self, receive: ASGIReceive) -> None:
+        self._disconnected = asyncio.Event()
+        self._task: asyncio.Task[None] = asyncio.create_task(self._watch(receive))
+
+    async def _watch(self, receive: ASGIReceive) -> None:
+        try:
+            while not self._disconnected.is_set():
+                message = await receive()
+                if message.get("type") == "http.disconnect":
+                    self._disconnected.set()
+                    return
+        except asyncio.CancelledError:
+            raise
+        except BaseException:
+            # A receive-channel error is not itself a disconnect signal; the
+            # caller's own read/dispatch will surface the real failure.
+            return
+
+    @property
+    def disconnected(self) -> bool:
+        return self._disconnected.is_set()
+
+    async def wait(self) -> None:
+        await self._disconnected.wait()
+
+    async def aclose(self) -> None:
+        if not self._task.done():
+            self._task.cancel()
+        await asyncio.gather(self._task, return_exceptions=True)
+
+
 async def send_llm_execution_request(
     request: LlmExecutionRequest,
+    *,
+    disconnect_watcher: RequestDisconnectWatcher | None = None,
+    cancellation_token: CancellationToken | None = None,
+    on_signal: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[httpx.AsyncClient, httpx.Response]:
+    """Dispatch the upstream request, racing pre-header disconnect/cancel.
+
+    ``disconnect_watcher``, when given, races the connect+send against a
+    local client disconnect observed *before* any upstream response headers
+    have arrived — the outer gateway hop's own ASGI connection.
+
+    ``cancellation_token``, when given, races the same connect+send against
+    a cross-hop cancel signal (see ``gateway/backends/cancellation.py``).
+    This is how the internal gateway hop — which has no local downstream
+    client of its own, only the forwarded ``X-AI-Gateway-Request-Id`` — stops
+    a pre-header wait on its own backend once the outer route has already
+    signalled the registry; without this, a backend that never returns
+    headers (idle, prompt-processing, etc.) leaves the internal hop stuck
+    even after the outer client is long gone.
+
+    Either, both, or neither may be given. If the client/cross-hop signal
+    wins the race, the in-flight ``client.send`` task is cancelled, the
+    client is closed promptly, and ``ClientDisconnectedBeforeHeaders`` is
+    raised so the caller can stop without ever having dispatched a body to a
+    downstream consumer.
+
+    ``on_signal``, when given, is awaited the instant a disconnect/cancel is
+    observed to have won the race — strictly before ``send_task`` is
+    cancelled and before the client is closed. Cross-hop signalling must not
+    wait on local teardown: a blocked ``client.aclose()`` must never delay
+    the internal hop's own reader from waking. If ``on_signal`` itself
+    raises, teardown still proceeds and ``ClientDisconnectedBeforeHeaders``
+    is still raised (the on_signal failure is not swallowed silently, but it
+    also must not prevent local cleanup — see the ``finally`` below, which
+    always runs regardless of how the signalled branch exits).
+    """
     client = httpx.AsyncClient(
         timeout=httpx.Timeout(
             connect=10.0,
@@ -158,40 +251,132 @@ async def send_llm_execution_request(
         headers=dict(request.headers),
         content=request.body,
     )
-    response = await client.send(req, stream=True)
-    return client, response
+
+    if disconnect_watcher is None and cancellation_token is None:
+        try:
+            response = await client.send(req, stream=True)
+        except BaseException:
+            await client.aclose()
+            raise
+        return client, response
+
+    send_task = asyncio.create_task(client.send(req, stream=True))
+    watch_tasks: list[asyncio.Task[Any]] = []
+    if disconnect_watcher is not None:
+        watch_tasks.append(asyncio.create_task(disconnect_watcher.wait()))
+    if cancellation_token is not None:
+        watch_tasks.append(asyncio.create_task(cancellation_token.wait()))
+    try:
+        done, _ = await asyncio.wait(
+            {send_task, *watch_tasks},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        # A disconnect/cancel observed in the same tick headers also arrived
+        # still wins — checking watch_tasks membership in ``done`` first
+        # (rather than "send_task not in done") means a response that
+        # happened to complete in the exact instant the client vanished is
+        # never dispatched to a caller who will just read a vanished client.
+        if not any(task in done for task in watch_tasks):
+            # ``send_task.result()`` re-raises here if the send itself
+            # failed (connect error, protocol failure, ...) — the client
+            # must still be closed on that path, same as the no-watcher
+            # branch above; it is otherwise never referenced again.
+            try:
+                return client, send_task.result()
+            except BaseException:
+                await client.aclose()
+                raise
+        if on_signal is not None:
+            await on_signal()
+        send_task.cancel()
+        await asyncio.gather(send_task, return_exceptions=True)
+        await client.aclose()
+        raise ClientDisconnectedBeforeHeaders()
+    finally:
+        for task in watch_tasks:
+            if not task.done():
+                task.cancel()
+        if watch_tasks:
+            await asyncio.gather(*watch_tasks, return_exceptions=True)
+
+
+class ClientDisconnectedBeforeHeaders(Exception):
+    """Raised when the client disconnects before upstream headers arrive."""
 
 
 async def read_llm_response_body(
     client: httpx.AsyncClient,
     response: httpx.Response,
     *,
-    is_downstream_disconnected: DownstreamDisconnectCheck,
-    poll_interval: float = DISCONNECT_POLL_INTERVAL_SECONDS,
+    disconnect_watcher: RequestDisconnectWatcher | None = None,
+    cancellation_token: CancellationToken | None = None,
+    on_signal: Callable[[], Awaitable[None]] | None = None,
 ) -> bytes | None:
     """Read an upstream body while owning downstream disconnect cleanup.
 
     ``httpx`` only knows about the upstream socket.  ASGI request handlers also
     need to stop the upstream request when their downstream client disappears;
-    otherwise a local inference server can keep decoding after Pi has aborted.
-    The caller still owns the normal response lifetime, while this helper closes
-    both resources on the disconnect path and returns ``None``.
+    otherwise a local inference server can keep decoding after the client has
+    aborted. The caller still owns the normal response lifetime, while this
+    helper closes both resources on the disconnect path and returns ``None``.
+
+    ``disconnect_watcher``, when given, is the single persistent ASGI receive
+    watcher for this request (see ``RequestDisconnectWatcher``) — raced
+    against the read, never polled.
+
+    ``cancellation_token``, when given, is a second — engine-agnostic — signal
+    raced alongside the disconnect watcher. It is how a cross-hop cancel
+    (outer gateway -> LiteLLM -> internal gateway) reaches a backend read
+    that has no direct view of the outer client's ASGI connection. See
+    ``gateway/backends/cancellation.py``.
+
+    ``on_signal``, when given, is awaited the instant a disconnect/cancel is
+    observed to have won the race against the read — strictly before the
+    read task is cancelled and before ``response``/``client`` are closed.
+    Cross-hop signalling must never wait behind local teardown that can
+    block (a stalled ``response.aclose()``); the internal hop's own reader
+    must be woken first.
     """
 
-    async def read() -> bytes:
-        return await response.aread()
+    read_task = asyncio.create_task(response.aread())
+    watch_tasks: list[asyncio.Task[Any]] = []
+    if disconnect_watcher is not None:
+        watch_tasks.append(asyncio.create_task(disconnect_watcher.wait()))
+    if cancellation_token is not None:
+        watch_tasks.append(asyncio.create_task(cancellation_token.wait()))
 
     try:
-        result = await _run_with_disconnect_watch(
-            read(),
-            is_downstream_disconnected=is_downstream_disconnected,
-            poll_interval=poll_interval,
-        )
+        if watch_tasks:
+            done, pending = await asyncio.wait(
+                {read_task, *watch_tasks},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            # A disconnect/cancel observed in the same tick the read also
+            # finished is still a disconnect — checking "did a watcher fire"
+            # before "did the read finish" (rather than the reverse) means a
+            # request whose body happened to complete in the exact instant
+            # its client vanished is never reported as a normal success.
+            if any(task in done for task in watch_tasks):
+                if on_signal is not None:
+                    await on_signal()
+                read_task.cancel()
+                await asyncio.gather(read_task, return_exceptions=True)
+                await close_llm_response(client, response)
+                return None
+        result = await read_task
     except BaseException:
-        await _close_llm_response(client, response)
+        read_task.cancel()
+        await asyncio.gather(read_task, return_exceptions=True)
+        await close_llm_response(client, response)
         raise
-    if result is None:
-        await _close_llm_response(client, response)
+    finally:
+        for task in watch_tasks:
+            if not task.done():
+                task.cancel()
+        if watch_tasks:
+            await asyncio.gather(*watch_tasks, return_exceptions=True)
     return result
 
 
@@ -199,8 +384,8 @@ async def iter_llm_response_bytes(
     client: httpx.AsyncClient,
     response: httpx.Response,
     *,
-    is_downstream_disconnected: DownstreamDisconnectCheck,
-    poll_interval: float = DISCONNECT_POLL_INTERVAL_SECONDS,
+    cancellation_token: CancellationToken | None = None,
+    on_signal: Callable[[], Awaitable[None]] | None = None,
 ) -> AsyncIterator[bytes]:
     """Yield upstream bytes and close the upstream on completion/cancellation.
 
@@ -208,11 +393,25 @@ async def iter_llm_response_bytes(
     cancellation propagates into this generator, whose ``finally`` closes the
     HTTPX stream.  Polling ``Request.is_disconnected`` here would introduce a
     second consumer of the ASGI receive channel and can strand a response after
-    its headers have been sent.
+    its headers have been sent — this generator deliberately never touches
+    ASGI receive; streaming cancellation is the source of truth for the
+    immediate hop.
 
-    ``is_downstream_disconnected`` and ``poll_interval`` remain in the
-    signature for caller compatibility; streaming cancellation is the source
-    of truth for this path.
+    ``cancellation_token``, when given, is raced alongside upstream reads so a
+    cross-hop cancel signal (see ``gateway/backends/cancellation.py``) can stop
+    this reader even when the local ASGI cancellation path does not fire
+    directly here — e.g. this generator is itself running behind LiteLLM on
+    the internal gateway hop, where there is no local downstream client to
+    disconnect from.
+
+    ``on_signal``, when given, is awaited the instant a cancellation is
+    observed — either the cross-hop token winning the race against the next
+    chunk, or this generator itself being cancelled by Starlette (local ASGI
+    disconnect) — strictly before the upstream response/client are closed.
+    Signalling must never wait behind a stalled ``response.aclose()``; the
+    internal hop's own reader must be woken first. Not called for the two
+    non-cancellation terminal paths (upstream EOF, ``[DONE]`` detection) —
+    those are ordinary completions, not cancellations.
 
     A complete OpenAI ``data: [DONE]`` SSE event is also a terminal outcome:
     it ends the semantic response even if the backend leaves its HTTP socket
@@ -225,8 +424,6 @@ async def iter_llm_response_bytes(
     slow downstream client.
     """
 
-    del is_downstream_disconnected, poll_interval
-
     upstream_iterator = response.aiter_bytes().__aiter__()
     done_detector = _OpenAiSseDoneDetector()
     close_lock = asyncio.Lock()
@@ -238,27 +435,81 @@ async def iter_llm_response_bytes(
             if closed:
                 return
             closed = True
-            await _close_llm_response(client, response)
+            await close_llm_response(client, response)
+
+    async def signal_cancelled() -> None:
+        if on_signal is not None:
+            try:
+                await on_signal()
+            except BaseException:
+                # Signalling failure must not block or mask the caller's own
+                # cancellation/close outcome — it is best-effort notification
+                # to a registry, not part of this generator's own contract.
+                pass
 
     async def next_chunk() -> bytes:
         try:
             return await anext(upstream_iterator)
-        except BaseException:
+        except asyncio.CancelledError as read_error:
+            # A direct cancellation of THIS task (Starlette cancels the
+            # generator's own suspended await point — here, mid-upstream-
+            # read — when it delivers a local ASGI disconnect) must signal
+            # before this task's own close_upstream() call, not after —
+            # the outer generator's try/except never gets a chance to run
+            # first, since this coroutine owns the cancellation and closes
+            # the upstream itself before the CancelledError ever propagates
+            # to the caller.
+            await signal_cancelled()
             try:
                 await close_upstream()
-            except BaseException:
+            except BaseException as close_error:
+                raise read_error from close_error
+            raise
+        except BaseException as read_error:
+            try:
+                await close_upstream()
+            except BaseException as close_error:
                 # The upstream read outcome is more useful to the caller than
-                # a cleanup failure, including when that outcome is cancellation.
-                pass
+                # a cleanup failure, including when that outcome is
+                # cancellation — but the cleanup failure must still be
+                # observable, not silently dropped, so it is chained onto
+                # the read error rather than discarded.
+                raise read_error from close_error
             raise
 
     pending_chunk = asyncio.create_task(next_chunk())
+    cancel_wait = (
+        asyncio.create_task(cancellation_token.wait())
+        if cancellation_token is not None
+        else None
+    )
+    generator_cancelled = False
     try:
         while True:
+            if cancel_wait is not None:
+                done, _ = await asyncio.wait(
+                    {pending_chunk, cancel_wait},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                # Cancellation wins even if the next chunk also became ready
+                # in the same tick — a cancel signal observed at the same
+                # instant a read happens to finish is still a cancel; do not
+                # let a race let one more chunk through before stopping.
+                if cancel_wait in done:
+                    await signal_cancelled()
+                    if not pending_chunk.done():
+                        pending_chunk.cancel()
+                    await close_upstream()
+                    await asyncio.gather(pending_chunk, return_exceptions=True)
+                    return
+
             try:
                 chunk = await pending_chunk
             except StopAsyncIteration:
                 return
+            except asyncio.CancelledError:
+                generator_cancelled = True
+                raise
 
             pending_chunk = asyncio.create_task(next_chunk())
             output, is_terminal = done_detector.consume(chunk)
@@ -272,11 +523,19 @@ async def iter_llm_response_bytes(
                 return
             if output:
                 yield output
+    except asyncio.CancelledError:
+        generator_cancelled = True
+        raise
     finally:
+        if generator_cancelled:
+            await signal_cancelled()
         if not pending_chunk.done():
             pending_chunk.cancel()
         await close_upstream()
         await asyncio.gather(pending_chunk, return_exceptions=True)
+        if cancel_wait is not None and not cancel_wait.done():
+            cancel_wait.cancel()
+            await asyncio.gather(cancel_wait, return_exceptions=True)
 
 
 class _OpenAiSseDoneDetector:
@@ -314,65 +573,33 @@ def _is_openai_sse_done_event(event: bytes) -> bool:
     return b"\n".join(data_lines) == b"[DONE]"
 
 
-async def _run_with_disconnect_watch(
-    operation: Awaitable[Any],
-    *,
-    is_downstream_disconnected: DownstreamDisconnectCheck,
-    poll_interval: float,
-) -> Any | None:
-    operation_task = asyncio.create_task(operation)
-    disconnected_task = asyncio.create_task(
-        _wait_for_downstream_disconnect(
-            is_downstream_disconnected,
-            poll_interval,
-        )
-    )
-    try:
-        done, pending = await asyncio.wait(
-            {operation_task, disconnected_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-
-        if disconnected_task in done:
-            operation_task.cancel()
-            await asyncio.gather(operation_task, return_exceptions=True)
-            return None
-        return operation_task.result()
-    finally:
-        if not operation_task.done():
-            operation_task.cancel()
-        await asyncio.gather(operation_task, return_exceptions=True)
-        if not disconnected_task.done():
-            disconnected_task.cancel()
-
-
-async def _wait_for_downstream_disconnect(
-    is_downstream_disconnected: DownstreamDisconnectCheck,
-    poll_interval: float,
-) -> None:
-    while True:
-        try:
-            disconnected = await asyncio.wait_for(
-                is_downstream_disconnected(),
-                timeout=poll_interval,
-            )
-        except asyncio.TimeoutError:
-            disconnected = False
-        if disconnected:
-            return
-        await asyncio.sleep(poll_interval)
-
-
-async def _close_llm_response(
+async def close_llm_response(
     client: httpx.AsyncClient,
     response: httpx.Response,
 ) -> None:
+    """Attempt both response and client closure, always attempting both.
+
+    ``response.aclose()`` failing must not skip ``client.aclose()`` — the
+    client owns the underlying transport/connection pool, and skipping its
+    teardown because the response's own close raised would leak a live
+    connection even though the caller believes cleanup ran. Both are always
+    attempted; if either raises, the failure propagates (the first failure
+    if both raise, via exception chaining) rather than being silently
+    treated as a successful close.
+    """
+    response_error: BaseException | None = None
     try:
         await response.aclose()
-    finally:
+    except BaseException as exc:  # noqa: BLE001
+        response_error = exc
+    try:
         await client.aclose()
+    except BaseException as client_error:  # noqa: BLE001
+        if response_error is not None:
+            raise client_error from response_error
+        raise
+    if response_error is not None:
+        raise response_error
 
 
 def _header(headers: Mapping[str, str], name: str) -> str:
