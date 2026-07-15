@@ -64,7 +64,7 @@ def _service_evidence(**overrides):
     evidence = {
         "service_id": "service",
         "deployment_generation": "g1",
-        "registry_generation": "registry-g1",
+        "evidence_registry_revision": "registry-g1",
         "evidence_revision": "receipt",
         "evidence_receipt_identity": "receipt-identity",
         "evidence_receipt_expires_at": "2030-01-01T00:00:00Z",
@@ -119,7 +119,7 @@ def _record(**overrides):
             "service_id": "service", "deployment_generation": "g1",
             "evidence_revision": "receipt", "evidence_receipt_identity": "receipt-identity",
             "evidence_receipt_expires_at": "2030-01-01T00:00:00Z",
-            "registry_generation": "registry-g1", "model_artifact_sha256": _DIGEST, "base_model_id": "base",
+            "evidence_registry_revision": "registry-g1", "model_artifact_sha256": _DIGEST, "base_model_id": "base",
             "unit_wrapper_contract_digest": _DIGEST, "declared_runtime_revision": "g",
             "template_contract": {"revision": "r", "sha256": _DIGEST, "kwargs": {"enable_thinking": False}, "render_bound_proof_digest": _DIGEST, "mode": "generation"},
             "tokenizer_contract": _service_evidence()["tokenizer_contract"],
@@ -141,7 +141,7 @@ def _contract(record=None, evidence=_DEFAULT_EVIDENCE):
             _service_evidence() if evidence is _DEFAULT_EVIDENCE else evidence
         ),
         service_deployment_generation="g1",
-        service_registry_generation="registry-g1",
+        service_evidence_registry_revision="registry-g1",
         base_model_id="base",
         now=1_800_000_000,
     )
@@ -170,7 +170,7 @@ def test_record_recomputes_ceiling_and_rejects_lifecycle_mismatches():
     "path, changed_value",
     [
         (("deployment_generation",), "other-generation"),
-        (("registry_generation",), "other-registry-generation"),
+        (("evidence_registry_revision",), "other-registry-generation"),
         (("evidence_revision",), "other-evidence"),
         (("evidence_receipt_identity",), "other-receipt"),
         (("evidence_receipt_expires_at",), "2031-01-01T00:00:00Z"),
@@ -239,7 +239,7 @@ def _registry_with_operation(evidence=_DEFAULT_EVIDENCE, record=None):
     config = {
         "model_policy_schema_version": 1,
         "deployment_generation": "g1",
-        "registry_generation": "registry-g1",
+        "evidence_registry_revision": "registry-g1",
         "models": [
             {"id": "base"},
             {"id": "operator-target", "base_model_id": "base", "compaction_safety": record or _record()},
@@ -353,7 +353,7 @@ def test_resolved_target_selects_data_contract_without_alias_name_policy():
         "backends": {
             "service": {
                 "deployment_generation": "g1",
-                "registry_generation": "registry-g1",
+                "evidence_registry_revision": "registry-g1",
                 "controlled_deployment_evidence": _service_evidence(),
                 "models": [
                     {"id": "base"},
@@ -382,7 +382,7 @@ def test_discovery_exposes_only_valid_authorized_operation_targets():
         "backends": {
             "service": {
                 "deployment_generation": "g1",
-                "registry_generation": "registry-g1",
+                "evidence_registry_revision": "registry-g1",
                 "controlled_deployment_evidence": _service_evidence(),
                 "models": [
                     {"id": "base"},
@@ -417,7 +417,7 @@ def test_discovery_exposes_only_valid_authorized_operation_targets():
 
 def test_authenticated_discovery_consumer_needs_no_internal_control_and_reaches_admitted_transport(tmp_path):
     config = {"backends": {"service": {
-        "model_policy_schema_version": 1, "deployment_generation": "g1", "registry_generation": "registry-g1",
+        "model_policy_schema_version": 1, "deployment_generation": "g1", "evidence_registry_revision": "registry-g1",
         "controlled_deployment_evidence": _service_evidence(),
         "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
     }}}
@@ -516,8 +516,8 @@ def test_authenticated_discovery_consumer_needs_no_internal_control_and_reaches_
 
 def test_duplicate_operation_targets_fail_closed_for_discovery_and_admission():
     config = {"backends": {
-        "first": {"deployment_generation": "g1", "registry_generation": "registry-g1", "controlled_deployment_evidence": _service_evidence(service_id="first"), "models": []},
-        "second": {"deployment_generation": "g1", "registry_generation": "registry-g1", "controlled_deployment_evidence": _service_evidence(service_id="second"), "models": []},
+        "first": {"deployment_generation": "g1", "evidence_registry_revision": "registry-g1", "controlled_deployment_evidence": _service_evidence(service_id="first"), "models": []},
+        "second": {"deployment_generation": "g1", "evidence_registry_revision": "registry-g1", "controlled_deployment_evidence": _service_evidence(service_id="second"), "models": []},
     }}
     for service_id in ("first", "second"):
         evidence = config["backends"][service_id]["controlled_deployment_evidence"]
@@ -579,7 +579,7 @@ def test_named_litellm_refuses_operation_before_receipt_or_activation():
     config = {
         "backends": {
             "service": {
-                "deployment_generation": "g1", "registry_generation": "registry-g1",
+                "deployment_generation": "g1", "evidence_registry_revision": "registry-g1",
                 "controlled_deployment_evidence": _service_evidence(),
                 "models": [
                     {"id": "base"},
@@ -601,7 +601,7 @@ def test_named_litellm_refuses_operation_before_receipt_or_activation():
 def test_responses_loopback_routes_logical_target_to_one_owned_admission(tmp_path):
     admissions: list[bytes] = []
     config = {"backends": {"service": {
-        "model_policy_schema_version": 1, "deployment_generation": "g1", "registry_generation": "registry-g1",
+        "model_policy_schema_version": 1, "deployment_generation": "g1", "evidence_registry_revision": "registry-g1",
         "controlled_deployment_evidence": _service_evidence(),
         "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
     }}}
@@ -649,13 +649,13 @@ def test_runtime_reload_drops_stale_service_evidence_before_resolution():
     previous = dict(proxy.config)
     previous_derived = {name: getattr(proxy, name) for name in proxy._derive_backend_constants(previous)}
     stale = {"backends": {"service": {
-        "deployment_generation": "g1", "registry_generation": "registry-g1",
+        "deployment_generation": "g1", "evidence_registry_revision": "registry-g1",
         "controlled_deployment_evidence": _service_evidence(evidence_revision="stale"),
         "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
     }}}
     try:
         with patch.object(proxy, "config", {"backends": {"service": {
-            "deployment_generation": "g1", "registry_generation": "registry-g1",
+            "deployment_generation": "g1", "evidence_registry_revision": "registry-g1",
             "controlled_deployment_evidence": _service_evidence(),
             "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
         }}}):
@@ -778,7 +778,7 @@ def test_current_loaded_transport_receives_the_admitted_bytes_without_reserializ
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
 
-    config = {"backends": {"service": {"model_policy_schema_version": 1, "deployment_generation": "g1", "registry_generation": "registry-g1", "controlled_deployment_evidence": _service_evidence(), "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}]}}}
+    config = {"backends": {"service": {"model_policy_schema_version": 1, "deployment_generation": "g1", "evidence_registry_revision": "registry-g1", "controlled_deployment_evidence": _service_evidence(), "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}]}}}
     request = proxy.Request({"type": "http", "method": "POST", "path": "/v1/chat/completions", "headers": [], "query_string": b"", "scheme": "http", "server": ("test", 80)}, receive)
     with patch.object(proxy, "config", config), patch.object(proxy, "_current_loaded_llm_target", current_target), patch.object(proxy, "_OuterCancellationSpan", Span), patch.object(proxy, "ReceiptLifecycleOwner", Owner), patch.object(proxy, "_profile_for_auth_context", lambda _auth: proxy.DEFAULT_PROFILE), patch.object(proxy, "prepare_downstream_headers", lambda *_args: {}), patch.object(proxy, "close_llm_response", close), patch.object(proxy, "prepare_admitted_body", admit):
         response = asyncio.run(proxy._forward_current_loaded_openai_request(request, request_path="/v1/chat/completions", auth_context=SimpleNamespace(identity=None), body_json=_body(model="operator-target")))

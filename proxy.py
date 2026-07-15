@@ -911,21 +911,6 @@ def reload_runtime_config() -> dict:
     for name, value in updates.items():
         _g[name] = value
 
-    # This is an observation after the in-process config swap, never a
-    # readiness claim for another process or a sidecar.
-    try:
-        for target in operation_activation.list_targets(path=ADMIN_DB_PATH):
-            generation = target.get("effective_operator_settings_generation")
-            if isinstance(generation, int):
-                operation_activation.acknowledge_local_reload(
-                    path=ADMIN_DB_PATH,
-                    service_id=str(target["service_id"]),
-                    alias_id=str(target["alias_id"]),
-                    generation=generation,
-                )
-    except Exception as exc:  # noqa: BLE001
-        print(f"[proxy] operation reload acknowledgement unavailable: {exc}", flush=True)
-
     print(
         f"[proxy] runtime config reloaded — "
         f"LLM backends: {list(updates['LLM_BACKEND_HOSTS'].keys())} "
@@ -19184,7 +19169,9 @@ def _resolve_request_target(
                     "controlled_deployment_evidence"
                 ),
                 service_deployment_generation=service_cfg.get("deployment_generation"),
-                service_registry_generation=service_cfg.get("registry_generation"),
+                service_evidence_registry_revision=service_cfg.get(
+                    "evidence_registry_revision"
+                ),
                 base_model_id=base_id,
             )
         except CompactionContractError as exc:

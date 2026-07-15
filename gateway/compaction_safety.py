@@ -90,7 +90,7 @@ def contract_from_data(
     service_id: str,
     service_controlled_deployment_evidence: Any,
     service_deployment_generation: Any,
-    service_registry_generation: Any,
+    service_evidence_registry_revision: Any,
     base_model_id: str,
     now: float | None = None,
 ) -> CompactionContract:
@@ -163,7 +163,7 @@ def contract_from_data(
             "deployment_generation",
             "evidence_revision",
             "evidence_receipt_identity", "evidence_receipt_expires_at",
-            "registry_generation", "model_artifact_sha256", "base_model_id",
+            "evidence_registry_revision", "model_artifact_sha256", "base_model_id",
             "unit_wrapper_contract_digest",
             "declared_runtime_revision",
         ),
@@ -175,7 +175,7 @@ def contract_from_data(
             "deployment_generation",
             "evidence_revision",
             "evidence_receipt_identity", "evidence_receipt_expires_at",
-            "registry_generation", "model_artifact_sha256", "base_model_id",
+            "evidence_registry_revision", "model_artifact_sha256", "base_model_id",
             "unit_wrapper_contract_digest",
             "declared_runtime_revision",
         ),
@@ -202,8 +202,9 @@ def contract_from_data(
     ):
         raise ContractError("service controlled deployment evidence does not match deployment generation")
     if (
-        not isinstance(service_registry_generation, str)
-        or service_evidence["registry_generation"] != service_registry_generation
+        not isinstance(service_evidence_registry_revision, str)
+        or service_evidence["evidence_registry_revision"]
+        != service_evidence_registry_revision
     ):
         raise ContractError("service controlled deployment evidence does not match registry generation")
     for field in (
@@ -211,7 +212,7 @@ def contract_from_data(
         "evidence_revision",
         "evidence_receipt_identity",
         "evidence_receipt_expires_at",
-        "registry_generation",
+        "evidence_registry_revision",
         "model_artifact_sha256",
         "base_model_id",
         "unit_wrapper_contract_digest",

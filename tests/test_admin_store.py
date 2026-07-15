@@ -123,7 +123,7 @@ class TestOperatorSettings(AdminStoreTestBase):
         self.assertEqual(rows[0]["updated_at"], 2)
         self.assertEqual(rows[0]["value"]["openai"]["state"], "maintenance")
 
-    def test_service_registry_protection_preserves_registry_generation_and_audit(self) -> None:
+    def test_service_registry_protection_preserves_operator_settings_generation_and_audit(self) -> None:
         admin_store.write_service_registry(
             {"schema_version": 1, "services": {"existing": {"id": "existing"}}},
             expected_generation=0,

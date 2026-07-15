@@ -1979,6 +1979,53 @@ def create_admin_router(
                 412, "generation_mismatch", "composite If-Match is required"
             ) from exc
 
+    def _operation_idempotency_key(request: Request) -> str:
+        key = request.headers.get("idempotency-key", "")
+        if not 1 <= len(key) <= 128 or any(
+            not (0x21 <= ord(char) <= 0x7E) for char in key
+        ):
+            raise _RouteError(
+                422, "invalid_idempotency_key",
+                "Idempotency-Key must be 1-128 visible ASCII bytes",
+            )
+        return key
+
+    def _observe_operation_reload(
+        *, service_id: str, alias_id: str, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Observe one committed lifecycle mutation from this process.
+
+        SQLite remains the configuration authority.  This route owns the
+        operation-specific observation because it knows the target and exact
+        generation that its injected reloader just attempted; the generic
+        runtime reloader must not guess either from a later database read.
+        """
+        replayed = bool(payload.get("idempotency_replayed"))
+        generation = payload.get("operator_settings_generation")
+        changed_registry = (
+            isinstance(generation, int)
+            and payload.get("effective_operator_settings_generation") == generation
+        )
+        if operation_reloader is not None and changed_registry and not replayed:
+            try:
+                operation_reloader()
+            except Exception:  # noqa: BLE001 - post-commit observation only
+                operation_activation.record_reload_failure(
+                    path=_operation_path(), service_id=service_id,
+                    alias_id=alias_id, generation=generation,
+                )
+            else:
+                operation_activation.acknowledge_local_reload(
+                    path=_operation_path(), service_id=service_id,
+                    alias_id=alias_id, generation=generation,
+                )
+        current = operation_activation.status(
+            path=_operation_path(), service_id=service_id, alias_id=alias_id
+        )
+        if replayed:
+            current["idempotency_replayed"] = True
+        return current
+
     @router.get("/operator/operation-targets")
     def list_operation_targets(request: Request) -> JSONResponse:
         ctx = _guard(request)
@@ -2055,27 +2102,20 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse): return ctx
         try:
-            tag=request.headers.get("if-match", "").strip('"'); parts=tag.split("-")
-            if len(parts) != 4 or parts[0] != "ot" or parts[2] != "os": raise _RouteError(412,"generation_mismatch","composite If-Match is required")
-            idempotency_key = request.headers.get("idempotency-key", "")
-            if not 1 <= len(idempotency_key) <= 128 or any(not (0x21 <= ord(char) <= 0x7E) for char in idempotency_key): raise _RouteError(422, "invalid_idempotency_key", "Idempotency-Key must be 1-128 visible ASCII bytes")
-            payload=operation_activation.activate(path=_operation_path(),state_dir=_operation_path().parent,service_id=service_id,alias_id=alias_id,expected_target=int(parts[1]),expected_registry=int(parts[3]),actor=ctx.subject,idempotency_key=idempotency_key)
+            target_generation, operator_settings_generation = _operation_match(request)
+            payload = operation_activation.activate(
+                path=_operation_path(), state_dir=_operation_path().parent,
+                service_id=service_id, alias_id=alias_id,
+                expected_target=target_generation,
+                expected_registry=operator_settings_generation, actor=ctx.subject,
+                idempotency_key=_operation_idempotency_key(request),
+            )
         except _RouteError as exc: return exc.as_response()
         except (ValueError, operation_activation.OperationError) as exc:
             return _operation_error(exc) if isinstance(exc, operation_activation.OperationError) else _RouteError(412,"generation_mismatch",str(exc)).as_response()
-        # Reload is intentionally post-commit observational work.  A failure
-        # must not retract the safe effective registry that SQLite committed.
-        if operation_reloader is not None and not payload.get("idempotency_replayed"):
-            try:
-                operation_reloader()
-            except Exception:  # noqa: BLE001 - an observation must not rollback
-                operation_activation.record_reload_failure(
-                    path=_operation_path(), service_id=service_id, alias_id=alias_id,
-                    generation=int(payload["operator_settings_generation"]),
-                )
-                payload = operation_activation.status(
-                    path=_operation_path(), service_id=service_id, alias_id=alias_id,
-                )
+        payload = _observe_operation_reload(
+            service_id=service_id, alias_id=alias_id, payload=payload
+        )
         response=JSONResponse(status_code=202,content={"target":payload}); response.headers.update({"ETag":_operation_etag(payload),"Cache-Control":"no-store"}); return response
 
     @router.delete("/operator/operation-targets/{service_id}/{alias_id}/activation")
@@ -2083,10 +2123,18 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse): return ctx
         try:
-            target_generation, registry_generation = _operation_match(request)
-            payload = operation_activation.deactivate(path=_operation_path(), service_id=service_id, alias_id=alias_id, expected_target=target_generation, expected_registry=registry_generation, actor=ctx.subject)
+            target_generation, operator_settings_generation = _operation_match(request)
+            payload = operation_activation.deactivate(
+                path=_operation_path(), service_id=service_id, alias_id=alias_id,
+                expected_target=target_generation,
+                expected_registry=operator_settings_generation, actor=ctx.subject,
+                idempotency_key=_operation_idempotency_key(request),
+            )
         except _RouteError as exc: return exc.as_response()
         except operation_activation.OperationError as exc: return _operation_error(exc)
+        payload = _observe_operation_reload(
+            service_id=service_id, alias_id=alias_id, payload=payload
+        )
         response = JSONResponse(content={"target": payload}); response.headers.update({"ETag": _operation_etag(payload), "Cache-Control": "no-store"}); return response
 
     @router.post("/operator/operation-targets/{service_id}/{alias_id}/rollback")
@@ -2095,9 +2143,9 @@ def create_admin_router(
         if isinstance(ctx, JSONResponse): return ctx
         try:
             body = await _read_json_body(request)
-            target_generation, registry_generation = _operation_match(request)
+            target_generation, operator_settings_generation = _operation_match(request)
             revision_number = int(body.get("revision"))
-            payload = operation_activation.rollback(path=_operation_path(), service_id=service_id, alias_id=alias_id, revision_number=revision_number, actor=ctx.subject, expected_target=target_generation, expected_registry=registry_generation)
+            payload = operation_activation.rollback(path=_operation_path(), service_id=service_id, alias_id=alias_id, revision_number=revision_number, actor=ctx.subject, expected_target=target_generation, expected_registry=operator_settings_generation)
         except _RouteError as exc: return exc.as_response()
         except operation_activation.OperationError as exc: return _operation_error(exc)
         except (TypeError, ValueError) as exc: return _RouteError(422, "invalid_revision", str(exc)).as_response()

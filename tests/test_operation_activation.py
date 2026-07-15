@@ -40,7 +40,7 @@ def _registry() -> dict:
                 "config": {
                     "model_policy_schema_version": 1,
                     "deployment_generation": "g1",
-                    "registry_generation": "registry-g1",
+                    "evidence_registry_revision": "registry-g1",
                     "controlled_deployment_evidence": _service_evidence(),
                     "models": [{"id": "base"}, {"id": "alias", "base_model_id": "base", "unrelated": "kept"}],
                 },
@@ -63,7 +63,7 @@ def _ready_target(tmp_path: Path) -> tuple[Path, dict]:
     return path, target
 
 
-def _operation_client(path: Path, *, session: bool = False) -> TestClient:
+def _operation_client(path: Path, *, session: bool = False, reloader=None) -> TestClient:
     def auth(request: Request) -> AdminContext:
         token = request.headers.get("authorization")
         if token == "Bearer admin":
@@ -75,7 +75,11 @@ def _operation_client(path: Path, *, session: bool = False) -> TestClient:
                                 auth_method="session", csrf_token="csrf")
         raise AdminAuthError()
     app = FastAPI()
-    app.include_router(create_admin_router(AdminSQLiteStore(path), auth=auth))
+    app.include_router(
+        create_admin_router(
+            AdminSQLiteStore(path), auth=auth, operation_reloader=reloader
+        )
+    )
     return TestClient(app)
 
 
@@ -120,6 +124,108 @@ def test_operation_mutations_reject_non_composite_etag(tmp_path: Path, etag: str
     )
     assert response.status_code == 412
     assert response.json()["error"]["code"] == "generation_mismatch"
+
+
+def _operation_etag(target: dict) -> str:
+    return (
+        f'"ot-{target["target_generation"]}'
+        f'-os-{target["operator_settings_generation"]}"'
+    )
+
+
+def test_activation_and_deactivation_reload_the_same_runtime_generation(tmp_path: Path) -> None:
+    path, staged = _ready_target(tmp_path)
+    runtime = {"operation_active": False, "reloads": 0}
+
+    def reload_runtime() -> None:
+        registry = admin_store.get_service_registry_with_generation(path=path)["value"]
+        alias = registry["services"]["service"]["config"]["models"][1]
+        runtime["operation_active"] = "compaction_safety" in alias
+        runtime["reloads"] += 1
+
+    client = _operation_client(path, reloader=reload_runtime)
+    activated = client.put(
+        "/admin/api/operator/operation-targets/service/alias/activation",
+        headers={
+            "Authorization": "Bearer admin", "If-Match": _operation_etag(staged),
+            "Idempotency-Key": "activate-runtime",
+        },
+    )
+    assert activated.status_code == 202
+    active = activated.json()["target"]
+    assert runtime == {"operation_active": True, "reloads": 1}
+    assert active["last_local_reload_ack_generation"] == active["operator_settings_generation"]
+
+    headers = {
+        "Authorization": "Bearer admin", "If-Match": _operation_etag(active),
+        "Idempotency-Key": "deactivate-runtime",
+    }
+    deactivated = client.delete(
+        "/admin/api/operator/operation-targets/service/alias/activation", headers=headers
+    )
+    assert deactivated.status_code == 200
+    inactive = deactivated.json()["target"]
+    assert runtime == {"operation_active": False, "reloads": 2}
+    assert inactive["effective_revision"] is None
+    assert inactive["last_local_reload_ack_generation"] == inactive["operator_settings_generation"]
+
+    replay = client.delete(
+        "/admin/api/operator/operation-targets/service/alias/activation", headers=headers
+    )
+    assert replay.status_code == 200
+    assert replay.json()["target"]["idempotency_replayed"] is True
+    assert runtime == {"operation_active": False, "reloads": 2}
+
+
+def test_reload_failure_is_recorded_without_a_false_local_acknowledgement(tmp_path: Path) -> None:
+    path, staged = _ready_target(tmp_path)
+
+    def fail_reload() -> None:
+        raise RuntimeError("reload failed before the runtime swap")
+
+    response = _operation_client(path, reloader=fail_reload).put(
+        "/admin/api/operator/operation-targets/service/alias/activation",
+        headers={
+            "Authorization": "Bearer admin", "If-Match": _operation_etag(staged),
+            "Idempotency-Key": "failed-runtime",
+        },
+    )
+
+    assert response.status_code == 202
+    target = response.json()["target"]
+    assert target["last_error_code"] == "local_reload_failed"
+    assert target["last_local_reload_ack_generation"] is None
+
+
+def test_reload_observation_loses_to_a_newer_operator_settings_generation(tmp_path: Path) -> None:
+    path, staged = _ready_target(tmp_path)
+
+    def race_reload() -> None:
+        current = admin_store.get_service_registry_with_generation(path=path)
+        replacement = current["value"]
+        replacement["services"]["service"]["name"] = "newer registry writer"
+        admin_store.write_service_registry(
+            replacement,
+            path=path,
+            expected_generation=current["operator_settings_generation"],
+        )
+        raise RuntimeError("newer writer won before this reload completed")
+
+    response = _operation_client(path, reloader=race_reload).put(
+        "/admin/api/operator/operation-targets/service/alias/activation",
+        headers={
+            "Authorization": "Bearer admin", "If-Match": _operation_etag(staged),
+            "Idempotency-Key": "race-runtime",
+        },
+    )
+
+    assert response.status_code == 202
+    target = response.json()["target"]
+    assert target["last_local_reload_ack_generation"] is None
+    assert target["last_error_code"] is None
+    assert target["effective_operator_settings_generation"] < target["operator_settings_generation"]
+    alias = admin_store.get_service_registry_with_generation(path=path)["value"]["services"]["service"]["config"]["models"][1]
+    assert "compaction_safety" in alias
 
 
 def test_evidence_is_deterministic_and_honestly_only_an_assertion() -> None:
@@ -168,6 +274,10 @@ def test_reload_ack_only_records_the_current_effective_generation(tmp_path: Path
     admin_store.init_db(path)
     admin_store.write_service_registry({"schema_version": 1, "services": {}, "protocol_frontends": {}, "workflows": {}, "capabilities": {}}, expected_generation=0, path=path)
     with admin_store._conn(path) as conn:
+        conn.execute(
+            "UPDATE operator_settings_generations SET operator_settings_generation=7 "
+            "WHERE setting_key='service_registry'"
+        )
         conn.execute("INSERT INTO operation_target_current(service_id,alias_id,target_generation,effective_operator_settings_generation,candidate_state,updated_at) VALUES ('service','alias',1,7,'none',1)")
         conn.commit()
     assert acknowledge_local_reload(path=path, service_id="service", alias_id="alias", generation=6) is False
@@ -389,7 +499,7 @@ def test_stale_target_writer_loses_without_replacing_candidate(tmp_path: Path) -
     assert second["candidate_revision"] == 2
 
 
-def test_registry_generation_is_shared_and_stale_writer_loses(tmp_path: Path) -> None:
+def test_operator_settings_generation_is_shared_and_stale_writer_loses(tmp_path: Path) -> None:
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     first = admin_store.write_service_registry(_registry(), expected_generation=0, path=path)

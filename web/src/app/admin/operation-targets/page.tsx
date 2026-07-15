@@ -59,7 +59,7 @@ export default function OperationTargetsPage() {
   }
   async function deactivate(target = selected) {
     if (!target) return;
-    try { await api.operationTargets.deactivate(target.service_id, target.alias_id, etag(target)); setMessage("Target deactivated. Refreshing status…"); refresh(); }
+    try { await api.operationTargets.deactivate(target.service_id, target.alias_id, etag(target), randomKey()); setMessage("Target deactivated. Refreshing status…"); refresh(); }
     catch (error) { setMessage(error instanceof ApiError ? error.message : "Deactivation failed."); }
   }
   async function rollback(target = selected) {

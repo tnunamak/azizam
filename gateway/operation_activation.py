@@ -123,7 +123,9 @@ def _validate_projection(registry: Mapping[str, Any], service_id: str, alias_id:
             alias["compaction_safety"], service_id=service_id,
             service_controlled_deployment_evidence=config.get("controlled_deployment_evidence"),
             service_deployment_generation=config.get("deployment_generation"),
-            service_registry_generation=config.get("registry_generation"),
+            service_evidence_registry_revision=config.get(
+                "evidence_registry_revision"
+            ),
             base_model_id=str(alias.get("base_model_id") or alias.get("id") or ""),
         )
     except ValueError as exc:
@@ -235,19 +237,34 @@ def _remove_overlay(registry: Mapping[str, Any], service_id: str, alias_id: str,
         raise OperationError("incompatible", str(exc), 409) from exc
 
 
-def deactivate(*, path: Path, service_id: str, alias_id: str, expected_target: int, expected_registry: int, actor: str) -> dict[str, Any]:
+def deactivate(*, path: Path, service_id: str, alias_id: str, expected_target: int,
+               expected_registry: int, actor: str,
+               idempotency_key: str | None = None) -> dict[str, Any]:
     """Cancel a candidate or remove only the effective target's overlay."""
     registry, generation = _effective_registry(path)
-    if generation != expected_registry:
-        raise OperationError("generation_mismatch", "registry generation changed", 412)
+    request_digest = _operation_request_digest(
+        "deactivation", service_id, alias_id, expected_target, expected_registry
+    )
     now = int(time.time())
     with admin_store._conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if idempotency_key is not None:
+            replay = _idempotency_replay(
+                conn, actor=actor, endpoint="deactivation", key=idempotency_key,
+                request_digest=request_digest,
+            )
+            if replay is not None:
+                conn.rollback()
+                return replay
         generation_row = conn.execute(
             "SELECT operator_settings_generation FROM operator_settings_generations "
             "WHERE setting_key=?", (SERVICE_REGISTRY_KEY,)
         ).fetchone()
-        if generation_row is None or int(generation_row[0]) != generation:
+        if (
+            generation != expected_registry
+            or generation_row is None
+            or int(generation_row[0]) != generation
+        ):
             conn.rollback()
             raise OperationError("generation_mismatch", "registry generation changed", 412)
         current = _target_row(conn, service_id, alias_id)
@@ -265,8 +282,15 @@ def deactivate(*, path: Path, service_id: str, alias_id: str, expected_target: i
             _audit(conn, action="operator.operation.deactivate", actor=actor,
                    service_id=service_id, alias_id=alias_id, now=now,
                    metadata={"cancelled_candidate": True})
+            committed = _status_from_row(
+                conn, _target_row(conn, service_id, alias_id), generation
+            )
+            _remember_idempotency(
+                conn, actor=actor, endpoint="deactivation", key=idempotency_key,
+                request_digest=request_digest, target=committed, status_code=200, now=now,
+            )
             conn.commit()
-            return status(path=path, service_id=service_id, alias_id=alias_id)
+            return committed
         effective = _revision_row(conn, service_id, alias_id, int(effective_number))
         overlay = json.loads(effective["overlay_json"])
         projected = _remove_overlay(registry, service_id, alias_id, overlay)
@@ -294,8 +318,15 @@ def deactivate(*, path: Path, service_id: str, alias_id: str, expected_target: i
         _audit(conn, action="operator.operation.deactivate", actor=actor,
                service_id=service_id, alias_id=alias_id, now=now,
                metadata={"operator_settings_generation": next_generation})
+        committed = _status_from_row(
+            conn, _target_row(conn, service_id, alias_id), next_generation
+        )
+        _remember_idempotency(
+            conn, actor=actor, endpoint="deactivation", key=idempotency_key,
+            request_digest=request_digest, target=committed, status_code=200, now=now,
+        )
         conn.commit()
-    return status(path=path, service_id=service_id, alias_id=alias_id)
+    return committed
 
 
 def rollback(*, path: Path, service_id: str, alias_id: str, revision_number: int, actor: str, expected_target: int, expected_registry: int) -> dict[str, Any]:
@@ -328,8 +359,17 @@ def acknowledge_local_reload(*, path: Path, service_id: str, alias_id: str, gene
     """Record only an originating-process observation after a real reload return."""
     with admin_store._conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        generation_row = conn.execute(
+            "SELECT operator_settings_generation FROM operator_settings_generations "
+            "WHERE setting_key=?", (SERVICE_REGISTRY_KEY,)
+        ).fetchone()
         row = _target_row(conn, service_id, alias_id)
-        if row is None or row["effective_operator_settings_generation"] != generation:
+        if (
+            generation_row is None
+            or int(generation_row[0]) != generation
+            or row is None
+            or row["effective_operator_settings_generation"] != generation
+        ):
             conn.rollback()
             return False
         conn.execute(
@@ -346,6 +386,13 @@ def record_reload_failure(*, path: Path, service_id: str, alias_id: str,
     """Record a local reload observation without changing effective registry state."""
     with admin_store._conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        generation_row = conn.execute(
+            "SELECT operator_settings_generation FROM operator_settings_generations "
+            "WHERE setting_key=?", (SERVICE_REGISTRY_KEY,)
+        ).fetchone()
+        if generation_row is None or int(generation_row[0]) != generation:
+            conn.rollback()
+            return False
         changed = conn.execute(
             "UPDATE operation_target_current SET last_error_code='local_reload_failed', "
             "updated_at=? WHERE service_id=? AND alias_id=? "
@@ -456,24 +503,18 @@ def _mark_prepare_failed(
 
 def activate(*, path: Path, state_dir: Path, service_id: str, alias_id: str, expected_target: int, expected_registry: int, actor: str, idempotency_key: str, seams: ActivationSeams | None = None) -> dict[str, Any]:
     """Prepare outside the registry, then perform one final CAS cutover."""
-    request_digest = _activation_request_digest(service_id, alias_id, expected_target, expected_registry)
+    request_digest = _operation_request_digest(
+        "activation", service_id, alias_id, expected_target, expected_registry
+    )
     with admin_store._conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        existing = conn.execute(
-            "SELECT request_digest, response_json "
-            "FROM operation_idempotency "
-            "WHERE actor_id=? AND endpoint='activation' AND key=?",
-            (actor, idempotency_key),
-        ).fetchone()
-        if existing is not None:
-            if existing["request_digest"] != request_digest:
-                conn.rollback()
-                raise OperationError("idempotency_conflict", "Idempotency-Key was used for a different request")
-            response = json.loads(existing["response_json"])
+        replay = _idempotency_replay(
+            conn, actor=actor, endpoint="activation", key=idempotency_key,
+            request_digest=request_digest,
+        )
+        if replay is not None:
             conn.rollback()
-            target = dict(response["target"])
-            target["idempotency_replayed"] = True
-            return target
+            return replay
         current = _target_row(conn, service_id, alias_id)
         if current is None or current["candidate_state"] not in ("staged", "prepare_failed") or int(current["target_generation"]) != expected_target:
             conn.rollback()
@@ -481,12 +522,9 @@ def activate(*, path: Path, state_dir: Path, service_id: str, alias_id: str, exp
         now = int(time.time())
         conn.execute("UPDATE operation_target_current SET candidate_state='preparing',target_generation=target_generation+1,updated_at=? WHERE service_id=? AND alias_id=?", (now, service_id, alias_id))
         reserved = _status_from_row(conn, _target_row(conn, service_id, alias_id), expected_registry)
-        conn.execute(
-            "INSERT INTO operation_idempotency("
-            "actor_id, endpoint, key, request_digest, response_status, response_json, "
-            "target_generation, operator_settings_generation, created_at"
-            ") VALUES (?, 'activation', ?, ?, 202, ?, ?, ?, ?)",
-            (actor, idempotency_key, request_digest, json.dumps({"target": reserved}, sort_keys=True), reserved["target_generation"], expected_registry, now),
+        _remember_idempotency(
+            conn, actor=actor, endpoint="activation", key=idempotency_key,
+            request_digest=request_digest, target=reserved, status_code=202, now=now,
         )
         conn.commit()
     claimed_generation = int(reserved["target_generation"])
@@ -541,9 +579,42 @@ def activate(*, path: Path, state_dir: Path, service_id: str, alias_id: str, exp
                      seams=seams)
 
 
-def _activation_request_digest(service_id: str, alias_id: str, target_generation: int, registry_generation: int) -> str:
-    canonical = json.dumps({"service_id": service_id, "alias_id": alias_id, "target_generation": target_generation, "operator_settings_generation": registry_generation}, sort_keys=True, separators=(",", ":"))
+def _operation_request_digest(endpoint: str, service_id: str, alias_id: str,
+                              target_generation: int,
+                              operator_settings_generation: int) -> str:
+    canonical = json.dumps({"endpoint": endpoint, "service_id": service_id, "alias_id": alias_id, "target_generation": target_generation, "operator_settings_generation": operator_settings_generation}, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _idempotency_replay(conn, *, actor: str, endpoint: str, key: str,
+                        request_digest: str) -> dict[str, Any] | None:
+    existing = conn.execute(
+        "SELECT request_digest, response_json FROM operation_idempotency "
+        "WHERE actor_id=? AND endpoint=? AND key=?", (actor, endpoint, key),
+    ).fetchone()
+    if existing is None:
+        return None
+    if existing["request_digest"] != request_digest:
+        raise OperationError("idempotency_conflict", "Idempotency-Key was used for a different request")
+    target = dict(json.loads(existing["response_json"])["target"])
+    target["idempotency_replayed"] = True
+    return target
+
+
+def _remember_idempotency(conn, *, actor: str, endpoint: str, key: str | None,
+                          request_digest: str, target: Mapping[str, Any],
+                          status_code: int, now: int) -> None:
+    if key is None:
+        return
+    conn.execute(
+        "INSERT INTO operation_idempotency("
+        "actor_id, endpoint, key, request_digest, response_status, response_json, "
+        "target_generation, operator_settings_generation, created_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (actor, endpoint, key, request_digest, status_code,
+         json.dumps({"target": dict(target)}, sort_keys=True),
+         target["target_generation"], target["operator_settings_generation"], now),
+    )
 
 
 def _cut_over(path: Path, service_id: str, alias_id: str, validated_generation: int,

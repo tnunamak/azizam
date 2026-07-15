@@ -860,7 +860,7 @@ export const api = {
     revision: (serviceId: string, aliasId: string, revision: number) => adminFetch(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/revisions/${revision}`),
     revisions: (serviceId: string, aliasId: string) => adminFetch<{ revisions: Array<{ revision: number; requested_state: string; created_at: number }> }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/revisions`).then((r) => r.revisions),
     activate: (serviceId: string, aliasId: string, etag: string, idempotencyKey: string) => adminFetch<{ target: OperationTarget }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/activation`, { method: "PUT", headers: { "If-Match": etag, "Idempotency-Key": idempotencyKey } }).then((r) => r.target),
-    deactivate: (serviceId: string, aliasId: string, etag: string) => adminFetch<{ target: OperationTarget }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/activation`, { method: "DELETE", headers: { "If-Match": etag } }).then((r) => r.target),
+    deactivate: (serviceId: string, aliasId: string, etag: string, idempotencyKey: string) => adminFetch<{ target: OperationTarget }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/activation`, { method: "DELETE", headers: { "If-Match": etag, "Idempotency-Key": idempotencyKey } }).then((r) => r.target),
     rollback: (serviceId: string, aliasId: string, revision: number, etag: string) => adminFetch<{ target: OperationTarget }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/rollback`, { method: "POST", body: { revision }, headers: { "If-Match": etag } }).then((r) => r.target),
   },
 

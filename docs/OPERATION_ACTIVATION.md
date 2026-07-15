@@ -12,6 +12,11 @@ composite `If-Match` and a visible-ASCII `Idempotency-Key`. Results are
 non-cacheable. Evidence is an authenticated operator assertion with a digest
 and expiry; it is not runtime attestation.
 
+`evidence_registry_revision` is an operator-declared string inside service
+evidence that binds the evidence to a registry revision. It is unrelated to
+`operator_settings_generation`, the server-owned integer and sole CAS
+authority for the service registry.
+
 For offline evidence canonicalization use:
 
 ```sh
