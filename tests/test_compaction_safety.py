@@ -424,6 +424,7 @@ def test_authenticated_discovery_consumer_needs_no_internal_control_and_reaches_
     profile = AppProfile(id="authorized", models=frozenset({"operator-target"}))
     auth = proxy.RuntimeRouteAuth(proxy.NO_AUTH_CONTEXT)
     transported: list[bytes] = []
+    admitted: list[tuple[dict, bytes]] = []
 
     class Span:
         def __init__(self, *_args, **_kwargs):
@@ -453,6 +454,13 @@ def test_authenticated_discovery_consumer_needs_no_internal_control_and_reaches_
     async def current_target(*_args, **_kwargs):
         return proxy.CurrentLoadedLlmTarget("service", "http://unit.test", "physical-model"), None
 
+    real_admit = proxy.prepare_admitted_body
+
+    def counted_admit(prepared, contract):
+        admitted_body, admitted_bytes = real_admit(prepared, contract)
+        admitted.append((admitted_body, admitted_bytes))
+        return admitted_body, admitted_bytes
+
     real_begin, real_finalize = proxy.receipt_store.begin, proxy.receipt_store.finalize
     proxy.receipt_store.init_db(tmp_path / "receipts.db")
     with patch.object(proxy, "config", config), patch.object(
@@ -460,6 +468,8 @@ def test_authenticated_discovery_consumer_needs_no_internal_control_and_reaches_
     ), patch.object(proxy, "_profile_for_auth_context", lambda _auth: profile), patch.object(
         proxy, "_current_loaded_llm_target", current_target
     ), patch.object(proxy, "_OuterCancellationSpan", Span), patch.object(
+        proxy, "prepare_admitted_body", counted_admit
+    ), patch.object(
         proxy.receipt_store, "begin", lambda receipt: real_begin(receipt, path=tmp_path / "receipts.db")
     ), patch.object(
         proxy.receipt_store, "finalize", lambda receipt: real_finalize(receipt, path=tmp_path / "receipts.db")
@@ -469,6 +479,10 @@ def test_authenticated_discovery_consumer_needs_no_internal_control_and_reaches_
         assert discovery.status_code == 200, discovery.text
         entry = next(item for item in discovery.json()["data"] if item["id"] == "operator-target")
         projection = entry["vivid_fish_operation"]["request_construction"]
+        assert set(projection) == {
+            "version", "model", "messages", "stream", "output_limit",
+            "max_final_body_utf8_bytes", "token_counting",
+        }
         body = {
             "model": projection["model"],
             "messages": [
@@ -489,7 +503,11 @@ def test_authenticated_discovery_consumer_needs_no_internal_control_and_reaches_
             "chat_template_kwargs": {"enable_thinking": False},
             "max_tokens": 8192,
         }
-        assert transported == [json.dumps(expected, ensure_ascii=False, separators=(",", ":")).encode()]
+        expected_bytes = json.dumps(expected, ensure_ascii=False, separators=(",", ":")).encode()
+        assert admitted == [(expected, expected_bytes)]
+        assert len(admitted) == 1
+        assert transported == [expected_bytes]
+        assert transported[0] is admitted[0][1]
         assert projection["token_counting"] == "conservative_not_exact"
         assert projection["output_limit"] == {
             "field": "max_tokens", "default": 8192, "maximum": 8192,
