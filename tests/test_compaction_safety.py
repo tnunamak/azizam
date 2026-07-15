@@ -37,18 +37,19 @@ class _InProcessLoopbackClient:
 
 
 _DEFAULT_EVIDENCE = object()
+_DIGEST = "a" * 64
 
 
 def _service_evidence(**overrides):
     tokenizer = {
         "architecture": "operator-declared", "tokenizer_model": "byte-bpe",
         "pretokenizer": "operator-declared", "vocabulary_entries": 256,
-        "vocabulary_payload_sha256": "a", "merge_entries": 0,
-        "merge_payload_sha256": "b", "byte_fallback_proof_digest": "c",
+        "vocabulary_payload_sha256": _DIGEST, "merge_entries": 0,
+        "merge_payload_sha256": _DIGEST, "byte_fallback_proof_digest": _DIGEST,
     }
     template = {
-        "revision": "r", "sha256": "d", "kwargs": {"enable_thinking": False},
-        "render_bound_proof_digest": "e", "mode": "generation",
+        "revision": "r", "sha256": _DIGEST, "kwargs": {"enable_thinking": False},
+        "render_bound_proof_digest": _DIGEST, "mode": "generation",
     }
     bounds = {
         "context_window_tokens": 102400, "reserved_output_tokens": 8192,
@@ -62,14 +63,14 @@ def _service_evidence(**overrides):
         "evidence_revision": "receipt",
         "evidence_receipt_identity": "receipt-identity",
         "evidence_receipt_expires_at": "2030-01-01T00:00:00Z",
-        "model_artifact_sha256": "model-sha",
+        "model_artifact_sha256": _DIGEST,
         "base_model_id": "base",
-        "unit_wrapper_contract_digest": "f",
+        "unit_wrapper_contract_digest": _DIGEST,
         "declared_runtime_revision": "g",
         "template_contract": template,
         "tokenizer_contract": tokenizer,
         "request_preparation_contract": {
-            "wrapper_server_request_preparation_digest": "prep-sha",
+            "wrapper_server_request_preparation_digest": _DIGEST,
             "apply_template_path": "declared-path", "context_window_tokens": 102400,
         },
         "numeric_bounds": bounds,
@@ -105,17 +106,17 @@ def _record(**overrides):
         "tokenizer_contract": {
             "architecture": "operator-declared", "tokenizer_model": "byte-bpe",
             "pretokenizer": "operator-declared", "vocabulary_entries": 256,
-            "vocabulary_payload_sha256": "a", "merge_entries": 0,
-            "merge_payload_sha256": "b", "byte_fallback_proof_digest": "c",
+            "vocabulary_payload_sha256": _DIGEST, "merge_entries": 0,
+            "merge_payload_sha256": _DIGEST, "byte_fallback_proof_digest": _DIGEST,
         },
-        "template_contract": {"revision": "r", "sha256": "d", "kwargs": {"enable_thinking": False}, "render_bound_proof_digest": "e", "mode": "generation"},
+        "template_contract": {"revision": "r", "sha256": _DIGEST, "kwargs": {"enable_thinking": False}, "render_bound_proof_digest": _DIGEST, "mode": "generation"},
         "controlled_deployment_reference": {
             "service_id": "service", "deployment_generation": "g1",
             "evidence_revision": "receipt", "evidence_receipt_identity": "receipt-identity",
             "evidence_receipt_expires_at": "2030-01-01T00:00:00Z",
-            "registry_generation": "registry-g1", "model_artifact_sha256": "model-sha", "base_model_id": "base",
-            "unit_wrapper_contract_digest": "f", "declared_runtime_revision": "g",
-            "template_contract": {"revision": "r", "sha256": "d", "kwargs": {"enable_thinking": False}, "render_bound_proof_digest": "e", "mode": "generation"},
+            "registry_generation": "registry-g1", "model_artifact_sha256": _DIGEST, "base_model_id": "base",
+            "unit_wrapper_contract_digest": _DIGEST, "declared_runtime_revision": "g",
+            "template_contract": {"revision": "r", "sha256": _DIGEST, "kwargs": {"enable_thinking": False}, "render_bound_proof_digest": _DIGEST, "mode": "generation"},
             "tokenizer_contract": _service_evidence()["tokenizer_contract"],
             "request_preparation_contract": _service_evidence()["request_preparation_contract"],
             "numeric_bounds": _service_evidence()["numeric_bounds"],
@@ -207,6 +208,26 @@ def test_service_controlled_deployment_evidence_is_required_and_matching_succeed
     with pytest.raises(ContractError):
         _contract(_record(validation={**_record()["validation"], "evidence_revision": "other"}))
     assert _contract().controlled_deployment_generation == "g1"
+
+
+@pytest.mark.parametrize("path", [
+    ("model_artifact_sha256",), ("unit_wrapper_contract_digest",),
+    ("tokenizer_contract", "vocabulary_payload_sha256"),
+    ("tokenizer_contract", "merge_payload_sha256"),
+    ("tokenizer_contract", "byte_fallback_proof_digest"),
+    ("template_contract", "sha256"), ("template_contract", "render_bound_proof_digest"),
+    ("request_preparation_contract", "wrapper_server_request_preparation_digest"),
+])
+def test_malformed_matching_digest_is_rejected_before_comparison(path):
+    evidence = _service_evidence()
+    reference = _record()["controlled_deployment_reference"]
+    for record in (evidence, reference):
+        target = record
+        for field in path[:-1]:
+            target = target[field]
+        target[path[-1]] = "not-a-digest"
+    with pytest.raises(ContractError):
+        _contract(_record(controlled_deployment_reference=reference), evidence)
 
 
 def _registry_with_operation(evidence=_DEFAULT_EVIDENCE, record=None):

@@ -13,6 +13,7 @@ supported registry surface before this contract is eligible for use.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ from typing import Any, Mapping
 
 SCHEMA_VERSION = 1
 PURPOSE = "context_compaction"
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 OUTPUT_CAP_FIELDS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
 FINAL_BODY_BASE_FIELDS = frozenset({"model", "messages", "max_tokens", "stream"})
 
@@ -112,9 +114,11 @@ def contract_from_data(
         service_controlled_deployment_evidence, "service controlled_deployment_evidence"
     )
     _required_strings(tokenizer, ("architecture", "tokenizer_model", "pretokenizer", "vocabulary_payload_sha256", "merge_payload_sha256", "byte_fallback_proof_digest"))
+    _required_digests(tokenizer, ("vocabulary_payload_sha256", "merge_payload_sha256", "byte_fallback_proof_digest"))
     _exact_int(tokenizer.get("vocabulary_entries"), "tokenizer_contract.vocabulary_entries", minimum=1)
     _exact_int(tokenizer.get("merge_entries"), "tokenizer_contract.merge_entries", minimum=0)
     _required_strings(template, ("revision", "sha256", "render_bound_proof_digest", "mode"))
+    _required_digests(template, ("sha256", "render_bound_proof_digest"))
     if not isinstance(template.get("kwargs"), Mapping):
         raise ContractError("template_contract.kwargs must be an object")
     _required_strings(
@@ -155,6 +159,10 @@ def contract_from_data(
     )
     _required_strings(evidence_template, ("revision", "sha256", "render_bound_proof_digest", "mode"))
     _required_strings(reference_template, ("revision", "sha256", "render_bound_proof_digest", "mode"))
+    for record in (deployment_reference, service_evidence):
+        _required_digests(record, ("model_artifact_sha256", "unit_wrapper_contract_digest"))
+    for record in (template, evidence_template, reference_template, tokenizer):
+        _required_digests(record, tuple(name for name in record if name.endswith(("_sha256", "_digest"))))
     if service_evidence["service_id"] != service_id:
         raise ContractError("service controlled deployment evidence does not match service")
     if (
@@ -218,6 +226,7 @@ def contract_from_data(
         raise ContractError("numeric_bounds do not match contract")
     preparation = service_evidence["request_preparation_contract"]
     _required_strings(preparation, ("wrapper_server_request_preparation_digest", "apply_template_path"))
+    _required_digests(preparation, ("wrapper_server_request_preparation_digest",))
     if preparation.get("context_window_tokens") != context:
         raise ContractError("request preparation context window does not match contract")
     if validation["evidence_revision"] != service_evidence["evidence_revision"]:
@@ -343,6 +352,12 @@ def _nonempty_string(value: Any, field: str) -> str:
 def _required_strings(value: Mapping[str, Any], fields: tuple[str, ...]) -> None:
     for field in fields:
         _nonempty_string(value.get(field), field)
+
+
+def _required_digests(value: Mapping[str, Any], fields: tuple[str, ...]) -> None:
+    for field in fields:
+        if not _SHA256.fullmatch(str(value.get(field) or "")):
+            raise ContractError(f"{field} must be a canonical SHA-256 digest")
 
 
 def _exact_int(value: Any, field: str, *, minimum: int, exact: int | None = None) -> int:
