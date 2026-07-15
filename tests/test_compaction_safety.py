@@ -11,7 +11,7 @@ import pytest
 from unittest.mock import patch
 
 from gateway.compaction_safety import AdmissionError, ContractError, contract_from_data, prepare_admitted_body
-from gateway.policy import AppProfile
+from gateway.policy import AppProfile, TargetPolicy
 import proxy
 
 
@@ -43,7 +43,7 @@ def _record(**overrides):
             "merge_payload_sha256": "b", "byte_fallback_proof_digest": "c",
         },
         "template_contract": {"revision": "r", "sha256": "d", "kwargs": {}, "render_bound_proof_digest": "e"},
-        "runtime_binding": {"service_id": "service", "deployment_generation": "g1", "unit_wrapper_contract_digest": "f", "runtime_revision": "g"},
+        "controlled_deployment": {"service_id": "service", "deployment_generation": "g1", "unit_wrapper_contract_digest": "f", "declared_runtime_revision": "g"},
         "validation": {"evidence_revision": "receipt", "validated_at": "2026-07-14T00:00:00Z", "expires_at": "2030-01-01T00:00:00Z", "validator_version": "v1"},
     }
     record.update(overrides)
@@ -69,7 +69,9 @@ def _body(**overrides):
 def test_record_recomputes_ceiling_and_rejects_lifecycle_mismatches():
     cases = [
         ("expired", {"validation": {**_record()["validation"], "expires_at": "1970-01-01T00:00:00Z"}}),
-        ("generation", {"runtime_binding": {**_record()["runtime_binding"], "deployment_generation": "g2"}}),
+        ("generation", {"controlled_deployment": {**_record()["controlled_deployment"], "deployment_generation": "g2"}}),
+        ("missing controlled deployment", {"controlled_deployment": None}),
+        ("missing evidence", {"validation": {**_record()["validation"], "evidence_revision": ""}}),
         ("derived ceiling", {"max_final_body_utf8_bytes": 77697}),
         ("boolean", {"max_tokens_per_final_utf8_byte": True}),
     ]
@@ -162,6 +164,7 @@ def test_discovery_exposes_only_valid_authorized_operation_targets():
         "id": "operator-compaction-target",
         "purpose": "context_compaction",
         "guarantee": "conservative rendered-token bound; not exact token counting",
+        "deployment_binding": "controlled registry generation; not runtime attestation",
         "max_final_body_utf8_bytes": 77696,
         "reserved_output_tokens": 8192,
     }
@@ -180,6 +183,29 @@ def test_operation_discovery_uses_the_shared_profile_model_allowlist():
         hidden, _ = asyncio.run(proxy._filter_model_list_for_profile([entry], proxy.NO_AUTH_CONTEXT))
     assert visible == [entry]
     assert hidden == []
+
+
+@pytest.mark.parametrize("loaded_ids, expected", [(set(["physical"]), True), (set(), False)])
+def test_current_loaded_operation_discovery_respects_available_profile_mode(loaded_ids, expected):
+    entry = {
+        "id": "operator-target",
+        "vivid_fish_current_loaded": True,
+        "vivid_fish_operation": {"purpose": "context_compaction"},
+    }
+    profile = AppProfile(
+        id="available",
+        models=frozenset({"operator-target"}),
+        target_policy=TargetPolicy(visibility="available", activation="existing_only"),
+    )
+
+    async def loaded():
+        return loaded_ids
+
+    with patch.object(proxy, "_profile_for_auth_context", lambda _auth: profile), patch.object(
+        proxy, "_current_loaded_llm_model_ids", loaded
+    ):
+        visible, _ = asyncio.run(proxy._filter_model_list_for_profile([entry], proxy.NO_AUTH_CONTEXT))
+    assert bool(visible) is expected
 
 
 def _pre_slice_prepare_oracle():
@@ -258,3 +284,36 @@ def test_current_loaded_transport_receives_the_admitted_bytes_without_reserializ
     assert admitted_inputs[0]["model"] == "actual-rewritten-model"
     assert json.loads(admitted_sentinel)["model"] == "actual-rewritten-model"
     assert captured[0] is admitted_sentinel
+
+
+@pytest.mark.parametrize("requested_model, expected_route", [
+    ("default", "litellm"), ("current", "current-loaded"),
+    ("coder", "litellm"), ("rp", "litellm"),
+])
+def test_ordinary_aliases_keep_their_top_level_dispatch_and_skip_operation_admission(
+    requested_model, expected_route
+):
+    calls: list[tuple[str, dict]] = []
+    body = _body(model=requested_model, max_tokens=19)
+    raw = json.dumps(body).encode()
+
+    async def receive():
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    async def current_forward(_request, **kwargs):
+        calls.append(("current-loaded", kwargs["body_json"]))
+        return proxy.Response(status_code=200)
+
+    async def litellm_forward(_request, **kwargs):
+        calls.append(("litellm", kwargs["body_json"]))
+        return proxy.Response(status_code=200)
+
+    request = proxy.Request({"type": "http", "method": "POST", "path": "/v1/chat/completions", "headers": [], "query_string": b"", "scheme": "http", "server": ("test", 80)}, receive)
+    auth = proxy.RuntimeRouteAuth(proxy.NO_AUTH_CONTEXT)
+    models = [{"id": "base"}]
+    models.extend({"id": model, "base_model_id": "base"} for model in ("default", "current", "coder", "rp"))
+    config = {"backends": {"service": {"model_policy_schema_version": 1, "models": models}}}
+    with patch.object(proxy, "config", config), patch.object(proxy, "authenticate_runtime_or_litellm_request", return_value=auth), patch.object(proxy, "_openai_proxy_policy_decision", return_value=None), patch.object(proxy, "_litellm_runtime_config", return_value=SimpleNamespace(enabled=False)), patch.object(proxy, "_forward_current_loaded_openai_request", current_forward), patch.object(proxy, "_forward_litellm_proxy_request", litellm_forward), patch.object(proxy, "prepare_admitted_body", side_effect=AssertionError("ordinary request invoked operation admission")):
+        response = asyncio.run(proxy._handle_openai_litellm_request(request, "/v1/chat/completions"))
+    assert response.status_code == 200
+    assert calls == [(expected_route, body)]

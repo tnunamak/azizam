@@ -9236,6 +9236,10 @@ async def _filter_model_list_for_profile(
             if (
                 normalize_model_id(str(item.get("id") or "")) in loaded_norm
                 or (
+                    bool(item.get("vivid_fish_current_loaded"))
+                    and bool(loaded_norm)
+                )
+                or (
                     bool(item.get("vivid_fish_workflow"))
                     and str(item.get("vivid_fish_backend") or "") in {"comfyui", "gateway"}
                     and comfy_available
@@ -17010,6 +17014,7 @@ def _operation_contract_model_entries() -> list[dict[str, Any]]:
                     "id": contract.id,
                     "purpose": contract.purpose,
                     "guarantee": "conservative rendered-token bound; not exact token counting",
+                    "deployment_binding": "controlled registry generation; not runtime attestation",
                     "max_final_body_utf8_bytes": contract.max_final_body_utf8_bytes,
                     "reserved_output_tokens": contract.reserved_output_tokens,
                 },

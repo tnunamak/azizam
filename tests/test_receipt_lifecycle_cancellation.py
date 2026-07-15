@@ -276,7 +276,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
         with patch.object(proxy, "_resolve_request_target", return_value=logical), patch.object(
             proxy, "_model_policy_schema_error", return_value=None
         ), patch.object(proxy, "_current_loaded_llm_target", AsyncMock(return_value=(target, None))), patch.object(
-            proxy, "_prepare_resolved_openai_request", return_value=(None, {"model": "current", "messages": []})
+            proxy, "_prepare_resolved_openai_request", return_value=(None, {"model": "current", "messages": []}, None)
         ), patch.object(proxy, "prepare_downstream_headers", return_value={}), patch.object(
             proxy._OuterCancellationSpan, "dispatch", delayed_dispatch
         ), patch.object(proxy.receipt_store, "begin", side_effect=lambda r: began.append(r)), patch.object(
