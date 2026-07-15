@@ -71,6 +71,7 @@ from gateway.compaction_safety import (
     CompactionContract,
     ContractError as CompactionContractError,
     contract_from_data,
+    consumer_request_construction_contract,
     prepare_admitted_body,
 )
 from gateway.admin_api import (
@@ -16988,25 +16989,26 @@ def _operation_contract_model_entries() -> list[dict[str, Any]]:
         if not isinstance(service_cfg, Mapping):
             continue
         for record in _service_model_records(service_cfg):
-            raw_contract = record.get("compaction_safety")
-            if raw_contract is None:
+            if "compaction_safety" not in record:
                 continue
             base_id = str(record.get("base_model_id") or record.get("id") or "").strip()
             model_id = str(record.get("id") or "").strip()
-            try:
-                contract = contract_from_data(
-                    raw_contract,
-                    service_id=str(service_id),
-                    service_controlled_deployment_evidence=service_cfg.get(
-                        "controlled_deployment_evidence"
-                    ),
-                    service_deployment_generation=service_cfg.get("deployment_generation"),
-                    service_registry_generation=service_cfg.get("registry_generation"),
-                    base_model_id=base_id,
-                )
-            except CompactionContractError:
-                continue
             if not model_id:
+                continue
+            try:
+                target = _resolve_request_target(model_id, required=True, aliases_only=True)
+                if (
+                    target is None
+                    or target.logical_service_id != str(service_id)
+                    or target.base_model_id != base_id
+                    or target.operation_contract is None
+                ):
+                    continue
+                contract = target.operation_contract
+                construction = consumer_request_construction_contract(
+                    contract, logical_model_id=model_id
+                )
+            except (AliasPolicyResolutionError, CompactionContractError):
                 continue
             entries.append({
                 "id": model_id,
@@ -17019,8 +17021,7 @@ def _operation_contract_model_entries() -> list[dict[str, Any]]:
                     "purpose": contract.purpose,
                     "guarantee": "conservative rendered-token bound; not exact token counting",
                     "deployment_binding": "controlled registry generation; not runtime attestation",
-                    "max_final_body_utf8_bytes": contract.max_final_body_utf8_bytes,
-                    "reserved_output_tokens": contract.reserved_output_tokens,
+                    "request_construction": construction,
                 },
                 "vivid_fish_current_loaded": contract.current_loaded_only,
             })

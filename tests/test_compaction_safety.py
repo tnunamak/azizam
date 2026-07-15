@@ -14,7 +14,13 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 from gateway import service_registry
-from gateway.compaction_safety import AdmissionError, ContractError, contract_from_data, prepare_admitted_body
+from gateway.compaction_safety import (
+    AdmissionError,
+    ContractError,
+    consumer_request_construction_contract,
+    contract_from_data,
+    prepare_admitted_body,
+)
 from gateway.policy import AppProfile, TargetPolicy
 import proxy
 
@@ -395,9 +401,132 @@ def test_discovery_exposes_only_valid_authorized_operation_targets():
         "purpose": "context_compaction",
         "guarantee": "conservative rendered-token bound; not exact token counting",
         "deployment_binding": "controlled registry generation; not runtime attestation",
-        "max_final_body_utf8_bytes": 77504,
-        "reserved_output_tokens": 8192,
+        "request_construction": {
+            "version": 1,
+            "model": "authorized",
+            "messages": [
+                {"role": "system", "content": "scalar_text"},
+                {"role": "user", "content": "scalar_text"},
+            ],
+            "stream": False,
+            "output_limit": {"field": "max_tokens", "default": 8192, "maximum": 8192},
+            "final_reasoning_control": _service_evidence()["final_reasoning_control"],
+            "max_final_body_utf8_bytes": 77504,
+            "token_counting": "conservative_not_exact",
+        },
     }
+
+
+def test_authorized_discovery_projection_constructs_the_one_admitted_strict_body():
+    config = {"backends": {"service": {
+        "deployment_generation": "g1", "registry_generation": "registry-g1",
+        "controlled_deployment_evidence": _service_evidence(),
+        "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
+    }}}
+    with patch.object(proxy, "config", config), patch.object(
+        proxy, "_profile_for_auth_context", lambda _auth: AppProfile(
+            id="authorized", models=frozenset({"operator-target"})
+        )
+    ):
+        entries, _ = asyncio.run(proxy._filter_model_list_for_profile(
+            proxy._operation_contract_model_entries(), proxy.NO_AUTH_CONTEXT
+        ))
+        projection = entries[0]["vivid_fish_operation"]["request_construction"]
+        contract = proxy._resolve_request_target(
+            projection["model"], required=True, aliases_only=True
+        ).operation_contract
+    assert contract is not None
+    body = {
+        "model": projection["model"],
+        "messages": [
+            {"role": item["role"], "content": content}
+            for item, content in zip(projection["messages"], ("summarize", "history"))
+        ],
+        projection["output_limit"]["field"]: projection["output_limit"]["default"],
+        "stream": projection["stream"],
+        **projection["final_reasoning_control"],
+    }
+    admitted, encoded = prepare_admitted_body(body, contract)
+    assert admitted == body
+    assert len(encoded) <= projection["max_final_body_utf8_bytes"]
+    assert projection["token_counting"] == "conservative_not_exact"
+    assert projection["output_limit"] == {
+        "field": "max_tokens", "default": contract.reserved_output_tokens,
+        "maximum": contract.reserved_output_tokens,
+    }
+
+
+def test_projection_final_control_is_immutable_copy_of_validated_contract_bytes():
+    contract = _contract()
+    first = consumer_request_construction_contract(contract, logical_model_id="operator-target")
+    expected = json.dumps(
+        _service_evidence()["final_reasoning_control"], ensure_ascii=False, separators=(",", ":")
+    ).encode()
+    actual = json.dumps(
+        first["final_reasoning_control"], ensure_ascii=False, separators=(",", ":")
+    ).encode()
+    assert actual == expected
+    first["final_reasoning_control"]["chat_template_kwargs"]["enable_thinking"] = True
+    second = consumer_request_construction_contract(contract, logical_model_id="operator-target")
+    assert json.dumps(second["final_reasoning_control"], separators=(",", ":")).encode() == expected
+
+
+def _record_and_evidence_with_control(control):
+    evidence = _service_evidence(final_reasoning_control=control)
+    reference = dict(_record()["controlled_deployment_reference"])
+    reference["final_reasoning_control"] = control
+    return _record(controlled_deployment_reference=reference), evidence
+
+
+@pytest.mark.parametrize("control", [
+    {"api_key": "nope"},
+    {"settings": {"authorization": "nope"}},
+    {"mode": "Bearer credential"},
+    {"mode": "sk-credential"},
+    {"setting": object()},
+    {"setting": float("nan")},
+])
+def test_credential_bearing_or_non_json_final_control_omits_operation(control):
+    record, evidence = _record_and_evidence_with_control(control)
+    config = {"backends": {"service": {
+        "deployment_generation": "g1", "registry_generation": "registry-g1",
+        "controlled_deployment_evidence": evidence,
+        "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": record}],
+    }}}
+    with patch.object(proxy, "config", config):
+        assert proxy._operation_contract_model_entries() == []
+        with pytest.raises(proxy.AliasPolicyResolutionError):
+            proxy._resolve_request_target("operator-target", required=True, aliases_only=True)
+
+
+def test_duplicate_operation_targets_fail_closed_for_discovery_and_admission():
+    config = {"backends": {
+        "first": {"deployment_generation": "g1", "registry_generation": "registry-g1", "controlled_deployment_evidence": _service_evidence(service_id="first"), "models": []},
+        "second": {"deployment_generation": "g1", "registry_generation": "registry-g1", "controlled_deployment_evidence": _service_evidence(service_id="second"), "models": []},
+    }}
+    for service_id in ("first", "second"):
+        evidence = config["backends"][service_id]["controlled_deployment_evidence"]
+        record = _record()
+        reference = dict(record["controlled_deployment_reference"])
+        reference["service_id"] = service_id
+        record["controlled_deployment_reference"] = reference
+        config["backends"][service_id]["models"] = [
+            {"id": "base"}, {"id": "duplicate", "base_model_id": "base", "compaction_safety": record},
+        ]
+    with patch.object(proxy, "config", config):
+        assert proxy._operation_contract_model_entries() == []
+        with pytest.raises(proxy.AliasPolicyResolutionError, match="ambiguous"):
+            proxy._resolve_request_target("duplicate", required=True, aliases_only=True)
+
+
+def test_ordinary_aliases_never_project_or_activate_an_operation_contract():
+    config = {"backends": {"service": {"model_policy_schema_version": 1, "models": [
+        {"id": "base"}, {"id": "ordinary", "base_model_id": "base"},
+    ]}}}
+    with patch.object(proxy, "config", config):
+        assert proxy._operation_contract_model_entries() == []
+        target = proxy._resolve_request_target("ordinary", required=True, aliases_only=True)
+    assert target is not None and target.operation_contract is None
 
 
 @pytest.mark.parametrize(
@@ -509,6 +638,12 @@ def test_runtime_reload_drops_stale_service_evidence_before_resolution():
         "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
     }}}
     try:
+        with patch.object(proxy, "config", {"backends": {"service": {
+            "deployment_generation": "g1", "registry_generation": "registry-g1",
+            "controlled_deployment_evidence": _service_evidence(),
+            "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
+        }}}):
+            assert [entry["id"] for entry in proxy._operation_contract_model_entries()] == ["operator-target"]
         with patch.object(proxy, "_load_effective_runtime_config", return_value=stale):
             proxy.reload_runtime_config()
         assert proxy._operation_contract_model_entries() == []
