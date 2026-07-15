@@ -872,7 +872,8 @@ def test_existing_registry_model_rows_are_not_silently_upgraded_from_yaml(tmp_pa
         "backends": {
             "kobold": {
                 "models": [
-                    {"id": "default", "model_group": "default", "upstream_model": "base.gguf"}
+                    {"id": "default", "model_group": "default", "upstream_model": "base.gguf"},
+                    {"id": "default-fast", "model_group": "default-fast", "upstream_model": "base.gguf"},
                 ]
             }
         }
@@ -899,7 +900,9 @@ def test_existing_registry_model_rows_are_not_silently_upgraded_from_yaml(tmp_pa
 
     reloaded = service_registry.ensure_service_registry(new_config, path=db)
 
-    assert [model["id"] for model in reloaded["services"]["kobold"]["config"]["models"]] == ["default"]
+    config = reloaded["services"]["kobold"]["config"]
+    assert [model["id"] for model in config["models"]] == ["default", "default-fast"]
+    assert "model_policy_schema_version" not in config
 
 
 def test_backfill_seed_catalog_metadata_never_overwrites_operator_edits() -> None:
@@ -1313,6 +1316,7 @@ def test_model_policy_records_round_trip_through_form_and_registry() -> None:
             "name": "models",
             "host": "127.0.0.1",
             "port": 8000,
+            "model_policy_schema_version": service_registry.MODEL_POLICY_SCHEMA_VERSION,
             "models": [
                 {
                     "id": "base",
@@ -1339,8 +1343,25 @@ def test_model_policy_records_round_trip_through_form_and_registry() -> None:
     )
 
     assert record["config"]["models"] == raw["models"]
+    assert record["config"]["model_policy_schema_version"] == service_registry.MODEL_POLICY_SCHEMA_VERSION
     projected = service_registry.runtime_backends(registry)
     assert projected["models"]["models"] == raw["models"]
+    assert projected["models"]["model_policy_schema_version"] == service_registry.MODEL_POLICY_SCHEMA_VERSION
+
+
+@pytest.mark.parametrize("marker", [True, "1", -1])
+def test_registry_rejects_invalid_model_policy_schema_markers(marker: object) -> None:
+    with pytest.raises(ValueError, match="model_policy_schema_version"):
+        service_registry.normalize_service_registry(
+            {
+                "services": {
+                    "service": {
+                        "id": "service",
+                        "config": {"model_policy_schema_version": marker, "models": []},
+                    }
+                }
+            }
+        )
 
 
 @pytest.mark.parametrize(

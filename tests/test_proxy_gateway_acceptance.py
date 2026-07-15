@@ -23,6 +23,7 @@ documents what wiring is missing.
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 import json
 import sys
@@ -65,6 +66,14 @@ def _catch_all_index(app) -> int:
         if getattr(route, "path", "") == "/{path:path}":
             return i
     return -1
+
+
+def _migrated_model_policy_config() -> dict[str, Any]:
+    config = copy.deepcopy(proxy.config)
+    for service in (config.get("backends") or {}).values():
+        if isinstance(service, dict) and isinstance(service.get("models"), list):
+            service["model_policy_schema_version"] = proxy.service_registry.MODEL_POLICY_SCHEMA_VERSION
+    return config
 
 
 @dataclass
@@ -249,6 +258,13 @@ class _FakeLiteLLMModelsResponse:
 
 
 class TestGatewayRouterMounting(unittest.TestCase):
+    def setUp(self) -> None:
+        self._model_policy_config = patch.object(proxy, "config", _migrated_model_policy_config())
+        self._model_policy_config.start()
+
+    def tearDown(self) -> None:
+        self._model_policy_config.stop()
+
     def test_gateway_router_is_mounted_before_catch_all(self) -> None:
         paths = _route_paths(proxy.app)
         gateway_paths = [p for p in paths if p.startswith("/gateway/v1")]

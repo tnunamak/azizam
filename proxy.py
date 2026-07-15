@@ -3007,6 +3007,12 @@ async def _prepare_litellm_local_llm_request(
         except AliasPolicyResolutionError as error:
             return _alias_policy_configuration_response(error), body
 
+    policy_service_id = resolved_target.logical_service_id if resolved_target else target_backend
+    if policy_service_id:
+        schema_error = _model_policy_schema_error(policy_service_id)
+        if schema_error is not None:
+            return _model_policy_schema_configuration_response(schema_error), body
+
     vision_needed = (
         request_path == "/v1/chat/completions"
         and has_vision_content(body.get("messages"))
@@ -18918,12 +18924,41 @@ class AliasPolicyResolutionError(ValueError):
     """A required public alias has no single declared logical policy."""
 
 
+class ModelPolicySchemaError(ValueError):
+    """A local models collection is not declared at the supported policy version."""
+
+
 def _alias_policy_configuration_response(error: AliasPolicyResolutionError) -> Response:
     return openai_error_response(
         f"Gateway alias policy is unavailable: {error}",
         status_code=503,
         error_type="service_unavailable",
         code="alias_policy_unavailable",
+    )
+
+
+def _model_policy_schema_configuration_response(error: ModelPolicySchemaError) -> Response:
+    return openai_error_response(
+        f"Gateway model policy configuration is unavailable: {error}",
+        status_code=503,
+        error_type="service_unavailable",
+        code="model_policy_schema_unavailable",
+    )
+
+
+def _model_policy_schema_error(service_id: str) -> ModelPolicySchemaError | None:
+    """Preflight a local models collection without inferring model intent."""
+    backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
+    service_cfg = backends.get(service_id)
+    if not isinstance(service_cfg, Mapping):
+        return ModelPolicySchemaError(f"service {service_id!r} is not configured")
+    version = service_cfg.get("model_policy_schema_version")
+    if version == service_registry.MODEL_POLICY_SCHEMA_VERSION:
+        return None
+    found = "missing" if version is None else repr(version)
+    return ModelPolicySchemaError(
+        f"service {service_id!r} models use schema {found}; expected "
+        f"{service_registry.MODEL_POLICY_SCHEMA_VERSION}"
     )
 
 
@@ -19404,6 +19439,9 @@ async def _forward_current_loaded_openai_request(
         )
     except AliasPolicyResolutionError as error:
         return _alias_policy_configuration_response(error)
+    schema_error = _model_policy_schema_error(logical_target.logical_service_id)
+    if schema_error is not None:
+        return _model_policy_schema_configuration_response(schema_error)
     target, target_error = await _current_loaded_llm_target(
         auth_context,
         enforce_gateway_policy=enforce_gateway_policy,

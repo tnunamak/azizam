@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import unittest
@@ -11,6 +12,14 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 import proxy
+
+
+def _migrated_model_policy_config() -> dict:
+    config = copy.deepcopy(proxy.config)
+    for service in (config.get("backends") or {}).values():
+        if isinstance(service, dict) and isinstance(service.get("models"), list):
+            service["model_policy_schema_version"] = proxy.service_registry.MODEL_POLICY_SCHEMA_VERSION
+    return config
 
 
 class _FakeExecutionClient:
@@ -400,6 +409,11 @@ def test_internal_litellm_current_route_does_not_enforce_gateway_profile_policy(
 
 
 class InternalCurrentLoadedCancellationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self._model_policy_config = patch.object(proxy, "config", _migrated_model_policy_config())
+        self._model_policy_config.start()
+        self.addCleanup(self._model_policy_config.stop)
+
     def _patches(self, send):
         return (
             patch.object(proxy, "_is_internal_litellm_lifecycle_request", return_value=True),

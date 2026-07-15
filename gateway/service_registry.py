@@ -31,6 +31,7 @@ from gateway.manifests import manifest_identity, validate_manifest
 
 SERVICE_REGISTRY_SETTING_KEY = "service_registry"
 SERVICE_REGISTRY_SCHEMA_VERSION = 1
+MODEL_POLICY_SCHEMA_VERSION = 1
 
 SERVICE_SOURCES = frozenset({"ui", "provisioned", "builtin", "discovered", "imported"})
 PROTOCOL_FRONTEND_SOURCES = frozenset({"builtin", "ui", "provisioned", "imported"})
@@ -185,6 +186,7 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
         record = normalize_capability_record(capability_id, raw)
         capabilities[record["id"]] = record
 
+    _validate_model_policy_schema_markers(services)
     _validate_model_policy_graphs(services)
     _validate_public_alias_uniqueness(services)
 
@@ -198,6 +200,30 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
         "seed_hash": str(value.get("seed_hash") or ""),
         "updated_at": int(value.get("updated_at") or time.time()),
     }
+
+
+def _validate_model_policy_schema_markers(services: Mapping[str, Mapping[str, Any]]) -> None:
+    """Validate an explicit models-collection marker without upgrading old DB data.
+
+    Absence deliberately remains representable: it identifies an operator-owned
+    pre-policy collection, which request preparation rejects with a typed
+    configuration-unavailable response until an operator migrates it.
+    """
+    for service_id, service in services.items():
+        config = service.get("config") if isinstance(service, Mapping) else None
+        if not isinstance(config, Mapping):
+            continue
+        marker = config.get("model_policy_schema_version")
+        if marker is None:
+            continue
+        if not isinstance(config.get("models"), list):
+            raise ValueError(
+                f"service {service_id!r} model_policy_schema_version requires a models list"
+            )
+        if isinstance(marker, bool) or not isinstance(marker, int) or marker < 0:
+            raise ValueError(
+                f"service {service_id!r} model_policy_schema_version must be a non-negative integer"
+            )
 
 
 def _validate_model_policy_graphs(services: Mapping[str, Mapping[str, Any]]) -> None:

@@ -63,6 +63,9 @@ backends:
     port: 5051
     state_type: llama_cpp
     health_endpoint: /v1/models
+    # Version the logical-policy collection independently of the registry as a
+    # whole. Existing DB-owned collections must be explicitly migrated.
+    model_policy_schema_version: 1
     models:
       - id: default
         model_group: default

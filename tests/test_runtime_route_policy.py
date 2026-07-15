@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import sys
 import unittest
@@ -53,6 +54,14 @@ def ok_response() -> Response:
         status_code=200,
         media_type="application/json",
     )
+
+
+def _migrated_model_policy_config() -> dict:
+    config = copy.deepcopy(proxy.config)
+    for service in (config.get("backends") or {}).values():
+        if isinstance(service, dict) and isinstance(service.get("models"), list):
+            service["model_policy_schema_version"] = proxy.service_registry.MODEL_POLICY_SCHEMA_VERSION
+    return config
 
 
 class _FakeHTTPResponse:
@@ -261,6 +270,9 @@ class _FakeAsyncStreamContext:
 
 class TestRuntimeRoutePolicy(unittest.TestCase):
     def setUp(self) -> None:
+        self._model_policy_config = patch.object(proxy, "config", _migrated_model_policy_config())
+        self._model_policy_config.start()
+        self.addCleanup(self._model_policy_config.stop)
         self.client = TestClient(proxy.app)
         _CaptureForwardClient.urls = []
         _CaptureNativePassthroughClient.calls = []

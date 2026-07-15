@@ -52,6 +52,7 @@ class _FakeResponse:
 
 def _service_config() -> dict[str, Any]:
     return {
+        "model_policy_schema_version": service_registry.MODEL_POLICY_SCHEMA_VERSION,
         "models": [
             {
                 "id": "default",
@@ -194,6 +195,9 @@ def test_bootstrap_seed_keeps_the_default_model_output_policy_as_data() -> None:
     coder = next(model for model in models if model["id"] == "coder")
     rp = next(model for model in models if model["id"] == "rp")
 
+    assert registry["services"]["kobold"]["config"]["model_policy_schema_version"] == (
+        service_registry.MODEL_POLICY_SCHEMA_VERSION
+    )
     assert default["transforms"] == _DEFAULT_TRANSFORMS
     assert default_fast["base_model_id"] == "default"
     assert current["base_model_id"] == "default"
@@ -519,13 +523,59 @@ def test_unknown_remote_litellm_body_and_existing_only_path_remain_unchanged() -
     assert prepared == remote_body
 
 
+@pytest.mark.parametrize("schema_marker", [None, 0])
+def test_pre_slice_default_fast_collection_fails_closed_before_egress(
+    schema_marker: int | None,
+) -> None:
+    """The actual pre-slice default-fast row is unsafe until the DB collection migrates."""
+    old_db_service = _service_config()
+    old_db_service.pop("model_policy_schema_version")
+    if schema_marker is not None:
+        old_db_service["model_policy_schema_version"] = schema_marker
+    old_db_service["models"] = [
+        {
+            key: value
+            for key, value in model.items()
+            if key not in {"base_model_id", "policy_overlay"}
+        }
+        for model in old_db_service["models"]
+        if model["id"] not in {"current", "current-fast"}
+    ]
+    backend_bodies: list[dict[str, Any]] = []
+
+    async def forbidden_send(execution_request, **_kwargs):
+        backend_bodies.append(json.loads(execution_request.body))
+        raise AssertionError("unmigrated local policy data must not reach egress")
+
+    client = TestClient(proxy.app)
+    with patch.object(proxy, "config", {"backends": {"local": old_db_service}}), patch.object(
+        proxy, "LLM_BACKEND_HOSTS", {"local": "http://fake-local"}
+    ), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        proxy.ADMIN_STORE, "get_service_registry", _litellm_registry
+    ), patch.object(proxy, "send_llm_execution_request", forbidden_send):
+        response = client.post("/v1/chat/completions", json={"model": "default-fast", "messages": []})
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "model_policy_schema_unavailable"
+    assert backend_bodies == []
+
+
+def test_migrated_default_fast_collection_applies_declared_policy() -> None:
+    forwarded = _forward_to_fake_upstream({"model": "default-fast", "messages": []})
+
+    assert forwarded["max_tokens"] == _DEFAULT_CAP
+    assert forwarded["thinking_budget_tokens"] == 0
+
+
 @pytest.mark.parametrize("max_output_tokens", [0, 19])
 def test_responses_trusted_loopback_prepares_once_and_reaches_one_backend_body(
     max_output_tokens: int,
 ) -> None:
     backend_bodies: list[dict[str, Any]] = []
     pipeline_calls = 0
+    loopback_checks: list[tuple[str | None, str | None, bool]] = []
     original_pipeline = proxy._run_request_pipeline
+    original_loopback_check = proxy._is_internal_protocol_forward
 
     class ChatResponse(_FakeResponse):
         async def aread(self) -> bytes:
@@ -543,7 +593,7 @@ def test_responses_trusted_loopback_prepares_once_and_reaches_one_backend_body(
             pass
 
         async def post(self, url: str, *, headers: dict[str, str], content: bytes) -> httpx.Response:
-            inner = TestClient(proxy.app)
+            inner = TestClient(proxy.app, client=("127.0.0.1", 48123))
             response = inner.post(urlsplit(url).path, headers=headers, content=content)
             return httpx.Response(
                 response.status_code,
@@ -564,6 +614,17 @@ def test_responses_trusted_loopback_prepares_once_and_reaches_one_backend_body(
         pipeline_calls += 1
         return original_pipeline(*args, **kwargs)
 
+    def observed_loopback_check(request: Any) -> bool:
+        accepted = original_loopback_check(request)
+        loopback_checks.append(
+            (
+                request.client.host if request.client else None,
+                request.headers.get(proxy._INTERNAL_PROTOCOL_FORWARD_HEADER),
+                accepted,
+            )
+        )
+        return accepted
+
     client = TestClient(proxy.app)
     with _local_model_config(), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
         proxy.ADMIN_STORE, "get_service_registry", _litellm_registry
@@ -571,6 +632,8 @@ def test_responses_trusted_loopback_prepares_once_and_reaches_one_backend_body(
         proxy, "_service_availability_response", lambda *_args, **_kwargs: None
     ), patch.object(proxy, "ensure_target", AsyncMock(return_value=True)
     ), patch.object(proxy, "_run_request_pipeline", counted_pipeline), patch.object(
+        proxy, "_is_internal_protocol_forward", observed_loopback_check
+    ), patch.object(
         proxy.httpx, "AsyncClient", InProcessLoopbackClient
     ):
         response = client.post(
@@ -579,6 +642,9 @@ def test_responses_trusted_loopback_prepares_once_and_reaches_one_backend_body(
         )
         assert response.status_code == 200, response.text
         assert pipeline_calls == 1
+        assert loopback_checks == [
+            ("127.0.0.1", proxy._INTERNAL_PROTOCOL_FORWARD_SECRET, True)
+        ]
         assert backend_bodies == [
             {
                 "model": "default",
@@ -593,14 +659,31 @@ def test_responses_trusted_loopback_prepares_once_and_reaches_one_backend_body(
             }
         ]
 
-        # A guessed marker is not loopback-trusted and still traverses preparation.
+        # The real marker from a non-loopback host is not trusted either.
         backend_bodies.clear()
         pipeline_calls = 0
-        untrusted = client.post(
+        wrong_host = client.post(
+            "/v1/chat/completions",
+            headers={proxy._INTERNAL_PROTOCOL_FORWARD_HEADER: proxy._INTERNAL_PROTOCOL_FORWARD_SECRET},
+            json={"model": "default", "messages": []},
+        )
+        assert wrong_host.status_code == 200, wrong_host.text
+        assert loopback_checks[-1] == (
+            "testclient", proxy._INTERNAL_PROTOCOL_FORWARD_SECRET, False
+        )
+        assert pipeline_calls == 1
+        assert backend_bodies[0]["max_tokens"] == _DEFAULT_CAP
+
+        # A guessed marker is not trusted even when it comes from loopback.
+        backend_bodies.clear()
+        pipeline_calls = 0
+        loopback_client = TestClient(proxy.app, client=("127.0.0.1", 48124))
+        untrusted = loopback_client.post(
             "/v1/chat/completions",
             headers={proxy._INTERNAL_PROTOCOL_FORWARD_HEADER: "untrusted"},
             json={"model": "default", "messages": []},
         )
         assert untrusted.status_code == 200, untrusted.text
+        assert loopback_checks[-1] == ("127.0.0.1", "untrusted", False)
         assert pipeline_calls == 1
         assert backend_bodies[0]["max_tokens"] == _DEFAULT_CAP
