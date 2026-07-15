@@ -172,14 +172,39 @@ def _require_exact_bounds(value: Any) -> None:
         raise EnrollmentError("numeric bounds must be the fixed 102400/8192/16384/320/77504 contract")
 
 
-def _flag_value(argv: list[str], names: tuple[str, ...], field: str) -> str:
+def _flag_value(argv: list[str], names: tuple[str, ...], field: str) -> str | None:
+    """Extract exactly one non-option value for a declared argv flag."""
+    values: list[str] = []
     for index, item in enumerate(argv):
-        if item in names and index + 1 < len(argv):
-            return argv[index + 1]
         for name in names:
+            if item == name:
+                if index + 1 >= len(argv) or argv[index + 1].startswith("-"):
+                    raise EnrollmentError(f"wrapper argv has malformed {field}")
+                values.append(argv[index + 1])
+                break
             if item.startswith(name + "="):
-                return item.removeprefix(name + "=")
-    raise EnrollmentError(f"wrapper argv does not declare {field}")
+                value = item.removeprefix(name + "=")
+                if not value or value.startswith("-"):
+                    raise EnrollmentError(f"wrapper argv has malformed {field}")
+                values.append(value)
+                break
+    if len(values) > 1:
+        raise EnrollmentError(f"wrapper argv declares {field} more than once")
+    return values[0] if values else None
+
+
+def _template_identity(argv: list[str]) -> Path:
+    """Extract one unambiguous, canonical template artifact path from argv."""
+    inline = _flag_value(argv, ("--chat-template",), "--chat-template")
+    file = _flag_value(argv, ("--chat-template-file",), "--chat-template-file")
+    if inline is not None and file is not None:
+        if Path(inline).resolve() != Path(file).resolve():
+            raise EnrollmentError("wrapper argv declares conflicting template artifacts")
+        raise EnrollmentError("wrapper argv declares ambiguous inline and file templates")
+    template = inline if inline is not None else file
+    if template is None:
+        raise EnrollmentError("wrapper argv does not declare a template artifact")
+    return Path(template).resolve()
 
 
 def _load_tokenizer(manifest_path: Path, paths: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -229,9 +254,12 @@ def _load_wrapper(manifest_path: Path, paths: Mapping[str, Any]) -> tuple[dict[s
     model = _declared_path(manifest_path, paths.get("model"), "paths.model")
     template = _declared_path(manifest_path, paths.get("template"), "paths.template")
     binary = _declared_path(manifest_path, paths.get("server_binary"), "paths.server_binary")
-    if Path(_flag_value(argv, ("--model", "-m"), "--model")).resolve() != model:
+    model_arg = _flag_value(argv, ("--model", "-m"), "--model")
+    if model_arg is None:
+        raise EnrollmentError("wrapper argv does not declare --model")
+    if Path(model_arg).resolve() != model:
         raise EnrollmentError("wrapper model path does not match declared model artifact")
-    if Path(_flag_value(argv, ("--chat-template",), "--chat-template")).resolve() != template:
+    if _template_identity(argv) != template:
         raise EnrollmentError("wrapper template path does not match declared template artifact")
     runtime = _mapping(wrapper.get("runtime"), "wrapper runtime")
     clean = runtime.get("clean")

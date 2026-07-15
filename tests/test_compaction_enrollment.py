@@ -45,7 +45,7 @@ def _prepared(body, _service_id, _alias_id, config) -> bytes:
     return json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode()
 
 
-def _fixture(tmp_path: Path) -> tuple[Path, Path]:
+def _fixture(tmp_path: Path, *, template_flag: str = "--chat-template") -> tuple[Path, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     model = tmp_path / "model.gguf"
     template = tmp_path / "template.jinja"
@@ -59,7 +59,11 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
         "byte_fallback": {f"{index:02x}": index for index in range(256)},
     })
     wrapper = _json(tmp_path / "wrapper.json", {
-        "argv": [str(binary), "--model", str(model), "--chat-template", str(template), "--ctx-size", "102400"],
+        "argv": [
+            str(binary), "--model", str(model), template_flag, str(template),
+            "--ctx-size", "102400", "--jinja", "--reasoning", "on",
+            "--reasoning-budget", "-1",
+        ],
         "runtime": {"checkout_commit": "abc123", "clean": True},
         "default_template_kwargs": {"preserve_thinking": True},
         "effective_template_kwargs": {"preserve_thinking": True, "enable_thinking": False},
@@ -89,8 +93,9 @@ def _collect(manifest: Path, output: Path) -> dict[str, str]:
     return enrollment.collect(manifest, output, preparer=_prepared, now=NOW)
 
 
-def test_collect_verify_package_are_deterministic_and_redacted(tmp_path: Path):
-    manifest, output = _fixture(tmp_path)
+@pytest.mark.parametrize("template_flag", ["--chat-template", "--chat-template-file"])
+def test_collect_verify_package_are_deterministic_and_redacted(tmp_path: Path, template_flag: str):
+    manifest, output = _fixture(tmp_path, template_flag=template_flag)
     first = _collect(manifest, output)
     second_output = tmp_path / "second"
     second = _collect(manifest, second_output)
@@ -109,6 +114,36 @@ def test_collect_verify_package_are_deterministic_and_redacted(tmp_path: Path):
     assert b"operator prompt must not persist" not in contents
     assert b"snow" not in contents
     assert b"opk_" not in contents
+
+
+@pytest.mark.parametrize(
+    "argv, message",
+    [
+        (["--model", "MODEL"], "does not declare a template artifact"),
+        (["--model", "MODEL", "--chat-template", "TEMPLATE", "--chat-template", "TEMPLATE"], "--chat-template more than once"),
+        (["--model", "MODEL", "--chat-template-file", "TEMPLATE", "--chat-template-file=TEMPLATE"], "--chat-template-file more than once"),
+        (["--model", "MODEL", "--chat-template", "TEMPLATE", "--chat-template-file", "OTHER"], "conflicting template artifacts"),
+        (["--model", "MODEL", "--chat-template", "TEMPLATE", "--chat-template-file", "TEMPLATE"], "ambiguous inline and file templates"),
+        (["--model", "MODEL", "--chat-template-file", "--ctx-size", "102400"], "malformed --chat-template-file"),
+    ],
+)
+def test_template_identity_rejects_missing_ambiguous_and_malformed_argv(argv: list[str], message: str):
+    with pytest.raises(enrollment.EnrollmentError, match=message):
+        enrollment._template_identity(argv)
+
+
+@pytest.mark.parametrize("template_flag", ["--chat-template", "--chat-template-file"])
+def test_template_flag_must_bind_the_declared_artifact(tmp_path: Path, template_flag: str):
+    manifest, output = _fixture(tmp_path, template_flag=template_flag)
+    document = json.loads(manifest.read_text())
+    wrapper_path = Path(document["paths"]["wrapper_transcript"])
+    wrapper = json.loads(wrapper_path.read_text())
+    substitute = tmp_path / "substitute-template.jinja"
+    substitute.write_text("substitute", encoding="utf-8")
+    wrapper["argv"][4] = str(substitute)
+    _json(wrapper_path, wrapper)
+    with pytest.raises(enrollment.EnrollmentError, match="template path does not match"):
+        _collect(manifest, output)
 
 
 def test_collect_uses_the_real_pure_gateway_preparation_seam(tmp_path: Path):
