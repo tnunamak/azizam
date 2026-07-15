@@ -135,6 +135,7 @@ from gateway.backends.chat import build_chat_loopback_request
 from gateway.backends.embeddings import build_embeddings_loopback_request
 from gateway.backends.cancellation import cancellation_registry
 from gateway.backends.request_shape import (
+    effective_output_limit,
     record_request_shape_stage,
     request_body_byte_count,
     request_shape_fields,
@@ -17319,12 +17320,18 @@ async def _forward_chat_completions(
     # only needs to bound the in-process round-trip (loopback is localhost
     # and proxy code is non-blocking). Match UPSTREAM_READ_TIMEOUT so this
     # never trips before the inner timeout does.
+    source_headers = dict(request.headers)
+    parent_request_id = getattr(
+        getattr(request, "state", None), "route_receipt_parent_request_id", ""
+    )
+    if parent_request_id:
+        source_headers[GATEWAY_REQUEST_ID_HEADER] = parent_request_id
     loopback_request = build_chat_loopback_request(
         proxy_port=PROXY_PORT,
         body=cc_body,
         internal_forward_header=_INTERNAL_PROTOCOL_FORWARD_HEADER,
         internal_forward_secret=_INTERNAL_PROTOCOL_FORWARD_SECRET,
-        source_headers=request.headers,
+        source_headers=source_headers,
         read_timeout=UPSTREAM_READ_TIMEOUT,
     )
     client = httpx.AsyncClient(timeout=loopback_request.timeout)
@@ -18396,6 +18403,15 @@ async def ollama_delete(request: Request):
 @app.post("/v1/responses")
 async def create_response(request: Request):
     """Create a Response. Translates to Chat Completions and forwards."""
+    outer_receipt: RouteReceipt | None = None
+
+    def finalize_outer_response(*, status: str, terminal_reason: str) -> None:
+        if outer_receipt is None:
+            return
+        outer_receipt.metadata["terminal_reason"] = terminal_reason
+        outer_receipt.finish(status)
+        _finalize_route_receipt(outer_receipt, route="Responses")
+
     route_auth = authenticate_runtime_or_litellm_request(
         request,
         "/v1/responses",
@@ -18457,12 +18473,26 @@ async def create_response(request: Request):
         store = req_body.get("store")
         if store is None:
             store = True
+        profile = _profile_for_auth_context(auth_context)
+        outer_receipt = RouteReceipt(
+            protocol="openai.responses",
+            path="/v1/responses",
+            intent="chat.responses",
+            app_profile=profile.id,
+            app_id=auth_context.identity.app_id if auth_context.identity else None,
+            api_key_name=auth_context.identity.name if auth_context.identity else None,
+            requested_model=(str(req_body["model"]) if isinstance(req_body.get("model"), str) else None),
+            resolved_model=(str(cc_body["model"]) if isinstance(cc_body.get("model"), str) else None),
+            visibility=profile.status_visibility.level,
+            stream=stream,
+            effective_output_limit=effective_output_limit(cc_body),
+        )
+        _begin_route_receipt(outer_receipt, route="Responses")
 
         if stream:
             # Streaming: open upstream stream, translate chunks, emit Responses SSE.
-            client, upstream = await _forward_chat_completions(
-                request, auth_context, cc_body, stream=True
-            )
+            request.state.route_receipt_parent_request_id = outer_receipt.request_id
+            client, upstream = await _forward_chat_completions(request, auth_context, cc_body, stream=True)
             if upstream.status_code >= 400:
                 # Drain the body for a useful error.
                 body_bytes = b""
@@ -18474,6 +18504,7 @@ async def create_response(request: Request):
                 finally:
                     await upstream.aclose()
                     await client.aclose()
+                finalize_outer_response(status="failed", terminal_reason="failed")
                 try:
                     upstream_json = json.loads(body_bytes.decode("utf-8", errors="replace") or "{}")
                 except Exception:
@@ -18496,6 +18527,8 @@ async def create_response(request: Request):
 
             async def event_stream():
                 final_obj: Optional[dict] = None
+                was_cancelled = False
+                stream_error: BaseException | None = None
                 try:
                     for ev in translator.start():
                         yield ev
@@ -18508,7 +18541,11 @@ async def create_response(request: Request):
                     for ev in translator.finish():
                         yield ev
                     final_obj = translator.build_final_response()
+                except asyncio.CancelledError:
+                    was_cancelled = True
+                    raise
                 except Exception as e:  # noqa: BLE001
+                    stream_error = e
                     err_ev = responses_translator.sse_pack("response.error", {
                         "type": "response.error",
                         "sequence_number": 9999,
@@ -18538,6 +18575,18 @@ async def create_response(request: Request):
                             )
                         except Exception as e:  # noqa: BLE001
                             print(f"[proxy] responses_store.save failed: {e}", flush=True)
+                    finalize_outer_response(
+                        status=(
+                            "cancelled" if was_cancelled
+                            else "failed" if stream_error is not None
+                            else "succeeded"
+                        ),
+                        terminal_reason=(
+                            "cancelled" if was_cancelled
+                            else "read_error" if stream_error is not None
+                            else "completed"
+                        ),
+                    )
 
             return StreamingResponse(
                 event_stream(),
@@ -18547,12 +18596,14 @@ async def create_response(request: Request):
             )
 
         # Non-streaming
+        request.state.route_receipt_parent_request_id = outer_receipt.request_id
         upstream = await _forward_chat_completions(request, auth_context, cc_body, stream=False)
         if upstream.status_code >= 400:
             try:
                 upstream_json = upstream.json()
             except Exception:
                 upstream_json = {"error": {"message": upstream.text[:1000]}}
+            finalize_outer_response(status="failed", terminal_reason="failed")
             return Response(
                 content=json.dumps({"error": {
                     "message": (upstream_json.get("error") or {}).get("message") or "Upstream chat-completions error.",
@@ -18566,6 +18617,7 @@ async def create_response(request: Request):
         try:
             cc_json = upstream.json()
         except Exception as e:
+            finalize_outer_response(status="failed", terminal_reason="read_error")
             return _responses_error(
                 f"Upstream returned non-JSON: {e}",
                 code="upstream_error",
@@ -18593,12 +18645,14 @@ async def create_response(request: Request):
             except Exception as e:  # noqa: BLE001
                 print(f"[proxy] responses_store.save failed: {e}", flush=True)
 
+        finalize_outer_response(status="succeeded", terminal_reason="completed")
         return Response(
             content=json.dumps(resp_json),
             status_code=200,
             media_type="application/json",
         )
     except Exception as e:  # noqa: BLE001
+        finalize_outer_response(status="failed", terminal_reason="internal_error")
         print(f"[proxy] /v1/responses internal error: {e}", flush=True)
         return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
 
@@ -19117,6 +19171,7 @@ def _start_litellm_route_receipt(
     protocol: str | None = None,
     intent: str | None = None,
     delegated_litellm_api_key: str = "",
+    parent_request_id: str = "",
 ) -> RouteReceipt:
     if protocol is None or intent is None:
         protocol, intent = _OPENAI_PROXY_POLICY.get(
@@ -19124,6 +19179,19 @@ def _start_litellm_route_receipt(
             ("openai.chat", "chat.generate"),
         )
     profile = _profile_for_auth_context(auth_context)
+    if parent_request_id:
+        receipt = RouteReceipt(
+            protocol=protocol,
+            path=request_path,
+            intent=intent,
+            backend="litellm",
+            requested_model=requested_model,
+            parent_request_id=parent_request_id,
+            visibility="internal",
+        )
+        receipt.set_policy_decision("allowed", source="gateway:trusted-loopback")
+        receipt.metadata["execution_backend"] = "litellm"
+        return receipt
     if delegated_litellm_api_key:
         receipt = RouteReceipt(
             protocol=protocol,
@@ -19141,7 +19209,6 @@ def _start_litellm_route_receipt(
             {
                 "execution_backend": "litellm",
                 "auth_source": "litellm",
-                "litellm_key_prefix": hash_api_key(delegated_litellm_api_key)[:18],
             }
         )
         return receipt
@@ -19225,11 +19292,18 @@ def _normalize_litellm_error_envelope(
         error["param"] = None
 
 
-def _record_litellm_route_receipt(receipt: RouteReceipt) -> None:
+def _begin_route_receipt(receipt: RouteReceipt, *, route: str) -> None:
     try:
-        receipt_store.record(receipt)
+        receipt_store.begin(receipt)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Could not record LiteLLM route receipt: {e}", flush=True)
+        print(f"[proxy] Could not begin {route} route receipt: {e}", flush=True)
+
+
+def _finalize_route_receipt(receipt: RouteReceipt, *, route: str) -> None:
+    try:
+        receipt_store.finalize(receipt)
+    except Exception as e:  # noqa: BLE001
+        print(f"[proxy] Could not finalize {route} route receipt: {e}", flush=True)
 
 
 def _record_internal_hop_receipt(
@@ -19507,15 +19581,21 @@ async def _forward_current_loaded_openai_request(
     # internal hop it actually is (internal_ingress/backend_egress/terminal),
     # not accepted/outer_egress which the parent already recorded.
     is_internal_hop = bool(request_id)
+    profile = _profile_for_auth_context(auth_context)
     receipt = RouteReceipt(
         protocol="openai.chat",
         path=request_path,
         intent="chat.generate",
         backend=target.backend,
         requested_model=str(requested_alias) if requested_alias else None,
-        resolved_model=target.model,
+        resolved_model=logical_target.base_model_id,
         parent_request_id=request_id if is_internal_hop else None,
-        visibility="internal",
+        app_profile=None if is_internal_hop else profile.id,
+        app_id=None if is_internal_hop or auth_context.identity is None else auth_context.identity.app_id,
+        api_key_name=None if is_internal_hop or auth_context.identity is None else auth_context.identity.name,
+        visibility="internal" if is_internal_hop else profile.status_visibility.level,
+        stream=bool(body.get("stream")),
+        effective_output_limit=effective_output_limit(body),
     )
     receipt.metadata.update({"execution_backend": "current-loaded"})
     if is_internal_hop:
@@ -19527,6 +19607,8 @@ async def _forward_current_loaded_openai_request(
             extra={"body_bytes": request_body_byte_count(execution_body)},
         )
 
+    _begin_route_receipt(receipt, route="current-loaded")
+
     def _finish_current_loaded_receipt(*, terminal_reason: str, status: str) -> None:
         receipt.metadata["terminal_reason"] = terminal_reason
         record_request_shape_stage(
@@ -19534,10 +19616,7 @@ async def _forward_current_loaded_openai_request(
             extra={"terminal_reason": terminal_reason},
         )
         receipt.finish(status)
-        try:
-            receipt_store.record(receipt)
-        except Exception as e:  # noqa: BLE001
-            print(f"[proxy] Could not record current-loaded route receipt: {e}", flush=True)
+        _finalize_route_receipt(receipt, route="current-loaded")
 
     cancellation_span = _OuterCancellationSpan(
         request_id or new_request_id(), receive=request.receive
@@ -19718,6 +19797,7 @@ async def _forward_litellm_proxy_request(
     runtime_config,
     requested_embedding_dimensions: int | None = None,
     delegated_litellm_api_key: str = "",
+    parent_request_id: str = "",
 ) -> Response:
     model_name = body_json.get("model")
     if not isinstance(model_name, str) or not model_name:
@@ -19745,6 +19825,7 @@ async def _forward_litellm_proxy_request(
         auth_context=auth_context,
         requested_model=model_name,
         delegated_litellm_api_key=delegated_litellm_api_key,
+        parent_request_id=parent_request_id,
     )
     body_for_litellm = body_json
     if request_path == "/v1/chat/completions":
@@ -19763,6 +19844,13 @@ async def _forward_litellm_proxy_request(
         body_for_litellm.pop("dimensions", None)
 
     body = json.dumps(dict(body_for_litellm)).encode()
+    receipt.resolved_model = (
+        str(body_for_litellm.get("model"))
+        if isinstance(body_for_litellm.get("model"), str)
+        else None
+    )
+    receipt.stream = bool(body_for_litellm.get("stream"))
+    receipt.effective_output_limit = effective_output_limit(body_for_litellm)
     receipt.metadata["request_shape"] = request_shape_fields(body_for_litellm)
     receipt.metadata["request_shape"]["body_bytes"] = request_body_byte_count(body)
     record_request_shape_stage(
@@ -19805,6 +19893,10 @@ async def _forward_litellm_proxy_request(
         read_timeout=read_timeout,
     )
 
+    # The accepted outer action is durable before this route opens an upstream
+    # connection or starts the disconnect watcher that owns that wait.
+    _begin_route_receipt(receipt, route="LiteLLM")
+
     cancellation_span = _OuterCancellationSpan(receipt.request_id, receive=request.receive)
 
     try:
@@ -19818,7 +19910,7 @@ async def _forward_litellm_proxy_request(
                 extra={"terminal_reason": "cancelled"},
             )
             receipt.finish("cancelled")
-            _record_litellm_route_receipt(receipt)
+            _finalize_route_receipt(receipt, route="LiteLLM")
             return Response(status_code=499)
         content_type = resp.headers.get("content-type", "") or "application/json"
         excluded = ("content-length", "transfer-encoding", "content-type")
@@ -19898,7 +19990,7 @@ async def _forward_litellm_proxy_request(
                         else "succeeded" if 200 <= resp.status_code < 400
                         else "failed"
                     )
-                    _record_litellm_route_receipt(receipt)
+                    _finalize_route_receipt(receipt, route="LiteLLM")
                     # Emit toolcall advisory via log at stream close.
                     _tc_advisory = _tc_detector.advisory()
                     if _tc_advisory:
@@ -19934,7 +20026,7 @@ async def _forward_litellm_proxy_request(
                 extra={"terminal_reason": terminal_reason},
             )
             receipt.finish("cancelled")
-            _record_litellm_route_receipt(receipt)
+            _finalize_route_receipt(receipt, route="LiteLLM")
             return Response(status_code=499)
         await close_llm_response(client, resp)
         if "application/json" in content_type:
@@ -19991,7 +20083,7 @@ async def _forward_litellm_proxy_request(
             extra={"terminal_reason": terminal_reason},
         )
         receipt.finish("succeeded" if 200 <= resp.status_code < 400 else "failed")
-        _record_litellm_route_receipt(receipt)
+        _finalize_route_receipt(receipt, route="LiteLLM")
         return Response(
             content=content,
             status_code=resp.status_code,
@@ -20007,7 +20099,7 @@ async def _forward_litellm_proxy_request(
         )
         receipt.finish("failed")
         receipt.add_warning("LiteLLM execution timed out")
-        _record_litellm_route_receipt(receipt)
+        _finalize_route_receipt(receipt, route="LiteLLM")
         return Response(
             content=json.dumps({"detail": "Request timeout"}),
             status_code=504,
@@ -20022,7 +20114,7 @@ async def _forward_litellm_proxy_request(
         )
         receipt.finish("failed")
         receipt.add_warning("LiteLLM execution backend is unavailable")
-        _record_litellm_route_receipt(receipt)
+        _finalize_route_receipt(receipt, route="LiteLLM")
         return Response(
             content=json.dumps({
                 "error": {
@@ -20043,7 +20135,7 @@ async def _forward_litellm_proxy_request(
             extra={"terminal_reason": "internal_error"},
         )
         receipt.finish("failed")
-        _record_litellm_route_receipt(receipt)
+        _finalize_route_receipt(receipt, route="LiteLLM")
         raise
 
 
@@ -20059,6 +20151,10 @@ async def _handle_openai_litellm_request(
     if isinstance(route_auth, Response):
         return route_auth
     auth_context = route_auth.auth_context
+    is_trusted_loopback = _is_internal_protocol_forward(request)
+    trusted_parent_request_id = (
+        _internal_request_id_from_headers(request.headers) if is_trusted_loopback else ""
+    )
 
     if not any(request_path.startswith(p) for p in NO_ACTIVITY_PATHS):
         state.update_activity()
@@ -20078,7 +20174,7 @@ async def _handle_openai_litellm_request(
 
     if (
         not route_auth.delegated_to_litellm
-        and not _is_internal_protocol_forward(request)
+        and not is_trusted_loopback
     ):
         policy_decision = _openai_proxy_policy_decision(
             auth_context,
@@ -20099,6 +20195,7 @@ async def _handle_openai_litellm_request(
             request_path=request_path,
             auth_context=auth_context,
             body_json=parsed_body,
+            request_id=trusted_parent_request_id,
         )
 
     litellm_runtime = _litellm_runtime_config()
@@ -20129,6 +20226,7 @@ async def _handle_openai_litellm_request(
         runtime_config=litellm_runtime,
         requested_embedding_dimensions=requested_embedding_dimensions,
         delegated_litellm_api_key=route_auth.delegated_litellm_api_key or "",
+        parent_request_id=trusted_parent_request_id,
     )
 
 
@@ -20652,6 +20750,7 @@ def _native_passthrough_receipt(
         receipt.app_profile = auth_context.identity.profile.id
         receipt.app_id = auth_context.identity.app_id
         receipt.api_key_name = auth_context.identity.name
+        receipt.visibility = auth_context.identity.profile.status_visibility.level
     receipt.metadata.update({
         "provider": provider,
         "native_path": f"/{native_path.lstrip('/')}",
@@ -20664,6 +20763,17 @@ def _record_native_passthrough_receipt(receipt: RouteReceipt) -> None:
         receipt_store.record(receipt)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Could not record provider-native receipt: {e}", flush=True)
+
+
+def _finish_native_passthrough_receipt(
+    receipt: RouteReceipt,
+    *,
+    status: str,
+    terminal_reason: str,
+) -> None:
+    receipt.metadata["terminal_reason"] = terminal_reason
+    receipt.finish(status)
+    _finalize_route_receipt(receipt, route="provider-native")
 
 
 def _provider_native_summary(
@@ -20852,6 +20962,9 @@ async def provider_native_request(
         return _policy_denied_response(decision)
 
     body = await request.body()
+    receipt.stream = False
+    receipt.effective_output_limit = None
+    _begin_route_receipt(receipt, route="provider-native")
     headers = prepare_downstream_headers(
         request.headers,
         auth_context,
@@ -20878,8 +20991,9 @@ async def provider_native_request(
         upstream = await stream_context.__aenter__()
     except httpx.TimeoutException:
         await client.aclose()
-        receipt.finish("timeout")
-        _record_native_passthrough_receipt(receipt)
+        _finish_native_passthrough_receipt(
+            receipt, status="timed_out", terminal_reason="idle_timeout"
+        )
         return openai_error_response(
             f"Provider {provider_key!r} timed out while handling {native_request_path}.",
             status_code=504,
@@ -20888,8 +21002,9 @@ async def provider_native_request(
         )
     except httpx.ConnectError:
         await client.aclose()
-        receipt.finish("backend_unavailable")
-        _record_native_passthrough_receipt(receipt)
+        _finish_native_passthrough_receipt(
+            receipt, status="failed", terminal_reason="connect_error"
+        )
         return openai_error_response(
             f"Provider {provider_key!r} is unavailable for native passthrough.",
             status_code=503,
@@ -20898,8 +21013,9 @@ async def provider_native_request(
         )
     except Exception as e:  # noqa: BLE001
         await client.aclose()
-        receipt.finish("error")
-        _record_native_passthrough_receipt(receipt)
+        _finish_native_passthrough_receipt(
+            receipt, status="failed", terminal_reason="internal_error"
+        )
         return openai_error_response(
             f"Provider-native passthrough failed: {str(e)[:200]}",
             status_code=502,
@@ -20912,17 +21028,37 @@ async def provider_native_request(
         for k, v in upstream.headers.items()
         if k.lower() not in _PROVIDER_NATIVE_HOP_BY_HOP_HEADERS
     }
-    receipt.finish("ok" if upstream.status_code < 400 else "error")
     receipt.metadata["status_code"] = upstream.status_code
-    _record_native_passthrough_receipt(receipt)
 
     async def _provider_native_body_stream():
+        stream_error: BaseException | None = None
+        was_cancelled = False
         try:
             async for chunk in upstream.aiter_bytes():
                 yield chunk
+        except asyncio.CancelledError:
+            was_cancelled = True
+            raise
+        except BaseException as exc:
+            stream_error = exc
+            raise
         finally:
             await stream_context.__aexit__(None, None, None)
             await client.aclose()
+            _finish_native_passthrough_receipt(
+                receipt,
+                status=(
+                    "cancelled" if was_cancelled
+                    else "failed" if stream_error is not None or upstream.status_code >= 400
+                    else "succeeded"
+                ),
+                terminal_reason=(
+                    "cancelled" if was_cancelled
+                    else "read_error" if stream_error is not None
+                    else "failed" if upstream.status_code >= 400
+                    else "completed"
+                ),
+            )
 
     return StreamingResponse(
         _provider_native_body_stream(),
@@ -21090,11 +21226,21 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             path=request_path,
             intent="chat.generate",
             backend=target_service,
+            app_profile=(
+                auth_context.identity.profile.id if auth_context.identity is not None else None
+            ),
+            app_id=auth_context.identity.app_id if auth_context.identity is not None else None,
+            api_key_name=auth_context.identity.name if auth_context.identity is not None else None,
             requested_model=(
                 str(_native_shape_body.get("model"))
                 if _native_shape_body and _native_shape_body.get("model") else None
             ),
-            visibility="internal",
+            visibility=(
+                auth_context.identity.profile.status_visibility.level
+                if auth_context.identity is not None else "internal"
+            ),
+            stream=bool(_native_shape_body.get("stream")),
+            effective_output_limit=effective_output_limit(_native_shape_body),
         )
         if _native_shape_body is not None else None
     )
@@ -21105,6 +21251,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             native_receipt.metadata, "outer_egress", _native_shape_body,
             extra={"body_bytes": request_body_byte_count(body)},
         )
+        _begin_route_receipt(native_receipt, route="direct native")
 
     def _finish_native_receipt(*, terminal_reason: str, status: str) -> None:
         if native_receipt is None:
@@ -21116,7 +21263,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         )
         native_receipt.finish(status)
         try:
-            receipt_store.record(native_receipt)
+            _finalize_route_receipt(native_receipt, route="direct native")
         except Exception as e:  # noqa: BLE001
             print(f"[proxy] Could not record native route receipt: {e}", flush=True)
 

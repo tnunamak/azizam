@@ -26,6 +26,7 @@ from collections.abc import Mapping
 from typing import Any
 
 _UNBOUNDED_TOKEN_SENTINELS = (None, -1)
+_OUTPUT_LIMIT_FIELDS = ("max_completion_tokens", "max_tokens", "n_predict")
 
 
 def request_shape_fields(body: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -77,6 +78,26 @@ def is_unbounded_nonstream(fields: Mapping[str, Any]) -> bool:
     if not limits:
         return True
     return all(limit in _UNBOUNDED_TOKEN_SENTINELS for limit in limits)
+
+
+def effective_output_limit(body: Mapping[str, Any] | None) -> int | None:
+    """Return the final explicit output cap from an outbound request shape.
+
+    This is deliberately a closed scalar projection: it does not preserve the
+    source field or inspect request content.  ``0`` is an explicit cap, while
+    absent, invalid, and the documented ``-1`` unbounded sentinel are all
+    represented as ``None``.
+    """
+    if not isinstance(body, Mapping):
+        return None
+    for key in _OUTPUT_LIMIT_FIELDS:
+        if key not in body:
+            continue
+        value = body[key]
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        return value if value >= 0 else None
+    return None
 
 
 def request_body_byte_count(raw_body: bytes | None) -> int:

@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -449,6 +450,104 @@ class TestReceiptStore(unittest.TestCase):
 
         stored = receipt_store.get(r.request_id, audience="client", path=self.db)
         self.assertNotIn("metadata", stored)
+
+    # ---- accepted receipt lifecycle ----
+
+    def test_begin_finalize_preserves_accepted_facts_and_explicit_zero_cap(self) -> None:
+        receipt = _make_receipt()
+        receipt.stream = False
+        receipt.effective_output_limit = 0
+
+        receipt_store.begin(receipt, now_ms=1_000, path=self.db)
+        begun = receipt_store.get(receipt.request_id, path=self.db, now_ms=1_001)
+        self.assertEqual(begun["status"], "in_progress")
+        self.assertEqual(begun["accepted_at_ms"], 1_000)
+        self.assertEqual(begun["effective_output_limit"], 0)
+
+        # A terminal caller may add terminal facts, but cannot rewrite what was
+        # accepted (including identity/model/cap) after the upstream wait.
+        receipt.app_id = "mutated-app"
+        receipt.requested_model = "mutated-model"
+        receipt.effective_output_limit = 99
+        receipt.finish("succeeded", now_ms=2_000)
+        self.assertTrue(receipt_store.finalize(receipt, path=self.db))
+
+        stored = receipt_store.get(receipt.request_id, path=self.db, now_ms=2_001)
+        self.assertEqual(stored["status"], "succeeded")
+        self.assertEqual(stored["accepted_at_ms"], 1_000)
+        self.assertEqual(stored["effective_output_limit"], 0)
+        self.assertEqual(stored["requested_model"], "gpt-4o")
+
+    def test_begin_is_idempotent_and_terminal_rows_never_regress(self) -> None:
+        receipt = _make_receipt()
+        receipt_store.begin(receipt, now_ms=1_000, path=self.db)
+        receipt_store.begin(receipt, now_ms=9_000, path=self.db)
+        receipt.finish("failed", now_ms=2_000)
+        self.assertTrue(receipt_store.finalize(receipt, path=self.db))
+        self.assertFalse(receipt_store.finalize(receipt, path=self.db))
+
+        stored = receipt_store.get(receipt.request_id, path=self.db, now_ms=10_000)
+        self.assertEqual(stored["status"], "failed")
+        self.assertEqual(stored["accepted_at_ms"], 1_000)
+
+    def test_concurrent_finalizers_have_one_winner(self) -> None:
+        receipt = _make_receipt()
+        receipt_store.begin(receipt, now_ms=1_000, path=self.db)
+
+        def finalize(status: str) -> bool:
+            candidate = _make_receipt(request_id=receipt.request_id)
+            candidate.finish(status, now_ms=2_000)
+            return receipt_store.finalize(candidate, path=self.db)
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            outcomes = list(workers.map(finalize, ("succeeded", "failed")))
+        self.assertEqual(outcomes.count(True), 1)
+        self.assertEqual(outcomes.count(False), 1)
+        self.assertIn(
+            receipt_store.get(receipt.request_id, path=self.db)["status"],
+            {"succeeded", "failed"},
+        )
+
+    def test_reopen_keeps_in_progress_and_only_projects_stale(self) -> None:
+        receipt = _make_receipt()
+        receipt_store.begin(receipt, now_ms=1_000, path=self.db)
+        receipt_store.init_db(self.db)  # process reopen, not a recovery write
+
+        fresh = receipt_store.get(receipt.request_id, path=self.db, now_ms=1_100, stale_after_ms=500)
+        stale = receipt_store.get(receipt.request_id, path=self.db, now_ms=1_500, stale_after_ms=500)
+        self.assertEqual(fresh["status"], "in_progress")
+        self.assertEqual(stale["status"], "stale_incomplete")
+        # The projection never persists a guessed terminal state.
+        raw = receipt_store.get(receipt.request_id, path=self.db, now_ms=1_100, stale_after_ms=500)
+        self.assertEqual(raw["status"], "in_progress")
+
+    def test_lifecycle_rejects_payloads_before_any_disk_write(self) -> None:
+        receipt = _make_receipt()
+        receipt.metadata["headers"] = {"authorization": "not-safe"}
+        with self.assertRaises(ValueError):
+            receipt_store.begin(receipt, path=self.db)
+        self.assertEqual(receipt_store.count(self.db), 0)
+
+        safe = _make_receipt()
+        receipt_store.begin(safe, path=self.db)
+        safe.metadata["tool_calls"] = [{"args": "not-safe"}]
+        safe.finish("failed")
+        with self.assertRaises(ValueError):
+            receipt_store.finalize(safe, path=self.db)
+        self.assertEqual(receipt_store.get(safe.request_id, path=self.db)["status"], "in_progress")
+
+    def test_primary_lists_and_counts_exclude_parent_linked_children(self) -> None:
+        parent = _make_receipt()
+        child = _make_receipt(parent_request_id=parent.request_id, app_id=None, api_key_name=None)
+        receipt_store.record(parent, path=self.db)
+        receipt_store.record(child, path=self.db)
+
+        self.assertEqual(receipt_store.count(self.db), 1)
+        self.assertEqual(receipt_store.count(self.db, outer_only=False), 2)
+        self.assertEqual(
+            {row["request_id"] for row in receipt_store.recent(path=self.db)}, {parent.request_id}
+        )
+        self.assertEqual(len(receipt_store.recent(path=self.db, outer_only=False)), 2)
 
 
 if __name__ == "__main__":

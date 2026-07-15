@@ -53,6 +53,9 @@ _RAW_PAYLOAD_KEYS = frozenset(
         "raw_response",
         "request_body",
         "response_body",
+        "tool_calls",
+        "tool_arguments",
+        "args",
     }
 )
 
@@ -77,6 +80,8 @@ _MEDIA_BYTE_KEYS = frozenset(
 _SECRET_KEYS = frozenset(
     {
         "authorization",
+        "headers",
+        "auth_headers",
         "api_key",
         "api_token",
         "secret",

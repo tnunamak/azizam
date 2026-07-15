@@ -7,7 +7,7 @@ raw request bodies or secrets.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from time import perf_counter
+from time import perf_counter, time
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -34,6 +34,10 @@ CLIENT_VISIBLE_FIELDS = {
     "status",
     "latency_ms",
     "job_id",
+    "stream",
+    "effective_output_limit",
+    "accepted_at_ms",
+    "updated_at_ms",
 }
 
 # Metadata keys promoted to top-level fields for the "admin" audience even
@@ -155,6 +159,10 @@ class RouteReceipt:
     warnings: list[str] = field(default_factory=list)
     status: str | None = None
     latency_ms: float | None = None
+    stream: bool = False
+    effective_output_limit: int | None = None
+    accepted_at_ms: int | None = None
+    updated_at_ms: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     _started_at: float = field(default_factory=perf_counter, repr=False)
 
@@ -208,11 +216,25 @@ class RouteReceipt:
         self.manifest_version = manifest_version
         self.manifest_hash = manifest_hash
 
-    def finish(self, status: str, latency_ms: float | None = None) -> None:
+    def begin(self, *, now_ms: int | None = None) -> None:
+        """Mark this receipt accepted before any upstream operation begins."""
+        timestamp = int(now_ms if now_ms is not None else time() * 1000)
+        self.status = "in_progress"
+        self.accepted_at_ms = timestamp
+        self.updated_at_ms = timestamp
+
+    def finish(
+        self,
+        status: str,
+        latency_ms: float | None = None,
+        *,
+        now_ms: int | None = None,
+    ) -> None:
         self.status = status
         if latency_ms is None:
             latency_ms = (perf_counter() - self._started_at) * 1000
         self.latency_ms = round(latency_ms, 3)
+        self.updated_at_ms = int(now_ms if now_ms is not None else time() * 1000)
 
     def to_dict(self, audience: str = "internal") -> dict[str, Any]:
         if audience not in {"internal", "admin", "client"}:
@@ -247,6 +269,10 @@ class RouteReceipt:
             "warnings": list(self.warnings),
             "status": self.status,
             "latency_ms": self.latency_ms,
+            "stream": self.stream,
+            "effective_output_limit": self.effective_output_limit,
+            "accepted_at_ms": self.accepted_at_ms,
+            "updated_at_ms": self.updated_at_ms,
             "metadata": dict(self.metadata),
         }
         if audience == "internal":

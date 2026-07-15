@@ -13,7 +13,9 @@ Public surface
 --------------
 
 - ``init_db(path)``                — create the file, run schema, integrity-check
-- ``record(receipt_or_dict, ...)`` — persist one receipt (rejects unsafe shapes)
+- ``begin(receipt_or_dict, ...)``  — durably accept an outer receipt once
+- ``finalize(receipt_or_dict, ...)`` — atomically terminalize an accepted receipt
+- ``record(receipt_or_dict, ...)`` — legacy terminal-only compatibility write
 - ``get(request_id, ...)``         — fetch one receipt as a dict (by audience)
 - ``recent(limit, ...)``           — list recent receipts (by audience)
 - ``prune(retain_s, ...)``         — delete rows older than the retention window
@@ -44,6 +46,7 @@ DB_PATH = Path(os.environ["AI_GATEWAY_RECEIPTS_DB"]) if os.environ.get("AI_GATEW
 # Retention: 14 days. Receipts are diagnostics, not audit logs; the cap keeps
 # the database bounded on a long-running gateway.
 RETAIN_S = 14 * 24 * 3600
+STALE_AFTER_MS = 5 * 60 * 1000
 
 # v2 adds the ``app_id`` column: the durable id of the owning App, so a user
 # can be shown ONLY their own receipts. ``app_profile`` (a shared permission
@@ -54,6 +57,14 @@ RETAIN_S = 14 * 24 * 3600
 SCHEMA_VERSION = 2
 
 _AUDIENCES = ("internal", "admin", "client")
+_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "disconnected", "timed_out"})
+_IMMUTABLE_ACCEPTED_FIELDS = frozenset(
+    {
+        "request_id", "protocol", "path", "intent", "app_profile", "app_id",
+        "api_key_name", "requested_model", "resolved_model", "backend", "stream",
+        "effective_output_limit", "accepted_at_ms", "parent_request_id", "visibility",
+    }
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS receipts (
@@ -200,6 +211,109 @@ def _assert_safe(data: Mapping[str, Any]) -> None:
     assert_safe_mapping("receipt.metadata", metadata)
 
 
+def _assert_lifecycle_data(data: Mapping[str, Any], *, terminal: bool) -> None:
+    _assert_safe(data)
+    status = data.get("status")
+    if terminal:
+        if status not in _TERMINAL_STATUSES:
+            raise ValueError(f"receipt terminal status must be one of {sorted(_TERMINAL_STATUSES)}")
+    elif status != "in_progress":
+        raise ValueError("receipt begin status must be in_progress")
+    cap = data.get("effective_output_limit")
+    if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or cap < 0):
+        raise ValueError("receipt effective_output_limit must be a non-negative integer or None")
+    for field in ("accepted_at_ms", "updated_at_ms"):
+        value = data.get(field)
+        if terminal and field == "accepted_at_ms" and value is None:
+            # A concurrent/retried finalizer may reconstruct only terminal
+            # facts; the accepted timestamp is restored from the begun row.
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"receipt {field} must be a non-negative integer")
+
+
+def _row_values(data: Mapping[str, Any], *, created_at: int) -> tuple[Any, ...]:
+    return (
+        data["request_id"], created_at, data.get("protocol"), data.get("intent"),
+        data.get("path"), data.get("app_profile"), data.get("app_id"),
+        data.get("api_key_name"), data.get("status"), data.get("job_id"),
+        data.get("parent_request_id"), json.dumps(data, ensure_ascii=False, sort_keys=True),
+    )
+
+
+def begin(
+    receipt: RouteReceipt | Mapping[str, Any],
+    *,
+    now_ms: int | None = None,
+    path: Path = DB_PATH,
+) -> str:
+    """Insert an accepted outer receipt once, without replacing an existing row."""
+    if isinstance(receipt, RouteReceipt):
+        receipt.begin(now_ms=now_ms)
+    data = _coerce_to_internal_dict(receipt)
+    if not isinstance(receipt, RouteReceipt):
+        timestamp = int(now_ms if now_ms is not None else time.time() * 1000)
+        data = dict(data)
+        data["status"] = "in_progress"
+        data.setdefault("accepted_at_ms", timestamp)
+        data.setdefault("updated_at_ms", timestamp)
+    _assert_lifecycle_data(data, terminal=False)
+    created_at = int(data["accepted_at_ms"] // 1000)
+    with _conn(path) as conn:
+        conn.execute(
+            "INSERT INTO receipts (request_id, created_at, protocol, intent, path, app_profile, "
+            "app_id, api_key_name, status, job_id, parent_request_id, receipt_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(request_id) DO NOTHING",
+            _row_values(data, created_at=created_at),
+        )
+        conn.commit()
+    return str(data["request_id"])
+
+
+def finalize(
+    receipt: RouteReceipt | Mapping[str, Any],
+    *,
+    now_ms: int | None = None,
+    path: Path = DB_PATH,
+) -> bool:
+    """CAS-terminalize one begun receipt; terminal duplicates are no-ops."""
+    if isinstance(receipt, RouteReceipt):
+        if receipt.status not in _TERMINAL_STATUSES:
+            raise ValueError("finish receipt with a terminal status before finalizing")
+        receipt.updated_at_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+    data = _coerce_to_internal_dict(receipt)
+    _assert_lifecycle_data(data, terminal=True)
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT created_at, receipt_json, status FROM receipts WHERE request_id = ?",
+            (data["request_id"],),
+        ).fetchone()
+        if row is None:
+            raise ValueError("cannot finalize receipt that was not begun")
+        accepted = _safe_loads(row[1])
+        if not isinstance(accepted, Mapping):
+            raise ValueError("cannot finalize malformed stored receipt")
+        merged = dict(data)
+        for field in _IMMUTABLE_ACCEPTED_FIELDS:
+            if field in accepted:
+                merged[field] = accepted[field]
+        _assert_lifecycle_data(merged, terminal=True)
+        cur = conn.execute(
+            "UPDATE receipts SET protocol=?, intent=?, path=?, app_profile=?, app_id=?, api_key_name=?, "
+            "status=?, job_id=?, parent_request_id=?, receipt_json=? "
+            "WHERE request_id=? AND status='in_progress'",
+            (
+                merged.get("protocol"), merged.get("intent"), merged.get("path"),
+                merged.get("app_profile"), merged.get("app_id"), merged.get("api_key_name"),
+                merged["status"], merged.get("job_id"), merged.get("parent_request_id"),
+                json.dumps(merged, ensure_ascii=False, sort_keys=True), merged["request_id"],
+            ),
+        )
+        conn.commit()
+    return cur.rowcount == 1
+
+
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
@@ -211,6 +325,27 @@ def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, An
         out.update(sanitize_admin_metadata(metadata))
         return out
     return {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
+
+
+def _project_incomplete(
+    data: Mapping[str, Any],
+    *,
+    now_ms: int | None,
+    stale_after_ms: int,
+) -> dict[str, Any]:
+    """Render stale accepted work honestly without writing a guessed outcome."""
+    out = dict(data)
+    if out.get("status") != "in_progress":
+        return out
+    updated_at_ms = out.get("updated_at_ms")
+    current_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+    if (
+        isinstance(updated_at_ms, int)
+        and not isinstance(updated_at_ms, bool)
+        and current_ms - updated_at_ms >= stale_after_ms
+    ):
+        out["status"] = "stale_incomplete"
+    return out
 
 
 def record(
@@ -256,6 +391,8 @@ def get(
     request_id: str,
     *,
     audience: str = "internal",
+    now_ms: int | None = None,
+    stale_after_ms: int = STALE_AFTER_MS,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Return the stored receipt filtered for ``audience``, or None."""
@@ -269,7 +406,9 @@ def get(
     data = _safe_loads(row[0])
     if not isinstance(data, Mapping):
         return None
-    out = _filter_for_audience(data, audience)
+    out = _filter_for_audience(
+        _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience
+    )
     out.setdefault("_stored_at", int(row[1]))
     return out
 
@@ -281,6 +420,9 @@ def recent(
     app_profile: str | None = None,
     app_ids: list[str] | None = None,
     since_s: int | None = None,
+    outer_only: bool = True,
+    now_ms: int | None = None,
+    stale_after_ms: int = STALE_AFTER_MS,
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
     """Return up to ``limit`` most-recent receipts, newest first.
@@ -314,6 +456,8 @@ def recent(
     if since_s is not None:
         clauses.append("created_at >= ?")
         params.append(int(time.time()) - int(since_s))
+    if outer_only:
+        clauses.append("parent_request_id IS NULL")
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
 
@@ -329,7 +473,9 @@ def recent(
         data = _safe_loads(receipt_json)
         if not isinstance(data, Mapping):
             continue
-        filtered = _filter_for_audience(data, audience)
+        filtered = _filter_for_audience(
+            _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience
+        )
         filtered.setdefault("_stored_at", int(created_at))
         out.append(filtered)
     return out
@@ -344,9 +490,11 @@ def prune(retain_s: int = RETAIN_S, path: Path = DB_PATH) -> int:
         return cur.rowcount
 
 
-def count(path: Path = DB_PATH) -> int:
+def count(path: Path = DB_PATH, *, outer_only: bool = True) -> int:
     with _conn(path) as conn:
-        row = conn.execute("SELECT COUNT(*) FROM receipts").fetchone()
+        row = conn.execute(
+            "SELECT COUNT(*) FROM receipts" + (" WHERE parent_request_id IS NULL" if outer_only else "")
+        ).fetchone()
         return int(row[0]) if row else 0
 
 
@@ -366,8 +514,11 @@ def _safe_loads(text: str) -> Any:
 __all__ = [
     "DB_PATH",
     "RETAIN_S",
+    "STALE_AFTER_MS",
     "SCHEMA_VERSION",
     "init_db",
+    "begin",
+    "finalize",
     "record",
     "get",
     "recent",

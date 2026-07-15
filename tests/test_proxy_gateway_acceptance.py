@@ -409,9 +409,12 @@ class TestGatewayRouterMounting(unittest.TestCase):
         async def fake_policy_ok(*_args, **_kwargs):
             return None
 
-        def fake_record(receipt, *_args, **_kwargs):
-            receipts.append(receipt)
+        def fake_begin(receipt, *_args, **_kwargs):
             return receipt.request_id
+
+        def fake_finalize(receipt, *_args, **_kwargs):
+            receipts.append(receipt)
+            return True
 
         def fake_registry():
             return {
@@ -440,7 +443,9 @@ class TestGatewayRouterMounting(unittest.TestCase):
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
         ), patch.object(
-            proxy.receipt_store, "record", fake_record
+            proxy.receipt_store, "begin", fake_begin
+        ), patch.object(
+            proxy.receipt_store, "finalize", fake_finalize
         ):
             response = client.post(
                 "/v1/chat/completions?trace=1",
