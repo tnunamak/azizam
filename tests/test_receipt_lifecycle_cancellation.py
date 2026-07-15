@@ -197,24 +197,32 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
                         yield b"unreachable"
 
                 class Context:
+                    exited = False
+
                     async def __aenter__(self):
                         return Upstream()
 
                     async def __aexit__(self, *_args):
+                        self.exited = True
                         return False
 
                 class Client:
+                    closed = False
+
                     def stream(self, *_args, **_kwargs):
-                        return Context()
+                        self.context = Context()
+                        return self.context
 
                     async def aclose(self):
+                        self.closed = True
                         return None
 
                 target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
+                client = Client()
                 with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
                     proxy, "_auth_context_from_scope", return_value=proxy.NO_AUTH_CONTEXT
                 ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
-                    proxy.httpx, "AsyncClient", return_value=Client()
+                    proxy.httpx, "AsyncClient", return_value=client
                 ), patch.object(proxy.receipt_store, "begin", side_effect=began.append), patch.object(
                     proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True
                 ):
@@ -228,6 +236,8 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
 
                 self.assertEqual(finalized, began)
                 self.assertEqual(finalized[0].status, "cancelled" if isinstance(error, asyncio.CancelledError) else "failed")
+                self.assertTrue(client.context.exited)
+                self.assertTrue(client.closed)
 
     async def test_current_begins_before_active_backend_resolution_and_finishes_no_active(self) -> None:
         began, finalized = [], []
@@ -369,3 +379,38 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(finalized, began)
         self.assertEqual(finalized[0].status, "cancelled")
+
+    async def test_direct_native_dispatch_cancellation_finalizes_once_before_later_effects(self) -> None:
+        began, finalized = [], []
+        entered = asyncio.Event()
+        later_effects = []
+
+        async def delayed_dispatch(*_args, **_kwargs):
+            entered.set()
+            await asyncio.Future()
+            later_effects.append("dispatch-returned")
+
+        with patch.object(proxy, "authenticate_request", return_value=proxy.NO_AUTH_CONTEXT), patch.object(
+            proxy, "_path_token_from_request", return_value=None
+        ), patch.object(proxy, "LITELLM_BODY_EXECUTION_PATHS", frozenset()), patch.object(
+            proxy, "MODEL_REQUIRED_PATHS", frozenset({"/v1/chat/completions"})
+        ), patch.object(proxy, "backend_for_host", return_value="test"), patch.object(
+            proxy, "_service_availability_response", return_value=None
+        ), patch.object(proxy, "check_service_health", AsyncMock(return_value=True)), patch.object(
+            proxy, "is_model_loaded", AsyncMock(return_value=True)
+        ), patch.object(proxy, "send_llm_execution_request", delayed_dispatch), patch.object(
+            proxy.receipt_store, "begin", side_effect=began.append
+        ), patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True):
+            task = asyncio.create_task(proxy.proxy_request(
+                _request("/v1/chat/completions", {"model": "native", "messages": []}),
+                "v1/chat/completions", mapped_route=True,
+            ))
+            await asyncio.wait_for(entered.wait(), 1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        self.assertEqual(began, finalized)
+        self.assertEqual(len(finalized), 1)
+        self.assertEqual(finalized[0].status, "cancelled")
+        self.assertEqual(later_effects, [])
