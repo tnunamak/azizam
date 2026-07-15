@@ -647,6 +647,7 @@ def test_responses_loopback_routes_logical_target_to_one_owned_admission(tmp_pat
 
 def test_runtime_reload_drops_stale_service_evidence_before_resolution():
     previous = dict(proxy.config)
+    previous_derived = {name: getattr(proxy, name) for name in proxy._derive_backend_constants(previous)}
     stale = {"backends": {"service": {
         "deployment_generation": "g1", "registry_generation": "registry-g1",
         "controlled_deployment_evidence": _service_evidence(evidence_revision="stale"),
@@ -667,6 +668,8 @@ def test_runtime_reload_drops_stale_service_evidence_before_resolution():
     finally:
         proxy.config.clear()
         proxy.config.update(previous)
+        for name, value in previous_derived.items():
+            setattr(proxy, name, value)
 
 
 def test_operation_discovery_uses_the_shared_profile_model_allowlist():
