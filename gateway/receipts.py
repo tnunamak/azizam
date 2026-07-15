@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from time import perf_counter, time
-from typing import Any, Mapping
+import asyncio
+from collections.abc import AsyncIterator
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from gateway.backends.request_shape import (
@@ -283,6 +285,92 @@ class RouteReceipt:
             data.update(sanitize_admin_metadata(metadata))
             return data
         return {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
+
+
+class ReceiptLifecycleOwner:
+    """Own the terminal lifecycle of one admitted outer receipt.
+
+    ``report`` only records the bounded normal outcome.  ``__aexit__`` and
+    ``wrap_stream`` are the sole terminal writers: cancellation always wins
+    over a reported normal outcome, ordinary BaseException is failed, and the
+    store callback is deliberately best-effort.
+    """
+
+    def __init__(
+        self,
+        receipt: RouteReceipt,
+        *,
+        begin: Callable[[RouteReceipt], object],
+        finalize: Callable[[RouteReceipt], object],
+        log: Callable[[str], object],
+        on_terminal: Callable[[RouteReceipt, str], object] | None = None,
+    ) -> None:
+        self.receipt = receipt
+        self._begin, self._finalize, self._log = begin, finalize, log
+        self._on_terminal = on_terminal
+        self._outcome: tuple[str, str] | None = None
+        self._closed = False
+        self._stream_transferred = False
+        # Admission is deliberately synchronous: SQLite receipt writes are
+        # synchronous, and no caller can accidentally put an await boundary
+        # between construction and persistence.
+        self._begin_once()
+
+    def _begin_once(self) -> None:
+        try:
+            self._begin(self.receipt)
+        except BaseException as error:
+            self._log(f"receipt begin failed: {error}")
+
+    def report(self, *, status: str, reason: str) -> None:
+        """Describe a normal route outcome; this never persists a terminal row."""
+        self._outcome = (status, reason)
+
+    def _close(self, status: str, reason: str) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.receipt.metadata["terminal_reason"] = reason
+        if self._on_terminal is not None:
+            try:
+                self._on_terminal(self.receipt, reason)
+            except BaseException as error:
+                self._log(f"receipt terminal annotation failed: {error}")
+        self.receipt.finish(status)
+        try:
+            self._finalize(self.receipt)
+        except BaseException as error:
+            self._log(f"receipt finalize failed: {error}")
+
+    async def __aenter__(self) -> "ReceiptLifecycleOwner":
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: BaseException | None, tb: object) -> bool:
+        if self._stream_transferred:
+            return False
+        if isinstance(exc, asyncio.CancelledError):
+            self._close("cancelled", "cancelled")
+        elif exc is not None:
+            self._close("failed", "internal_error")
+        else:
+            self._close(*(self._outcome or ("failed", "internal_error")))
+        return False
+
+    def handoff_stream(self, source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+        """Detach a handler scope and retain ownership in the response body."""
+        if self._closed:
+            raise RuntimeError("cannot hand off a closed receipt lifecycle")
+        self._stream_transferred = True
+        return self.wrap_stream(source)
+
+    async def wrap_stream(self, source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+        """Transfer lifecycle ownership past a StreamingResponse return."""
+        # The handler's __aexit__ observes this flag and leaves ownership to
+        # the generator.  Once the generator starts, its own scope must close.
+        self._stream_transferred = False
+        async with self:
+            async for item in source:
+                yield item
 
 
 def record_validation_result(receipt: RouteReceipt, result: Any) -> None:

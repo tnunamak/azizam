@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import sys
+import asyncio
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway.receipts import RouteReceipt, record_validation_result  # noqa: E402
+from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, record_validation_result  # noqa: E402
 
 
 class FakeValidationResult:
@@ -80,6 +81,47 @@ class TestRouteReceipt(unittest.TestCase):
         receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate")
         with self.assertRaises(ValueError):
             receipt.set_policy_decision("maybe")
+
+
+class TestReceiptLifecycleOwner(unittest.IsolatedAsyncioTestCase):
+    async def test_cancellation_wins_and_store_errors_do_not_mask_it(self) -> None:
+        begun: list[RouteReceipt] = []
+        finalized: list[RouteReceipt] = []
+        receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate")
+        owner = ReceiptLifecycleOwner(
+            receipt,
+            begin=begun.append,
+            finalize=lambda item: finalized.append(item) or (_ for _ in ()).throw(OSError("disk full")),
+            log=lambda _message: None,
+        )
+
+        async def cancelled() -> None:
+            async with owner:
+                raise asyncio.CancelledError()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await cancelled()
+        self.assertEqual(begun, [receipt])
+        self.assertEqual(finalized, [receipt])
+        self.assertEqual(receipt.status, "cancelled")
+        self.assertEqual(receipt.metadata["terminal_reason"], "cancelled")
+
+    async def test_normal_outcome_is_written_once_after_stream_handoff(self) -> None:
+        finalized: list[RouteReceipt] = []
+        receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate", stream=True)
+        owner = ReceiptLifecycleOwner(
+            receipt, begin=lambda _item: None, finalize=finalized.append, log=lambda _message: None
+        )
+
+        async def body():
+            yield b"one"
+            owner.report(status="succeeded", reason="completed")
+
+        async with owner:
+            stream = owner.handoff_stream(body())
+        self.assertEqual([item async for item in stream], [b"one"])
+        self.assertEqual(finalized, [receipt])
+        self.assertEqual(receipt.status, "succeeded")
 
 
 if __name__ == "__main__":
