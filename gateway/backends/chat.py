@@ -50,6 +50,9 @@ def build_chat_loopback_request(
     api_key_header = _get_header(source_headers, "x-api-key")
     if api_key_header:
         headers["x-api-key"] = api_key_header
+    request_id = _get_header(source_headers, "x-ai-gateway-request-id")
+    if request_id:
+        headers["x-ai-gateway-request-id"] = request_id
 
     return ChatLoopbackRequest(
         url=f"http://127.0.0.1:{proxy_port}/v1/chat/completions",

@@ -454,7 +454,7 @@ def test_named_litellm_refuses_operation_before_receipt_or_activation():
     assert response.status_code == 422
 
 
-def test_responses_loopback_routes_logical_target_to_one_owned_admission():
+def test_responses_loopback_routes_logical_target_to_one_owned_admission(tmp_path):
     admissions: list[bytes] = []
     config = {"backends": {"service": {
         "model_policy_schema_version": 1, "deployment_generation": "g1", "registry_generation": "registry-g1",
@@ -479,18 +479,26 @@ def test_responses_loopback_routes_logical_target_to_one_owned_admission():
         async def stop_watcher_for_streaming_handoff(self): pass
     async def current_target(*a,**k): return proxy.CurrentLoadedLlmTarget("service","http://unit.test","physical-model"),None
     real=proxy.prepare_admitted_body
+    real_begin, real_finalize = proxy.receipt_store.begin, proxy.receipt_store.finalize
+    proxy.receipt_store.init_db(tmp_path / "receipts.db")
     def counted(body,contract):
         result=real(body,contract); admissions.append(result[1]); return result
 
     with patch.object(proxy, "config", config), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
         proxy.httpx, "AsyncClient", _InProcessLoopbackClient
-    ), patch.object(proxy,"_current_loaded_llm_target",current_target),patch.object(proxy,"_OuterCancellationSpan",Span),patch.object(proxy,"prepare_admitted_body",counted),patch.object(proxy.receipt_store,"begin",lambda *_:None),patch.object(proxy.receipt_store,"finalize",lambda *_:True):
+    ), patch.object(proxy,"_current_loaded_llm_target",current_target),patch.object(proxy,"_OuterCancellationSpan",Span),patch.object(proxy,"prepare_admitted_body",counted),patch.object(proxy.receipt_store,"begin",lambda receipt: real_begin(receipt,path=tmp_path/"receipts.db")),patch.object(proxy.receipt_store,"finalize",lambda receipt: real_finalize(receipt,path=tmp_path/"receipts.db")):
         response = TestClient(proxy.app).post("/v1/responses", json={
             "model": "operator-target", "instructions": "summarize", "input": "history", "store": False,
         })
     assert response.status_code == 200, response.text
     assert len(admissions) == 1
     assert transported[0] is admissions[0]
+    rows = proxy.receipt_store.recent(path=tmp_path/"receipts.db", limit=10, outer_only=False)
+    assert len(rows) == 2
+    outer = next(row for row in rows if row["protocol"] == "openai.responses")
+    child = next(row for row in rows if row["protocol"] == "openai.chat")
+    child_detail = proxy.receipt_store.get(child["request_id"], audience="internal", path=tmp_path/"receipts.db")
+    assert child_detail["parent_request_id"] == outer["request_id"] and child_detail["status"] == "succeeded"
 
 
 def test_runtime_reload_drops_stale_service_evidence_before_resolution():
