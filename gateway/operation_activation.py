@@ -561,10 +561,12 @@ def _cut_over(path: Path, service_id: str, alias_id: str, validated_generation: 
                 or int(current["candidate_revision"] or -1) != int(candidate["revision"])
                 or int(current["target_generation"]) != expected_target_generation
                 or current["prepared_artifact_digest"] != digest
-                or current["prepared_artifact_relpath"] != relative_path
-                or generation_row is None or int(generation_row[0]) != validated_generation):
+                or current["prepared_artifact_relpath"] != relative_path):
             conn.rollback()
-            raise OperationError("obsolete_worker", "candidate was replaced or registry changed")
+            raise OperationError("obsolete_worker", "candidate was replaced or cancelled")
+        if generation_row is None or int(generation_row[0]) != validated_generation:
+            conn.rollback()
+            return _mark_prepare_failed(path, service_id, alias_id, int(candidate["revision"]), "registry_changed")
         receipt = conn.execute("SELECT expires_at FROM operation_evidence_receipts WHERE digest=?", (candidate["evidence_digest"],)).fetchone()
         if receipt is None or int(receipt[0]) <= now:
             conn.rollback()

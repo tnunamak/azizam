@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store
+from gateway import admin_store, operation_activation
 from gateway.admin_api import AdminAuthError, AdminContext, create_admin_router
 from gateway.admin_runtime import AdminSQLiteStore
 from gateway.operation_activation import (
@@ -241,6 +241,137 @@ def test_evidence_expiry_between_stage_and_cutover_never_changes_registry(tmp_pa
     assert failed["candidate_state"] == "prepare_failed"
     assert failed["last_error_code"] == "evidence_expired"
     assert "compaction_safety" not in admin_store.get_service_registry_with_generation(path=path)["value"]["services"]["service"]["config"]["models"][1]
+
+
+def test_registry_change_before_final_cutover_marks_candidate_failed_without_overlay(tmp_path: Path) -> None:
+    path, target = _ready_target(tmp_path)
+    original_cut_over = operation_activation._cut_over
+
+    def change_registry_then_cut_over(*args, **kwargs):
+        registry = admin_store.get_service_registry_with_generation(path=path)
+        changed = registry["value"]
+        changed["services"]["service"]["name"] = "Unrelated change"
+        admin_store.write_service_registry(
+            changed, path=path,
+            expected_generation=registry["operator_settings_generation"],
+        )
+        return original_cut_over(*args, **kwargs)
+
+    with patch("gateway.operation_activation._cut_over", side_effect=change_registry_then_cut_over):
+        failed = activate(
+            path=path, state_dir=tmp_path, service_id="service", alias_id="alias",
+            expected_target=target["target_generation"],
+            expected_registry=target["operator_settings_generation"], actor="test",
+            idempotency_key="changed-before-cutover",
+        )
+
+    alias = admin_store.get_service_registry_with_generation(path=path)["value"]["services"]["service"]["config"]["models"][1]
+    assert failed["candidate_state"] == "prepare_failed"
+    assert failed["last_error_code"] == "registry_changed"
+    assert "compaction_safety" not in alias
+
+
+def test_rollback_stages_prior_overlay_against_unrelated_current_registry(tmp_path: Path) -> None:
+    path, target = _ready_target(tmp_path)
+    effective = activate(
+        path=path, state_dir=tmp_path, service_id="service", alias_id="alias",
+        expected_target=target["target_generation"],
+        expected_registry=target["operator_settings_generation"], actor="test",
+        idempotency_key="activate-before-rollback",
+    )
+    inactive = deactivate(
+        path=path, service_id="service", alias_id="alias",
+        expected_target=effective["target_generation"],
+        expected_registry=effective["operator_settings_generation"], actor="test",
+    )
+    registry = admin_store.get_service_registry_with_generation(path=path)
+    changed = registry["value"]
+    changed["services"]["service"]["name"] = "Preserved through rollback"
+    changed_registry = admin_store.write_service_registry(
+        changed, path=path, expected_generation=registry["operator_settings_generation"],
+    )
+
+    rolled_back = rollback(
+        path=path, service_id="service", alias_id="alias", revision_number=2,
+        actor="test", expected_target=inactive["target_generation"],
+        expected_registry=changed_registry["operator_settings_generation"],
+    )
+
+    assert rolled_back["candidate_state"] == "staged"
+    assert rolled_back["operator_settings_generation"] == changed_registry["operator_settings_generation"]
+    reactivated = activate(
+        path=path, state_dir=tmp_path, service_id="service", alias_id="alias",
+        expected_target=rolled_back["target_generation"],
+        expected_registry=rolled_back["operator_settings_generation"], actor="test",
+        idempotency_key="activate-rolled-back-revision",
+    )
+    current = admin_store.get_service_registry_with_generation(path=path)
+    assert reactivated["effective_revision"] is not None
+    assert reactivated["operator_settings_generation"] == current["operator_settings_generation"]
+    alias = current["value"]["services"]["service"]["config"]["models"][1]
+    assert current["value"]["services"]["service"]["name"] == "Preserved through rollback"
+    assert "compaction_safety" in alias
+    with admin_store._conn(path) as conn:
+        actions = [row[0] for row in conn.execute("SELECT action FROM audit_events")]
+    assert actions.count("operator.operation.rollback") == 1
+
+
+def test_deactivate_wins_when_activation_reaches_final_cutover_after_it(tmp_path: Path) -> None:
+    path, target = _ready_target(tmp_path)
+    registry = admin_store.get_service_registry_with_generation(path=path)
+    changed = registry["value"]
+    changed["services"]["service"]["name"] = "Unrelated change"
+    refreshed = admin_store.write_service_registry(
+        changed, path=path, expected_generation=registry["operator_settings_generation"],
+    )
+    target = stage(
+        path=path, service_id="service", alias_id="alias", base_model_id="base",
+        overlay={"compaction_safety": _record()}, evidence={"expires_at": 2_000_000_000},
+        actor="test", expected_target=target["target_generation"],
+        expected_registry=refreshed["operator_settings_generation"],
+    )
+    cutover_ready = threading.Event()
+    release_cutover = threading.Event()
+    result: list[dict | Exception] = []
+    original_cut_over = operation_activation._cut_over
+
+    def wait_before_cut_over(*args, **kwargs):
+        cutover_ready.set()
+        assert release_cutover.wait(timeout=5)
+        return original_cut_over(*args, **kwargs)
+
+    def worker() -> None:
+        try:
+            result.append(activate(
+                path=path, state_dir=tmp_path, service_id="service", alias_id="alias",
+                expected_target=target["target_generation"],
+                expected_registry=target["operator_settings_generation"], actor="test",
+                idempotency_key="activate-versus-deactivate",
+            ))
+        except Exception as exc:
+            result.append(exc)
+
+    with patch("gateway.operation_activation._cut_over", side_effect=wait_before_cut_over):
+        thread = threading.Thread(target=worker)
+        thread.start()
+        assert cutover_ready.wait(timeout=5)
+        preparing = operation_activation.status(path=path, service_id="service", alias_id="alias")
+        inactive = deactivate(
+            path=path, service_id="service", alias_id="alias",
+            expected_target=preparing["target_generation"],
+            expected_registry=preparing["operator_settings_generation"], actor="test",
+        )
+        release_cutover.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert len(result) == 1 and isinstance(result[0], OperationError)
+    assert result[0].code == "obsolete_worker"
+    assert inactive["candidate_state"] == "none" and inactive["effective_revision"] is None
+    registry_after = admin_store.get_service_registry_with_generation(path=path)["value"]
+    assert registry_after["services"]["service"]["name"] == "Unrelated change"
+    with admin_store._conn(path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM operation_target_revisions WHERE requested_state='effective'").fetchone()[0] == 0
 
 
 def test_stale_target_writer_loses_without_replacing_candidate(tmp_path: Path) -> None:
