@@ -186,6 +186,7 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
         capabilities[record["id"]] = record
 
     _validate_model_policy_graphs(services)
+    _validate_public_alias_uniqueness(services)
 
     return {
         "schema_version": int(value.get("schema_version") or SERVICE_REGISTRY_SCHEMA_VERSION),
@@ -262,6 +263,30 @@ def _validate_model_policy_graphs(services: Mapping[str, Mapping[str, Any]]) -> 
 
         for model_id in records:
             visit(model_id)
+
+
+def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]]) -> None:
+    """Make unscoped public-alias resolution deterministic across services."""
+    owners: dict[str, str] = {}
+    for service_id, service in services.items():
+        config = service.get("config") if isinstance(service, Mapping) else None
+        records = config.get("models") if isinstance(config, Mapping) else None
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, Mapping) or record.get("base_model_id") in (None, ""):
+                continue
+            for public_name in (record.get("id"), record.get("model_group")):
+                alias = str(public_name or "").strip().lower()
+                if not alias:
+                    continue
+                owner = owners.get(alias)
+                if owner is not None and owner != service_id:
+                    raise ValueError(
+                        f"public alias {alias!r} is ambiguous across services "
+                        f"{owner!r} and {service_id!r}"
+                    )
+                owners[alias] = service_id
 
 
 def backfill_seed_catalog_metadata(

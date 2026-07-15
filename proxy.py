@@ -2861,6 +2861,8 @@ def _backend_default_model_to_load(backend: str) -> Optional[str]:
 
 def _configured_litellm_local_model_target(
     requested_model: str,
+    *,
+    service_id: str | None = None,
 ) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Return the local backend activation target for a LiteLLM model group.
 
@@ -2873,6 +2875,8 @@ def _configured_litellm_local_model_target(
     backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
 
     for backend in LLM_BACKEND_HOSTS:
+        if service_id is not None and backend != service_id:
+            continue
         service_cfg = backends.get(backend, {})
         if not isinstance(service_cfg, Mapping):
             continue
@@ -2989,10 +2993,19 @@ async def _prepare_litellm_local_llm_request(
             code="missing_required_parameter",
         ), body
 
-    target_backend, target_model, target_mmproj = (
-        _configured_litellm_local_model_target(model_name)
+    try:
+        resolved_target = _resolve_request_target(model_name, aliases_only=True)
+    except AliasPolicyResolutionError as error:
+        return _alias_policy_configuration_response(error), body
+    target_backend, target_model, target_mmproj = _configured_litellm_local_model_target(
+        model_name,
+        service_id=(resolved_target.logical_service_id if resolved_target else None),
     )
-    resolved_target = _resolve_request_target(model_name, service_id=target_backend)
+    if resolved_target is None:
+        try:
+            resolved_target = _resolve_request_target(model_name, service_id=target_backend)
+        except AliasPolicyResolutionError as error:
+            return _alias_policy_configuration_response(error), body
 
     vision_needed = (
         request_path == "/v1/chat/completions"
@@ -3055,6 +3068,7 @@ async def _prepare_litellm_local_llm_request(
         body,
         request_path=request_path,
         target=resolved_target,
+        execution_service_id=target_backend or "",
     )
     if policy_error is not None:
         return policy_error, body
@@ -18894,15 +18908,31 @@ class ResolvedRequestTarget:
     """The one data-derived request-policy target for a public model name."""
 
     requested_model: str
-    service_id: str
+    logical_service_id: str
     base_model_id: str
-    transform_specs: tuple[str | dict[str, Any], ...]
+    base_transform_specs: tuple[str | dict[str, Any], ...]
+    alias_overlay_specs: tuple[str | dict[str, Any], ...]
+
+
+class AliasPolicyResolutionError(ValueError):
+    """A required public alias has no single declared logical policy."""
+
+
+def _alias_policy_configuration_response(error: AliasPolicyResolutionError) -> Response:
+    return openai_error_response(
+        f"Gateway alias policy is unavailable: {error}",
+        status_code=503,
+        error_type="service_unavailable",
+        code="alias_policy_unavailable",
+    )
 
 
 def _resolve_request_target(
     requested_model: Any,
     *,
     service_id: str | None = None,
+    required: bool = False,
+    aliases_only: bool = False,
 ) -> ResolvedRequestTarget | None:
     """Resolve a public model to one service-scoped base and alias overlay.
 
@@ -18914,7 +18944,7 @@ def _resolve_request_target(
     backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
     candidates = [service_id] if service_id else list(backends)
     normalized_requested = normalize_model_id(requested_model)
-
+    matches: list[tuple[str, Mapping[str, Any], Mapping[str, Any]]] = []
     for candidate_service_id in candidates:
         if not candidate_service_id:
             continue
@@ -18927,38 +18957,55 @@ def _resolve_request_target(
             for record in records
             if str(record.get("id") or "").strip()
         }
-        alias = next(
-            (
-                record
-                for record in records
-                if normalized_requested
-                in {
-                    normalize_model_id(str(record.get("id") or "")),
-                    normalize_model_id(str(record.get("model_group") or "")),
-                }
-            ),
-            None,
-        )
-        if alias is None:
+        matching_records = [
+            record
+            for record in records
+            if not aliases_only or record.get("base_model_id") not in (None, "")
+            if normalized_requested
+            in {
+                normalize_model_id(str(record.get("id") or "")),
+                normalize_model_id(str(record.get("model_group") or "")),
+            }
+        ]
+        if not matching_records:
             continue
+        if len(matching_records) != 1:
+            raise AliasPolicyResolutionError(
+                f"model {requested_model!r} is ambiguous within service {candidate_service_id!r}"
+            )
+        alias = matching_records[0]
         alias_id = str(alias.get("id") or "").strip()
         base_id = str(alias.get("base_model_id") or alias_id).strip()
         base = by_id.get(base_id)
         if base is None:
-            # Registry validation rejects this before runtime. Keep reload
-            # behavior fail-safe if a malformed in-memory config slips through.
-            return None
-        specs = _transform_specs(service_cfg.get("transforms"))
-        specs.extend(_transform_specs(base.get("transforms")))
-        if alias_id != base_id:
-            specs.extend(_transform_specs(alias.get("policy_overlay")))
-        return ResolvedRequestTarget(
-            requested_model=requested_model,
-            service_id=str(candidate_service_id),
-            base_model_id=base_id,
-            transform_specs=tuple(specs),
+            raise AliasPolicyResolutionError(
+                f"model {requested_model!r} in service {candidate_service_id!r} "
+                f"has no declared base policy {base_id!r}"
+            )
+        matches.append((str(candidate_service_id), alias, base))
+
+    if not matches:
+        if required:
+            raise AliasPolicyResolutionError(
+                f"model {requested_model!r} has no declared logical alias policy"
+            )
+        return None
+    if len(matches) != 1:
+        services = sorted(service for service, _, _ in matches)
+        raise AliasPolicyResolutionError(
+            f"model {requested_model!r} has ambiguous logical alias policies in {services}"
         )
-    return None
+
+    logical_service_id, alias, base = matches[0]
+    alias_id = str(alias.get("id") or "").strip()
+    base_id = str(alias.get("base_model_id") or alias_id).strip()
+    return ResolvedRequestTarget(
+        requested_model=requested_model,
+        logical_service_id=logical_service_id,
+        base_model_id=base_id,
+        base_transform_specs=tuple(_transform_specs(base.get("transforms"))),
+        alias_overlay_specs=tuple(_transform_specs(alias.get("policy_overlay"))),
+    )
 
 
 def _prepare_resolved_openai_request(
@@ -18966,12 +19013,18 @@ def _prepare_resolved_openai_request(
     *,
     request_path: str,
     target: ResolvedRequestTarget | None,
+    execution_service_id: str = "",
 ) -> tuple[Response | None, Mapping[str, Any]]:
     """Apply the one request-policy pipeline, then generic reasoning handling."""
     prepared = copy.deepcopy(dict(body))
-    if target is not None and target.transform_specs:
+    if target is None:
+        return None, prepared
+    specs = _per_backend_transform_specs(execution_service_id)
+    specs.extend(target.base_transform_specs)
+    specs.extend(target.alias_overlay_specs)
+    if specs:
         prepared = _run_request_pipeline(
-            list(target.transform_specs),
+            specs,
             prepared,
             _TransformContext(),
             _TRANSFORM_REGISTRY,
@@ -19343,6 +19396,14 @@ async def _forward_current_loaded_openai_request(
     request_id: str = "",
 ) -> Response:
     requested_alias = body_json.get("model")
+    try:
+        logical_target = _resolve_request_target(
+            requested_alias,
+            required=True,
+            aliases_only=True,
+        )
+    except AliasPolicyResolutionError as error:
+        return _alias_policy_configuration_response(error)
     target, target_error = await _current_loaded_llm_target(
         auth_context,
         enforce_gateway_policy=enforce_gateway_policy,
@@ -19366,7 +19427,8 @@ async def _forward_current_loaded_openai_request(
     policy_error, body = _prepare_resolved_openai_request(
         body,
         request_path=request_path,
-        target=_resolve_request_target(requested_alias, service_id=target.backend),
+        target=logical_target,
+        execution_service_id=target.backend,
     )
     if policy_error is not None:
         return policy_error

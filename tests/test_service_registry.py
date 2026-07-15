@@ -866,6 +866,42 @@ def test_remove_config_sourced_service_not_resurrected_on_reboot(tmp_path: Path)
     )
 
 
+def test_existing_registry_model_rows_are_not_silently_upgraded_from_yaml(tmp_path: Path) -> None:
+    """Old DB shapes stay DB-owned and must fail closed until migrated."""
+    old_config = {
+        "backends": {
+            "kobold": {
+                "models": [
+                    {"id": "default", "model_group": "default", "upstream_model": "base.gguf"}
+                ]
+            }
+        }
+    }
+    new_config = {
+        "backends": {
+            "kobold": {
+                "models": [
+                    {"id": "default", "model_group": "default", "upstream_model": "base.gguf"},
+                    {"id": "current", "model_group": "current", "upstream_model": "base.gguf", "base_model_id": "default"},
+                ]
+            }
+        }
+    }
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    old_registry = service_registry.build_service_registry_seed(old_config)
+    admin_store.put_operator_setting(
+        service_registry.SERVICE_REGISTRY_SETTING_KEY,
+        old_registry,
+        updated_by="test",
+        path=db,
+    )
+
+    reloaded = service_registry.ensure_service_registry(new_config, path=db)
+
+    assert [model["id"] for model in reloaded["services"]["kobold"]["config"]["models"]] == ["default"]
+
+
 def test_backfill_seed_catalog_metadata_never_overwrites_operator_edits() -> None:
     """backfill_seed_catalog_metadata fills missing fields only, never overwrites.
 
@@ -1364,4 +1400,23 @@ def test_registry_write_rejects_an_invalid_model_policy_reference() -> None:
                     },
                 ]
             },
+        )
+
+
+def test_registry_rejects_a_public_alias_declared_by_two_services() -> None:
+    alias = {
+        "id": "current",
+        "model_group": "current",
+        "upstream_model": "base",
+        "base_model_id": "base",
+    }
+    base = {"id": "base", "model_group": "base", "upstream_model": "base"}
+    with pytest.raises(ValueError, match="ambiguous across services"):
+        service_registry.normalize_service_registry(
+            {
+                "services": {
+                    "a": {"id": "a", "config": {"models": [base, alias]}},
+                    "b": {"id": "b", "config": {"models": [base, alias]}},
+                }
+            }
         )

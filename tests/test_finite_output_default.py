@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import copy
+import asyncio
 import json
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import urlsplit
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -131,7 +133,7 @@ def _apply_model_policy(body: dict[str, Any]) -> dict[str, Any]:
         target = proxy._resolve_request_target(body["model"])
         assert target is not None
         return run_request_pipeline(
-            list(target.transform_specs),
+            [*target.base_transform_specs, *target.alias_overlay_specs],
             copy.deepcopy(body),
         )
 
@@ -402,3 +404,203 @@ def test_named_litellm_request_runs_request_policy_exactly_once_before_egress() 
 
     assert calls == 1
     assert forwarded["max_tokens"] == _DEFAULT_CAP
+
+
+def test_current_policy_is_logical_data_not_the_active_backend() -> None:
+    policy_service = _service_config()
+    policy_service["transforms"] = [
+        {"kind": "message-inject", "role": "system", "text": "logical-service", "mode": "append"}
+    ]
+    base = next(model for model in policy_service["models"] if model["id"] == "default")
+    base["transforms"] = [
+        *_DEFAULT_TRANSFORMS,
+        {"kind": "message-inject", "role": "system", "text": "logical-base", "mode": "append"},
+    ]
+    active_service = {
+        "transforms": [
+            {"kind": "message-inject", "role": "system", "text": "execution-service", "mode": "append"}
+        ]
+    }
+    captured: list[dict[str, Any]] = []
+
+    async def fake_send(execution_request, **_kwargs):
+        captured.append(json.loads(execution_request.body))
+        return _FakeClient(), _FakeResponse()
+
+    client = TestClient(proxy.app)
+    with patch.object(proxy, "config", {"backends": {"policy": policy_service, "active": active_service}}), patch.object(
+        proxy, "LLM_BACKEND_HOSTS", {"active": "http://fake-active"}
+    ), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        proxy, "get_active_backend", AsyncMock(return_value="active")
+    ), patch.object(
+        proxy, "current_llm_model_for_backend", AsyncMock(return_value="active-loaded.gguf")
+    ), patch.object(
+        proxy, "_service_availability_response", lambda *_args, **_kwargs: None
+    ), patch.object(proxy, "send_llm_execution_request", fake_send):
+        for model, extra, expected_cap, expected_budget in (
+            ("current", {}, _DEFAULT_CAP, None),
+            ("current", {"max_tokens": 0}, 0, None),
+            ("current", {"max_completion_tokens": 19}, 19, None),
+            ("current-fast", {}, _DEFAULT_CAP, 0),
+            ("current-fast", {"reasoning_effort": "high"}, _DEFAULT_CAP, 8192),
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={"model": model, "messages": [{"role": "user", "content": "x"}], **extra},
+            )
+            assert response.status_code == 200, response.text
+            forwarded = captured[-1]
+            assert forwarded["model"] == "active-loaded.gguf"
+            assert forwarded["max_tokens"] == expected_cap
+            if expected_budget is None:
+                assert "thinking_budget_tokens" not in forwarded
+            else:
+                assert forwarded["thinking_budget_tokens"] == expected_budget
+            assert [message["content"] for message in forwarded["messages"]] == [
+                "x", "execution-service", "logical-base"
+            ]
+            assert all(message["content"] != "logical-service" for message in forwarded["messages"])
+
+
+def test_current_alias_without_a_declared_policy_fails_closed_before_routing() -> None:
+    old_registry_shape = _service_config()
+    old_registry_shape["models"] = [
+        model for model in old_registry_shape["models"] if model["id"] not in {"current", "current-fast"}
+    ]
+
+    async def forbidden_send(*_args, **_kwargs):
+        raise AssertionError("missing alias policy must not forward")
+
+    client = TestClient(proxy.app)
+    with patch.object(proxy, "config", {"backends": {"local": old_registry_shape}}), patch.object(
+        proxy, "LLM_BACKEND_HOSTS", {"local": "http://fake-local"}
+    ), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        proxy, "send_llm_execution_request", forbidden_send
+    ):
+        response = client.post("/v1/chat/completions", json={"model": "current", "messages": []})
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "alias_policy_unavailable"
+
+
+def test_ambiguous_current_alias_policy_fails_closed_before_routing() -> None:
+    service_a = _service_config()
+    service_b = _service_config()
+    captured: list[dict[str, Any]] = []
+
+    async def forbidden_send(execution_request, **_kwargs):
+        captured.append(json.loads(execution_request.body))
+        return _FakeClient(), _FakeResponse()
+
+    client = TestClient(proxy.app)
+    with patch.object(proxy, "config", {"backends": {"a": service_a, "b": service_b}}), patch.object(
+        proxy, "AUTH_ENABLED", False
+    ), patch.object(proxy, "send_llm_execution_request", forbidden_send):
+        response = client.post("/v1/chat/completions", json={"model": "current", "messages": []})
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "alias_policy_unavailable"
+    assert captured == []
+
+
+def test_unknown_remote_litellm_body_and_existing_only_path_remain_unchanged() -> None:
+    remote_body = {"model": "remote/model", "messages": [], "reasoning_effort": "high"}
+    assert _forward_to_fake_upstream(remote_body) == remote_body
+
+    with _local_model_config(), patch.object(proxy, "_profile_target_activation", return_value="existing_only"):
+        error, prepared = asyncio.run(
+            proxy._prepare_litellm_local_llm_request(
+                proxy.NO_AUTH_CONTEXT,
+                request_path="/v1/chat/completions",
+                body_json=remote_body,
+            )
+        )
+    assert error is None
+    assert prepared == remote_body
+
+
+@pytest.mark.parametrize("max_output_tokens", [0, 19])
+def test_responses_trusted_loopback_prepares_once_and_reaches_one_backend_body(
+    max_output_tokens: int,
+) -> None:
+    backend_bodies: list[dict[str, Any]] = []
+    pipeline_calls = 0
+    original_pipeline = proxy._run_request_pipeline
+
+    class ChatResponse(_FakeResponse):
+        async def aread(self) -> bytes:
+            return json.dumps(
+                {
+                    "id": "chatcmpl-loopback",
+                    "object": "chat.completion",
+                    "model": "default",
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                }
+            ).encode()
+
+    class InProcessLoopbackClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def post(self, url: str, *, headers: dict[str, str], content: bytes) -> httpx.Response:
+            inner = TestClient(proxy.app)
+            response = inner.post(urlsplit(url).path, headers=headers, content=content)
+            return httpx.Response(
+                response.status_code,
+                content=response.content,
+                headers={"content-type": response.headers.get("content-type", "application/json")},
+                request=httpx.Request("POST", url),
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    async def fake_send(execution_request, **_kwargs):
+        backend_bodies.append(json.loads(execution_request.body))
+        return _FakeClient(), ChatResponse()
+
+    def counted_pipeline(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal pipeline_calls
+        pipeline_calls += 1
+        return original_pipeline(*args, **kwargs)
+
+    client = TestClient(proxy.app)
+    with _local_model_config(), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        proxy.ADMIN_STORE, "get_service_registry", _litellm_registry
+    ), patch.object(proxy, "send_llm_execution_request", fake_send), patch.object(
+        proxy, "_service_availability_response", lambda *_args, **_kwargs: None
+    ), patch.object(proxy, "ensure_target", AsyncMock(return_value=True)
+    ), patch.object(proxy, "_run_request_pipeline", counted_pipeline), patch.object(
+        proxy.httpx, "AsyncClient", InProcessLoopbackClient
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={"model": "default", "input": "loopback", "max_output_tokens": max_output_tokens, "store": False},
+        )
+        assert response.status_code == 200, response.text
+        assert pipeline_calls == 1
+        assert backend_bodies == [
+            {
+                "model": "default",
+                "messages": [{"role": "user", "content": "loopback"}],
+                "max_tokens": max_output_tokens,
+                "temperature": 0.6,
+                "top_p": 0.95,
+                "top_k": 20,
+                "min_p": 0.0,
+                "presence_penalty": 0.0,
+                "repetition_penalty": 1.0,
+            }
+        ]
+
+        # A guessed marker is not loopback-trusted and still traverses preparation.
+        backend_bodies.clear()
+        pipeline_calls = 0
+        untrusted = client.post(
+            "/v1/chat/completions",
+            headers={proxy._INTERNAL_PROTOCOL_FORWARD_HEADER: "untrusted"},
+            json={"model": "default", "messages": []},
+        )
+        assert untrusted.status_code == 200, untrusted.text
+        assert pipeline_calls == 1
+        assert backend_bodies[0]["max_tokens"] == _DEFAULT_CAP
