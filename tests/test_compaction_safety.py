@@ -17,7 +17,6 @@ from gateway import service_registry
 from gateway.compaction_safety import (
     AdmissionError,
     ContractError,
-    consumer_request_construction_contract,
     contract_from_data,
     prepare_admitted_body,
 )
@@ -410,93 +409,91 @@ def test_discovery_exposes_only_valid_authorized_operation_targets():
             ],
             "stream": False,
             "output_limit": {"field": "max_tokens", "default": 8192, "maximum": 8192},
-            "final_reasoning_control": _service_evidence()["final_reasoning_control"],
             "max_final_body_utf8_bytes": 77504,
             "token_counting": "conservative_not_exact",
         },
     }
 
 
-def test_authorized_discovery_projection_constructs_the_one_admitted_strict_body():
+def test_authenticated_discovery_consumer_needs_no_internal_control_and_reaches_admitted_transport(tmp_path):
     config = {"backends": {"service": {
-        "deployment_generation": "g1", "registry_generation": "registry-g1",
+        "model_policy_schema_version": 1, "deployment_generation": "g1", "registry_generation": "registry-g1",
         "controlled_deployment_evidence": _service_evidence(),
         "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
     }}}
+    profile = AppProfile(id="authorized", models=frozenset({"operator-target"}))
+    auth = proxy.RuntimeRouteAuth(proxy.NO_AUTH_CONTEXT)
+    transported: list[bytes] = []
+
+    class Span:
+        def __init__(self, *_args, **_kwargs):
+            self.token = SimpleNamespace(cancelled=False)
+
+        async def dispatch(self, execution_request):
+            transported.append(execution_request.body)
+            class Client:
+                async def aclose(self):
+                    return None
+
+            class Response:
+                status_code = 200
+                headers = {"content-type": "application/json"}
+
+                async def aclose(self):
+                    return None
+
+            return Client(), Response()
+
+        async def read_body(self, *_args):
+            return b'{"id":"chat","object":"chat.completion","model":"physical-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}'
+
+        async def aclose(self):
+            return None
+
+    async def current_target(*_args, **_kwargs):
+        return proxy.CurrentLoadedLlmTarget("service", "http://unit.test", "physical-model"), None
+
+    real_begin, real_finalize = proxy.receipt_store.begin, proxy.receipt_store.finalize
+    proxy.receipt_store.init_db(tmp_path / "receipts.db")
     with patch.object(proxy, "config", config), patch.object(
-        proxy, "_profile_for_auth_context", lambda _auth: AppProfile(
-            id="authorized", models=frozenset({"operator-target"})
-        )
+        proxy, "authenticate_runtime_or_litellm_request", return_value=auth
+    ), patch.object(proxy, "_profile_for_auth_context", lambda _auth: profile), patch.object(
+        proxy, "_current_loaded_llm_target", current_target
+    ), patch.object(proxy, "_OuterCancellationSpan", Span), patch.object(
+        proxy.receipt_store, "begin", lambda receipt: real_begin(receipt, path=tmp_path / "receipts.db")
+    ), patch.object(
+        proxy.receipt_store, "finalize", lambda receipt: real_finalize(receipt, path=tmp_path / "receipts.db")
     ):
-        entries, _ = asyncio.run(proxy._filter_model_list_for_profile(
-            proxy._operation_contract_model_entries(), proxy.NO_AUTH_CONTEXT
-        ))
-        projection = entries[0]["vivid_fish_operation"]["request_construction"]
-        contract = proxy._resolve_request_target(
-            projection["model"], required=True, aliases_only=True
-        ).operation_contract
-    assert contract is not None
-    body = {
-        "model": projection["model"],
-        "messages": [
-            {"role": item["role"], "content": content}
-            for item, content in zip(projection["messages"], ("summarize", "history"))
-        ],
-        projection["output_limit"]["field"]: projection["output_limit"]["default"],
-        "stream": projection["stream"],
-        **projection["final_reasoning_control"],
-    }
-    admitted, encoded = prepare_admitted_body(body, contract)
-    assert admitted == body
-    assert len(encoded) <= projection["max_final_body_utf8_bytes"]
-    assert projection["token_counting"] == "conservative_not_exact"
-    assert projection["output_limit"] == {
-        "field": "max_tokens", "default": contract.reserved_output_tokens,
-        "maximum": contract.reserved_output_tokens,
-    }
-
-
-def test_projection_final_control_is_immutable_copy_of_validated_contract_bytes():
-    contract = _contract()
-    first = consumer_request_construction_contract(contract, logical_model_id="operator-target")
-    expected = json.dumps(
-        _service_evidence()["final_reasoning_control"], ensure_ascii=False, separators=(",", ":")
-    ).encode()
-    actual = json.dumps(
-        first["final_reasoning_control"], ensure_ascii=False, separators=(",", ":")
-    ).encode()
-    assert actual == expected
-    first["final_reasoning_control"]["chat_template_kwargs"]["enable_thinking"] = True
-    second = consumer_request_construction_contract(contract, logical_model_id="operator-target")
-    assert json.dumps(second["final_reasoning_control"], separators=(",", ":")).encode() == expected
-
-
-def _record_and_evidence_with_control(control):
-    evidence = _service_evidence(final_reasoning_control=control)
-    reference = dict(_record()["controlled_deployment_reference"])
-    reference["final_reasoning_control"] = control
-    return _record(controlled_deployment_reference=reference), evidence
-
-
-@pytest.mark.parametrize("control", [
-    {"api_key": "nope"},
-    {"settings": {"authorization": "nope"}},
-    {"mode": "Bearer credential"},
-    {"mode": "sk-credential"},
-    {"setting": object()},
-    {"setting": float("nan")},
-])
-def test_credential_bearing_or_non_json_final_control_omits_operation(control):
-    record, evidence = _record_and_evidence_with_control(control)
-    config = {"backends": {"service": {
-        "deployment_generation": "g1", "registry_generation": "registry-g1",
-        "controlled_deployment_evidence": evidence,
-        "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": record}],
-    }}}
-    with patch.object(proxy, "config", config):
-        assert proxy._operation_contract_model_entries() == []
-        with pytest.raises(proxy.AliasPolicyResolutionError):
-            proxy._resolve_request_target("operator-target", required=True, aliases_only=True)
+        client = TestClient(proxy.app)
+        discovery = client.get("/v1/models")
+        assert discovery.status_code == 200, discovery.text
+        entry = next(item for item in discovery.json()["data"] if item["id"] == "operator-target")
+        projection = entry["vivid_fish_operation"]["request_construction"]
+        body = {
+            "model": projection["model"],
+            "messages": [
+                {"role": item["role"], "content": content}
+                for item, content in zip(projection["messages"], ("summarize", "history"))
+            ],
+            projection["output_limit"]["field"]: projection["output_limit"]["default"],
+            "stream": projection["stream"],
+        }
+        assert "final_reasoning_control" not in projection
+        response = client.post("/v1/chat/completions", json=body)
+        assert response.status_code == 200, response.text
+        expected = {
+            "model": "physical-model",
+            "messages": body["messages"],
+            "stream": False,
+            "thinking_budget_tokens": 0,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "max_tokens": 8192,
+        }
+        assert transported == [json.dumps(expected, ensure_ascii=False, separators=(",", ":")).encode()]
+        assert projection["token_counting"] == "conservative_not_exact"
+        assert projection["output_limit"] == {
+            "field": "max_tokens", "default": 8192, "maximum": 8192,
+        }
 
 
 def test_duplicate_operation_targets_fail_closed_for_discovery_and_admission():

@@ -13,12 +13,10 @@ supported registry surface before this contract is eligible for use.
 from __future__ import annotations
 
 import json
-import math
 import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from types import MappingProxyType
 from typing import Any, Mapping
 
 
@@ -28,12 +26,6 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 OUTPUT_CAP_FIELDS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
 FINAL_BODY_BASE_FIELDS = frozenset({"model", "messages", "max_tokens", "stream"})
 CONSUMER_CONSTRUCTION_VERSION = 1
-_SENSITIVE_FIELD_PARTS = frozenset({
-    "access", "apikey", "api", "authorization", "bearer", "credential",
-    "key", "password", "private", "secret", "token",
-})
-_CREDENTIAL_VALUE_PREFIXES = ("basic ", "bearer ")
-_CREDENTIAL_VALUE_MARKERS = ("opk_", "oak_", "sk-")
 
 
 class ContractError(ValueError):
@@ -87,7 +79,6 @@ def consumer_request_construction_contract(
             "default": contract.reserved_output_tokens,
             "maximum": contract.reserved_output_tokens,
         },
-        "final_reasoning_control": _json_safe_copy(contract.final_reasoning_control),
         "max_final_body_utf8_bytes": contract.max_final_body_utf8_bytes,
         "token_counting": "conservative_not_exact",
     }
@@ -252,7 +243,6 @@ def contract_from_data(
     )
     if not evidence_reasoning or reference_reasoning != evidence_reasoning:
         raise ContractError("final_reasoning_control does not match service evidence")
-    final_reasoning_control = _validated_public_control(evidence_reasoning)
     if tokenizer != service_evidence["tokenizer_contract"]:
         raise ContractError("tokenizer_contract does not match service evidence")
     expected_bounds = {
@@ -283,7 +273,7 @@ def contract_from_data(
         raise ContractError("contract is expired")
     return CompactionContract(contract_id, PURPOSE, declared_base, context, output, headroom,
                               ratio, overhead, ceiling, generation, expires_at,
-                              reasoning_default, True, final_reasoning_control)
+                              reasoning_default, True, dict(evidence_reasoning))
 
 
 def prepare_admitted_body(
@@ -381,70 +371,6 @@ def _normalize_output_cap(body: dict[str, Any], contract: CompactionContract) ->
 def _mapping(value: Any, field: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ContractError(f"{field} must be an object")
-    return value
-
-
-def _validated_public_control(value: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Freeze an operator control only when it is safe to disclose to clients.
-
-    The control is arbitrary operator data, but an authenticated discovery
-    response must never become a secret transport. Keys must be non-empty
-    strings without credential-bearing components; values must be finite JSON
-    values and may not resemble common Authorization or gateway key forms.
-    Normalizing through JSON also rejects custom mappings and makes the stored
-    contract independent of later mutation of registry input.
-    """
-    def check(item: Any, path: str) -> None:
-        if isinstance(item, Mapping):
-            for key, nested in item.items():
-                if not isinstance(key, str) or not key:
-                    raise ContractError(f"final_reasoning_control has an invalid key at {path}")
-                key_parts = {part for part in re.split(r"[^a-z0-9]+", key.lower()) if part}
-                compact = "".join(key_parts)
-                if key_parts & _SENSITIVE_FIELD_PARTS or any(
-                    marker in compact for marker in ("apikey", "accesskey", "privatekey", "clientsecret")
-                ):
-                    raise ContractError("final_reasoning_control contains a credential-bearing field")
-                check(nested, f"{path}.{key}")
-            return
-        if isinstance(item, (list, tuple)):
-            for index, nested in enumerate(item):
-                check(nested, f"{path}[{index}]")
-            return
-        if isinstance(item, float) and not math.isfinite(item):
-            raise ContractError("final_reasoning_control contains a non-finite number")
-        if item is None or isinstance(item, (bool, int, float)):
-            return
-        if isinstance(item, str):
-            lowered = item.lower()
-            if lowered.startswith(_CREDENTIAL_VALUE_PREFIXES) or lowered.startswith(_CREDENTIAL_VALUE_MARKERS):
-                raise ContractError("final_reasoning_control contains a credential-like value")
-            return
-        raise ContractError(f"final_reasoning_control is not JSON-safe at {path}")
-
-    check(value, "final_reasoning_control")
-    try:
-        normalized = json.loads(json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
-    except (TypeError, ValueError, UnicodeEncodeError) as exc:
-        raise ContractError("final_reasoning_control is not JSON-safe") from exc
-    if not isinstance(normalized, dict) or not normalized:
-        raise ContractError("final_reasoning_control must be a non-empty object")
-    return _freeze_json_value(normalized)
-
-
-def _freeze_json_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return MappingProxyType({key: _freeze_json_value(nested) for key, nested in value.items()})
-    if isinstance(value, list):
-        return tuple(_freeze_json_value(nested) for nested in value)
-    return value
-
-
-def _json_safe_copy(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {key: _json_safe_copy(nested) for key, nested in value.items()}
-    if isinstance(value, tuple):
-        return [_json_safe_copy(nested) for nested in value]
     return value
 
 

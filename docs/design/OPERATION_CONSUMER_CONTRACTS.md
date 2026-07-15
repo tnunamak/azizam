@@ -14,13 +14,14 @@ is not a second source of policy.
 The versioned object specifies the logical model id, exactly two scalar-text
 messages (`system`, then `user`), `stream: false`, the canonical `max_tokens`
 field plus default and maximum, the final UTF-8 byte ceiling, conservative
-(not exact) token semantics, and the exact operator-declared
-`final_reasoning_control` mapping. Consumers supply only the two text values
-and may construct one strict request solely from this object.
+(not exact) token semantics.
+Consumers supply only the two text values and may construct one strict request
+solely from this object.
 
-Before a control mapping can enter the validated contract, the gateway rejects
-non-JSON values, non-finite numbers, ambiguous/non-string keys, and
-credential-bearing keys or common credential-like values. It freezes the
-normalized value and returns a fresh deep copy for every discovery projection.
-The gateway does not log these mappings, constructed requests, prompts, or
-credentials. This boundary is generic: it names no engine, model, or consumer.
+`final_reasoning_control` is deliberately absent from discovery. It remains an
+internal, evidence-bound admission invariant: the operation forces its
+reasoning default, the configured gateway transform produces the internal
+control, and admission compares that result to the service evidence before the
+gateway sends the exact admitted bytes upstream. Consumers never send or need
+internal reasoning or backend-control fields. This boundary is generic: it
+names no engine, model, or consumer.
