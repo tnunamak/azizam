@@ -235,7 +235,7 @@ from gateway.openai_media_schemas import (
     VOICES_LIST_OPENAPI,
 )
 from gateway.policy import DEFAULT_PROFILE, DENIED, PolicyDecision
-from gateway.receipts import RouteReceipt, new_request_id
+from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, new_request_id
 from gateway.runtime_auth import (
     RuntimeIdentity,
     discovery_audience_for_profile,
@@ -18433,15 +18433,6 @@ async def ollama_delete(request: Request):
 @app.post("/v1/responses")
 async def create_response(request: Request):
     """Create a Response. Translates to Chat Completions and forwards."""
-    outer_receipt: RouteReceipt | None = None
-
-    def finalize_outer_response(*, status: str, terminal_reason: str) -> None:
-        if outer_receipt is None:
-            return
-        outer_receipt.metadata["terminal_reason"] = terminal_reason
-        outer_receipt.finish(status)
-        _finalize_route_receipt(outer_receipt, route="Responses")
-
     route_auth = authenticate_runtime_or_litellm_request(
         request,
         "/v1/responses",
@@ -18452,8 +18443,8 @@ async def create_response(request: Request):
     auth_context = route_auth.auth_context
     state.update_activity()
 
+    raw = await request.body()
     try:
-        raw = await request.body()
         try:
             req_body = json.loads(raw) if raw else {}
         except json.JSONDecodeError as e:
@@ -18517,28 +18508,96 @@ async def create_response(request: Request):
             stream=stream,
             effective_output_limit=effective_output_limit(cc_body),
         )
-        _begin_route_receipt(outer_receipt, route="Responses")
+        owner = ReceiptLifecycleOwner(outer_receipt)
+        async with owner:
+            if stream:
+                # Open upstream stream, translate chunks, emit Responses SSE.
+                request.state.route_receipt_parent_request_id = outer_receipt.request_id
+                client, upstream = await _forward_chat_completions(request, auth_context, cc_body, stream=True)
+                if upstream.status_code >= 400:
+                    # Drain the body for a useful error.
+                    body_bytes = b""
+                    try:
+                        async for chunk in upstream.aiter_bytes():
+                            body_bytes += chunk
+                            if len(body_bytes) > 8192:
+                                break
+                    finally:
+                        await upstream.aclose()
+                        await client.aclose()
+                    owner.report(status="failed", reason="failed")
+                    try:
+                        upstream_json = json.loads(body_bytes.decode("utf-8", errors="replace") or "{}")
+                    except Exception:
+                        upstream_json = {"error": {"message": body_bytes.decode("utf-8", errors="replace")[:1000]}}
+                    return Response(
+                        content=json.dumps({"error": {
+                            "message": (upstream_json.get("error") or {}).get("message") or "Upstream chat-completions error.",
+                            "type": "upstream_error",
+                            "code": "upstream_error",
+                        }}),
+                        status_code=upstream.status_code,
+                        media_type="application/json",
+                    )
 
-        if stream:
-            # Streaming: open upstream stream, translate chunks, emit Responses SSE.
+                translator = responses_translator.StreamTranslator(
+                    response_id=response_id,
+                    created_at=created_at,
+                    original_request=req_body,
+                )
+
+                async def event_stream():
+                    final_obj: Optional[dict] = None
+                    try:
+                        for ev in translator.start():
+                            yield ev
+                        async for chunk in iter_llm_response_bytes(client, upstream):
+                            for ev in translator.feed(chunk):
+                                yield ev
+                        for ev in translator.finish():
+                            yield ev
+                        final_obj = translator.build_final_response()
+                        owner.report(status="succeeded", reason="completed")
+                    except Exception as error:  # noqa: BLE001
+                        owner.report(status="failed", reason="read_error")
+                        yield responses_translator.sse_pack("response.error", {
+                            "type": "response.error",
+                            "sequence_number": 9999,
+                            "error": {"message": str(error), "type": "internal_error", "code": "internal_error"},
+                        })
+                    finally:
+                        await upstream.aclose()
+                        await client.aclose()
+                        if store and final_obj is not None:
+                            try:
+                                responses_store.save(
+                                    response_id,
+                                    created_at=created_at,
+                                    model=final_obj.get("model"),
+                                    previous_response_id=req_body.get("previous_response_id"),
+                                    request_json=req_body,
+                                    response_json=final_obj,
+                                    api_key_name=_api_key_name(auth_context),
+                                )
+                            except Exception as error:  # noqa: BLE001
+                                print(f"[proxy] responses_store.save failed: {error}", flush=True)
+
+                return StreamingResponse(
+                    owner.handoff_stream(event_stream()),
+                    status_code=200,
+                    media_type="text/event-stream",
+                    headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+                )
+
+            # Non-streaming
             request.state.route_receipt_parent_request_id = outer_receipt.request_id
-            client, upstream = await _forward_chat_completions(request, auth_context, cc_body, stream=True)
+            upstream = await _forward_chat_completions(request, auth_context, cc_body, stream=False)
             if upstream.status_code >= 400:
-                # Drain the body for a useful error.
-                body_bytes = b""
                 try:
-                    async for chunk in upstream.aiter_bytes():
-                        body_bytes += chunk
-                        if len(body_bytes) > 8192:
-                            break
-                finally:
-                    await upstream.aclose()
-                    await client.aclose()
-                finalize_outer_response(status="failed", terminal_reason="failed")
-                try:
-                    upstream_json = json.loads(body_bytes.decode("utf-8", errors="replace") or "{}")
+                    upstream_json = upstream.json()
                 except Exception:
-                    upstream_json = {"error": {"message": body_bytes.decode("utf-8", errors="replace")[:1000]}}
+                    upstream_json = {"error": {"message": upstream.text[:1000]}}
+                owner.report(status="failed", reason="failed")
                 return Response(
                     content=json.dumps({"error": {
                         "message": (upstream_json.get("error") or {}).get("message") or "Upstream chat-completions error.",
@@ -18549,147 +18608,46 @@ async def create_response(request: Request):
                     media_type="application/json",
                 )
 
-            translator = responses_translator.StreamTranslator(
+            try:
+                cc_json = upstream.json()
+            except Exception as error:
+                owner.report(status="failed", reason="read_error")
+                return _responses_error(
+                    f"Upstream returned non-JSON: {error}",
+                    code="upstream_error",
+                    status=502,
+                )
+
+            resp_json = responses_translator.from_chat_completions(
+                cc_json,
                 response_id=response_id,
                 created_at=created_at,
                 original_request=req_body,
             )
 
-            async def event_stream():
-                final_obj: Optional[dict] = None
-                was_cancelled = False
-                stream_error: BaseException | None = None
+            if store:
                 try:
-                    for ev in translator.start():
-                        yield ev
-                    async for chunk in iter_llm_response_bytes(
-                        client,
-                        upstream,
-                    ):
-                        for ev in translator.feed(chunk):
-                            yield ev
-                    for ev in translator.finish():
-                        yield ev
-                    final_obj = translator.build_final_response()
-                except asyncio.CancelledError:
-                    was_cancelled = True
-                    raise
-                except Exception as e:  # noqa: BLE001
-                    stream_error = e
-                    err_ev = responses_translator.sse_pack("response.error", {
-                        "type": "response.error",
-                        "sequence_number": 9999,
-                        "error": {"message": str(e), "type": "internal_error", "code": "internal_error"},
-                    })
-                    yield err_ev
-                finally:
-                    try:
-                        await upstream.aclose()
-                    except Exception:
-                        pass
-                    try:
-                        await client.aclose()
-                    except Exception:
-                        pass
-                    # Persist if requested
-                    if store and final_obj is not None:
-                        try:
-                            responses_store.save(
-                                response_id,
-                                created_at=created_at,
-                                model=final_obj.get("model"),
-                                previous_response_id=req_body.get("previous_response_id"),
-                                request_json=req_body,
-                                response_json=final_obj,
-                                api_key_name=_api_key_name(auth_context),
-                            )
-                        except Exception as e:  # noqa: BLE001
-                            print(f"[proxy] responses_store.save failed: {e}", flush=True)
-                    finalize_outer_response(
-                        status=(
-                            "cancelled" if was_cancelled
-                            else "failed" if stream_error is not None
-                            else "succeeded"
-                        ),
-                        terminal_reason=(
-                            "cancelled" if was_cancelled
-                            else "read_error" if stream_error is not None
-                            else "completed"
-                        ),
+                    responses_store.save(
+                        response_id,
+                        created_at=created_at,
+                        model=resp_json.get("model"),
+                        previous_response_id=req_body.get("previous_response_id"),
+                        request_json=req_body,
+                        response_json=resp_json,
+                        api_key_name=_api_key_name(auth_context),
                     )
+                except Exception as error:  # noqa: BLE001
+                    print(f"[proxy] responses_store.save failed: {error}", flush=True)
 
-            return StreamingResponse(
-                event_stream(),
-                status_code=200,
-                media_type="text/event-stream",
-                headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
-            )
-
-        # Non-streaming
-        request.state.route_receipt_parent_request_id = outer_receipt.request_id
-        upstream = await _forward_chat_completions(request, auth_context, cc_body, stream=False)
-        if upstream.status_code >= 400:
-            try:
-                upstream_json = upstream.json()
-            except Exception:
-                upstream_json = {"error": {"message": upstream.text[:1000]}}
-            finalize_outer_response(status="failed", terminal_reason="failed")
+            owner.report(status="succeeded", reason="completed")
             return Response(
-                content=json.dumps({"error": {
-                    "message": (upstream_json.get("error") or {}).get("message") or "Upstream chat-completions error.",
-                    "type": "upstream_error",
-                    "code": "upstream_error",
-                }}),
-                status_code=upstream.status_code,
+                content=json.dumps(resp_json),
+                status_code=200,
                 media_type="application/json",
             )
-
-        try:
-            cc_json = upstream.json()
-        except Exception as e:
-            finalize_outer_response(status="failed", terminal_reason="read_error")
-            return _responses_error(
-                f"Upstream returned non-JSON: {e}",
-                code="upstream_error",
-                status=502,
-            )
-
-        resp_json = responses_translator.from_chat_completions(
-            cc_json,
-            response_id=response_id,
-            created_at=created_at,
-            original_request=req_body,
-        )
-
-        if store:
-            try:
-                responses_store.save(
-                    response_id,
-                    created_at=created_at,
-                    model=resp_json.get("model"),
-                    previous_response_id=req_body.get("previous_response_id"),
-                    request_json=req_body,
-                    response_json=resp_json,
-                    api_key_name=_api_key_name(auth_context),
-                )
-            except Exception as e:  # noqa: BLE001
-                print(f"[proxy] responses_store.save failed: {e}", flush=True)
-
-        finalize_outer_response(status="succeeded", terminal_reason="completed")
-        return Response(
-            content=json.dumps(resp_json),
-            status_code=200,
-            media_type="application/json",
-        )
-    except Exception as e:  # noqa: BLE001
-        finalize_outer_response(status="failed", terminal_reason="internal_error")
-        print(f"[proxy] /v1/responses internal error: {e}", flush=True)
-        return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
-    except asyncio.CancelledError:
-        # This outer route owns the accepted receipt until it returns its
-        # non-stream response.  Cancellation is not an ordinary Exception.
-        finalize_outer_response(status="cancelled", terminal_reason="cancelled")
-        raise
+    except Exception as error:  # noqa: BLE001
+        print(f"[proxy] /v1/responses internal error: {error}", flush=True)
+        return _responses_error(f"Internal error: {error}", code="internal_error", status=500)
 
 
 @app.get("/openai/v1/responses/{response_id}")
@@ -20835,17 +20793,6 @@ def _record_native_passthrough_receipt(receipt: RouteReceipt) -> None:
         print(f"[proxy] Could not record provider-native receipt: {e}", flush=True)
 
 
-def _finish_native_passthrough_receipt(
-    receipt: RouteReceipt,
-    *,
-    status: str,
-    terminal_reason: str,
-) -> None:
-    receipt.metadata["terminal_reason"] = terminal_reason
-    receipt.finish(status)
-    _finalize_route_receipt(receipt, route="provider-native")
-
-
 def _provider_native_summary(
     provider: str,
     target: Mapping[str, Any],
@@ -21034,119 +20981,85 @@ async def provider_native_request(
     body = await request.body()
     receipt.stream = False
     receipt.effective_output_limit = None
-    _begin_route_receipt(receipt, route="provider-native")
-    headers = prepare_downstream_headers(
-        request.headers,
-        auth_context,
-        str(target["service"]),
-        native_request_path,
-    )
-    url = f"{target['host']}{native_request_path}"
-    if request.url.query:
-        url += f"?{request.url.query}"
+    owner = ReceiptLifecycleOwner(receipt)
+    async with owner:
+        headers = prepare_downstream_headers(
+            request.headers,
+            auth_context,
+            str(target["service"]),
+            native_request_path,
+        )
+        url = f"{target['host']}{native_request_path}"
+        if request.url.query:
+            url += f"?{request.url.query}"
 
-    client = httpx.AsyncClient(timeout=httpx.Timeout(
-        connect=10.0,
-        read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
-        write=60.0,
-        pool=None,
-    ))
-    stream_context = client.stream(
-        request.method,
-        url,
-        headers=headers,
-        content=body,
-    )
-    try:
-        upstream = await stream_context.__aenter__()
-    except asyncio.CancelledError:
-        # Header acquisition is still owned by this endpoint; the streaming
-        # generator does not exist yet to finalize the accepted receipt.
+        client = httpx.AsyncClient(timeout=httpx.Timeout(
+            connect=10.0,
+            read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
+            write=60.0,
+            pool=None,
+        ))
+        stream_context = client.stream(
+            request.method,
+            url,
+            headers=headers,
+            content=body,
+        )
         try:
+            upstream = await stream_context.__aenter__()
+        except httpx.TimeoutException:
             await client.aclose()
-        except BaseException:  # cancellation must retain precedence
-            pass
-        _finish_native_passthrough_receipt(
-            receipt, status="cancelled", terminal_reason="cancelled"
-        )
-        raise
-    except httpx.TimeoutException:
-        await client.aclose()
-        _finish_native_passthrough_receipt(
-            receipt, status="timed_out", terminal_reason="idle_timeout"
-        )
-        return openai_error_response(
-            f"Provider {provider_key!r} timed out while handling {native_request_path}.",
-            status_code=504,
-            error_type="service_unavailable",
-            code="provider_timeout",
-        )
-    except httpx.ConnectError:
-        await client.aclose()
-        _finish_native_passthrough_receipt(
-            receipt, status="failed", terminal_reason="connect_error"
-        )
-        return openai_error_response(
-            f"Provider {provider_key!r} is unavailable for native passthrough.",
-            status_code=503,
-            error_type="service_unavailable",
-            code="provider_unavailable",
-        )
-    except Exception as e:  # noqa: BLE001
-        await client.aclose()
-        _finish_native_passthrough_receipt(
-            receipt, status="failed", terminal_reason="internal_error"
-        )
-        return openai_error_response(
-            f"Provider-native passthrough failed: {str(e)[:200]}",
-            status_code=502,
-            error_type="api_error",
-            code="provider_passthrough_error",
-        )
-
-    response_headers = {
-        k: v
-        for k, v in upstream.headers.items()
-        if k.lower() not in _PROVIDER_NATIVE_HOP_BY_HOP_HEADERS
-    }
-    receipt.metadata["status_code"] = upstream.status_code
-
-    async def _provider_native_body_stream():
-        stream_error: BaseException | None = None
-        was_cancelled = False
-        try:
-            async for chunk in upstream.aiter_bytes():
-                yield chunk
-        except asyncio.CancelledError:
-            was_cancelled = True
-            raise
-        except BaseException as exc:
-            stream_error = exc
-            raise
-        finally:
-            await stream_context.__aexit__(None, None, None)
+            owner.report(status="timed_out", reason="idle_timeout")
+            return openai_error_response(
+                f"Provider {provider_key!r} timed out while handling {native_request_path}.",
+                status_code=504,
+                error_type="service_unavailable",
+                code="provider_timeout",
+            )
+        except httpx.ConnectError:
             await client.aclose()
-            _finish_native_passthrough_receipt(
-                receipt,
-                status=(
-                    "cancelled" if was_cancelled
-                    else "failed" if stream_error is not None or upstream.status_code >= 400
-                    else "succeeded"
-                ),
-                terminal_reason=(
-                    "cancelled" if was_cancelled
-                    else "read_error" if stream_error is not None
-                    else "failed" if upstream.status_code >= 400
-                    else "completed"
-                ),
+            owner.report(status="failed", reason="connect_error")
+            return openai_error_response(
+                f"Provider {provider_key!r} is unavailable for native passthrough.",
+                status_code=503,
+                error_type="service_unavailable",
+                code="provider_unavailable",
+            )
+        except Exception as error:  # noqa: BLE001
+            await client.aclose()
+            owner.report(status="failed", reason="internal_error")
+            return openai_error_response(
+                f"Provider-native passthrough failed: {str(error)[:200]}",
+                status_code=502,
+                error_type="api_error",
+                code="provider_passthrough_error",
             )
 
-    return StreamingResponse(
-        _provider_native_body_stream(),
-        status_code=upstream.status_code,
-        headers=response_headers,
-        media_type=upstream.headers.get("content-type"),
-    )
+        response_headers = {
+            k: v
+            for k, v in upstream.headers.items()
+            if k.lower() not in _PROVIDER_NATIVE_HOP_BY_HOP_HEADERS
+        }
+        receipt.metadata["status_code"] = upstream.status_code
+
+        async def _provider_native_body_stream():
+            try:
+                async for chunk in upstream.aiter_bytes():
+                    yield chunk
+                owner.report(
+                    status="failed" if upstream.status_code >= 400 else "succeeded",
+                    reason="failed" if upstream.status_code >= 400 else "completed",
+                )
+            finally:
+                await stream_context.__aexit__(None, None, None)
+                await client.aclose()
+
+        return StreamingResponse(
+            owner.handoff_stream(_provider_native_body_stream()),
+            status_code=upstream.status_code,
+            headers=response_headers,
+            media_type=upstream.headers.get("content-type"),
+        )
 
 
 @app.api_route(

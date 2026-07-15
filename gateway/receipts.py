@@ -300,13 +300,21 @@ class ReceiptLifecycleOwner:
         self,
         receipt: RouteReceipt,
         *,
-        begin: Callable[[RouteReceipt], object],
-        finalize: Callable[[RouteReceipt], object],
-        log: Callable[[str], object],
+        begin: Callable[[RouteReceipt], object] | None = None,
+        finalize: Callable[[RouteReceipt], object] | None = None,
+        log: Callable[[str], object] | None = None,
         on_terminal: Callable[[RouteReceipt, str], object] | None = None,
     ) -> None:
         self.receipt = receipt
-        self._begin, self._finalize, self._log = begin, finalize, log
+        # Delayed import avoids the receipt_store -> receipts import cycle and
+        # keeps persistence ownership here rather than in each HTTP route.
+        if begin is None or finalize is None:
+            from gateway import receipt_store
+            begin = begin or receipt_store.begin
+            finalize = finalize or receipt_store.finalize
+        self._begin = begin
+        self._finalize = finalize
+        self._log = log or (lambda message: print(f"[proxy] {message}", flush=True))
         self._on_terminal = on_terminal
         self._outcome: tuple[str, str] | None = None
         self._closed = False

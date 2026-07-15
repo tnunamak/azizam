@@ -6,6 +6,7 @@ import sys
 import asyncio
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -84,6 +85,21 @@ class TestRouteReceipt(unittest.TestCase):
 
 
 class TestReceiptLifecycleOwner(unittest.IsolatedAsyncioTestCase):
+    async def test_default_store_wiring_begins_and_finalizes(self) -> None:
+        begun: list[RouteReceipt] = []
+        finalized: list[RouteReceipt] = []
+        receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate")
+
+        with patch("gateway.receipt_store.begin", side_effect=begun.append), patch(
+            "gateway.receipt_store.finalize", side_effect=finalized.append
+        ):
+            owner = ReceiptLifecycleOwner(receipt)
+            async with owner:
+                owner.report(status="succeeded", reason="completed")
+
+        self.assertEqual(begun, [receipt])
+        self.assertEqual(finalized, [receipt])
+
     async def test_cancellation_wins_and_store_errors_do_not_mask_it(self) -> None:
         begun: list[RouteReceipt] = []
         finalized: list[RouteReceipt] = []

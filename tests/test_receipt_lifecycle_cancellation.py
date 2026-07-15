@@ -27,6 +27,71 @@ def _request(path: str, payload: dict) -> Request:
 
 
 class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
+    async def test_responses_post_begin_await_failures_are_owned(self) -> None:
+        """Both outer Responses dispatch shapes finalize through the owner."""
+        for stream in (False, True):
+            for error in (asyncio.CancelledError(), KeyboardInterrupt("stop")):
+                with self.subTest(stream=stream, error=type(error).__name__):
+                    began, finalized = [], []
+
+                    async def failing_forward(*_args, **_kwargs):
+                        raise error
+
+                    route_auth = SimpleNamespace(auth_context=proxy.NO_AUTH_CONTEXT, delegated_to_litellm=True)
+                    with patch.object(proxy, "authenticate_runtime_or_litellm_request", return_value=route_auth), patch.object(
+                        proxy, "_forward_chat_completions", failing_forward
+                    ), patch.object(proxy.receipt_store, "begin", side_effect=began.append), patch.object(
+                        proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True
+                    ):
+                        with self.assertRaises(type(error)):
+                            await proxy.create_response(_request(
+                                "/v1/responses", {"model": "m", "input": "hi", "stream": stream}
+                            ))
+
+                    self.assertEqual(finalized, began)
+                    self.assertEqual(
+                        finalized[0].status,
+                        "cancelled" if isinstance(error, asyncio.CancelledError) else "failed",
+                    )
+
+    async def test_responses_stream_iteration_failures_are_owned(self) -> None:
+        for error in (asyncio.CancelledError(), KeyboardInterrupt("stop")):
+            with self.subTest(error=type(error).__name__):
+                began, finalized = [], []
+
+                class Upstream:
+                    status_code = 200
+
+                    async def aclose(self):
+                        return None
+
+                class Client:
+                    async def aclose(self):
+                        return None
+
+                async def forward(*_args, **_kwargs):
+                    return Client(), Upstream()
+
+                async def failing_iter(*_args, **_kwargs):
+                    raise error
+                    yield b"unreachable"
+
+                route_auth = SimpleNamespace(auth_context=proxy.NO_AUTH_CONTEXT, delegated_to_litellm=True)
+                with patch.object(proxy, "authenticate_runtime_or_litellm_request", return_value=route_auth), patch.object(
+                    proxy, "_forward_chat_completions", forward
+                ), patch.object(proxy, "iter_llm_response_bytes", failing_iter), patch.object(
+                    proxy.receipt_store, "begin", side_effect=began.append
+                ), patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True):
+                    response = await proxy.create_response(_request(
+                        "/v1/responses", {"model": "m", "input": "hi", "stream": True}
+                    ))
+                    with self.assertRaises(type(error)):
+                        async for _chunk in response.body_iterator:
+                            pass
+
+                self.assertEqual(finalized, began)
+                self.assertEqual(finalized[0].status, "cancelled" if isinstance(error, asyncio.CancelledError) else "failed")
+
     async def test_responses_nonstream_asgi_cancellation_finalizes_same_receipt(self) -> None:
         began, finalized = [], []
         entered = asyncio.Event()
@@ -86,6 +151,83 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(began), 1)
         self.assertEqual(finalized, began)
         self.assertEqual(finalized[0].status, "cancelled")
+
+    async def test_provider_post_begin_preheader_base_exception_is_owned(self) -> None:
+        began, finalized = [], []
+
+        class FailingContext:
+            async def __aenter__(self):
+                raise KeyboardInterrupt("stop")
+
+        class Client:
+            def stream(self, *_args, **_kwargs):
+                return FailingContext()
+
+            async def aclose(self):
+                return None
+
+        target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
+        with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
+            proxy, "_auth_context_from_scope", return_value=proxy.NO_AUTH_CONTEXT
+        ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
+            proxy.httpx, "AsyncClient", return_value=Client()
+        ), patch.object(proxy.receipt_store, "begin", side_effect=began.append), patch.object(
+            proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                await proxy.provider_native_request(
+                    _request("/gateway/v1/providers/test/v1/chat/completions", {"x": 1}),
+                    "test", "v1/chat/completions",
+                )
+
+        self.assertEqual(finalized, began)
+        self.assertEqual(finalized[0].status, "failed")
+
+    async def test_provider_stream_iteration_failures_are_owned(self) -> None:
+        for error in (asyncio.CancelledError(), KeyboardInterrupt("stop")):
+            with self.subTest(error=type(error).__name__):
+                began, finalized = [], []
+
+                class Upstream:
+                    status_code = 200
+                    headers = {"content-type": "application/octet-stream"}
+
+                    async def aiter_bytes(self):
+                        raise error
+                        yield b"unreachable"
+
+                class Context:
+                    async def __aenter__(self):
+                        return Upstream()
+
+                    async def __aexit__(self, *_args):
+                        return False
+
+                class Client:
+                    def stream(self, *_args, **_kwargs):
+                        return Context()
+
+                    async def aclose(self):
+                        return None
+
+                target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
+                with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
+                    proxy, "_auth_context_from_scope", return_value=proxy.NO_AUTH_CONTEXT
+                ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
+                    proxy.httpx, "AsyncClient", return_value=Client()
+                ), patch.object(proxy.receipt_store, "begin", side_effect=began.append), patch.object(
+                    proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True
+                ):
+                    response = await proxy.provider_native_request(
+                        _request("/gateway/v1/providers/test/v1/chat/completions", {"x": 1}),
+                        "test", "v1/chat/completions",
+                    )
+                    with self.assertRaises(type(error)):
+                        async for _chunk in response.body_iterator:
+                            pass
+
+                self.assertEqual(finalized, began)
+                self.assertEqual(finalized[0].status, "cancelled" if isinstance(error, asyncio.CancelledError) else "failed")
 
     async def test_current_begins_before_active_backend_resolution_and_finishes_no_active(self) -> None:
         began, finalized = [], []
