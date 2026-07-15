@@ -123,11 +123,39 @@ class TestOperatorSettings(AdminStoreTestBase):
         self.assertEqual(rows[0]["updated_at"], 2)
         self.assertEqual(rows[0]["value"]["openai"]["state"], "maintenance")
 
-    def test_service_registry_is_protected_from_generic_setting_writes(self) -> None:
+    def test_service_registry_protection_preserves_registry_generation_and_audit(self) -> None:
+        admin_store.write_service_registry(
+            {"schema_version": 1, "services": {"existing": {"id": "existing"}}},
+            expected_generation=0,
+            updated_by="seed",
+            now=1,
+            path=self.db,
+        )
+        admin_store.record_audit(
+            "operator.service_registry.seed",
+            actor_kind="admin",
+            actor_id="seed",
+            target_kind="operator_setting",
+            target_id="service_registry",
+            path=self.db,
+        )
+        before_registry = admin_store.get_service_registry_with_generation(path=self.db)
+        before_audit = admin_store.list_audit(path=self.db)
+
         with self.assertRaisesRegex(ValueError, "registry transaction primitive"):
             admin_store.put_operator_setting(
-                "service_registry", {"services": {}}, path=self.db
+                "service_registry",
+                {"schema_version": 1, "services": {"replacement": {"id": "replacement"}}},
+                updated_by="attacker",
+                now=2,
+                path=self.db,
             )
+
+        self.assertEqual(
+            admin_store.get_service_registry_with_generation(path=self.db),
+            before_registry,
+        )
+        self.assertEqual(admin_store.list_audit(path=self.db), before_audit)
 
     def test_registry_audit_rolls_back_with_registry_and_generation(self) -> None:
         initial = admin_store.write_service_registry(
