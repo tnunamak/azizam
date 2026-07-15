@@ -61,7 +61,7 @@ _TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "disconnecte
 _IMMUTABLE_ACCEPTED_FIELDS = frozenset(
     {
         "request_id", "protocol", "path", "intent", "app_profile", "app_id",
-        "api_key_name", "requested_model", "resolved_model", "backend", "stream",
+        "api_key_name", "requested_model", "stream",
         "effective_output_limit", "accepted_at_ms", "parent_request_id", "visibility",
     }
 )

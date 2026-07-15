@@ -478,6 +478,41 @@ class TestReceiptStore(unittest.TestCase):
         self.assertEqual(stored["effective_output_limit"], 0)
         self.assertEqual(stored["requested_model"], "gpt-4o")
 
+    def test_finalize_updates_resolution_facts_without_replacing_acceptance(self) -> None:
+        receipt = _make_receipt()
+        receipt.backend = None
+        receipt.resolved_model = "current"
+        receipt_store.begin(receipt, now_ms=1_000, path=self.db)
+
+        receipt.backend = "local"
+        receipt.resolved_model = "loaded.gguf"
+        receipt.requested_model = "mutated-request"
+        receipt.finish("failed", now_ms=2_000)
+        self.assertTrue(receipt_store.finalize(receipt, path=self.db))
+
+        stored = receipt_store.get(receipt.request_id, path=self.db)
+        self.assertEqual(stored["backend"], "local")
+        self.assertEqual(stored["resolved_model"], "loaded.gguf")
+        self.assertEqual(stored["requested_model"], "gpt-4o")
+
+    def test_finalize_malformed_legacy_row_leaves_row_in_progress(self) -> None:
+        receipt = _make_receipt()
+        receipt_store.begin(receipt, now_ms=1_000, path=self.db)
+        with receipt_store._conn(self.db) as conn:
+            conn.execute(
+                "UPDATE receipts SET receipt_json = ? WHERE request_id = ?",
+                ("{not-json", receipt.request_id),
+            )
+            conn.commit()
+        receipt.finish("cancelled", now_ms=2_000)
+        with self.assertRaises(ValueError):
+            receipt_store.finalize(receipt, path=self.db)
+        with receipt_store._conn(self.db) as conn:
+            status = conn.execute(
+                "SELECT status FROM receipts WHERE request_id = ?", (receipt.request_id,)
+            ).fetchone()[0]
+        self.assertEqual(status, "in_progress")
+
     def test_begin_is_idempotent_and_terminal_rows_never_regress(self) -> None:
         receipt = _make_receipt()
         receipt_store.begin(receipt, now_ms=1_000, path=self.db)

@@ -18685,6 +18685,11 @@ async def create_response(request: Request):
         finalize_outer_response(status="failed", terminal_reason="internal_error")
         print(f"[proxy] /v1/responses internal error: {e}", flush=True)
         return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
+    except asyncio.CancelledError:
+        # This outer route owns the accepted receipt until it returns its
+        # non-stream response.  Cancellation is not an ordinary Exception.
+        finalize_outer_response(status="cancelled", terminal_reason="cancelled")
+        raise
 
 
 @app.get("/openai/v1/responses/{response_id}")
@@ -19550,14 +19555,6 @@ async def _forward_current_loaded_openai_request(
     schema_error = _model_policy_schema_error(logical_target.logical_service_id)
     if schema_error is not None:
         return _model_policy_schema_configuration_response(schema_error)
-    target, target_error = await _current_loaded_llm_target(
-        auth_context,
-        enforce_gateway_policy=enforce_gateway_policy,
-    )
-    if target_error is not None:
-        return target_error
-    assert target is not None
-
     body_for_backend: Mapping[str, Any] = body_json
     if request_path == "/v1/chat/completions":
         try:
@@ -19568,6 +19565,60 @@ async def _forward_current_loaded_openai_request(
             return _extension_validation_error_response(extension_result.rejected)
         body_for_backend = extension_result.request
 
+    # Begin after the pure alias/extension checks but before resolving the
+    # active backend: resolution probes the backend and may wait on network I/O.
+    is_internal_hop = bool(request_id)
+    profile = _profile_for_auth_context(auth_context)
+    receipt = RouteReceipt(
+        protocol="openai.chat",
+        path=request_path,
+        intent="chat.generate",
+        requested_model=str(requested_alias) if requested_alias else None,
+        resolved_model=logical_target.base_model_id,
+        parent_request_id=request_id if is_internal_hop else None,
+        app_profile=None if is_internal_hop else profile.id,
+        app_id=None if is_internal_hop or auth_context.identity is None else auth_context.identity.app_id,
+        api_key_name=None if is_internal_hop or auth_context.identity is None else auth_context.identity.name,
+        visibility="internal" if is_internal_hop else profile.status_visibility.level,
+        stream=bool(body_for_backend.get("stream")),
+        effective_output_limit=effective_output_limit(body_for_backend),
+    )
+    receipt.metadata.update({"execution_backend": "current-loaded"})
+    if is_internal_hop:
+        record_request_shape_stage(receipt.metadata, "internal_ingress", body_json)
+    else:
+        record_request_shape_stage(receipt.metadata, "accepted", body_for_backend)
+    _begin_route_receipt(receipt, route="current-loaded")
+
+    def _finish_current_loaded_receipt(*, terminal_reason: str, status: str, body: Mapping[str, Any] | None = None) -> None:
+        receipt.metadata["terminal_reason"] = terminal_reason
+        record_request_shape_stage(
+            receipt.metadata, "terminal", body if body is not None else body_for_backend,
+            extra={"terminal_reason": terminal_reason},
+        )
+        receipt.finish(status)
+        _finalize_route_receipt(receipt, route="current-loaded")
+
+    try:
+        target, target_error = await _current_loaded_llm_target(
+            auth_context,
+            enforce_gateway_policy=enforce_gateway_policy,
+        )
+    except asyncio.CancelledError:
+        _finish_current_loaded_receipt(terminal_reason="cancelled", status="cancelled")
+        raise
+    except BaseException:
+        _finish_current_loaded_receipt(terminal_reason="internal_error", status="failed")
+        raise
+    if target_error is not None:
+        _finish_current_loaded_receipt(terminal_reason="failed", status="failed")
+        return target_error
+    assert target is not None
+    # These are post-acceptance resolution facts.  finalize() merges them into
+    # the same in-progress row without replacing immutable acceptance facts.
+    receipt.backend = target.backend
+    receipt.resolved_model = target.model
+
     body = copy.deepcopy(dict(body_for_backend))
     body.pop("_vf_requested_model", None)
     policy_error, body = _prepare_resolved_openai_request(
@@ -19577,6 +19628,7 @@ async def _forward_current_loaded_openai_request(
         execution_service_id=target.backend,
     )
     if policy_error is not None:
+        _finish_current_loaded_receipt(terminal_reason="failed", status="failed", body=body)
         return policy_error
     body["model"] = target.model
 
@@ -19603,50 +19655,10 @@ async def _forward_current_loaded_openai_request(
         read_timeout=UPSTREAM_READ_TIMEOUT,
     )
 
-    # ``request_id`` non-empty means this call arrived through the internal
-    # LiteLLM hop (an outer route already recorded its own accepted/
-    # outer_egress receipt and forwarded X-AI-Gateway-Request-Id) — this
-    # function's own receipt must correlate to that parent rather than look
-    # like a second independent outer request, and its stages describe the
-    # internal hop it actually is (internal_ingress/backend_egress/terminal),
-    # not accepted/outer_egress which the parent already recorded.
-    is_internal_hop = bool(request_id)
-    profile = _profile_for_auth_context(auth_context)
-    receipt = RouteReceipt(
-        protocol="openai.chat",
-        path=request_path,
-        intent="chat.generate",
-        backend=target.backend,
-        requested_model=str(requested_alias) if requested_alias else None,
-        resolved_model=logical_target.base_model_id,
-        parent_request_id=request_id if is_internal_hop else None,
-        app_profile=None if is_internal_hop else profile.id,
-        app_id=None if is_internal_hop or auth_context.identity is None else auth_context.identity.app_id,
-        api_key_name=None if is_internal_hop or auth_context.identity is None else auth_context.identity.name,
-        visibility="internal" if is_internal_hop else profile.status_visibility.level,
-        stream=bool(body.get("stream")),
-        effective_output_limit=effective_output_limit(body),
+    record_request_shape_stage(
+        receipt.metadata, "outer_egress", body,
+        extra={"body_bytes": request_body_byte_count(execution_body)},
     )
-    receipt.metadata.update({"execution_backend": "current-loaded"})
-    if is_internal_hop:
-        record_request_shape_stage(receipt.metadata, "internal_ingress", body_json)
-    else:
-        record_request_shape_stage(receipt.metadata, "accepted", body_json)
-        record_request_shape_stage(
-            receipt.metadata, "outer_egress", body,
-            extra={"body_bytes": request_body_byte_count(execution_body)},
-        )
-
-    _begin_route_receipt(receipt, route="current-loaded")
-
-    def _finish_current_loaded_receipt(*, terminal_reason: str, status: str) -> None:
-        receipt.metadata["terminal_reason"] = terminal_reason
-        record_request_shape_stage(
-            receipt.metadata, "terminal", body,
-            extra={"terminal_reason": terminal_reason},
-        )
-        receipt.finish(status)
-        _finalize_route_receipt(receipt, route="current-loaded")
 
     cancellation_span = _OuterCancellationSpan(
         request_id or new_request_id(), receive=request.receive
@@ -21040,6 +21052,17 @@ async def provider_native_request(
     )
     try:
         upstream = await stream_context.__aenter__()
+    except asyncio.CancelledError:
+        # Header acquisition is still owned by this endpoint; the streaming
+        # generator does not exist yet to finalize the accepted receipt.
+        try:
+            await client.aclose()
+        except BaseException:  # cancellation must retain precedence
+            pass
+        _finish_native_passthrough_receipt(
+            receipt, status="cancelled", terminal_reason="cancelled"
+        )
+        raise
     except httpx.TimeoutException:
         await client.aclose()
         _finish_native_passthrough_receipt(
@@ -21194,6 +21217,43 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         _fallback_id = _highest_priority_chat_backend()
         target_host = LLM_BACKEND_HOSTS[_fallback_id] if _fallback_id else TABBY_HOST
 
+    # This is an advertised external LLM route.  Its health and auto-load
+    # branches below can perform backend I/O, so begin before either one.
+    target_service = backend_for_host(target_host) or _highest_priority_chat_backend() or "kobold"
+    _native_shape_body: Mapping[str, Any] | None = None
+    if request_path in MODEL_REQUIRED_PATHS:
+        _parsed, _parse_error = parse_openai_json_body(body_peek)
+        if _parse_error is None:
+            _native_shape_body = _parsed
+    native_receipt = (
+        RouteReceipt(
+            protocol="openai.chat", path=request_path, intent="chat.generate",
+            backend=target_service,
+            app_profile=(auth_context.identity.profile.id if auth_context.identity is not None else None),
+            app_id=auth_context.identity.app_id if auth_context.identity is not None else None,
+            api_key_name=auth_context.identity.name if auth_context.identity is not None else None,
+            requested_model=(str(_native_shape_body.get("model")) if _native_shape_body and _native_shape_body.get("model") else None),
+            visibility=(auth_context.identity.profile.status_visibility.level if auth_context.identity is not None else "internal"),
+            stream=bool(_native_shape_body.get("stream")),
+            effective_output_limit=effective_output_limit(_native_shape_body),
+        ) if _native_shape_body is not None else None
+    )
+    if native_receipt is not None:
+        native_receipt.metadata.update({"execution_backend": "native"})
+        record_request_shape_stage(native_receipt.metadata, "accepted", _native_shape_body)
+        _begin_route_receipt(native_receipt, route="direct native")
+
+    def _finish_native_receipt(*, terminal_reason: str, status: str) -> None:
+        if native_receipt is None:
+            return
+        native_receipt.metadata["terminal_reason"] = terminal_reason
+        record_request_shape_stage(
+            native_receipt.metadata, "terminal", _native_shape_body,
+            extra={"terminal_reason": terminal_reason},
+        )
+        native_receipt.finish(status)
+        _finalize_route_receipt(native_receipt, route="direct native")
+
     target_service_for_admission = backend_for_host(target_host)
     if target_service_for_admission:
         service_response = _service_availability_response(
@@ -21201,6 +21261,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             service_label=target_service_for_admission,
         )
         if service_response is not None:
+            _finish_native_receipt(terminal_reason="failed", status="failed")
             return service_response
 
     if target_host == TABBY_HOST:
@@ -21209,6 +21270,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         # interchangeable. The gateway does not revive backends — return 503 and
         # let the operator's supervisor bring it back.
         if not await check_service_health(target_service):
+            _finish_native_receipt(terminal_reason="failed", status="failed")
             return Response(
                 content=json.dumps({
                     "error": {
@@ -21229,6 +21291,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
     if target_host == TABBY_HOST and any(request_path.startswith(p) for p in MODEL_REQUIRED_PATHS):
         if not await is_model_loaded():
             if not await load_model():
+                _finish_native_receipt(terminal_reason="failed", status="failed")
                 return Response(
                     content=json.dumps({"detail": "Failed to load model"}),
                     status_code=503,
@@ -21266,57 +21329,13 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
     # a receipt for those adds parallel bookkeeping without a matching
     # observability contract. ``None`` (parse failure, or a path this
     # doesn't apply to) means the receipt calls below become no-ops.
-    _native_shape_body: Mapping[str, Any] | None = None
-    if request_path in MODEL_REQUIRED_PATHS:
-        _parsed, _parse_error = parse_openai_json_body(body_peek)
-        if _parse_error is None:
-            _native_shape_body = _parsed
-    native_receipt = (
-        RouteReceipt(
-            protocol="openai.chat",
-            path=request_path,
-            intent="chat.generate",
-            backend=target_service,
-            app_profile=(
-                auth_context.identity.profile.id if auth_context.identity is not None else None
-            ),
-            app_id=auth_context.identity.app_id if auth_context.identity is not None else None,
-            api_key_name=auth_context.identity.name if auth_context.identity is not None else None,
-            requested_model=(
-                str(_native_shape_body.get("model"))
-                if _native_shape_body and _native_shape_body.get("model") else None
-            ),
-            visibility=(
-                auth_context.identity.profile.status_visibility.level
-                if auth_context.identity is not None else "internal"
-            ),
-            stream=bool(_native_shape_body.get("stream")),
-            effective_output_limit=effective_output_limit(_native_shape_body),
-        )
-        if _native_shape_body is not None else None
-    )
+    # ``native_receipt`` was begun above, before health/autoload I/O.
     if native_receipt is not None:
         native_receipt.metadata.update({"execution_backend": "native"})
-        record_request_shape_stage(native_receipt.metadata, "accepted", _native_shape_body)
         record_request_shape_stage(
             native_receipt.metadata, "outer_egress", _native_shape_body,
             extra={"body_bytes": request_body_byte_count(body)},
         )
-        _begin_route_receipt(native_receipt, route="direct native")
-
-    def _finish_native_receipt(*, terminal_reason: str, status: str) -> None:
-        if native_receipt is None:
-            return
-        native_receipt.metadata["terminal_reason"] = terminal_reason
-        record_request_shape_stage(
-            native_receipt.metadata, "terminal", _native_shape_body,
-            extra={"terminal_reason": terminal_reason},
-        )
-        native_receipt.finish(status)
-        try:
-            _finalize_route_receipt(native_receipt, route="direct native")
-        except Exception as e:  # noqa: BLE001
-            print(f"[proxy] Could not record native route receipt: {e}", flush=True)
 
     # Pre-header disconnect coverage: this route has no LiteLLM/internal hop
     # behind it (native_passthrough talks straight to the backend), so it
