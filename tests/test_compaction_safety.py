@@ -10,9 +10,29 @@ from types import SimpleNamespace
 import pytest
 from unittest.mock import patch
 
+from gateway import service_registry
 from gateway.compaction_safety import AdmissionError, ContractError, contract_from_data, prepare_admitted_body
 from gateway.policy import AppProfile, TargetPolicy
 import proxy
+
+
+_DEFAULT_EVIDENCE = object()
+
+
+def _service_evidence(**overrides):
+    evidence = {
+        "service_id": "service",
+        "deployment_generation": "g1",
+        "evidence_revision": "receipt",
+        "evidence_receipt_identity": "receipt-identity",
+        "unit_wrapper_contract_digest": "f",
+        "declared_runtime_revision": "g",
+        "template_contract": {
+            "revision": "r", "sha256": "d", "render_bound_proof_digest": "e",
+        },
+    }
+    evidence.update(overrides)
+    return evidence
 
 
 def _record(**overrides):
@@ -43,18 +63,25 @@ def _record(**overrides):
             "merge_payload_sha256": "b", "byte_fallback_proof_digest": "c",
         },
         "template_contract": {"revision": "r", "sha256": "d", "kwargs": {}, "render_bound_proof_digest": "e"},
-        "controlled_deployment": {"service_id": "service", "deployment_generation": "g1", "unit_wrapper_contract_digest": "f", "declared_runtime_revision": "g"},
+        "controlled_deployment_reference": {
+            "service_id": "service", "deployment_generation": "g1",
+            "evidence_revision": "receipt", "evidence_receipt_identity": "receipt-identity",
+            "unit_wrapper_contract_digest": "f", "declared_runtime_revision": "g",
+            "template_contract": {"revision": "r", "sha256": "d", "render_bound_proof_digest": "e"},
+        },
         "validation": {"evidence_revision": "receipt", "validated_at": "2026-07-14T00:00:00Z", "expires_at": "2030-01-01T00:00:00Z", "validator_version": "v1"},
     }
     record.update(overrides)
     return record
 
 
-def _contract(record=None):
+def _contract(record=None, evidence=_DEFAULT_EVIDENCE):
     return contract_from_data(
         record or _record(),
         service_id="service",
-        service_generation="g1",
+        service_controlled_deployment_evidence=(
+            _service_evidence() if evidence is _DEFAULT_EVIDENCE else evidence
+        ),
         base_model_id="base",
         now=1_800_000_000,
     )
@@ -69,8 +96,7 @@ def _body(**overrides):
 def test_record_recomputes_ceiling_and_rejects_lifecycle_mismatches():
     cases = [
         ("expired", {"validation": {**_record()["validation"], "expires_at": "1970-01-01T00:00:00Z"}}),
-        ("generation", {"controlled_deployment": {**_record()["controlled_deployment"], "deployment_generation": "g2"}}),
-        ("missing controlled deployment", {"controlled_deployment": None}),
+        ("missing deployment reference", {"controlled_deployment_reference": None}),
         ("missing evidence", {"validation": {**_record()["validation"], "evidence_revision": ""}}),
         ("derived ceiling", {"max_final_body_utf8_bytes": 77697}),
         ("boolean", {"max_tokens_per_final_utf8_byte": True}),
@@ -78,6 +104,76 @@ def test_record_recomputes_ceiling_and_rejects_lifecycle_mismatches():
     for _, changes in cases:
         with pytest.raises(ContractError):
             _contract(_record(**changes))
+
+
+@pytest.mark.parametrize(
+    "path, changed_value",
+    [
+        (("deployment_generation",), "other-generation"),
+        (("evidence_revision",), "other-evidence"),
+        (("evidence_receipt_identity",), "other-receipt"),
+        (("declared_runtime_revision",), "other-runtime"),
+        (("unit_wrapper_contract_digest",), "other-wrapper"),
+        (("template_contract", "revision"), "other-template-revision"),
+        (("template_contract", "sha256"), "other-template-digest"),
+        (("template_contract", "render_bound_proof_digest"), "other-template-proof"),
+    ],
+)
+def test_operation_reference_must_match_separate_service_controlled_deployment_evidence(
+    path, changed_value
+):
+    reference = _record()["controlled_deployment_reference"]
+    changed = dict(reference)
+    if len(path) == 1:
+        changed[path[0]] = changed_value
+    else:
+        changed[path[0]] = dict(changed[path[0]])
+        changed[path[0]][path[1]] = changed_value
+    with pytest.raises(ContractError):
+        _contract(_record(controlled_deployment_reference=changed))
+
+
+def test_service_controlled_deployment_evidence_is_required_and_matching_succeeds():
+    with pytest.raises(ContractError):
+        _contract(evidence=None)
+    with pytest.raises(ContractError):
+        _contract(_record(validation={**_record()["validation"], "evidence_revision": "other"}))
+    assert _contract().controlled_deployment_generation == "g1"
+
+
+def _registry_with_operation(evidence=_DEFAULT_EVIDENCE, record=None):
+    config = {
+        "model_policy_schema_version": 1,
+        "models": [
+            {"id": "base"},
+            {"id": "operator-target", "base_model_id": "base", "compaction_safety": record or _record()},
+        ],
+    }
+    if evidence is not _DEFAULT_EVIDENCE:
+        config["controlled_deployment_evidence"] = evidence
+    return {"services": {"service": {"id": "service", "config": config}}}
+
+
+def test_registry_normalization_preserves_separate_controlled_deployment_evidence():
+    normalized = service_registry.normalize_service_registry(
+        _registry_with_operation(_service_evidence())
+    )
+    assert normalized["services"]["service"]["config"]["controlled_deployment_evidence"] == _service_evidence()
+
+
+@pytest.mark.parametrize(
+    "evidence, record",
+    [
+        (_DEFAULT_EVIDENCE, None),
+        (_service_evidence(evidence_receipt_identity="other-receipt"), None),
+        (None, None),
+    ],
+)
+def test_registry_normalization_rejects_missing_or_mismatched_controlled_deployment_evidence(
+    evidence, record
+):
+    with pytest.raises(ValueError, match="invalid operation contract"):
+        service_registry.normalize_service_registry(_registry_with_operation(evidence, record))
 
 
 @pytest.mark.parametrize("cap", [0, 19, 8192])
@@ -122,6 +218,7 @@ def test_resolved_target_selects_data_contract_without_alias_name_policy():
         "backends": {
             "service": {
                 "deployment_generation": "g1",
+                "controlled_deployment_evidence": _service_evidence(),
                 "models": [
                     {"id": "base"},
                     {"id": "any-operator-chosen-name", "base_model_id": "base", "compaction_safety": _record()},
@@ -149,6 +246,7 @@ def test_discovery_exposes_only_valid_authorized_operation_targets():
         "backends": {
             "service": {
                 "deployment_generation": "g1",
+                "controlled_deployment_evidence": _service_evidence(),
                 "models": [
                     {"id": "base"},
                     {"id": "authorized", "base_model_id": "base", "compaction_safety": _record()},
@@ -168,6 +266,34 @@ def test_discovery_exposes_only_valid_authorized_operation_targets():
         "max_final_body_utf8_bytes": 77696,
         "reserved_output_tokens": 8192,
     }
+
+
+@pytest.mark.parametrize(
+    "evidence, record",
+    [
+        (None, _record()),
+        (
+            _service_evidence(evidence_receipt_identity="other-receipt"),
+            _record(),
+        ),
+    ],
+)
+def test_discovery_omits_operation_when_service_controlled_deployment_evidence_is_invalid(
+    evidence, record
+):
+    config = {
+        "backends": {
+            "service": {
+                "controlled_deployment_evidence": evidence,
+                "models": [
+                    {"id": "base"},
+                    {"id": "operator-target", "base_model_id": "base", "compaction_safety": record},
+                ],
+            }
+        }
+    }
+    with patch.object(proxy, "config", config):
+        assert proxy._operation_contract_model_entries() == []
 
 
 def test_operation_discovery_uses_the_shared_profile_model_allowlist():
@@ -276,7 +402,7 @@ def test_current_loaded_transport_receives_the_admitted_bytes_without_reserializ
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
 
-    config = {"backends": {"service": {"model_policy_schema_version": 1, "deployment_generation": "g1", "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}]}}}
+    config = {"backends": {"service": {"model_policy_schema_version": 1, "deployment_generation": "g1", "controlled_deployment_evidence": _service_evidence(), "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}]}}}
     request = proxy.Request({"type": "http", "method": "POST", "path": "/v1/chat/completions", "headers": [], "query_string": b"", "scheme": "http", "server": ("test", 80)}, receive)
     with patch.object(proxy, "config", config), patch.object(proxy, "_current_loaded_llm_target", current_target), patch.object(proxy, "_OuterCancellationSpan", Span), patch.object(proxy, "ReceiptLifecycleOwner", Owner), patch.object(proxy, "_profile_for_auth_context", lambda _auth: proxy.DEFAULT_PROFILE), patch.object(proxy, "prepare_downstream_headers", lambda *_args: {}), patch.object(proxy, "close_llm_response", close), patch.object(proxy, "prepare_admitted_body", admit):
         response = asyncio.run(proxy._forward_current_loaded_openai_request(request, request_path="/v1/chat/completions", auth_context=SimpleNamespace(identity=None), body_json=_body(model="operator-target")))

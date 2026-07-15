@@ -16997,7 +16997,9 @@ def _operation_contract_model_entries() -> list[dict[str, Any]]:
                 contract = contract_from_data(
                     raw_contract,
                     service_id=str(service_id),
-                    service_generation=service_cfg.get("deployment_generation"),
+                    service_controlled_deployment_evidence=service_cfg.get(
+                        "controlled_deployment_evidence"
+                    ),
                     base_model_id=base_id,
                 )
             except CompactionContractError:
@@ -19151,7 +19153,9 @@ def _resolve_request_target(
             operation_contract = contract_from_data(
                 alias["compaction_safety"],
                 service_id=logical_service_id,
-                service_generation=service_cfg.get("deployment_generation"),
+                service_controlled_deployment_evidence=service_cfg.get(
+                    "controlled_deployment_evidence"
+                ),
                 base_model_id=base_id,
             )
         except CompactionContractError as exc:

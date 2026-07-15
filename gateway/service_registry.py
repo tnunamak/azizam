@@ -332,7 +332,9 @@ def _validate_operation_contracts(services: Mapping[str, Mapping[str, Any]]) -> 
                 contract_from_data(
                     record["compaction_safety"],
                     service_id=service_id,
-                    service_generation=config.get("deployment_generation"),
+                    service_controlled_deployment_evidence=config.get(
+                        "controlled_deployment_evidence"
+                    ),
                     base_model_id=base_model_id,
                 )
             except ContractError as exc:

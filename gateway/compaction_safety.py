@@ -4,7 +4,7 @@ This module knows no model, engine, alias, or application names.  It turns an
 operator-authored v1 record into a small immutable admission contract and
 checks the one canonical body that is subsequently forwarded unchanged.
 
-``controlled_deployment`` is a registry control-plane assertion, not runtime
+``controlled_deployment_evidence`` is a registry control-plane assertion, not runtime
 attestation: the gateway cannot observe an out-of-band backend or template
 swap. Operators must install a fresh evidence-bearing generation through the
 supported registry surface before this contract is eligible for use.
@@ -52,7 +52,7 @@ def contract_from_data(
     value: Any,
     *,
     service_id: str,
-    service_generation: Any,
+    service_controlled_deployment_evidence: Any,
     base_model_id: str,
     now: float | None = None,
 ) -> CompactionContract:
@@ -100,8 +100,11 @@ def contract_from_data(
     tokenizer = _mapping(value.get("tokenizer_contract"), "tokenizer_contract")
     template = _mapping(value.get("template_contract"), "template_contract")
     validation = _mapping(value.get("validation"), "validation")
-    controlled_deployment = _mapping(
-        value.get("controlled_deployment"), "controlled_deployment"
+    deployment_reference = _mapping(
+        value.get("controlled_deployment_reference"), "controlled_deployment_reference"
+    )
+    service_evidence = _mapping(
+        service_controlled_deployment_evidence, "service controlled_deployment_evidence"
     )
     _required_strings(tokenizer, ("architecture", "tokenizer_model", "pretokenizer", "vocabulary_payload_sha256", "merge_payload_sha256", "byte_fallback_proof_digest"))
     _exact_int(tokenizer.get("vocabulary_entries"), "tokenizer_contract.vocabulary_entries", minimum=1)
@@ -114,19 +117,56 @@ def contract_from_data(
         ("evidence_revision", "validated_at", "expires_at", "validator_version"),
     )
     _required_strings(
-        controlled_deployment,
+        deployment_reference,
         (
             "service_id",
             "deployment_generation",
+            "evidence_revision",
+            "evidence_receipt_identity",
             "unit_wrapper_contract_digest",
             "declared_runtime_revision",
         ),
     )
-    if controlled_deployment["service_id"] != service_id:
-        raise ContractError("controlled_deployment.service_id does not match service")
-    generation = controlled_deployment["deployment_generation"]
-    if not isinstance(service_generation, str) or not service_generation or generation != service_generation:
-        raise ContractError("controlled deployment generation does not match contract")
+    _required_strings(
+        service_evidence,
+        (
+            "service_id",
+            "deployment_generation",
+            "evidence_revision",
+            "evidence_receipt_identity",
+            "unit_wrapper_contract_digest",
+            "declared_runtime_revision",
+        ),
+    )
+    evidence_template = _mapping(
+        service_evidence.get("template_contract"),
+        "service controlled_deployment_evidence.template_contract",
+    )
+    reference_template = _mapping(
+        deployment_reference.get("template_contract"),
+        "controlled_deployment_reference.template_contract",
+    )
+    _required_strings(evidence_template, ("revision", "sha256", "render_bound_proof_digest"))
+    _required_strings(reference_template, ("revision", "sha256", "render_bound_proof_digest"))
+    if service_evidence["service_id"] != service_id:
+        raise ContractError("service controlled deployment evidence does not match service")
+    for field in (
+        "deployment_generation",
+        "evidence_revision",
+        "evidence_receipt_identity",
+        "unit_wrapper_contract_digest",
+        "declared_runtime_revision",
+    ):
+        if deployment_reference[field] != service_evidence[field]:
+            raise ContractError(f"controlled deployment {field} does not match service evidence")
+    for field in ("revision", "sha256", "render_bound_proof_digest"):
+        if reference_template[field] != service_evidence["template_contract"][field]:
+            raise ContractError(f"controlled deployment template {field} does not match service evidence")
+        if template[field] != service_evidence["template_contract"][field]:
+            raise ContractError(f"template_contract {field} does not match service evidence")
+    if validation["evidence_revision"] != service_evidence["evidence_revision"]:
+        raise ContractError("validation evidence_revision does not match service evidence")
+    generation = service_evidence["deployment_generation"]
     current_time = time.time() if now is None else now
     validated_at = _timestamp(validation["validated_at"])
     expires_at = validation["expires_at"]
