@@ -24,7 +24,6 @@ from typing import Any
 import yaml
 
 from gateway import admin_store
-from gateway.compaction_safety import ContractError, contract_from_data
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import manifest_identity, validate_manifest
@@ -182,7 +181,6 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
 
     _validate_model_policy_schema_markers(services)
     _validate_model_policy_graphs(services)
-    _validate_operation_contracts(services)
     _validate_public_alias_uniqueness(services)
 
     return {
@@ -310,36 +308,6 @@ def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]])
                 owners[alias] = service_id
 
 
-def _validate_operation_contracts(services: Mapping[str, Mapping[str, Any]]) -> None:
-    """Validate typed operation contracts without assigning policy by alias name."""
-    for service_id, service in services.items():
-        config = service.get("config") if isinstance(service, Mapping) else None
-        records = config.get("models") if isinstance(config, Mapping) else None
-        if not isinstance(records, list):
-            continue
-        for record in records:
-            if not isinstance(record, Mapping) or "compaction_safety" not in record:
-                continue
-            base_model_id = str(record.get("base_model_id") or record.get("id") or "").strip()
-            try:
-                contract_from_data(
-                    record["compaction_safety"],
-                    service_id=service_id,
-                    service_controlled_deployment_evidence=config.get(
-                        "controlled_deployment_evidence"
-                    ),
-                    service_deployment_generation=config.get("deployment_generation"),
-                    service_evidence_registry_revision=config.get(
-                        "evidence_registry_revision"
-                    ),
-                    base_model_id=base_model_id,
-                )
-            except ContractError as exc:
-                raise ValueError(
-                    f"service {service_id!r} model {record.get('id')!r} has invalid operation contract: {exc}"
-                ) from exc
-
-
 def backfill_seed_catalog_metadata(
     registry: Mapping[str, Any],
     *,
@@ -375,7 +343,7 @@ def _backend_config_seeds(proxy_config: Mapping[str, Any]) -> dict[str, dict[str
 
     ``proxy_config.yml`` is the source of truth for operator-authored,
     fail-closed CAPABILITY declarations a backend opts into (e.g.
-    ``auth_inject``, ``exact_preflight``) — these are never edited via the
+    ``auth_inject``) — these are never edited via the
     admin UI/DB, unlike ``models``/model-policy data which the registry owns
     exclusively once seeded (see ``test_existing_registry_model_rows_are_not_
     silently_upgraded_from_yaml``). Without this, a capability block added to

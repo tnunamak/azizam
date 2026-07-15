@@ -215,18 +215,6 @@ export interface ServiceRegistryResponse {
   service_registry: ServiceRegistry;
 }
 
-export interface OperationTarget {
-  service_id: string;
-  alias_id: string;
-  target_generation: number;
-  operator_settings_generation: number;
-  effective_revision: number | null;
-  candidate_revision: number | null;
-  candidate_state: "none" | "staged" | "preparing" | "prepare_failed";
-  last_error_code: string | null;
-  last_local_reload_ack_generation?: number | null;
-}
-
 export interface ProviderPreset {
   id: string;
   label: string;
@@ -850,18 +838,6 @@ export const api = {
           general_settings?: Record<string, unknown>;
         };
       }>("/admin/api/operator/litellm-config").then((r) => r.litellm_config),
-  },
-
-  operationTargets: {
-    list: () => adminFetch<{ targets: OperationTarget[] }>("/admin/api/operator/operation-targets").then((r) => r.targets),
-    get: (serviceId: string, aliasId: string) => adminFetch<{ target: OperationTarget }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}`).then((r) => r.target),
-    stage: (serviceId: string, aliasId: string, body: Record<string, unknown>) => adminFetch<{ target: OperationTarget }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}`, { method: "PUT", body, headers: { "If-None-Match": "*" } }).then((r) => r.target),
-    validate: (serviceId: string, aliasId: string, body: Record<string, unknown>) => adminFetch(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/validation`, { method: "POST", body }),
-    revision: (serviceId: string, aliasId: string, revision: number) => adminFetch(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/revisions/${revision}`),
-    revisions: (serviceId: string, aliasId: string) => adminFetch<{ revisions: Array<{ revision: number; requested_state: string; created_at: number }> }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/revisions`).then((r) => r.revisions),
-    activate: (serviceId: string, aliasId: string, etag: string, idempotencyKey: string) => adminFetch<{ target: OperationTarget }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/activation`, { method: "PUT", headers: { "If-Match": etag, "Idempotency-Key": idempotencyKey } }).then((r) => r.target),
-    deactivate: (serviceId: string, aliasId: string, etag: string, idempotencyKey: string) => adminFetch<{ target: OperationTarget }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/activation`, { method: "DELETE", headers: { "If-Match": etag, "Idempotency-Key": idempotencyKey } }).then((r) => r.target),
-    rollback: (serviceId: string, aliasId: string, revision: number, etag: string) => adminFetch<{ target: OperationTarget }>(`/admin/api/operator/operation-targets/${serviceId}/${aliasId}/rollback`, { method: "POST", body: { revision }, headers: { "If-Match": etag } }).then((r) => r.target),
   },
 
   overview: () => adminFetch<Overview>("/admin/api/overview"),

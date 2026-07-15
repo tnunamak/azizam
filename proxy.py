@@ -66,18 +66,10 @@ from gateway import (
     video_media_job_http,
     video_media_jobs,
 )
-from gateway import operation_activation
-from gateway.compaction_safety import (
-    AdmissionError as CompactionAdmissionError,
-    ContractError as CompactionContractError,
-    consumer_request_construction_contract,
-    prepare_admitted_body,
-)
-from gateway.operation_candidate import (
+from gateway.alias_policy import (
     AliasPolicyResolutionError,
     ResolvedRequestTarget,
     per_backend_transform_specs as _pure_per_backend_transform_specs,
-    prepare_operation_candidate_body as _prepare_operation_candidate_body,
     resolve_request_target as _pure_resolve_request_target,
     service_model_records as _pure_service_model_records,
     transform_specs as _pure_transform_specs,
@@ -155,14 +147,6 @@ from gateway.backends.request_shape import (
     record_request_shape_stage,
     request_body_byte_count,
     request_shape_fields,
-)
-from gateway.backends.exact_preflight import (
-    PreflightCancelled,
-    PreflightUnavailable,
-    check_context_fit,
-    exact_input_token_count,
-    is_text_only_chat_body,
-    resolve_output_allowance,
 )
 from gateway.backends.llm_execution import (
     ClientDisconnectedBeforeHeaders,
@@ -326,7 +310,6 @@ def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, A
             path=ADMIN_DB_PATH,
             actor="startup",
         )
-        operation_activation.recover(path=ADMIN_DB_PATH, state_dir=ADMIN_DB_PATH.parent)
         _write_litellm_config_artifact(registry)
         return service_registry.apply_service_registry_to_config(raw_config, registry)
     except Exception as e:  # noqa: BLE001
@@ -629,20 +612,6 @@ SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 # at >5 tok/s never approach this. 600s (10 min) of silence is well past any
 # legitimate work and tight enough that a hung backend frees the socket promptly.
 UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cfg.get("upstream_read_timeout", 600)))
-# The exact preflight's own apply-template/tokenize calls are no-inference
-# (see bee-exact-count-latency-0715.md: sub-50ms p95 at ~102k tokens), so a
-# fixed, tight budget is enough — no operator-configurable surface needed
-# for two loopback calls with a known cheap cost profile. Two DIFFERENT
-# numbers, deliberately: PREFLIGHT_READ_TIMEOUT is httpx's per-call
-# read-idle budget (passed as LlmExecutionRequest.read_timeout — connect/
-# write still use the transport's own 10s/60s defaults per call); the
-# preflight as a whole (both apply-template AND tokenize, sequentially) is
-# additionally wrapped in one PREFLIGHT_WALL_CLOCK_DEADLINE-second
-# asyncio.timeout scope, so the combined preflight cannot exceed 20s even
-# though the two per-call socket budgets alone could sum higher.
-PREFLIGHT_READ_TIMEOUT = 20.0
-PREFLIGHT_WALL_CLOCK_DEADLINE = 20.0
-
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
 # hardcoding a filename. Roles map to a backend type ("kobold", "tabby", or any enabled
 # registry backend) — never to a specific model file for unmanaged backends.
@@ -1071,98 +1040,6 @@ _BACKEND_STATE_STRATEGIES: dict = {
         "mmproj_pgrep": False,
     },
 }
-
-# A backend declares the exact-preflight capability with its OWN explicit,
-# operator-authored config block — not inferred from `state_type` (that
-# field only ever meant "how to probe the loaded-model id"; a backend can be
-# `state_type: llama_cpp` for that purpose while running a build/version/
-# reverse-proxy that lacks one of the two endpoints, or gates them behind
-# auth). This is the same shape as `auth_inject` above: opt-in data an
-# operator adds to their own backend record, never inferred from engine
-# name/family. Example (see proxy_config.yml's `kobold` record):
-#
-#   exact_preflight:
-#     apply_template_path: /apply-template
-#     tokenize_path: /tokenize
-#     output_limit_precedence: [n_predict, max_completion_tokens, max_tokens]
-#
-# Every field, INCLUDING output_limit_precedence, is REQUIRED and validated:
-# an incomplete or malformed block disables the capability rather than
-# silently filling in a default path or guessing a precedence order — see
-# `_exact_preflight_capability`. There is deliberately no "precedence
-# omitted" fallback: a service's real override semantics must be stated
-# explicitly, never inferred as "check these fields in some default order."
-_ALLOWED_OUTPUT_LIMIT_FIELDS = frozenset({"max_tokens", "max_completion_tokens", "n_predict"})
-
-
-@dataclass(frozen=True)
-class ExactPreflightCapability:
-    apply_template_path: str
-    tokenize_path: str
-    output_limit_precedence: tuple[str, ...]
-
-
-def _valid_capability_path(value: Any) -> str | None:
-    """A declared endpoint path must be a non-empty absolute path; else invalid."""
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    if not value.startswith("/") or value == "/":
-        return None
-    return value
-
-
-def _valid_output_limit_precedence(value: Any) -> tuple[str, ...] | None:
-    """A declared precedence is REQUIRED: must be a non-empty list of unique,
-    known output-limit field names, or the whole capability is invalid.
-    Omission, an empty list, and any other shape are all invalid — never
-    silently defaulted to a check order the operator did not state.
-    """
-    if not isinstance(value, (list, tuple)) or not value:
-        return None
-    fields = tuple(str(item) for item in value)
-    if len(set(fields)) != len(fields):
-        return None
-    if any(field not in _ALLOWED_OUTPUT_LIMIT_FIELDS for field in fields):
-        return None
-    return fields
-
-
-def _exact_preflight_capability(backend: str) -> ExactPreflightCapability | None:
-    """Return `backend`'s explicit, VALIDATED exact-preflight capability, or None.
-
-    Returns None (preflight skipped, existing behavior preserved) unless the
-    operator has added a complete, well-formed `exact_preflight` block to
-    that backend's own config record: both paths present as non-empty
-    absolute paths, AND `output_limit_precedence` present as a non-empty
-    list of unique known output-limit fields. ANY malformed, incomplete, or
-    omitted field disables the capability rather than overclaiming it with
-    an inferred default. There is no state_type/engine-name inference and
-    no blind endpoint probe used as policy.
-    """
-    backend_cfg = (config.get("backends") or {}).get(backend, {})
-    if not isinstance(backend_cfg, Mapping):
-        return None
-    declared = backend_cfg.get("exact_preflight")
-    if not isinstance(declared, Mapping):
-        return None
-
-    apply_template_path = _valid_capability_path(declared.get("apply_template_path"))
-    if apply_template_path is None:
-        return None
-    tokenize_path = _valid_capability_path(declared.get("tokenize_path"))
-    if tokenize_path is None:
-        return None
-    precedence = _valid_output_limit_precedence(declared.get("output_limit_precedence"))
-    if precedence is None:
-        return None
-
-    return ExactPreflightCapability(
-        apply_template_path=apply_template_path,
-        tokenize_path=tokenize_path,
-        output_limit_precedence=precedence,
-    )
-
 
 def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
     """Walk dot-separated keys/indices into a parsed JSON structure."""
@@ -9914,10 +9791,6 @@ app.include_router(
         known_model_names_getter=lambda: litellm_known_model_names(
             ADMIN_STORE.get_service_registry()
         ),
-        operation_preparer=lambda body, service_id, alias_id, runtime_config: _prepare_operation_candidate_body(
-            body, service_id, alias_id, runtime_config
-        ),
-        operation_reloader=reload_runtime_config,
     )
 )
 
@@ -17096,53 +16969,6 @@ def _current_loaded_model_entries() -> list[dict[str, Any]]:
     ]
 
 
-def _operation_contract_model_entries() -> list[dict[str, Any]]:
-    """Project valid, data-declared operation targets for generic discovery."""
-    entries: list[dict[str, Any]] = []
-    backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
-    for service_id, service_cfg in backends.items():
-        if not isinstance(service_cfg, Mapping):
-            continue
-        for record in _service_model_records(service_cfg):
-            if "compaction_safety" not in record:
-                continue
-            base_id = str(record.get("base_model_id") or record.get("id") or "").strip()
-            model_id = str(record.get("id") or "").strip()
-            if not model_id:
-                continue
-            try:
-                target = _resolve_request_target(model_id, required=True, aliases_only=True)
-                if (
-                    target is None
-                    or target.logical_service_id != str(service_id)
-                    or target.base_model_id != base_id
-                    or target.operation_contract is None
-                ):
-                    continue
-                contract = target.operation_contract
-                construction = consumer_request_construction_contract(
-                    contract, logical_model_id=model_id
-                )
-            except (AliasPolicyResolutionError, CompactionContractError):
-                continue
-            entries.append({
-                "id": model_id,
-                "object": "model",
-                "created": int(time.time()),
-                "owned_by": "gateway",
-                "capabilities": ["chat", "completion"],
-                "vivid_fish_operation": {
-                    "id": contract.id,
-                    "purpose": contract.purpose,
-                    "guarantee": "conservative rendered-token bound; not exact token counting",
-                    "deployment_binding": "controlled registry generation; not runtime attestation",
-                    "request_construction": construction,
-                },
-                "vivid_fish_current_loaded": contract.current_loaded_only,
-            })
-    return entries
-
-
 @app.get("/anthropic/v1/models")
 async def anthropic_models(request: Request):
     """Anthropic-compatible model list projected from the gateway catalog."""
@@ -17256,10 +17082,6 @@ async def list_models(request: Request):
         if current_entry["id"] not in existing_ids:
             data.insert(0, current_entry)
             existing_ids.add(current_entry["id"])
-    for entry in _operation_contract_model_entries():
-        if entry["id"] not in existing_ids:
-            data.insert(0, entry)
-            existing_ids.add(entry["id"])
     for entry in workflow_entries:
         if entry["id"] not in existing_ids:
             data.insert(0, entry)
@@ -19202,13 +19024,6 @@ def _prepare_resolved_openai_request(
             _TransformContext(),
             _TRANSFORM_REGISTRY,
         )
-    if target.operation_contract is not None:
-        if prepared.get("reasoning_effort") not in (None, "none"):
-            return openai_error_response(
-                "Operation contract requires reasoning none.", status_code=400,
-                error_type="invalid_request_error", code="operation_contract_rejected",
-            ), prepared, None
-        prepared["reasoning_effort"] = target.operation_contract.reasoning_effort_default
     if request_path == "/v1/chat/completions":
         source = runtime_config if runtime_config is not None else config
         reasoning_error = _ReasoningEffortTransform(source.get("reasoning") or {}).apply(prepared)
@@ -19223,24 +19038,7 @@ def _prepare_resolved_openai_request(
                 status_code=400,
                 media_type="application/json",
             ), prepared, None
-    if target.operation_contract is not None:
-        try:
-            prepared, admitted_bytes = prepare_admitted_body(prepared, target.operation_contract)
-        except CompactionAdmissionError as exc:
-            return openai_error_response(
-                f"Operation contract rejected request: {exc}",
-                status_code=400,
-                error_type="invalid_request_error",
-                code="operation_contract_rejected",
-            ), prepared, None
-        return None, prepared, admitted_bytes
     return None, prepared, None
-
-
-def _resolved_operation_requires_current_loaded(model: Any) -> bool:
-    """Whether a resolved data contract selects existing-current execution."""
-    target = _resolve_request_target(model, aliases_only=True)
-    return bool(target and target.operation_contract and target.operation_contract.current_loaded_only)
 
 
 def _litellm_gateway_metadata(
@@ -19605,143 +19403,6 @@ class _OuterCancellationSpan:
         await self.aclose()
 
 
-async def _exact_preflight_check(
-    body: Mapping[str, Any],
-    *,
-    target: "CurrentLoadedLlmTarget",
-    cancellation_span: "_OuterCancellationSpan",
-    auth_context: AuthContext,
-    request_headers: Mapping[str, str],
-) -> Response | None:
-    """Guard the current-loaded text chat path: never dispatch an uncounted request.
-
-    Returns an OpenAI-compatible error Response — never ``None`` — for any
-    guarded request this function cannot positively prove fits:
-
-    * ``context_length_exceeded`` if the exact input-token count plus the
-      canonical output allowance exceeds the resolved context window, or the
-      input alone is already at/past the context window (Pi maps this to its
-      provider-overflow compact-and-retry path).
-    * a distinct ``preflight_unavailable`` (503) if the exact count itself
-      could not be obtained — a missing context window, exceeding the
-      shared wall-clock deadline, a non-2xx/malformed ``/apply-template`` or
-      ``/tokenize`` response, or any other transport failure. This is a hard
-      fail-closed: forwarding an uncounted request would silently drop the
-      prevention guarantee this preflight exists for, so an availability
-      failure must never be forwarded as if it were a fit, and must use a
-      code Pi will not misclassify as context overflow.
-
-    Returns ``None`` (proceed with the existing, unguarded execution path)
-    for a request this preflight explicitly does not cover:
-
-    * anything other than a positively-identified text-only chat body
-      (``is_text_only_chat_body`` — image/audio/unknown/malformed content
-      blocks all take this path unchanged: ``/apply-template`` is not proven
-      exact for non-text content, see ``gateway/backends/exact_preflight.py``); or
-    * a target backend with no explicit, validated ``exact_preflight``
-      capability declared on its own service config
-      (``_exact_preflight_capability`` — operator-authored data, never
-      inferred from ``state_type``/engine name). Such a backend is honestly
-      unguarded: existing behavior for it is unchanged.
-
-    A client disconnect/cross-hop cancel observed during the preflight's own
-    HTTP calls (including while waiting for headers — both the local ASGI
-    disconnect watcher AND the cross-hop cancellation-registry token race
-    the header wait, matching the real dispatch) propagates as
-    ``ClientDisconnectedBeforeHeaders``, exactly as it would from the real
-    dispatch — never folded into either error response above. Consumes no
-    completion/generation slot on the backend (``/apply-template`` and
-    ``/tokenize`` are documented no-inference endpoints). Both calls share
-    one 20-second wall-clock deadline (not 20s per call).
-    """
-    if not is_text_only_chat_body(body):
-        return None
-    capability = _exact_preflight_capability(target.backend)
-    if capability is None:
-        return None
-
-    def _unavailable(reason: str) -> Response:
-        return openai_error_response(
-            f"Exact context-length preflight unavailable: {reason}. "
-            "Refusing to forward an uncounted request.",
-            status_code=503,
-            error_type="service_unavailable",
-            code="preflight_unavailable",
-        )
-
-    context_window = await _context_window_for_model_id(target.model)
-    if context_window is None:
-        return _unavailable("no resolved context window for the active model")
-
-    output_allowance = resolve_output_allowance(
-        body, precedence=capability.output_limit_precedence
-    )
-
-    async def post_json(path: str, json_body: Mapping[str, Any]) -> tuple[int, Any]:
-        headers = prepare_downstream_headers(request_headers, auth_context, target.backend, path)
-        headers.setdefault("content-type", "application/json")
-        headers.setdefault("accept", "application/json")
-        request = LlmExecutionRequest(
-            method="POST",
-            url=f"{target.host}{path}",
-            headers=headers,
-            body=json.dumps(json_body).encode(),
-            read_timeout=PREFLIGHT_READ_TIMEOUT,
-        )
-        try:
-            client, resp = await cancellation_span.dispatch(request)
-        except ClientDisconnectedBeforeHeaders:
-            raise PreflightCancelled() from None
-        content = await cancellation_span.read_body(client, resp)
-        if content is None:
-            # read_body already closed client/resp on this path (see its
-            # docstring) — nothing left to tear down here.
-            raise PreflightCancelled()
-        await close_llm_response(client, resp)
-        try:
-            return resp.status_code, json.loads(content)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return resp.status_code, None
-
-    try:
-        async with asyncio.timeout(PREFLIGHT_WALL_CLOCK_DEADLINE):
-            count = await exact_input_token_count(
-                body=body,
-                apply_template_path=capability.apply_template_path,
-                tokenize_path=capability.tokenize_path,
-                post_json=post_json,
-            )
-    except PreflightCancelled:
-        raise ClientDisconnectedBeforeHeaders() from None
-    except TimeoutError:
-        return _unavailable(
-            f"preflight exceeded its {PREFLIGHT_WALL_CLOCK_DEADLINE:.0f}s wall-clock deadline"
-        )
-
-    if isinstance(count, PreflightUnavailable):
-        return _unavailable(count.reason)
-
-    overflow = check_context_fit(
-        input_tokens=count.input_tokens,
-        output_allowance=output_allowance.tokens,
-        context_window=context_window,
-    )
-    if overflow is None:
-        return None
-
-    return openai_error_response(
-        (
-            f"This model's maximum context length is {overflow.context_window} tokens. "
-            f"This request requires {overflow.input_tokens} tokens for the messages and "
-            f"reserves {overflow.output_allowance} tokens for the response, which exceeds "
-            "the limit. Please reduce the length of the messages or the requested output."
-        ),
-        status_code=400,
-        error_type="invalid_request_error",
-        code="context_length_exceeded",
-    )
-
-
 async def _forward_current_loaded_openai_request(
     request: Request,
     *,
@@ -19865,24 +19526,6 @@ async def _forward_current_loaded_openai_request(
         )
 
         try:
-            if request_path == "/v1/chat/completions":
-                try:
-                    overflow_error = await _exact_preflight_check(
-                        body,
-                        target=target,
-                        cancellation_span=cancellation_span,
-                        auth_context=auth_context,
-                        request_headers=request.headers,
-                    )
-                except ClientDisconnectedBeforeHeaders:
-                    await cancellation_span.aclose()
-                    owner.report(status="cancelled", reason="cancelled")
-                    return Response(status_code=499)
-                if overflow_error is not None:
-                    await cancellation_span.aclose()
-                    owner.report(status="failed", reason="failed")
-                    return overflow_error
-
             try:
                 client, resp = await cancellation_span.dispatch(execution_request)
             except ClientDisconnectedBeforeHeaders:
@@ -20055,13 +19698,6 @@ async def _forward_litellm_proxy_request(
         logical_target = _resolve_request_target(model_name, aliases_only=True)
     except AliasPolicyResolutionError as error:
         return _alias_policy_configuration_response(error)
-    if logical_target is not None and logical_target.operation_contract is not None:
-        return openai_error_response(
-            "This declared operation target requires gateway-owned direct current-loaded egress.",
-            status_code=422,
-            error_type="invalid_request_error",
-            code="compaction_route_unsupported",
-        )
 
     if _profile_target_activation(auth_context) == "existing_only":
         current_loaded_decision = await _current_loaded_model_policy_decision(
@@ -20421,21 +20057,11 @@ async def _handle_openai_litellm_request(
         if policy_decision is not None and policy_decision.denied:
             return _policy_denied_response(policy_decision)
 
-    try:
-        operation_requires_current_loaded = _resolved_operation_requires_current_loaded(
-            parsed_body.get("model")
-        )
-    except AliasPolicyResolutionError as error:
-        return _alias_policy_configuration_response(error)
-
     if (
         not route_auth.delegated_to_litellm
         and
         request_path in {"/v1/chat/completions", "/v1/completions"}
-        and (
-            _is_use_loaded_model_alias(parsed_body.get("model"))
-            or operation_requires_current_loaded
-        )
+        and _is_use_loaded_model_alias(parsed_body.get("model"))
     ):
         return await _forward_current_loaded_openai_request(
             request,

@@ -63,18 +63,6 @@ backends:
     port: 5051
     state_type: llama_cpp
     health_endpoint: /v1/models
-    # Explicit, operator-authored declaration that this backend exposes the
-    # generic no-inference apply-template/tokenize preflight contract (see
-    # gateway/backends/exact_preflight.py). This is NOT implied by
-    # state_type above (that field only means "how to probe the loaded
-    # model id") — a service must opt in with its own paths, same as
-    # auth_inject below is its own opt-in block. output_limit_precedence
-    # mirrors this server's actual override order (server-task.cpp:
-    # n_predict overrides max_completion_tokens overrides max_tokens).
-    exact_preflight:
-      apply_template_path: /apply-template
-      tokenize_path: /tokenize
-      output_limit_precedence: [n_predict, max_completion_tokens, max_tokens]
     # Version the logical-policy collection independently of the registry as a
     # whole. Existing DB-owned collections must be explicitly migrated.
     model_policy_schema_version: 1

@@ -1,28 +1,14 @@
-"""Pure request preparation for a data-declared operation candidate.
+"""Pure request-target resolution from service-declared alias policy data.
 
-This module owns the value-only policy path used to validate a candidate
-operation configuration.  It deliberately has no access to gateway startup,
-stores, registry recovery, runtime-config generation, or network clients.
+This module owns the value-only policy path used to resolve a public model
+name to one service-scoped base and optional alias overlay.  It deliberately
+has no access to gateway startup, stores, registry recovery, or network clients.
 """
 from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
 from typing import Any, Mapping
-
-from gateway.compaction_safety import (
-    AdmissionError,
-    CompactionContract,
-    ContractError,
-    contract_from_data,
-    prepare_admitted_body,
-)
-from gateway.transforms import (
-    REGISTRY,
-    ReasoningEffortTransform,
-    TransformContext,
-    run_request_pipeline,
-)
 
 
 @dataclass(frozen=True)
@@ -34,15 +20,10 @@ class ResolvedRequestTarget:
     base_model_id: str
     base_transform_specs: tuple[str | dict[str, Any], ...]
     alias_overlay_specs: tuple[str | dict[str, Any], ...]
-    operation_contract: CompactionContract | None = None
 
 
 class AliasPolicyResolutionError(ValueError):
     """A required public alias has no single declared logical policy."""
-
-
-class CandidatePreparationError(ValueError):
-    """A data-only operation candidate cannot produce an admitted request."""
 
 
 def service_model_records(service_cfg: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -166,78 +147,13 @@ def resolve_request_target(
     logical_service_id, alias, base = matches[0]
     alias_id = str(alias.get("id") or "").strip()
     base_id = str(alias.get("base_model_id") or alias_id).strip()
-    operation_contract = None
-    if "compaction_safety" in alias:
-        service_cfg = backends.get(logical_service_id) or {}
-        try:
-            operation_contract = contract_from_data(
-                alias["compaction_safety"],
-                service_id=logical_service_id,
-                service_controlled_deployment_evidence=service_cfg.get(
-                    "controlled_deployment_evidence"
-                ),
-                service_deployment_generation=service_cfg.get("deployment_generation"),
-                service_evidence_registry_revision=service_cfg.get(
-                    "evidence_registry_revision"
-                ),
-                base_model_id=base_id,
-            )
-        except ContractError as exc:
-            raise AliasPolicyResolutionError(
-                f"operation contract is unavailable: {exc}"
-            ) from exc
     return ResolvedRequestTarget(
         requested_model=requested_model,
         logical_service_id=logical_service_id,
         base_model_id=base_id,
         base_transform_specs=tuple(transform_specs(base.get("transforms"))),
         alias_overlay_specs=tuple(transform_specs(alias.get("policy_overlay"))),
-        operation_contract=operation_contract,
     )
-
-
-def prepare_operation_candidate_body(
-    body: Mapping[str, Any],
-    service_id: str,
-    alias_id: str,
-    runtime_config: Mapping[str, Any],
-) -> bytes:
-    """Prepare the exact admitted bytes for an in-memory operation candidate.
-
-    All inputs are values supplied by the caller; this function has no runtime
-    configuration fallback and no side effects.  It is deliberately the same
-    policy pipeline used by proxy validation and the offline enrollment CLI.
-    """
-    target = resolve_request_target(
-        alias_id,
-        service_id=service_id,
-        required=True,
-        runtime_config=runtime_config,
-    )
-    if target is None or target.operation_contract is None:
-        raise CandidatePreparationError("operation request preparation rejected candidate")
-    prepared = copy.deepcopy(dict(body))
-    specs = per_backend_transform_specs(
-        service_id,
-        runtime_config=runtime_config,
-    )
-    specs.extend(target.base_transform_specs)
-    specs.extend(target.alias_overlay_specs)
-    if specs:
-        prepared = run_request_pipeline(specs, prepared, TransformContext(), REGISTRY)
-    if prepared.get("reasoning_effort") not in (None, "none"):
-        raise CandidatePreparationError("operation request preparation rejected candidate")
-    prepared["reasoning_effort"] = target.operation_contract.reasoning_effort_default
-    reasoning_error = ReasoningEffortTransform(
-        runtime_config.get("reasoning") if isinstance(runtime_config.get("reasoning"), dict) else None
-    ).apply(prepared)
-    if reasoning_error:
-        raise CandidatePreparationError("operation request preparation rejected candidate")
-    try:
-        _, admitted = prepare_admitted_body(prepared, target.operation_contract)
-    except AdmissionError as exc:
-        raise CandidatePreparationError("operation request preparation rejected candidate") from exc
-    return admitted
 
 
 def _normalize_model_id(model_name: str) -> str:

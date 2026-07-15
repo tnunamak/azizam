@@ -195,59 +195,6 @@ CREATE TABLE IF NOT EXISTS operator_settings_generations (
   operator_settings_generation INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS operation_evidence_receipts (
-  digest TEXT PRIMARY KEY,
-  canonical_json TEXT NOT NULL,
-  expires_at INTEGER NOT NULL,
-  created_at INTEGER NOT NULL,
-  created_by TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS operation_target_revisions (
-  id INTEGER PRIMARY KEY,
-  service_id TEXT NOT NULL,
-  alias_id TEXT NOT NULL,
-  revision INTEGER NOT NULL,
-  requested_state TEXT NOT NULL CHECK(requested_state IN ('staged','effective','inactive')),
-  base_model_id TEXT NOT NULL,
-  overlay_json TEXT NOT NULL,
-  evidence_digest TEXT NOT NULL REFERENCES operation_evidence_receipts(digest),
-  supersedes_revision INTEGER,
-  created_at INTEGER NOT NULL,
-  created_by TEXT NOT NULL,
-  UNIQUE(service_id, alias_id, revision)
-);
-
-CREATE TABLE IF NOT EXISTS operation_target_current (
-  service_id TEXT NOT NULL,
-  alias_id TEXT NOT NULL,
-  target_generation INTEGER NOT NULL,
-  effective_revision INTEGER,
-  candidate_revision INTEGER,
-  candidate_state TEXT NOT NULL CHECK(candidate_state IN ('none','staged','preparing','prepare_failed')),
-  candidate_base_operator_settings_generation INTEGER,
-  effective_operator_settings_generation INTEGER,
-  prepared_artifact_digest TEXT,
-  prepared_artifact_relpath TEXT,
-  prepared_at INTEGER,
-  last_error_code TEXT,
-  last_local_reload_ack_generation INTEGER,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY(service_id, alias_id)
-);
-
-CREATE TABLE IF NOT EXISTS operation_idempotency (
-  actor_id TEXT NOT NULL,
-  endpoint TEXT NOT NULL,
-  key TEXT NOT NULL,
-  request_digest TEXT NOT NULL,
-  response_status INTEGER NOT NULL,
-  response_json TEXT NOT NULL,
-  target_generation INTEGER,
-  operator_settings_generation INTEGER,
-  created_at INTEGER NOT NULL,
-  PRIMARY KEY(actor_id, endpoint, key)
-);
 
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,
