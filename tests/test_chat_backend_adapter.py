@@ -51,6 +51,22 @@ class ChatBackendAdapterTests(unittest.TestCase):
         self.assertNotIn("authorization", request.headers)
         self.assertNotIn("x-api-key", request.headers)
 
+    def test_loopback_parent_is_explicit_not_copied_from_client_headers(self) -> None:
+        request = build_chat_loopback_request(
+            proxy_port=5001, body={"model": "default", "messages": []},
+            internal_forward_header="x-internal-forward", internal_forward_secret="secret",
+            source_headers={"x-ai-gateway-request-id": "forged"},
+            parent_request_id="server-owned", read_timeout=30.0,
+        )
+        self.assertEqual(request.headers["x-ai-gateway-request-id"], "server-owned")
+
+        unparented = build_chat_loopback_request(
+            proxy_port=5001, body={"model": "default", "messages": []},
+            internal_forward_header="x-internal-forward", internal_forward_secret="secret",
+            source_headers={"x-ai-gateway-request-id": "forged"}, read_timeout=30.0,
+        )
+        self.assertNotIn("x-ai-gateway-request-id", unparented.headers)
+
 
 if __name__ == "__main__":
     unittest.main()

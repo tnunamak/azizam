@@ -17416,14 +17416,13 @@ async def _forward_chat_completions(
     parent_request_id = getattr(
         getattr(request, "state", None), "route_receipt_parent_request_id", ""
     )
-    if parent_request_id:
-        source_headers[GATEWAY_REQUEST_ID_HEADER] = parent_request_id
     loopback_request = build_chat_loopback_request(
         proxy_port=PROXY_PORT,
         body=cc_body,
         internal_forward_header=_INTERNAL_PROTOCOL_FORWARD_HEADER,
         internal_forward_secret=_INTERNAL_PROTOCOL_FORWARD_SECRET,
         source_headers=source_headers,
+        parent_request_id=parent_request_id,
         read_timeout=UPSTREAM_READ_TIMEOUT,
     )
     client = httpx.AsyncClient(timeout=loopback_request.timeout)
