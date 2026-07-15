@@ -40,7 +40,7 @@ from gateway.policy import (
 from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.backends.litellm_admin import LiteLLMAdminError
 from gateway.profiles import ProfileLoadError, load_profile
-from gateway import extension_packages, service_registry
+from gateway import admin_store, extension_packages, operation_activation, service_registry
 
 __all__ = [
     "AdminAuthError",
@@ -1210,6 +1210,8 @@ def create_admin_router(
     status_provider: StatusProvider | None = None,
     litellm_key_client: LiteLLMKeyClient | None = None,
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
+    operation_preparer: Callable[[Mapping[str, Any], str, str, Mapping[str, Any]], bytes] | None = None,
+    operation_reloader: Callable[[], Any] | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -1896,10 +1898,164 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return JSONResponse(
+        response = JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"service_registry": store.get_service_registry()},
         )
+        if hasattr(store, "path"):
+            record = admin_store.get_service_registry_with_generation(path=store.path)
+            if record:
+                response.headers["ETag"] = f'"os-{record["operator_settings_generation"]}"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    def _operation_path() -> Any:
+        path = getattr(store, "path", None)
+        if path is None:
+            raise _RouteError(status.HTTP_501_NOT_IMPLEMENTED, "operation_targets_unavailable", "operation targets require the SQLite admin store")
+        return path
+
+    def _operation_error(exc: operation_activation.OperationError) -> JSONResponse:
+        return _RouteError(exc.status, exc.code, str(exc)).as_response()
+
+    def _operation_etag(payload: Mapping[str, Any]) -> str:
+        return f'"ot-{payload["target_generation"]}-os-{payload["operator_settings_generation"]}"'
+
+    def _operation_match(request: Request) -> tuple[int, int]:
+        raw = request.headers.get("if-match", "").strip('"')
+        parts = raw.split("-")
+        if len(parts) != 4 or parts[0] != "ot" or parts[2] != "os":
+            raise _RouteError(412, "generation_mismatch", "composite If-Match is required")
+        try:
+            return int(parts[1]), int(parts[3])
+        except ValueError as exc:
+            raise _RouteError(
+                412, "generation_mismatch", "composite If-Match is required"
+            ) from exc
+
+    @router.get("/operator/operation-targets")
+    def list_operation_targets(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse): return ctx
+        try: payload = operation_activation.list_targets(path=_operation_path())
+        except operation_activation.OperationError as exc: return _operation_error(exc)
+        return JSONResponse(content={"targets": payload}, headers={"Cache-Control": "no-store"})
+
+    @router.get("/operator/operation-targets/{service_id}/{alias_id}")
+    def get_operation_target(service_id: str, alias_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse): return ctx
+        try: payload = operation_activation.status(path=_operation_path(), service_id=service_id, alias_id=alias_id)
+        except operation_activation.OperationError as exc: return _operation_error(exc)
+        response = JSONResponse(content={"target": payload, "request_id": request.headers.get("x-request-id", "")})
+        response.headers.update({"ETag": _operation_etag(payload), "Cache-Control": "no-store"})
+        return response
+
+    @router.get("/operator/operation-targets/{service_id}/{alias_id}/revisions/{revision}")
+    def get_operation_revision(service_id: str, alias_id: str, revision: int, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse): return ctx
+        try: payload = operation_activation.revision(path=_operation_path(), service_id=service_id, alias_id=alias_id, number=revision)
+        except operation_activation.OperationError as exc: return _operation_error(exc)
+        return JSONResponse(content={"revision": payload}, headers={"Cache-Control": "no-store"})
+
+    @router.get("/operator/operation-targets/{service_id}/{alias_id}/revisions")
+    def list_operation_revisions(service_id: str, alias_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse): return ctx
+        try: payload = operation_activation.revisions(path=_operation_path(), service_id=service_id, alias_id=alias_id)
+        except operation_activation.OperationError as exc: return _operation_error(exc)
+        return JSONResponse(content={"revisions": payload}, headers={"Cache-Control": "no-store"})
+
+    @router.put("/operator/operation-targets/{service_id}/{alias_id}")
+    async def stage_operation_target(service_id: str, alias_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse): return ctx
+        try:
+            body = await _read_json_body(request)
+            existing = None
+            try:
+                existing = operation_activation.status(
+                    path=_operation_path(), service_id=service_id, alias_id=alias_id
+                )
+            except operation_activation.OperationError as exc:
+                if exc.code != "target_not_found":
+                    raise
+            if existing is None:
+                if request.headers.get("if-none-match") != "*":
+                    raise _RouteError(412, "generation_mismatch", "If-None-Match: * is required when creating a target")
+                expected_target = expected_registry = None
+                response_status = status.HTTP_201_CREATED
+            else:
+                expected_target, expected_registry = _operation_match(request)
+                response_status = status.HTTP_200_OK
+            payload = operation_activation.stage(path=_operation_path(), service_id=service_id, alias_id=alias_id, base_model_id=str(body.get("base_model_id") or ""), overlay=body.get("overlay") or {}, evidence=body.get("evidence") or {}, actor=ctx.subject, expected_target=expected_target, expected_registry=expected_registry)
+        except _RouteError as exc: return exc.as_response()
+        except operation_activation.OperationError as exc: return _operation_error(exc)
+        response = JSONResponse(status_code=response_status, content={"target": payload}); response.headers.update({"ETag": _operation_etag(payload), "Cache-Control": "no-store"}); return response
+
+    @router.post("/operator/operation-targets/{service_id}/{alias_id}/validation")
+    async def validate_operation_target(service_id: str, alias_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse): return ctx
+        if operation_preparer is None:
+            return _RouteError(503, "operation_validation_unavailable", "operation preparation is unavailable").as_response()
+        try: return JSONResponse(content={"validation": operation_activation.dry_run(path=_operation_path(), service_id=service_id, alias_id=alias_id, request=await _read_json_body(request), prepare=operation_preparer)}, headers={"Cache-Control": "no-store"})
+        except operation_activation.OperationError as exc: return _operation_error(exc)
+        except Exception as exc: return _RouteError(422, "validation_failed", str(exc)).as_response()
+
+    @router.put("/operator/operation-targets/{service_id}/{alias_id}/activation")
+    def activate_operation_target(service_id: str, alias_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse): return ctx
+        try:
+            tag=request.headers.get("if-match", "").strip('"'); parts=tag.split("-")
+            if len(parts) != 4 or parts[0] != "ot" or parts[2] != "os": raise _RouteError(412,"generation_mismatch","composite If-Match is required")
+            idempotency_key = request.headers.get("idempotency-key", "")
+            if not 1 <= len(idempotency_key) <= 128 or any(not (0x21 <= ord(char) <= 0x7E) for char in idempotency_key): raise _RouteError(422, "invalid_idempotency_key", "Idempotency-Key must be 1-128 visible ASCII bytes")
+            payload=operation_activation.activate(path=_operation_path(),state_dir=_operation_path().parent,service_id=service_id,alias_id=alias_id,expected_target=int(parts[1]),expected_registry=int(parts[3]),actor=ctx.subject,idempotency_key=idempotency_key)
+        except _RouteError as exc: return exc.as_response()
+        except (ValueError, operation_activation.OperationError) as exc:
+            return _operation_error(exc) if isinstance(exc, operation_activation.OperationError) else _RouteError(412,"generation_mismatch",str(exc)).as_response()
+        # Reload is intentionally post-commit observational work.  A failure
+        # must not retract the safe effective registry that SQLite committed.
+        if operation_reloader is not None and not payload.get("idempotency_replayed"):
+            try:
+                operation_reloader()
+            except Exception:  # noqa: BLE001 - an observation must not rollback
+                operation_activation.record_reload_failure(
+                    path=_operation_path(), service_id=service_id, alias_id=alias_id,
+                    generation=int(payload["operator_settings_generation"]),
+                )
+                payload = operation_activation.status(
+                    path=_operation_path(), service_id=service_id, alias_id=alias_id,
+                )
+        response=JSONResponse(status_code=202,content={"target":payload}); response.headers.update({"ETag":_operation_etag(payload),"Cache-Control":"no-store"}); return response
+
+    @router.delete("/operator/operation-targets/{service_id}/{alias_id}/activation")
+    def deactivate_operation_target(service_id: str, alias_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse): return ctx
+        try:
+            target_generation, registry_generation = _operation_match(request)
+            payload = operation_activation.deactivate(path=_operation_path(), service_id=service_id, alias_id=alias_id, expected_target=target_generation, expected_registry=registry_generation, actor=ctx.subject)
+        except _RouteError as exc: return exc.as_response()
+        except operation_activation.OperationError as exc: return _operation_error(exc)
+        response = JSONResponse(content={"target": payload}); response.headers.update({"ETag": _operation_etag(payload), "Cache-Control": "no-store"}); return response
+
+    @router.post("/operator/operation-targets/{service_id}/{alias_id}/rollback")
+    async def rollback_operation_target(service_id: str, alias_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse): return ctx
+        try:
+            body = await _read_json_body(request)
+            target_generation, registry_generation = _operation_match(request)
+            revision_number = int(body.get("revision"))
+            payload = operation_activation.rollback(path=_operation_path(), service_id=service_id, alias_id=alias_id, revision_number=revision_number, actor=ctx.subject, expected_target=target_generation, expected_registry=registry_generation)
+        except _RouteError as exc: return exc.as_response()
+        except operation_activation.OperationError as exc: return _operation_error(exc)
+        except (TypeError, ValueError) as exc: return _RouteError(422, "invalid_revision", str(exc)).as_response()
+        response = JSONResponse(status_code=202, content={"target": payload}); response.headers.update({"ETag": _operation_etag(payload), "Cache-Control": "no-store"}); return response
 
     @router.put("/operator/service-registry")
     async def update_service_registry(request: Request) -> JSONResponse:

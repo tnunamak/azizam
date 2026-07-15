@@ -42,7 +42,7 @@ from typing import Any, Iterable, Mapping
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SUBJECT_KINDS = ("user", "service_account", "app")
 APP_KINDS = ("personal", "service")
@@ -185,6 +185,68 @@ CREATE TABLE IF NOT EXISTS operator_settings (
 CREATE INDEX IF NOT EXISTS operator_settings_updated_at
   ON operator_settings(updated_at);
 
+-- This table is deliberately scoped to the one document currently protected
+-- by this CAS protocol.  Its key makes a future, explicit setting opt-in
+-- possible without silently turning unrelated settings into registry writers.
+CREATE TABLE IF NOT EXISTS operator_settings_generations (
+  setting_key TEXT PRIMARY KEY,
+  operator_settings_generation INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS operation_evidence_receipts (
+  digest TEXT PRIMARY KEY,
+  canonical_json TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  created_by TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS operation_target_revisions (
+  id INTEGER PRIMARY KEY,
+  service_id TEXT NOT NULL,
+  alias_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  requested_state TEXT NOT NULL CHECK(requested_state IN ('staged','effective','inactive')),
+  base_model_id TEXT NOT NULL,
+  overlay_json TEXT NOT NULL,
+  evidence_digest TEXT NOT NULL REFERENCES operation_evidence_receipts(digest),
+  supersedes_revision INTEGER,
+  created_at INTEGER NOT NULL,
+  created_by TEXT NOT NULL,
+  UNIQUE(service_id, alias_id, revision)
+);
+
+CREATE TABLE IF NOT EXISTS operation_target_current (
+  service_id TEXT NOT NULL,
+  alias_id TEXT NOT NULL,
+  target_generation INTEGER NOT NULL,
+  effective_revision INTEGER,
+  candidate_revision INTEGER,
+  candidate_state TEXT NOT NULL CHECK(candidate_state IN ('none','staged','preparing','prepare_failed')),
+  candidate_base_operator_settings_generation INTEGER,
+  effective_operator_settings_generation INTEGER,
+  prepared_artifact_digest TEXT,
+  prepared_artifact_relpath TEXT,
+  prepared_at INTEGER,
+  last_error_code TEXT,
+  last_local_reload_ack_generation INTEGER,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(service_id, alias_id)
+);
+
+CREATE TABLE IF NOT EXISTS operation_idempotency (
+  actor_id TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  key TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  response_status INTEGER NOT NULL,
+  response_json TEXT NOT NULL,
+  target_generation INTEGER,
+  operator_settings_generation INTEGER,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(actor_id, endpoint, key)
+);
+
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,
   created_at INTEGER NOT NULL,
@@ -221,10 +283,24 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
         )
-    elif int(row[0]) != SCHEMA_VERSION:
+    elif int(row[0]) > SCHEMA_VERSION:
         raise sqlite3.DatabaseError(
             f"admin_store schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
+    elif int(row[0]) < SCHEMA_VERSION:
+        # All v2 DDL is idempotent and was just applied above.  Keep this
+        # forward-only migration intentionally small: old databases get the
+        # five operation tables, while new databases are born at v2.
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    # A database created before registry generations existed may already have
+    # the document.  Seed its first server-owned value during migration rather
+    # than exposing a synthetic zero until the next write.
+    conn.execute(
+        "INSERT OR IGNORE INTO operator_settings_generations("
+        "setting_key, operator_settings_generation) "
+        "SELECT 'service_registry', 1 WHERE EXISTS ("
+        "SELECT 1 FROM operator_settings WHERE key='service_registry')"
+    )
     conn.commit()
 
 
@@ -1553,6 +1629,10 @@ def put_operator_setting(
         raise ValueError("operator setting key is required")
     if not isinstance(value, Mapping):
         raise ValueError("operator setting value must be a mapping")
+    # Compatibility for historical test/bootstrap callers.  Production
+    # registry writers use write_service_registry, which advances the CAS.
+    if setting_key == "service_registry":
+        return write_service_registry(value, updated_by=updated_by, now=now, path=path)
     ts = _now() if now is None else int(now)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     with _conn(path) as conn:
@@ -1570,6 +1650,93 @@ def put_operator_setting(
             "SELECT * FROM operator_settings WHERE key = ?", (setting_key,)
         ).fetchone()
     return _operator_setting_row_to_dict(row)
+
+
+class OperatorSettingsGenerationConflict(ValueError):
+    """A registry document changed after the caller read its ETag."""
+
+
+def get_service_registry_with_generation(*, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Return the one active registry document and its server-owned CAS value."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT value_json, updated_at, updated_by FROM operator_settings WHERE key = 'service_registry'"
+        ).fetchone()
+        if row is None:
+            return None
+        generation = conn.execute(
+            "SELECT operator_settings_generation FROM operator_settings_generations "
+            "WHERE setting_key = 'service_registry'"
+        ).fetchone()
+    value = json.loads(row["value_json"])
+    return {
+        "key": "service_registry", "value": value, "updated_at": row["updated_at"],
+        "updated_by": row["updated_by"],
+        "operator_settings_generation": int(generation[0]) if generation else 0,
+    }
+
+
+def write_service_registry(
+    value: Mapping[str, Any], *, updated_by: str | None = None,
+    expected_generation: int | None = None, now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Atomically write the active registry and advance its only CAS counter.
+
+    This is the sole production writer for ``operator.service_registry``.  It
+    intentionally owns no artifact/reload effect: those occur after commit.
+    """
+    if not isinstance(value, Mapping):
+        raise ValueError("service registry value must be a mapping")
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        next_generation = write_service_registry_in_transaction(
+            conn, value, updated_by=updated_by,
+            expected_generation=expected_generation, now=ts,
+        )
+        conn.commit()
+    return {"key": "service_registry", "value": dict(value), "updated_at": ts,
+            "updated_by": updated_by, "operator_settings_generation": next_generation}
+
+
+def write_service_registry_in_transaction(
+    conn: sqlite3.Connection,
+    value: Mapping[str, Any],
+    *,
+    updated_by: str | None,
+    expected_generation: int | None,
+    now: int,
+) -> int:
+    """Write the registry and increment its generation in a caller-owned transaction.
+
+    Lifecycle cutover/deactivation need their pointer, audit, and registry
+    update to commit together.  This is deliberately the only internal escape
+    hatch: callers must already hold ``BEGIN IMMEDIATE``.
+    """
+    generation_row = conn.execute(
+        "SELECT operator_settings_generation FROM operator_settings_generations "
+        "WHERE setting_key = 'service_registry'"
+    ).fetchone()
+    generation = int(generation_row[0]) if generation_row else 0
+    if expected_generation is not None and generation != expected_generation:
+        raise OperatorSettingsGenerationConflict(
+            f"operator settings generation mismatch: current={generation}"
+        )
+    next_generation = generation + 1
+    payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
+    conn.execute(
+        "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, "
+        "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+        ("service_registry", payload, now, updated_by),
+    )
+    conn.execute(
+        "INSERT INTO operator_settings_generations(setting_key, operator_settings_generation) VALUES (?, ?) "
+        "ON CONFLICT(setting_key) DO UPDATE SET operator_settings_generation=excluded.operator_settings_generation",
+        ("service_registry", next_generation),
+    )
+    return next_generation
 
 
 def get_operator_setting(
@@ -1654,6 +1821,10 @@ __all__ = [
     "list_runtime_profile_mappings",
     "resolve_runtime_profile_mapping",
     "put_operator_setting",
+    "get_service_registry_with_generation",
+    "write_service_registry",
+    "write_service_registry_in_transaction",
+    "OperatorSettingsGenerationConflict",
     "get_operator_setting",
     "list_operator_settings",
     "record_audit",

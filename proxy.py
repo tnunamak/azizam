@@ -66,6 +66,7 @@ from gateway import (
     video_media_job_http,
     video_media_jobs,
 )
+from gateway import operation_activation
 from gateway.compaction_safety import (
     AdmissionError as CompactionAdmissionError,
     CompactionContract,
@@ -310,6 +311,7 @@ def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, A
             path=ADMIN_DB_PATH,
             actor="startup",
         )
+        operation_activation.recover(path=ADMIN_DB_PATH, state_dir=ADMIN_DB_PATH.parent)
         _write_litellm_config_artifact(registry)
         return service_registry.apply_service_registry_to_config(raw_config, registry)
     except Exception as e:  # noqa: BLE001
@@ -908,6 +910,21 @@ def reload_runtime_config() -> dict:
     updates = _derive_backend_constants(new_cfg)
     for name, value in updates.items():
         _g[name] = value
+
+    # This is an observation after the in-process config swap, never a
+    # readiness claim for another process or a sidecar.
+    try:
+        for target in operation_activation.list_targets(path=ADMIN_DB_PATH):
+            generation = target.get("effective_operator_settings_generation")
+            if isinstance(generation, int):
+                operation_activation.acknowledge_local_reload(
+                    path=ADMIN_DB_PATH,
+                    service_id=str(target["service_id"]),
+                    alias_id=str(target["alias_id"]),
+                    generation=generation,
+                )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] operation reload acknowledgement unavailable: {exc}", flush=True)
 
     print(
         f"[proxy] runtime config reloaded — "
@@ -9803,6 +9820,10 @@ app.include_router(
         known_model_names_getter=lambda: litellm_known_model_names(
             ADMIN_STORE.get_service_registry()
         ),
+        operation_preparer=lambda body, service_id, alias_id, runtime_config: _prepare_operation_candidate_body(
+            body, service_id, alias_id, runtime_config
+        ),
+        operation_reloader=reload_runtime_config,
     )
 )
 
@@ -18989,6 +19010,7 @@ def _per_backend_transform_specs(
     service_id: str,
     *,
     model_name: str = "",
+    runtime_config: Mapping[str, Any] | None = None,
 ) -> list[str | dict[str, Any]]:
     """Return service then exact-model transform specs from backend config data.
 
@@ -18999,7 +19021,8 @@ def _per_backend_transform_specs(
     """
     if not service_id:
         return []
-    bcfg = (config.get("backends") or {}).get(service_id) or {}
+    source = runtime_config if runtime_config is not None else config
+    bcfg = (source.get("backends") or {}).get(service_id) or {}
     if not isinstance(bcfg, Mapping):
         return []
     specs = _transform_specs(bcfg.get("transforms"))
@@ -19082,6 +19105,7 @@ def _resolve_request_target(
     service_id: str | None = None,
     required: bool = False,
     aliases_only: bool = False,
+    runtime_config: Mapping[str, Any] | None = None,
 ) -> ResolvedRequestTarget | None:
     """Resolve a public model to one service-scoped base and alias overlay.
 
@@ -19090,7 +19114,8 @@ def _resolve_request_target(
     """
     if not isinstance(requested_model, str) or not requested_model:
         return None
-    backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
+    source = runtime_config if runtime_config is not None else config
+    backends = source.get("backends") if isinstance(source.get("backends"), Mapping) else {}
     candidates = [service_id] if service_id else list(backends)
     normalized_requested = normalize_model_id(requested_model)
     matches: list[tuple[str, Mapping[str, Any], Mapping[str, Any]]] = []
@@ -19180,12 +19205,13 @@ def _prepare_resolved_openai_request(
     request_path: str,
     target: ResolvedRequestTarget | None,
     execution_service_id: str = "",
+    runtime_config: Mapping[str, Any] | None = None,
 ) -> tuple[Response | None, Mapping[str, Any], bytes | None]:
     """Apply the one request-policy pipeline, then generic reasoning handling."""
     prepared = copy.deepcopy(dict(body))
     if target is None:
         return None, prepared, None
-    specs = _per_backend_transform_specs(execution_service_id)
+    specs = _per_backend_transform_specs(execution_service_id, runtime_config=runtime_config)
     specs.extend(target.base_transform_specs)
     specs.extend(target.alias_overlay_specs)
     if specs:
@@ -19203,7 +19229,8 @@ def _prepare_resolved_openai_request(
             ), prepared, None
         prepared["reasoning_effort"] = target.operation_contract.reasoning_effort_default
     if request_path == "/v1/chat/completions":
-        reasoning_error = _ReasoningEffortTransform(config.get("reasoning") or {}).apply(prepared)
+        source = runtime_config if runtime_config is not None else config
+        reasoning_error = _ReasoningEffortTransform(source.get("reasoning") or {}).apply(prepared)
         if reasoning_error:
             return Response(
                 content=json.dumps({"error": {
@@ -19227,6 +19254,23 @@ def _prepare_resolved_openai_request(
             ), prepared, None
         return None, prepared, admitted_bytes
     return None, prepared, None
+
+
+def _prepare_operation_candidate_body(
+    body: Mapping[str, Any], service_id: str, alias_id: str,
+    runtime_config: Mapping[str, Any],
+) -> bytes:
+    """Pure reuse seam for admin validation; it never reads or mutates globals."""
+    target = _resolve_request_target(
+        alias_id, service_id=service_id, required=True, runtime_config=runtime_config
+    )
+    error, _prepared, admitted = _prepare_resolved_openai_request(
+        body, request_path="/v1/chat/completions", target=target,
+        execution_service_id=service_id, runtime_config=runtime_config,
+    )
+    if error is not None or admitted is None:
+        raise ValueError("operation request preparation rejected candidate")
+    return admitted
 
 
 def _resolved_operation_requires_current_loaded(model: Any) -> bool:

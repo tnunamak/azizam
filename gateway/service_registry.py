@@ -62,8 +62,7 @@ def ensure_service_registry(
     if record is not None and isinstance(record.get("value"), Mapping):
         registry = backfill_seed_catalog_metadata(record["value"], proxy_config=proxy_config)
         if stable_hash(registry) != stable_hash(record["value"]):
-            admin_store.put_operator_setting(
-                SERVICE_REGISTRY_SETTING_KEY,
+            admin_store.write_service_registry(
                 registry,
                 updated_by=actor,
                 path=path,
@@ -83,8 +82,7 @@ def ensure_service_registry(
         return registry
 
     registry = build_service_registry_seed(proxy_config)
-    admin_store.put_operator_setting(
-        SERVICE_REGISTRY_SETTING_KEY,
+    admin_store.write_service_registry(
         registry,
         updated_by=actor,
         path=path,

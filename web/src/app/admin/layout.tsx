@@ -59,6 +59,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Profiles", href: "/admin/profiles", Icon: ProfilesIcon },
   { label: "Users", href: "/admin/users", Icon: UsersIcon },
   { label: "Audit", href: "/admin/audit", Icon: AuditIcon },
+  { label: "Operation targets", href: "/admin/operation-targets", Icon: SettingsIcon },
   { label: "Settings", href: "/admin/settings", Icon: SettingsIcon },
 ];
 

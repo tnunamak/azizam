@@ -736,8 +736,7 @@ class AdminSQLiteStore:
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
         value = service_registry.normalize_service_registry(data)
-        record = admin_store.put_operator_setting(
-            SERVICE_REGISTRY_SETTING_KEY,
+        record = admin_store.write_service_registry(
             value,
             updated_by=actor.subject,
             path=self.path,
@@ -793,8 +792,7 @@ class AdminSQLiteStore:
         extra: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         value = service_registry.normalize_service_registry(registry)
-        record = admin_store.put_operator_setting(
-            SERVICE_REGISTRY_SETTING_KEY,
+        record = admin_store.write_service_registry(
             value,
             updated_by=actor.subject,
             path=self.path,
