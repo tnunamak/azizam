@@ -457,29 +457,40 @@ def test_named_litellm_refuses_operation_before_receipt_or_activation():
 def test_responses_loopback_routes_logical_target_to_one_owned_admission():
     admissions: list[bytes] = []
     config = {"backends": {"service": {
-        "deployment_generation": "g1", "registry_generation": "registry-g1",
+        "model_policy_schema_version": 1, "deployment_generation": "g1", "registry_generation": "registry-g1",
         "controlled_deployment_evidence": _service_evidence(),
         "models": [{"id": "base"}, {"id": "operator-target", "base_model_id": "base", "compaction_safety": _record()}],
     }}}
 
-    async def current_forward(_request, **kwargs):
-        target = proxy._resolve_request_target("operator-target", required=True, aliases_only=True)
-        error, _prepared, encoded = proxy._prepare_resolved_openai_request(
-            kwargs["body_json"] | {"model": "physical-model"},
-            request_path="/v1/chat/completions", target=target, execution_service_id="",
-        )
-        assert error is None and encoded is not None
-        admissions.append(encoded)
-        return proxy.Response(content=json.dumps({"id": "chat", "object": "chat.completion", "model": "physical-model", "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]}), media_type="application/json")
+    transported=[]
+    class Span:
+        def __init__(self,*a,**k): self.token=SimpleNamespace(cancelled=False)
+        async def dispatch(self, req):
+            transported.append(req.body)
+            class Client:
+                async def aclose(self): pass
+            class Response:
+                status_code=200
+                headers={"content-type":"application/json"}
+                async def aclose(self): pass
+            return Client(), Response()
+        async def read_body(self,*a): return b'{"id":"chat","object":"chat.completion","model":"physical-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}'
+        async def aclose(self): pass
+        async def stop_watcher_for_streaming_handoff(self): pass
+    async def current_target(*a,**k): return proxy.CurrentLoadedLlmTarget("service","http://unit.test","physical-model"),None
+    real=proxy.prepare_admitted_body
+    def counted(body,contract):
+        result=real(body,contract); admissions.append(result[1]); return result
 
     with patch.object(proxy, "config", config), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
         proxy.httpx, "AsyncClient", _InProcessLoopbackClient
-    ), patch.object(proxy, "_forward_current_loaded_openai_request", current_forward):
+    ), patch.object(proxy,"_current_loaded_llm_target",current_target),patch.object(proxy,"_OuterCancellationSpan",Span),patch.object(proxy,"prepare_admitted_body",counted),patch.object(proxy.receipt_store,"begin",lambda *_:None),patch.object(proxy.receipt_store,"finalize",lambda *_:True):
         response = TestClient(proxy.app).post("/v1/responses", json={
             "model": "operator-target", "instructions": "summarize", "input": "history", "store": False,
         })
     assert response.status_code == 200, response.text
     assert len(admissions) == 1
+    assert transported[0] is admissions[0]
 
 
 def test_runtime_reload_drops_stale_service_evidence_before_resolution():
