@@ -19824,6 +19824,13 @@ async def _forward_current_loaded_openai_request(
         )
         response.headers["Retry-After"] = "10"
         return response
+    except asyncio.CancelledError:
+        try:
+            await cancellation_span.aclose()
+        except BaseException:
+            pass
+        _finish_current_loaded_receipt(terminal_reason="cancelled", status="cancelled")
+        raise
     except BaseException:
         await cancellation_span.aclose()
         _finish_current_loaded_receipt(terminal_reason="internal_error", status="failed")
@@ -21254,49 +21261,52 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         native_receipt.finish(status)
         _finalize_route_receipt(native_receipt, route="direct native")
 
-    target_service_for_admission = backend_for_host(target_host)
-    if target_service_for_admission:
-        service_response = _service_availability_response(
-            target_service_for_admission,
-            service_label=target_service_for_admission,
-        )
-        if service_response is not None:
-            _finish_native_receipt(terminal_reason="failed", status="failed")
-            return service_response
-
-    if target_host == TABBY_HOST:
-        # Backend-native catch-all paths are service-specific. They never fall
-        # through to another backend because native surfaces are not
-        # interchangeable. The gateway does not revive backends — return 503 and
-        # let the operator's supervisor bring it back.
-        if not await check_service_health(target_service):
-            _finish_native_receipt(terminal_reason="failed", status="failed")
-            return Response(
-                content=json.dumps({
-                    "error": {
-                        "message": (
-                            f"Configured backend '{target_service}' is unavailable for this catch-all route. "
-                            "Retry after Retry-After."
-                        ),
-                        "type": "service_unavailable",
-                        "code": "backend_unavailable",
-                    }
-                }),
-                status_code=503,
-                media_type="application/json",
-                headers={"Retry-After": "10"},
+    try:
+        target_service_for_admission = backend_for_host(target_host)
+        if target_service_for_admission:
+            service_response = _service_availability_response(
+                target_service_for_admission,
+                service_label=target_service_for_admission,
             )
-
-    # Auto-load model if needed (TabbyAPI only)
-    if target_host == TABBY_HOST and any(request_path.startswith(p) for p in MODEL_REQUIRED_PATHS):
-        if not await is_model_loaded():
-            if not await load_model():
+            if service_response is not None:
+                _finish_native_receipt(terminal_reason="failed", status="failed")
+                return service_response
+        if target_host == TABBY_HOST:
+            # Backend-native catch-all paths are service-specific. They never fall
+            # through to another backend because native surfaces are not
+            # interchangeable. The gateway does not revive backends — return 503 and
+            # let the operator's supervisor bring it back.
+            if not await check_service_health(target_service):
                 _finish_native_receipt(terminal_reason="failed", status="failed")
                 return Response(
-                    content=json.dumps({"detail": "Failed to load model"}),
+                    content=json.dumps({
+                        "error": {
+                            "message": (
+                                f"Configured backend '{target_service}' is unavailable for this catch-all route. "
+                                "Retry after Retry-After."
+                            ),
+                            "type": "service_unavailable",
+                            "code": "backend_unavailable",
+                        }
+                    }),
                     status_code=503,
-                    media_type="application/json"
+                    media_type="application/json",
+                    headers={"Retry-After": "10"},
                 )
+
+        # Auto-load model if needed (TabbyAPI only)
+        if target_host == TABBY_HOST and any(request_path.startswith(p) for p in MODEL_REQUIRED_PATHS):
+            if not await is_model_loaded():
+                if not await load_model():
+                    _finish_native_receipt(terminal_reason="failed", status="failed")
+                    return Response(
+                        content=json.dumps({"detail": "Failed to load model"}),
+                        status_code=503,
+                        media_type="application/json"
+                    )
+    except asyncio.CancelledError:
+        _finish_native_receipt(terminal_reason="cancelled", status="cancelled")
+        raise
 
     # Forward to target backend. Strip our own ?api_key= before forwarding so the
     # gateway credential never reaches the backend (or its access logs); all other

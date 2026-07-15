@@ -111,6 +111,39 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
         self.assertEqual(finalized, began)
         self.assertEqual(finalized[0].status, "failed")
 
+    async def test_current_dispatch_cancellation_finalizes_cancelled_and_reraises(self) -> None:
+        began, finalized = [], []
+        entered = asyncio.Event()
+
+        async def delayed_dispatch(_span, _request):
+            entered.set()
+            await asyncio.Future()
+
+        logical = SimpleNamespace(logical_service_id="current", base_model_id="current")
+        target = proxy.CurrentLoadedLlmTarget("local", "http://upstream.test", "loaded.gguf")
+        with patch.object(proxy, "_resolve_request_target", return_value=logical), patch.object(
+            proxy, "_model_policy_schema_error", return_value=None
+        ), patch.object(proxy, "_current_loaded_llm_target", AsyncMock(return_value=(target, None))), patch.object(
+            proxy, "_prepare_resolved_openai_request", return_value=(None, {"model": "current", "messages": []})
+        ), patch.object(proxy, "prepare_downstream_headers", return_value={}), patch.object(
+            proxy._OuterCancellationSpan, "dispatch", delayed_dispatch
+        ), patch.object(proxy.receipt_store, "begin", side_effect=lambda r: began.append(r)), patch.object(
+            proxy.receipt_store, "finalize", side_effect=lambda r: finalized.append(r) or True
+        ):
+            task = asyncio.create_task(proxy._forward_current_loaded_openai_request(
+                _request("/v1/chat/completions", {"model": "current", "messages": []}),
+                request_path="/v1/chat/completions", auth_context=proxy.NO_AUTH_CONTEXT,
+                body_json={"model": "current", "messages": []},
+            ))
+            await asyncio.wait_for(entered.wait(), 1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        self.assertEqual(finalized, began)
+        self.assertEqual(finalized[0].status, "cancelled")
+        self.assertEqual(finalized[0].metadata["terminal_reason"], "cancelled")
+
     async def test_direct_native_begins_before_health_effect_and_finishes_failure(self) -> None:
         began, finalized = [], []
 
@@ -135,3 +168,62 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(finalized, began)
         self.assertEqual(finalized[0].status, "failed")
+
+    async def test_direct_native_health_cancellation_finalizes_cancelled_and_reraises(self) -> None:
+        began, finalized = [], []
+        entered = asyncio.Event()
+
+        async def delayed_health(_backend):
+            entered.set()
+            await asyncio.Future()
+
+        with patch.object(proxy, "authenticate_request", return_value=proxy.NO_AUTH_CONTEXT), patch.object(
+            proxy, "_path_token_from_request", return_value=None
+        ), patch.object(proxy, "LITELLM_BODY_EXECUTION_PATHS", frozenset()), patch.object(
+            proxy, "MODEL_REQUIRED_PATHS", frozenset({"/v1/chat/completions"})
+        ), patch.object(proxy, "backend_for_host", return_value="test"), patch.object(
+            proxy, "_service_availability_response", return_value=None
+        ), patch.object(proxy, "check_service_health", delayed_health), patch.object(
+            proxy.receipt_store, "begin", side_effect=lambda r: began.append(r)
+        ), patch.object(proxy.receipt_store, "finalize", side_effect=lambda r: finalized.append(r) or True):
+            task = asyncio.create_task(proxy.proxy_request(
+                _request("/v1/chat/completions", {"model": "native", "messages": []}),
+                "v1/chat/completions", mapped_route=True,
+            ))
+            await asyncio.wait_for(entered.wait(), 1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        self.assertEqual(finalized, began)
+        self.assertEqual(finalized[0].status, "cancelled")
+
+    async def test_direct_native_autoload_cancellation_finalizes_cancelled_and_reraises(self) -> None:
+        began, finalized = [], []
+        entered = asyncio.Event()
+
+        async def delayed_loaded():
+            entered.set()
+            await asyncio.Future()
+
+        with patch.object(proxy, "authenticate_request", return_value=proxy.NO_AUTH_CONTEXT), patch.object(
+            proxy, "_path_token_from_request", return_value=None
+        ), patch.object(proxy, "LITELLM_BODY_EXECUTION_PATHS", frozenset()), patch.object(
+            proxy, "MODEL_REQUIRED_PATHS", frozenset({"/v1/chat/completions"})
+        ), patch.object(proxy, "backend_for_host", return_value="test"), patch.object(
+            proxy, "_service_availability_response", return_value=None
+        ), patch.object(proxy, "check_service_health", AsyncMock(return_value=True)), patch.object(
+            proxy, "is_model_loaded", delayed_loaded
+        ), patch.object(proxy.receipt_store, "begin", side_effect=lambda r: began.append(r)), patch.object(
+            proxy.receipt_store, "finalize", side_effect=lambda r: finalized.append(r) or True):
+            task = asyncio.create_task(proxy.proxy_request(
+                _request("/v1/chat/completions", {"model": "native", "messages": []}),
+                "v1/chat/completions", mapped_route=True,
+            ))
+            await asyncio.wait_for(entered.wait(), 1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        self.assertEqual(finalized, began)
+        self.assertEqual(finalized[0].status, "cancelled")
