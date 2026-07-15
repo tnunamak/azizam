@@ -19546,253 +19546,221 @@ async def _forward_current_loaded_openai_request(
         record_request_shape_stage(receipt.metadata, "internal_ingress", body_json)
     else:
         record_request_shape_stage(receipt.metadata, "accepted", body_for_backend)
-    _begin_route_receipt(receipt, route="current-loaded")
+    terminal_body = body_for_backend
 
-    def _finish_current_loaded_receipt(*, terminal_reason: str, status: str, body: Mapping[str, Any] | None = None) -> None:
-        receipt.metadata["terminal_reason"] = terminal_reason
+    def _record_current_loaded_terminal(_receipt: RouteReceipt, terminal_reason: str) -> None:
         record_request_shape_stage(
-            receipt.metadata, "terminal", body if body is not None else body_for_backend,
+            receipt.metadata, "terminal", terminal_body,
             extra={"terminal_reason": terminal_reason},
         )
-        receipt.finish(status)
-        _finalize_route_receipt(receipt, route="current-loaded")
-
-    try:
+    owner = ReceiptLifecycleOwner(receipt, on_terminal=_record_current_loaded_terminal)
+    async with owner:
         target, target_error = await _current_loaded_llm_target(
             auth_context,
             enforce_gateway_policy=enforce_gateway_policy,
         )
-    except asyncio.CancelledError:
-        _finish_current_loaded_receipt(terminal_reason="cancelled", status="cancelled")
-        raise
-    except BaseException:
-        _finish_current_loaded_receipt(terminal_reason="internal_error", status="failed")
-        raise
-    if target_error is not None:
-        _finish_current_loaded_receipt(terminal_reason="failed", status="failed")
-        return target_error
-    assert target is not None
+        if target_error is not None:
+            owner.report(status="failed", reason="failed")
+            return target_error
+        assert target is not None
     # These are post-acceptance resolution facts.  finalize() merges them into
     # the same in-progress row without replacing immutable acceptance facts.
-    receipt.backend = target.backend
-    receipt.resolved_model = target.model
+        receipt.backend = target.backend
+        receipt.resolved_model = target.model
 
-    body = copy.deepcopy(dict(body_for_backend))
-    body.pop("_vf_requested_model", None)
-    policy_error, body = _prepare_resolved_openai_request(
-        body,
-        request_path=request_path,
-        target=logical_target,
-        execution_service_id=target.backend,
-    )
-    if policy_error is not None:
-        _finish_current_loaded_receipt(terminal_reason="failed", status="failed", body=body)
-        return policy_error
-    body["model"] = target.model
+        body = copy.deepcopy(dict(body_for_backend))
+        body.pop("_vf_requested_model", None)
+        policy_error, body = _prepare_resolved_openai_request(
+            body,
+            request_path=request_path,
+            target=logical_target,
+            execution_service_id=target.backend,
+        )
+        terminal_body = body
+        if policy_error is not None:
+            owner.report(status="failed", reason="failed")
+            return policy_error
+        body["model"] = target.model
 
-    query = _forward_query_without_client_api_key(request.url.query)
-    url = f"{target.host}{request_path}"
-    if query:
-        url = f"{url}?{query}"
+        query = _forward_query_without_client_api_key(request.url.query)
+        url = f"{target.host}{request_path}"
+        if query:
+            url = f"{url}?{query}"
 
-    headers = prepare_downstream_headers(
-        request.headers,
-        auth_context,
-        target.backend,
-        request_path,
-    )
-    headers.setdefault("content-type", "application/json")
-    headers.setdefault("accept", "application/json")
+        headers = prepare_downstream_headers(
+            request.headers,
+            auth_context,
+            target.backend,
+            request_path,
+        )
+        headers.setdefault("content-type", "application/json")
+        headers.setdefault("accept", "application/json")
 
-    execution_body = json.dumps(body).encode()
-    execution_request = LlmExecutionRequest(
-        method=request.method,
-        url=url,
-        headers=headers,
-        body=execution_body,
-        read_timeout=UPSTREAM_READ_TIMEOUT,
-    )
+        execution_body = json.dumps(body).encode()
+        execution_request = LlmExecutionRequest(
+            method=request.method,
+            url=url,
+            headers=headers,
+            body=execution_body,
+            read_timeout=UPSTREAM_READ_TIMEOUT,
+        )
 
-    record_request_shape_stage(
-        receipt.metadata, "outer_egress", body,
-        extra={"body_bytes": request_body_byte_count(execution_body)},
-    )
-
-    cancellation_span = _OuterCancellationSpan(
-        request_id or new_request_id(), receive=request.receive
-    )
-
-    try:
-        try:
-            client, resp = await cancellation_span.dispatch(execution_request)
-        except ClientDisconnectedBeforeHeaders:
-            await cancellation_span.aclose()
-            _finish_current_loaded_receipt(terminal_reason="cancelled", status="cancelled")
-            return Response(status_code=499)
-        content_type = resp.headers.get("content-type", "") or "application/json"
         record_request_shape_stage(
-            receipt.metadata, "backend_egress", body,
-            extra={"status_code": resp.status_code},
-        )
-        excluded = ("content-length", "transfer-encoding", "content-type")
-        response_headers = {
-            k: v for k, v in resp.headers.items() if k.lower() not in excluded
-        }
-        response_headers["X-AI-Gateway-LLM-Execution"] = "current-loaded"
-        response_headers["X-AI-Gateway-Backend"] = target.backend
-        response_headers["X-AI-Gateway-Resolved-Model"] = target.model
-
-        _tc_backend_hint = _toolcall_backend_hint(target.backend)
-        _tc_had_tools = (
-            request_path == "/v1/chat/completions"
-            and _request_had_tools(body)
+            receipt.metadata, "outer_egress", body,
+            extra={"body_bytes": request_body_byte_count(execution_body)},
         )
 
-        if "text/event-stream" in content_type:
-            _tc_detector = _ToolcallStreamDetector(
-                had_tools=_tc_had_tools,
-                backend_hint=_tc_backend_hint,
-            )
-            # Hand ASGI receive over to Starlette's own disconnect listener
-            # before it exists: this span's watcher must never run
-            # concurrently with StreamingResponse's receive loop.
-            await cancellation_span.stop_watcher_for_streaming_handoff()
+        cancellation_span = _OuterCancellationSpan(
+            request_id or new_request_id(), receive=request.receive
+        )
 
-            async def stream_response():
-                stream_error: BaseException | None = None
-                try:
-                    async for chunk in _tc_detector.wrap(
-                        iter_llm_response_bytes(
-                            client,
-                            resp,
-                            cancellation_token=cancellation_span.token,
-                            on_signal=cancellation_span._signal,
-                        )
-                    ):
-                        if request_path == "/v1/chat/completions":
-                            chunk = _normalize_chat_completion_sse_chunk(chunk)
-                        yield chunk
-                except asyncio.CancelledError:
-                    cancellation_span.mark_stream_cancelled()
-                    raise
-                except BaseException as exc:
-                    stream_error = exc
-                    raise
-                finally:
-                    _tc_advisory = _tc_detector.advisory()
-                    if _tc_advisory:
-                        import logging as _logging
-                        _logging.getLogger("gateway.toolcall").warning(
-                            "event=toolcall.unlifted backend=%s family=%s remediation=%r",
-                            _tc_backend_hint,
-                            _tc_detector.detected_family,
-                            _tc_advisory,
-                        )
-                    await resp.aclose()
-                    await client.aclose()
-                    await cancellation_span.aclose()
-                    was_cancelled = cancellation_span.token.cancelled
-                    _finish_current_loaded_receipt(
-                        terminal_reason=(
-                            "cancelled" if was_cancelled
-                            else "read_error" if stream_error is not None
-                            else "completed" if 200 <= resp.status_code < 400
-                            else "failed"
-                        ),
-                        status=(
-                            "cancelled" if was_cancelled
-                            else "failed" if stream_error is not None
-                            else "succeeded" if 200 <= resp.status_code < 400
-                            else "failed"
-                        ),
-                    )
+        try:
 
-            return StreamingResponse(
-                stream_response(),
-                status_code=resp.status_code,
-                headers=response_headers,
-                media_type=content_type,
-            )
-
-        content = await cancellation_span.read_body(client, resp)
-        was_cancelled = cancellation_span.token.cancelled
-        await cancellation_span.aclose()
-        if content is None:
-            _finish_current_loaded_receipt(
-                terminal_reason="cancelled" if was_cancelled else "disconnected",
-                status="cancelled",
-            )
-            return Response(status_code=499)
-        await close_llm_response(client, resp)
-        if "application/json" in content_type:
             try:
-                response_json = json.loads(content)
-                if isinstance(response_json, dict):
-                    if 200 <= resp.status_code < 300 and request_path == "/v1/chat/completions":
-                        _normalize_chat_completion_payload(response_json)
-                        _normalize_toolcall_args(response_json)
-                        _normalize_toolcall_finish_reason(response_json)
-                        # Per-backend response transforms (data-driven; see ENGINE_KNOWLEDGE_BOUNDARY.md).
-                        _resp_tx = _per_backend_transform_specs(target.backend)
-                        if _resp_tx:
-                            response_json = _run_response_pipeline(
-                                _resp_tx, response_json, _TransformContext(), _TRANSFORM_REGISTRY,
+                client, resp = await cancellation_span.dispatch(execution_request)
+            except ClientDisconnectedBeforeHeaders:
+                await cancellation_span.aclose()
+                owner.report(status="cancelled", reason="cancelled")
+                return Response(status_code=499)
+            content_type = resp.headers.get("content-type", "") or "application/json"
+            record_request_shape_stage(
+                receipt.metadata, "backend_egress", body,
+                extra={"status_code": resp.status_code},
+            )
+            excluded = ("content-length", "transfer-encoding", "content-type")
+            response_headers = {
+                k: v for k, v in resp.headers.items() if k.lower() not in excluded
+            }
+            response_headers["X-AI-Gateway-LLM-Execution"] = "current-loaded"
+            response_headers["X-AI-Gateway-Backend"] = target.backend
+            response_headers["X-AI-Gateway-Resolved-Model"] = target.model
+
+            _tc_backend_hint = _toolcall_backend_hint(target.backend)
+            _tc_had_tools = (
+                request_path == "/v1/chat/completions"
+                and _request_had_tools(body)
+            )
+
+            if "text/event-stream" in content_type:
+                _tc_detector = _ToolcallStreamDetector(
+                    had_tools=_tc_had_tools,
+                    backend_hint=_tc_backend_hint,
+                )
+                # Hand ASGI receive over to Starlette's own disconnect listener
+                # before it exists: this span's watcher must never run
+                # concurrently with StreamingResponse's receive loop.
+                await cancellation_span.stop_watcher_for_streaming_handoff()
+
+                async def stream_response():
+                    try:
+                        async for chunk in _tc_detector.wrap(
+                            iter_llm_response_bytes(
+                                client,
+                                resp,
+                                cancellation_token=cancellation_span.token,
+                                on_signal=cancellation_span._signal,
                             )
-                        _tc_family = _detect_unlifted_toolcalls(response_json, _tc_had_tools)
-                        if _tc_family:
-                            _tc_advisory = _toolcall_advisory_for_backend(_tc_backend_hint, _tc_family)
+                        ):
+                            if request_path == "/v1/chat/completions":
+                                chunk = _normalize_chat_completion_sse_chunk(chunk)
+                            yield chunk
+                    except asyncio.CancelledError:
+                        cancellation_span.mark_stream_cancelled()
+                        raise
+                    else:
+                        owner.report(
+                            status="succeeded" if 200 <= resp.status_code < 400 else "failed",
+                            reason="completed" if 200 <= resp.status_code < 400 else "failed",
+                        )
+                    finally:
+                        _tc_advisory = _tc_detector.advisory()
+                        if _tc_advisory:
                             import logging as _logging
                             _logging.getLogger("gateway.toolcall").warning(
                                 "event=toolcall.unlifted backend=%s family=%s remediation=%r",
                                 _tc_backend_hint,
-                                _tc_family,
+                                _tc_detector.detected_family,
                                 _tc_advisory,
                             )
-                            response_headers["x-gateway-toolcall-advisory"] = _tc_advisory
-                    content = json.dumps(response_json).encode()
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
-        _finish_current_loaded_receipt(
-            terminal_reason="completed" if 200 <= resp.status_code < 400 else "failed",
-            status="succeeded" if 200 <= resp.status_code < 400 else "failed",
-        )
-        return Response(
-            content=content,
-            status_code=resp.status_code,
-            headers=response_headers,
-            media_type=content_type,
-        )
-    except httpx.TimeoutException:
-        await cancellation_span.aclose()
-        _finish_current_loaded_receipt(terminal_reason="idle_timeout", status="failed")
-        return openai_error_response(
-            "Current loaded LLM request timed out.",
-            status_code=504,
-            error_type="api_error",
-            code="timeout",
-        )
-    except httpx.ConnectError:
-        await cancellation_span.aclose()
-        _finish_current_loaded_receipt(terminal_reason="connect_error", status="failed")
-        response = openai_error_response(
-            f"Active backend {target.backend!r} is unavailable.",
-            status_code=503,
-            error_type="service_unavailable",
-            code="backend_unavailable",
-        )
-        response.headers["Retry-After"] = "10"
-        return response
-    except asyncio.CancelledError:
-        try:
+                        await resp.aclose()
+                        await client.aclose()
+                        await cancellation_span.aclose()
+
+                return StreamingResponse(
+                    owner.handoff_stream(stream_response()),
+                    status_code=resp.status_code,
+                    headers=response_headers,
+                    media_type=content_type,
+                )
+
+            content = await cancellation_span.read_body(client, resp)
+            was_cancelled = cancellation_span.token.cancelled
             await cancellation_span.aclose()
-        except BaseException:
-            pass
-        _finish_current_loaded_receipt(terminal_reason="cancelled", status="cancelled")
-        raise
-    except BaseException:
-        await cancellation_span.aclose()
-        _finish_current_loaded_receipt(terminal_reason="internal_error", status="failed")
-        raise
+            if content is None:
+                owner.report(
+                    status="cancelled",
+                    reason="cancelled" if was_cancelled else "disconnected",
+                )
+                return Response(status_code=499)
+            await close_llm_response(client, resp)
+            if "application/json" in content_type:
+                try:
+                    response_json = json.loads(content)
+                    if isinstance(response_json, dict):
+                        if 200 <= resp.status_code < 300 and request_path == "/v1/chat/completions":
+                            _normalize_chat_completion_payload(response_json)
+                            _normalize_toolcall_args(response_json)
+                            _normalize_toolcall_finish_reason(response_json)
+                            # Per-backend response transforms (data-driven; see ENGINE_KNOWLEDGE_BOUNDARY.md).
+                            _resp_tx = _per_backend_transform_specs(target.backend)
+                            if _resp_tx:
+                                response_json = _run_response_pipeline(
+                                    _resp_tx, response_json, _TransformContext(), _TRANSFORM_REGISTRY,
+                                )
+                            _tc_family = _detect_unlifted_toolcalls(response_json, _tc_had_tools)
+                            if _tc_family:
+                                _tc_advisory = _toolcall_advisory_for_backend(_tc_backend_hint, _tc_family)
+                                import logging as _logging
+                                _logging.getLogger("gateway.toolcall").warning(
+                                    "event=toolcall.unlifted backend=%s family=%s remediation=%r",
+                                    _tc_backend_hint,
+                                    _tc_family,
+                                    _tc_advisory,
+                                )
+                                response_headers["x-gateway-toolcall-advisory"] = _tc_advisory
+                        content = json.dumps(response_json).encode()
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+            owner.report(
+                reason="completed" if 200 <= resp.status_code < 400 else "failed",
+                status="succeeded" if 200 <= resp.status_code < 400 else "failed",
+            )
+            return Response(
+                content=content,
+                status_code=resp.status_code,
+                headers=response_headers,
+                media_type=content_type,
+            )
+        except httpx.TimeoutException:
+            await cancellation_span.aclose()
+            owner.report(status="failed", reason="idle_timeout")
+            return openai_error_response(
+                "Current loaded LLM request timed out.",
+                status_code=504,
+                error_type="api_error",
+                code="timeout",
+            )
+        except httpx.ConnectError:
+            await cancellation_span.aclose()
+            owner.report(status="failed", reason="connect_error")
+            response = openai_error_response(
+                f"Active backend {target.backend!r} is unavailable.",
+                status_code=503,
+                error_type="service_unavailable",
+                code="backend_unavailable",
+            )
+            response.headers["Retry-After"] = "10"
+            return response
 
 
 async def _forward_litellm_proxy_request(
@@ -21161,20 +21129,20 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
     if native_receipt is not None:
         native_receipt.metadata.update({"execution_backend": "native"})
         record_request_shape_stage(native_receipt.metadata, "accepted", _native_shape_body)
-        _begin_route_receipt(native_receipt, route="direct native")
 
-    def _finish_native_receipt(*, terminal_reason: str, status: str) -> None:
-        if native_receipt is None:
-            return
-        native_receipt.metadata["terminal_reason"] = terminal_reason
+    def _record_native_terminal(_receipt: RouteReceipt, terminal_reason: str) -> None:
+        assert native_receipt is not None
         record_request_shape_stage(
             native_receipt.metadata, "terminal", _native_shape_body,
             extra={"terminal_reason": terminal_reason},
         )
-        native_receipt.finish(status)
-        _finalize_route_receipt(native_receipt, route="direct native")
+    owner = (
+        ReceiptLifecycleOwner(native_receipt, on_terminal=_record_native_terminal)
+        if native_receipt is not None else None
+    )
 
-    try:
+    async with (owner or contextlib.nullcontext()):
+
         target_service_for_admission = backend_for_host(target_host)
         if target_service_for_admission:
             service_response = _service_availability_response(
@@ -21182,7 +21150,8 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                 service_label=target_service_for_admission,
             )
             if service_response is not None:
-                _finish_native_receipt(terminal_reason="failed", status="failed")
+                if owner is not None:
+                    owner.report(status="failed", reason="failed")
                 return service_response
         if target_host == TABBY_HOST:
             # Backend-native catch-all paths are service-specific. They never fall
@@ -21190,7 +21159,8 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             # interchangeable. The gateway does not revive backends — return 503 and
             # let the operator's supervisor bring it back.
             if not await check_service_health(target_service):
-                _finish_native_receipt(terminal_reason="failed", status="failed")
+                if owner is not None:
+                    owner.report(status="failed", reason="failed")
                 return Response(
                     content=json.dumps({
                         "error": {
@@ -21211,194 +21181,180 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
         if target_host == TABBY_HOST and any(request_path.startswith(p) for p in MODEL_REQUIRED_PATHS):
             if not await is_model_loaded():
                 if not await load_model():
-                    _finish_native_receipt(terminal_reason="failed", status="failed")
+                    if owner is not None:
+                        owner.report(status="failed", reason="failed")
                     return Response(
                         content=json.dumps({"detail": "Failed to load model"}),
                         status_code=503,
                         media_type="application/json"
                     )
-    except asyncio.CancelledError:
-        _finish_native_receipt(terminal_reason="cancelled", status="cancelled")
-        raise
+        # Forward to target backend. Strip our own ?api_key= before forwarding so the
+        # gateway credential never reaches the backend (or its access logs); all other
+        # query params are preserved.
+        url = f"{target_host}/{path}"
+        if request.url.query:
+            _fwd_qs = [
+                (k, v) for k, v in parse_qsl(request.url.query, keep_blank_values=True)
+                if k != "api_key"
+            ]
+            if _fwd_qs:
+                url += f"?{urlencode(_fwd_qs)}"
 
-    # Forward to target backend. Strip our own ?api_key= before forwarding so the
-    # gateway credential never reaches the backend (or its access logs); all other
-    # query params are preserved.
-    url = f"{target_host}/{path}"
-    if request.url.query:
-        _fwd_qs = [
-            (k, v) for k, v in parse_qsl(request.url.query, keep_blank_values=True)
-            if k != "api_key"
-        ]
-        if _fwd_qs:
-            url += f"?{urlencode(_fwd_qs)}"
-
-    body = body_peek  # Already read above for model detection
-    # backend_for_host resolves known hosts; for an unknown host (shouldn't
-    # happen given the registry-derived target above) we fall back to the
-    # highest-priority chat backend id rather than a bare literal.
-    target_service = backend_for_host(target_host) or _highest_priority_chat_backend() or "kobold"
-    headers = prepare_downstream_headers(
-        request.headers,
-        auth_context,
-        target_service,
-        request_path,
-    )
-
-    # Staged request-shape observability, scoped to the chat/completions
-    # paths this catch-all also serves (MODEL_REQUIRED_PATHS) — the rest of
-    # this route forwards arbitrary non-LLM passthrough (health checks,
-    # TTS, ...) that request_shape_fields cannot meaningfully describe, and
-    # a receipt for those adds parallel bookkeeping without a matching
-    # observability contract. ``None`` (parse failure, or a path this
-    # doesn't apply to) means the receipt calls below become no-ops.
-    # ``native_receipt`` was begun above, before health/autoload I/O.
-    if native_receipt is not None:
-        native_receipt.metadata.update({"execution_backend": "native"})
-        record_request_shape_stage(
-            native_receipt.metadata, "outer_egress", _native_shape_body,
-            extra={"body_bytes": request_body_byte_count(body)},
+        body = body_peek  # Already read above for model detection
+        # backend_for_host resolves known hosts; for an unknown host (shouldn't
+        # happen given the registry-derived target above) we fall back to the
+        # highest-priority chat backend id rather than a bare literal.
+        target_service = backend_for_host(target_host) or _highest_priority_chat_backend() or "kobold"
+        headers = prepare_downstream_headers(
+            request.headers,
+            auth_context,
+            target_service,
+            request_path,
         )
 
-    # Pre-header disconnect coverage: this route has no LiteLLM/internal hop
-    # behind it (native_passthrough talks straight to the backend), so it
-    # needs the local ASGI disconnect watcher only — no cross-hop
-    # cancellation registry. Built before dispatch so a client abort during
-    # connect/header-wait stops the backend request instead of leaving it
-    # running unobserved (the gap this route previously had).
-    native_disconnect_watcher = RequestDisconnectWatcher(request.receive)
-    try:
-        try:
-            # connect tight (local backend should accept instantly), read generous
-            # (covers slow prompt-processing on reasoning/vision), write tight
-            # (request bodies are small even with base64 images), no pool budget
-            # (fresh client per request — no shared pool to wait on).
-            execution_request = LlmExecutionRequest(
-                method=request.method,
-                url=url,
-                headers=headers,
-                body=body,
-                read_timeout=UPSTREAM_READ_TIMEOUT,
+        # Staged request-shape observability, scoped to the chat/completions
+        # paths this catch-all also serves (MODEL_REQUIRED_PATHS) — the rest of
+        # this route forwards arbitrary non-LLM passthrough (health checks,
+        # TTS, ...) that request_shape_fields cannot meaningfully describe, and
+        # a receipt for those adds parallel bookkeeping without a matching
+        # observability contract. ``None`` (parse failure, or a path this
+        # doesn't apply to) means the receipt calls below become no-ops.
+        # ``native_receipt`` was begun above, before health/autoload I/O.
+        if native_receipt is not None:
+            native_receipt.metadata.update({"execution_backend": "native"})
+            record_request_shape_stage(
+                native_receipt.metadata, "outer_egress", _native_shape_body,
+                extra={"body_bytes": request_body_byte_count(body)},
             )
+
+        # Pre-header disconnect coverage: this route has no LiteLLM/internal hop
+        # behind it (native_passthrough talks straight to the backend), so it
+        # needs the local ASGI disconnect watcher only — no cross-hop
+        # cancellation registry. Built before dispatch so a client abort during
+        # connect/header-wait stops the backend request instead of leaving it
+        # running unobserved (the gap this route previously had).
+        native_disconnect_watcher = RequestDisconnectWatcher(request.receive)
+        try:
             try:
-                client, resp = await send_llm_execution_request(
-                    execution_request, disconnect_watcher=native_disconnect_watcher
+                # connect tight (local backend should accept instantly), read generous
+                # (covers slow prompt-processing on reasoning/vision), write tight
+                # (request bodies are small even with base64 images), no pool budget
+                # (fresh client per request — no shared pool to wait on).
+                execution_request = LlmExecutionRequest(
+                    method=request.method,
+                    url=url,
+                    headers=headers,
+                    body=body,
+                    read_timeout=UPSTREAM_READ_TIMEOUT,
                 )
-            except ClientDisconnectedBeforeHeaders:
-                _finish_native_receipt(terminal_reason="cancelled", status="cancelled")
-                return Response(status_code=499)
+                try:
+                    client, resp = await send_llm_execution_request(
+                        execution_request, disconnect_watcher=native_disconnect_watcher
+                    )
+                except ClientDisconnectedBeforeHeaders:
+                    if owner is not None:
+                        owner.report(status="cancelled", reason="cancelled")
+                    return Response(status_code=499)
 
-            content_type = resp.headers.get("content-type", "") or "application/json"
-            excluded = ('content-length', 'transfer-encoding', 'content-type')
-            response_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
-            if native_receipt is not None:
-                record_request_shape_stage(
-                    native_receipt.metadata, "backend_egress", _native_shape_body,
-                    extra={"status_code": resp.status_code},
+                content_type = resp.headers.get("content-type", "") or "application/json"
+                excluded = ('content-length', 'transfer-encoding', 'content-type')
+                response_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
+                if native_receipt is not None:
+                    record_request_shape_stage(
+                        native_receipt.metadata, "backend_egress", _native_shape_body,
+                        extra={"status_code": resp.status_code},
+                    )
+                if "text/event-stream" in content_type:
+                    # Hand ASGI receive over to Starlette's own disconnect
+                    # listener before it exists: this watcher must never run
+                    # concurrently with StreamingResponse's receive loop.
+                    await native_disconnect_watcher.aclose()
+
+                    async def stream_response():
+                        try:
+                            async for chunk in iter_llm_response_bytes(
+                                client,
+                                resp,
+                            ):
+                                yield chunk
+                        finally:
+                            await resp.aclose()
+                            await client.aclose()
+                        if owner is not None:
+                            owner.report(
+                                status="succeeded" if 200 <= resp.status_code < 400 else "failed",
+                                reason="completed" if 200 <= resp.status_code < 400 else "failed",
+                            )
+
+                    return StreamingResponse(
+                        owner.handoff_stream(stream_response()) if owner is not None else stream_response(),
+                        status_code=resp.status_code,
+                        headers=response_headers,
+                        media_type=content_type
+                    )
+
+                content = await read_llm_response_body(
+                    client,
+                    resp,
+                    disconnect_watcher=native_disconnect_watcher,
                 )
-            if "text/event-stream" in content_type:
-                # Hand ASGI receive over to Starlette's own disconnect
-                # listener before it exists: this watcher must never run
-                # concurrently with StreamingResponse's receive loop.
-                await native_disconnect_watcher.aclose()
-
-                async def stream_response():
-                    was_cancelled = False
-                    stream_error: BaseException | None = None
-                    try:
-                        async for chunk in iter_llm_response_bytes(
-                            client,
-                            resp,
-                        ):
-                            yield chunk
-                    except asyncio.CancelledError:
-                        was_cancelled = True
-                        raise
-                    except BaseException as exc:
-                        stream_error = exc
-                        raise
-                    finally:
-                        await resp.aclose()
-                        await client.aclose()
-                        _finish_native_receipt(
-                            terminal_reason=(
-                                "cancelled" if was_cancelled
-                                else "read_error" if stream_error is not None
-                                else "completed" if 200 <= resp.status_code < 400
-                                else "failed"
-                            ),
-                            status=(
-                                "cancelled" if was_cancelled
-                                else "failed" if stream_error is not None
-                                else "succeeded" if 200 <= resp.status_code < 400
-                                else "failed"
-                            ),
-                        )
-
-                return StreamingResponse(
-                    stream_response(),
+                if content is None:
+                    if owner is not None:
+                        owner.report(status="cancelled", reason="disconnected")
+                    return Response(status_code=499)
+                await close_llm_response(client, resp)
+                if owner is not None:
+                    owner.report(
+                        status="succeeded" if 200 <= resp.status_code < 400 else "failed",
+                        reason="completed" if 200 <= resp.status_code < 400 else "failed",
+                    )
+                return Response(
+                    content=content,
                     status_code=resp.status_code,
                     headers=response_headers,
                     media_type=content_type
                 )
+            finally:
+                # Idempotent: already-stopped (streaming handoff, or the
+                # non-stream read's own watcher use) is a no-op. Guarantees the
+                # watcher task never outlives this function on any exit path,
+                # including the exception branches below.
+                await native_disconnect_watcher.aclose()
 
-            content = await read_llm_response_body(
-                client,
-                resp,
-                disconnect_watcher=native_disconnect_watcher,
-            )
-            if content is None:
-                _finish_native_receipt(terminal_reason="disconnected", status="cancelled")
-                return Response(status_code=499)
-            await close_llm_response(client, resp)
-            _finish_native_receipt(
-                terminal_reason="completed" if 200 <= resp.status_code < 400 else "failed",
-                status="succeeded" if 200 <= resp.status_code < 400 else "failed",
-            )
+        except httpx.TimeoutException:
+            if owner is not None:
+                owner.report(status="failed", reason="idle_timeout")
             return Response(
-                content=content,
-                status_code=resp.status_code,
-                headers=response_headers,
-                media_type=content_type
-            )
-        finally:
-            # Idempotent: already-stopped (streaming handoff, or the
-            # non-stream read's own watcher use) is a no-op. Guarantees the
-            # watcher task never outlives this function on any exit path,
-            # including the exception branches below.
-            await native_disconnect_watcher.aclose()
-
-    except httpx.TimeoutException:
-        _finish_native_receipt(terminal_reason="idle_timeout", status="failed")
-        return Response(
-            content=json.dumps({"detail": "Request timeout"}),
-            status_code=504,
-            media_type="application/json"
-        )
-    except httpx.ConnectError:
-        # A connect error can be a transient blip or the supervisor mid-restart.
-        # Re-probe health generically: if the local-swap backend is reachable
-        # again, tell the client to retry (503); otherwise it's a hard connection
-        # failure (502). The gateway does not restart backends — supervisors do.
-        _finish_native_receipt(terminal_reason="connect_error", status="failed")
-        if engine_quarantine.is_local_swap_backend(target_service) and await check_service_health(target_service):
-            return Response(
-                content=json.dumps({"detail": f"{target_service} is reachable again, please retry"}),
-                status_code=503,
+                content=json.dumps({"detail": "Request timeout"}),
+                status_code=504,
                 media_type="application/json"
             )
-        return Response(
-            content=json.dumps({"detail": f"{target_service} connection failed"}),
-            status_code=502,
-            media_type="application/json"
-        )
-    except Exception as e:
-        _finish_native_receipt(terminal_reason="internal_error", status="failed")
-        return Response(
-            content=json.dumps({"detail": f"Proxy error: {str(e)}"}),
-            status_code=502,
-            media_type="application/json"
-        )
+        except httpx.ConnectError:
+            # A connect error can be a transient blip or the supervisor mid-restart.
+            # Re-probe health generically: if the local-swap backend is reachable
+            # again, tell the client to retry (503); otherwise it's a hard connection
+            # failure (502). The gateway does not restart backends — supervisors do.
+            if owner is not None:
+                owner.report(status="failed", reason="connect_error")
+            if engine_quarantine.is_local_swap_backend(target_service) and await check_service_health(target_service):
+                return Response(
+                    content=json.dumps({"detail": f"{target_service} is reachable again, please retry"}),
+                    status_code=503,
+                    media_type="application/json"
+                )
+            return Response(
+                content=json.dumps({"detail": f"{target_service} connection failed"}),
+                status_code=502,
+                media_type="application/json"
+            )
+        except Exception as e:
+            if owner is not None:
+                owner.report(status="failed", reason="internal_error")
+            return Response(
+                content=json.dumps({"detail": f"Proxy error: {str(e)}"}),
+                status_code=502,
+                media_type="application/json"
+            )
 
 
 # =============================================================================
