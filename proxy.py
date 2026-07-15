@@ -2989,12 +2989,10 @@ async def _prepare_litellm_local_llm_request(
             code="missing_required_parameter",
         ), body
 
-    if enforce_gateway_policy and _profile_target_activation(auth_context) == "existing_only":
-        return None, body
-
     target_backend, target_model, target_mmproj = (
         _configured_litellm_local_model_target(model_name)
     )
+    resolved_target = _resolve_request_target(model_name, service_id=target_backend)
 
     vision_needed = (
         request_path == "/v1/chat/completions"
@@ -3044,9 +3042,6 @@ async def _prepare_litellm_local_llm_request(
                 headers={"X-Vision-Routed": "false"},
             ), body
 
-    if not target_backend:
-        return None, body
-
     if request_path in ("/v1/chat/completions", "/v1/completions"):
         role_cfg = ROLES.get(model_name) if isinstance(ROLES, dict) else None
         if isinstance(role_cfg, Mapping):
@@ -3056,23 +3051,18 @@ async def _prepare_litellm_local_llm_request(
                     if field not in body:
                         body[field] = value
 
+    policy_error, body = _prepare_resolved_openai_request(
+        body,
+        request_path=request_path,
+        target=resolved_target,
+    )
+    if policy_error is not None:
+        return policy_error, body
 
-    if request_path == "/v1/chat/completions":
-        # Step 2: reasoning_effort handled by the reasoning-effort built-in.
-        # Body mutation goes through the transform; 400 plumbing stays here.
-        reasoning_cfg = config.get("reasoning") or {}
-        reasoning_error = _ReasoningEffortTransform(reasoning_cfg).apply(body)
-        if reasoning_error:
-            return Response(
-                content=json.dumps({"error": {
-                    "message": reasoning_error,
-                    "type": "invalid_request_error",
-                    "param": "reasoning_effort",
-                    "code": "invalid_value",
-                }}),
-                status_code=400,
-                media_type="application/json",
-            ), body
+    if not target_backend or (
+        enforce_gateway_policy and _profile_target_activation(auth_context) == "existing_only"
+    ):
+        return None, body
 
     response = await _ensure_litellm_local_backend_target(
         auth_context,
@@ -3133,13 +3123,6 @@ def _is_use_loaded_model_alias(value: Any) -> bool:
     return (
         isinstance(value, str)
         and normalize_model_id(value) in USE_LOADED_MODEL_ALIASES
-    )
-
-
-def _is_use_loaded_fast_model_alias(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and normalize_model_id(value) == USE_LOADED_FAST_MODEL_ALIAS
     )
 
 
@@ -18906,14 +18889,107 @@ def _per_backend_transform_specs(
     return specs
 
 
-def _local_model_transform_specs(model_name: Any) -> list[str | dict[str, Any]]:
-    """Resolve a local model's transform attachments without backend literals."""
-    if not isinstance(model_name, str) or not model_name:
-        return []
-    backend, _, _ = _configured_litellm_local_model_target(model_name)
-    if not backend:
-        return []
-    return _per_backend_transform_specs(backend, model_name=model_name)
+@dataclass(frozen=True)
+class ResolvedRequestTarget:
+    """The one data-derived request-policy target for a public model name."""
+
+    requested_model: str
+    service_id: str
+    base_model_id: str
+    transform_specs: tuple[str | dict[str, Any], ...]
+
+
+def _resolve_request_target(
+    requested_model: Any,
+    *,
+    service_id: str | None = None,
+) -> ResolvedRequestTarget | None:
+    """Resolve a public model to one service-scoped base and alias overlay.
+
+    Physical upstream/activation names intentionally do not participate in this
+    lookup: a shared filename is routing data, never logical policy identity.
+    """
+    if not isinstance(requested_model, str) or not requested_model:
+        return None
+    backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
+    candidates = [service_id] if service_id else list(backends)
+    normalized_requested = normalize_model_id(requested_model)
+
+    for candidate_service_id in candidates:
+        if not candidate_service_id:
+            continue
+        service_cfg = backends.get(candidate_service_id)
+        if not isinstance(service_cfg, Mapping):
+            continue
+        records = _service_model_records(service_cfg)
+        by_id = {
+            str(record.get("id") or "").strip(): record
+            for record in records
+            if str(record.get("id") or "").strip()
+        }
+        alias = next(
+            (
+                record
+                for record in records
+                if normalized_requested
+                in {
+                    normalize_model_id(str(record.get("id") or "")),
+                    normalize_model_id(str(record.get("model_group") or "")),
+                }
+            ),
+            None,
+        )
+        if alias is None:
+            continue
+        alias_id = str(alias.get("id") or "").strip()
+        base_id = str(alias.get("base_model_id") or alias_id).strip()
+        base = by_id.get(base_id)
+        if base is None:
+            # Registry validation rejects this before runtime. Keep reload
+            # behavior fail-safe if a malformed in-memory config slips through.
+            return None
+        specs = _transform_specs(service_cfg.get("transforms"))
+        specs.extend(_transform_specs(base.get("transforms")))
+        if alias_id != base_id:
+            specs.extend(_transform_specs(alias.get("policy_overlay")))
+        return ResolvedRequestTarget(
+            requested_model=requested_model,
+            service_id=str(candidate_service_id),
+            base_model_id=base_id,
+            transform_specs=tuple(specs),
+        )
+    return None
+
+
+def _prepare_resolved_openai_request(
+    body: Mapping[str, Any],
+    *,
+    request_path: str,
+    target: ResolvedRequestTarget | None,
+) -> tuple[Response | None, Mapping[str, Any]]:
+    """Apply the one request-policy pipeline, then generic reasoning handling."""
+    prepared = copy.deepcopy(dict(body))
+    if target is not None and target.transform_specs:
+        prepared = _run_request_pipeline(
+            list(target.transform_specs),
+            prepared,
+            _TransformContext(),
+            _TRANSFORM_REGISTRY,
+        )
+    if request_path == "/v1/chat/completions":
+        reasoning_error = _ReasoningEffortTransform(config.get("reasoning") or {}).apply(prepared)
+        if reasoning_error:
+            return Response(
+                content=json.dumps({"error": {
+                    "message": reasoning_error,
+                    "type": "invalid_request_error",
+                    "param": "reasoning_effort",
+                    "code": "invalid_value",
+                }}),
+                status_code=400,
+                media_type="application/json",
+            ), prepared
+    return None, prepared
 
 
 def _litellm_gateway_metadata(
@@ -19287,24 +19363,14 @@ async def _forward_current_loaded_openai_request(
 
     body = copy.deepcopy(dict(body_for_backend))
     body.pop("_vf_requested_model", None)
+    policy_error, body = _prepare_resolved_openai_request(
+        body,
+        request_path=request_path,
+        target=_resolve_request_target(requested_alias, service_id=target.backend),
+    )
+    if policy_error is not None:
+        return policy_error
     body["model"] = target.model
-
-    if request_path == "/v1/chat/completions":
-        if _is_use_loaded_fast_model_alias(requested_alias):
-            body["reasoning_effort"] = "none"
-        reasoning_cfg = config.get("reasoning") or {}
-        reasoning_error = _ReasoningEffortTransform(reasoning_cfg).apply(body)
-        if reasoning_error:
-            return Response(
-                content=json.dumps({"error": {
-                    "message": reasoning_error,
-                    "type": "invalid_request_error",
-                    "param": "reasoning_effort",
-                    "code": "invalid_value",
-                }}),
-                status_code=400,
-                media_type="application/json",
-            )
 
     query = _forward_query_without_client_api_key(request.url.query)
     url = f"{target.host}{request_path}"
@@ -19591,23 +19657,6 @@ async def _forward_litellm_proxy_request(
     ):
         body_for_litellm = dict(body_for_litellm)
         body_for_litellm.pop("dimensions", None)
-
-    # Per-backend request transforms (engine-agnostic, data-driven):
-    # services and exact public models may declare transform specs. Applied here
-    # after frontend normalization, so policy is DATA rather than a backend
-    # branch in the dispatch path.
-    # See docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md.
-    _backend_transforms = _per_backend_transform_specs(runtime.service_id)
-    _backend_transforms.extend(
-        _local_model_transform_specs(body_for_litellm.get("model"))
-    )
-    if _backend_transforms:
-        body_for_litellm = _run_request_pipeline(
-            _backend_transforms,
-            dict(body_for_litellm),
-            _TransformContext(),
-            _TRANSFORM_REGISTRY,
-        )
 
     body = json.dumps(dict(body_for_litellm)).encode()
     receipt.metadata["request_shape"] = request_shape_fields(body_for_litellm)

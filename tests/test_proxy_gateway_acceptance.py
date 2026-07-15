@@ -616,7 +616,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         # connection-pool transport isn't leaked.
         self.assertTrue(tracked_client.close_attempted)
 
-    def test_current_fast_model_uses_loaded_backend_and_forces_thinking_off(self) -> None:
+    def test_current_fast_model_uses_loaded_backend_without_overriding_reasoning(self) -> None:
         calls: list[Any] = []
 
         async def fake_send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
@@ -670,10 +670,9 @@ class TestGatewayRouterMounting(unittest.TestCase):
         forwarded = json.loads(calls[0].body.decode())
         self.assertEqual(forwarded["model"], "Manual-Experiment.gguf")
         self.assertNotIn("reasoning_effort", forwarded)
-        # Suppression is via chat_template_kwargs.enable_thinking=False only; no /no_think injection
-        self.assertFalse(forwarded["chat_template_kwargs"]["enable_thinking"])
-        for msg in forwarded["messages"]:
-            self.assertNotIn("/no_think", msg.get("content", ""))
+        # The alias overlay is a default: an explicit caller effort wins.
+        self.assertEqual(forwarded["thinking_budget_tokens"], 8192)
+        self.assertNotIn("chat_template_kwargs", forwarded)
 
     def test_current_model_returns_503_when_active_backend_has_no_loaded_model(self) -> None:
         async def forbidden_send(*_args, **_kwargs):

@@ -1020,8 +1020,12 @@ def test_models_list_round_trips_through_form_to_raw_to_litellm(tmp_path: Path) 
         seed, service_id="my-tgw", raw=raw, source="ui"
     )
 
-    # The stored config carries the models list.
-    assert record["config"]["models"] == raw["models"]
+    # Registry normalization assigns stable ids even when a legacy form row
+    # only supplied public/upstream names.
+    assert record["config"]["models"] == [
+        {"id": "llama-3-8b", **raw["models"][0]},
+        {"id": "llama-3-70b", **raw["models"][1]},
+    ]
 
     # LiteLLM compilation produces one entry per model mapping.
     compiled = litellm_substrate.compile_litellm_config_from_registry(registry)
@@ -1265,3 +1269,99 @@ def test_unknown_config_key_survives_form_to_raw_passthrough() -> None:
     )
     # service_form_to_raw drops blank/None values but must not strip unknown keys.
     assert raw.get("some_future_field") == "preserved-value"
+
+
+def test_model_policy_records_round_trip_through_form_and_registry() -> None:
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "models",
+            "host": "127.0.0.1",
+            "port": 8000,
+            "models": [
+                {
+                    "id": "base",
+                    "public": "base",
+                    "upstream": "shared.gguf",
+                    "transforms": [{"kind": "default-params", "set": {"max_tokens": 9}}],
+                },
+                {
+                    "id": "fast",
+                    "public": "fast",
+                    "upstream": "shared.gguf",
+                    "base_model_id": "base",
+                    "policy_overlay": [
+                        {"kind": "default-params", "set": {"reasoning_effort": "none"}}
+                    ],
+                },
+            ],
+        }
+    )
+    registry, record = service_registry.upsert_service_in_registry(
+        service_registry.build_service_registry_seed({"backends": {}}),
+        service_id="models",
+        raw=raw,
+    )
+
+    assert record["config"]["models"] == raw["models"]
+    projected = service_registry.runtime_backends(registry)
+    assert projected["models"]["models"] == raw["models"]
+
+
+@pytest.mark.parametrize(
+    ("models", "match"),
+    [
+        ([
+            {"id": "base", "model_group": "base", "upstream_model": "base"},
+            {"id": "alias", "model_group": "alias", "upstream_model": "base", "base_model_id": "missing"},
+        ], "unknown base_model_id"),
+        ([
+            {"id": "base", "model_group": "base", "upstream_model": "base"},
+            {"id": "alias-a", "model_group": "alias-a", "upstream_model": "base", "base_model_id": "alias-b"},
+            {"id": "alias-b", "model_group": "alias-b", "upstream_model": "base", "base_model_id": "alias-a"},
+        ], "cycle"),
+        ([
+            {"id": "base", "model_group": "base", "upstream_model": "base"},
+            {"id": "alias-a", "model_group": "alias-a", "upstream_model": "base", "base_model_id": "base"},
+            {"id": "alias-b", "model_group": "alias-b", "upstream_model": "base", "base_model_id": "alias-a"},
+        ], "base policy record"),
+        ([
+            {"id": "base", "model_group": "base", "upstream_model": "base"},
+            {"id": "base", "model_group": "other", "upstream_model": "base"},
+        ], "duplicate model id"),
+        ([
+            {"id": "base", "model_group": "base", "upstream_model": "base"},
+            {"id": "alias", "model_group": "alias", "upstream_model": "base", "base_model_id": "base", "transforms": ["named"]},
+        ], "policy_overlay"),
+    ],
+)
+def test_registry_rejects_invalid_model_policy_graphs(models: list[dict], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        service_registry.normalize_service_registry(
+            {
+                "services": {
+                    "service": {
+                        "id": "service",
+                        "config": {"models": models},
+                    }
+                }
+            }
+        )
+
+
+def test_registry_write_rejects_an_invalid_model_policy_reference() -> None:
+    with pytest.raises(ValueError, match="unknown base_model_id"):
+        service_registry.upsert_service_in_registry(
+            service_registry.build_service_registry_seed({"backends": {}}),
+            service_id="service",
+            raw={
+                "models": [
+                    {"id": "base", "model_group": "base", "upstream_model": "base"},
+                    {
+                        "id": "alias",
+                        "model_group": "alias",
+                        "upstream_model": "base",
+                        "base_model_id": "missing",
+                    },
+                ]
+            },
+        )

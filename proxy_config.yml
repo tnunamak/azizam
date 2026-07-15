@@ -84,14 +84,30 @@ backends:
         upstream_model: Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
-      # Same GGUF as default; the matching roles.default-fast entry adds
-      # reasoning_effort:none (thinking off). Registered here so LiteLLM accepts
-      # the model name and it appears in /v1/models for header-less clients.
+      # Public aliases inherit the logical base policy by stable id. Physical
+      # paths remain routing data; only this overlay distinguishes fast.
       - id: default-fast
         model_group: default-fast
+        base_model_id: default
         upstream_model: Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
+        policy_overlay:
+          - kind: default-params
+            set: {reasoning_effort: none}
+      # These aliases deliberately select the already loaded routing target.
+      # Their base references are policy data, not loaded-file inference.
+      - id: current
+        model_group: current
+        base_model_id: default
+        upstream_model: Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
+      - id: current-fast
+        model_group: current-fast
+        base_model_id: default
+        upstream_model: Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
+        policy_overlay:
+          - kind: default-params
+            set: {reasoning_effort: none}
       - id: rp
         model_group: rp
         upstream_model: Huihui-Qwen3.6-27B-abliterated-UD-Q4_K_XL-MTP.gguf
@@ -255,17 +271,14 @@ roles:
       min_p: 0.0
       presence_penalty: 0.0
       repetition_penalty: 1.0
-  # Same model as `default`, reasoning OFF — for latency-sensitive or header-less
-  # clients (e.g. dictation cleanup) that can only pick a model name. The
-  # intent-level `reasoning_effort: none` routes onto the no-think path (the Qwen
-  # chat transform turns it into thinking-off), cutting a short call from ~8s to ~1s.
+  # Same physical model as `default`; the model record's declarative alias
+  # overlay owns its reasoning default so explicit callers still win.
   default-fast:
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     description: Default LLM, reasoning off (low-latency)
     sampling:
-      reasoning_effort: none
       temperature: 0.6
       top_p: 0.95
       top_k: 20

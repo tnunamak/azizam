@@ -129,7 +129,7 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
             },
         )
 
-    return {
+    return normalize_service_registry({
         "schema_version": SERVICE_REGISTRY_SCHEMA_VERSION,
         "services": services,
         "protocol_frontends": catalogs.get("protocol_frontends") or {},
@@ -143,7 +143,7 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
             }
         ),
         "updated_at": int(time.time()),
-    }
+    })
 
 
 def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -185,6 +185,8 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
         record = normalize_capability_record(capability_id, raw)
         capabilities[record["id"]] = record
 
+    _validate_model_policy_graphs(services)
+
     return {
         "schema_version": int(value.get("schema_version") or SERVICE_REGISTRY_SCHEMA_VERSION),
         "services": services,
@@ -195,6 +197,71 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
         "seed_hash": str(value.get("seed_hash") or ""),
         "updated_at": int(value.get("updated_at") or time.time()),
     }
+
+
+def _validate_model_policy_graphs(services: Mapping[str, Mapping[str, Any]]) -> None:
+    """Reject ambiguous or invalid service-local logical-model references."""
+    for service_id, service in services.items():
+        config = service.get("config") if isinstance(service, Mapping) else None
+        raw_models = config.get("models") if isinstance(config, Mapping) else None
+        if not isinstance(raw_models, list):
+            continue
+
+        records: dict[str, Mapping[str, Any]] = {}
+        for index, record in enumerate(raw_models):
+            if not isinstance(record, Mapping):
+                raise ValueError(f"service {service_id!r} models[{index}] must be an object")
+            model_id = str(record.get("id") or "").strip()
+            if not model_id:
+                raise ValueError(f"service {service_id!r} models[{index}] requires a stable id")
+            if model_id in records:
+                raise ValueError(f"service {service_id!r} has duplicate model id {model_id!r}")
+            records[model_id] = record
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(model_id: str) -> None:
+            if model_id in visited:
+                return
+            if model_id in visiting:
+                raise ValueError(
+                    f"service {service_id!r} model aliases contain a cycle at {model_id!r}"
+                )
+            visiting.add(model_id)
+            record = records[model_id]
+            base_model_id = record.get("base_model_id")
+            if base_model_id not in (None, ""):
+                if record.get("transforms") not in (None, []):
+                    raise ValueError(
+                        f"service {service_id!r} alias {model_id!r} must use policy_overlay, not transforms"
+                    )
+                base_id = str(base_model_id).strip()
+                if base_id not in records:
+                    raise ValueError(
+                        f"service {service_id!r} model {model_id!r} references unknown "
+                        f"base_model_id {base_id!r}"
+                    )
+                visit(base_id)
+                if records[base_id].get("base_model_id") not in (None, ""):
+                    raise ValueError(
+                        f"service {service_id!r} model {model_id!r} must reference a "
+                        f"base policy record, not alias {base_id!r}"
+                    )
+                overlay = record.get("policy_overlay")
+                if overlay is not None and not isinstance(overlay, list):
+                    raise ValueError(
+                        f"service {service_id!r} model {model_id!r} policy_overlay must be a list"
+                    )
+            elif record.get("policy_overlay") not in (None, []):
+                raise ValueError(
+                    f"service {service_id!r} base model {model_id!r} cannot declare policy_overlay"
+                )
+            visiting.remove(model_id)
+            visited.add(model_id)
+
+        for model_id in records:
+            visit(model_id)
 
 
 def backfill_seed_catalog_metadata(
@@ -510,6 +577,25 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
     config = raw.get("config")
     if not isinstance(config, Mapping):
         config = {}
+    config = copy.deepcopy(dict(config))
+    raw_models = config.get("models")
+    if isinstance(raw_models, list):
+        normalized_models: list[Any] = []
+        for model in raw_models:
+            if not isinstance(model, Mapping):
+                normalized_models.append(copy.deepcopy(model))
+                continue
+            normalized_model = copy.deepcopy(dict(model))
+            normalized_model.setdefault(
+                "id",
+                str(
+                    normalized_model.get("model_group")
+                    or normalized_model.get("upstream_model")
+                    or ""
+                ).strip(),
+            )
+            normalized_models.append(normalized_model)
+        config["models"] = normalized_models
     capabilities = normalize_string_list(raw.get("capabilities") or config.get("capabilities"))
     lifecycle = raw.get("lifecycle")
     if not isinstance(lifecycle, Mapping):
@@ -529,7 +615,7 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
         "priority": int(raw.get("priority") or 100),
         "role": str(raw.get("role") or config.get("role") or "required"),
         "capabilities": capabilities,
-        "config": copy.deepcopy(dict(config)),
+        "config": config,
         "secret_refs": copy.deepcopy(dict(secret_refs)),
         "lifecycle": {
             "type": str(lifecycle.get("type") or "external"),
@@ -738,7 +824,8 @@ def upsert_service_in_registry(
 
     out["services"][sid] = record
     out["updated_at"] = int(time.time())
-    return out, record
+    out = normalize_service_registry(out)
+    return out, out["services"][sid]
 
 
 def remove_service_from_registry(
@@ -935,16 +1022,16 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in raw.items() if value not in (None, "")}
 
 
-def _form_models_to_config(value: Any) -> list[dict[str, str]]:
+def _form_models_to_config(value: Any) -> list[dict[str, Any]]:
     """Normalize the form's model rows into config.models deployment records.
 
     Accepts a list of mappings with public/upstream (or model_group/id +
-    upstream_model) keys. Each becomes ``{model_group, upstream_model}`` —
-    the minimal deployment shape. Rows missing both names are dropped.
+    upstream_model) keys. Stable ids, base references, transforms, and ordered
+    alias overlays survive the form path; rows missing both names are dropped.
     """
     if not isinstance(value, (list, tuple)):
         return []
-    out: list[dict[str, str]] = []
+    out: list[dict[str, Any]] = []
     for row in value:
         if not isinstance(row, Mapping):
             continue
@@ -959,7 +1046,12 @@ def _form_models_to_config(value: Any) -> list[dict[str, str]]:
         # A public name defaults to the upstream name and vice versa.
         public = public or upstream
         upstream = upstream or public
-        out.append({"model_group": public, "upstream_model": upstream})
+        normalized = copy.deepcopy(dict(row))
+        normalized.pop("public", None)
+        normalized.pop("upstream", None)
+        normalized["model_group"] = public
+        normalized["upstream_model"] = upstream
+        out.append(normalized)
     return out
 
 
