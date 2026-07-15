@@ -1049,6 +1049,124 @@ class TestExactPreflight(unittest.TestCase):
         self.assertNotIn(secret_text, response.text)
 
 
+class TestExactPreflightActivationThroughRealRegistryProjection(unittest.TestCase):
+    """Proves R1's fix through the REAL DB-registry projection path.
+
+    Every other test in this file patches ``proxy.config``/the capability
+    directly with a dict that already contains ``exact_preflight`` — that
+    proves the capability's validation/wiring, but not that the block ever
+    REACHES runtime config for an existing deployment. On a real, already-
+    seeded ``data/admin.db``, ``config["backends"]`` is a one-way projection
+    from the DB-owned service registry
+    (``service_registry.apply_service_registry_to_config`` /
+    ``runtime_backends`` / ``runtime_backend_from_service``); ``proxy.py``'s
+    ``_load_effective_runtime_config`` only ever calls
+    ``service_registry.ensure_service_registry`` then
+    ``service_registry.apply_service_registry_to_config`` — this test drives
+    those exact two functions (the real mechanism, not a stand-in for it)
+    against an isolated on-disk sqlite DB that simulates a deployment seeded
+    BEFORE the ``exact_preflight`` YAML block existed, then reads the
+    capability off the projected config with NO patching of
+    ``proxy.config``/``proxy._exact_preflight_capability``.
+    """
+
+    def test_capability_added_to_yaml_after_first_seed_activates_on_existing_deployment(
+        self,
+    ) -> None:
+        import tempfile
+
+        import yaml
+        from gateway import admin_store, service_registry
+
+        real_proxy_config = yaml.safe_load(
+            (ROOT / "proxy_config.yml").read_text(encoding="utf-8")
+        )
+
+        # Simulate the pre-existing deployment: seed the registry from a
+        # variant of the REAL config with the kobold backend's
+        # `exact_preflight` block stripped out, exactly as a deployment
+        # seeded before this feature shipped would look. Every other field
+        # (state_type, models, auth_inject-shaped data, etc.) is untouched,
+        # so this is a faithful "day-zero" snapshot of the real backend
+        # record, not a synthetic minimal fixture.
+        pre_feature_config = json.loads(json.dumps(real_proxy_config))
+        del pre_feature_config["backends"]["kobold"]["exact_preflight"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "admin.db"
+            admin_store.init_db(db_path)
+
+            seeded_registry = service_registry.ensure_service_registry(
+                pre_feature_config, path=db_path, actor="startup"
+            )
+            # Sanity: the pre-feature seed genuinely lacks the block (proves
+            # the harness actually simulates an old deployment, not a no-op).
+            self.assertNotIn(
+                "exact_preflight",
+                seeded_registry["services"]["kobold"]["config"],
+            )
+
+            # The "operator upgrades the gateway" step: the process reboots
+            # with the CURRENT proxy_config.yml (which now declares
+            # exact_preflight for kobold), against the SAME pre-existing DB.
+            # This is exactly what proxy.py's `_load_effective_runtime_config`
+            # does on every boot.
+            reloaded_registry = service_registry.ensure_service_registry(
+                real_proxy_config, path=db_path, actor="startup"
+            )
+            projected_config = service_registry.apply_service_registry_to_config(
+                real_proxy_config, reloaded_registry
+            )
+
+        # Drive the real capability reader against the REAL projected config —
+        # no patch.object(proxy, "config", ...) and no patch of
+        # _exact_preflight_capability itself.
+        with patch.object(proxy, "config", projected_config):
+            capability = proxy._exact_preflight_capability("kobold")
+
+        self.assertIsNotNone(
+            capability,
+            "exact_preflight must activate for kobold once the registry "
+            "backfill has run against an existing (pre-feature-seeded) DB",
+        )
+        self.assertEqual(capability.apply_template_path, "/apply-template")
+        self.assertEqual(capability.tokenize_path, "/tokenize")
+        self.assertEqual(
+            capability.output_limit_precedence,
+            ("n_predict", "max_completion_tokens", "max_tokens"),
+        )
+
+        # Prove it's not just readable — a guarded request actually engages
+        # the preflight against this real, DB-projected config: an
+        # over-large input must be rejected BEFORE any completion call, and
+        # /apply-template must actually have been hit.
+        backend = _FakeBeeBackend(input_tokens=999_999)
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            proxy, "LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"}
+        ), patch.object(proxy, "config", projected_config), patch.object(
+            proxy, "get_active_backend", AsyncMock(return_value="kobold")
+        ), patch.object(
+            proxy,
+            "current_llm_model_for_backend",
+            AsyncMock(return_value="Manual-Experiment.gguf"),
+        ), patch.object(
+            proxy, "_service_availability_response", lambda *_a, **_k: None
+        ), patch.object(
+            proxy, "_context_window_for_model_id", AsyncMock(return_value=100)
+        ), patch.object(proxy, "send_llm_execution_request", backend.send):
+            response = TestClient(proxy.app).post(
+                "/v1/chat/completions",
+                json={"model": "current", "messages": [{"role": "user", "content": "hi"}]},
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(backend.completion_calls, 0)
+        self.assertTrue(
+            any(c.url.endswith("/apply-template") for c in backend.calls),
+            "the real, DB-projected capability must have engaged the preflight",
+        )
+
+
 class TestResolveOutputAllowanceUnit(unittest.TestCase):
     """Table tests: absent/default, 0, each field alone, conflicts, sentinels."""
 

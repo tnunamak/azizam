@@ -348,7 +348,8 @@ def backfill_seed_catalog_metadata(
     """Merge new bundled metadata into older DB-owned registry records."""
 
     out = normalize_service_registry(registry)
-    catalogs = load_seed_catalogs(proxy_config or {})
+    proxy_config = proxy_config or {}
+    catalogs = load_seed_catalogs(proxy_config)
     _backfill_missing_records(
         out["services"],
         catalogs.get("services") or {},
@@ -357,12 +358,57 @@ def backfill_seed_catalog_metadata(
         out["services"],
         catalogs.get("services") or {},
     )
+    _backfill_service_metadata(
+        out["services"],
+        _backend_config_seeds(proxy_config),
+    )
     _backfill_collection_metadata(
         out["protocol_frontends"],
         catalogs.get("protocol_frontends") or {},
         keys=("registered_routes", "asset_content_policies", "public_discovery"),
     )
     return out
+
+
+def _backend_config_seeds(proxy_config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Build backfill seeds from ``proxy_config.yml``'s own ``backends`` block.
+
+    ``proxy_config.yml`` is the source of truth for operator-authored,
+    fail-closed CAPABILITY declarations a backend opts into (e.g.
+    ``auth_inject``, ``exact_preflight``) — these are never edited via the
+    admin UI/DB, unlike ``models``/model-policy data which the registry owns
+    exclusively once seeded (see ``test_existing_registry_model_rows_are_not_
+    silently_upgraded_from_yaml``). Without this, a capability block added to
+    an existing backend's YAML after the DB was first seeded would never
+    reach an already-seeded deployment: ``ensure_service_registry`` only reads
+    YAML on first seed, and the ordinary bundled-catalog backfill above sources
+    from ``registry/services.yml``/``proxy_config["services"]``, not
+    ``proxy_config["backends"]``.
+
+    Reuses ``service_from_backend_config`` (the same first-seed path) so the
+    produced seed records have the identical shape/``source`` the ordinary
+    backfill gate already checks — this only ever fills fields the existing
+    record is missing (``_merge_missing_fields``); it never overwrites an
+    operator/DB-owned value.
+    """
+    seeds: dict[str, dict[str, Any]] = {}
+    for raw_id, raw in (proxy_config.get("backends") or {}).items():
+        if not isinstance(raw, Mapping):
+            continue
+        service_id = normalize_id(raw_id)
+        if not service_id:
+            continue
+        source = str(raw.get("source") or "provisioned")
+        seeds[service_id] = service_from_backend_config(
+            service_id,
+            raw,
+            source=source,
+            provenance={
+                "seed": f"proxy_config.yml:backends.{raw_id}",
+                "seed_hash": stable_hash(raw),
+            },
+        )
+    return seeds
 
 
 def _backfill_missing_records(
