@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from _hermetic_environment import validate_test_environment
+from _hermetic import validate_test_environment
 
 
 def test_state_config_and_environment_are_private_to_this_run(gateway_test_state_dir: Path) -> None:
