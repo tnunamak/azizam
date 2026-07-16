@@ -34,6 +34,7 @@ checkout_root="$state_dir/checkout"
 mkdir -p -- "$checkout_root"
 git -C "$repo_root" archive --format=tar HEAD | tar -x -C "$checkout_root"
 mkdir -- "$checkout_root/venv" "$checkout_root/cache"
+cp -- "$checkout_root/proxy_config.yml" "$state_dir/proxy_config.yml"
 fresh_env="$state_dir/fresh-venv"
 env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv venv --no-project --no-managed-python --no-python-downloads --python "$python_root/bin/python3.12" "$fresh_env" >/dev/null
 env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv pip sync --offline --no-build --strict --require-hashes --link-mode copy --python "$fresh_env/bin/python" "$lock_file" >/dev/null

@@ -17,7 +17,9 @@ from _hermetic import validate_test_environment
 def test_state_config_and_environment_are_private_to_this_run(gateway_test_state_dir: Path) -> None:
     assert gateway_test_state_dir.is_relative_to(Path(os.environ["VIVID_FISH_HERMETIC_STATE_DIR"]))
     assert "/.tmp/" in f"{gateway_test_state_dir}/"
-    assert Path(os.environ["AI_GATEWAY_CONFIG_PATH"]).parent.is_relative_to(Path(os.environ["VIVID_FISH_HERMETIC_STATE_DIR"]))
+    config_path = Path(os.environ["AI_GATEWAY_CONFIG_PATH"])
+    assert config_path.parent.is_relative_to(Path(os.environ["VIVID_FISH_HERMETIC_STATE_DIR"]))
+    assert config_path.is_file()
     assert os.environ.get("OPENAI_API_KEY") is None
     assert os.environ.get("OPENAI_PROXY_ADMIN_DB") is None
     assert os.environ.get("PYTHONDONTWRITEBYTECODE") == "1"
