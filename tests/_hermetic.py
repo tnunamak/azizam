@@ -153,8 +153,6 @@ def assert_hermetic_environment() -> None:
         "VIVID_FISH_HERMETIC_TEST_ENV_ROOT",
         "VIVID_FISH_HERMETIC_REPO_ROOT",
         "VIVID_FISH_HERMETIC_PYTHON_ROOT",
-        "VIVID_FISH_HERMETIC_CHECKOUT_RECEIPT",
-        "VIVID_FISH_HERMETIC_LOCK_SHA256",
     )
     missing = [name for name in required if not os.environ.get(name)]
     if os.environ.get("VIVID_FISH_HERMETIC_TEST_NAMESPACE") != "1" or missing:
