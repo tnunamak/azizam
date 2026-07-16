@@ -35,7 +35,7 @@ def validate_test_environment() -> dict[str, str]:
     for label, value in (("environment", env), ("repo", repo), ("python", pyroot)):
         if value.is_symlink() or not value.is_dir() or value.resolve() != value.absolute():
             raise HermeticEnvironmentError(f"{label} root is not real")
-    if not _inside(Path(sys.executable), env) or not _inside(Path(sys.executable).resolve(), pyroot):
+    if not Path(sys.executable).absolute().is_relative_to(env) or not _inside(Path(sys.executable).resolve(), pyroot):
         raise HermeticEnvironmentError("interpreter is outside approved roots")
     if not _inside(Path(sys.prefix), env) or not _inside(Path(sys.base_prefix), pyroot):
         raise HermeticEnvironmentError("Python prefixes escape approved roots")
