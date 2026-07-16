@@ -67,7 +67,7 @@ host_runner_pid=$$
 host_pid_namespace=$(readlink /proc/self/ns/pid)
 host_ipc_namespace=$(readlink /proc/self/ns/ipc)
 forbidden_production_path="$(dirname -- "$repo_root")/openai-proxy"
-python_bin="$checkout_root/venv/bin/python"
+python_bin="/venv/bin/python"
 
 declare -a bwrap_args=(
   --die-with-parent --new-session --unshare-user --uid 0 --gid 0
@@ -84,12 +84,11 @@ declare -a bwrap_args=(
   --setenv VIVID_FISH_HERMETIC_FORBIDDEN_PRODUCTION_PATH "$forbidden_production_path"
   --setenv VIVID_FISH_HERMETIC_HOST_RUNNER_PID "$host_runner_pid"
   --setenv VIVID_FISH_HERMETIC_HOST_PID_NAMESPACE "$host_pid_namespace" --setenv VIVID_FISH_HERMETIC_HOST_IPC_NAMESPACE "$host_ipc_namespace"
-  --setenv VIVID_FISH_HERMETIC_TEST_ENV_ROOT "$checkout_root/venv" --setenv VIVID_FISH_HERMETIC_REPO_ROOT "$checkout_root"
+  --setenv VIVID_FISH_HERMETIC_TEST_ENV_ROOT /venv --setenv VIVID_FISH_HERMETIC_REPO_ROOT "$checkout_root"
   --setenv VIVID_FISH_HERMETIC_PYTHON_ROOT "$python_root" --setenv VIVID_FISH_HERMETIC_CACHE_ENV_ROOT "$cache_environment_root"
   --setenv VIVID_FISH_HERMETIC_LOCK_SHA256 "$lock_sha256" --setenv VIVID_FISH_HERMETIC_MANIFEST_SHA256 "$manifest_sha256"
   --setenv VIVID_FISH_HERMETIC_INPUT_SHA256 "$input_sha256" --setenv VIVID_FISH_HERMETIC_PYTHON_ABI "$python_abi"
   --setenv VIVID_FISH_HERMETIC_PLATFORM "$platform" --setenv VIVID_FISH_HERMETIC_PYTHON_MINOR "$python_minor"
-  --setenv VIVID_FISH_HERMETIC_ENV_RECEIPT "$cache_environment_root/receipt.json"
   --setenv VIVID_FISH_HERMETIC_CHECKOUT_RECEIPT "$state_dir/checkout-receipt.json" --setenv VIVID_FISH_HERMETIC_CHECKOUT_HEAD "$checkout_head"
 )
 
@@ -113,7 +112,7 @@ for system_path in /usr/bin /usr/sbin /usr/lib /usr/lib64 /usr/libexec /usr/shar
 for config_path in /etc/ld.so.cache /etc/ld.so.conf /etc/ld.so.conf.d /etc/passwd /etc/group /etc/nsswitch.conf /etc/hosts /etc/localtime /etc/mime.types /etc/os-release /etc/debian_version /etc/ssl /etc/ca-certificates /etc/ca-certificates.conf; do add_read_only_bind "$config_path" "$config_path"; done
 add_read_only_bind "$python_root" "$python_root"
 add_read_only_bind "$checkout_root" "$checkout_root"
-add_read_only_bind "$cache_environment_root/venv" "$checkout_root/venv"
+add_read_only_bind "$cache_environment_root/venv" /venv
 add_parent_dirs "$state_dir"
 bwrap_args+=(--bind "$state_dir" "$state_dir" --bind "$state_dir/cache" "$checkout_root/cache")
 
