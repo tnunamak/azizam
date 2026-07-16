@@ -47,7 +47,7 @@ env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/
 env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv pip sync --strict --require-hashes --link-mode copy --python "$fresh_env/bin/python" "$lock_file" >/dev/null
 find "$fresh_env" -type f -name '*.pth' -delete
 cp -- "$checkout_root/proxy_config.yml" "$state_dir/proxy_config.yml"
-mkdir -p -- "$state_dir"/{tmp,pytest-tmp,cache,pycache,home}
+mkdir -p -- "$state_dir"/{tmp,cache,pycache,home}
 printf '{"checkout_diff_sha256":"%s","checkout_head":"%s","lock_sha256":"%s","schema":1}\n' \
   "$checkout_diff_sha256" "$checkout_head" "$lock_sha256" > "$state_dir/checkout-receipt.json"
 
@@ -106,6 +106,7 @@ done
 add_read_only_bind "$checkout_root" "$checkout_root"
 add_read_only_bind "$fresh_env" /venv
 bwrap_args+=(--bind "$state_dir/cache" "$checkout_root/cache")
+bwrap_args+=(--ro-bind "$state_dir/checkout-receipt.json" "$state_dir/checkout-receipt.json")
 
 namespace_command='if ! ip -o link show dev lo | grep -q "UP"; then echo "error: namespace has no loopback" >&2; exit 1; fi
 if [[ $(ip -o link show | wc -l) -ne 1 ]] || tail -n +2 /proc/net/route | grep -q .; then echo "error: namespace exposes host interfaces or routes" >&2; exit 1; fi
@@ -120,6 +121,6 @@ if [[ ${1:-} == "--check" ]]; then
   shift; (($# == 0)) || { echo "error: --check does not accept pytest arguments" >&2; exit 2; }
   test_command=("$python_bin" -S -c 'import os, sys; assert sys.executable; assert not os.environ.get("OPENAI_API_KEY"); assert not os.environ.get("AI_GATEWAY_ADMIN_DB")')
 else
-  test_command=("$python_bin" -m pytest -p no:cacheprovider --basetemp "$state_dir/pytest-tmp" "$@")
+  test_command=("$python_bin" -m pytest -p no:cacheprovider "$@")
 fi
 bwrap "${bwrap_args[@]}" --chdir "$checkout_root" -- /bin/bash -ceu "$namespace_command" bash "${test_command[@]}"
