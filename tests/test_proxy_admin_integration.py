@@ -68,6 +68,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             proxy.status_endpoint, "get_cached_status", _test_status_projection
         )
         self._status_projection.start()
+        self._loaded_model_projection = patch.object(
+            proxy, "currently_loaded_kobold_model", return_value=None
+        )
+        self._loaded_model_projection.start()
         admin_store.init_db(self.db)
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
@@ -81,6 +85,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.cookie = self.old_cookie
         proxy.AUTH_ENABLED = self.old_auth_enabled
         self._status_projection.stop()
+        self._loaded_model_projection.stop()
         self.env_patcher.stop()
         proxy.ADMIN_OIDC_STATES.clear()
         self.tmp.cleanup()
@@ -1493,6 +1498,10 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             proxy.status_endpoint, "get_cached_status", _test_status_projection
         )
         self._status_projection.start()
+        self._loaded_model_projection = patch.object(
+            proxy, "currently_loaded_kobold_model", return_value=None
+        )
+        self._loaded_model_projection.start()
         admin_store.init_db(self.db)
         # No service-account admin key here -> no owner/admin exists yet.
         self.client = TestClient(proxy.app)
@@ -1504,6 +1513,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.cookie = self.old_cookie
         proxy.AUTH_ENABLED = self.old_auth_enabled
         self._status_projection.stop()
+        self._loaded_model_projection.stop()
         proxy.ADMIN_OIDC_STATES.clear()
         self.tmp.cleanup()
 
