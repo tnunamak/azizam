@@ -100,7 +100,7 @@ for system_path in /usr/bin /usr/sbin /usr/lib /usr/lib64 /usr/libexec /usr/shar
 for config_path in /etc/ld.so.cache /etc/ld.so.conf /etc/ld.so.conf.d /etc/passwd /etc/group /etc/nsswitch.conf /etc/hosts /etc/localtime /etc/mime.types /etc/os-release /etc/debian_version /etc/ssl /etc/ca-certificates /etc/ca-certificates.conf; do add_read_only_bind "$config_path" "$config_path"; done
 add_read_only_bind "$python_root" "$python_root"
 add_parent_dirs "$state_dir"
-for writable in tmp pytest-tmp cache pycache home; do
+for writable in tmp cache pycache home; do
   bwrap_args+=(--bind "$state_dir/$writable" "$state_dir/$writable")
 done
 add_read_only_bind "$checkout_root" "$checkout_root"
