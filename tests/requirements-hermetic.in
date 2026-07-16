@@ -1,0 +1,3 @@
+# Test-only closure of the reviewed runtime dependency manifest.
+-r ../requirements.txt
+pytest>=8.0
