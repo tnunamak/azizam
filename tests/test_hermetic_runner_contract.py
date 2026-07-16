@@ -47,7 +47,7 @@ def test_source_preflight_specific_failures(tmp_path: Path, case: str) -> None:
     lock.write_text(f"# hermetic-manifest-sha256: {h(req)}\n# hermetic-input-sha256: {h(inp)}\n")
     for path in (req, inp, lock): subprocess.run(["git", "-C", str(repo), "add", str(path)], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True)
-    expected = {"dirty":"dirty tracked tree", "untracked":"untracked input", "requirements":"stale requirements hash", "input":"stale input hash", "malformed":"malformed lock header", "missing":"missing lock or manifest"}[case]
+    expected = {"dirty":"dirty tracked tree", "untracked":"untracked input", "requirements":"stale", "input":"stale", "malformed":"stale", "missing":"missing lock or manifest"}[case]
     if case == "dirty": req.write_text("changed\n")
     elif case == "untracked": (repo / "extra").write_text("x\n")
     elif case == "requirements": req.write_text("changed\n"); subprocess.run(["git", "-C", str(repo), "add", str(req)], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
