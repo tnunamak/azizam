@@ -129,7 +129,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
     def test_provider_native_passthrough_is_confined_to_gateway_provider_namespace(self) -> None:
         provider_native_routes = {
             (method, route.path)
-            for route in proxy.app.routes
+            for route in _iter_routes(proxy.app.routes)
             if route.name == "provider_native_request"
             for method in getattr(route, "methods", set())
         }
