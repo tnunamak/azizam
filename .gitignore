@@ -38,14 +38,26 @@ data/admin.db
 data/admin.db-wal
 data/admin.db-shm
 data/admin.db.broken-*
+data/admin.db.bak.*
 data/admin_session_key
 data/admin_session_key.tmp
 data/migration-backups/
 
+# Stray root-level copy of the admin DB (never a canonical location).
+/admin.db
+
 # LiteLLM sidecar config is generated from the DB-owned service registry.
-# It is runtime state, not an editable source of truth.
+# It is runtime state, not an editable source of truth. Generated backup/
+# snapshot copies of it are equally non-canonical.
 data/litellm.config.yaml
+data/litellm.config.yaml.old
+data/litellm.config.yaml.bak.*
 data/litellm.pid
+
+# Core dumps — may contain in-memory secrets/session tokens.
+core
+core.*
+*.core
 
 # GPU incident snapshots — ephemeral diagnostic captures written by
 # ~/.local/bin/gpu-incident-watcher
