@@ -19,20 +19,12 @@ done
 for file in "$lock_file" "$repo_root/tests/requirements-hermetic.in" "$repo_root/requirements.txt" "$repo_root/proxy_config.yml"; do
   [[ -f $file ]] || { echo "error: required hermetic test input is missing: $file" >&2; exit 127; }
 done
-if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --quiet; then
-  echo "error: hermetic release tests require a committed, clean reviewed checkout" >&2
-  exit 2
-fi
-if [[ -n $(git -C "$repo_root" ls-files --others --exclude-standard) ]]; then
-  echo "error: untracked checkout input is forbidden" >&2
-  exit 2
-fi
+"$repo_root/scripts/hermetic_source_preflight.sh" "$repo_root" "$lock_file" "$repo_root/requirements.txt" "$repo_root/tests/requirements-hermetic.in"
 
 lock_sha256=$(sha256sum "$lock_file" | awk '{print $1}')
 manifest_sha256=$(sha256sum "$repo_root/requirements.txt" | awk '{print $1}')
 input_sha256=$(sha256sum "$repo_root/tests/requirements-hermetic.in" | awk '{print $1}')
 checkout_head=$(git -C "$repo_root" rev-parse HEAD)
-checkout_diff_sha256=$(git -C "$repo_root" diff --binary | sha256sum | awk '{print $1}')
 
 mkdir -p -- "$state_root"
 state_dir=$(mktemp -d "$state_root/vivid-fish-pytest.XXXXXXXX")
@@ -46,10 +38,7 @@ fresh_env="$state_dir/fresh-venv"
 env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv venv --no-project --no-managed-python --no-python-downloads --python "$python_root/bin/python3.12" "$fresh_env" >/dev/null
 env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv pip sync --strict --require-hashes --link-mode copy --python "$fresh_env/bin/python" "$lock_file" >/dev/null
 find "$fresh_env" -type f -name '*.pth' -delete
-cp -- "$checkout_root/proxy_config.yml" "$state_dir/proxy_config.yml"
 mkdir -p -- "$state_dir"/{tmp,cache,pycache,home}
-printf '{"checkout_diff_sha256":"%s","checkout_head":"%s","lock_sha256":"%s","schema":1}\n' \
-  "$checkout_diff_sha256" "$checkout_head" "$lock_sha256" > "$state_dir/checkout-receipt.json"
 
 host_runner_pid=$$
 host_pid_namespace=$(readlink /proc/self/ns/pid)
@@ -74,7 +63,6 @@ declare -a bwrap_args=(
   --setenv VIVID_FISH_HERMETIC_HOST_PID_NAMESPACE "$host_pid_namespace" --setenv VIVID_FISH_HERMETIC_HOST_IPC_NAMESPACE "$host_ipc_namespace"
   --setenv VIVID_FISH_HERMETIC_TEST_ENV_ROOT /venv --setenv VIVID_FISH_HERMETIC_REPO_ROOT "$checkout_root"
   --setenv VIVID_FISH_HERMETIC_PYTHON_ROOT "$python_root"
-  --setenv VIVID_FISH_HERMETIC_CHECKOUT_RECEIPT "$state_dir/checkout-receipt.json" --setenv VIVID_FISH_HERMETIC_CHECKOUT_HEAD "$checkout_head"
 )
 
 declare -A sandbox_dirs=(['/usr']=1 ['/etc']=1 ['/home']=1 ['/var']=1 ['/run']=1 ['/run/user']=1 ['/run/user/0']=1)
@@ -103,7 +91,6 @@ done
 add_read_only_bind "$checkout_root" "$checkout_root"
 add_read_only_bind "$fresh_env" /venv
 bwrap_args+=(--bind "$state_dir/cache" "$checkout_root/cache")
-bwrap_args+=(--ro-bind "$state_dir/checkout-receipt.json" "$state_dir/checkout-receipt.json")
 
 namespace_command='if ! ip -o link show dev lo | grep -q "UP"; then echo "error: namespace has no loopback" >&2; exit 1; fi
 if [[ $(ip -o link show | wc -l) -ne 1 ]] || tail -n +2 /proc/net/route | grep -q .; then echo "error: namespace exposes host interfaces or routes" >&2; exit 1; fi
