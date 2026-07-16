@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-import atexit
 import os
-import shutil
-import tempfile
+import socket
 from pathlib import Path
 
 import pytest
 
+from _hermetic import HermeticGuard, assert_hermetic_environment
 
-# Set AI_GATEWAY_TEST_STATE_DIR to retain pytest state somewhere else.  The
-# default stays disk-backed rather than using the RAM-backed /tmp filesystem.
-_STATE_ROOT = Path(os.environ.get("AI_GATEWAY_TEST_STATE_DIR", Path.home() / ".tmp"))
-_STATE_ROOT.mkdir(parents=True, exist_ok=True)
-_STATE_DIR = Path(tempfile.mkdtemp(prefix="vivid-fish-pytest-", dir=_STATE_ROOT))
+
+# The runner creates exactly one unique, disk-backed state directory before
+# pytest collection.  Refusing a direct pytest invocation prevents import-time
+# gateway stores from falling back to a real operator database.
+if os.environ.get("VIVID_FISH_HERMETIC_TEST_NAMESPACE") != "1":
+    pytest.exit("pytest must run through scripts/run-hermetic-pytest.sh", returncode=2)
+_STATE_DIR = Path(os.environ["AI_GATEWAY_TEST_STATE_DIR"])
 _STORE_PATHS = {
     "AI_GATEWAY_ADMIN_DB": "admin.db",
     "AI_GATEWAY_METRICS_DB": "metrics.db",
@@ -30,12 +31,19 @@ _STORE_PATHS = {
 for _name, _filename in _STORE_PATHS.items():
     os.environ[_name] = str(_STATE_DIR / _filename)
 
-
-def _cleanup_state_dir() -> None:
-    shutil.rmtree(_STATE_DIR, ignore_errors=True)
+_GUARD = HermeticGuard()
 
 
-atexit.register(_cleanup_state_dir)
+def pytest_sessionstart(session: pytest.Session) -> None:
+    assert_hermetic_environment()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    _GUARD.install()
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    _GUARD.restore()
 
 
 @pytest.fixture(scope="session")
@@ -43,5 +51,12 @@ def gateway_test_state_dir() -> Path:
     return _STATE_DIR
 
 
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    _cleanup_state_dir()
+@pytest.fixture
+def test_owned_tcp_listener():
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    try:
+        yield listener
+    finally:
+        listener.close()
