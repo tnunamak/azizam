@@ -89,6 +89,7 @@ add_parent_dirs "$state_dir"
 for writable in tmp cache pycache home; do
   bwrap_args+=(--bind "$state_dir/$writable" "$state_dir/$writable")
 done
+bwrap_args+=(--ro-bind "$state_dir/proxy_config.yml" "$state_dir/proxy_config.yml")
 add_read_only_bind "$checkout_root" "$checkout_root"
 add_read_only_bind "$fresh_env" /venv
 bwrap_args+=(--bind "$state_dir/cache" "$checkout_root/cache")
