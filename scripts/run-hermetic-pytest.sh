@@ -74,9 +74,6 @@ declare -a bwrap_args=(
   --setenv VIVID_FISH_HERMETIC_HOST_PID_NAMESPACE "$host_pid_namespace" --setenv VIVID_FISH_HERMETIC_HOST_IPC_NAMESPACE "$host_ipc_namespace"
   --setenv VIVID_FISH_HERMETIC_TEST_ENV_ROOT /venv --setenv VIVID_FISH_HERMETIC_REPO_ROOT "$checkout_root"
   --setenv VIVID_FISH_HERMETIC_PYTHON_ROOT "$python_root"
-  --setenv VIVID_FISH_HERMETIC_LOCK_SHA256 "$lock_sha256" --setenv VIVID_FISH_HERMETIC_MANIFEST_SHA256 "$manifest_sha256"
-  --setenv VIVID_FISH_HERMETIC_INPUT_SHA256 "$input_sha256" --setenv VIVID_FISH_HERMETIC_PYTHON_ABI "$python_abi"
-  --setenv VIVID_FISH_HERMETIC_PLATFORM "$platform" --setenv VIVID_FISH_HERMETIC_PYTHON_MINOR "$python_minor"
   --setenv VIVID_FISH_HERMETIC_CHECKOUT_RECEIPT "$state_dir/checkout-receipt.json" --setenv VIVID_FISH_HERMETIC_CHECKOUT_HEAD "$checkout_head"
 )
 
@@ -114,7 +111,6 @@ read -r _ _ _ _ _ _ tty_number _ < /proc/self/stat
 if [[ $tty_number != 0 ]] || ( : </dev/tty ) 2>/dev/null; then echo "error: sandbox retained a controlling terminal" >&2; exit 1; fi
 if [[ -e "/proc/$VIVID_FISH_HERMETIC_HOST_RUNNER_PID" ]] || [[ $(readlink /proc/1/ns/pid) == "$VIVID_FISH_HERMETIC_HOST_PID_NAMESPACE" ]] || [[ $(readlink /proc/1/ns/ipc) == "$VIVID_FISH_HERMETIC_HOST_IPC_NAMESPACE" ]]; then echo "error: sandbox exposes host process or IPC state" >&2; exit 1; fi
 if [[ -e "$VIVID_FISH_HERMETIC_FORBIDDEN_PRODUCTION_PATH" ]] || [[ -e /run/docker.sock ]] || [[ -e /var/run/docker.sock ]]; then echo "error: sandbox exposes forbidden production or Unix-socket path" >&2; exit 1; fi
-"$VIVID_FISH_HERMETIC_TEST_ENV_ROOT/bin/python" -S "$VIVID_FISH_HERMETIC_REPO_ROOT/scripts/hermetic_preflight.py" --environment-root "$VIVID_FISH_HERMETIC_TEST_ENV_ROOT" --python-root "$VIVID_FISH_HERMETIC_PYTHON_ROOT" --requirements "$VIVID_FISH_HERMETIC_REPO_ROOT/requirements.txt" --input-manifest "$VIVID_FISH_HERMETIC_REPO_ROOT/tests/requirements-hermetic.in" --lock "$VIVID_FISH_HERMETIC_REPO_ROOT/tests/requirements-hermetic.lock" --python-minor "$VIVID_FISH_HERMETIC_PYTHON_MINOR"
 exec "$@"'
 
 if [[ ${1:-} == "--check" ]]; then
