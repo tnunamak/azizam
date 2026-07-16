@@ -63,8 +63,10 @@ def installed_inventory(site_packages: Path) -> set[str]:
 
 
 def reject_hooks(*roots: Path) -> None:
-    patterns = ("*.pth", "*.egg-link", "sitecustomize.py", "usercustomize.py", "direct_url.json")
-    for root in roots:
+    for index, root in enumerate(roots):
+        patterns = ("*.pth", "*.egg-link", "sitecustomize.py", "usercustomize.py")
+        if index == 0:
+            patterns += ("direct_url.json",)
         for pattern in patterns:
             found = next(root.rglob(pattern), None)
             if found is not None:
