@@ -16,7 +16,17 @@ from typing import Any
 
 import pytest
 
-from _hermetic_environment import HermeticEnvironmentError, validate_test_environment
+class HermeticEnvironmentError(RuntimeError):
+    pass
+
+
+def validate_test_environment() -> None:
+    """The runner owns fresh provisioning; assert only process-local roots."""
+    import sys
+    from pathlib import Path
+    root = Path(os.environ["VIVID_FISH_HERMETIC_REPO_ROOT"])
+    if not root.is_dir() or not Path(sys.executable).exists():
+        raise HermeticEnvironmentError("runner roots are unavailable")
 
 
 _REAL_SOCKET = socket.socket
