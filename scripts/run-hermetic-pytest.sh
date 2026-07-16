@@ -57,7 +57,7 @@ trap cleanup EXIT HUP INT TERM
 checkout_root="$state_dir/checkout"
 mkdir -p -- "$checkout_root"
 git -C "$repo_root" archive --format=tar HEAD | tar -x -C "$checkout_root"
-mkdir -- "$checkout_root/cache"
+mkdir -- "$checkout_root/venv" "$checkout_root/cache"
 cp -- "$checkout_root/proxy_config.yml" "$state_dir/proxy_config.yml"
 mkdir -p -- "$state_dir"/{tmp,pytest-tmp,cache,pycache,home}
 printf '{"checkout_diff_sha256":"%s","checkout_head":"%s","lock_sha256":"%s","schema":1}\n' \
