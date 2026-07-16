@@ -626,6 +626,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             proxy.ADMIN_STORE, "get_service_registry", litellm_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
+        ), patch.object(
+            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
@@ -645,6 +647,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             proxy.ADMIN_STORE, "get_service_registry", litellm_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
+        ), patch.object(
+            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
@@ -675,6 +679,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
             proxy, "currently_loaded_kobold_model", lambda: loaded_path
+        ), patch.object(
+            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 

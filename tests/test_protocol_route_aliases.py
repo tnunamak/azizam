@@ -18,6 +18,12 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 
 
+def _iter_routes(routes):
+    for route in routes:
+        yield route
+        yield from _iter_routes(getattr(route, "routes", ()))
+
+
 def _first_full_route_name(method: str, path: str) -> str | None:
     scope = {
         "type": "http",
@@ -25,7 +31,7 @@ def _first_full_route_name(method: str, path: str) -> str | None:
         "path": path,
         "root_path": "",
     }
-    for route in proxy.app.routes:
+    for route in _iter_routes(proxy.app.routes):
         match, _ = route.matches(scope)
         if match == Match.FULL:
             return route.name
@@ -36,7 +42,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
     def test_declared_aliases_are_registered(self) -> None:
         registered = {
             (method, route.path)
-            for route in proxy.app.routes
+            for route in _iter_routes(proxy.app.routes)
             for method in getattr(route, "methods", set())
         }
 

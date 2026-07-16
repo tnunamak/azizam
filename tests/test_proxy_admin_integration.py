@@ -26,6 +26,11 @@ from gateway.admin_oidc import (  # noqa: E402
 from gateway.admin_runtime import create_admin_service_account_key  # noqa: E402
 
 
+async def _test_status_projection(_config):
+    """Keep admin-route assertions independent of engine health probes."""
+    return {}
+
+
 def assert_authenticated_admin_dashboard(
     test_case: unittest.TestCase, client: TestClient
 ) -> None:
@@ -59,6 +64,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_STORE.path = self.db
         proxy.ADMIN_OIDC_STATES.clear()
         proxy.AUTH_ENABLED = True
+        self._status_projection = patch.object(
+            proxy.status_endpoint, "get_cached_status", _test_status_projection
+        )
+        self._status_projection.start()
         admin_store.init_db(self.db)
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
@@ -71,6 +80,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.signing_key = self.old_signing_key
         proxy.ADMIN_AUTH.cookie = self.old_cookie
         proxy.AUTH_ENABLED = self.old_auth_enabled
+        self._status_projection.stop()
         self.env_patcher.stop()
         proxy.ADMIN_OIDC_STATES.clear()
         self.tmp.cleanup()
@@ -1479,6 +1489,10 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         proxy.AUTH_ENABLED = True
         proxy.ADMIN_AUTH.signing_key = b"s" * 32
         proxy.ADMIN_AUTH.cookie = CookieConfig(secure=False)
+        self._status_projection = patch.object(
+            proxy.status_endpoint, "get_cached_status", _test_status_projection
+        )
+        self._status_projection.start()
         admin_store.init_db(self.db)
         # No service-account admin key here -> no owner/admin exists yet.
         self.client = TestClient(proxy.app)
@@ -1489,6 +1503,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.signing_key = self.old_signing_key
         proxy.ADMIN_AUTH.cookie = self.old_cookie
         proxy.AUTH_ENABLED = self.old_auth_enabled
+        self._status_projection.stop()
         proxy.ADMIN_OIDC_STATES.clear()
         self.tmp.cleanup()
 

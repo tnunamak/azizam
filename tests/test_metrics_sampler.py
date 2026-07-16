@@ -15,6 +15,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -44,21 +45,30 @@ class TestMetricsSampler(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_emit_fast_does_not_crash(self) -> None:
-        # Even when probes return empty / partial data, the sampler should
-        # not raise. We rely on the real probes; their failure modes are
-        # already handled inside _emit_fast.
         now = int(time.time())
-        try:
+        with (
+            patch.object(metrics_sampler.status_endpoint, "_gpus_raw", return_value=[] ) as gpus,
+            patch.object(metrics_sampler.status_endpoint, "_read_sensors", return_value={}) as sensors,
+            patch.object(metrics_sampler.status_endpoint, "_load_average", return_value=(0.0, 0.0, 0.0)) as load,
+            patch.object(metrics_sampler.status_endpoint, "_ram_attribution", return_value={}) as ram,
+        ):
             metrics_sampler._emit_fast(self._writer, now)
-        except Exception as e:  # noqa: BLE001
-            self.fail(f"_emit_fast raised: {e}")
+        for probe in (gpus, sensors, load, ram):
+            probe.assert_called_once_with()
 
     def test_emit_slow_does_not_crash(self) -> None:
         now = int(time.time())
-        try:
+        with (
+            patch.object(metrics_sampler.status_endpoint, "_disk_partitions", return_value=[]) as disks,
+            patch.object(metrics_sampler.status_endpoint, "_ram_attribution", return_value={}) as ram,
+            patch.object(metrics_sampler.status_endpoint, "_gpus_raw", return_value=[]) as gpus,
+            patch.object(metrics_sampler.status_endpoint, "_vram_attribution", return_value={}) as vram,
+            patch.object(metrics_sampler.status_endpoint, "_journal_xids", return_value={}) as journal,
+        ):
             metrics_sampler._emit_slow(self._writer, now)
-        except Exception as e:  # noqa: BLE001
-            self.fail(f"_emit_slow raised: {e}")
+        for probe in (disks, ram, gpus, journal):
+            probe.assert_called_once_with()
+        vram.assert_called_once_with([])
 
     def test_record_request_writes_with_tags(self) -> None:
         metrics_sampler.record_request(

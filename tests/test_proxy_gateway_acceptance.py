@@ -2168,7 +2168,10 @@ class TestAnthropicAndOllamaRoutes(unittest.TestCase):
                 "GET /api/tags not yet mounted — owner is wiring the Ollama "
                 "model listing"
             )
-        with self._patch_auth_open():
+        summaries = [{"id": "test-model", "context_window": 8192}]
+        with self._patch_auth_open(), patch.object(
+            proxy, "_ollama_model_catalog_summaries", AsyncMock(return_value=summaries)
+        ):
             response = self.client.get("/api/tags")
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()

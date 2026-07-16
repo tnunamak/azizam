@@ -90,6 +90,10 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (workflows_dir / "demo.ui.json").write_text(
+                json.dumps({"nodes": [{"id": 3, "type": "KSampler"}], "links": []}),
+                encoding="utf-8",
+            )
             registry = WorkflowRegistry()
             registry.add_manifest(
                 {
