@@ -81,14 +81,14 @@ def _copy_runner_source(repo: Path) -> tuple[Path, Path, Path]:
     return req, inp, lock
 
 
-def _make_invalid_source(repo: Path, req: Path, inp: Path, lock: Path, case: str) -> str:
+def _make_invalid_source(repo: Path, req: Path, inp: Path, lock: Path, case: str) -> tuple[int, str]:
     expected = {
-        "dirty": "dirty tracked tree",
-        "untracked": "untracked input",
-        "requirements": "stale",
-        "input": "stale",
-        "malformed": "stale",
-        "missing": "missing lock or manifest",
+        "dirty": (2, "dirty tracked tree"),
+        "untracked": (2, "untracked input"),
+        "requirements": (2, "stale"),
+        "input": (2, "stale"),
+        "malformed": (2, "stale"),
+        "missing": (127, "required hermetic test input is missing"),
     }[case]
     if case == "dirty":
         req.write_text("changed\n")
@@ -141,7 +141,8 @@ def test_runner_rejects_invalid_source_before_state_or_provisioning(tmp_path: Pa
 
     result = subprocess.run([str(repo / "scripts" / RUNNER.name)], text=True, capture_output=True, env=env)
 
-    assert result.returncode == 2
-    assert expected in result.stderr
+    expected_code, expected_message = expected
+    assert result.returncode == expected_code
+    assert expected_message in result.stderr
     assert not list((home / ".tmp").glob("vivid-fish-pytest.*"))
     assert not provision_marker.exists()
