@@ -963,27 +963,28 @@ class TestGatewayRouterMounting(unittest.TestCase):
         ):
             self.assertEqual(
                 proxy._configured_litellm_local_model_target("registered-name"),
-                ("kobold", "/models/registered.gguf", None),
+                proxy.LocalModelActivation(
+                    backend="kobold",
+                    model="/models/registered.gguf",
+                ),
             )
-            self.assertEqual(
-                proxy._configured_litellm_local_model_target("friendly-name"),
-                (None, None, None),
+            self.assertIsNone(
+                proxy._configured_litellm_local_model_target("friendly-name")
             )
-            self.assertEqual(
-                proxy._configured_litellm_local_model_target("upstream-name"),
-                (None, None, None),
+            self.assertIsNone(
+                proxy._configured_litellm_local_model_target("upstream-name")
             )
 
     def test_litellm_activates_gateway_owned_local_role_before_forwarding(self) -> None:
         calls: list[Any] = []
-        activations: list[tuple[str, str | None, str | None]] = []
+        activations: list[tuple[str, str | None, str | None, str | None]] = []
 
         async def fake_send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             calls.append(execution_request)
             return _FakeStreamClient(), _FakeLiteLLMResponse()
 
-        async def fake_ensure_target(backend, model, mmproj=None):
-            activations.append((backend, model, mmproj))
+        async def fake_ensure_target(backend, model, mmproj=None, profile=None):
+            activations.append((backend, model, mmproj, profile))
             return True
 
         def fake_registry():
@@ -1019,10 +1020,11 @@ class TestGatewayRouterMounting(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(len(activations), 1)
-        backend, model, mmproj = activations[0]
+        backend, model, mmproj, profile = activations[0]
         self.assertEqual(backend, "kobold")
         self.assertEqual(model, proxy.ROLES["default"]["model"])
         self.assertEqual(mmproj, proxy.ROLES["default"]["mmproj"])
+        self.assertEqual(profile, "kv-q5-q4")
         forwarded = json.loads(calls[0].body.decode())
         self.assertEqual(forwarded["model"], "default")
         self.assertNotIn("reasoning_effort", forwarded)
@@ -1032,13 +1034,13 @@ class TestGatewayRouterMounting(unittest.TestCase):
             self.assertNotIn("/no_think", msg.get("content", ""))
 
     def test_litellm_activates_mmproj_only_for_vision_requests(self) -> None:
-        activations: list[tuple[str, str | None, str | None]] = []
+        activations: list[tuple[str, str | None, str | None, str | None]] = []
 
         async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _FakeStreamClient(), _FakeLiteLLMResponse()
 
-        async def fake_ensure_target(backend, model, mmproj=None):
-            activations.append((backend, model, mmproj))
+        async def fake_ensure_target(backend, model, mmproj=None, profile=None):
+            activations.append((backend, model, mmproj, profile))
             return True
 
         def fake_registry():

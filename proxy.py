@@ -1226,8 +1226,13 @@ def _currently_loaded_aux_for(backend: str) -> Optional[str]:
     return None
 
 
-async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str] = None) -> bool:
-    """Make a (backend, model, mmproj) target real before forwarding a request.
+async def ensure_target(
+    backend: str,
+    model: Optional[str],
+    mmproj: Optional[str] = None,
+    profile: Optional[str] = None,
+) -> bool:
+    """Make a (backend, model, mmproj, profile) target real before forwarding.
 
     Every backend goes through its LifecycleDriver — there is no kobold/tabby
     special-case anymore. The driver is resolved from the service's
@@ -1244,6 +1249,8 @@ async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str
         and pin-loaded skip from SwapContext.
 
     `mmproj` is the optional aux file (kobold vision). Pass None for text-only.
+    `profile` is an optional named engine profile selected by model data. The
+    lifecycle driver owns its meaning and rejects unknown names.
 
     Returns True on success. Caller turns False into a 503.
     """
@@ -1264,7 +1271,12 @@ async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str
 
     # The driver builds + prechecks its own activation from driver_config. On a
     # precheck failure (e.g. a missing GGUF/aux file) it returns None.
-    activation = driver.build_activation(bcfg, model=model, aux=mmproj or None)
+    activation = driver.build_activation(
+        bcfg,
+        model=model,
+        aux=mmproj or None,
+        profile=profile,
+    )
     if activation is None:
         return False
 
@@ -1280,6 +1292,7 @@ async def ensure_target(backend: str, model: Optional[str], mmproj: Optional[str
                 loaded_aux=_currently_loaded_aux_for(backend),
                 target_aux=mmproj or None,
                 pin_loaded=bool(bcfg.get("pin_loaded_model", PIN_LOADED_MODEL)),
+                target_profile=profile,
             ),
             warned_models=_pin_mismatch_warned,
         )
@@ -2841,6 +2854,17 @@ def _service_model_records(service_cfg: Mapping[str, Any]) -> list[Mapping[str, 
     return _pure_service_model_records(service_cfg)
 
 
+@dataclass(frozen=True)
+class LocalModelActivation:
+    """Resolved identity and backend-facing name for one local model target."""
+
+    backend: str
+    model: Optional[str]
+    mmproj: Optional[str] = None
+    profile: Optional[str] = None
+    backend_model: Optional[str] = None
+
+
 def _backend_default_model_to_load(backend: str) -> Optional[str]:
     backend_cfg = (config.get("backends") or {}).get(backend, {})
     if not isinstance(backend_cfg, Mapping):
@@ -2860,12 +2884,12 @@ def _configured_litellm_local_model_target(
     requested_model: str,
     *,
     service_id: str | None = None,
-) -> tuple[Optional[str], Optional[str], Optional[str]]:
+) -> Optional[LocalModelActivation]:
     """Return the local backend activation target for a LiteLLM model group.
 
     LiteLLM owns execution, but the gateway still owns local service readiness.
     This helper recognizes model groups generated from local service data and
-    returns the backend/model/mmproj that must be hot before forwarding.
+    returns the backend/model/mmproj/profile that must be hot before forwarding.
     Unknown model groups are left for LiteLLM to handle.
     """
     normalized = normalize_model_id(requested_model)
@@ -2880,7 +2904,12 @@ def _configured_litellm_local_model_target(
 
         service_model = str(service_cfg.get("model_id") or "").strip()
         if service_model and normalize_model_id(service_model) == normalized:
-            return backend, _backend_default_model_to_load(backend), None
+            profile = str(service_cfg.get("activation_profile") or "").strip()
+            return LocalModelActivation(
+                backend=backend,
+                model=_backend_default_model_to_load(backend),
+                profile=profile or None,
+            )
 
         for item in _service_model_records(service_cfg):
             # LiteLLM registers one public route name per deployment. Match
@@ -2906,13 +2935,19 @@ def _configured_litellm_local_model_target(
                 or item.get("mmproj")
                 or ""
             ).strip()
+            activation_profile = str(item.get("activation_profile") or "").strip()
             if engine_quarantine.activation_from_upstream_id(backend) and not activation_model:
                 activation_model = str(item.get("upstream_model") or item.get("id") or "").strip()
             if engine_quarantine.activation_requires_abs_path(backend) and activation_model and not os.path.isabs(activation_model):
                 activation_model = ""
-            return backend, activation_model or None, activation_mmproj or None
+            return LocalModelActivation(
+                backend=backend,
+                model=activation_model or None,
+                mmproj=activation_mmproj or None,
+                profile=activation_profile or None,
+            )
 
-    return None, None, None
+    return None
 
 
 def _litellm_activation_failure_response(
@@ -2946,6 +2981,7 @@ async def _ensure_litellm_local_backend_target(
     backend: Optional[str],
     target_model: Optional[str],
     target_mmproj: Optional[str] = None,
+    target_profile: Optional[str] = None,
     enforce_gateway_policy: bool = True,
 ) -> Response | None:
     if not backend:
@@ -2958,7 +2994,13 @@ async def _ensure_litellm_local_backend_target(
     availability = _service_availability_response(backend, service_label=backend)
     if availability is not None:
         return availability
-    if await ensure_target(backend, target_model, target_mmproj):
+    ready = await ensure_target(
+        backend,
+        target_model,
+        target_mmproj,
+        profile=target_profile,
+    )
+    if ready:
         return None
     return _litellm_activation_failure_response(
         requested_model=requested_model,
@@ -2995,10 +3037,14 @@ async def _prepare_litellm_local_llm_request(
         resolved_target = _resolve_request_target(model_name, aliases_only=True)
     except AliasPolicyResolutionError as error:
         return _alias_policy_configuration_response(error), body
-    target_backend, target_model, target_mmproj = _configured_litellm_local_model_target(
+    local_activation = _configured_litellm_local_model_target(
         model_name,
         service_id=(resolved_target.logical_service_id if resolved_target else None),
     )
+    target_backend = local_activation.backend if local_activation else None
+    target_model = local_activation.model if local_activation else None
+    target_mmproj = local_activation.mmproj if local_activation else None
+    target_profile = local_activation.profile if local_activation else None
     if resolved_target is None:
         try:
             resolved_target = _resolve_request_target(model_name, service_id=target_backend)
@@ -3088,6 +3134,7 @@ async def _prepare_litellm_local_llm_request(
         backend=target_backend,
         target_model=target_model,
         target_mmproj=target_mmproj,
+        target_profile=target_profile,
         enforce_gateway_policy=enforce_gateway_policy,
     )
     return response, body
@@ -3104,10 +3151,14 @@ async def _activate_prepared_litellm_local_target(
         resolved_target = _resolve_request_target(requested_model, aliases_only=True)
     except AliasPolicyResolutionError as error:
         return _alias_policy_configuration_response(error)
-    target_backend, target_model, target_mmproj = _configured_litellm_local_model_target(
+    local_activation = _configured_litellm_local_model_target(
         requested_model,
         service_id=(resolved_target.logical_service_id if resolved_target else None),
     )
+    target_backend = local_activation.backend if local_activation else None
+    target_model = local_activation.model if local_activation else None
+    target_mmproj = local_activation.mmproj if local_activation else None
+    target_profile = local_activation.profile if local_activation else None
     if not target_backend or (
         enforce_gateway_policy and _profile_target_activation(auth_context) == "existing_only"
     ):
@@ -3118,6 +3169,7 @@ async def _activate_prepared_litellm_local_target(
         backend=target_backend,
         target_model=target_model,
         target_mmproj=target_mmproj,
+        target_profile=target_profile,
         enforce_gateway_policy=enforce_gateway_policy,
     )
 
@@ -18807,10 +18859,14 @@ def _normalize_litellm_local_model_name(value: Any) -> str:
 def _litellm_local_activation_target(
     backend: str,
     requested_model: str,
-) -> tuple[str, str | None]:
+) -> LocalModelActivation:
     backend_cfg = config.get("backends", {}).get(backend, {})
     if not isinstance(backend_cfg, Mapping):
-        return requested_model, None
+        return LocalModelActivation(
+            backend=backend,
+            model=requested_model,
+            backend_model=requested_model,
+        )
     requested = normalize_model_id(requested_model)
     for item in _service_model_records(backend_cfg):
         candidates = {
@@ -18832,8 +18888,20 @@ def _litellm_local_activation_target(
             activation_mmproj = str(
                 item.get("activation_mmproj") or item.get("mmproj") or ""
             ).strip()
-            return activation_model or requested_model, activation_mmproj or None
-    return requested_model, None
+            activation_profile = str(item.get("activation_profile") or "").strip()
+            backend_model = str(item.get("backend_model") or requested_model).strip()
+            return LocalModelActivation(
+                backend=backend,
+                model=activation_model or requested_model,
+                mmproj=activation_mmproj or None,
+                profile=activation_profile or None,
+                backend_model=backend_model or requested_model,
+            )
+    return LocalModelActivation(
+        backend=backend,
+        model=requested_model,
+        backend_model=requested_model,
+    )
 
 
 def _openai_proxy_policy_decision(
@@ -20142,7 +20210,7 @@ async def _forward_internal_litellm_local_chat_completions(
             param="model",
             code="missing_required_parameter",
         )
-    activation_model, activation_mmproj = _litellm_local_activation_target(
+    activation = _litellm_local_activation_target(
         backend,
         target_model,
     )
@@ -20150,14 +20218,20 @@ async def _forward_internal_litellm_local_chat_completions(
     availability = _service_availability_response(backend, service_label=backend)
     if availability is not None:
         return availability
-    if not await ensure_target(backend, activation_model, activation_mmproj):
+    ready = await ensure_target(
+        backend,
+        activation.model,
+        activation.mmproj,
+        profile=activation.profile,
+    )
+    if not ready:
         return _litellm_activation_failure_response(
             requested_model=str(body.get("model") or target_model),
             backend=backend,
-            target_model=activation_model,
+            target_model=activation.model,
         )
 
-    body["model"] = target_model
+    body["model"] = activation.backend_model or target_model
     execution_request = LlmExecutionRequest(
         method="POST",
         url=f"{upstream_base}/v1/chat/completions",

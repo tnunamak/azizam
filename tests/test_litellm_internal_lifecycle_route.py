@@ -223,7 +223,7 @@ def test_internal_litellm_local_route_activates_and_forwards_directly() -> None:
         )
 
     assert response.status_code == 200, response.text
-    ensure_target.assert_awaited_once_with("kobold", "Qwen.gguf", None)
+    ensure_target.assert_awaited_once_with("kobold", "Qwen.gguf", None, profile=None)
     execution_request = captured["request"]
     assert execution_request.url == "http://127.0.0.1:5051/v1/chat/completions"
     assert execution_request.headers == {"content-type": "application/json"}
@@ -359,9 +359,146 @@ def test_internal_litellm_local_route_resolves_activation_path_from_model_data()
         )
 
     assert response.status_code == 200, response.text
-    ensure_target.assert_awaited_once_with("kobold", activation_path, activation_mmproj)
+    ensure_target.assert_awaited_once_with(
+        "kobold",
+        activation_path,
+        activation_mmproj,
+        profile=None,
+    )
     forwarded_body = json.loads(captured["request"].body.decode("utf-8"))
     assert forwarded_body["model"] == "Qwen.gguf"
+
+
+def test_internal_litellm_route_preserves_q8_profile_alias_and_forwards_backend_model() -> None:
+    client = TestClient(proxy.app)
+    captured = {}
+    activation_path = "/models/Qwen.gguf"
+
+    async def fake_send(execution_request, *, cancellation_token=None):
+        captured["request"] = execution_request
+        return _FakeExecutionClient(), _FakeExecutionResponse({"ok": True})
+
+    with patch.dict(
+        os.environ,
+        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        clear=False,
+    ), patch.dict(
+        proxy.LLM_BACKEND_HOSTS,
+        {"kobold": "http://127.0.0.1:5051"},
+        clear=True,
+    ), patch.object(
+        proxy,
+        "config",
+        {
+            "backends": {
+                "kobold": {
+                    "models": [
+                        {
+                            "id": "coder-q8",
+                            "model_group": "coder-q8",
+                            "upstream_model": "coder-q8",
+                            "backend_model": "Qwen.gguf",
+                            "activation_model": activation_path,
+                            "activation_profile": "kv-q8",
+                        }
+                    ]
+                }
+            }
+        },
+    ), patch.object(
+        proxy,
+        "_service_availability_response",
+        return_value=None,
+    ), patch.object(
+        proxy,
+        "ensure_target",
+        AsyncMock(return_value=True),
+    ) as ensure_target, patch.object(
+        proxy,
+        "send_llm_execution_request",
+        fake_send,
+    ):
+        response = client.post(
+            "/internal/litellm/local/kobold/v1/chat/completions",
+            headers={"Authorization": "Bearer internal-secret"},
+            json={"model": "openai/coder-q8", "messages": []},
+        )
+
+    assert response.status_code == 200, response.text
+    ensure_target.assert_awaited_once_with(
+        "kobold",
+        activation_path,
+        None,
+        profile="kv-q8",
+    )
+    forwarded_body = json.loads(captured["request"].body.decode("utf-8"))
+    assert forwarded_body["model"] == "Qwen.gguf"
+
+
+def test_internal_litellm_route_preserves_rp_context_profile_and_huihui_model() -> None:
+    client = TestClient(proxy.app)
+    captured = {}
+    activation_path = "/models/Huihui-Qwen.gguf"
+
+    async def fake_send(execution_request, *, cancellation_token=None):
+        captured["request"] = execution_request
+        return _FakeExecutionClient(), _FakeExecutionResponse({"ok": True})
+
+    with patch.dict(
+        os.environ,
+        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        clear=False,
+    ), patch.dict(
+        proxy.LLM_BACKEND_HOSTS,
+        {"kobold": "http://127.0.0.1:5051"},
+        clear=True,
+    ), patch.object(
+        proxy,
+        "config",
+        {
+            "backends": {
+                "kobold": {
+                    "models": [
+                        {
+                            "id": "rp",
+                            "model_group": "rp",
+                            "upstream_model": "rp",
+                            "backend_model": "Huihui-Qwen.gguf",
+                            "activation_model": activation_path,
+                            "activation_profile": "kv-q5-q4-rp",
+                        }
+                    ]
+                }
+            }
+        },
+    ), patch.object(
+        proxy,
+        "_service_availability_response",
+        return_value=None,
+    ), patch.object(
+        proxy,
+        "ensure_target",
+        AsyncMock(return_value=True),
+    ) as ensure_target, patch.object(
+        proxy,
+        "send_llm_execution_request",
+        fake_send,
+    ):
+        response = client.post(
+            "/internal/litellm/local/kobold/v1/chat/completions",
+            headers={"Authorization": "Bearer internal-secret"},
+            json={"model": "openai/rp", "messages": []},
+        )
+
+    assert response.status_code == 200, response.text
+    ensure_target.assert_awaited_once_with(
+        "kobold",
+        activation_path,
+        None,
+        profile="kv-q5-q4-rp",
+    )
+    forwarded_body = json.loads(captured["request"].body.decode("utf-8"))
+    assert forwarded_body["model"] == "Huihui-Qwen.gguf"
 
 
 def test_internal_litellm_current_route_does_not_enforce_gateway_profile_policy() -> None:

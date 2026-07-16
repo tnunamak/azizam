@@ -36,7 +36,8 @@ SystemdDriver  (swap_strategy: dropin-env-restart)
     stop()        → systemctl stop <unit> (only fires when idle_timeout_s > 0).
     ensure_ready  → systemctl start <unit> then poll health.
     driver_config keys: scope, unit, dropin, swap_strategy, health_endpoint,
-                        health_timeout_s.
+                        health_timeout_s, activation_env_keys,
+                        activation_profiles.
     NEVER writes anything except the single declared drop-in file.
     NEVER installs or modifies the unit itself.
 
@@ -93,6 +94,11 @@ class SwapContext:
     pin_loaded:
         If True the driver must NOT restart the service when there is a
         mismatch — warn once and return True (serve with whatever is loaded).
+    target_profile:
+        Optional named engine profile selected by model data. For systemd
+        activations the profile is part of the loaded identity: matching the
+        model and aux file is not enough to short-circuit when the managed
+        drop-in was written for a different profile.
     """
 
     loaded_model: Optional[str]
@@ -100,6 +106,7 @@ class SwapContext:
     loaded_aux: Optional[str] = None
     target_aux: Optional[str] = None
     pin_loaded: bool = False
+    target_profile: Optional[str] = None
 
     # Per-SwapContext set tracking which models we have already warned about so
     # the warn-once behaviour is mirrored faithfully without needing a global
@@ -170,11 +177,13 @@ class LifecycleDriver(Protocol):
         *,
         model: str,
         aux: Optional[str] = None,
+        profile: Optional[str] = None,
     ) -> Optional[dict]:
         """OPTIONAL — single-slot drivers only.  Build and precheck the activation dict.
 
         The activation dict is the resolved per-model block passed to swap():
-          - systemd (dropin-env-restart): {"env": {KEY: VALUE, ...}}
+          - systemd (dropin-env-restart): {"env": {KEY: VALUE, ...},
+                                           "profile": str | None}
           - http-load-unload:             {"model_name": str}
 
         Reads all engine-shaped knowledge (env key names, load body key, precheck
@@ -308,6 +317,7 @@ class ExternalDriver:
         *,
         model: str,
         aux: Optional[str] = None,
+        profile: Optional[str] = None,
     ) -> Optional[dict]:
         """No-op: ExternalDriver does not support swap; returns empty dict."""
         return {}
@@ -406,6 +416,7 @@ class DockerDriver:
         *,
         model: str,
         aux: Optional[str] = None,
+        profile: Optional[str] = None,
     ) -> Optional[dict]:
         """No-op: DockerDriver does not support swap; returns empty dict."""
         return {}
@@ -620,6 +631,7 @@ class CommandDriver:
         *,
         model: str,
         aux: Optional[str] = None,
+        profile: Optional[str] = None,
     ) -> Optional[dict]:
         """No-op: CommandDriver does not support swap; returns empty dict."""
         return {}
@@ -831,6 +843,7 @@ class SystemdDriver:
         *,
         model: str,
         aux: Optional[str] = None,
+        profile: Optional[str] = None,
     ) -> Optional[dict]:
         """Build the activation dict for a dropin-env-restart swap from driver_config.
 
@@ -843,7 +856,13 @@ class SystemdDriver:
         aux path when aux is provided.  Returns None (with a printed message) if
         validation fails — identical behaviour to the legacy ensure_target branch.
 
-        Returns ``{"env": {<model_key>: model, <aux_key>: aux or ""}}``.
+        A named profile is resolved only through
+        ``driver_config.activation_profiles``. Unknown or malformed profiles
+        fail closed. Profile env cannot overwrite the model/aux identity keys.
+
+        Returns ``{"env": {<model_key>: model, <aux_key>: aux or "", ...},
+        "profile": profile}`` for named profiles. The legacy no-profile shape
+        is preserved for services that do not use profiles.
         """
         dc = self._driver_config(svc)
 
@@ -868,7 +887,43 @@ class SystemdDriver:
                 )
                 return None
 
-        return {"env": {model_key: model, aux_key: aux or ""}}
+        env = {model_key: model, aux_key: aux or ""}
+        if profile is None:
+            return {"env": env}
+
+        profile_name = str(profile).strip()
+        profiles = dc.get("activation_profiles")
+        profile_env = profiles.get(profile_name) if isinstance(profiles, Mapping) else None
+        if not profile_name or not isinstance(profile_env, Mapping):
+            print(
+                f"[lifecycle] SystemdDriver.build_activation: unknown activation profile "
+                f"{profile_name!r}",
+                flush=True,
+            )
+            return None
+        if any(not isinstance(key, str) or not key for key in profile_env):
+            print(
+                f"[lifecycle] SystemdDriver.build_activation: activation profile "
+                f"{profile_name!r} contains an invalid environment key",
+                flush=True,
+            )
+            return None
+        if model_key in profile_env or aux_key in profile_env:
+            print(
+                f"[lifecycle] SystemdDriver.build_activation: activation profile "
+                f"{profile_name!r} may not override model/aux identity",
+                flush=True,
+            )
+            return None
+        if any(not isinstance(value, (str, int, float, bool)) for value in profile_env.values()):
+            print(
+                f"[lifecycle] SystemdDriver.build_activation: activation profile "
+                f"{profile_name!r} contains a non-scalar environment value",
+                flush=True,
+            )
+            return None
+        env.update({key: str(value) for key, value in profile_env.items()})
+        return {"env": env, "profile": profile_name}
 
     async def swap(
         self,
@@ -902,8 +957,8 @@ class SystemdDriver:
         if not unit:
             return False
 
-        env = activation.get("env") or {}
         dropin_path = self._dropin_path(dc)
+        dropin_text = self._dropin_text(activation)
 
         # --- SwapContext policy (already-loaded short-circuit + pin) ----------
         if ctx is not None:
@@ -917,9 +972,14 @@ class SystemdDriver:
             # mismatch = (model mismatch) OR (aux mismatch, normalised to None).
             loaded_aux_norm = ctx.loaded_aux or None
             target_aux_norm = ctx.target_aux or None
+            profile_matches = (
+                ctx.target_profile is None
+                or self._managed_dropin_matches(dropin_path, dropin_text)
+            )
             already_loaded = (
                 ctx.loaded_model == target
                 and loaded_aux_norm == target_aux_norm
+                and profile_matches
             )
             if already_loaded:
                 return True
@@ -942,14 +1002,6 @@ class SystemdDriver:
                     )
                 return True
         # --- end SwapContext policy -------------------------------------------
-
-        # Build the drop-in text (the exact [Service] Environment= override).
-        dropin_text = (
-            "# Managed by openai-proxy. Do not edit by hand; set role `model:`/`mmproj:` in proxy_config.yml.\n"
-            "[Service]\n"
-        )
-        for key, value in env.items():
-            dropin_text += f'Environment="{key}={value}"\n'
 
         # Write the drop-in.
         try:
@@ -1023,6 +1075,26 @@ class SystemdDriver:
         if isinstance(lifecycle, Mapping):
             return lifecycle.get("driver_config") or {}
         return {}
+
+    @staticmethod
+    def _dropin_text(activation: Mapping[str, Any]) -> str:
+        text = (
+            "# Managed by openai-proxy. Do not edit by hand; set role `model:`/`mmproj:` in proxy_config.yml.\n"
+        )
+        profile = activation.get("profile")
+        if profile:
+            text += f"# Activation profile: {profile}\n"
+        text += "[Service]\n"
+        for key, value in (activation.get("env") or {}).items():
+            text += f'Environment="{key}={value}"\n'
+        return text
+
+    @staticmethod
+    def _managed_dropin_matches(path: Path, expected: str) -> bool:
+        try:
+            return path.read_text() == expected
+        except OSError:
+            return False
 
     @staticmethod
     def _scope_flag(dc: Mapping[str, Any]) -> list[str]:
@@ -1158,6 +1230,7 @@ class HttpLoadUnloadDriver:
         *,
         model: str,
         aux: Optional[str] = None,
+        profile: Optional[str] = None,
     ) -> Optional[dict]:
         """Build the activation dict for an http-load-unload swap from driver_config.
 
