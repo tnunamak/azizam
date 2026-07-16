@@ -130,7 +130,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
         provider_native_routes = {
             (method, route.path)
             for route in _iter_routes(proxy.app.routes)
-            if route.name == "provider_native_request"
+            if getattr(route, "name", None) == "provider_native_request"
             for method in getattr(route, "methods", set())
         }
 
