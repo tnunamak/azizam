@@ -45,14 +45,14 @@ def test_source_preflight_specific_failures(tmp_path: Path, case: str) -> None:
     import hashlib
     h = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
     lock.write_text(f"# hermetic-manifest-sha256: {h(req)}\n# hermetic-input-sha256: {h(inp)}\n")
-    for path in (req, inp, lock): subprocess.run(["git", "-C", str(repo), "add", str(path)], check=True)
+    for name in ("requirements.txt", "input.in", "lock"): subprocess.run(["git", "-C", str(repo), "add", name], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True)
     expected = {"dirty":"dirty tracked tree", "untracked":"untracked input", "requirements":"stale", "input":"stale", "malformed":"stale", "missing":"missing lock or manifest"}[case]
     if case == "dirty": req.write_text("changed\n")
     elif case == "untracked": (repo / "extra").write_text("x\n")
-    elif case == "requirements": req.write_text("changed\n"); subprocess.run(["git", "-C", str(repo), "add", str(req)], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
-    elif case == "input": inp.write_text("changed\n"); subprocess.run(["git", "-C", str(repo), "add", str(inp)], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
-    elif case == "malformed": lock.write_text("broken\n"); subprocess.run(["git", "-C", str(repo), "add", str(lock)], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
+    elif case == "requirements": req.write_text("changed\n"); subprocess.run(["git", "-C", str(repo), "add", "requirements.txt"], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
+    elif case == "input": inp.write_text("changed\n"); subprocess.run(["git", "-C", str(repo), "add", "input.in"], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
+    elif case == "malformed": lock.write_text("broken\n"); subprocess.run(["git", "-C", str(repo), "add", "lock"], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
     else: lock.unlink(); subprocess.run(["git", "-C", str(repo), "add", "-u"], check=True); subprocess.run(["git", "-C", str(repo), "commit", "-qm", "change"], check=True)
     marker = tmp_path / "not-started"
     result = subprocess.run([str(PREFLIGHT), str(repo), str(lock), str(req), str(inp)], text=True, capture_output=True)
