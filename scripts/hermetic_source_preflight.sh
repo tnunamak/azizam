@@ -8,8 +8,8 @@ if [[ -n $(git -C "$repo" ls-files --others --exclude-standard) ]]; then
   echo "untracked input" >&2; exit 2
 fi
 [[ -f $lock && -f $requirements && -f $input ]] || { echo "missing lock or manifest" >&2; exit 2; }
-manifest_hash=$(sha256sum "$requirements" | awk '{print $1}')
-input_hash=$(sha256sum "$input" | awk '{print $1}')
+read -r manifest_hash _ < <(sha256sum "$requirements")
+read -r input_hash _ < <(sha256sum "$input")
 grep -q "^# hermetic-manifest-sha256: $manifest_hash$" "$lock" || { echo "stale requirements hash" >&2; exit 2; }
 grep -q "^# hermetic-input-sha256: $input_hash$" "$lock" || { echo "stale input hash" >&2; exit 2; }
 grep -q '^# hermetic-manifest-sha256: [0-9a-f]\{64\}$' "$lock" || { echo "malformed lock header" >&2; exit 2; }
