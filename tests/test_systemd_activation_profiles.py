@@ -26,7 +26,9 @@ def _service() -> dict:
                     "kv-q5-q4": {
                         "LLAMA_BEE_CTK": "q5_0",
                         "LLAMA_BEE_CTV": "q4_1",
-                        "LLAMA_BEE_CTX": 202752,
+                        "LLAMA_BEE_DRAFT_CTK": "q5_0",
+                        "LLAMA_BEE_DRAFT_CTV": "q4_1",
+                        "LLAMA_BEE_CTX": 205824,
                     },
                     "kv-q5-q4-rp": {
                         "LLAMA_BEE_CTK": "q5_0",

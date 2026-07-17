@@ -76,7 +76,7 @@ backends:
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
         activation_profile: kv-q5-q4
-        context_window: 202752
+        context_window: 205824
         # Aggregate completion guard for the selected default model only.
         # This is canonical after protocol normalization; an explicit caller
         # max_tokens (or equivalent frontend field) wins by setdefault.
@@ -93,7 +93,7 @@ backends:
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
         activation_profile: kv-q5-q4
-        context_window: 202752
+        context_window: 205824
       - id: coder-q5
         model_group: coder-q5
         base_model_id: coder
@@ -104,7 +104,7 @@ backends:
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
         activation_profile: kv-q5-q4
-        context_window: 202752
+        context_window: 205824
       - id: coder-q8
         model_group: coder-q8
         base_model_id: coder
@@ -123,7 +123,7 @@ backends:
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
         activation_profile: kv-q5-q4
-        context_window: 202752
+        context_window: 205824
         policy_overlay:
           - kind: default-params
             set: {reasoning_effort: none}
@@ -179,7 +179,9 @@ backends:
           kv-q5-q4:
             LLAMA_BEE_CTK: q5_0
             LLAMA_BEE_CTV: q4_1
-            LLAMA_BEE_CTX: 202752
+            LLAMA_BEE_DRAFT_CTK: q5_0
+            LLAMA_BEE_DRAFT_CTV: q4_1
+            LLAMA_BEE_CTX: 205824
           kv-q5-q4-rp:
             LLAMA_BEE_CTK: q5_0
             LLAMA_BEE_CTV: q4_1
@@ -319,7 +321,7 @@ roles:
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     activation_profile: kv-q5-q4
-    context_window: 202752
+    context_window: 205824
     description: Default LLM (Qwen3.6-27B UD-Q4_K_XL MTP via local llama.cpp on :5051)
     # Qwen3.6 thinking mode for coding — from official Qwen team recommendations
     sampling:
@@ -336,7 +338,7 @@ roles:
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     activation_profile: kv-q5-q4
-    context_window: 202752
+    context_window: 205824
     description: Default LLM, reasoning off (low-latency)
     sampling:
       temperature: 0.6
@@ -368,7 +370,7 @@ roles:
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     activation_profile: kv-q5-q4
-    context_window: 202752
+    context_window: 205824
     description: Coding LLM (Qwen3.6-27B UD-Q4_K_XL MTP via local llama.cpp)
     # Qwen3.6 thinking mode for coding — from official Qwen team recommendations
     sampling:
@@ -383,7 +385,7 @@ roles:
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
     activation_profile: kv-q5-q4
-    context_window: 202752
+    context_window: 205824
     description: Coding LLM with balanced Q5_0 K / Q4_1 V cache
     sampling:
       temperature: 0.6
