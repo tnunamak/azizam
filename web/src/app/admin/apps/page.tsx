@@ -183,25 +183,16 @@ function isActiveKey(credential: Credential): boolean {
   return credential.revoked_at === null;
 }
 
-/** Tracks whether the viewport is at/above Tailwind's `lg` breakpoint (1024px),
- * the same breakpoint SheetContent and RightContextPanel switch on. Row
- * selection needs this to decide whether opening the mobile detail Sheet is
- * meaningful — below lg, SheetContent renders the visible bottom sheet;
- * at/above lg it's `lg:hidden`, so "opening" it would only show Radix's
- * overlay with no visible content. */
-function useIsDesktopViewport(): boolean {
-  const query = "(min-width: 1024px)";
-  const [isDesktop, setIsDesktop] = useState(
-    () => typeof window !== "undefined" && window.matchMedia(query).matches,
-  );
-  useEffect(() => {
-    const mql = window.matchMedia(query);
-    setIsDesktop(mql.matches);
-    const onChange = () => setIsDesktop(mql.matches);
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
-  }, []);
-  return isDesktop;
+/** True at/above Tailwind's `lg` breakpoint (1024px), the same breakpoint
+ * SheetContent and RightContextPanel switch on. Checked at click/keydown time
+ * (not cached in state) so an early interaction can't read a stale default
+ * before a mount effect resolves the real viewport. Row selection needs this
+ * to decide whether opening the mobile detail Sheet is meaningful — below lg,
+ * SheetContent renders the visible bottom sheet; at/above lg it's
+ * `lg:hidden`, so "opening" it would only show Radix's overlay with no
+ * visible content. */
+function isDesktopViewport(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches;
 }
 
 /** Operator-facing profile name. The built-in fallback's stored name is the
@@ -325,7 +316,6 @@ export default function AdminAppsPage() {
   const [revealed, setRevealed] = useState<RevealedKey | null>(null);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false); // used by mobile Sheet trigger on row tap
-  const isDesktopViewport = useIsDesktopViewport();
   const [appSearch, setAppSearch] = useState("");
   const [appStatusFilter, setAppStatusFilter] = useState<AppStatusFilter>("active");
   const [showRevokedAdminKeys, setShowRevokedAdminKeys] = useState(false);
@@ -935,7 +925,7 @@ export default function AdminAppsPage() {
                     // with nothing visible inside it.
                     const selectApp = () => {
                       setSelectedAppId(app.id);
-                      if (!isDesktopViewport) setMobileDetailOpen(true);
+                      if (!isDesktopViewport()) setMobileDetailOpen(true);
                     };
                     return (
                       <div
