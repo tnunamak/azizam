@@ -183,6 +183,27 @@ function isActiveKey(credential: Credential): boolean {
   return credential.revoked_at === null;
 }
 
+/** Tracks whether the viewport is at/above Tailwind's `lg` breakpoint (1024px),
+ * the same breakpoint SheetContent and RightContextPanel switch on. Row
+ * selection needs this to decide whether opening the mobile detail Sheet is
+ * meaningful — below lg, SheetContent renders the visible bottom sheet;
+ * at/above lg it's `lg:hidden`, so "opening" it would only show Radix's
+ * overlay with no visible content. */
+function useIsDesktopViewport(): boolean {
+  const query = "(min-width: 1024px)";
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(query).matches,
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    setIsDesktop(mql.matches);
+    const onChange = () => setIsDesktop(mql.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+  return isDesktop;
+}
+
 /** Operator-facing profile name. The built-in fallback's stored name is the
  * internal id ("default-local"); never show that as cell text (vocab law). */
 function profileLabel(app: App): string {
@@ -304,6 +325,7 @@ export default function AdminAppsPage() {
   const [revealed, setRevealed] = useState<RevealedKey | null>(null);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false); // used by mobile Sheet trigger on row tap
+  const isDesktopViewport = useIsDesktopViewport();
   const [appSearch, setAppSearch] = useState("");
   const [appStatusFilter, setAppStatusFilter] = useState<AppStatusFilter>("active");
   const [showRevokedAdminKeys, setShowRevokedAdminKeys] = useState(false);
@@ -905,20 +927,27 @@ export default function AdminAppsPage() {
                   {filteredApps.map((app) => {
                     const activeKeyCount = (appKeysByApp.get(app.id) ?? []).filter(isActiveKey).length;
                     const isSelected = selectedAppId === app.id;
+                    // Below lg, selecting a row also opens the mobile detail
+                    // Sheet (SheetContent there is the only visible detail
+                    // view). At/above lg, SheetContent is `lg:hidden` — the
+                    // RightContextPanel already shows the selection, so
+                    // opening the Sheet would only render Radix's overlay
+                    // with nothing visible inside it.
+                    const selectApp = () => {
+                      setSelectedAppId(app.id);
+                      if (!isDesktopViewport) setMobileDetailOpen(true);
+                    };
                     return (
                       <div
                         key={app.id}
                         role="button"
                         tabIndex={0}
                         className={`cursor-pointer transition-colors ${isSelected ? "bg-vf-row-hover ring-vf-accent/30 ring-1 ring-inset" : ""}`}
-                        onClick={() => {
-                          setSelectedAppId(app.id);
-                          setMobileDetailOpen(true);
-                        }}
+                        onClick={selectApp}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
-                            setSelectedAppId(app.id);
-                            setMobileDetailOpen(true);
+                            e.preventDefault();
+                            selectApp();
                           }
                         }}
                       >
