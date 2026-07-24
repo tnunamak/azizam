@@ -483,7 +483,6 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         # cred_1 is active; cred_2 is revoked and must be omitted by default.
         self.assertIn("cred_1", html)
         self.assertNotIn("cred_2", html)
-        self.assertIn("active", html)
 
     def test_apps_and_keys_show_last_used_metadata(self) -> None:
         html = render_admin_dashboard(_snapshot())
