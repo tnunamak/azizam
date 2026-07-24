@@ -1357,6 +1357,8 @@ function AppKeysPanel({
   onMint: () => void;
   onRevoke: (credential: Credential) => void;
 }) {
+  const [showRevoked, setShowRevoked] = useState(false);
+
   if (loading) {
     return (
       <div className="flex flex-col gap-3" aria-busy="true">
@@ -1386,17 +1388,36 @@ function AppKeysPanel({
     );
   }
 
+  const revokedKeys = keys.filter((k) => !isActiveKey(k));
+  const visibleKeys = showRevoked ? keys : keys.filter(isActiveKey);
+
   return (
     <div className="flex flex-col gap-3">
-      {app.disabled_at === null && (
-        <div>
+      <div className="flex items-center justify-between gap-2">
+        {app.disabled_at === null ? (
           <Button size="sm" onClick={onMint}>
             Mint key
           </Button>
-        </div>
-      )}
+        ) : (
+          <span />
+        )}
+        {revokedKeys.length > 0 && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setShowRevoked((value) => !value)}
+          >
+            {showRevoked ? "Hide" : "Show"} revoked · {revokedKeys.length}
+          </Button>
+        )}
+      </div>
+      {visibleKeys.length === 0 ? (
+        <span className="text-vf-micro text-vf-muted">
+          No active keys. {revokedKeys.length} revoked hidden.
+        </span>
+      ) : (
       <ul className="divide-vf-border/60 flex flex-col divide-y">
-        {keys.map((credential) => (
+        {visibleKeys.map((credential) => (
           <li
             key={credential.id}
             className="flex items-start justify-between gap-3 py-3"
@@ -1426,6 +1447,7 @@ function AppKeysPanel({
           </li>
         ))}
       </ul>
+      )}
     </div>
   );
 }
