@@ -478,13 +478,13 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("default-local", html)
         self.assertIn("protocols openai", html)
 
-    def test_credentials_table_marks_revoked_status(self) -> None:
+    def test_credentials_table_hides_revoked_by_default(self) -> None:
         html = render_admin_dashboard(_snapshot())
+        # cred_1 is active; cred_2 is revoked and must be omitted by default.
         self.assertIn("cred_1", html)
-        self.assertIn("cred_2", html)
-        # active and revoked badges.
+        self.assertNotIn("cred_2", html)
         self.assertIn("active", html)
-        self.assertIn("revoked", html)
+        self.assertNotIn("revoked", html)
 
     def test_apps_and_keys_show_last_used_metadata(self) -> None:
         html = render_admin_dashboard(_snapshot())

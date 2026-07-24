@@ -2825,9 +2825,13 @@ def render_admin_dashboard(
     credentials = [
         credential
         for credential in list(snapshot.get("credentials") or [])
-        if not credential.get("app_id") or any(
-            str(app.get("id") or "") == str(credential.get("app_id") or "")
-            for app in apps
+        if not _is_revoked(credential)
+        and (
+            not credential.get("app_id")
+            or any(
+                str(app.get("id") or "") == str(credential.get("app_id") or "")
+                for app in apps
+            )
         )
     ]
     audit = list(snapshot.get("audit") or [])
