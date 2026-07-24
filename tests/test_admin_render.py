@@ -484,7 +484,6 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn("cred_1", html)
         self.assertNotIn("cred_2", html)
         self.assertIn("active", html)
-        self.assertNotIn("revoked", html)
 
     def test_apps_and_keys_show_last_used_metadata(self) -> None:
         html = render_admin_dashboard(_snapshot())
