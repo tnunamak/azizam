@@ -311,9 +311,10 @@ class AdminSQLiteStore:
                 raise ValueError("personal apps require owner_user_id")
             if admin_store.get_user(str(owner_user_id), path=self.path) is None:
                 raise ValueError(f"user {owner_user_id!r} not found")
-            record = admin_store.ensure_personal_app_for_user(
-                str(owner_user_id),
-                name=name,
+            record = admin_store.create_app(
+                name,
+                kind="personal",
+                owner_user_id=str(owner_user_id),
                 default_profile_id=profile_id,
                 path=self.path,
             )

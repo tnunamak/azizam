@@ -209,6 +209,63 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertIn("app.update", actions)
         self.assertIn("app.disable", actions)
 
+    def test_admin_create_personal_app_creates_distinct_app_from_existing_one(
+        self,
+    ) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        user = admin_store.upsert_oidc_user("iss", "sub", path=self.db)
+        existing = admin_store.ensure_personal_app_for_user(user["id"], path=self.db)
+
+        resp = self._client(admin_key).post(
+            "/admin/api/apps",
+            json={
+                "name": "OpenWhispr",
+                "kind": "personal",
+                "owner_user_id": user["id"],
+            },
+        )
+
+        self.assertEqual(resp.status_code, 201, resp.text)
+        created = resp.json()["app"]
+        self.assertNotEqual(created["id"], existing["id"])
+        self.assertEqual(created["name"], "OpenWhispr")
+        self.assertEqual(created["kind"], "personal")
+        self.assertEqual(created["owner_user_id"], user["id"])
+
+        app_ids = {app["id"] for app in admin_store.list_apps(path=self.db)}
+        self.assertIn(existing["id"], app_ids)
+        self.assertIn(created["id"], app_ids)
+
+        audit_event = next(
+            event
+            for event in admin_store.list_audit(path=self.db)
+            if event["action"] == "app.create"
+        )
+        self.assertEqual(audit_event["target_id"], created["id"])
+
+    def test_admin_create_service_app_unaffected_by_personal_app_fix(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+
+        first = client.post(
+            "/admin/api/apps", json={"name": "svc-one"}
+        )
+        second = client.post(
+            "/admin/api/apps", json={"name": "svc-two"}
+        )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(second.status_code, 201, second.text)
+        first_app = first.json()["app"]
+        second_app = second.json()["app"]
+        self.assertEqual(first_app["kind"], "service")
+        self.assertEqual(second_app["kind"], "service")
+        self.assertNotEqual(first_app["id"], second_app["id"])
+
     def test_default_local_profile_selection_inherits_builtin_default(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db
