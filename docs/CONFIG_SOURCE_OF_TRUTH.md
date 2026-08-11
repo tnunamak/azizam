@@ -90,7 +90,7 @@ pins the mapping; if you change one side you must change the other.
 | Domain               | Plane       | Dashboard-editable                              | Stays in YAML/env                                |
 |----------------------|-------------|-------------------------------------------------|--------------------------------------------------|
 | `proxy/network`      | bootstrap   | nothing                                         | listener host/port, TLS, deployment shape        |
-| `services/providers` | dashboard   | service records, ownership mode, enablement, health/test actions, routing metadata | seed/provisioning input, secret refs, irreducible bootstrap |
+| `services/providers` | dashboard   | DB-owned service records and enablement, health/test actions, routing metadata (`source` is provenance) | seed/provisioning input and immutable package/source artifacts, secret refs, irreducible bootstrap |
 | `model routing`      | dashboard   | runtime overrides and role policy               | model directories, compat tables                 |
 | `roles/models`       | dashboard   | role definitions, role→model grants             | nothing                                          |
 | `media jobs`         | dashboard   | admission, queue policy, cache limits           | URL signing secrets, storage roots               |

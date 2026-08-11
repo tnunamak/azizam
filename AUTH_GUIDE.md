@@ -49,7 +49,9 @@ The short version:
    signed-in user's first App, and mints one `opk_...` runtime key shown once.
 5. Manage providers, users, Apps, Profiles, keys, admission limits, and
    service availability from `/admin`. OIDC provider settings are dashboard
-   owned after setup. Provisioning / as-code config export is deferred; default
+   owned after setup. The narrow, authenticated service-registry export at
+   `GET /admin/api/config/export` is shipped; only full deployment-bundle
+   restore and authoritative file-wins reconciliation remain deferred. Default
    Profiles live in `admin.db`, not YAML.
 
 The full operator-facing walkthrough is in
