@@ -9,9 +9,9 @@ before touching anything here.
 - Next.js 15 App Router, React 19, TypeScript strict, Tailwind v4
 - `output: 'export'` — static files only; the FastAPI gateway serves
   `web/out/` under `/ui`. No SSR/Node in production.
-- All visual tokens come from `@vivid-fish/brand` (local path dep on
-  `~/code/vivid-fish-brand`). Token gaps are fixed upstream in the brand
-  package, never with local literals.
+- All visual tokens come from `@vivid-fish/brand`. This deployment uses a local
+  path dependency, but the package name and token contract are portable; token
+  gaps are fixed upstream in the brand package, never with local literals.
 
 ## Commands
 

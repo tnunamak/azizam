@@ -1,9 +1,15 @@
 # Web UI Steering — the design contract
 
+This is the canonical product information-architecture and presentation
+contract for the React UI. The shared component contracts live in
+`docs/design/VIVID_FISH_COMPONENT_LIBRARY_SPEC.md`; historical design and
+implementation plans remain useful context but do not override these docs.
+
 This document is the binding spec for the React rebuild of the gateway UI.
 Agents implementing surfaces MUST follow it; deviations require editing this
 doc first. It exists because a screenshot audit (2026-06-06,
-`~/.tmp/ui-audit/`) found the server-rendered UI uneven: two hand-crafted
+the local deployment evidence directory `~/.tmp/ui-audit/`) found the
+server-rendered UI uneven: two hand-crafted
 surfaces were good, everything else dumped database records into HTML (raw
 epoch ints as dates, `usr_…`/`cred_…` IDs as primary content, `window.confirm()`
 for deletes, a dozen ad-hoc font sizes, duplicated badge/notice primitives).
@@ -24,11 +30,12 @@ that layer structural.
 - **Cutover**: strangler. New surfaces mount under `/ui/` (gateway
   `StaticFiles`) until parity, then take over the canonical routes. Python
   renderers are not deleted in this phase.
-- **Brand**: `@vivid-fish/brand` (local path dep on `~/code/vivid-fish-brand`,
-  Tailwind v4 peer) is the ONLY source of color, type, radius, shadow,
+- **Brand**: `@vivid-fish/brand` (a local path dependency in this deployment,
+  with a Tailwind v4 peer) is the ONLY source of color, type, radius, shadow,
   animation tokens. Root stylesheet: `@import "tailwindcss";
   @import "@vivid-fish/brand";`. Token gaps are fixed UPSTREAM in the brand
-  package, never with local literals.
+  package, never with local literals. The package name and token contract are
+  portable; the dependency checkout path is deployment-specific.
 
 ## The presentation law (non-negotiable)
 
@@ -54,7 +61,7 @@ that layer structural.
 9. **Components are token-only.** No literal colors, font sizes, radii, or
    shadows inside components — Tailwind utilities bound to brand `@theme`
    variables only. Rebranding must be achievable by editing
-   `vivid-fish-brand/src/tokens.css` alone.
+   the brand package's `src/tokens.css` alone.
 10. **Copy is product language.** Services/Apps/Keys/Profiles vocabulary per
     the operator-vocab pass; no `opk_`/`oak_`/policy-internal jargon on
     operator surfaces; sentence case everywhere ("Configured services", not

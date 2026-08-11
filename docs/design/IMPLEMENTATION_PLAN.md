@@ -1,5 +1,11 @@
 # AI Gateway UI — Design Implementation Plan
 
+> Historical implementation record. Use
+> `docs/design/WEB_UI_STEERING.md` for current product IA and presentation
+> requirements, and `docs/design/VIVID_FISH_COMPONENT_LIBRARY_SPEC.md` for
+> current shared-component contracts. The server-rendered stack and checklist
+> below are preserved as history, not as a competing current brief.
+
 Source design: `docs/design/vivid-fish-handoff/` (Claude Design handoff).
 Authoritative reference files: `gateway/atoms.jsx` (tokens/icons/primitives),
 `gateway/screens-user.jsx`, `gateway/screens-admin.jsx`,

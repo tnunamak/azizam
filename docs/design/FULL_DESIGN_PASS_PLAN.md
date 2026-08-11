@@ -1,5 +1,11 @@
 # Full Design Pass — Plan (for approval)
 
+> Historical execution record. Current React UI requirements live in
+> `docs/design/WEB_UI_STEERING.md` and
+> `docs/design/VIVID_FISH_COMPONENT_LIBRARY_SPEC.md`. The proposed stack,
+> source-of-truth wording, and phase status below describe this plan's
+> 2026-06 execution context; they do not override the current contracts.
+
 Status: proposed, awaiting Tim's approval before execution.
 Date: 2026-06-03.
 
