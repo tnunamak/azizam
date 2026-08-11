@@ -57,10 +57,40 @@ class _FakeTTSAsyncClient:
         )
 
 
+class _FakeSTTAsyncClient:
+    requests: list[dict[str, object]] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def build_request(self, method, url, *, headers, data, files):
+        self.__class__.requests.append(
+            {
+                "method": method,
+                "url": url,
+                "headers": dict(headers),
+                "data": data,
+                "files": files,
+            }
+        )
+        return object()
+
+    async def send(self, _request, *, stream):
+        return proxy.httpx.Response(
+            200,
+            content=b'{"text":"translated"}',
+            headers={"content-type": "application/json"},
+        )
+
+    async def aclose(self):
+        return None
+
+
 class OpenAICompatValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
         _FakeTTSAsyncClient.requests = []
+        _FakeSTTAsyncClient.requests = []
         self.patches = [
             patch.object(proxy, "AUTH_ENABLED", False),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
@@ -229,31 +259,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(resp.json()["error"]["type"], "authentication_error")
 
     def test_translation_route_forwards_to_backend_when_capability_declared(self) -> None:
-        captured = {}
-
-        class FakeSyncClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc_info):
-                return False
-
-            def post(self, url, *, headers, data, files):
-                captured["url"] = url
-                captured["data"] = data
-                captured["files"] = files
-
-                class FakeResponse:
-                    status_code = 200
-                    headers = {"content-type": "application/json"}
-                    content = b'{"text":"translated"}'
-
-                return FakeResponse()
-
-        with stt_translation_capability_enabled(), patch.object(proxy.httpx, "Client", FakeSyncClient):
+        with stt_translation_capability_enabled(), patch.object(proxy.httpx, "AsyncClient", _FakeSTTAsyncClient):
             resp = self.client.post(
                 "/v1/audio/translations",
                 data={"model": "whisper-1"},
@@ -262,6 +268,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["text"], "translated")
+        captured = _FakeSTTAsyncClient.requests[0]
         self.assertTrue(captured["url"].endswith("/v1/audio/translations"))
         self.assertEqual(captured["data"]["model"], proxy.STT_BACKEND_MODEL)
         self.assertEqual(captured["files"][0][0], "file")

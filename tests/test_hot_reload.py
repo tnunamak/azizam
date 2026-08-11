@@ -522,7 +522,7 @@ class TestAtomicity(unittest.TestCase):
         required_keys = {
             "TABBY_HOST", "KOBOLD_HOST", "TTS_HOST", "STT_HOST",
             "EMBEDDINGS_HOST", "COMFY_HOST", "LLM_BACKEND_HOSTS",
-            "TTS_ENABLED", "STT_ENABLED", "EMBEDDINGS_ENABLED", "COMFY_ENABLED",
+            "TTS_ENABLED", "STT_ENABLED", "STT_TIMEOUT", "EMBEDDINGS_ENABLED", "COMFY_ENABLED",
         }
         missing = required_keys - set(updates.keys())
         self.assertFalse(missing, f"reload_runtime_config() missing keys: {missing}")
@@ -600,7 +600,7 @@ class TestDeriveBackendConstants(unittest.TestCase):
                 "tabby": _tabby_backend(host="10.1.0.1", port=5050),
                 "kobold": _kobold_backend(host="10.1.0.2", port=5051),
                 "tts": {"enabled": True, "host": "10.1.0.3", "port": 8880},
-                "stt": {"enabled": True, "host": "10.1.0.4", "port": 5092},
+                "stt": {"enabled": True, "host": "10.1.0.4", "port": 5092, "timeout": 321},
                 "embeddings": {"enabled": True, "host": "10.1.0.5", "port": 5061},
                 "comfyui": {"enabled": True, "host": "10.1.0.6", "port": 7890},
             }
@@ -611,6 +611,7 @@ class TestDeriveBackendConstants(unittest.TestCase):
         self.assertEqual(result["KOBOLD_HOST"], "http://10.1.0.2:5051")
         self.assertEqual(result["TTS_HOST"], "http://10.1.0.3:8880")
         self.assertEqual(result["STT_HOST"], "http://10.1.0.4:5092")
+        self.assertEqual(result["STT_TIMEOUT"], 321)
         self.assertEqual(result["EMBEDDINGS_HOST"], "http://10.1.0.5:5061")
         self.assertEqual(result["COMFY_HOST"], "http://10.1.0.6:7890")
         self.assertIn("tabby", result["LLM_BACKEND_HOSTS"])

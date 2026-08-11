@@ -359,7 +359,15 @@ class ReceiptLifecycleOwner:
         if isinstance(exc, asyncio.CancelledError):
             self._close("cancelled", "cancelled")
         elif exc is not None:
-            self._close("failed", "internal_error")
+            # Route-local execution boundaries may use a small exception type
+            # with these declarative attributes to preserve a known terminal
+            # outcome without teaching the receipt owner about each route.
+            # Unknown exceptions remain the conservative internal failure.
+            status = getattr(exc, "receipt_status", "failed")
+            reason = getattr(exc, "receipt_reason", "internal_error")
+            if not isinstance(status, str) or not isinstance(reason, str):
+                status, reason = "failed", "internal_error"
+            self._close(status, reason)
         else:
             self._close(*(self._outcome or ("failed", "internal_error")))
         return False

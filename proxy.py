@@ -46,6 +46,7 @@ import yaml
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.requests import ClientDisconnect
 
 # Local: status dashboard backend.
 import status_endpoint
@@ -66,6 +67,7 @@ from gateway import (
     video_media_job_http,
     video_media_jobs,
 )
+from gateway import stt_chunking
 from gateway.alias_policy import (
     AliasPolicyResolutionError,
     ResolvedRequestTarget,
@@ -572,6 +574,26 @@ def backends_for_capability(capability: str) -> list[str]:
     return [bid for _, bid in result]
 
 
+def service_for_capability(capability: str) -> tuple[str, Mapping[str, Any]] | None:
+    """Return the selected service id and its current effective config.
+
+    The lookup is intentionally one synchronous read of the registry-derived
+    configuration.  Callers that need more than a host use this rather than
+    resolving a host and an identity in two independent passes across a hot
+    reload boundary.
+    """
+    backends = config.get("backends") or {}
+    for service_id in backends_for_capability(capability):
+        service = backends.get(service_id)
+        if not isinstance(service, Mapping):
+            continue
+        host = str(service.get("host") or "").strip()
+        if not host or not service.get("port"):
+            continue
+        return service_id, service
+    return None
+
+
 def host_for_capability(capability: str) -> str | None:
     """Return the host URL of the highest-priority enabled backend for *capability*.
 
@@ -580,16 +602,10 @@ def host_for_capability(capability: str) -> str | None:
     out of scope for this step; the caller should fall back to the legacy constant
     when None is returned.
     """
-    backends = config.get("backends") or {}
-    for bid in backends_for_capability(capability):
-        bcfg = backends.get(bid)
-        if not isinstance(bcfg, Mapping):
-            continue
-        host = bcfg.get("host", "127.0.0.1")
-        port = bcfg.get("port")
-        if not port:
-            continue
-        return f"http://{host}:{port}"
+    selected = service_for_capability(capability)
+    if selected is not None:
+        _service_id, service = selected
+        return f"http://{service.get('host')}:{service.get('port')}"
     return None
 
 
@@ -844,6 +860,7 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
     new_cfy_host = f"http://{cfy_c.get('host', '127.0.0.1')}:{cfy_c.get('port', 7890)}"
     new_tts_enabled = bool_from_config(tts_c.get("enabled"), True)
     new_stt_enabled = bool_from_config(stt_c.get("enabled"), True)
+    new_stt_timeout = int(stt_c.get("timeout", 120))
     new_emb_enabled = bool_from_config(emb_c.get("enabled"), bool(emb_c))
     new_cfy_enabled = bool_from_config(cfy_c.get("enabled"), True)
 
@@ -870,6 +887,7 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
         "COMFY_HOST": new_cfy_host,
         "TTS_ENABLED": new_tts_enabled,
         "STT_ENABLED": new_stt_enabled,
+        "STT_TIMEOUT": new_stt_timeout,
         "EMBEDDINGS_ENABLED": new_emb_enabled,
         "COMFY_ENABLED": new_cfy_enabled,
         "LLM_BACKEND_HOSTS": new_llm_hosts,
@@ -2380,6 +2398,8 @@ def prepare_downstream_headers(
     auth_context: AuthContext,
     service: str,
     request_path: str = "",
+    *,
+    backend_config: Mapping[str, Any] | None = None,
 ) -> dict:
     """Build backend headers without leaking client-facing proxy credentials."""
     headers = dict(request_headers)
@@ -2400,7 +2420,15 @@ def prepare_downstream_headers(
     # the old hardcoded tabby auth did, but now from DATA.
     inject_cfg = service_cfg
     if not service_cfg.get("auth_inject"):
-        backend_inject = (config.get("backends") or {}).get(service, {}).get("auth_inject")
+        # A multi-attempt operation can supply the immutable service record it
+        # selected before any await.  Ordinary routes retain the live registry
+        # lookup, while the operation keeps its host, identity, and backend
+        # auth data from one effective-config snapshot.
+        backend_inject = (
+            backend_config.get("auth_inject")
+            if backend_config is not None
+            else (config.get("backends") or {}).get(service, {}).get("auth_inject")
+        )
         if backend_inject:
             inject_cfg = {**service_cfg, "auth_inject": backend_inject}
     apply_auth_inject(headers, inject_cfg, request_path)
@@ -3718,24 +3746,66 @@ def audio_translation_unsupported_response() -> Response:
     )
 
 
+def _stt_execution_snapshot(operation: str) -> stt_chunking.SttExecutionConfig | None:
+    """Capture one capability-selected STT service from effective hot-reload data."""
+    selected = service_for_capability(f"audio.{operation}")
+    if selected is None:
+        return None
+    service_id, service_config = selected
+    return stt_chunking.SttExecutionConfig.from_service(
+        service_id=service_id,
+        service_config=service_config,
+        config_directory=CONFIG_PATH.parent,
+    )
+
+
+def _stt_receipt(
+    *,
+    request: Request,
+    auth_context: AuthContext,
+    operation: str,
+    service_id: str,
+) -> RouteReceipt:
+    profile = _profile_for_auth_context(auth_context)
+    return RouteReceipt(
+        protocol="openai.audio",
+        path=request.url.path,
+        intent=f"audio.{operation}",
+        backend=service_id,
+        app_profile=profile.id,
+        app_id=auth_context.identity.app_id if auth_context.identity else None,
+        api_key_name=auth_context.identity.name if auth_context.identity else None,
+        visibility=profile.status_visibility.level,
+    )
+
+
+def _stt_response_from_upstream(response: stt_chunking.UpstreamResponse) -> Response:
+    """Return an upstream STT response without dropping safe response metadata."""
+    headers = stt_chunking.filtered_response_headers(response.headers)
+    return Response(
+        content=response.body,
+        status_code=response.status_code,
+        headers=headers,
+        media_type=response.headers.get("content-type", "application/json"),
+    )
+
+
+def _stt_error(message: str, *, status_code: int, code: str) -> Response:
+    return openai_error_response(
+        message,
+        status_code=status_code,
+        error_type="api_error" if status_code >= 500 else "invalid_request_error",
+        code=code,
+    )
+
+
 async def proxy_stt_request(
     request: Request,
     auth_context: AuthContext,
     *,
     operation: str = "transcriptions",
 ) -> Response:
-    """Forward STT request to STT backend."""
-    if not STT_ENABLED:
-        return openai_error_response(
-            "STT not enabled",
-            status_code=503,
-            error_type="service_unavailable",
-        )
-    service_response = _service_availability_response("stt", service_label="STT")
-    if service_response is not None:
-        return service_response
-    if operation == "translations" and not stt_backend_supports_translation():
-        return audio_translation_unsupported_response()
+    """Forward one bounded STT request, optionally with silence-only chunks."""
     if operation not in {"transcriptions", "translations"}:
         return openai_error_response(
             f"Unsupported STT operation: {operation}",
@@ -3743,65 +3813,79 @@ async def proxy_stt_request(
             code="unsupported_stt_operation",
         )
 
-    headers = prepare_downstream_headers(request.headers, auth_context, "stt")
+    try:
+        execution = _stt_execution_snapshot(operation)
+    except stt_chunking.SttConfigurationError:
+        return _stt_error(
+            "The selected STT service has invalid execution limits.",
+            status_code=503,
+            code="stt_configuration_invalid",
+        )
+    if execution is None:
+        if operation == "translations":
+            return audio_translation_unsupported_response()
+        return openai_error_response(
+            "STT not enabled",
+            status_code=503,
+            error_type="service_unavailable",
+        )
 
-    _stt_capability = f"audio.{operation}"  # audio.transcriptions or audio.translations
-    _stt_host = host_for_capability(_stt_capability) or (STT_HOST if STT_ENABLED else None) or STT_HOST
-    url = f"{_stt_host}/v1/audio/{operation}"
+    service_response = _service_availability_response(
+        execution.service_id,
+        service_label=execution.service_id,
+    )
+    if service_response is not None:
+        return service_response
+
+    receipt = _stt_receipt(
+        request=request,
+        auth_context=auth_context,
+        operation=operation,
+        service_id=execution.service_id,
+    )
+    receipt.set_policy_decision("allowed", source="runtime_route_policy")
+    receipt.metadata["stt"] = {
+        "service_id": execution.service_id,
+        "chunking": "not_started",
+        "attempts_started": 0,
+    }
+    owner = ReceiptLifecycleOwner(receipt)
+    cancellation = cancellation_registry().register(receipt.request_id)
+    parsed: stt_chunking.ParsedMultipart | None = None
+    watcher: RequestDisconnectWatcher | None = None
+    lease: stt_chunking.SttResourceLease | None = None
+    client: httpx.AsyncClient | None = None
+    cancellation_signalled = False
+
+    def signal_cancellation() -> None:
+        nonlocal cancellation_signalled
+        if cancellation_signalled:
+            return
+        cancellation_signalled = True
+        cancellation_registry().signal(receipt.request_id)
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(STT_TIMEOUT, connect=10)) as client:
-            if "multipart/form-data" in request.headers.get("content-type", ""):
-                form = await request.form()
-                if "file" not in form:
-                    return openai_error_response(
-                        "No file part in the request.",
-                        status_code=400,
-                        param="file",
-                        code="missing_file",
-                    )
-                requested_model = str(form.get("model", "whisper-1"))
-                try:
-                    model_resolution = resolve_model_for_operation(operation, requested_model)
-                except ModelCompatibilityError as e:
-                    return model_compatibility_error(str(e))
-
-                data = {}
-                files = []
-                for name, value in form.multi_items():
-                    if name == "model":
-                        data[name] = model_resolution.effective_model or STT_BACKEND_MODEL
-                    elif hasattr(value, "filename") and hasattr(value, "read"):
-                        file_content = await value.read()
-                        files.append((
-                            name,
-                            (
-                                value.filename or "audio",
-                                file_content,
-                                value.content_type or "application/octet-stream",
-                            ),
-                        ))
-                    else:
-                        data[name] = str(value)
-
-                if "model" not in data:
-                    data["model"] = STT_BACKEND_MODEL
-                if not files:
-                    return openai_error_response(
-                        "No file part in the request.",
-                        status_code=400,
-                        param="file",
-                        code="missing_file",
-                    )
-
-                pop_header(headers, "content-type")
-                pop_header(headers, "content-length")
-                def send_multipart_stt_request():
-                    with httpx.Client(timeout=httpx.Timeout(STT_TIMEOUT, connect=10)) as sync_client:
-                        return sync_client.post(url, headers=headers, data=data, files=files)
-
-                resp = await asyncio.to_thread(send_multipart_stt_request)
-            else:
+        async with owner:
+            if "multipart/form-data" not in request.headers.get("content-type", ""):
+                owner.report(status="failed", reason="failed")
+                return openai_error_response(
+                    "No file part in the request.",
+                    status_code=400,
+                    param="file",
+                    code="missing_file",
+                )
+            deadline_at = time.monotonic() + execution.deadline_seconds
+            # Before parsing, Request.stream() owns ASGI receive so it is the
+            # authoritative disconnect path during upload.  Afterwards the
+            # persistent watcher becomes the sole receive consumer.
+            lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(
+                request_id=receipt.request_id,
+                config=execution,
+            )
+            parsed = await stt_chunking.parse_bounded_multipart(request, execution)
+            fields, uploads = stt_chunking.upload_file_parts(parsed.form)
+            if not uploads:
+                owner.report(status="failed", reason="failed")
                 return openai_error_response(
                     "No file part in the request.",
                     status_code=400,
@@ -3809,31 +3893,214 @@ async def proxy_stt_request(
                     code="missing_file",
                 )
 
-            content_type = resp.headers.get("content-type", "application/json")
-            return Response(
-                content=resp.content,
-                status_code=resp.status_code,
-                media_type=content_type
+            requested_model = str(parsed.form.get("model", "whisper-1"))
+            try:
+                model_resolution = resolve_model_for_operation(operation, requested_model)
+            except ModelCompatibilityError as error:
+                owner.report(status="failed", reason="failed")
+                return model_compatibility_error(str(error))
+            effective_model = model_resolution.effective_model or execution.default_model or STT_BACKEND_MODEL
+            if model_resolution.is_openai_alias and execution.default_model:
+                effective_model = execution.default_model
+            fields = stt_chunking.replace_model_field(fields, model=effective_model)
+            multipart_fields: dict[str, str | list[str]] = {}
+            for field_name, field_value in fields:
+                previous = multipart_fields.get(field_name)
+                if previous is None:
+                    multipart_fields[field_name] = field_value
+                elif isinstance(previous, list):
+                    previous.append(field_value)
+                else:
+                    multipart_fields[field_name] = [previous, field_value]
+            receipt.requested_model = requested_model
+            receipt.resolved_model = effective_model
+            for field_name, _value in fields:
+                receipt.accept_input(field_name)
+            receipt.accept_input("file")
+
+            headers = prepare_downstream_headers(
+                request.headers,
+                auth_context,
+                execution.service_id,
+                f"/v1/audio/{operation}",
+                backend_config=execution.backend_config,
+            )
+            pop_header(headers, "content-type")
+            pop_header(headers, "content-length")
+            url = f"{execution.host}/v1/audio/{operation}"
+            watcher = RequestDisconnectWatcher(request.receive)
+            cancellation_waiters = (watcher.wait, cancellation.token.wait)
+            client = httpx.AsyncClient(
+                timeout=httpx.Timeout(execution.timeout_seconds, connect=min(10.0, execution.timeout_seconds)),
             )
 
-    except httpx.TimeoutException:
-        return Response(
-            content=json.dumps({"error": {"message": "STT request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json"
-        )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"STT backend unavailable at {_stt_host}", "type": "api_error"}}),
+            async def send_files(files: list[tuple[str, tuple[str, Any, str]]]) -> stt_chunking.UpstreamResponse:
+                try:
+                    outgoing = client.build_request(
+                        "POST",
+                        url,
+                        headers=headers,
+                        data=multipart_fields,
+                        files=files,
+                    )
+                    response = await stt_chunking.await_with_cancellation(
+                        client.send(outgoing, stream=True),
+                        cancellation_waiters=cancellation_waiters,
+                        deadline_at=deadline_at,
+                        on_cancel=signal_cancellation,
+                    )
+                    try:
+                        body = await stt_chunking.await_with_cancellation(
+                            response.aread(),
+                            cancellation_waiters=cancellation_waiters,
+                            deadline_at=deadline_at,
+                            on_cancel=signal_cancellation,
+                        )
+                    finally:
+                        await response.aclose()
+                    return stt_chunking.UpstreamResponse(
+                        status_code=response.status_code,
+                        body=body,
+                        headers=dict(response.headers),
+                    )
+                except httpx.TimeoutException as error:
+                    raise stt_chunking.SttBackendTimeout("STT backend timed out") from error
+                except httpx.ConnectError as error:
+                    raise stt_chunking.SttBackendUnavailable("STT backend is unavailable") from error
+
+            async def post_file(path: Path, filename: str, media_type: str) -> stt_chunking.UpstreamResponse:
+                handle = path.open("rb")
+                try:
+                    return await send_files([("file", (filename, handle, media_type))])
+                finally:
+                    handle.close()
+
+            async def post_uploads() -> stt_chunking.UpstreamResponse:
+                opened = [
+                    (
+                        name,
+                        stt_chunking.source_path(upload).open("rb"),
+                        upload.filename or "audio",
+                        upload.content_type or "application/octet-stream",
+                    )
+                    for name, upload in uploads
+                ]
+                try:
+                    return await send_files([
+                        (name, (filename, handle, media_type))
+                        for name, handle, filename, media_type in opened
+                    ])
+                finally:
+                    for _name, handle, _filename, _media_type in opened:
+                        handle.close()
+
+            if len(uploads) == 1:
+                file_field, upload = uploads[0]
+                del file_field
+                outcome = await stt_chunking.execute_chunking(
+                    source_path=stt_chunking.source_path(upload),
+                    source_stem=Path(upload.filename or "audio").stem or "audio",
+                    fields=fields,
+                    config=execution,
+                    post_file=lambda path, filename: post_file(path, filename, "audio/wav"),
+                    cancellation_waiters=cancellation_waiters,
+                    deadline_at=deadline_at,
+                    on_cancel=signal_cancellation,
+                    on_attempt_started=lambda count: receipt.metadata.update({
+                        "stt": {
+                            "service_id": execution.service_id,
+                            "chunking": "in_progress",
+                            "attempts_started": count,
+                        }
+                    }),
+                )
+            else:
+                outcome = stt_chunking.ChunkingOutcome("passthrough", 0, "multiple_files")
+
+            receipt.metadata["stt"] = {
+                "service_id": execution.service_id,
+                "chunking": outcome.mode,
+                "attempts_started": outcome.attempts_started,
+                **({"fallback_reason": outcome.fallback_reason} if outcome.fallback_reason else {}),
+            }
+            if outcome.mode == "chunked":
+                response = Response(
+                    content=json.dumps(outcome.merged_payload),
+                    status_code=200,
+                    media_type="application/json",
+                )
+                receipt.metadata["status_code"] = 200
+                owner.report(status="succeeded", reason="completed")
+                return response
+            if outcome.mode == "upstream_error" and outcome.upstream_response is not None:
+                receipt.metadata["status_code"] = outcome.upstream_response.status_code
+                owner.report(status="failed", reason="failed")
+                return _stt_response_from_upstream(outcome.upstream_response)
+
+            # No backend chunk has started in passthrough mode.  Preserve the
+            # normal multipart fields and the full downstream response, but
+            # stream the spooled file through async HTTP rather than a worker
+            # thread so client disconnects can cancel it.
+            direct = await post_uploads()
+            receipt.metadata["status_code"] = direct.status_code
+            owner.report(
+                status="succeeded" if 200 <= direct.status_code < 400 else "failed",
+                reason="completed" if 200 <= direct.status_code < 400 else "failed",
+            )
+            return _stt_response_from_upstream(direct)
+    except ClientDisconnect:
+        signal_cancellation()
+        owner.report(status="cancelled", reason="cancelled")
+        return Response(status_code=499)
+    except stt_chunking.SttCancelled:
+        signal_cancellation()
+        owner.report(status="cancelled", reason="cancelled")
+        return Response(status_code=499)
+    except stt_chunking.SttDeadlineExceeded:
+        owner.report(status="timed_out", reason="idle_timeout")
+        return _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline")
+    except stt_chunking.SttResourceLimitExceeded as error:
+        owner.report(status="failed", reason="failed")
+        return _stt_error(str(error), status_code=413, code="stt_resource_limit")
+    except stt_chunking.MultiPartException as error:
+        owner.report(status="failed", reason="failed")
+        return _stt_error(str(error), status_code=413, code="stt_upload_limit")
+    except stt_chunking.SttChunkResponseError:
+        owner.report(status="failed", reason="failed")
+        return _stt_error(
+            "STT backend returned a chunk response that cannot be merged.",
             status_code=502,
-            media_type="application/json"
+            code="invalid_stt_chunk_response",
         )
-    except Exception as e:
-        return Response(
-            content=json.dumps({"error": {"message": f"STT proxy error: {str(e)}", "type": "api_error"}}),
+    except stt_chunking.SttChunkAttemptError:
+        owner.report(status="failed", reason="failed")
+        return _stt_error(
+            "STT chunk request failed after chunk processing started.",
             status_code=502,
-            media_type="application/json"
+            code="stt_chunk_attempt_failed",
         )
+    except stt_chunking.SttSetupFailure:
+        owner.report(status="failed", reason="failed")
+        return _stt_error("STT media setup failed.", status_code=502, code="stt_media_setup_failed")
+    except stt_chunking.SttBackendTimeout:
+        owner.report(status="timed_out", reason="idle_timeout")
+        return _stt_error("STT request timeout.", status_code=504, code="stt_request_timeout")
+    except stt_chunking.SttBackendUnavailable:
+        owner.report(status="failed", reason="connect_error")
+        return _stt_error("STT backend is unavailable.", status_code=502, code="stt_backend_unavailable")
+    except Exception:
+        owner.report(status="failed", reason="failed")
+        return _stt_error("STT proxy request failed.", status_code=502, code="stt_proxy_error")
+    finally:
+        if watcher is not None:
+            await watcher.aclose()
+        if client is not None:
+            await client.aclose()
+        if parsed is not None:
+            await parsed.aclose()
+        if lease is not None:
+            lease.release()
+        cancellation.release()
 
 
 # =============================================================================

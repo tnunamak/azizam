@@ -217,8 +217,33 @@ backends:
     native_passthrough: true
     host: 127.0.0.1
     port: 5092
+    default_model: parakeet-tdt-0.6b-v3
     health_endpoint: /health
     timeout: 120
+    # Generic long-audio protection. This storage root must be on a durable
+    # operator-provisioned filesystem; it is intentionally never /tmp.
+    chunking:
+      enabled: true
+      threshold_seconds: 720
+      target_seconds: 480
+      silence_noise_db: -30dB
+      silence_min_seconds: 0.5
+      silence_search_seconds: 120
+      max_input_bytes: 536870912
+      max_decoded_bytes: 1073741824
+      max_duration_seconds: 14400
+      max_sample_rate: 48000
+      max_channels: 2
+      max_segments: 16
+      max_files: 8
+      max_fields: 100
+      max_field_bytes: 65536
+      spool_dir: data/stt-spool
+      min_free_bytes: 67108864
+      global_concurrency: 2
+      backend_timeout_seconds: 120
+      deadline_seconds: 300
+      setup_failure_policy: passthrough
     role: required
     capabilities:
       - audio
