@@ -377,7 +377,9 @@ managed LiteLLM substrate separately locks its endpoint/protocol fields and
 removal, while allowing its name, enabled state, and note to be changed.
 Runtime access policy (Profiles, Apps, role/model bindings, admission caps,
 identity mappings, service availability) lives in `admin.db` and is edited
-from the dashboard. Provisioning / as-code config export is deferred; default
+from the dashboard. The authenticated, narrow service-registry export at
+`GET /admin/api/config/export` is shipped; full provisioning/as-code bundles,
+restore, and authoritative file-wins reconciliation are deferred. Default
 Profiles are seeded into `admin.db` on first startup, not YAML-managed. See
 [`docs/CONFIG_SOURCE_OF_TRUTH.md`](docs/CONFIG_SOURCE_OF_TRUTH.md) for the
 full policy. For all environment variables (paths, engine integrations,

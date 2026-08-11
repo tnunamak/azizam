@@ -55,19 +55,22 @@ feature.
 
 ## Ownership
 
-Registry records carry an ownership mode:
+Package files carry provenance and are immutable artifacts: bundled catalog
+files stay in the gateway package, while imported package files stay at their
+reviewed content hash until a package update replaces them. This package-file
+rule does not restrict a service row's permissions.
 
-- `ui`: created and edited in `/admin`; DB is authoritative.
-- `bundled`: shipped with the gateway; immutable until copied.
-- `provisioned`: supplied by deployment/config; read-only until detached or
-  copied.
-- `imported`: installed extension package object; immutable until upgraded.
-- `copied`: operator-owned fork of bundled/imported/provisioned data.
-- `discovered`: found by inventory; read-only until adopted.
+For `service` records, `source` is provenance/history, not permission. After
+the one-time seed, every non-managed service row is editable,
+enablable/disableable, and removable in the DB/UI registry regardless of
+whether its source is `ui`, `provisioned`, `builtin`, `discovered`, or package
+provenance. The managed LiteLLM substrate is the sole exception: its
+gateway-derived endpoint/protocol fields are locked and it cannot be removed;
+its name, enabled state, and note remain editable.
 
-Enablement never mutates bundled, imported, or provisioned files. It creates DB
-records referencing immutable package content hashes, or copies records into
-`ui`/`copied` ownership.
+Enablement never mutates bundled or imported package files. It writes DB
+registry records that reference immutable package content hashes; later edits
+to a non-managed service row remain DB/UI operations.
 
 ## Package Layout
 
@@ -162,13 +165,13 @@ The admin UI is the normal extension surface:
    Profiles.
 3. **Validate** schemas, unique IDs, adapter presence, route collisions, binding
    targets, dependency declarations, and policy impact.
-4. **Configure** service URLs, secret refs, ownership mode, and which records to
-   enable or copy.
+4. **Configure** service URLs, secret refs, provenance, and which records to
+   enable.
 5. **Test** health checks, inventory, dry-run binding, and optional smoke jobs.
 6. **Enable** DB registry records. New capabilities do not become available to
    Apps until Profiles allow them.
-7. **Operate** disable, update, rollback, repair dependencies, copy as editable,
-   or uninstall when no active references remain.
+7. **Operate** disable, update, rollback, repair dependencies, edit
+   non-managed service rows, or uninstall when no active references remain.
 
 The UI should render forms from schemas. It should not contain
 provider-specific wizards in core code.
@@ -199,9 +202,9 @@ overrides, and audit history. A Git-backed update is a new staged candidate
 that must pass validation before replacing the enabled package.
 
 Local directories follow the same model. The path is an install source for
-staging and hashing package content; enablement writes immutable imported
-registry records and provenance, not a live pointer that executes whatever the
-directory later contains.
+staging and hashing package content; enablement writes DB registry records
+with immutable package provenance, not a live pointer that executes whatever
+the directory later contains.
 
 Data-only packages can be live-enabled after validation because their effect is
 limited to registry records and policy-gated capabilities. Code-bearing packages
@@ -317,8 +320,8 @@ The implemented installer covers the essential data-owned path:
 - validate/review before enable,
 - enable by merging normalized records into the DB service registry,
 - store installed package metadata in `admin_store.operator_settings`,
-- keep imported records immutable and provenance-stamped by package id, version,
-  content hash, and resolved source commit when installed from Git.
+- keep imported package files immutable, and stamp DB records with package id,
+  version, content hash, and resolved source commit when installed from Git.
 
 This gives operators the Home Assistant / ComfyUI Manager style flow without
 making core code provider-specific. Code-bearing packages extend the same
