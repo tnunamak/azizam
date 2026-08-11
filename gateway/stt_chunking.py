@@ -11,7 +11,6 @@ observability.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import math
 import os
@@ -26,7 +25,12 @@ from types import MappingProxyType
 from typing import Any, Literal, TypeVar
 
 import httpx
-from openai.types.audio.transcription import Transcription
+from openai.types.audio.transcription import (
+    Transcription,
+    UsageDuration,
+    UsageTokens,
+    UsageTokensInputTokenDetails,
+)
 from starlette.datastructures import FormData, Headers, UploadFile
 from starlette.formparsers import (
     MultiPartException,
@@ -35,6 +39,7 @@ from starlette.formparsers import (
     _user_safe_decode,
     parse_options_header,
 )
+from starlette.requests import ClientDisconnect
 
 from gateway.resource_claims import (
     AdmissionRequest,
@@ -71,13 +76,13 @@ _HOP_BY_HOP_RESPONSE_HEADERS = frozenset(
 # not safely mergeable without response-specific timestamp semantics.
 _SDK_TRANSCRIPTION_FIELDS = frozenset(Transcription.__annotations__)
 _MERGEABLE_TRANSCRIPTION_FIELDS = frozenset({"text", "usage"})
+_SDK_DURATION_USAGE_FIELDS = frozenset(UsageDuration.__annotations__)
+_SDK_TOKEN_USAGE_FIELDS = frozenset(UsageTokens.__annotations__)
+_SDK_TOKEN_DETAIL_FIELDS = frozenset(UsageTokensInputTokenDetails.__annotations__)
 
 
 class SttExecutionError(RuntimeError):
     """Base class for safe STT execution failures."""
-
-    receipt_status = "failed"
-    receipt_reason = "failed"
 
 
 class SttConfigurationError(SttExecutionError):
@@ -87,15 +92,9 @@ class SttConfigurationError(SttExecutionError):
 class SttCancelled(SttExecutionError):
     """A client disconnect or correlated request cancellation won a race."""
 
-    receipt_status = "cancelled"
-    receipt_reason = "cancelled"
-
 
 class SttDeadlineExceeded(SttExecutionError):
     """The immutable outer STT deadline elapsed."""
-
-    receipt_status = "timed_out"
-    receipt_reason = "idle_timeout"
 
 
 class SttResourceLimitExceeded(SttExecutionError):
@@ -117,15 +116,17 @@ class SttSetupFailure(SttExecutionError):
 class SttBackendTimeout(SttExecutionError):
     """The selected backend did not complete one bounded request in time."""
 
-    receipt_status = "timed_out"
-    receipt_reason = "idle_timeout"
-
 
 class SttBackendUnavailable(SttExecutionError):
     """The selected backend could not accept one direct STT request."""
 
-    receipt_status = "failed"
-    receipt_reason = "connect_error"
+
+class SttResponseLimitExceeded(SttExecutionError):
+    """A backend or local media utility exceeded its configured output bound."""
+
+
+class SttCleanupFailure(SttExecutionError):
+    """A mandatory, already-attempted cleanup action failed."""
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,8 @@ class SttExecutionConfig:
     max_files: int
     max_fields: int
     max_field_bytes: int
+    max_response_bytes: int
+    max_media_output_bytes: int
     spool_dir: Path
     min_free_bytes: int
     global_concurrency: int
@@ -249,6 +252,8 @@ class SttExecutionConfig:
             max_files=positive_int("max_files", 8),
             max_fields=positive_int("max_fields", 100),
             max_field_bytes=positive_int("max_field_bytes", 65_536),
+            max_response_bytes=positive_int("max_response_bytes", 16 * 1024 * 1024),
+            max_media_output_bytes=positive_int("max_media_output_bytes", 8 * 1024 * 1024),
             spool_dir=spool_dir,
             min_free_bytes=positive_int("min_free_bytes", 67_108_864),
             global_concurrency=positive_int("global_concurrency", 2),
@@ -301,10 +306,8 @@ class ParsedMultipart:
     parser: "DiskBoundedMultiPartParser"
 
     async def aclose(self) -> None:
-        try:
-            await self.form.close()
-        finally:
-            self.parser.remove_spool_files()
+        await self.form.close()
+        self.parser.remove_spool_files()
 
 
 class DiskBoundedMultiPartParser(MultiPartParser):
@@ -382,16 +385,30 @@ class DiskBoundedMultiPartParser(MultiPartParser):
         )
 
     def remove_spool_files(self) -> None:
+        failures: list[OSError] = []
         for handle in self._files_to_close_on_error:
-            with contextlib.suppress(OSError):
+            try:
                 handle.close()
+            except OSError as error:
+                failures.append(error)
         for path in self._spool_paths:
-            with contextlib.suppress(FileNotFoundError, OSError):
+            try:
                 path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                failures.append(error)
         self._spool_paths.clear()
+        if failures:
+            raise failures[0]
 
 
-async def parse_bounded_multipart(request: Any, config: SttExecutionConfig) -> ParsedMultipart:
+async def parse_bounded_multipart(
+    request: Any,
+    config: SttExecutionConfig,
+    *,
+    deadline_at: float | None = None,
+) -> ParsedMultipart:
     """Parse the request body directly to bounded disk files, never bytes buffers."""
     try:
         config.spool_dir.mkdir(parents=True, exist_ok=True)
@@ -399,13 +416,24 @@ async def parse_bounded_multipart(request: Any, config: SttExecutionConfig) -> P
         raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
     parser = DiskBoundedMultiPartParser(request.headers, request.stream(), config=config)
     try:
-        form = await parser.parse()
-    except BaseException as error:
-        parser.remove_spool_files()
-        if error.__class__.__name__ == "ClientDisconnect":
-            raise SttCancelled("STT upload cancelled by client disconnect") from error
+        form = await await_with_cancellation(parser.parse(), deadline_at=deadline_at)
+    except ClientDisconnect as error:
+        _remove_spool_files_after_parse_failure(parser)
+        raise SttCancelled("STT upload cancelled by client disconnect") from error
+    except asyncio.CancelledError:
+        _remove_spool_files_after_parse_failure(parser)
+        raise
+    except Exception:
+        _remove_spool_files_after_parse_failure(parser)
         raise
     return ParsedMultipart(form=form, parser=parser)
+
+
+def _remove_spool_files_after_parse_failure(parser: DiskBoundedMultiPartParser) -> None:
+    try:
+        parser.remove_spool_files()
+    except OSError as error:
+        _log_cleanup_failure("multipart_spool", error)
 
 
 class SttResourceLease:
@@ -509,7 +537,12 @@ async def await_with_cancellation(
                 raise SttCancelled("STT request cancelled by client disconnect")
             raise SttDeadlineExceeded("STT request deadline exceeded")
         return operation.result()
-    except BaseException:
+    except asyncio.CancelledError:
+        if not operation.done():
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+        raise
+    except Exception:
         if not operation.done():
             operation.cancel()
             await asyncio.gather(operation, return_exceptions=True)
@@ -529,6 +562,7 @@ async def run_media_command(
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
+    max_output_bytes: int = 8 * 1024 * 1024,
 ) -> tuple[bytes, bytes]:
     """Run a child process and always kill/reap it on cancellation or timeout."""
     process: asyncio.subprocess.Process | None = None
@@ -545,7 +579,10 @@ async def run_media_command(
         )
         try:
             stdout, stderr = await await_with_cancellation(
-                asyncio.wait_for(process.communicate(), timeout=timeout_seconds),
+                asyncio.wait_for(
+                    _read_media_output(process, max_output_bytes=max_output_bytes),
+                    timeout=timeout_seconds,
+                ),
                 cancellation_waiters=cancellation_waiters,
                 deadline_at=deadline_at,
                 on_cancel=on_cancel,
@@ -555,16 +592,48 @@ async def run_media_command(
         if process.returncode != 0:
             raise SttSetupFailure("STT media command failed")
         return stdout, stderr
-    except (SttCancelled, SttDeadlineExceeded):
+    except (asyncio.CancelledError, SttCancelled, SttDeadlineExceeded, SttResponseLimitExceeded):
         raise
     except FileNotFoundError as error:
         raise SttSetupFailure("Required local media utility is unavailable") from error
     finally:
         if process is not None and process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
+            try:
                 process.kill()
-            with contextlib.suppress(BaseException):
+            except ProcessLookupError:
+                pass
+            try:
                 await asyncio.shield(process.wait())
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                _log_cleanup_failure("media_process", error)
+
+
+async def _read_media_output(
+    process: asyncio.subprocess.Process,
+    *,
+    max_output_bytes: int,
+) -> tuple[bytes, bytes]:
+    if process.stdout is None or process.stderr is None:
+        raise SttSetupFailure("STT media command did not expose output streams")
+    stdout, stderr = await asyncio.gather(
+        _read_limited_stream(process.stdout, max_output_bytes),
+        _read_limited_stream(process.stderr, max_output_bytes),
+    )
+    await process.wait()
+    return stdout, stderr
+
+
+async def _read_limited_stream(reader: asyncio.StreamReader, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await reader.read(64 * 1024):
+        total += len(chunk)
+        if total > max_bytes:
+            raise SttResponseLimitExceeded("STT media command output exceeds the configured limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 async def probe_audio(
@@ -590,6 +659,7 @@ async def probe_audio(
         cancellation_waiters=cancellation_waiters,
         deadline_at=deadline_at,
         on_cancel=on_cancel,
+        max_output_bytes=config.max_media_output_bytes,
     )
     try:
         payload = json.loads(stdout.decode("utf-8"))
@@ -640,6 +710,7 @@ async def detect_silences(
         cancellation_waiters=cancellation_waiters,
         deadline_at=deadline_at,
         on_cancel=on_cancel,
+        max_output_bytes=config.max_media_output_bytes,
     )
     intervals: list[tuple[float, float]] = []
     pending_start: float | None = None
@@ -740,6 +811,7 @@ async def extract_segment(
         cancellation_waiters=cancellation_waiters,
         deadline_at=deadline_at,
         on_cancel=on_cancel,
+        max_output_bytes=config.max_media_output_bytes,
     )
     # WAV is fixed PCM16; this postcondition makes the disk bound concrete even
     # if a media utility emits an unexpected container or duration.
@@ -819,7 +891,14 @@ async def execute_chunking(
             target_seconds=config.target_seconds,
             search_seconds=config.silence_search_seconds,
         )
-    except (SttCancelled, SttDeadlineExceeded, SttResourceLimitExceeded):
+    except (
+        asyncio.CancelledError,
+        SttCancelled,
+        SttDeadlineExceeded,
+        SttResourceLimitExceeded,
+        SttBackendTimeout,
+        SttBackendUnavailable,
+    ):
         raise
     except SttSetupFailure:
         if config.setup_failure_policy == "passthrough":
@@ -860,11 +939,17 @@ async def execute_chunking(
                 on_attempt_started(attempts_started)
             try:
                 response = await post_file(chunk_path, f"{source_stem}.chunk{index:03d}.wav")
-            except (SttCancelled, SttDeadlineExceeded):
+            except (
+                asyncio.CancelledError,
+                SttCancelled,
+                SttDeadlineExceeded,
+                SttBackendTimeout,
+                SttBackendUnavailable,
+            ):
                 raise
-            except BaseException as error:
+            except Exception as error:
                 raise SttChunkAttemptError("STT chunk request failed") from error
-            if not 200 <= response.status_code < 300:
+            if not upstream_response_succeeded(response.status_code):
                 return ChunkingOutcome(
                     "upstream_error",
                     attempts_started,
@@ -872,8 +957,12 @@ async def execute_chunking(
                 )
             payloads.append(_parse_mergeable_chunk_payload(response.body))
         finally:
-            with contextlib.suppress(FileNotFoundError, OSError):
+            try:
                 chunk_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                _log_cleanup_failure("chunk_file", error)
 
     return ChunkingOutcome(
         "chunked",
@@ -904,6 +993,8 @@ def _parse_mergeable_chunk_payload(body: bytes) -> Mapping[str, Any]:
     unsupported = set(payload) - _MERGEABLE_TRANSCRIPTION_FIELDS
     if unknown or unsupported:
         raise SttChunkResponseError("STT chunk returned a response shape that cannot be merged")
+    if "usage" in payload:
+        _validate_usage(payload["usage"])
     return payload
 
 
@@ -913,6 +1004,8 @@ def _merge_usage(values: Sequence[Any]) -> dict[str, Any] | None:
     if any(not isinstance(value, Mapping) for value in values):
         raise SttChunkResponseError("STT chunk usage is invalid")
     usages = [dict(value) for value in values]
+    for usage in usages:
+        _validate_usage(usage)
     kinds = {str(usage.get("type") or "") for usage in usages}
     if len(kinds) != 1:
         raise SttChunkResponseError("STT chunk usage formats differ")
@@ -930,12 +1023,57 @@ def _merge_usage(values: Sequence[Any]) -> dict[str, Any] | None:
         if any(detail is not None for detail in details):
             if any(not isinstance(detail, Mapping) for detail in details):
                 raise SttChunkResponseError("STT chunk token usage details differ")
-            merged["input_token_details"] = {
-                "audio_tokens": _sum_number([dict(detail) for detail in details], "audio_tokens"),
-                "text_tokens": _sum_number([dict(detail) for detail in details], "text_tokens"),
-            }
+            known_details = [dict(detail) for detail in details if isinstance(detail, Mapping)]
+            merged_details: dict[str, int | float] = {}
+            for field in _SDK_TOKEN_DETAIL_FIELDS:
+                present = [detail for detail in known_details if field in detail and detail[field] is not None]
+                if present:
+                    merged_details[field] = _sum_number(present, field)
+            if merged_details:
+                merged["input_token_details"] = merged_details
         return merged
     raise SttChunkResponseError("STT chunk usage format is unsupported")
+
+
+def _validate_usage(value: Any) -> None:
+    if not isinstance(value, Mapping):
+        raise SttChunkResponseError("STT chunk usage is invalid")
+    kind = value.get("type")
+    if kind == "duration":
+        _validate_usage_mapping(value, _SDK_DURATION_USAGE_FIELDS, required={"type", "seconds"})
+        _validate_number(value["seconds"])
+        return
+    if kind == "tokens":
+        _validate_usage_mapping(
+            value,
+            _SDK_TOKEN_USAGE_FIELDS,
+            required={"type", "input_tokens", "output_tokens", "total_tokens"},
+        )
+        for field in ("input_tokens", "output_tokens", "total_tokens"):
+            _validate_number(value[field])
+        details = value.get("input_token_details")
+        if details is not None:
+            _validate_usage_mapping(details, _SDK_TOKEN_DETAIL_FIELDS, required=set())
+            for field in _SDK_TOKEN_DETAIL_FIELDS:
+                if field in details and details[field] is not None:
+                    _validate_number(details[field])
+        return
+    raise SttChunkResponseError("STT chunk usage format is unsupported")
+
+
+def _validate_usage_mapping(
+    value: Mapping[str, Any],
+    fields: frozenset[str],
+    *,
+    required: set[str],
+) -> None:
+    if set(value) - fields or required - set(value):
+        raise SttChunkResponseError("STT chunk usage has unsupported fields")
+
+
+def _validate_number(value: Any) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise SttChunkResponseError("STT chunk usage is invalid")
 
 
 def filtered_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -944,6 +1082,95 @@ def filtered_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
         for name, value in headers.items()
         if name.lower() not in _HOP_BY_HOP_RESPONSE_HEADERS
     }
+
+
+def upstream_response_succeeded(status_code: int) -> bool:
+    """The shared terminal-success contract for direct and chunked STT calls."""
+    return 200 <= status_code < 300
+
+
+async def read_bounded_response(
+    response: httpx.Response,
+    *,
+    max_bytes: int,
+    cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
+    deadline_at: float,
+    on_cancel: Callable[[], None] | None,
+) -> bytes:
+    """Read one upstream body without allowing it to become an unbounded buffer."""
+    chunks: list[bytes] = []
+    total = 0
+    iterator = response.aiter_bytes().__aiter__()
+    while True:
+        try:
+            chunk = await await_with_cancellation(
+                iterator.__anext__(),
+                cancellation_waiters=cancellation_waiters,
+                deadline_at=deadline_at,
+                on_cancel=on_cancel,
+            )
+        except StopAsyncIteration:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise SttResponseLimitExceeded("STT backend response exceeds the configured limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+class SttCleanupOwner:
+    """One route-local owner that attempts every cleanup and records safe failures."""
+
+    def __init__(self) -> None:
+        self._actions: list[tuple[str, Callable[[], Awaitable[None] | None]]] = []
+        self.failed = False
+
+    def add(self, name: str, action: Callable[[], Awaitable[None] | None]) -> None:
+        self._actions.append((name, action))
+
+    async def aclose(self) -> None:
+        cancelled = False
+        while self._actions:
+            name, action = self._actions.pop()
+            try:
+                await self._run(name, action)
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def release(self, name: str, action: Callable[[], Awaitable[None] | None]) -> None:
+        await self._run(name, action)
+
+    async def _run(self, name: str, action: Callable[[], Awaitable[None] | None]) -> None:
+        try:
+            result = action()
+            if result is not None:
+                await _await_cleanup(result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self.failed = True
+            _log_cleanup_failure(name, error)
+
+
+async def _await_cleanup(awaitable: Awaitable[None]) -> None:
+    task = asyncio.ensure_future(awaitable)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await asyncio.shield(task)
+        except Exception as error:
+            _log_cleanup_failure("cancelled_cleanup", error)
+        raise
+
+
+def _log_cleanup_failure(resource: str, error: Exception) -> None:
+    print(
+        f"[gateway] STT cleanup failed for {resource}: {type(error).__name__}",
+        flush=True,
+    )
 
 
 def upload_file_parts(form: FormData) -> tuple[list[tuple[str, str]], list[tuple[str, UploadFile]]]:

@@ -55,6 +55,7 @@ ADMIN_VISIBLE_METADATA_FIELDS = {
     "terminal_reason",
     "litellm",
     "status_code",
+    "stt",
 }
 
 # Canonical allowlist for metadata["litellm"] — mirrors the keys
@@ -115,6 +116,22 @@ def sanitize_admin_metadata(metadata: Any) -> dict[str, Any]:
     status_code = metadata.get("status_code")
     if isinstance(status_code, int) and not isinstance(status_code, bool):
         out["status_code"] = status_code
+    stt = metadata.get("stt")
+    if isinstance(stt, Mapping):
+        field_count = stt.get("field_count")
+        file_count = stt.get("file_count")
+        attempts_started = stt.get("attempts_started")
+        chunked = stt.get("chunked")
+        if (
+            all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in (field_count, file_count, attempts_started))
+            and isinstance(chunked, bool)
+        ):
+            out["stt"] = {
+                "field_count": field_count,
+                "file_count": file_count,
+                "attempts_started": attempts_started,
+                "chunked": chunked,
+            }
     litellm_meta = _sanitize_litellm_metadata_for_admin(metadata.get("litellm"))
     if litellm_meta:
         out["litellm"] = litellm_meta
@@ -327,7 +344,7 @@ class ReceiptLifecycleOwner:
     def _begin_once(self) -> None:
         try:
             self._begin(self.receipt)
-        except BaseException as error:
+        except Exception as error:
             self._log(f"receipt begin failed: {error}")
 
     def report(self, *, status: str, reason: str) -> None:
@@ -342,12 +359,12 @@ class ReceiptLifecycleOwner:
         if self._on_terminal is not None:
             try:
                 self._on_terminal(self.receipt, reason)
-            except BaseException as error:
+            except Exception as error:
                 self._log(f"receipt terminal annotation failed: {error}")
         self.receipt.finish(status)
         try:
             self._finalize(self.receipt)
-        except BaseException as error:
+        except Exception as error:
             self._log(f"receipt finalize failed: {error}")
 
     async def __aenter__(self) -> "ReceiptLifecycleOwner":
@@ -359,15 +376,7 @@ class ReceiptLifecycleOwner:
         if isinstance(exc, asyncio.CancelledError):
             self._close("cancelled", "cancelled")
         elif exc is not None:
-            # Route-local execution boundaries may use a small exception type
-            # with these declarative attributes to preserve a known terminal
-            # outcome without teaching the receipt owner about each route.
-            # Unknown exceptions remain the conservative internal failure.
-            status = getattr(exc, "receipt_status", "failed")
-            reason = getattr(exc, "receipt_reason", "internal_error")
-            if not isinstance(status, str) or not isinstance(reason, str):
-                status, reason = "failed", "internal_error"
-            self._close(status, reason)
+            self._close("failed", "internal_error")
         else:
             self._close(*(self._outcome or ("failed", "internal_error")))
         return False

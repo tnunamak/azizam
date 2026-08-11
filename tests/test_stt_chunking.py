@@ -110,6 +110,17 @@ class SttChunkMergeTests(unittest.TestCase):
         self.assertEqual(tokens["usage"]["total_tokens"], 23)
         self.assertEqual(tokens["usage"]["input_token_details"], {"audio_tokens": 5, "text_tokens": 4})
 
+    def test_merges_each_optional_sdk_token_detail_without_inventing_absent_values(self) -> None:
+        payload = stt_chunking.merge_transcription_payloads([
+            {"text": "one", "usage": {"type": "tokens", "input_tokens": 1, "output_tokens": 0, "total_tokens": 1, "input_token_details": {"audio_tokens": 1}}},
+            {"text": "two", "usage": {"type": "tokens", "input_tokens": 2, "output_tokens": 0, "total_tokens": 2, "input_token_details": {"audio_tokens": 3}}},
+        ])
+        self.assertEqual(payload["usage"]["input_token_details"], {"audio_tokens": 4})
+        with self.assertRaises(stt_chunking.SttChunkResponseError):
+            stt_chunking._parse_mergeable_chunk_payload(b'{"text":"x","usage":{"type":"tokens","input_tokens":1,"output_tokens":0,"total_tokens":1,"extra":1}}')
+        with self.assertRaises(stt_chunking.SttChunkResponseError):
+            stt_chunking._parse_mergeable_chunk_payload(b'{"text":"x","usage":{"type":"tokens","input_tokens":1,"output_tokens":0,"total_tokens":1,"input_token_details":{"unknown":1}}}')
+
     def test_rejects_sdk_fields_that_need_richer_merge_semantics(self) -> None:
         with self.assertRaises(stt_chunking.SttChunkResponseError):
             stt_chunking._parse_mergeable_chunk_payload(b'{"text":"x","logprobs":[]}')
@@ -178,18 +189,42 @@ class BoundedMultipartTests(unittest.IsolatedAsyncioTestCase):
                 await stt_chunking.parse_bounded_multipart(request, config)
             self.assertEqual(list(config.spool_dir.glob("*")) if config.spool_dir.exists() else [], [])
 
+    async def test_partial_upload_obeys_the_outer_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = _config(Path(temp_dir))
+            _body, content_type = _multipart_body()
+
+            async def receive():
+                yield_message = {"type": "http.request", "body": b"--stt-test-boundary\r\n", "more_body": True}
+                if not hasattr(receive, "sent"):
+                    receive.sent = True
+                    return yield_message
+                await asyncio.Future()
+
+            request = Request({"type": "http", "method": "POST", "headers": [(b"content-type", content_type.encode())]}, receive)
+            deadline = asyncio.get_running_loop().time() + 0.02
+            with self.assertRaises(stt_chunking.SttDeadlineExceeded):
+                await stt_chunking.parse_bounded_multipart(request, config, deadline_at=deadline)
+
 
 class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_media_child_is_killed_and_reaped_on_task_cancellation(self) -> None:
-        class FakeProcess:
-            returncode: int | None = None
-            killed = False
-            reaped = False
-            entered = asyncio.Event()
+        class BlockingReader:
+            def __init__(self, entered: asyncio.Event) -> None:
+                self._entered = entered
 
-            async def communicate(self):
-                self.entered.set()
+            async def read(self, _size: int) -> bytes:
+                self._entered.set()
                 await asyncio.Future()
+
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.returncode: int | None = None
+                self.killed = False
+                self.reaped = False
+                self.entered = asyncio.Event()
+                self.stdout = BlockingReader(self.entered)
+                self.stderr = BlockingReader(self.entered)
 
             def kill(self) -> None:
                 self.killed = True
@@ -213,6 +248,33 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(task, 2)
         self.assertTrue(process.killed)
         self.assertTrue(process.reaped)
+
+    async def test_chunk_typed_terminal_causes_and_redirects_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "source.wav"
+            source.write_bytes(b"source")
+            config = _config(Path(temp_dir))
+
+            async def extract(_source, destination, **_kwargs):
+                Path(destination).write_bytes(b"RIFFchunk")
+
+            async def timeout_post(_path, _filename):
+                raise stt_chunking.SttBackendTimeout("timed out")
+
+            async def redirect_post(_path, _filename):
+                return stt_chunking.UpstreamResponse(302, b"redirect", {})
+
+            common = dict(
+                source_path=source, source_stem="source", fields=[("response_format", "json")], config=config,
+                cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
+            )
+            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))), patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=[(19, 21), (39, 41), (59, 61)])), patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)):
+                with self.assertRaises(stt_chunking.SttBackendTimeout):
+                    await stt_chunking.execute_chunking(post_file=timeout_post, **common)
+                outcome = await stt_chunking.execute_chunking(post_file=redirect_post, **common)
+            self.assertEqual(outcome.mode, "upstream_error")
+            self.assertFalse(stt_chunking.upstream_response_succeeded(302))
+            self.assertFalse(stt_chunking.upstream_response_succeeded(outcome.upstream_response.status_code))
 
     async def test_partial_failure_never_replays_the_whole_upload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -353,6 +415,37 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(outcome.merged_payload, {"text": "part-1 part-2 part-3"})
             self.assertEqual(len(uploaded), 3)
             self.assertFalse(any(root.glob("segment-*.wav")))
+
+
+class OutputAndCleanupBoundTests(unittest.IsolatedAsyncioTestCase):
+    async def test_response_bytes_are_bounded_and_every_cleanup_is_attempted(self) -> None:
+        class Response:
+            def aiter_bytes(self):
+                async def chunks():
+                    yield b"abc"
+                    yield b"def"
+                return chunks()
+
+        with self.assertRaises(stt_chunking.SttResponseLimitExceeded):
+            await stt_chunking.read_bounded_response(
+                Response(), max_bytes=5, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 1, on_cancel=None
+            )
+
+        calls: list[str] = []
+        owner = stt_chunking.SttCleanupOwner()
+
+        def broken() -> None:
+            calls.append("broken")
+            raise OSError("closed")
+
+        def released() -> None:
+            calls.append("released")
+
+        owner.add("released", released)
+        owner.add("broken", broken)
+        await owner.aclose()
+        self.assertEqual(calls, ["broken", "released"])
+        self.assertTrue(owner.failed)
 
 
 class ResourceGateTests(unittest.TestCase):
@@ -526,11 +619,11 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
                     status_code = 200
                     headers = {"content-type": "application/json"}
 
-                    async def aread(self):
+                    async def aiter_bytes(self):
                         if boundary == "response_read":
                             entered.set()
                             await asyncio.Future()
-                        return b'{"text":"chunk"}'
+                        yield b'{"text":"chunk"}'
 
                     async def aclose(self):
                         return None
@@ -634,6 +727,36 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
 
 
 class HotReloadAndCapabilityTests(unittest.TestCase):
+    def test_service_selection_keeps_one_registry_snapshot_during_reload_interleaving(self) -> None:
+        old = {
+            "stt-old": {"host": "127.0.0.1", "port": 9011, "priority": 10, "enabled": True, "capabilities": ["audio", "transcriptions"]},
+        }
+        new = {
+            "stt-new": {"host": "127.0.0.1", "port": 9012, "priority": 10, "enabled": True, "capabilities": ["audio", "transcriptions"]},
+        }
+
+        class ReloadingBackends(dict):
+            def items(self):
+                proxy.reload_runtime_config()
+                return super().items()
+
+        original_config = proxy.config
+        original_derived = {
+            name: getattr(proxy, name)
+            for name in proxy._derive_backend_constants(original_config)
+        }
+        try:
+            with patch.object(proxy, "config", {"backends": ReloadingBackends(old)}), patch.object(
+                proxy, "_load_effective_runtime_config", return_value={"backends": new}
+            ):
+                selected = proxy.service_for_capability("audio.transcriptions")
+                self.assertEqual(selected[0], "stt-old")
+                self.assertEqual(proxy.service_for_capability("audio.transcriptions")[0], "stt-new")
+        finally:
+            proxy.config = original_config
+            for name, value in original_derived.items():
+                setattr(proxy, name, value)
+
     def test_snapshot_freezes_selected_service_identity_auth_and_new_requests_see_reload(self) -> None:
         old = {
             "stt-a": {
@@ -693,6 +816,35 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
             )
         self.assertEqual(headers["x-stt-key"], "configured-only-for-test")
         self.assertNotIn("authorization", {name.lower() for name in headers})
+
+    def test_selected_backend_policy_and_receipt_never_use_the_legacy_stt_literal(self) -> None:
+        receipt = proxy._stt_receipt(
+            request=type("Request", (), {"url": type("Url", (), {"path": "/v1/audio/transcriptions"})()})(),
+            auth_context=proxy.NO_AUTH_CONTEXT,
+            operation="transcriptions",
+            service_id="stt-selected",
+        )
+        seen = []
+
+        class Decision:
+            denied = False
+
+        with patch.object(proxy, "evaluate_and_apply", side_effect=lambda _identity, policy, applied: seen.append((policy.backend, applied.backend)) or Decision()):
+            proxy._apply_selected_stt_policy(receipt, proxy.NO_AUTH_CONTEXT, operation="transcriptions")
+        self.assertEqual(seen, [("stt-selected", "stt-selected")])
+
+    def test_receipt_shape_omits_hostile_upload_data(self) -> None:
+        receipt = proxy._stt_receipt(
+            request=type("Request", (), {"url": type("Url", (), {"path": "/v1/audio/transcriptions"})()})(),
+            auth_context=proxy.NO_AUTH_CONTEXT,
+            operation="transcriptions",
+            service_id="stt-selected",
+        )
+        hostile = "private-prompt-filename-transcript-audio-marker"
+        proxy._record_stt_input_shape(receipt, [(hostile, hostile), ("prompt", hostile)], [(hostile, object())])
+        stored = json.dumps(receipt.to_dict(), sort_keys=True)
+        self.assertNotIn(hostile, stored)
+        self.assertEqual(receipt.accepted_inputs, ["prompt", "file"])
 
     def test_registry_seed_and_existing_record_backfill_keep_operator_chunk_limits(self) -> None:
         bootstrap = {
