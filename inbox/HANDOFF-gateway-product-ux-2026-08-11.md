@@ -47,7 +47,7 @@ Observed gap: the current shell/IA resembles the design in outline, but the ship
 
 ### Spin-down state
 
-All six owned tmux worker windows and their exact worker/background process groups were stopped during this handoff. No matching worker, test, Claude, Codex, or Waspflow command process remained afterward. The three maker worktrees and all reports/commits remain intact. Waspflow's lane state files still say `live` because `park`/`reap` repeatedly hung behind stale wrapper locks after the owned windows were stopped; do not interpret those stale state labels as running work. On resume, inspect the absent panes/processes and preserved artifacts, then close/reap or resume each lane deliberately. This is a Waspflow lifecycle defect worth reporting separately, but it does not justify deleting worktrees or state by hand.
+All owned tmux worker windows and their exact worker/background process groups were stopped during this handoff. No matching worker, test, Claude, Codex, or Waspflow command process remained afterward. Follow-up cleanup reaped the concluded `gw-backlog-gate-0811`, `gw-ux-blueprint-gate-0811`, `vf-brand-dirty-audit-0811`, and `gw-ux-macro-blueprint-0811` lanes. The completed UX blueprint report remains at its documented path; its redundant clean worktree was removed after Waspflow wrote and verified a branch bundle. Only the two unfinished, code-bearing worktrees remain: `gw-backlog-reality-0811` pending its fresh cumulative gate, and `gw-stale-receipt-recovery-0811` pending its full suite and independent gate.
 
 ### 1. Canonical backlog reconciliation
 
