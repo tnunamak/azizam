@@ -1,7 +1,8 @@
 # Known Work
 
-Date: 2026-05-28
-Status: canonical owner backlog for current `main`
+Date: 2026-08-11
+Status: canonical owner backlog for current `main`, reconciled against code,
+tests, and history through `edeb9e9`
 
 This file is the source of truth for outstanding known work. Historical worker
 notes, scratch reports, and `tmp/workstreams/*` are useful evidence, not the
@@ -10,9 +11,6 @@ as untriaged until revalidated.
 
 Current baseline:
 
-- GitHub has no open issues for this repo at the time this file was created.
-- The core test suite, Python compatibility matrix, and Node SDK probes passed
-  on the latest pushed main before this note.
 - Runtime product state is DB/dashboard-owned; bootstrap YAML/env are seed and
   early-start inputs only. See `docs/CONFIG_SOURCE_OF_TRUTH.md`.
 - LiteLLM is the commodity LLM execution substrate. Gateway code still owns
@@ -21,18 +19,19 @@ Current baseline:
 
 ## Active Core Work
 
-### 1. Dynamic Capability And Service Inventory
+### 1. Reconcile The Live Capability And Service Inventory
 
-The live capability surface still needs to become more complete and more
-data-driven. The target is not "one bigger hard-coded catalog"; it is a merged
-view of service registry records, workflow manifests, adapter health, model
-inventory, resource estimates, and profile policy.
+The registry now projects service, workflow, capability, and route facts, and
+the capability router selects embeddings, TTS, and STT from declared service
+capabilities. The remaining gap is cross-surface truth: model discovery,
+workflow discovery, service health, queue facts, and profile policy do not yet
+have one live inventory with an end-to-end agreement proof.
 
 Done means:
 
 - `/gateway/v1/capabilities`, `/gateway/v1/workflows`, `/gateway/v1/providers`,
-  `/v1/models`, `/ollama/api/tags`, and admin service views agree on the same
-  underlying facts.
+  `/v1/models`, `/ollama/api/tags`, and admin service views have an explicit,
+  tested agreement on their shared facts.
 - Disabled/down/unconfigured services are visible with clear reasons.
 - Advertised capabilities map to actual routes or explicit unsupported errors.
 - The user-facing list uses friendly descriptions instead of exposing raw tags
@@ -61,22 +60,21 @@ Done means:
 Primary references: `docs/API_TARGETS.md`, `docs/CORE_CONTRACTS.md`,
 `docs/LITELLM_SUBSTRATE_DECISION.md`.
 
-### 3. Resource Admission And Mode Controls
+### 3. Extend Resource Admission Beyond Media Jobs
 
-The pure admission core and media-job constraints exist, but the product slice
-is not fully closed. Self-hosted AI is resource constrained: loaded models,
-VRAM, queues, disabled services, and concurrent users must be legible before a
-request starts expensive work.
+The admission core, HTTP error translation, admin controls, and live
+image/audio/video media-job checks exist. The remaining product gap is applying
+the same truthful admission decision to other expensive or constrained routes,
+especially LLM execution, rather than only the media-job paths.
 
 Done means:
 
-- Admins can see service availability, queues, resource estimates, and the
-  reason a request would be admitted, queued, or rejected.
-- Profiles can express simple limits that matter in practice: protocol access,
-  model/workflow access, native passthrough, queue/concurrency caps, and
-  expensive-media restrictions.
-- Runtime responses return honest 403/409/429/503 errors with actionable
-  reasons and `Retry-After` where appropriate.
+- The admission decision covers each constrained route that the gateway
+  advertises, with its reason exposed consistently to the caller and admin.
+- Profile limits, service availability, queue/concurrency caps, and resource
+  reservations feed that decision without route-local policy copies.
+- Denied routes return the documented 403/409/429/503 shape and `Retry-After`
+  where a retry is meaningful.
 - Full scheduler preemption or multi-worker event storage remains deferred
   unless a concrete deployment needs it.
 
@@ -124,72 +122,61 @@ Done means:
 Primary references: `docs/CONDITIONING_CONTROLS.md`,
 `docs/LOCAL_CLIENT_RECIPES.md`, `tests/compat/python/probe_openai_responses_media.py`.
 
-### 6. Extension Package Validation And Install UX
+### 6. Finish Extension Package Disable/Removal Semantics
 
-The extension architecture is documented and partial code exists for package
-review. It still needs enough real packages to prove that providers, services,
-workflows, capabilities, routes, and adapter/translator declarations can move
-out of core code without becoming unsafe or confusing.
+Data-owned packages now validate from local directories and Git/GitHub sources,
+retain resolved source/provenance/content hashes, and enable registry records
+through the admin API. Bundled data and code-bearing review fixtures prove the
+boundary: code is staged for review and is not executed merely by installing a
+package.
 
-Done means:
-
-- At least a small bundled package set proves protocol/frontend, provider,
-  service, workflow, capability, and test-case objects.
-- Imported packages from local directory and Git/GitHub URL go through stage,
-  review, validate, configure, test, enable.
-- Data-only packages can be enabled safely; code-bearing packages require an
-  explicit operator trust decision before runnable adapter/translator code is
-  used.
-- Enabled records store provenance and content hashes; live runtime does not
-  execute mutable source directories by surprise.
-
-Primary reference: `docs/EXTENSION_ARCHITECTURE.md`.
-
-### 7. Provisioning Export And Restore
-
-The first-run story is DB/dashboard-first and current runtime keys live in the
-admin DB. The remaining operator gap is an as-code export/import story for
-non-secret dashboard-owned settings.
+The remaining lifecycle defect is concrete: the current delete endpoint removes
+only the package-index record. It does not remove or disable the
+package-provenance registry records that enablement added, so it cannot yet
+truthfully mean "disable/remove this installed package."
 
 Done means:
 
-- Exportable product state is derived from the same source-of-truth inventory
-  used by the dashboard.
-- Secrets are redacted or referenced, never exported raw.
-- Provisioned service rows can round-trip without becoming UI-owned by
-  accident.
+- Disable/remove has explicit, tested effects on every registry record owned by
+  the package, with safe handling for operator-copied records.
+- The index, service registry, audit trail, and live reload agree after the
+  lifecycle change.
+- The deliberate deferral remains: no plugin marketplace/signing infrastructure
+  or general code-plugin loader is implied.
+
+Evidence: `gateway/admin_runtime.py::remove_extension_package`,
+`gateway/extension_packages.py::remove_extension_package`, and
+`tests/test_admin_api.py`.
+
+### 7. Complete Provisioning Restore And Reconciliation
+
+An authenticated `GET /admin/api/config/export` now emits a service-registry
+YAML export and strips ephemeral runtime state. The remaining gap is a proven,
+operator-safe restore/reconciliation workflow. The current export is read-only;
+it does not make a checked-in file authoritative, and it does not cover all
+dashboard-owned settings.
+
+Done means:
+
+- The service-registry export can be imported into a fresh instance with a
+  round-trip test and clear conflict/ownership semantics.
+- The scope of any export beyond service records is explicit; secrets remain
+  redacted or referenced, never exported raw.
+- Operators can deliberately reconcile a provisioned source without making
+  UI-managed rows file-owned by accident.
 - The first-run path still works without requiring this feature.
 
 Primary reference: `docs/CONFIG_SOURCE_OF_TRUTH.md`.
 
-### 8. Declared, Visible Model Aliases For LLM Routing
+### 8. Declared, Visible Model Aliases For LLM Routing — completed
 
-A client that sends a well-known model name it doesn't have locally (e.g.
-`claude-sonnet-4-6`, `gpt-4o-mini`) gets a 400 "Invalid model name" because the
-LLM request path (`_prepare_litellm_local_llm_request`) does an exact-match
-lookup and the LiteLLM substrate rejects unknown names. Aliasing already exists
-for video (`videos.aliases`) and as a metadata/category map
-(`MODEL_COMPAT_ALIASES`), and `config_sources.py` already declares the intent
-("UI-managed targets and aliases live in admin.db") — but the operator-defined
-name→name alias layer for text LLMs is unbuilt and not surfaced in the UI.
+Service-declared model records now express a base model and optional policy
+overlay. The pure resolver rejects missing or ambiguous alias policy, request
+preparation uses the resolved target, and receipts retain both requested and
+resolved model facts. This is data-derived policy, not silent fallback.
 
-This must NOT become silent aliasing: routing `claude-sonnet-4-6` to a local
-Qwen without telling the client violates the no-fake-compatibility principle.
-The SLVP shape is a **declared, visible** alias: data in the registry/admin.db,
-editable in the UI like everything else, applied in the LLM request path, and
-recorded in the receipt so "you asked for X, served by local Y" is inspectable.
-
-Done means:
-
-- Operator-defined model aliases live in admin.db (data, not code), editable
-  from `/admin`, seedable from `proxy_config.yml`.
-- The OpenAI/Anthropic/Ollama LLM paths resolve aliases before LiteLLM, so an
-  aliased name routes instead of 400-ing.
-- The applied alias is surfaced (receipt + response metadata), never silent.
-- Unknown, unaliased models still fail explicitly (no silent default).
-
-Primary references: `docs/CONFIG_SOURCE_OF_TRUTH.md`,
-`docs/LITELLM_SUBSTRATE_DECISION.md`.
+Evidence: `gateway/alias_policy.py`, `tests/test_service_registry.py`,
+`tests/test_finite_output_default.py`, and `tests/test_receipt_store.py`.
 
 ### 9. LiteLLM Sidecar Config Sync And Visibility — completed
 

@@ -44,11 +44,15 @@ Active known work now lives in [`docs/KNOWN_WORK.md`](KNOWN_WORK.md). Treat
 this file as build history and architecture sequencing, not the live backlog.
 The current highest-leverage open items are:
 
-- Expand the live capability inventory beyond the initial hand-built catalog.
+- Reconcile capability, model, workflow, health, queue, and profile facts
+  across every discovery surface.
 - Backend adapter contract extracted from `proxy.py`.
 - Close long-tail app/client verification from the compatibility matrix.
-- Finish the resource/admission/admin visibility slice for real self-hosted
-  operations.
+- Extend resource admission consistently beyond the completed media-job slice.
+- Finish extension-package disable/removal semantics so index and registry do
+  not diverge.
+- Prove provisioning restore/reconciliation beyond the shipped service-registry
+  export.
 
 ## North Star
 
