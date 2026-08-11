@@ -17,6 +17,7 @@ external file), and cross-checks that canonical tracked/generated config
 paths remain unignored.
 """
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -38,6 +39,7 @@ IGNORED_PATHS = [
     "data/litellm.config.yaml",
     "data/litellm.config.yaml.old",
     "data/litellm.config.yaml.bak.20260630-103242",
+    "data/litellm.config.yaml.mylllama-bak.20260605-182039",
     "core.73804",
     "core.348027",
     "docs/design/vivid-fish-handoff/gateway/core.348027",
@@ -53,6 +55,10 @@ NOT_IGNORED_PATHS = [
     "tests/test_repository_hygiene.py",
     "docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md",
     "data/.gitkeep",
+    "gateway/core.py",
+    "web/core.ts",
+    "config/core.yaml",
+    "gateway/core/registry.py",
 ]
 
 # Neutralize any machine-local/global/system exclude sources so a match can
@@ -98,7 +104,9 @@ def test_sensitive_runtime_artifact_is_ignored_by_repo_gitignore(path):
     # take the last line, which is the pattern that actually decided the match.
     lines = [line for line in result.stdout.splitlines() if line]
     assert lines, f"expected -v output for ignored path {path!r}, got none"
-    source = lines[-1].split(":", 1)[0]
+    verbose_match = re.match(r"^(?P<source>.*):(?P<line>\d+):[^\t]*\t", lines[-1])
+    assert verbose_match, f"unexpected -v output for ignored path {path!r}: {lines[-1]!r}"
+    source = verbose_match.group("source")
     # git reports the source relative to the cwd it was invoked from (REPO_ROOT)
     # when the source is inside the repo; resolve before comparing so this
     # holds regardless of git version/cwd-relative-path quirks.
@@ -114,7 +122,8 @@ def test_sensitive_runtime_artifact_is_ignored_by_repo_gitignore(path):
 @pytest.mark.parametrize("path", NOT_IGNORED_PATHS)
 def test_canonical_source_or_config_is_not_ignored(path):
     result = _check_ignore_verbose(path)
-    assert result.returncode != 0, (
+    assert result.returncode == 1, (
         f"expected {path!r} to be tracked/unignored but it is gitignored "
-        f"(stdout={result.stdout!r})"
+        f"(returncode={result.returncode} stdout={result.stdout!r} "
+        f"stderr={result.stderr!r})"
     )

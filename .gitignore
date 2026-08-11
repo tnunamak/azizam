@@ -50,13 +50,12 @@ data/migration-backups/
 # It is runtime state, not an editable source of truth. Generated backup/
 # snapshot copies of it are equally non-canonical.
 data/litellm.config.yaml
-data/litellm.config.yaml.old
-data/litellm.config.yaml.bak.*
+data/litellm.config.yaml.*
 data/litellm.pid
 
 # Core dumps — may contain in-memory secrets/session tokens.
-core
-core.*
+/core
+core.[0-9]*
 *.core
 
 # GPU incident snapshots — ephemeral diagnostic captures written by
