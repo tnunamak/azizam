@@ -150,6 +150,20 @@ class SttChunkMergeTests(unittest.TestCase):
         self.assertEqual(segments, [(0.0, 20.0), (20.0, 40.0), (40.0, 80)])
 
     def test_sdk_exact_usage_null_integer_and_optional_detail_contracts(self) -> None:
+        parsed = [
+            stt_chunking._parse_mergeable_chunk_payload(b'{"text":"one","usage":null}'),
+            stt_chunking._parse_mergeable_chunk_payload(b'{"text":"two","usage":null}'),
+        ]
+        self.assertEqual(
+            stt_chunking.merge_transcription_payloads(parsed),
+            {"text": "one two"},
+        )
+        parsed.append(stt_chunking._parse_mergeable_chunk_payload(
+            b'{"text":"three","usage":{"type":"duration","seconds":1}}'
+        ))
+        with self.assertRaises(stt_chunking.SttChunkResponseError):
+            stt_chunking.merge_transcription_payloads(parsed)
+
         self.assertEqual(
             stt_chunking.merge_transcription_payloads([{"text": "one", "usage": None}, {"text": "two", "usage": None}]),
             {"text": "one two"},

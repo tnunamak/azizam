@@ -1062,7 +1062,7 @@ def _parse_mergeable_chunk_payload(body: bytes) -> Mapping[str, Any]:
     unsupported = set(payload) - _MERGEABLE_TRANSCRIPTION_FIELDS
     if unknown or unsupported:
         raise SttChunkResponseError("STT chunk returned a response shape that cannot be merged")
-    if "usage" in payload:
+    if payload.get("usage") is not None:
         _validate_usage(payload["usage"])
     return payload
 
