@@ -34,11 +34,18 @@ function isServiceRegistryMutation(path: string, method: string): boolean {
 }
 
 function isServiceRegistryResponse(path: string, method: string): boolean {
-  return path === SERVICE_REGISTRY_PATH || isServiceRegistryMutation(path, method);
+  return (
+    path === SERVICE_REGISTRY_PATH || isServiceRegistryMutation(path, method)
+  );
 }
 
-function hasHeader(headers: Record<string, string> | undefined, name: string): boolean {
-  return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === name.toLowerCase());
+function hasHeader(
+  headers: Record<string, string> | undefined,
+  name: string,
+): boolean {
+  return Object.keys(headers ?? {}).some(
+    (key) => key.toLowerCase() === name.toLowerCase(),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -331,10 +338,12 @@ export interface AttentionItem {
   severity: "problem" | "attention";
   title: string;
   detail: string;
-  section: string;
+  /** Compatibility-only. The client derives links from the canonical tuple. */
   href?: string;
   target_kind?: string | null;
   target_id?: string | null;
+  /** Display only; never use this value to resolve a route. */
+  target_name?: string | null;
 }
 
 export interface AuditEntry {
@@ -376,8 +385,11 @@ export interface Overview {
     active_credentials: number;
     services_total?: number;
     services_enabled?: number;
+    /** Non-human control-plane principals; distinct from people/users. */
+    service_principals?: number;
   };
   attention: AttentionItem[];
+  current_health: CurrentHealth;
   runtime_profile_mappings: Record<string, string>;
 }
 
@@ -406,22 +418,23 @@ export interface StatusPayload {
   system_health?: "ok" | "warn" | "bad" | string;
   system_health_reasons?: string[];
   generated_at?: number;
-	  backends?: Array<{
-	    key?: string;
-	    service_id?: string;
-	    name?: string;
-	    url?: string;
-	    role?: string;
+  current_health?: CurrentHealth;
+  backends?: Array<{
+    key?: string;
+    service_id?: string;
+    name?: string;
+    url?: string;
+    role?: string;
     live_status?: string;
     status?: string;
     latency_ms?: number | null;
     last_error?: string | null;
     history?: BackendHistory;
   }>;
-	  auth_keys?: Array<{
-	    name?: string;
-	    app_id?: string | null;
-	    requests_24h?: number | null;
+  auth_keys?: Array<{
+    name?: string;
+    app_id?: string | null;
+    requests_24h?: number | null;
     errors_4xx_24h?: number | null;
     errors_5xx_24h?: number | null;
     latency_ms_p50?: number | null;
@@ -459,6 +472,43 @@ export interface StatusPayload {
     };
   };
   [key: string]: unknown;
+}
+
+export interface CurrentHealthService {
+  service_id: string;
+  name: string;
+  configured: boolean;
+  enabled: boolean;
+  role: string;
+  routable: boolean | null;
+  observation:
+    | "up"
+    | "degraded"
+    | "down"
+    | "standby_stopped"
+    | "disabled"
+    | "unavailable"
+    | string;
+  tone: "ok" | "warn" | "bad" | "neutral" | string;
+  last_error: string | null;
+}
+
+export interface CurrentHealthSignal {
+  source: string;
+  tone: "warn" | "bad" | string;
+  reasons: string[];
+}
+
+/** The one current health projection shared by all admin read surfaces. */
+export interface CurrentHealth {
+  state: "ok" | "warn" | "bad" | "unavailable" | "empty" | "inactive" | string;
+  tone: "ok" | "warn" | "bad" | "neutral" | string;
+  label: string;
+  detail: string;
+  observation_available: boolean;
+  /** Producer-authored API/host facts, distinct from per-service probes. */
+  signals?: CurrentHealthSignal[];
+  services: CurrentHealthService[];
 }
 
 export interface StatusResponse {
@@ -598,7 +648,11 @@ export async function adminFetch<T>(
     payload.error.code === CSRF_REQUIRED_CODE
   ) {
     const fresh = await fetchSession({ force: true });
-    response = await rawFetch(path, requestInit, fresh.actor.csrf_token || null);
+    response = await rawFetch(
+      path,
+      requestInit,
+      fresh.actor.csrf_token || null,
+    );
     payload =
       response.status === 204
         ? undefined
@@ -640,7 +694,9 @@ export async function adminRegistryMutation<T>(
     if (error instanceof ApiError && error.status === 412) {
       // Refresh the retained ETag so the next operator retry has a current
       // precondition, while preserving the conflict for the UI to surface.
-      await adminFetch<ServiceRegistryResponse>(SERVICE_REGISTRY_PATH).catch(() => undefined);
+      await adminFetch<ServiceRegistryResponse>(SERVICE_REGISTRY_PATH).catch(
+        () => undefined,
+      );
     }
     throw error;
   }
@@ -798,14 +854,15 @@ export const api = {
         "/admin/api/operator/service-registry",
       ).then((r) => r.service_registry),
     presets: () =>
-      adminFetch<PresetsResponse>(
-        "/admin/api/operator/service-presets",
-      ),
+      adminFetch<PresetsResponse>("/admin/api/operator/service-presets"),
     add: (input: Record<string, unknown>) =>
-      adminRegistryMutation<ServiceRegistryResponse>("/admin/api/operator/services", {
-        method: "POST",
-        body: input,
-      }).then((r) => r.service_registry),
+      adminRegistryMutation<ServiceRegistryResponse>(
+        "/admin/api/operator/services",
+        {
+          method: "POST",
+          body: input,
+        },
+      ).then((r) => r.service_registry),
     edit: (serviceId: string, input: Record<string, unknown>) =>
       adminRegistryMutation<ServiceRegistryResponse>(
         `/admin/api/operator/services/${serviceId}`,
@@ -822,19 +879,31 @@ export const api = {
         { method: "POST", body: { enabled } },
       ).then((r) => r.service_registry),
     testConnection: (input: Record<string, unknown>) =>
-      adminFetch<{ probe: { ok: boolean; status: number | null; error: string; url: string } }>(
-        "/admin/api/operator/services/test",
-        { method: "POST", body: input },
-      ).then((r) => r.probe),
+      adminFetch<{
+        probe: {
+          ok: boolean;
+          status: number | null;
+          error: string;
+          url: string;
+        };
+      }>("/admin/api/operator/services/test", {
+        method: "POST",
+        body: input,
+      }).then((r) => r.probe),
     detectModels: (input: Record<string, unknown>) =>
-      adminFetch<{ detected: { ok: boolean; models: string[]; error: string } }>(
-        "/admin/api/operator/services/detect-models",
-        { method: "POST", body: input },
-      ).then((r) => r.detected),
+      adminFetch<{
+        detected: { ok: boolean; models: string[]; error: string };
+      }>("/admin/api/operator/services/detect-models", {
+        method: "POST",
+        body: input,
+      }).then((r) => r.detected),
     litellmConfig: () =>
       adminFetch<{
         litellm_config: {
-          model_list: Array<{ model_name: string; litellm_params: Record<string, unknown> }>;
+          model_list: Array<{
+            model_name: string;
+            litellm_params: Record<string, unknown>;
+          }>;
           general_settings?: Record<string, unknown>;
         };
       }>("/admin/api/operator/litellm-config").then((r) => r.litellm_config),

@@ -166,39 +166,12 @@ function formatCompact(value: number | null | undefined): string {
   }).format(value);
 }
 
-function healthTone(value: unknown): HealthTone {
-  if (value === "bad") return "bad";
-  if (value === "warn") return "warn";
-  if (value === "ok") return "ok";
-  return "neutral";
-}
-
-function maxHealthTone(a: HealthTone, b: HealthTone): HealthTone {
-  const rank: Record<HealthTone, number> = {
-    neutral: 0,
-    info: 0,
-    ok: 1,
-    warn: 2,
-    bad: 3,
-  };
-  return rank[b] > rank[a] ? b : a;
-}
-
-function healthWord(tone: HealthTone): string {
-  if (tone === "bad") return "bad";
-  if (tone === "warn") return "degraded";
-  if (tone === "ok") return "ok";
-  return "unknown";
-}
-
 function healthSummary(status: StatusPayload | undefined, error: boolean) {
   if (error) {
     return {
       tone: "bad" as HealthTone,
       label: "Status unavailable",
       detail: "The admin status endpoint did not respond.",
-      apiTone: "neutral" as HealthTone,
-      hostTone: "neutral" as HealthTone,
     };
   }
   if (!status) {
@@ -206,32 +179,23 @@ function healthSummary(status: StatusPayload | undefined, error: boolean) {
       tone: "neutral" as HealthTone,
       label: "Loading status",
       detail: "Checking API and host health.",
-      apiTone: "neutral" as HealthTone,
-      hostTone: "neutral" as HealthTone,
     };
   }
-  const apiTone = healthTone(status.banner ?? "ok");
-  const hostTone = healthTone(status.system_health ?? "ok");
-  const tone = maxHealthTone(apiTone, hostTone);
-  const reasons = [
-    ...(status.banner_reasons ?? []),
-    ...(status.system_health_reasons ?? []),
-  ].filter(Boolean);
-  if (tone === "ok") {
+  const current = status.current_health;
+  if (!current) {
     return {
-      tone,
-      label: "API and host healthy",
-      detail: "No incidents detected.",
-      apiTone,
-      hostTone,
+      tone: "neutral" as HealthTone,
+      label: "Live status unavailable",
+      detail: "The gateway did not provide a current health projection.",
     };
   }
   return {
-    tone,
-    label: tone === "bad" ? "Action needed" : "Degraded",
-    detail: reasons.slice(0, 3).join("; ") || "Review live status for details.",
-    apiTone,
-    hostTone,
+    tone:
+      current.tone === "ok" || current.tone === "warn" || current.tone === "bad"
+        ? current.tone
+        : ("neutral" as HealthTone),
+    label: current.label,
+    detail: current.detail,
   };
 }
 
@@ -241,7 +205,9 @@ function buildTelemetryCards(status: StatusPayload | undefined) {
   );
   const requests24h = (status?.auth_keys ?? []).reduce((sum, key) => {
     const value = key.requests_24h;
-    return sum + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+    return (
+      sum + (typeof value === "number" && Number.isFinite(value) ? value : 0)
+    );
   }, 0);
 
   const firstGpu = status?.metrics?.gpus?.[0];
@@ -274,7 +240,10 @@ function auditActorLabel(
   if (entry.actor_id === "cli" || entry.actor_kind === "cli") return "System";
   const user = usersById.get(entry.actor_id);
   if (user) return userLabel(user);
-  if (entry.actor_kind === "service_account" || entry.actor_id.startsWith("svc_")) {
+  if (
+    entry.actor_kind === "service_account" ||
+    entry.actor_id.startsWith("svc_")
+  ) {
     return "Admin key";
   }
   if (entry.actor_kind === "admin") return "Admin";
@@ -316,7 +285,8 @@ function AttentionSection({
       tone={tone}
       title={headline}
       items={items.map((item) => {
-        const href = item.href ?? undefined;
+        const href =
+          adminTargetHref(item.target_kind, item.target_id) ?? undefined;
         return {
           title: item.title,
           detail: item.detail,
@@ -360,21 +330,35 @@ function AppsSection({
   return (
     <div className="overflow-hidden rounded-md border border-[var(--vf-border)]">
       {/* Column header row */}
-      <div className="hidden md:flex items-center gap-2.5 px-3 py-1.5 border-b border-[var(--vf-border)] bg-[var(--vf-surface-1)]">
-        <span className="shrink-0 w-[34px]" />
-        <span className="flex-1 min-w-0 text-vf-micro text-vf-subtle font-mono uppercase">App name</span>
-        <span className="shrink-0 text-vf-micro text-vf-subtle font-mono uppercase w-20 text-right">Last used</span>
-        <span className="shrink-0 text-vf-micro text-vf-subtle font-mono uppercase w-14 text-right">Status</span>
+      <div className="hidden items-center gap-2.5 border-b border-[var(--vf-border)] bg-[var(--vf-surface-1)] px-3 py-1.5 min-[980px]:flex">
+        <span className="w-[34px] shrink-0" />
+        <span className="text-vf-micro text-vf-subtle min-w-0 flex-1 font-mono uppercase">
+          App name
+        </span>
+        <span className="text-vf-micro text-vf-subtle w-20 shrink-0 text-right font-mono uppercase">
+          Last used
+        </span>
+        <span className="text-vf-micro text-vf-subtle w-14 shrink-0 text-right font-mono uppercase">
+          Status
+        </span>
       </div>
       <div className="vf-activity-feed">
         {apps.slice(0, 5).map((app) => {
-          const appActiveKeys = (credentialsData ?? [])
-            .filter((c) => c.subject_kind === "app" && c.app_id === app.id && c.revoked_at === null)
-            .length;
+          const appActiveKeys = (credentialsData ?? []).filter(
+            (c) =>
+              c.subject_kind === "app" &&
+              c.app_id === app.id &&
+              c.revoked_at === null,
+          ).length;
           const t = statusData?.auth_keys?.find((k) => k.app_id === app.id);
           const lastSeenTs = t?.last_seen ? Math.floor(t.last_seen) : null;
           const credTs = (credentialsData ?? [])
-            .filter((c) => c.subject_kind === "app" && c.app_id === app.id && c.last_used_at !== null)
+            .filter(
+              (c) =>
+                c.subject_kind === "app" &&
+                c.app_id === app.id &&
+                c.last_used_at !== null,
+            )
             .reduce<number | null>((best, c) => {
               const v = c.last_used_at!;
               return best === null || v > best ? v : best;
@@ -385,7 +369,8 @@ function AppsSection({
                 const diffSec = Math.floor(Date.now() / 1000) - ts;
                 if (diffSec < 60) return "just now";
                 if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-                if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+                if (diffSec < 86400)
+                  return `${Math.floor(diffSec / 3600)}h ago`;
                 return `${Math.floor(diffSec / 86400)}d ago`;
               })()
             : undefined;
@@ -465,7 +450,7 @@ function RecentActivitySection({
     );
   }
   return (
-    <div className="rounded-md border border-[var(--vf-border)] overflow-hidden">
+    <div className="overflow-hidden rounded-md border border-[var(--vf-border)]">
       <div className="vf-activity-feed">
         {entries.map((entry) => {
           const actor = auditActorLabel(entry, usersById);
@@ -578,11 +563,13 @@ export default function AdminOverviewPage() {
     () => healthSummary(statusData, statusError),
     [statusData, statusError],
   );
-  const liveServiceByName = useMemo(() => {
-    const map = new Map<string, NonNullable<StatusPayload["backends"]>[number]>();
-    for (const backend of statusData?.backends ?? []) {
-      const name = backend.name?.toLowerCase();
-      if (name) map.set(name, backend);
+  const liveServiceById = useMemo(() => {
+    const map = new Map<
+      string,
+      NonNullable<StatusPayload["current_health"]>["services"][number]
+    >();
+    for (const service of statusData?.current_health?.services ?? []) {
+      map.set(service.service_id, service);
     }
     return map;
   }, [statusData]);
@@ -629,16 +616,14 @@ export default function AdminOverviewPage() {
               label: "Generate an API key",
               detail: "Mint a key for the app so callers can authenticate.",
               complete: activeKeys.length > 0,
-              action: (
-                firstApp ? (
-                  <Button asChild variant="ghost" size="sm">
-                    <Link href={adminAppHref(firstApp.id)}>Create key</Link>
-                  </Button>
-                ) : (
-                  <Button variant="ghost" size="sm" disabled>
-                    Create key
-                  </Button>
-                )
+              action: firstApp ? (
+                <Button asChild variant="ghost" size="sm">
+                  <Link href={adminAppHref(firstApp.id)}>Create key</Link>
+                </Button>
+              ) : (
+                <Button variant="ghost" size="sm" disabled>
+                  Create key
+                </Button>
               ),
             },
             {
@@ -677,19 +662,28 @@ export default function AdminOverviewPage() {
           },
           {
             label: "Active keys",
-            value: credentialsData !== undefined ? String(activeKeys.length) : "—",
+            value:
+              credentialsData !== undefined ? String(activeKeys.length) : "—",
             detail: "credentials",
           },
           {
             label: "Requests",
-            value: formatCompact(telemetry.requests24h > 0 ? telemetry.requests24h : null),
+            value: formatCompact(
+              telemetry.requests24h > 0 ? telemetry.requests24h : null,
+            ),
             detail: "24h",
             tone: "info" as const,
-            series: telemetry.requestSeries.length >= 3 ? telemetry.requestSeries : undefined,
+            series:
+              telemetry.requestSeries.length >= 3
+                ? telemetry.requestSeries
+                : undefined,
           },
           {
             label: "Services on",
-            value: registry !== undefined ? `${enabledServices}/${services.length || 0}` : "—",
+            value:
+              registry !== undefined
+                ? `${enabledServices}/${services.length || 0}`
+                : "—",
             detail: "enabled",
             tone:
               services.length > 0 && enabledServices < services.length
@@ -735,8 +729,9 @@ export default function AdminOverviewPage() {
               )}
             </div>
             {appsData !== undefined && apps.length > 0 && (
-              <p className="mt-2 text-vf-micro text-vf-muted">
-                Showing {Math.min(5, apps.length)} of {apps.length} app{apps.length === 1 ? "" : "s"}
+              <p className="text-vf-micro text-vf-muted mt-2">
+                Showing {Math.min(5, apps.length)} of {apps.length} app
+                {apps.length === 1 ? "" : "s"}
               </p>
             )}
           </section>
@@ -789,9 +784,7 @@ export default function AdminOverviewPage() {
 
         {/* API Health + Services */}
         <section>
-          <SectionActionHeader
-            title="API Health"
-          />
+          <SectionActionHeader title="API Health" />
           <div className="mt-3 flex flex-col gap-3">
             <div className="vf-health-summary">
               <StatusDotLabel
@@ -800,18 +793,6 @@ export default function AdminOverviewPage() {
                 pulse={health.tone === "ok"}
               />
               <p className="text-vf-micro text-vf-muted">{health.detail}</p>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <StatusDotLabel
-                  tone={health.apiTone}
-                  label={`API ${healthWord(health.apiTone)}`}
-                  className="text-vf-micro"
-                />
-                <StatusDotLabel
-                  tone={health.hostTone}
-                  label={`Host ${healthWord(health.hostTone)}`}
-                  className="text-vf-micro"
-                />
-              </div>
             </div>
 
             {services.length > 0 && (
@@ -830,21 +811,17 @@ export default function AdminOverviewPage() {
                 />
                 <ObjectList className="mt-2">
                   {services.slice(0, 4).map((service) => {
-                    const live = liveServiceByName.get(service.name.toLowerCase());
-                    const liveStatus = String(
-                      live?.live_status ?? live?.status ?? "",
-                    ).toLowerCase();
+                    const live = liveServiceById.get(service.id);
+                    const liveStatus = live?.observation ?? "unavailable";
                     const tone =
-                      liveStatus === "up"
+                      live?.tone === "ok"
                         ? "ok"
-                        : liveStatus === "degraded"
+                        : live?.tone === "warn"
                           ? "warn"
-                          : liveStatus === "down"
+                          : live?.tone === "bad"
                             ? "bad"
-                            : service.enabled
-                              ? "neutral"
-                              : "warn";
-                    const label = liveStatus || (service.enabled ? "on" : "off");
+                            : "neutral";
+                    const label = liveStatus.replace(/_/g, " ");
                     return (
                       <ObjectRow
                         key={service.id}

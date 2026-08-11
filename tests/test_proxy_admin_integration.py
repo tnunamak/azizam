@@ -1717,6 +1717,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(claimed.status_code, 303, claimed.text)
 
         for section in (
+            "status",
             "services",
             "apps",
             "profiles",
@@ -1729,6 +1730,14 @@ class SetupRouteIntegrationTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 302, response.text)
                 self.assertEqual(response.headers["location"], f"/ui/admin/{section}/")
         for path, expected in (
+            (
+                "/admin/status?service=svc_123&source=attention",
+                "/ui/admin/status/?service=svc_123&source=attention",
+            ),
+            (
+                "/admin/status/?service=svc_123&source=attention",
+                "/ui/admin/status/?service=svc_123&source=attention",
+            ),
             (
                 "/admin/services?service=tts",
                 "/ui/admin/services/?service=tts",

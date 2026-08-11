@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 import sys
 import tempfile
 import unittest
+import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 from unittest.mock import patch
@@ -20,6 +23,7 @@ from gateway.admin_api import (  # noqa: E402
     AdminAuthError,
     AdminContext,
     create_admin_router,
+    derive_admin_health_projection,
     derive_admin_attention,
 )
 from gateway.admin_runtime import AdminSQLiteStore  # noqa: E402
@@ -50,9 +54,9 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                 {"app_id": "a5", "revoked_at": None},
             ],
             "services": [
-                {"id": "comfy", "key": "comfy", "name": "ComfyUI", "status": "down"},
-                {"id": "tabby", "key": "tabby", "name": "TabbyAPI", "status": "degraded"},
-                {"id": "ok", "key": "ok", "name": "Fine", "status": "up"},
+                {"id": "comfy", "key": "comfy", "name": "ComfyUI", "status": "down", "tone": "bad"},
+                {"id": "tabby", "key": "tabby", "name": "TabbyAPI", "status": "degraded", "tone": "warn"},
+                {"id": "ok", "key": "ok", "name": "Fine", "status": "up", "tone": "ok"},
             ],
             "status": {
                 "banner": "bad",
@@ -88,18 +92,18 @@ class DeriveAdminAttentionTests(unittest.TestCase):
         self.assertIn("NoKey has no active key", titles)
         self.assertIn("ComfyUI is down", titles)
         self.assertIn("TabbyAPI is degraded", titles)
-        self.assertIn("API health is degraded", titles)
-        self.assertIn("Host health needs attention", titles)
+        self.assertNotIn("API health is degraded", titles)
+        self.assertNotIn("Host health needs attention", titles)
         self.assertIn("paperless has a high error rate", titles)
         self.assertIn("brother-chat has a high error rate", titles)
         self.assertIn("paperless is slow", titles)
         self.assertNotIn("Healthy", titles)
         self.assertNotIn("Fine", titles)
-        # Each item routes to the section that fixes it.
-        sections = {i["section"] for i in items}
-        self.assertEqual(sections, {"apps-keys", "services"})
+        # Target identity is canonical; names are display-only.
         by_title = {i["title"]: i for i in items}
+        self.assertEqual(by_title["MissingProf's profile is missing"]["target_kind"], "app")
         self.assertEqual(by_title["MissingProf's profile is missing"]["target_id"], "a2")
+        self.assertEqual(by_title["MissingProf's profile is missing"]["target_name"], "MissingProf")
         self.assertEqual(
             by_title["MissingProf's profile is missing"]["href"],
             "/admin/apps?app=a2",
@@ -124,8 +128,9 @@ class DeriveAdminAttentionTests(unittest.TestCase):
         )
         self.assertNotIn("href", by_title["brother-chat has a high error rate"])
         self.assertNotIn("target_id", by_title["brother-chat has a high error rate"])
-        self.assertNotIn("href", by_title["API health is degraded"])
-        self.assertNotIn("href", by_title["Host health needs attention"])
+        for item in items:
+            self.assertNotIn("entity_id", item)
+            self.assertNotIn("entity_name", item)
 
     def test_auth_key_attention_does_not_guess_app_by_name(self) -> None:
         snap = {
@@ -154,7 +159,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
     def test_service_attention_does_not_link_without_resolved_service_id(self) -> None:
         snap = {
             "services": [
-                {"key": "probe-only", "name": "Probe-only backend", "status": "down"},
+                {"key": "probe-only", "name": "Probe-only backend", "status": "down", "tone": "bad"},
             ],
         }
 
@@ -162,6 +167,282 @@ class DeriveAdminAttentionTests(unittest.TestCase):
         self.assertEqual(item["title"], "Probe-only backend is down")
         self.assertNotIn("href", item)
         self.assertNotIn("target_id", item)
+
+    def test_current_health_distinguishes_unavailable_and_standby(self) -> None:
+        registry = {
+            "services": {
+                "required": {
+                    "id": "required",
+                    "name": "Required",
+                    "enabled": True,
+                    "config": {
+                        "models": [{"model_group": "public-model", "upstream_model": "upstream-model"}],
+                    },
+                },
+                "standby": {"id": "standby", "name": "Standby", "enabled": True, "role": "standby"},
+                "disabled": {"id": "disabled", "name": "Disabled", "enabled": False},
+            }
+        }
+        unavailable = derive_admin_health_projection(registry, {}, observation_available=False)
+        self.assertEqual(unavailable["state"], "unavailable")
+        self.assertFalse(unavailable["observation_available"])
+        self.assertEqual(unavailable["services"][0]["observation"], "unavailable")
+
+        live = derive_admin_health_projection(
+            registry,
+            {"backends": [
+                {"service_id": "required", "live_status": "up"},
+                {"service_id": "standby", "live_status": "down"},
+            ]},
+            observation_available=True,
+        )
+        by_id = {service["service_id"]: service for service in live["services"]}
+        self.assertEqual(live["state"], "ok")
+        self.assertEqual(by_id["required"]["observation"], "up")
+        self.assertEqual(by_id["standby"]["observation"], "standby_stopped")
+        self.assertEqual(by_id["disabled"]["observation"], "disabled")
+
+        incomplete = derive_admin_health_projection(
+            registry,
+            {"backends": [{"service_id": "required", "live_status": "up"}]},
+            observation_available=True,
+        )
+        self.assertEqual(incomplete["state"], "unavailable")
+        self.assertEqual(incomplete["label"], "Live status incomplete")
+
+    def test_current_health_reduces_all_configuration_and_live_states(self) -> None:
+        cases = (
+            {
+                "name": "empty configured registry",
+                "registry": {"services": {}},
+                "payload": {"banner": "bad", "backends": []},
+                "available": True,
+                "state": "empty",
+                "tone": "neutral",
+                "label": "No services configured",
+            },
+            {
+                "name": "optional service down",
+                "registry": {"services": {"optional": {"role": "optional"}}},
+                "payload": {"backends": [{"key": "optional", "status": "down"}]},
+                "available": True,
+                "state": "warn",
+                "tone": "warn",
+                "observation": "down",
+            },
+            {
+                "name": "disabled service ignores raw banner",
+                "registry": {"services": {"disabled": {"enabled": False}}},
+                "payload": {
+                    "banner": "bad",
+                    "banner_reasons": ["required backend down"],
+                    "backends": [{"key": "disabled", "status": "down"}],
+                },
+                "available": True,
+                "state": "inactive",
+                "tone": "neutral",
+                "observation": "disabled",
+            },
+            {
+                "name": "required service down",
+                "registry": {"services": {"required": {"role": "required"}}},
+                "payload": {"backends": [{"key": "required", "status": "down"}]},
+                "available": True,
+                "state": "bad",
+                "tone": "bad",
+                "observation": "down",
+            },
+            {
+                "name": "degraded service",
+                "registry": {"services": {"degraded": {}}},
+                "payload": {"backends": [{"key": "degraded", "status": "degraded"}]},
+                "available": True,
+                "state": "warn",
+                "tone": "warn",
+                "observation": "degraded",
+            },
+            {
+                "name": "standby stopped",
+                "registry": {"services": {"standby": {"role": "standby"}}},
+                "payload": {
+                    "system_health": "bad",
+                    "backends": [{"key": "standby", "status": "down"}],
+                },
+                "available": True,
+                "state": "inactive",
+                "tone": "neutral",
+                "observation": "standby_stopped",
+            },
+            {
+                "name": "status source unavailable",
+                "registry": {"services": {"required": {}}},
+                "payload": {},
+                "available": False,
+                "state": "unavailable",
+                "tone": "neutral",
+                "observation": "unavailable",
+            },
+            {
+                "name": "incomplete status source",
+                "registry": {"services": {"required": {}}},
+                "payload": {"backends": []},
+                "available": True,
+                "state": "unavailable",
+                "tone": "neutral",
+                "observation": "unavailable",
+            },
+            {
+                "name": "required service is reachable but unroutable",
+                "registry": {"services": {"required": {"config": {"models": []}}}},
+                "payload": {"backends": [{"key": "required", "status": "up"}]},
+                "available": True,
+                "state": "bad",
+                "tone": "bad",
+                "observation": "up",
+                "routable": False,
+            },
+            {
+                "name": "live service without a routing declaration is incomplete",
+                "registry": {"services": {"required": {"config": {"protocol": "openai-compatible"}}}},
+                "payload": {"backends": [{"key": "required", "status": "up"}]},
+                "available": True,
+                "state": "unavailable",
+                "tone": "neutral",
+                "label": "Live status incomplete",
+                "observation": "up",
+                "routable": None,
+            },
+            {
+                "name": "real model mapping is routable",
+                "registry": {
+                    "services": {
+                        "required": {
+                            "config": {
+                                "models": [{"model_group": "public-model", "upstream_model": "upstream-model"}],
+                            },
+                        },
+                    },
+                },
+                "payload": {"backends": [{"key": "required", "status": "up"}]},
+                "available": True,
+                "state": "ok",
+                "tone": "ok",
+                "observation": "up",
+                "routable": True,
+            },
+        )
+
+        for case in cases:
+            with self.subTest(case["name"]):
+                projection = derive_admin_health_projection(
+                    case["registry"],
+                    case["payload"],
+                    observation_available=case["available"],
+                )
+                self.assertEqual(projection["state"], case["state"])
+                self.assertEqual(projection["tone"], case["tone"])
+                if "label" in case:
+                    self.assertEqual(projection["label"], case["label"])
+                if "observation" in case:
+                    self.assertEqual(
+                        projection["services"][0]["observation"], case["observation"]
+                    )
+                if "routable" in case:
+                    self.assertEqual(
+                        projection["services"][0]["routable"], case["routable"]
+                    )
+
+    def test_current_health_keeps_only_structured_independent_signals(self) -> None:
+        registry = {
+            "services": {
+                "required": {
+                    "config": {
+                        "models": [{"model_group": "public-model", "upstream_model": "upstream-model"}],
+                    },
+                },
+            },
+        }
+        live = {"backends": [{"key": "required", "status": "up"}]}
+
+        host_bad = derive_admin_health_projection(
+            registry,
+            {
+                **live,
+                "banner": "ok",
+                "system_health": "bad",
+                "health_sources": {
+                    "host": {"tone": "bad", "reasons": ["disk / 99% full"]},
+                },
+            },
+            observation_available=True,
+        )
+        self.assertEqual((host_bad["state"], host_bad["tone"]), ("bad", "bad"))
+        self.assertEqual(host_bad["signals"], [{"source": "host", "tone": "bad", "reasons": ["disk / 99% full"]}])
+
+        api_warn = derive_admin_health_projection(
+            registry,
+            {
+                **live,
+                "banner": "warn",
+                "health_sources": {
+                    "api": {"tone": "warn", "reasons": ["model swap in progress"]},
+                },
+            },
+            observation_available=True,
+        )
+        self.assertEqual((api_warn["state"], api_warn["tone"]), ("warn", "warn"))
+        self.assertEqual(api_warn["signals"][0]["source"], "api")
+
+        legacy_aggregate_only = derive_admin_health_projection(
+            registry,
+            {**live, "banner": "bad", "banner_reasons": ["required backend down"]},
+            observation_available=True,
+        )
+        self.assertEqual((legacy_aggregate_only["state"], legacy_aggregate_only["tone"]), ("ok", "ok"))
+
+    def test_independent_health_attention_has_no_service_target(self) -> None:
+        items = derive_admin_attention({
+            "current_health": {
+                "signals": [{
+                    "source": "host",
+                    "tone": "bad",
+                    "reasons": ["disk / 99% full"],
+                }],
+            },
+        })
+        self.assertEqual(items[0]["title"], "host health needs attention")
+        self.assertEqual(items[0]["detail"], "disk / 99% full")
+        self.assertNotIn("target_id", items[0])
+        self.assertNotIn("href", items[0])
+
+    def test_attention_compatibility_hrefs_match_the_typescript_helper(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("the hermetic Python runner intentionally does not expose Node")
+        items = derive_admin_attention({
+            "apps": [{"id": "app id", "name": "App", "default_profile_id": "p1"}],
+            "profiles": [{"id": "p1"}],
+            "credentials": [],
+            "services": [{"id": "svc id", "name": "Service", "observation": "down", "tone": "bad"}],
+        })
+        tuples = [
+            {"target_kind": item["target_kind"], "target_id": item["target_id"]}
+            for item in items
+            if item.get("target_id")
+        ]
+        script = """
+import { adminTargetHref } from './web/src/lib/admin-links.ts';
+const tuples = JSON.parse(process.argv[1]);
+process.stdout.write(JSON.stringify(tuples.map(({ target_kind, target_id }) => adminTargetHref(target_kind, target_id))));
+"""
+        result = subprocess.run(
+            [node, "--experimental-strip-types", "--input-type=module", "-e", script, json.dumps(tuples)],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual([item["href"] for item in items if item.get("target_id")], json.loads(result.stdout))
 
 
 class FakeAdminStore:
@@ -920,6 +1201,22 @@ class AdminAuthTests(unittest.TestCase):
         counts = resp.json()["counts"]
         self.assertEqual(counts["services_total"], 3)
         self.assertEqual(counts["services_enabled"], 2)
+        self.assertEqual(counts["service_principals"], 0)
+        self.assertEqual(resp.json()["current_health"]["state"], "unavailable")
+
+    def test_overview_counts_service_principals_separately_from_people(self) -> None:
+        client, store = _make_client()
+        store.credentials["cred_service"] = {
+            "id": "cred_service",
+            "subject_kind": "service_account",
+            "subject_id": "svc_automation",
+            "revoked_at": None,
+        }
+
+        resp = client.get("/admin/api/overview", headers=_auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["counts"]["users"], 1)
+        self.assertEqual(resp.json()["counts"]["service_principals"], 1)
 
     def test_overview_links_live_service_attention_to_registry_id(self) -> None:
         async def status_provider() -> Mapping[str, Any]:
@@ -990,27 +1287,30 @@ class AdminAuthTests(unittest.TestCase):
         resp = client.get("/admin/api/status", headers=_auth())
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual(resp.headers["cache-control"], "no-store")
-        self.assertEqual(
-            resp.json(),
-            {"status": {"banner": "ok", "backends": [{"name": "ComfyUI"}]}},
-        )
+        body = resp.json()["status"]
+        self.assertEqual(body["banner"], "ok")
+        self.assertEqual(body["backends"], [{"name": "ComfyUI"}])
+        self.assertEqual(body["current_health"]["state"], "empty")
+        self.assertTrue(body["current_health"]["observation_available"])
 
-    def test_admin_status_503_when_provider_missing(self) -> None:
+    def test_admin_status_projects_unavailable_when_provider_missing(self) -> None:
         client, _store = _make_client()
 
         resp = client.get("/admin/api/status", headers=_auth())
-        self.assertEqual(resp.status_code, 503)
-        self.assertEqual(resp.json()["error"]["code"], "status_unavailable")
+        self.assertEqual(resp.status_code, 200)
+        health = resp.json()["status"]["current_health"]
+        self.assertEqual(health["state"], "unavailable")
+        self.assertFalse(health["observation_available"])
 
-    def test_admin_status_503_when_provider_raises(self) -> None:
+    def test_admin_status_projects_unavailable_when_provider_raises(self) -> None:
         async def status_provider() -> Mapping[str, Any]:
             raise RuntimeError("boom")
 
         client, _store = _make_client(status_provider=status_provider)
 
         resp = client.get("/admin/api/status", headers=_auth())
-        self.assertEqual(resp.status_code, 503)
-        self.assertEqual(resp.json()["error"]["code"], "status_unavailable")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["status"]["current_health"]["state"], "unavailable")
 
     def test_owner_role_is_admin_capable(self) -> None:
         def owner_auth(_request: Request) -> AdminContext:

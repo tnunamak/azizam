@@ -1,9 +1,8 @@
-# Web API contract — all seven admin surfaces
+# Web API contract — all eight admin surfaces
 
-The JSON contract the React client (`web/`, per `WEB_UI_STEERING.md`) uses to
-render all admin surfaces. Verified against `gateway/admin_api.py` +
-`gateway/admin_runtime.py` (`AdminSQLiteStore`) and the route tests in
-`tests/test_admin_api.py` on 2026-06-11.
+The binding JSON contract the React client (`web/`, per
+`WEB_UI_STEERING.md`) uses to render all admin surfaces. It supersedes earlier
+seven-surface and backend-specific UI descriptions.
 
 ---
 
@@ -19,6 +18,8 @@ render all admin surfaces. Verified against `gateway/admin_api.py` +
 - **No raw key material** ever appears in list/read responses. The one-time
   full key appears exactly once, in the `201` response of a mint call, under
   `credential.api_key`.
+- **Principals are distinct.** A person is a human/OIDC identity. A service
+  principal is automation. Do not count, label, or resolve one as the other.
 
 ## Error envelope (every endpoint)
 
@@ -57,6 +58,35 @@ fails `403 admin_csrf_required` — the action header alone is not enough.
 Bearer-key (`Authorization: Bearer oak_…`) callers need neither header. Wire
 both into the single `adminFetch` in `web/src/lib/api.ts`.
 
+## Canonical admin navigation contract
+
+The React client has exactly these shared link helpers:
+
+- `adminStatusHref(serviceId?)` links to diagnosis. With an ID it focuses that
+  service on Status; without one it opens Status.
+- `adminServiceHref(serviceId)` links to the Services configuration surface.
+- `adminTargetHref(targetKind, targetId)` is the one configuration-target
+  mapping. Its `service` mapping is `adminServiceHref`, not
+  `adminStatusHref`.
+
+The canonical target identity is exactly `target_kind` + `target_id`; an
+optional `target_name` is display-only. API payloads must not add `entity_*`
+duplicates or another target identity. A compatibility `href`, if present,
+must equal `adminTargetHref(target_kind, target_id)` exactly. A system advisory
+has neither target fields nor `href`.
+
+For the canonical `service` query parameter, the client matches the exact
+stable `service.id` only. It does not normalize, or match, a display name or
+stored configuration name. A server migration may emit a separately named
+legacy parameter if compatibility is required; it must not overload the
+canonical target parameter.
+
+`/admin/status` and `/admin/status/` require admin browser authentication.
+Both redirect to `/ui/admin/status/` while preserving the full query string
+(for example, `/admin/status/?service=svc_1` redirects to
+`/ui/admin/status/?service=svc_1`); the same query-preserving trailing-slash
+canonicalization applies to every admin section route.
+
 ---
 
 ## Surface 0 — Bootstrap (all surfaces)
@@ -82,7 +112,60 @@ app load; refetch after a `403 admin_csrf_required` (session rolled).
 
 ---
 
-## Surface 1 — Overview
+## Surface 1 — Status
+
+### GET /admin/api/status
+
+The single current health projection for Status, Overview, Services, shell
+status, and current advisories. Do not merge this response with a stale
+registry-only count or make a second all-clear calculation in the client.
+
+```json
+{
+  "status": {
+    "…": "raw cached status fields",
+    "current_health": {
+      "state": "ok" | "warn" | "bad" | "unavailable" | "empty" | "inactive",
+      "tone": "ok" | "warn" | "bad" | "neutral",
+      "label": "Operational",
+      "detail": "Current configured-service health is normal.",
+      "observation_available": true,
+      "signals": [ {
+        "source": "api" | "host" | "…",
+        "tone": "warn" | "bad",
+        "reasons": ["producer-authored reason"]
+      } ],
+      "services": [ {
+        "service_id": "svc_…",
+        "name": "Text generation",
+        "configured": true,
+        "enabled": true,
+        "role": "required" | "optional" | "standby",
+        "routable": true | false | null,
+        "observation": "up" | "degraded" | "down" | "standby_stopped" | "disabled" | "unavailable",
+        "tone": "ok" | "warn" | "bad" | "neutral",
+        "last_error": null
+      } ]
+    }
+  }
+}
+```
+
+`state: "ok"` is the only green state. `unavailable` means current observation
+could not be obtained and must stay visibly distinct from a green status and
+from an empty configured-service list; it is never converted to an empty
+advisory list or an all-clear. `empty` is "No services configured"; `inactive`
+is a neutral state when all configured services are disabled or stopped in
+standby. `configured`, `enabled`, role, observation, and routability answer
+different questions and remain separate fields. A stopped standby service and
+a disabled service are not represented as a required-service failure.
+`signals` preserves independent producer facts (for example API or host
+health) as structured data. Legacy raw aggregate banners do not override the
+more-specific service reduction and are never parsed for source meaning. An
+absent `config.models` routing declaration yields `routable: null` and an
+incomplete projection, never a green routing claim.
+
+## Surface 2 — Overview
 
 ### GET /admin/api/overview
 
@@ -90,6 +173,8 @@ Single fetch that backs the entire Overview page. Returns:
 
 - `actor` — subject/email/roles (**no** `csrf_token`; use `/session` for that).
 - `counts` — quiet stat strip numbers.
+- `current_health` — the exact current health projection from Status (not a second
+  summary calculation).
 - `attention` — the "things that want a look" list (single source:
   `derive_admin_attention`).
 - `runtime_profile_mappings` — full list for the overview teaser.
@@ -107,6 +192,7 @@ that is a separate fetch, not embedded in the overview response.
   },
   "counts": {
     "users": 4,
+    "service_principals": 1,
     "apps": 7,
     "profiles": 3,
     "runtime_profile_mappings": 2,
@@ -121,31 +207,43 @@ that is a separate fetch, not embedded in the overview response.
       "severity": "problem",
       "title": "brother-laptop is disabled",
       "detail": "Re-enable it or remove it.",
-      "section": "apps-keys"
+      "target_kind": "app",
+      "target_id": "app_…",
+      "target_name": "brother-laptop",
+      "href": "/admin/apps?app=app_…"
     }
   ],
+  "current_health": { "…": "exact GET /admin/api/status.current_health shape" },
   "runtime_profile_mappings": [ { "...": "..." } ],
   "access_model": { "nouns": ["user", "app", "profile", "key", "runtime_mapping", "admin_role"], "..." : "..." }
 }
 ```
 
 `attention` item shape:
-- `kind` — `"app"` | `"service"`.
+- `kind` — advisory category, such as `"app"`, `"service"`, or `"system"`.
 - `severity` — `"problem"` (broken, needs fixing) | `"attention"` (works but
   incomplete). Items sorted problems-first.
 - `title` — plain-language one-liner for the row.
 - `detail` — one sentence of guidance.
-- `section` — route slug the action button links to (`"apps-keys"`,
-  `"services"`).
+- `target_kind` + `target_id` — the only canonical object target. They are
+  present together or both absent.
+- `target_name` — optional display-only text. It never identifies or routes an
+  object.
+- `href` — compatibility field only. When a target exists it is exactly the
+  result of `adminTargetHref(target_kind, target_id)`; clients may recompute
+  it. It is absent when the tuple is absent.
 
-`counts.services_total` — count of services in the stored service registry
-(static config; live connectivity is not probed here).
-`counts.services_enabled` — count of services with `enabled: true` (or
-`enabled` absent, which defaults to true).
+A system advisory is not an object link: it has no target tuple, no
+`target_name`, and no `href`. The client must not invent a section link for it.
+
+`counts.users` counts human/OIDC identities only; `counts.service_principals`
+counts automation only. `counts.services_total` and `counts.services_enabled`
+are configuration facts, not live-health claims. Current health language comes
+only from `current_health`.
 
 ---
 
-## Surface 2 — Services
+## Surface 3 — Services
 
 ### GET /admin/api/operator/service-registry
 
@@ -154,9 +252,9 @@ that is a separate fetch, not embedded in the overview response.
   "service_registry": {
     "schema_version": 1,
     "services": {
-      "tabby": {
-        "id": "tabby",
-        "name": "TabbyAPI",
+      "text-service": {
+        "id": "text-service",
+        "name": "Text service",
         "kind": "provider",
         "source": "provisioned" | "ui",
         "enabled": true,
@@ -171,57 +269,35 @@ that is a separate fetch, not embedded in the overview response.
 }
 ```
 
-`source` field values: `"provisioned"` = from bootstrap YAML/config; `"ui"` =
-created via admin API; `"builtin"` = bundled catalog; `"imported"` = extension
-package; `"discovered"` = runtime-detected. Source is **provenance (history),
-not permission** — all sources are fully editable and removable after the
-one-time config import. Sole exception: `managed` substrate rows (LiteLLM) —
-see Editability Law below.
-
-**Editability Law** (enforced server-side):
-
-- Every service record exposes `"editable": true` after normalization, EXCEPT
-  the LiteLLM managed-substrate row which has `"editable": false`.
-- The LiteLLM row is identified by: `id == "litellm"`, OR
-  `kind == "llm-substrate"` / `"litellm"`, OR
-  `config.execution_substrate == "litellm"`.
-- For the LiteLLM row: remove is blocked (`403 service_not_editable`); editing
-  `host`, `port`, `base_url`, `protocol`, or `execution_substrate` is blocked
-  (`403 service_not_editable`); renaming (`name`), toggling (`enabled`), and
-  adding a note are allowed.
-- All other rows: fully editable and removable. Config-imported rows removed
-  via the API are **not re-imported** on the next boot (DB is the source of
-  truth; YAML is never re-merged after the initial seed).
-
-**`editable` field in service records**: normalized to `true` for all
-non-managed rows. A stored `editable: false` from old seeds is ignored.
+`source` is provenance (history), not permission. A record may expose
+`editable: false` only when the API also supplies the generic derived-field
+reason. The UI renders that reason and must not infer it from an ID, kind, or
+engine name. Config-imported rows removed through the API are not re-imported:
+the registry is the source of truth after its initial seed.
 
 **`models` field** in `config`: list of `{ model_group, upstream_model }`
-deployment mappings. What makes an OpenAI-compatible service routable — each
-entry produces one LiteLLM model_list entry. Populated via the form's Models
-editor; round-trips through PATCH and compile_litellm_config.
+deployment mappings. It makes a service's public model names routable and
+round-trips through PATCH without a client-side provider branch.
 
-### GET /admin/api/operator/service-presets  (preset list for Add-service dialog)
+### GET /admin/api/operator/service-presets
 
-Returns the canonical provider preset list. **Never duplicate this list
-client-side** — consume this endpoint instead.
+Returns optional service-record presets and the canonical capability vocabulary.
+They are operator-configurable data; the UI consumes them without encoding a
+provider catalog or choosing a preferred/default preset.
 
 `200` →
 ```json
 {
   "presets": [
     {
-      "id": "openai-compatible",
-      "label": "OpenAI-compatible (custom)",
-      "base_path": "/v1",
+      "id": "custom-http",
+      "label": "Custom HTTP service",
+      "base_path": null,
       "default_port": null,
-      "protocol": "openai-compatible",
+      "protocol": null,
       "capabilities": ["chat", "completions"],
       "native_passthrough": true
-    },
-    { "id": "vllm", "label": "vLLM", "base_path": "/v1", "default_port": 8000, "…": "…" },
-    { "id": "ollama", "label": "Ollama", "base_path": "/v1", "default_port": 11434, "…": "…" },
-    "…"
+    }
   ],
   "capabilities": [
     { "id": "chat", "label": "Chat" },
@@ -237,24 +313,23 @@ client-side** — consume this endpoint instead.
 }
 ```
 
-The first entry is always `"openai-compatible"` (the custom escape hatch).
-Every preset has: `id`, `label`, `base_path`, `default_port` (null for custom),
-`protocol` (null for non-OpenAI presets like ComfyUI), `capabilities`,
-`native_passthrough`.
+Every preset has: `id`, `label`, `base_path`, `default_port`, `protocol`,
+`capabilities`, and `native_passthrough`. Their order has no product meaning.
 
 `capabilities` is the canonical list of capability identifiers and human labels
-for use in the Edit service form. **Never duplicate this list client-side** —
-fall back to a static copy only while the response is loading.
+for the service form. Do not fall back to a client-maintained copy. The add
+form starts with no selected preset, handles loading/error/empty responses
+explicitly, and submits only an API-supplied preset selected by the operator.
 
 ### POST /admin/api/operator/services  (add service)
 
 Request:
 ```json
 {
-  "name": "My vLLM",
-  "preset": "vllm",
-  "base_url": "http://10.0.0.5:8000/v1",
-  "api_key_env": "VLLM_API_KEY",
+  "name": "Text generation",
+  "preset": "custom-http",
+  "base_url": "http://10.0.0.5:8000/api",
+  "api_key_env": "TEXT_SERVICE_API_KEY",
   "capabilities": ["chat.completions"],
   "models": [
     { "public": "llama-3-8b", "upstream": "Meta-Llama-3-8B-Instruct" }
@@ -276,21 +351,19 @@ already exists.
 ### PATCH /admin/api/operator/services/{service_id}  (edit service)
 
 Request: same fields as POST (partial ok; `name` defaults to `service_id` when
-omitted); `base_url`/`host` are optional when doing a metadata-only edit (name,
-enabled, note — the only fields allowed for managed-substrate rows). Accepts
-`models` list with same shape as POST.
+omitted). `base_url`/`host` are optional for metadata-only edits. A record the
+API marks non-editable may accept only its declared editable fields. Accepts a
+`models` list with the same shape as POST.
 
 Full field list accepted by PATCH (all optional in partial edits):
 
 **Connection**: `name`, `base_url` (or `host`+`port`+`base_path`),
-`api_key_env` (env var name only, never a key value), `protocol`
-(`"openai-compatible"`, `"openai"`, `"comfyui"`, or `null`/`""`),
-`health_endpoint`, `timeout` (integer seconds).
+`api_key_env` (env var name only, never a key value), `protocol` (an opaque
+service-record value), `health_endpoint`, `timeout` (integer seconds).
 
 **Routing**: `capabilities` (list of strings; canonical values: `chat`,
 `completions`, `vision`, `embeddings`, `image`, `audio`, `speech`,
-`generations`, `videos`), `native_passthrough` (boolean — send directly to
-backend, bypassing LiteLLM substrate), `models` (list of `{ public, upstream }`
+`generations`, `videos`), `native_passthrough` (boolean), `models` (list of `{ public, upstream }`
 mappings, same shape as POST).
 
 **Admission / Advanced**: `role` (`"required"`, `"optional"`, `"standby"`),
@@ -300,22 +373,10 @@ number, `duration_class` `"interactive"|"batch"`).
 
 **Top-level**: `enabled` (boolean).
 
-**Protocol-specific fields** (accepted and persisted for any service; validated
-by `_validate_service_form` and round-tripped by `service_form_to_raw`):
-
-| Protocol | Field | Type | Description |
-|---|---|---|---|
-| `comfyui` | `workflows_dir` | string | Absolute path to the directory holding workflow `.json` files |
-| `comfyui` | `video_workflows_dir` | string | Absolute path to the video workflow directory |
-| `comfyui` | `video_timeout` | integer (seconds) | Max seconds to wait for a video generation job |
-| `comfyui` | `default_model` | string | Name of the default workflow (basename without `.json`), used when the caller does not specify a model |
-
-`default_model` should match a `.json` filename in `workflows_dir`; a value
-with no corresponding file will result in a 404 at request time. The form
-should populate this as a Select populated by scanning the workflow dir (if
-accessible) with a free-text fallback. These fields are stored directly in
-`config` and survive any subsequent PATCH — including a partial edit that does
-not send them.
+**Additional service config** is opaque record data. The server validates and
+round-trips it without asking the browser to inspect the operator filesystem or
+derive a selector. A UI can render explicit values and server-supplied choice
+sets, but cannot manufacture engine/protocol-specific controls.
 
 **Honesty law H1 (preserve mechanism)**: `AdminSQLiteStore.update_service`
 starts its merge base from ALL keys in the existing `config` dict (not a
@@ -331,13 +392,13 @@ PATCH.
 
 `200` → `{ "service_registry": { … } }`
 
-`403 service_not_editable` only for managed-substrate rows (`litellm`) when
-endpoint/protocol fields are included.
+`403 service_not_editable` only when a request changes a field that the API
+marks derived/non-editable.
 
 ### DELETE /admin/api/operator/services/{service_id}  (remove service)
 
 `200` → `{ "service_registry": { … } }`; `403 service_not_editable` only for
-the managed-substrate (`litellm`) row; `404` after second delete.
+a record the API marks non-removable; `404` after second delete.
 
 Config-imported rows show a provenance-aware confirmation: "imported from your
 config file; your YAML is not modified and will not re-import it".
@@ -365,25 +426,21 @@ Request: same shape as test. Not persisted.
 
 `models` is empty and `ok` is false when the host is unreachable.
 
-**ComfyUI gap**: ComfyUI does not expose an OpenAI-compatible `/models`
-endpoint; `detect-models` probes `<base_path>/models` (which is empty for
-ComfyUI's default `base_path=""`) and returns `ok: false`. The frontend
-should offer `default_model` as a free-text field (with an optional directory
-scan if the workflow dir is locally accessible) rather than relying on
-detect-models for ComfyUI services. A future `/operator/services/{id}/scan-workflows`
-endpoint would close this gap by reading the workflow dir server-side.
+Model detection is advisory only. A failed or incomplete probe must remain an
+honest failed/incomplete state; the client must not replace it with browser
+filesystem inspection or invent a provider-specific selector.
 
-### GET /admin/api/operator/litellm-config  (read-only viewer)
+### GET /admin/api/operator/litellm-config
 
 `200` → `{ "litellm_config": { "model_list": [ { "model_name": "…", "litellm_params": { "api_base": "…", "api_key": "os.environ/KEY_NAME" } } ], "general_settings": { "…": "…" } } }`
 
-This is the compiled LiteLLM substrate config derived from the service registry.
-Secrets appear as `os.environ/…` references, never as values. Render as a
-read-only mono viewer inside a collapsed disclosure.
+This is a derived runtime artifact. Secrets appear as `os.environ/…`
+references, never as values. If exposed, render it as generic read-only
+diagnostic data; it is not a named-engine configuration surface.
 
 ---
 
-## Surface 3 — Apps & keys
+## Surface 4 — Apps & keys
 
 ### GET /admin/api/apps
 
@@ -404,9 +461,11 @@ read-only mono viewer inside a collapsed disclosure.
 ```
 
 Notes:
-- **Owner name is a client-side join**: apps carry `owner_user_id` only.
-  Resolve against `GET /admin/api/users` (`id → display_name ?? email`).
-  Shared apps have `owner_service_account_id` instead (render as "Shared").
+- **Owner name is a client-side join**: apps with `owner_user_id` resolve
+  against `GET /admin/api/users` (`id → display_name ?? email`). Apps with
+  `owner_service_account_id` are automation. They never resolve through Users
+  or render as a person; use the service-principal label/name available in the
+  Apps & keys credential context.
 - **Key count is a client-side derive**: count `GET /admin/api/credentials`
   rows where `app_id === app.id && !revoked_at`. There is no per-app count
   field; with both lists in React Query cache this is one selector.
@@ -501,7 +560,7 @@ idempotent: revoking an already-revoked key returns `200`.
 
 ---
 
-## Surface 4 — Profiles
+## Surface 5 — Profiles
 
 ### GET /admin/api/profiles
 
@@ -523,8 +582,8 @@ Notes:
   `profile` policy document by `_profile_summary` in `admin_runtime.py` — the
   surface uses these for the "Access summary" column without parsing the full
   policy document.
-- The built-in fallback `default-local` is **not** in this list; selects must
-  prepend it as a static option (`id: "default-local"`).
+- A fallback profile may be supplied separately by the API. The client must
+  not prepend or infer a static default selection.
 - **"Apps using it" count is client-side**: count `GET /admin/api/apps` rows
   where `default_profile_id === profile.id`.
 
@@ -613,7 +672,7 @@ return `400 invalid_request`.
 
 ---
 
-## Surface 5 — Users
+## Surface 6 — Users
 
 ### GET /admin/api/users
 
@@ -631,9 +690,11 @@ return `400 invalid_request`.
 } ] }
 ```
 
-`name` mirrors `display_name`. Owner cell text: `display_name ?? email`, with
-`usr_…` as the quiet copyable detail. No user CRUD — identities come from the
-sign-in provider; say so in the empty/explainer copy.
+`name` mirrors `display_name`. This endpoint contains **people only**: owner
+cell text is `display_name ?? email`, with `usr_…` as the quiet copyable detail.
+No user CRUD — identities come from the sign-in provider; say so in the
+empty/explainer copy. It must never contain an admin key, CLI identity, or
+service principal.
 
 **Apps count** for the Users table is client-side: count `GET /admin/api/apps`
 rows where `owner_user_id === user.id`.
@@ -651,7 +712,7 @@ surfaces (different sub-keys).
       "self_service_apps": true,
       "auto_create_personal_app": true
     },
-    "service_availability": { "openai": { "state": "degraded", "reason": "slow", "retry_after_seconds": null } },
+    "service_availability": { "text-service": { "state": "degraded", "reason": "slow", "retry_after_seconds": null } },
     "media_job_admission": {
       "disabled_intents": [],
       "disabled_resource_classes": [],
@@ -700,7 +761,7 @@ Request: `{ "source_kind": "oidc_group", "source_value": "trusted-users", "profi
 
 ---
 
-## Surface 6 — Audit
+## Surface 7 — Audit
 
 ### GET /admin/api/audit
 
@@ -724,7 +785,7 @@ with `next_cursor` to reach arbitrarily old events for any filter.
   "records": [ {
     "id": "aud_…",
     "created_at": 1765…,
-    "actor_kind": "admin" | "cli" | null,
+    "actor_kind": "admin" | "user" | "service_account" | "cli" | null,
     "actor_id": "usr_… | svc_… | cli",
     "action": "app.create",
     "target_kind": "app" | "profile" | "credential" | "operator_setting" | "service" | "extension_package" | "runtime_profile_mapping" | null,
@@ -751,9 +812,10 @@ Field notes:
   `"operator.oidc_provider_config.update"`).
   Map to sentence-case human phrases client-side; display the raw value as
   `micro` mono detail.
-- `actor_id` resolves to a user via `GET /admin/api/users`
-  (`id === actor_id`); display as `EntityRef`. `"cli"` is a non-user actor
-  (bootstrap scripts); render as "System".
+- `actor_id` resolves through the principal kind. A human resolves via
+  `GET /admin/api/users`; a service account renders as named automation from
+  the audit/credential context. `"cli"` is a system actor. Do not display a
+  service principal as "Unknown user".
 - `metadata` is a free-form object specific to each action; render as
   mono JSON in the row detail Sheet.
 - Results are sorted newest-first (`created_at DESC`).
@@ -770,7 +832,7 @@ endpoint; the React client should prefer `/audit`.
 
 ---
 
-## Surface 7 — Settings
+## Surface 8 — Settings
 
 ### GET /admin/api/oidc-config
 
@@ -838,9 +900,8 @@ Accepted fields: `enabled`, `issuer`, `client_id`, `client_secret`,
 
 After saving, the gateway must be restarted for the new OIDC config to take
 effect. Display an OIDC-specific "Saved — restart to apply" banner. Service
-registry changes use the live gateway hot-reload path instead; the managed
-LiteLLM watcher applies its own brief sidecar recycle after the generated
-artifact changes.
+registry changes follow their API-reported apply state; do not promise a
+runtime-specific side effect in the UI.
 
 ### GET /admin/api/extensions
 

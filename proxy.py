@@ -11114,6 +11114,8 @@ async def admin_dashboard(request: Request):
 
 @app.get("/admin/services", include_in_schema=False)
 @app.get("/admin/services/", include_in_schema=False)
+@app.get("/admin/status", include_in_schema=False)
+@app.get("/admin/status/", include_in_schema=False)
 @app.get("/admin/apps", include_in_schema=False)
 @app.get("/admin/apps/", include_in_schema=False)
 @app.get("/admin/profiles", include_in_schema=False)

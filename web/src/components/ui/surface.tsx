@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from "react";
+import type {
+  ComponentPropsWithoutRef,
+  CSSProperties,
+  ReactElement,
+  ReactNode,
+} from "react";
+import { cloneElement } from "react";
 
 import { cn } from "@/lib/cn";
 import { type BadgeTone } from "./badge";
@@ -298,6 +304,10 @@ export interface MobileNavItem {
   label: string;
   href: string;
   icon: ReactNode;
+  onClick?: () => void;
+  active?: boolean;
+  /** Lets an owning Radix primitive attach its real trigger semantics. */
+  trigger?: (tab: ReactElement) => ReactElement;
 }
 
 export function MobileTabBar({ items }: { items: MobileNavItem[] }) {
@@ -310,10 +320,22 @@ export function MobileTabBar({ items }: { items: MobileNavItem[] }) {
     >
       {items.map((item) => {
         const active =
-          item.href === "/admin"
+          item.active ??
+          (item.href === "/admin"
             ? pathname === "/admin" || pathname === "/admin/"
-            : pathname.startsWith(item.href);
-        return (
+            : pathname.startsWith(item.href));
+        const tab = item.onClick ? (
+            <button
+              key={item.href}
+              type="button"
+              onClick={item.onClick}
+              className="vf-mobile-tab"
+              aria-current={active ? "page" : undefined}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          ) : (
           <Link
             key={item.href}
             href={item.href}
@@ -324,6 +346,9 @@ export function MobileTabBar({ items }: { items: MobileNavItem[] }) {
             <span>{item.label}</span>
           </Link>
         );
+        return item.trigger
+          ? cloneElement(item.trigger(tab), { key: item.href })
+          : tab;
       })}
     </nav>
   );

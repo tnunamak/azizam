@@ -160,9 +160,8 @@ Above all else:
 H1. **No silent data loss.** An edit must never drop a field the operator
     didn't touch. Saving a partial form preserves the ENTIRE stored record;
     fields the form doesn't model are passed through untouched, not
-    whitelisted away. (Bug of record: saving the generic service Edit form
-    for ComfyUI dropped `workflows_dir`/`video_workflows_dir`/`video_timeout`/
-    `default_model` — proven, fixed.)
+    whitelisted away. (Bug of record: saving a generic service Edit form
+    dropped unmodelled config fields — proven, fixed.)
 H2. **Show everything the record carries.** If a service holds config keys
     or capabilities the form has no widget for, render them — read-only with
     an "edited elsewhere" note is acceptable; hiding them is not. A form that
@@ -177,29 +176,28 @@ H4. **No dead affordances.** A button that looks actionable does something or
     capabilities (e.g. user role editing has no API) are explained in plain
     copy, not represented by a control that fails.
 
-## Protocol-aware service editing (binding)
+## Data-driven service editing (binding)
 
-A service's editable shape depends on its `protocol`. The generic
-OpenAI-compatible form is wrong for ComfyUI and any non-LLM backend.
+The service editor is an operator-facing view of service-record data, not a
+catalog of inference engines. It renders the generic connection, routing,
+capability, and admission fields supplied by the service contract, and it
+shows every other stored config field without discarding it (H1/H2).
 
-- **Field schema is keyed on protocol.** `openai-compatible` →
-  connection + LLM capabilities + models map (today's form). `comfyui`
-  (and future non-LLM protocols) → a protocol section with that backend's
-  real fields as first-class inputs: `workflows_dir`, `video_workflows_dir`,
-  `video_timeout`, `default_model` (default_model as a Select populated by
-  scanning the workflow dir — a free-text model with no matching
-  `<name>.json` is a latent 404, so guide the choice). The backend's
-  `service_form_to_raw`/validator must know each protocol's keys so they
-  round-trip instead of dropping (H1).
-- **Capability vocabulary is complete.** `generations` and `videos` join
-  the canonical capability list (served from `/operator/service-presets`);
-  no capability a record can hold is missing a checkbox.
-- **Out of scope (correctly):** editing/uploading/previewing the workflow
-  JSON files themselves, or a model catalog browser. ComfyUI's own node
-  editor owns the graphs; this gateway points at the directory and picks a
-  default. Say so in the form.
-- **Honest passthrough copy:** for non-`openai-compatible` protocols,
-  native passthrough is stated as the mode, not offered as a toggle.
+- A service record may declare fields beyond the generic form. Render those
+  fields as data with an honest edit/read-only state; preserve them on every
+  partial write. Do not add a client branch, wizard, or remediation copy for a
+  named engine or protocol.
+- Capability labels and optional presets come from the API as data. The UI does
+  not prescribe a preferred preset, synthesize a default choice, or duplicate a
+  provider catalog. Add Service begins with no preset selected, renders
+  loading/error/empty states explicitly, and sends only an API-supplied preset
+  that the operator selected.
+- Browser code never scans operator files or directories to populate a control.
+  If an API has not supplied a safe, explicit choice set, use the value already
+  stored or a plain validated text field. Do not imply discovery exists.
+- A derived runtime artifact may be displayed only as generic, read-only
+  diagnostic data. It is not a configuration editor and does not create a
+  special service type in the UI.
 
 ## Audit & sign-in honesty fixes (binding, 2026-06-13)
 
@@ -231,11 +229,14 @@ stay write-only). If the backend OIDC model lacks the field, add it
 
 ## Admin information architecture (binding)
 
-Seven flat, noun-named sections (Tailscale-calm; no nesting, no Title Case):
+Eight flat, noun-named sections (Tailscale-calm; no nesting, no Title Case).
+**Status is first and read-first**: it answers the operational question before
+an operator enters a configuration surface.
 
 | Route (`/ui/admin/…`) | Nav label | One job |
 |---|---|---|
-| `/` (overview) | Overview | "Does anything need me?" |
+| `/status` | Status | "What is true now, and what needs diagnosis?" |
+| `/` (overview) | Overview | "What needs my attention next?" |
 | `/services` | Services | The upstream backends this gateway fronts |
 | `/apps` | Apps & keys | Who can call in (DONE — surface spec #1) |
 | `/profiles` | Profiles | What callers are allowed to reach |
@@ -243,53 +244,77 @@ Seven flat, noun-named sections (Tailscale-calm; no nesting, no Title Case):
 | `/audit` | Audit | Who changed what, when |
 | `/settings` | Settings | Sign-in, extensions, gateway-wide config |
 
-**Shell** (`web/src/app/admin/layout.tsx`): desktop ≥960px — fixed left
-sidebar 240px on `vf-surface-1` (content column stays on `vf-bg`): wordmark
-(text, brand voice) + micro kicker "admin" on top; nav items (icon + label,
-active = accent text + subtle accent-tinted background, `rounded-vf-sm`);
-bottom = signed-in email (small, muted), quiet links "Open portal" (`/me`)
-and "Sign out". Mobile — top bar (wordmark + menu IconButton opening the
-nav in a `Sheet`); content full-width. Content column: `max-w-[1080px]`,
-generous whitespace (px-6 md:px-10, py-8/12); every page starts with
-`SectionHeader`. Rhythm: section gap-8, intra-card gap-4; tables use
-`small` text with relaxed row height. No card-borders-everywhere: prefer
-spacing and single hairline rules (`vf-border`) over boxes.
+**Responsive shell** (`web/src/app/admin/layout.tsx`): the only breakpoint
+bands are **Phone `<640px`**, **Compact `640px–979px`**, and **Desktop
+`≥980px`**. Desktop has the fixed 240px left sidebar on `vf-surface-1`
+(content remains on `vf-bg`), with wordmark, micro "admin" kicker, full
+labelled navigation, signed-in email, "Open portal", and "Sign out". Compact
+uses the same one-pane content order with labelled navigation in a Sheet or
+visible rail; selected detail is a Sheet, never a squeezed second column.
+Phone uses the top bar plus labelled primary navigation and a reachable More
+menu for every non-primary destination. Nothing may be omitted merely because
+the viewport is narrow. All controls remain at least 44px, filters wrap, and
+there is no horizontal page overflow. Content uses `max-w-[1080px]`; every page
+starts with `SectionHeader`. Rhythm remains section gap-8 and intra-card gap-4;
+tables use `small` text with relaxed row height. Prefer spacing and single
+hairline rules (`vf-border`) over card borders everywhere.
+
+**Canonical route and link contract:** `/admin/status` and
+`/admin/status/` are authenticated browser routes. Each redirects to the
+canonical React Status route (`/ui/admin/status/`) while preserving the
+complete query string (for example,
+`/admin/status/?service=svc_1` → `/ui/admin/status/?service=svc_1`). The same
+query-preserving canonicalization applies to every trailing-slash admin section
+route. `adminStatusHref(serviceId?)` is the diagnostic link builder and
+produces the Status route, optionally focused on a service.
+`adminServiceHref(serviceId)` is the configuration link builder and produces
+the Services route. `adminTargetHref(targetKind, targetId)` is the one shared
+configuration-target mapping; its service mapping is `adminServiceHref`, never
+`adminStatusHref`. Do not hand-build competing entity URLs in a surface.
+
+**Attention target contract:** a target is exactly the tuple
+`target_kind + target_id`, with optional display-only `target_name`. `href` is
+a compatibility field only and, when a target exists, must equal
+`adminTargetHref(target_kind, target_id)` exactly. Do not emit or consume
+`entity_kind`, `entity_id`, `entity_name`, a second ID, or a section-derived
+target. A system advisory has no target tuple, no `target_name`, and no `href`.
+Services consumes the canonical `service` target by exact stable `service.id`;
+it never normalizes or falls back to a display/config name. Any server-side
+legacy route contract uses a separately named parameter.
+
+**Health and principals truth:** Status, Overview, Services, shell status, and
+attention all consume one current health projection. It separates configured
+(`enabled`), expected role, and observed
+(`up`/`degraded`/`down`/`unavailable`) state and routability. An unavailable observation is
+never green and is not an empty healthy state; an empty configured-service list
+is also not an all-clear. People and service principals are separate kinds.
+Users shows only people; automation is named and counted as service principals
+in its own context, never fabricated as a person.
 
 **Per-surface specs** (each list-first; create/edit = Dialog; destructive =
 overflow + ConfirmDialog; every state designed):
 
-- **Overview**: the current route is the implemented operator working page:
-  attention banners from `GET /overview`, an optional four-step quickstart,
-  the metric strip, a two-column apps/activity body, and a bottom row with the
-  base URL plus API health/services. It uses the shared component contracts
-  from the component library spec, including their operational states. This is
-  the one current Overview shape; screenshots are visual references, not a
-  competing IA contract.
-- **Services**: DataTable — Service (EntityRef name; PROVENANCE badge
-  `config`/`ui`/`managed` — provenance is history, NOT permission), Endpoint
-  (host:port, mono small), Capabilities (human-labeled badge row), Status
-  (availability incl. overrides), Enabled (Switch), ⋯ (Edit, Models, Test
-  connection, Detect models, Remove). EDITABILITY LAW: the DB registry owns
-  every service after the one-time config import, so ALL rows are fully
-  editable and removable regardless of source. Sole exception: `managed`
-  substrate rows (litellm) — the gateway spawns that process, so endpoint/
-  protocol are derived (locked with one-line explanation in the dialog);
-  rename/enable/note only; no Remove (disable instead). Removing a
-  config-imported row uses typed-name ConfirmDialog with provenance-aware
-  copy ("imported from your config file; your YAML is not modified and will
-  not re-import it"). **Models editor**: per-service dialog listing model
-  mappings (public name → upstream name) with add/remove/edit rows — this is
-  what makes a backend's models routable; never read-only. "Add service"
-  Dialog: preset Select with "Custom (OpenAI-compatible)" FIRST (presets
-  served from GET /admin/api/operator/service-presets — never duplicated
-  client-side), name, base URL, api-key ENV-REF field (never secret values),
-  protocol + capabilities in collapsed advanced. Honest apply: banner
-  "Saved — changes apply live" after writes. Gateway service edits persist to
-  the registry and hot-reload immediately. The derived LiteLLM config is
-  regenerated automatically; its managed watcher restarts LiteLLM when the
-  artifact hash changes, so substrate changes apply after that brief watcher
-  interval. LiteLLM substrate config = read-only mono viewer behind a
-  disclosure (genuinely derived).
+- **Status**: read-only diagnosis first. The current health projection supplies
+  the health band, service observations, and current advisories. A focused
+  service uses `adminStatusHref(serviceId)`; a configuration action is an
+  explicit `adminServiceHref(serviceId)` link. Status never edits service
+  records, invents history, or substitutes a green/empty claim when live
+  observation is unavailable.
+- **Overview**: attention from `GET /overview`, optional quickstart, real
+  metrics, selected list/context, and recent activity. Its links use the
+  canonical attention target contract. It summarizes Status but does not
+  define a second health model or defer diagnosis to a later Status surface.
+- **Services**: DataTable — Service (EntityRef name; provenance badge is
+  history, not permission), Endpoint (host:port, mono small),
+  Capabilities (human-labelled badge row), current observation, Enabled, and
+  overflow actions. This is the configuration surface; current diagnosis lives
+  on Status. The registry owns all ordinary service records after initial
+  import. A record whose fields are genuinely derived may lock only those
+  fields with a one-line explanation; it remains data-driven, not a named
+  engine exception. Add/Edit exposes API-provided generic fields and preserves
+  unknown data. It never scans operator files, assumes a default selector, or
+  carries a client-side engine catalog. Show "Saved — changes apply live" only
+  when the API says the change has applied.
 - **Profiles**: DataTable — Profile (EntityRef), Access summary (e.g.
   "4 models · chat, images" — derived, human), Apps using it (count), ⋯
   (Edit, Duplicate?, Delete → typed-name ConfirmDialog; block/explain when
@@ -298,8 +323,10 @@ overflow + ConfirmDialog; every state designed):
   "Test access" disclosure wired to `POST /policy/simulate`: pick app +
   model → allowed/denied with the actual reason. This is a trust feature —
   make it visible but quiet.
-- **Users**: DataTable — User (EntityRef name/email), Role badge, Apps
-  (count), Created (RelativeTime). Below, a "Default access" group:
+- **Users**: DataTable — Person (EntityRef name/email), Role badge, Apps
+  (count), Created (RelativeTime). Service principals are not rows in this
+  table; show their separate count and named automation context only where it
+  answers an access or audit question. Below, a "Default access" group:
   user-access-defaults (PUT) + runtime profile mappings (list + create/
   disable) — these answer "what does a brand-new user get?"; copy must say
   exactly that. No user CRUD (identities come from sign-in) — say so in the
@@ -324,8 +351,8 @@ is frozen during a fan-out.
 
 ## Later (explicitly out of this increment)
 
-Portal surfaces, status page redesign, absorbing `status-page/` into
-`web/`, promoting `ui/` to `@vivid-fish/brand/react`, deleting Python
-renderers, canonical-route cutover (per-area flips: `/admin` first, then
+Portal surfaces, absorbing legacy status rendering into `web/`, promoting
+`ui/` to `@vivid-fish/brand/react`, deleting Python renderers,
+canonical-route cutover (per-area flips: `/admin` first, then
 `/me`; `basePath` `''` + gateway serves export at canonical routes +
 `/ui/*` redirects).

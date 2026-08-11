@@ -19,3 +19,13 @@
 - Task: `ds task quick "triage reproducible official llama.cpp large-context generation wedge on Bee"`.
 - Rough edge: automatic indexing emitted only a progress line and did not yield a usable task id, packed context, or prompt before the incident work had to continue. The shell process remained around longer than expected, so it was not useful as a fast triage boundary.
 - Net: `ds tldr` was useful for choosing the incident-shaped workflow; for a live engine incident, `ds task quick` needs a bounded readiness/timeout signal so it cannot compete with the diagnostic window.
+
+## 2026-08-11 — bounded admin UX contract
+
+- Useful: `ds tldr`, `recent`, and `map` quickly confirmed the Gateway, admin UI, and identity boundaries.
+- Rough edge: `ds task` hit `SQLITE_BUSY` during auto-indexing after creating an untracked `devspecs/` task directory. The task pack was not usable and the generated directory had to be moved to trash. A failed task creation should clean up its own repository artifact.
+
+## 2026-08-11 — P0 Gate 2 correction
+
+- Useful: `ds tldr` and `ds recent` identified the immediately preceding P0 contract commit and its source boundary without conflating it with unrelated active work.
+- Rough edge: the bounded `ds task` run took about 29 seconds, printed only indexing progress, and left an untracked `devspecs/tasks/…` directory without returning a usable task ID or prompt. This is expensive ceremony for a confirmed hotfix and leaves cleanup work to the caller.

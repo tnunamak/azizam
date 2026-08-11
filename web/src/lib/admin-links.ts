@@ -2,8 +2,15 @@ export function adminAppHref(appId: string): string {
   return `/admin/apps?app=${encodeURIComponent(appId)}`;
 }
 
-export function adminServiceHref(serviceIdOrName: string): string {
-  return `/admin/services?service=${encodeURIComponent(serviceIdOrName)}`;
+export function adminServiceHref(serviceId: string): string {
+  return `/admin/services?service=${encodeURIComponent(serviceId)}`;
+}
+
+/** Live diagnosis. Service configuration stays at adminServiceHref(). */
+export function adminStatusHref(serviceId?: string | null): string {
+  return serviceId
+    ? `/admin/status?service=${encodeURIComponent(serviceId)}`
+    : "/admin/status";
 }
 
 export function adminProfileHref(profileId: string): string {
@@ -19,16 +26,19 @@ export function adminTargetHref(
   targetId: string | null | undefined,
 ): string | null {
   if (!targetKind || !targetId) return null;
-  const kind = targetKind.toLowerCase();
-  if (kind === "app") return adminAppHref(targetId);
-  if (kind === "profile" || kind === "app_profile") {
-    return adminProfileHref(targetId);
+  // Attention targets are a small canonical tuple, not a compatibility
+  // namespace. Alias handling here would make emitted backend records and UI
+  // navigation disagree about object identity.
+  switch (targetKind) {
+    case "app":
+      return adminAppHref(targetId);
+    case "profile":
+      return adminProfileHref(targetId);
+    case "service":
+      return adminServiceHref(targetId);
+    case "audit":
+      return adminAuditHref(targetId);
+    default:
+      return null;
   }
-  if (kind === "service" || kind === "backend") {
-    return adminServiceHref(targetId);
-  }
-  if (kind === "audit" || kind === "audit_event") {
-    return adminAuditHref(targetId);
-  }
-  return null;
 }

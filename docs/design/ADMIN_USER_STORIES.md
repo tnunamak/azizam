@@ -71,7 +71,7 @@ new models and wants apps to route to it. Traced: **~35–40% self-serve.**
 |---|---|---|
 | C1 | "What needs my attention right now?" | ✅ Overview attention list. |
 | C2 | "Who changed what, when — searchable across the whole log." | ✅ (server-side filter + cursor; honesty fix) |
-| C3 | "Is each backend actually up?" | 🟡 Health is probed per-service, but Overview's count says 'enabled' not 'reachable' (honest label); no at-a-glance live reachability roll-up. |
+| C3 | "Is each service actually up?" | ✅ Status, Overview, Services, and the shell consume one current-health projection. It keeps enabled, required/standby expectation, live observation, disabled state, and unavailable telemetry distinct. |
 | C4 | "See live request activity / throughput / errors." | 🟡 Firehose + metrics exist (server-rendered), not in the React admin yet. |
 | C5 | "Inspect a single request's routing decision (receipts)." | 🟡 Receipts exist; new-engine receipts get no service label (proxy.py:~4587 hardcoded). |
 
@@ -86,7 +86,7 @@ new models and wants apps to route to it. Traced: **~35–40% self-serve.**
 | D3 | "Disable / remove an installed extension." | 🔴 No disable/remove API. |
 | D4 | "Control media-job admission (block intents, reserve GPU)." | ✅ |
 | D5 | "Set per-service note / role / priority / resources." | ✅ (full edit form, data-loss fixed). |
-| D6 | "Edit a non-OpenAI backend honestly (ComfyUI workflow dirs)." | ✅ (protocol-aware form, honesty fix). |
+| D6 | "Edit a service honestly without losing fields the form does not model." | ✅ Generic protocol/data-shaped forms preserve unknown stored fields; service-specific workflows and filesystem advice do not belong in the UI contract. |
 
 ---
 

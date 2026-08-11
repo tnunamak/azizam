@@ -3662,23 +3662,37 @@ async def build_status_payload(config: dict) -> dict:
         errors.setdefault("backends", "no probe results")
         api_reasons.append(("bad", "no backend probes"))
 
+    # Keep independent API facts separate from the backwards-compatible
+    # aggregate banner. Consumers that understand health_sources can retain
+    # host/API failures without treating disabled or standby probe noise as a
+    # system failure.
+    api_health = "ok"
+    api_health_reasons: list[tuple[str, str]] = []
+
     # Xid 109 surge in last 60min affects request reliability — API tier.
     by60 = (driver or {}).get("by_code_60min") or {}
     if by60:
         total_60 = sum(by60.values())
         if total_60 >= 5:
             banner = _bump(banner, "warn")
-            api_reasons.append(("warn", f"Xid surge: {total_60} in last 60min"))
+            reason = f"Xid surge: {total_60} in last 60min"
+            api_reasons.append(("warn", reason))
+            api_health = _bump(api_health, "warn")
+            api_health_reasons.append(("warn", reason))
 
     # Model swap in progress → transient unavailability for one provider.
     if swap_state and (swap_state.get("tabby_swap_in_progress") or swap_state.get("kobold_swap_in_progress")):
         banner = _bump(banner, "warn")
-        api_reasons.append(("warn", "model swap in progress"))
+        reason = "model swap in progress"
+        api_reasons.append(("warn", reason))
+        api_health = _bump(api_health, "warn")
+        api_health_reasons.append(("warn", reason))
 
     # Sort API reasons by severity (bad first), preserve insertion order
     # within the same severity.
     api_reasons.sort(key=lambda r: -sev_rank.get(r[0], 0))
     banner_reasons: list[str] = [m for _s, m in api_reasons]
+    api_health_reasons.sort(key=lambda r: -sev_rank.get(r[0], 0))
 
     # --- system_health badge (secondary) ---
     system_health = "ok"
@@ -3753,6 +3767,16 @@ async def build_status_payload(config: dict) -> dict:
         "banner_reasons": banner_reasons,
         "system_health": system_health,
         "system_health_reasons": system_health_reasons,
+        "health_sources": {
+            "api": {
+                "tone": api_health,
+                "reasons": [m for _s, m in api_health_reasons],
+            },
+            "host": {
+                "tone": system_health,
+                "reasons": system_health_reasons,
+            },
+        },
         "backends": backends or [],
         "gpus": gpus,
         "vram_attribution": vram_attr,

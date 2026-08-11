@@ -3,7 +3,7 @@
 /** Admin shell — fixed left sidebar (desktop) / top bar + Sheet (mobile).
  *
  * This layout owns the QueryClientProvider and Toaster so all admin pages
- * share a single React Query cache. Nav entries cover all seven flat sections
+ * share a single React Query cache. Nav entries cover all eight flat sections
  * per the steering doc IA. */
 
 import Link from "next/link";
@@ -24,6 +24,7 @@ import {
   ExternalLinkIcon,
   IconButton,
   MenuIcon,
+  type MobileNavItem,
   MobileTabBar,
   MobileTopRail,
   OverviewIcon,
@@ -31,16 +32,20 @@ import {
   ServicesIcon,
   SettingsIcon,
   Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
   StatusCluster,
   Toaster,
   UsersIcon,
-  XIcon,
 } from "@/components/ui";
 import { api, createQueryClient, queryKeys } from "@/lib/api";
 import {
   adminAppHref,
   adminProfileHref,
   adminServiceHref,
+  adminStatusHref,
 } from "@/lib/admin-links";
 
 // ---------------------------------------------------------------------------
@@ -54,6 +59,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Overview", href: "/admin", Icon: OverviewIcon },
+  { label: "Status", href: "/admin/status", Icon: OverviewIcon },
   { label: "Services", href: "/admin/services", Icon: ServicesIcon },
   { label: "Apps & keys", href: "/admin/apps", Icon: AppsIcon },
   { label: "Profiles", href: "/admin/profiles", Icon: ProfilesIcon },
@@ -183,27 +189,23 @@ function SidebarNav({ onNav }: { onNav?: () => void }) {
 }
 
 function useShellStatus() {
-  const { data: overview } = useQuery({
-    queryKey: queryKeys.overview,
-    queryFn: api.overview,
+  const { data: status } = useQuery({
+    queryKey: queryKeys.status,
+    queryFn: api.status,
   });
   const { data: sessionData } = useQuery({
     queryKey: queryKeys.session,
     queryFn: api.session,
   });
 
-  const counts = overview?.counts;
-  const attention = overview?.attention ?? [];
-  const hasProblem = attention.some((item) => item.severity === "problem");
-  const serviceTotal = counts?.services_total ?? 0;
-  const serviceEnabled = counts?.services_enabled ?? 0;
-  const partialServices = serviceTotal > 0 && serviceEnabled < serviceTotal;
-  const statusTone: BadgeTone = hasProblem || partialServices ? "warn" : "ok";
-  const statusLabel = hasProblem
-    ? "Needs attention"
-    : partialServices
-      ? `${serviceEnabled}/${serviceTotal} enabled`
-      : "Operational";
+  const current = status?.current_health;
+  const statusTone: BadgeTone =
+    current?.tone === "bad" ||
+    current?.tone === "warn" ||
+    current?.tone === "ok"
+      ? current.tone
+      : "neutral";
+  const statusLabel = current?.label ?? "Checking live status";
   const email = sessionData?.actor.email ?? "Signed in";
   return { statusTone, statusLabel, email };
 }
@@ -230,8 +232,7 @@ function useAdminSearchItems(): CommandSearchItem[] {
       id: `app:${app.id}`,
       label: app.name,
       href: adminAppHref(app.id),
-      description:
-        app.disabled_at === null ? "app" : "disabled app",
+      description: app.disabled_at === null ? "app" : "disabled app",
     }));
     const serviceItems: CommandSearchItem[] = Object.values(
       registry?.services ?? {},
@@ -249,12 +250,7 @@ function useAdminSearchItems(): CommandSearchItem[] {
         description: "profile",
       }),
     );
-    return [
-      ...NAV_SEARCH_ITEMS,
-      ...appItems,
-      ...serviceItems,
-      ...profileItems,
-    ];
+    return [...NAV_SEARCH_ITEMS, ...appItems, ...serviceItems, ...profileItems];
   }, [apps, profiles, registry]);
 }
 
@@ -263,9 +259,9 @@ function TopBar() {
   const searchItems = useAdminSearchItems();
 
   return (
-    <div className="vf-console-topbar hidden md:flex">
+    <div className="vf-console-topbar hidden min-[980px]:flex">
       <div className="flex min-w-0 items-center gap-3">
-        <Link href="/admin/services" className="text-vf-text no-underline">
+        <Link href={adminStatusHref()} className="text-vf-text no-underline">
           <StatusCluster
             tone={statusTone}
             label={statusLabel}
@@ -297,17 +293,17 @@ function TopBar() {
   );
 }
 
-function MobileTopBar({ onOpenNav }: { onOpenNav: () => void }) {
+function MobileTopBar() {
   const { statusTone, statusLabel } = useShellStatus();
 
   return (
     <MobileTopRail
-      className="md:hidden"
+      className="min-[980px]:hidden"
       brand={<BrandLockup href="/admin" kicker="console" />}
       account={
         <div className="flex items-center gap-2">
           <Link
-            href="/admin/services"
+            href={adminStatusHref()}
             className="text-vf-text min-w-0 no-underline"
           >
             <StatusCluster
@@ -316,13 +312,11 @@ function MobileTopBar({ onOpenNav }: { onOpenNav: () => void }) {
               className="max-w-40"
             />
           </Link>
-          <IconButton
-            aria-label="Open navigation"
-            variant="ghost"
-            onClick={onOpenNav}
-          >
-            <MenuIcon className="size-5" />
-          </IconButton>
+          <SheetTrigger asChild>
+            <IconButton aria-label="Open navigation" variant="ghost">
+              <MenuIcon className="size-5" />
+            </IconButton>
+          </SheetTrigger>
         </div>
       }
     />
@@ -334,71 +328,67 @@ function MobileTopBar({ onOpenNav }: { onOpenNav: () => void }) {
 
 function AdminShell({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const mobileTabs = NAV_ITEMS.slice(0, 5).map((item) => ({
+  const pathname = usePathname();
+  const mobileTabs: MobileNavItem[] = NAV_ITEMS.slice(0, 4).map((item) => ({
     label: item.label === "Apps & keys" ? "Apps" : item.label,
     href: item.href,
     icon: <item.Icon />,
   }));
+  const moreItems = NAV_ITEMS.slice(4);
+  mobileTabs.push({
+    label: "More",
+    href: "#more",
+    icon: <MenuIcon />,
+    onClick: () => undefined,
+    active: moreItems.some((item) => pathname.startsWith(item.href)),
+    trigger: (tab) => <SheetTrigger asChild>{tab}</SheetTrigger>,
+  });
 
   return (
-    <div className="vf-app vf-console-shell relative overflow-x-hidden">
-      <AmbientBackdrop />
+    <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+      <div className="vf-app vf-console-shell relative overflow-x-hidden">
+        <AmbientBackdrop />
 
-      {/* Desktop rail */}
-      <aside className="vf-console-rail">
-        <SidebarNav />
-      </aside>
+        {/* Desktop rail */}
+        <aside className="vf-console-rail">
+          <SidebarNav />
+        </aside>
 
-      <div className="vf-console-stage">
-        {/* Mobile: top bar */}
-        <MobileTopBar onOpenNav={() => setMobileNavOpen(true)} />
+        <div className="vf-console-stage">
+          {/* Mobile: top bar */}
+          <MobileTopBar />
 
-        {/* Mobile nav sheet — overflow routes and account actions. */}
-        {mobileNavOpen && (
-          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-            <MobileNavSheet onClose={() => setMobileNavOpen(false)} />
-          </Sheet>
-        )}
+          {/* Mobile nav sheet — overflow routes and account actions. */}
+          <MobileNavSheet onNavigate={() => setMobileNavOpen(false)} />
 
-        {/* Content column */}
-        <TopBar />
-        <main className="vf-console-main">
-          <div className="vf-console-inner">{children}</div>
-        </main>
+          {/* Content column */}
+          <TopBar />
+          <main className="vf-console-main">
+            <div className="vf-console-inner">{children}</div>
+          </main>
+        </div>
+
+        <MobileTabBar items={mobileTabs} />
       </div>
-
-      <MobileTabBar items={mobileTabs} />
-    </div>
+    </Sheet>
   );
 }
 
 // The Sheet content for mobile nav — separate component so the nav links
 // can read the pathname after the sheet portal mounts.
-function MobileNavSheet({ onClose }: { onClose: () => void }) {
+function MobileNavSheet({ onNavigate }: { onNavigate: () => void }) {
   return (
-    <div
-      className="bg-vf-surface-1 fixed inset-y-0 left-0 z-50 w-72 shadow-lg"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Admin navigation"
+    <SheetContent
+      aria-describedby={undefined}
+      className="max-md:inset-y-0 max-md:left-0 max-md:right-auto max-md:max-h-none max-md:w-72 max-md:rounded-none max-md:border-r"
     >
-      <div className="flex items-center justify-between p-4">
-        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
-          Navigation
-        </span>
-        <IconButton
-          aria-label="Close navigation"
-          variant="ghost"
-          size="sm"
-          onClick={onClose}
-        >
-          <XIcon className="size-4" />
-        </IconButton>
+      <SheetHeader>
+        <SheetTitle>Navigation</SheetTitle>
+      </SheetHeader>
+      <div className="min-h-0 flex-1 pb-4">
+        <SidebarNav onNav={onNavigate} />
       </div>
-      <div className="h-[calc(100%-4rem)] px-4 pb-4">
-        <SidebarNav onNav={onClose} />
-      </div>
-    </div>
+    </SheetContent>
   );
 }
 

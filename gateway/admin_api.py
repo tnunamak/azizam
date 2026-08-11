@@ -26,7 +26,6 @@ import json
 import hmac
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
-from urllib.parse import quote
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
@@ -47,6 +46,7 @@ __all__ = [
     "AdminContext",
     "AdminStore",
     "access_model_summary",
+    "derive_admin_health_projection",
     "derive_admin_attention",
     "create_admin_router",
 ]
@@ -283,51 +283,325 @@ def _attention_app_profile_id(record: Mapping[str, Any]) -> str:
     return str(profile_id) if profile_id else "default-local"
 
 
-def _attention_href(section: str, target_kind: str | None, target_id: str | None) -> str:
-    base = {
-        "apps-keys": "/admin/apps",
-        "services": "/admin/services",
-        "profiles": "/admin/profiles",
-        "users": "/admin/users",
-        "audit": "/admin/audit",
-        "settings": "/admin/settings",
-    }.get(section, "/admin")
-    if not target_kind or not target_id:
-        return base
-    param = {
-        "app": "app",
-        "service": "service",
-        "profile": "profile",
-        "user": "user",
-        "audit": "event",
-    }.get(target_kind)
-    if not param:
-        return base
-    return f"{base}?{param}={quote(target_id, safe='')}"
+def _admin_target_href(target_kind: str, target_id: str) -> str | None:
+    """Compatibility href for one canonical attention target tuple.
+
+    The React admin client owns navigation. This copy exists only for older
+    consumers of the JSON response and is verified against its shared
+    ``adminTargetHref`` helper. Keep target kinds canonical; aliases create a
+    second, ambiguous attention contract.
+    """
+    from urllib.parse import quote
+
+    routes = {
+        "app": ("/admin/apps", "app"),
+        "profile": ("/admin/profiles", "profile"),
+        "service": ("/admin/services", "service"),
+        "audit": ("/admin/audit", "event"),
+    }
+    route = routes.get(target_kind)
+    if route is None:
+        return None
+    path, parameter = route
+    return f"{path}?{parameter}={quote(target_id, safe='')}"
 
 
 def _attention_item(
     *,
     kind: str,
     severity: str,
-    section: str,
     title: str,
     detail: str,
     target_kind: str | None = None,
     target_id: str | None = None,
+    target_name: str | None = None,
 ) -> dict[str, Any]:
     item: dict[str, Any] = {
         "kind": kind,
         "severity": severity,
-        "section": section,
         "title": title,
         "detail": detail,
     }
     if target_kind and target_id:
-        item["href"] = _attention_href(section, target_kind, target_id)
+        href = _admin_target_href(target_kind, target_id)
+        if href is None:
+            return item
         item["target_kind"] = target_kind
         item["target_id"] = target_id
+        if target_name:
+            item["target_name"] = target_name
+        item["href"] = href
     return item
+
+
+def derive_admin_health_projection(
+    registry: Mapping[str, Any],
+    status_payload: Mapping[str, Any] | None,
+    *,
+    observation_available: bool,
+) -> dict[str, Any]:
+    """Project configured-service health from configuration and live facts.
+
+    Configuration (configured/enabled), expectation (role), live observation,
+    and routability are distinct values. This is the one current-health source
+    for the React admin surfaces. Legacy aggregate banners are not inputs: they
+    can include disabled or standby probes and would override this reduction
+    with a less-specific, false failure. Independent producer facts arrive as
+    structured ``health_sources`` entries, so this reducer never infers their
+    source from display text.
+    """
+    services_raw = registry.get("services") if isinstance(registry, Mapping) else {}
+    services = services_raw if isinstance(services_raw, Mapping) else {}
+    payload = status_payload if isinstance(status_payload, Mapping) else {}
+    observations: dict[str, Mapping[str, Any]] = {}
+    for backend in payload.get("backends") or []:
+        if not isinstance(backend, Mapping):
+            continue
+        service_id = str(backend.get("service_id") or backend.get("key") or "")
+        if service_id:
+            observations[service_id] = backend
+
+    # ``banner`` remains a backwards-compatible aggregate, but it conflates
+    # service probes with API-wide facts. Consume only structured producer
+    # facts here; parsing banner text would recreate the same ambiguity.
+    source_signals: list[dict[str, Any]] = []
+    raw_sources = payload.get("health_sources")
+    if isinstance(raw_sources, Mapping):
+        for raw_source, raw_signal in raw_sources.items():
+            if not isinstance(raw_signal, Mapping):
+                continue
+            tone = str(raw_signal.get("tone") or "").lower()
+            if tone not in {"warn", "bad"}:
+                continue
+            raw_reasons = raw_signal.get("reasons")
+            reasons = [
+                reason.strip()
+                for reason in raw_reasons
+                if isinstance(reason, str) and reason.strip()
+            ] if isinstance(raw_reasons, (list, tuple)) else []
+            source_signals.append({
+                "source": str(raw_source),
+                "tone": tone,
+                "reasons": reasons,
+            })
+
+    rows: list[dict[str, Any]] = []
+    configured_service_ids: set[str] = set()
+    worst = "ok"
+    rank = {"ok": 0, "warn": 1, "bad": 2}
+    reasons: list[str] = []
+    for raw_id, raw_service in services.items():
+        if not isinstance(raw_service, Mapping):
+            continue
+        service_id = str(raw_service.get("id") or raw_id)
+        configured_service_ids.add(service_id)
+        name = str(raw_service.get("name") or service_id)
+        enabled = bool(raw_service.get("enabled", True))
+        role = str(raw_service.get("role") or "required")
+        backend = observations.get(service_id)
+        config = raw_service.get("config") if isinstance(raw_service.get("config"), Mapping) else {}
+        # ``config.models`` is the registry's generic routing declaration and
+        # the same data shape consumed by the derived routing configuration.
+        # Do not trust synthetic top-level values, and do not guess routing
+        # semantics from protocol or engine details. An omitted declaration is
+        # unknown rather than a green claim.
+        model_mappings = config.get("models")
+        if isinstance(model_mappings, Mapping):
+            routable: bool | None = bool(model_mappings)
+        elif isinstance(model_mappings, (list, tuple)):
+            routable = bool(model_mappings)
+        else:
+            routable = None
+        observed = str(
+            (backend or {}).get("live_status") or (backend or {}).get("status") or ""
+        ).lower()
+        if not enabled:
+            observation = "disabled"
+            tone = "neutral"
+        elif not observation_available or not observed:
+            observation = "unavailable"
+            tone = "neutral"
+        elif role == "standby" and observed == "down":
+            observation = "standby_stopped"
+            tone = "neutral"
+        elif observed in {"up", "healthy", "ok"}:
+            observation = "up"
+            tone = "ok"
+        elif observed == "degraded":
+            observation = "degraded"
+            tone = "warn"
+        else:
+            observation = "down"
+            tone = "warn" if role == "optional" else "bad"
+        if observation == "up" and routable is False:
+            tone = "warn" if role == "optional" else "bad"
+        if rank.get(tone, 0) > rank.get(worst, 0):
+            worst = tone
+        if tone in {"warn", "bad"}:
+            if routable is False and observation == "up":
+                reasons.append(f"{name} is reachable but not routable")
+            else:
+                reasons.append(f"{name} is {observation.replace('_', ' ')}")
+        rows.append({
+            "service_id": service_id,
+            "name": name,
+            "configured": True,
+            "enabled": enabled,
+            "role": role,
+            "observation": observation,
+            "routable": routable,
+            "tone": tone,
+            "last_error": (backend or {}).get("last_error") or None,
+        })
+
+    # A probe can observe a backend before it has a registry record. Keep that
+    # current fact visible, but mark it unconfigured so it can never acquire a
+    # configuration target or compatibility href by accident.
+    for service_id, backend in observations.items():
+        if service_id in configured_service_ids:
+            continue
+        name = str(backend.get("name") or service_id)
+        observed = str(backend.get("live_status") or backend.get("status") or "").lower()
+        if observed in {"up", "healthy", "ok"}:
+            observation, tone = "up", "ok"
+        elif observed == "degraded":
+            observation, tone = "degraded", "warn"
+        elif observed:
+            observation, tone = "down", "bad"
+        else:
+            observation, tone = "unavailable", "neutral"
+        if rank.get(tone, 0) > rank.get(worst, 0):
+            worst = tone
+        if tone in {"warn", "bad"}:
+            reasons.append(f"{name} is {observation.replace('_', ' ')}")
+        rows.append({
+            "service_id": service_id,
+            "name": name,
+            "configured": False,
+            "enabled": False,
+            "role": "unregistered",
+            "observation": observation,
+            "routable": None,
+            "tone": tone,
+            "last_error": backend.get("last_error") or None,
+        })
+
+    def _with_source_signals(base: dict[str, Any]) -> dict[str, Any]:
+        """Merge producer-authored independent facts without reviving probes."""
+        base["signals"] = source_signals
+        if not source_signals:
+            return base
+
+        source_rank = {"neutral": 0, "ok": 0, "warn": 1, "bad": 2}
+        source_tone = max(source_signals, key=lambda signal: source_rank[signal["tone"]])["tone"]
+        base_tone = str(base.get("tone") or "neutral")
+        if source_rank[source_tone] <= source_rank.get(base_tone, 0):
+            return base
+
+        signal_reasons = [
+            reason
+            for signal in source_signals
+            for reason in signal["reasons"]
+        ]
+        detail_parts = signal_reasons[:3]
+        if base.get("state") in {"unavailable", "empty", "inactive"}:
+            detail_parts.append(str(base.get("detail") or ""))
+        labels = {
+            "warn": "Needs attention",
+            "bad": "Action needed",
+        }
+        base.update({
+            "state": source_tone,
+            "tone": source_tone,
+            "label": labels[source_tone],
+            "detail": "; ".join(part for part in detail_parts if part)
+            or "An independent current health signal needs attention.",
+        })
+        return base
+
+    if not configured_service_ids:
+        if not observation_available:
+            return _with_source_signals({
+                "state": "unavailable",
+                "tone": "neutral",
+                "label": "Live status unavailable",
+                "detail": "The gateway could not read current health.",
+                "observation_available": False,
+                "services": rows,
+            })
+        return _with_source_signals({
+            "state": "empty",
+            "tone": "neutral",
+            "label": "No services configured",
+            "detail": "Add a service before the gateway can route requests.",
+            "observation_available": observation_available,
+            "services": rows,
+        })
+
+    active_rows = [
+        row for row in rows
+        if row["configured"] and row["enabled"] and row["observation"] != "standby_stopped"
+    ]
+    if not active_rows:
+        return _with_source_signals({
+            "state": "inactive",
+            "tone": "neutral",
+            "label": "No active services",
+            "detail": "Configured services are disabled or stopped in standby.",
+            "observation_available": observation_available,
+            "services": rows,
+        })
+
+    if not observation_available:
+        return _with_source_signals({
+            "state": "unavailable",
+            "tone": "neutral",
+            "label": "Live status unavailable",
+            "detail": "The gateway could not read current health.",
+            "observation_available": False,
+            "services": rows,
+        })
+
+    unobserved = [row["name"] for row in rows if row["observation"] == "unavailable"]
+    if unobserved:
+        return _with_source_signals({
+            "state": "unavailable",
+            "tone": "neutral",
+            "label": "Live status incomplete",
+            "detail": f"No current health observation for {', '.join(unobserved[:3])}.",
+            "observation_available": True,
+            "services": rows,
+        })
+
+    unroutable = [
+        row["name"]
+        for row in active_rows
+        if row["observation"] == "up" and row["routable"] is None
+    ]
+    if unroutable:
+        return _with_source_signals({
+            "state": "unavailable",
+            "tone": "neutral",
+            "label": "Live status incomplete",
+            "detail": f"No routing declaration for {', '.join(unroutable[:3])}.",
+            "observation_available": True,
+            "services": rows,
+        })
+
+    labels = {
+        "ok": ("Operational", "Current configured-service health is normal."),
+        "warn": ("Needs attention", "; ".join(reasons[:3]) or "One or more current health signals are degraded."),
+        "bad": ("Action needed", "; ".join(reasons[:3]) or "A required service cannot route requests."),
+    }
+    label, detail = labels[worst]
+    return _with_source_signals({
+        "state": worst,
+        "tone": worst,
+        "label": label,
+        "detail": detail,
+        "observation_available": True,
+        "services": rows,
+    })
 
 
 def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -335,21 +609,25 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
 
     Pure function over a dashboard snapshot, so the same list backs both the
     admin HTML overview and the ``/admin/api/overview`` JSON (the migration-safe
-    seam). Each item is ``{kind, severity, title, detail, section}`` where
+    seam). Each item is ``{kind, severity, title, detail, target tuple}`` where
     ``severity`` is ``"problem"`` (broken — needs fixing) or ``"attention"``
     (works but incomplete). Rows with a resolved object target also carry
     ``href`` plus ``target_kind`` / ``target_id`` so the UI can open the fixing
     section with that row selected.
-    An EMPTY list means everything's healthy — and the overview says so, rather
-    than padding the screen with green stat cards.
+    An empty list means there is no current operator advisory. It does not
+    imply an all-clear: the health projection may be unavailable, empty, or
+    inactive and remains the authoritative displayed state.
 
-    Signals mirror the per-row statuses the detail tables already show, so the
-    overview never disagrees with the sections:
+    Signals mirror the single current-health projection used by the detail
+    surfaces, so the overview never disagrees with the sections:
       * Apps: profile missing, or no active key. Apps without an explicit
         profile use the built-in default profile. Disabled Apps are an operator
         state, not a per-row incident.
-      * Services: ``down`` (problem) or ``degraded`` (attention).
-      * Live status: API/host health and high-error/high-latency Apps.
+        * Services: the projected row severity.
+      * Live status: the current health projection and high-error/high-latency
+          Apps. Structured, independent health signals create system advisories;
+          legacy raw aggregate banners are excluded because they do not preserve
+          the configured/enabled/role reduction.
     """
     items: list[dict[str, Any]] = []
 
@@ -357,7 +635,6 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     profiles = [p for p in snapshot.get("profiles", []) if isinstance(p, Mapping)]
     profile_ids = {str(p.get("id")) for p in profiles if p.get("id")}
     credentials = [c for c in snapshot.get("credentials", []) if isinstance(c, Mapping)]
-    status_payload = snapshot.get("status") if isinstance(snapshot.get("status"), Mapping) else {}
     active_keys_by_app: dict[str, int] = {}
     for cred in credentials:
         if cred.get("revoked_at"):
@@ -374,47 +651,47 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
             continue
         elif profile_id != "default-local" and profile_id not in profile_ids:
             items.append(_attention_item(
-                kind="app", severity="problem", section="apps-keys",
+                kind="app", severity="problem",
                 title=f"{name}'s profile is missing",
                 detail="Its profile was deleted; assign a new one.",
-                target_kind="app", target_id=app_id,
+                target_kind="app", target_id=app_id, target_name=name,
             ))
         elif active_keys_by_app.get(app_id, 0) < 1:
             items.append(_attention_item(
-                kind="app", severity="attention", section="apps-keys",
+                kind="app", severity="attention",
                 title=f"{name} has no active key",
                 detail="Mint a key so it can reach the gateway.",
-                target_kind="app", target_id=app_id,
+                target_kind="app", target_id=app_id, target_name=name,
             ))
 
-    status_banner = str(status_payload.get("banner") or "ok").lower()
-    if status_banner in {"bad", "warn"}:
-        reasons = [
-            str(reason) for reason in (status_payload.get("banner_reasons") or [])
-            if reason
-        ]
+    current_health = snapshot.get("current_health")
+    if isinstance(current_health, Mapping) and current_health.get("state") == "unavailable":
         items.append(_attention_item(
             kind="status",
-            severity="problem" if status_banner == "bad" else "attention",
-            section="services",
-            title="API health is degraded",
-            detail="; ".join(reasons[:3]) if reasons else "Status endpoint reports degraded API health.",
+            severity="attention",
+            title="Live status unavailable",
+            detail=str(current_health.get("detail") or "The gateway could not read current health."),
         ))
-
-    system_health = str(status_payload.get("system_health") or "ok").lower()
-    if system_health in {"bad", "warn"}:
-        reasons = [
-            str(reason) for reason in (status_payload.get("system_health_reasons") or [])
-            if reason
-        ]
-        items.append(_attention_item(
-            kind="status",
-            severity="problem" if system_health == "bad" else "attention",
-            section="services",
-            title="Host health needs attention",
-            detail="; ".join(reasons[:3]) if reasons else "Status endpoint reports host health issues.",
-        ))
-
+    if isinstance(current_health, Mapping):
+        for signal in current_health.get("signals") or []:
+            if not isinstance(signal, Mapping):
+                continue
+            tone = str(signal.get("tone") or "").lower()
+            if tone not in {"warn", "bad"}:
+                continue
+            source = str(signal.get("source") or "system")
+            reasons = signal.get("reasons")
+            detail = next(
+                (reason for reason in reasons if isinstance(reason, str) and reason.strip()),
+                "An independent current health signal needs attention.",
+            ) if isinstance(reasons, (list, tuple)) else "An independent current health signal needs attention."
+            items.append(_attention_item(
+                kind="status",
+                severity="problem" if tone == "bad" else "attention",
+                title=f"{source} health needs attention",
+                detail=detail,
+            ))
+    status_payload = snapshot.get("status") if isinstance(snapshot.get("status"), Mapping) else {}
     for key in status_payload.get("auth_keys") or []:
         if not isinstance(key, Mapping):
             continue
@@ -432,40 +709,47 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
         if request_count >= 10 and error_count / max(request_count, 1) >= 0.2:
             pct = round((error_count / request_count) * 100)
             items.append(_attention_item(
-                kind="app", severity="problem", section="apps-keys",
+                kind="app", severity="problem",
                 title=f"{name} has a high error rate",
                 detail=f"{pct}% errors across {int(request_count)} requests in the last 24h.",
                 target_kind="app", target_id=str(target_id) if target_id else None,
+                target_name=name,
             ))
         if isinstance(p50, (int, float)) and p50 >= 30_000:
             items.append(_attention_item(
-                kind="app", severity="attention", section="apps-keys",
+                kind="app", severity="attention",
                 title=f"{name} is slow",
                 detail=f"Median latency is {round(p50 / 1000, 1)}s.",
                 target_kind="app", target_id=str(target_id) if target_id else None,
+                target_name=name,
             ))
 
     for svc in snapshot.get("services", []):
         if not isinstance(svc, Mapping):
             continue
-        state = str(svc.get("status") or "").lower()
+        state = str(svc.get("observation") or svc.get("status") or "").lower()
         label = str(svc.get("name") or svc.get("key") or "A service")
-        target_id = str(svc.get("id") or "")
+        target_id = str(svc.get("service_id") or svc.get("id") or "")
+        target_kind = "service" if svc.get("configured", True) else None
         last_error = " ".join(str(svc.get("last_error") or "").split())
         error_detail = last_error[:180] if last_error else ""
-        if state == "down":
+        tone = str(svc.get("tone") or "").lower()
+        state_label = "not routable" if svc.get("routable") is False and state == "up" else state
+        if tone == "bad":
             items.append(_attention_item(
-                kind="service", severity="problem", section="services",
-                title=f"{label} is down",
-                detail=error_detail or "Requests that need it will fail until it's back.",
-                target_kind="service", target_id=target_id,
+                kind="service", severity="problem",
+                title=f"{label} is {state_label}",
+                detail=error_detail or "Requests that need it will fail until it is available.",
+                target_kind=target_kind, target_id=target_id if target_kind else None,
+                target_name=label if target_kind else None,
             ))
-        elif state == "degraded":
+        elif tone == "warn":
             items.append(_attention_item(
-                kind="service", severity="attention", section="services",
-                title=f"{label} is degraded",
-                detail=error_detail or "It's reachable but not fully healthy.",
-                target_kind="service", target_id=target_id,
+                kind="service", severity="attention",
+                title=f"{label} is {state_label}",
+                detail=error_detail or "It needs attention before it can serve requests reliably.",
+                target_kind=target_kind, target_id=target_id if target_kind else None,
+                target_name=label if target_kind else None,
             ))
 
     order = {"problem": 0, "attention": 1}
@@ -1281,8 +1565,6 @@ def create_admin_router(
         active_credentials = [
             c for c in credentials if not c.get("revoked_at")
         ]
-        # Derive service up/total counts from the stored service registry.
-        # This is static config state; live connectivity is not probed here.
         registry = store.get_service_registry()
         services_map = registry.get("services") or {}
         services_total = len(services_map)
@@ -1290,34 +1572,25 @@ def create_admin_router(
             1 for svc in services_map.values()
             if isinstance(svc, dict) and svc.get("enabled", True)
         )
-        # Enrich attention with live service health from the cached status
-        # snapshot (12-15s cache, so the extra call is nearly free).
-        live_services: list[dict] = []
         status_snap: Mapping[str, Any] = {}
+        status_available = status_provider is not None
         if status_provider is not None:
             try:
                 status_snap = await status_provider()
-                for b in (status_snap.get("backends") or []):
-                    if not isinstance(b, dict):
-                        continue
-                    backend_name = str(b.get("name") or b.get("role") or "service")
-                    raw_service_id = str(b.get("service_id") or b.get("key") or "")
-                    service_id = raw_service_id if raw_service_id in services_map else None
-                    live_services.append({
-                        "id": service_id,
-                        "name": backend_name,
-                        "key": service_id or str(b.get("name") or backend_name),
-                        "status": b.get("live_status") or b.get("status") or "unknown",
-                        "last_error": b.get("last_error"),
-                    })
             except Exception:
-                pass  # degraded attention signal is better than a broken overview
+                status_available = False
+        current_health = derive_admin_health_projection(
+            registry,
+            status_snap,
+            observation_available=status_available,
+        )
         attention = derive_admin_attention({
             "apps": apps,
             "profiles": profiles,
             "credentials": credentials,
-            "services": live_services,
+            "services": current_health["services"],
             "status": status_snap,
+            "current_health": current_health,
         })
         payload = {
             "actor": {
@@ -1335,8 +1608,15 @@ def create_admin_router(
                 "active_credentials": len(active_credentials),
                 "services_total": services_total,
                 "services_enabled": services_up,
+                "service_principals": len({
+                    str(credential.get("subject_id"))
+                    for credential in credentials
+                    if credential.get("subject_kind") == "service_account"
+                    and credential.get("subject_id")
+                }),
             },
             "attention": attention,
+            "current_health": current_health,
             "runtime_profile_mappings": runtime_mappings,
         }
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
@@ -1351,23 +1631,23 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        if status_provider is None:
-            return _RouteError(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "status_unavailable",
-                "status provider is not configured",
-            ).as_response()
-        try:
-            payload = await status_provider()
-        except Exception:  # noqa: BLE001
-            return _RouteError(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "status_unavailable",
-                "status cache is unavailable",
-            ).as_response()
+        payload: Mapping[str, Any] = {}
+        available = status_provider is not None
+        if status_provider is not None:
+            try:
+                payload = await status_provider()
+            except Exception:  # noqa: BLE001
+                available = False
+        registry = store.get_service_registry()
+        projected = dict(payload)
+        projected["current_health"] = derive_admin_health_projection(
+            registry,
+            payload,
+            observation_available=available,
+        )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"status": payload},
+            content={"status": projected},
             headers={"cache-control": "no-store"},
         )
 
