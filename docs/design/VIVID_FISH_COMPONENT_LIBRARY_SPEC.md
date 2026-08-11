@@ -18,12 +18,14 @@ Build one coherent, reusable Vivid Fish component system for the gateway:
   primitives.
 - route files own data selection, mutations, and page-specific composition only.
 
-The screenshot grammar in local deployment evidence under
-`tmp/designs/*.png` is authoritative for density, contrast, surface depth,
-rows, status bands, side panels, activity feeds, and mobile navigation when
-that evidence is available. Marketing slogans and SaaS positioning from the
-screenshots are not product requirements. Portable requirements are the
-contracts and rules in this document and in `WEB_UI_STEERING.md`.
+The screenshot grammar in the portable design handoff under
+`docs/design/assets/reference-ui/*.png` is authoritative for density,
+contrast, surface depth, rows, status bands, side panels, activity feeds, and
+mobile navigation when that evidence is useful. Marketing slogans and SaaS
+positioning from the screenshots are not product requirements. Portable
+requirements are the contracts and rules in this document and in
+`WEB_UI_STEERING.md`; see the asset README for the normative/illustrative
+boundary.
 
 ## Prior-Art Conclusions
 
@@ -691,7 +693,8 @@ No implementation ownership. Review only.
 
 Deliver:
 
-- Desktop and mobile screenshot comparison against `tmp/designs/*.png`.
+- Desktop and mobile screenshot comparison against
+  `docs/design/assets/reference-ui/*.png`.
 - Overflow check at 390x844 and 1440x1000.
 - Accessibility sanity check for target sizes, focus states, keyboard search,
   and copy/reveal controls.
