@@ -819,7 +819,8 @@ is **always** redacted in GET responses; it is write-only.
 > **Runtime gap note**: the `groups_claim` field is fully wired — the live
 > OIDC auth path in `proxy.py` reads the configured claim name for both admin
 > role evaluation and profile mapping. Setting this field is immediately
-> effective after the next gateway restart.
+> effective after the next gateway restart because OIDC settings are static
+> authentication configuration, not service-registry runtime state.
 
 ### PUT /admin/api/oidc-config  (save OIDC config)
 
@@ -836,7 +837,10 @@ Accepted fields: `enabled`, `issuer`, `client_id`, `client_secret`,
 `200` → `{ "oidc_config": { …same scrubbed shape… } }`
 
 After saving, the gateway must be restarted for the new OIDC config to take
-effect. Display the same "Saved — restart to apply" banner as service changes.
+effect. Display an OIDC-specific "Saved — restart to apply" banner. Service
+registry changes use the live gateway hot-reload path instead; the managed
+LiteLLM watcher applies its own brief sidecar recycle after the generated
+artifact changes.
 
 ### GET /admin/api/extensions
 

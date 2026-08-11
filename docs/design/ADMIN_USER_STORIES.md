@@ -29,29 +29,25 @@ new models and wants apps to route to it. Traced: **~35–40% self-serve.**
 | # | Story | Status | Reality (file:line) |
 |---|---|---|---|
 | A1 | "Add the engine as a service (host, port, key, capabilities)." | ✅ | Persists to admin.db + writes LiteLLM artifact (admin_runtime add_service). |
-| A2 | "Map its models (public → upstream) so callers can request them." | 🟡 | Models reach the LiteLLM model_list (litellm_substrate, registry-driven) — but only after a gateway AND litellm-subprocess restart. |
-| A3 | "Have it take effect without restarting the gateway." | 🔴 | No in-process hot reload (admin_runtime:711-713). `LLM_BACKEND_HOSTS`, `TTS/STT/EMBEDDINGS_HOST` are import-time constants. Restart mandatory. **Top gap.** |
-| A4 | "Route a chat call for its model to it." | 🟡 | Works via LiteLLM substrate IF the engine is already up + after restart. Native catch-all picks it only as priority fallback when tabby absent (tier-2). |
+| A2 | "Map its models (public → upstream) so callers can request them." | ✅ | Models reach the LiteLLM model_list through the registry-driven artifact. A registry mutation regenerates the artifact and hot-reloads the gateway; the managed LiteLLM watcher applies its own brief sidecar recycle. |
+| A3 | "Have it take effect without restarting the gateway." | ✅ | Service-registry mutations apply through the gateway's hot-reload path. Only genuinely static/OIDC settings require a gateway restart. |
+| A4 | "Route a chat call for its model to it." | 🟡 | Works via LiteLLM substrate if the engine is already up and the registry mutation has completed its live gateway reload plus the managed watcher's brief sidecar recycle. Native catch-all picks it only as priority fallback when tabby absent (tier-2). |
 | A5 | "Have the gateway start/stop/idle the engine for me." | 🔴 | `ensure_target()` returns False for any backend ∉ ("kobold","tabby") (proxy.py:1240). Lifecycle (swap/idle/spawn) is tabby/kobold-hardcoded. Engine must be run externally. |
 | A6 | "Use it for a role (e.g. the 'coder' role points here)." | 🔴 | Role-model table silently drops entries whose backend ∉ ("kobold","tabby") (proxy.py:~502). |
-| A7 | "See its health in the admin." | ✅ | `check_service_health(id)` is generic (tier-2). Overview/Services reflect it after restart. |
+| A7 | "See its health in the admin." | ✅ | `check_service_health(id)` is generic (tier-2). Overview/Services reflect registry changes after the live reload path and the managed watcher's brief sidecar recycle. |
 | A8 | "See its process / VRAM on the status page." | 🔴 | `status_endpoint._SERVICE_UNITS` is a hardcoded process-name list. New engine invisible. |
 | A9 | "Let it serve embeddings / TTS / STT too (multi-modal engine)." | 🔴 | `/v1/embeddings`,`/v1/audio/*` pinned to single `EMBEDDINGS_HOST`/`TTS_HOST`/`STT_HOST` constants keyed to ids embeddings/tts/stt. A new id can't serve these even if it declares the capability. |
-| A10 | "Let it serve vision." | 🟡 | Included in `vision_capable_llm_backends()` (tier-2) after restart; but vision model-swap orchestration is kobold-mmproj hardcoded. |
+| A10 | "Let it serve vision." | 🟡 | Included in `vision_capable_llm_backends()` (tier-2) after the registry mutation's live reload; but vision model-swap orchestration is kobold-mmproj hardcoded. |
 
 **Highest-leverage gaps to make A real (in order):**
-1. **In-process hot reload** (A3) — an admin action / signal that re-runs
-   `_load_effective_runtime_config` and rebuilds the host constants. Single
-   most impactful: turns every "save → restart" into "save → live." Until it
-   exists, the restart-to-apply banner is the honesty patch.
-2. **Generalize `ensure_target`** (A5 partial) — an "externally managed,
+1. **Generalize `ensure_target`** (A5 partial) — an "externally managed,
    just health-check it" lifecycle so an always-on new engine activates
    instead of 503-ing at the literal gate. Full lifecycle config is Epic E.
-3. **Role table accepts any registry backend** (A6) — drop the
+2. **Role table accepts any registry backend** (A6) — drop the
    ("kobold","tabby") gate; read from `LLM_BACKEND_HOSTS`.
-4. **Capability dispatch tables** (A9) — `/v1/embeddings` & `/v1/audio/*`
+3. **Capability dispatch tables** (A9) — `/v1/embeddings` & `/v1/audio/*`
    resolve backend from the registry by capability, not a single host const.
-5. **Registry-derived status process list** (A8).
+4. **Registry-derived status process list** (A8).
 
 ---
 
@@ -118,8 +114,8 @@ engine" case without needing E at all.
 
 The honest path to "nailed admin UX":
 
-1. **Make Epic A's always-on case fully self-serve** — hot reload (A3),
-   generalize ensure_target for externally-managed engines (A5-partial),
+1. **Make Epic A's always-on case fully self-serve** — generalize
+   ensure_target for externally-managed engines (A5-partial),
    role table (A6), embeddings/audio capability dispatch (A9). This makes
    "add a vLLM/remote endpoint and route to it" a real one-screen job — the
    most common operator intent, and the one the UI currently over-promises.

@@ -191,21 +191,24 @@ Done means:
 Primary references: `docs/CONFIG_SOURCE_OF_TRUTH.md`,
 `docs/LITELLM_SUBSTRATE_DECISION.md`.
 
-### 9. LiteLLM Sidecar Config Sync And Visibility
+### 9. LiteLLM Sidecar Config Sync And Visibility — completed
 
 The LiteLLM substrate runs as a sidecar (`start.sh` launches `litellm --config
 data/litellm.config.yaml` on :4011); the gateway proxies LLM execution to it.
-The gateway compiles the config from the service registry, but nothing
-regenerates the file and reloads the sidecar when the registry changes. A live
-incident (2026-06-03): the sidecar was running with a stale `model_list: []`,
-so every chat/Anthropic/Ollama call 400'd "Invalid model name" while local
-kobold/tabby models were registered and healthy. The failure was silent — an
-empty model list with no breadcrumb pointing at the sidecar.
+The gateway compiles the config from the service registry. A registry mutation
+now regenerates the artifact and hot-reloads the gateway; the managed LiteLLM
+watcher notices the artifact and applies its own brief sidecar recycle. A live
+incident (2026-06-03) recorded the former failure mode: the sidecar was
+running with a stale `model_list: []`, so every chat/Anthropic/Ollama call
+400'd "Invalid model name" while local kobold/tabby models were registered and
+healthy. The failure was silent — an empty model list with no breadcrumb
+pointing at the sidecar.
 
-Done means:
+Completed:
 
-- The gateway regenerates the LiteLLM config and reloads/restarts the sidecar
-  on service-registry change (or at least reconciles on startup).
+- The gateway regenerates the LiteLLM config and hot-reloads on
+  service-registry change; the managed watcher applies its own brief sidecar
+  recycle.
 - `/admin` surfaces the sidecar's live model count so an empty list is visible.
 - A stale or empty sidecar produces a diagnosable error, not a generic 400.
 
