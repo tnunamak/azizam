@@ -82,8 +82,11 @@ safely:
 Everything that can change after boot belongs in `admin.db` and the dashboard.
 The DB/UI service registry is the product source of truth for providers and
 services. `proxy_config.yml` can seed or provision records, but it is not the
-normal live operator surface. Provisioned services are visible and testable in
-`/admin`, but read-only unless detached or copied to UI-managed ownership.
+normal live operator surface. After the one-time seed, every non-managed
+registry service can be edited, enabled or disabled, and removed in `/admin`
+regardless of its `source`; source is provenance, not permission. The managed
+LiteLLM substrate separately locks its endpoint/protocol fields and removal,
+while allowing its name, enabled state, and note to be changed.
 On startup, bootstrap user defaults are imported into `admin.db`; after that,
 dashboard/API state is authoritative. See
 [CONFIG_SOURCE_OF_TRUTH.md](CONFIG_SOURCE_OF_TRUTH.md).
@@ -159,12 +162,12 @@ Admin keys are never runtime keys. Use `oak_...` only for `/admin`,
 |-----------------------------------------------------|------------------|----------|
 | Listener, TLS, session signing key                  | `proxy_config.yml` / env / generated `data/admin_session_key` | yes for explicit changes |
 | OIDC provider settings                              | `/admin` (optional bootstrap fallback in `proxy_config.yml`) | no |
-| Service/provider registry                           | `/admin` (`ui`, `provisioned`, `builtin`, `discovered` ownership modes) | no for UI-managed records |
+| Service/provider registry                           | `/admin`; `source` (`ui`, `provisioned`, `builtin`, `discovered`) is provenance | no for non-managed records |
 | Provider seed/provisioning input, model directories, secret references | `proxy_config.yml` / env / Docker secrets | yes |
 | Owner/admin roles, Apps, Profiles, App API keys     | `/setup`, `/`, `/admin`                  | no  |
 | Identity → Profile mappings, role/model bindings    | `/admin`                                 | no  |
 | Admission caps, throttles, runtime routing toggles  | `/admin`                                 | no  |
-| Provider/service enablement                         | `/admin` for UI-managed records; provisioned/builtin/discovered records are read-only until copied or detached | no  |
+| Provider/service enablement                         | `/admin` for every non-managed registry record; LiteLLM remains a managed substrate | no  |
 | Service-registry export                             | Authenticated `GET /admin/api/config/export`; read-only download of service records | no |
 
 First-run does not require the shipped service-registry export. Full

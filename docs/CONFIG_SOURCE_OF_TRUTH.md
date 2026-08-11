@@ -63,25 +63,23 @@ Concretely:
    boot without touching a file. Audited, applies live unless the apply_mode
    says otherwise.
 3. **Provisioned plane** — workflow manifests and catalog files committed in
-   the repo (`workflows/`, the model compatibility table), plus service
-   records seeded or reconciled from provisioning config. The dashboard
-   surfaces provisioned services as visible and testable, but read-only unless
-   the operator detaches or copies them into a UI-managed record.
+   the repo (`workflows/`, the model compatibility table). Service records
+   may be seeded from provisioning config, but after that one-time seed the
+   DB/UI registry is authoritative.
 4. **Secret/bootstrap plane** — env, Docker secrets, and secret references for
    values that cannot live as editable product state. The dashboard may show
    that a secret reference exists, but never exposes or edits the secret value.
 
-Service/provider records carry an explicit ownership mode so there is no
-split-brain:
+Service/provider records carry a `source` value as provenance/history, not a
+permission boundary. After the one-time seed, every non-managed service row
+can be edited, enabled or disabled, and removed from the DB/UI registry;
+removed rows are not re-imported on later boots:
 
-- `ui` — created and edited in `/admin`; DB is authoritative.
-- `provisioned` — imported/reconciled from `proxy_config.yml` or another
-  provisioning source; visible and testable in `/admin`, read-only until
-  detached or copied to UI-managed.
-- `builtin` — shipped product defaults; visible and testable, read-only unless
-  copied to UI-managed.
-- `discovered` — found from runtime discovery; visible/testable as inventory,
-  not editable product config until adopted.
+- `ui`, `provisioned`, `builtin`, and `discovered` identify how the row entered
+  the registry; they do not change its DB/UI permissions.
+- The managed LiteLLM substrate is the sole exception. Its endpoint and
+  protocol fields are gateway-derived and locked, and it cannot be removed;
+  its name, enabled state, and note remain editable.
 
 ## Per-domain ownership policy
 
@@ -106,9 +104,9 @@ Implications:
 - The dashboard never writes a value that lives in YAML or env. If an
   operator wants such a value to change, the change path is "edit the file
   and restart" — surfaced in `change_path` and `apply_mode`.
-- The dashboard does write UI-managed service/provider records. Provisioned,
-  builtin, and discovered records remain visible and testable but read-only
-  until copied or detached into `ui` ownership.
+- The dashboard writes all non-managed service/provider records regardless of
+  `source`; source remains provenance after the one-time seed. The managed
+  LiteLLM substrate has the limited fields described above.
 - The dashboard never writes downstream provider secrets or browser session
   signing keys. OIDC `client_secret` is the single intentional exception:
   when configured from `/admin`, it is stored in `admin.db`, redacted in UI/API
@@ -164,9 +162,9 @@ the dashboard as the only edit surface for runtime policy.
   problem with no operator benefit.
 - A second policy editor inside Services or APIs. Policy stays on Profiles
   (see `docs/ADMIN_ACCESS_UX_RESEARCH.md`).
-- Inline editing of provisioned service definitions. The dashboard's job is
-  to make provenance legible; operators edit the provisioning source or copy
-  the service into `ui` ownership.
+- A second service-registry ownership mode. The dashboard makes provenance
+  legible, but the DB/UI registry remains authoritative after its one-time
+  seed.
 - Per-field schema validation in the dashboard for bootstrap fields. They
   are validated at gateway start; making the dashboard a second validator
   duplicates truth.

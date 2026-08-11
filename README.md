@@ -250,8 +250,11 @@ recovered from disk.
 Service/provider records live in the DB/UI service registry. `proxy_config.yml`
 is seed/provisioning/bootstrap input, not the normal live operator surface.
 Env and Docker secrets remain for irreducible bootstrap and provider secret
-references. Provisioned services are visible and testable in `/admin`, but
-read-only unless detached or copied to UI-managed ownership. Per-App
+references. After the one-time seed, every non-managed registry service is
+editable, enablable/disableable, and removable in `/admin` regardless of its
+`source`; source is provenance, not permission. The managed LiteLLM substrate
+separately locks its endpoint/protocol fields and removal, while allowing its
+name, enabled state, and note to be changed. Per-App
 downstream credential overrides are not part of the current DB runtime path;
 use Profiles to decide what an App may access.
 
@@ -367,13 +370,15 @@ to one gateway Python process only. Run one worker unless you provide a durable
 cross-process admission coordinator; extra workers multiply both limits.
 
 After boot, provider/service availability lives in the DB/UI registry with an
-explicit ownership mode: `ui`, `provisioned`, `builtin`, or `discovered`.
-Provisioned services are visible and testable but read-only unless detached or
-copied to UI-managed ownership. Runtime access policy (Profiles, Apps,
-role/model bindings, admission caps, identity mappings, service availability)
-lives in `admin.db` and is edited from the dashboard. Provisioning / as-code
-config export is deferred; default Profiles are seeded into `admin.db` on
-first startup, not YAML-managed. See
+explicit `source`: `ui`, `provisioned`, `builtin`, or `discovered`. Source is
+provenance, not permission: after the one-time seed, every non-managed service
+is editable, enablable/disableable, and removable from the dashboard. The
+managed LiteLLM substrate separately locks its endpoint/protocol fields and
+removal, while allowing its name, enabled state, and note to be changed.
+Runtime access policy (Profiles, Apps, role/model bindings, admission caps,
+identity mappings, service availability) lives in `admin.db` and is edited
+from the dashboard. Provisioning / as-code config export is deferred; default
+Profiles are seeded into `admin.db` on first startup, not YAML-managed. See
 [`docs/CONFIG_SOURCE_OF_TRUTH.md`](docs/CONFIG_SOURCE_OF_TRUTH.md) for the
 full policy. For all environment variables (paths, engine integrations,
 monitoring), see [`CONFIG.md`](CONFIG.md).
