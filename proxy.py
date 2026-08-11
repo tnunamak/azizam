@@ -7578,23 +7578,26 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     except Exception as exc:
         raise _VideoFormParseError(f"Invalid multipart body: {exc}") from exc
 
-    body: dict[str, Any] = {}
-    for name, value in form.multi_items():
-        if name in _VIDEO_FORM_FILE_FIELDS and hasattr(value, "read") and hasattr(value, "filename"):
-            try:
-                raw = await value.read()
-            except Exception as exc:
-                raise _VideoFormParseError(
-                    f"failed to read uploaded {name}: {exc}"
-                ) from exc
-            mime = getattr(value, "content_type", None) or "application/octet-stream"
-            body[name] = "data:" + mime + ";base64," + base64.b64encode(raw).decode("ascii")
-            continue
-        # Plain scalar form field. OpenAI's SDK sends everything else as text;
-        # callers may send numeric/bool-looking strings, which the existing JSON
-        # path also accepts as strings (it coerces seconds/seed via float()/int()).
-        body[name] = value if not hasattr(value, "read") else str(value)
-    return body
+    try:
+        body: dict[str, Any] = {}
+        for name, value in form.multi_items():
+            if name in _VIDEO_FORM_FILE_FIELDS and hasattr(value, "read") and hasattr(value, "filename"):
+                try:
+                    raw = await value.read()
+                except Exception as exc:
+                    raise _VideoFormParseError(
+                        f"failed to read uploaded {name}: {exc}"
+                    ) from exc
+                mime = getattr(value, "content_type", None) or "application/octet-stream"
+                body[name] = "data:" + mime + ";base64," + base64.b64encode(raw).decode("ascii")
+                continue
+            # Plain scalar form field. OpenAI's SDK sends everything else as text;
+            # callers may send numeric/bool-looking strings, which the existing JSON
+            # path also accepts as strings (it coerces seconds/seed via float()/int()).
+            body[name] = value if not hasattr(value, "read") else str(value)
+        return body
+    finally:
+        await form.close()
 
 
 async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) -> Response:

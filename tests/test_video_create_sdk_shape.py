@@ -88,9 +88,7 @@ class VideoCreateMultipartParsingTests(unittest.TestCase):
             ]
         )
 
-        body = asyncio.new_event_loop().run_until_complete(
-            proxy._read_video_create_form_body(request)
-        )
+        body = asyncio.run(proxy._read_video_create_form_body(request))
 
         self.assertEqual(body["prompt"], "A small blue square on white.")
         self.assertEqual(body["model"], "ltx-2.3-distilled")
@@ -113,13 +111,18 @@ class VideoCreateMultipartParsingTests(unittest.TestCase):
             ]
         )
 
-        body = asyncio.new_event_loop().run_until_complete(
-            proxy._read_video_create_form_body(request)
-        )
+        async def parse() -> tuple[dict, bool]:
+            body = await proxy._read_video_create_form_body(request)
+            form = await request.form()
+            upload = form["input_reference"]
+            return body, upload.file.closed
+
+        body, upload_closed = asyncio.run(parse())
 
         self.assertTrue(body["input_reference"].startswith("data:image/png;base64,"))
         encoded = body["input_reference"].split(",", 1)[1]
         self.assertEqual(base64.b64decode(encoded), png_bytes)
+        self.assertTrue(upload_closed, "multipart upload must be closed after normalization")
 
     def test_handler_does_not_400_on_multipart_content_type(self) -> None:
         # Regression: the live probe was getting `{"error": {"message":
@@ -140,7 +143,7 @@ class VideoCreateMultipartParsingTests(unittest.TestCase):
                     auth_context=None,  # type: ignore[arg-type]
                 )
 
-        response = asyncio.new_event_loop().run_until_complete(run())
+        response = asyncio.run(run())
 
         self.assertEqual(response.status_code, 503)
         payload = json.loads(response.body.decode("utf-8"))
