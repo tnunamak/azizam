@@ -1,8 +1,13 @@
 # Trellis mesh route design
 
 Status: **Planned — not implemented.**  This document is the canonical authority for
-v1.  It supersedes earlier Trellis designs and rejects the current dirty patch as a
-shippable implementation.  The feature is GO only after this design is implemented and
+v1.  It supersedes earlier Trellis designs and rejects the historical prototype as a
+shippable implementation. This checkout is clean at `67a51bf`; it contains no
+Trellis route, helper, module, or coupled tests. The rejected prototype is preserved
+for fixture provenance only in local archive branch
+`archive/trellis-prototype-0811` at commit
+`c6afef0ac1749ddcf2a4d5d491f70395e569578d`. It is not product lineage and must never
+be merged. The feature is GO only after this design is implemented and
 the proof gates below pass; no route exists today.
 
 ## Decision and boundary
@@ -197,26 +202,45 @@ The following 50 acceptance items are binding:
 43. Public 403/400/503 service-unavailable mapping is exact.
 44. Resource/downstream/cancellation outcomes and retry behavior are exact.
 45. Observability is bounded and secret-free.
-46. Preserve deterministic dirty transport fixtures and record intentional changes.
-47. Delete dirty Trellis handler/helpers/module/tests after fixture preservation.
-48. Focused deterministic tests cover upgrades, bootstrap, tombstones, overrides,
-    compatible IDs, discovery, leases, numeric boundaries, cancellation, receipts,
-    serialization, and the full ASGI journey; no live ports/backend.
+46. Before deleting the historical prototype handler, preserve deterministic fixtures
+    for public form fields, namespace validation, filename/content type, omitted
+    defaults, scalar mapping, success status/content type/GLB bytes, and ordinary
+    400/502/504 classifications. Record intentional changes: negative/boolean seed
+    rejection, fail-closed observer behavior, the exclusive-capacity requirement,
+    removal of learning/cache behavior, and bounded generic upstream errors. The
+    fixture source is the archived prototype commit named above; no prototype files
+    exist in this clean checkout today.
+47. Delete historical-prototype Trellis constants/functions, direct observer/cache
+    code, `gateway/mesh_extensions.py`, and the two implementation-coupled tests
+    (`tests/test_mesh_generate_route.py` and `tests/test_trellis_vram_gate.py`) after
+    their valid fixtures move. Do not preserve their fail-open or false-peak
+    assertions. These named files are absent from the current HEAD; this is a future
+    implementation disposition, not a request to recreate or delete them now.
+48. Focused deterministic tests cover exact upgrade outcomes, disabled bootstrap,
+    deletion/tombstone behavior, stale override, an arbitrary compatible service ID,
+    async discovery, same-pool serialization, different-pool progress, numeric
+    boundaries, every cancellation await point, receipt terminality, canonical
+    path/scalar rules, and the full ASGI fake journey. Cancellation coverage includes
+    lock wait, observer, downstream connect/write/read, disconnect watcher, HTTP-task
+    cancellation/await, response/client close, upload/form cleanup, and lease release
+    boundaries. No test contacts ports 5000/15000 or a live backend.
 49. Run warning-as-error focused tests, full `./venv/bin/python -m pytest -q`,
     `git diff --check`, engine-boundary/literal sweeps, and reread all touched files;
     independent review is required before implementation is accepted.
-50. Preserve every unrelated dirty file and hunk; never reset, clean, stash, overwrite,
-    or fold unrelated work into Trellis.
+50. In any future implementation worktree, preserve every unrelated dirty file and
+    hunk; never reset, clean, stash, overwrite, or fold unrelated work into the
+    Trellis change. This is a preservation rule for that future worktree, not a claim
+    that the current HEAD is dirty.
 
 ## Implementation order, rollback, and stop condition
 
-1. Freeze dirty request/output fixtures and classify intentional behavior changes.
+1. Freeze historical-prototype request/output fixtures and classify intentional behavior changes.
 2. Add data, manifest validation, exact seed CAS, deletion/tombstone tests.
 3. Build/test the closed multipart executor byte-for-byte.
 4. Build/test the exclusive lease with same/different-pool and cancellation barriers.
 5. Replace the route with receipt, post-body watcher, resolver, lease, and executor.
 6. Add scoped GET/PUT override and asynchronous discovery.
-7. Delete dirty helpers/tests, run boundary/literal sweeps, full tests, reread, and
+7. Delete historical-prototype helpers/tests, run boundary/literal sweeps, full tests, reread, and
    obtain independent final diff review.
 
 Rollback restores the audited registry generation and reverts the implementation commit
