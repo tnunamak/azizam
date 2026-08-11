@@ -178,30 +178,32 @@ def main() -> int:
 
     if not args.seed_model:
         p.error("--seed-model or AUTOTILE_TEXTURE_MODEL is required")
-    gateway = GatewayImageClient.from_args(args)
-    edge_config = comfy_cli_args(args)
-
     spec = json.loads(args.spec.read_text())
-    size = int(spec.get("tile_size", 512)); edge_w = int(spec.get("edge_width", 32))
-    if size < 2 or size % 2 or edge_w < 1 or edge_w > size or args.steps < 1:
-        p.error("tile_size must be an even positive integer, edge_width must be in 1..tile_size, and steps must be positive")
-    default_prompt = spec.get("default_prompt", "")
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-
-    generated: dict[str, Path] = {}
+    try:
+        tile_ids = [safe_spec_id(tile["id"], "tile id") for tile in spec["tiles"]]
+    except (KeyError, TypeError, ValueError) as exc:
+        p.error(str(exc))
     seen_ids: set[str] = set()
-    t0 = time.time()
-
-    for i, tile in enumerate(spec["tiles"]):
-        try:
-            tid = safe_spec_id(tile["id"], "tile id")
-            out_path = contained_path(args.out_dir, f"{tid}.png")
-        except (KeyError, ValueError) as exc:
-            p.error(str(exc))
+    for tid in tile_ids:
         tid_key = spec_id_key(tid)
         if tid_key in seen_ids:
             p.error(f"duplicate tile id: {tid}")
         seen_ids.add(tid_key)
+
+    size = int(spec.get("tile_size", 512)); edge_w = int(spec.get("edge_width", 32))
+    if size < 2 or size % 2 or edge_w < 1 or edge_w > size or args.steps < 1:
+        p.error("tile_size must be an even positive integer, edge_width must be in 1..tile_size, and steps must be positive")
+    default_prompt = spec.get("default_prompt", "")
+    gateway = GatewayImageClient.from_args(args)
+    edge_config = comfy_cli_args(args)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    generated: dict[str, Path] = {}
+    t0 = time.time()
+
+    for i, tile in enumerate(spec["tiles"]):
+        tid = tile_ids[i]
+        out_path = contained_path(args.out_dir, f"{tid}.png")
         prompt = tile.get("prompt", default_prompt) or default_prompt
         if not prompt:
             sys.exit(f"tile {tid} has no prompt and no default_prompt set")

@@ -14,7 +14,7 @@ import argparse, json, shutil, sys, time, uuid, urllib.request, urllib.error
 from pathlib import Path
 import numpy as np
 from PIL import Image
-from runtime import add_comfy_args, require
+from runtime import add_comfy_args, comfy_output_path, require
 
 
 def build_workflow(image_name: str, mask_name: str, prompt: str, *,
@@ -191,7 +191,10 @@ def main() -> int:
         t0 = time.time()
         out_filename = submit_and_wait(wf, comfy_url=comfy_url, timeout_s=args.timeout_s)
         print(f"[edge-stitch] generation completed in {time.time()-t0:.1f}s -> {out_filename}")
-        inpainted_path = comfy_output / out_filename
+        try:
+            inpainted_path = comfy_output_path(comfy_output, out_filename)
+        except ValueError as exc:
+            p.error(str(exc))
         max_d, n_drift = hard_post_composite(args.reference, inpainted_path, args.mask, args.output)
     finally:
         staged_reference.unlink(missing_ok=True)

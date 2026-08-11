@@ -50,8 +50,10 @@ from PIL import Image
 from build_dualgrid import composite_tile, make_spritesheet
 from build_direct import generate_tile
 from build_layered import gen_corner_transition
+from build_set import main as build_set_main
 from edge_stitch import hard_post_composite
-from runtime import GatewayImageClient, contained_path, safe_spec_id, spec_id_key
+from runtime import (GatewayImageClient, comfy_output_path, contained_path,
+                     safe_spec_id, spec_id_key)
 
 work = Path(sys.argv[1])
 size = 8
@@ -118,6 +120,31 @@ except ValueError: pass
 else: raise AssertionError("allowed output path escape")
 assert spec_id_key("Foo") == spec_id_key("foo")
 assert spec_id_key("e\u0301") == spec_id_key("é")
+for bad in ("../../outside.png", "/outside.png", "..\\outside.png",
+            "%2e%2e%2foutside.png", "%252e%252e%252foutside.png"):
+    try: comfy_output_path(work, bad)
+    except ValueError: pass
+    else: raise AssertionError(f"accepted unsafe Comfy filename: {bad}")
+assert comfy_output_path(work, "nested/result.png") == (work / "nested/result.png").resolve()
+outside = work.parent / (work.name + "-outside")
+outside.mkdir()
+(work / "link").symlink_to(outside, target_is_directory=True)
+try: comfy_output_path(work, "link/secret.png")
+except ValueError: pass
+else: raise AssertionError("accepted symlink/traversal Comfy filename")
+
+# Build-set ID validation is a true preflight: a duplicate must fail before
+# required backend config is resolved or the output directory is created.
+duplicate_spec = work / "duplicate.json"
+duplicate_spec.write_text('{"tiles": [{"id": "Foo"}, {"id": "foo"}]}')
+duplicate_out = work / "duplicate-output"
+with patch.object(sys, "argv", ["build_set.py", "--spec", str(duplicate_spec),
+                                  "--out-dir", str(duplicate_out), "--seed-model", "fixture"]):
+    try: build_set_main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else: raise AssertionError("duplicate build-set IDs were accepted")
+assert not duplicate_out.exists()
 
 # Launch failures must not strand generated Comfy input files.
 rgb = np.zeros((size, size, 3), dtype=np.uint8)

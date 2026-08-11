@@ -12,9 +12,10 @@ import base64
 import os
 import ipaddress
 import unicodedata
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from dataclasses import dataclass
 from pathlib import Path
+from pathlib import PureWindowsPath
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -122,6 +123,31 @@ def contained_path(root: Path, *parts: str) -> Path:
     if candidate != root and root not in candidate.parents:
         raise ValueError(f"resolved output path escapes output root: {candidate}")
     return candidate
+
+
+def comfy_output_path(root: Path, server_filename: object) -> Path:
+    """Resolve a Comfy history filename under the configured output root.
+
+    Comfy returns a filename, but the value is endpoint-controlled data.  The
+    API permits a flat or nested relative filename; it does not permit a path
+    root, traversal component, Windows path syntax, or encoded traversal.
+    """
+    if not isinstance(server_filename, str) or not server_filename:
+        raise ValueError("Comfy response filename must be a non-empty relative path")
+    decoded = server_filename
+    for _ in range(3):
+        next_value = unquote(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    if "\\" in decoded or "\x00" in decoded:
+        raise ValueError("Comfy response filename must use POSIX relative path syntax")
+    path = Path(decoded)
+    if path.is_absolute() or PureWindowsPath(decoded).is_absolute() or PureWindowsPath(decoded).drive:
+        raise ValueError("Comfy response filename must be relative")
+    if any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("Comfy response filename must not contain traversal components")
+    return contained_path(root, *path.parts)
 
 
 def validate_gateway_url(base_url: str, *, bearer: bool) -> str:
