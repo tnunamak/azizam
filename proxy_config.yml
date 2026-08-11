@@ -114,6 +114,14 @@ backends:
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
         activation_profile: kv-q8
         context_window: 145408
+      - id: coder-unchained
+        model_group: coder-unchained
+        upstream_model: coder-unchained
+        backend_model: Huihui-Qwen3.6-27B-abliterated-UD-Q4_K_XL-MTP.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Huihui-Qwen3.6-27B-abliterated-UD-Q4_K_XL-MTP.gguf
+        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
+        activation_profile: kv-q5-q4
+        context_window: 205824
       # Public aliases inherit the logical base policy by stable id. Physical
       # paths remain routing data; only this overlay distinguishes fast.
       - id: default-fast
@@ -401,6 +409,20 @@ roles:
     activation_profile: kv-q8
     context_window: 145408
     description: Coding LLM with conservative Q8_0 K / Q8_0 V cache
+    sampling:
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
+  coder-unchained:
+    backend: kobold
+    model: /media/windows/AI Models/LLMs/GGUF/Huihui-Qwen3.6-27B-abliterated-UD-Q4_K_XL-MTP.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-mmproj-BF16.gguf
+    activation_profile: kv-q5-q4
+    context_window: 205824
+    description: Coding LLM - abliterated (Huihui Qwen3.6-27B abliterated UD-Q4_K_XL MTP)
     sampling:
       temperature: 0.6
       top_p: 0.95
