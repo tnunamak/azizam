@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from runtime import (GatewayImageClient, add_comfy_args, add_gateway_args, comfy_cli_args,
-                     contained_path, require, safe_spec_id)
+                     contained_path, require, safe_spec_id, spec_id_key)
 
 EDGE_STITCH = Path(__file__).parent / "edge_stitch.py"
 
@@ -100,19 +100,20 @@ def generate_tile(bits: int, size: int, prompt: str, seed: int, steps: int,
     work = comfy_input / f"_directtile_{uuid.uuid4().hex[:8]}"
     canvas_p = work.with_suffix(".canvas.png")
     mask_p = work.with_suffix(".mask.png")
-    canvas.save(canvas_p)
-    mask.save(mask_p)
-
-    print(f"    tile_{bits:02d} (S-V2[{bits & 1}{(bits>>1) & 1}{(bits>>2) & 1}{(bits>>3) & 1}])...")
-    r = subprocess.run([str(EDGE_STITCH),
+    try:
+        canvas.save(canvas_p)
+        mask.save(mask_p)
+        print(f"    tile_{bits:02d} (S-V2[{bits & 1}{(bits>>1) & 1}{(bits>>2) & 1}{(bits>>3) & 1}])...")
+        r = subprocess.run([str(EDGE_STITCH),
                         "--reference", str(canvas_p),
                         "--mask", str(mask_p),
                         "--prompt", prompt,
                         "--output", str(out_path),
                         "--seed", str(seed),
-                        "--steps", str(steps), *edge_config])
-    canvas_p.unlink(missing_ok=True)
-    mask_p.unlink(missing_ok=True)
+                            "--steps", str(steps), *edge_config])
+    finally:
+        canvas_p.unlink(missing_ok=True)
+        mask_p.unlink(missing_ok=True)
     if r.returncode != 0:
         sys.exit(f"tile gen failed for bits={bits}")
 
@@ -281,7 +282,7 @@ def main() -> int:
     if size < 2 or size % 2 or steps < 1:
         p.error("size must be an even positive integer and steps must be positive")
     ids = [safe_spec_id(layer.get("id"), "layer id") for layer in spec.get("layers", [])]
-    if not ids or len(ids) != len(set(ids)):
+    if not ids or len(ids) != len({spec_id_key(value) for value in ids}):
         p.error("layers must be a non-empty list with unique portable ids")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

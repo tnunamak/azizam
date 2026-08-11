@@ -48,8 +48,10 @@ import numpy as np
 from PIL import Image
 
 from build_dualgrid import composite_tile, make_spritesheet
+from build_direct import generate_tile
+from build_layered import gen_corner_transition
 from edge_stitch import hard_post_composite
-from runtime import GatewayImageClient, contained_path, safe_spec_id
+from runtime import GatewayImageClient, contained_path, safe_spec_id, spec_id_key
 
 work = Path(sys.argv[1])
 size = 8
@@ -77,6 +79,23 @@ rgba_out = Image.open(work / "rgba-out.png")
 assert rgba_out.mode == "RGBA"
 assert np.array_equal(np.array(rgba_out)[:, : size // 2], rgba_reference[:, : size // 2])
 
+# Every accepted single-channel/color PNG mode must preserve its reference pixels.
+for mode, values in (("L", np.arange(size * size, dtype=np.uint8).reshape(size, size)),
+                     ("P", np.arange(size * size, dtype=np.uint8).reshape(size, size)),
+                     ("RGB", reference), ("RGBA", rgba_reference)):
+    ref_path = work / f"mode-{mode}-reference.png"
+    out_path = work / f"mode-{mode}-inpainted.png"
+    result_path = work / f"mode-{mode}-result.png"
+    ref_image = Image.fromarray(values, mode=mode)
+    if mode == "P":
+        ref_image.putpalette(bytes(range(256)) * 3)
+    ref_image.save(ref_path)
+    Image.fromarray(np.zeros_like(values), mode=mode).save(out_path)
+    hard_post_composite(ref_path, out_path, work / "mask.png", result_path)
+    result = Image.open(result_path)
+    assert result.mode == mode
+    assert np.array_equal(np.array(result)[:, : size // 2], values[:, : size // 2])
+
 # Distinct palette values make every quadrant placement and all 16 bit patterns
 # observable without any diffusion runtime.
 palette = {}
@@ -89,13 +108,37 @@ assert np.all(tiles[1][:4, :4] == 3)  # TL filled against BR empty.
 assert np.all(tiles[1][4:, 4:] == 3)  # BR sees the same TL-filled transition.
 sheet = make_spritesheet(tiles, size)
 assert sheet.size == (size * 4, size * 4)
-for bad in ("..", "../escape", "a/b", "a\\b", "/absolute", "C:drive"):
+for bad in ("..", "../escape", "a/b", "a\\b", "/absolute", "C:drive", "CON", "aux.txt",
+            "Lpt9", "bad*", "bad?", "bad<", "bad>", "bad|", "bad\"", "bad.", "bad "):
     try: safe_spec_id(bad, "tile id")
     except ValueError: pass
     else: raise AssertionError(f"accepted unsafe id: {bad}")
 try: contained_path(work, "..", "escape.png")
 except ValueError: pass
 else: raise AssertionError("allowed output path escape")
+assert spec_id_key("Foo") == spec_id_key("foo")
+assert spec_id_key("e\u0301") == spec_id_key("é")
+
+# Launch failures must not strand generated Comfy input files.
+rgb = np.zeros((size, size, 3), dtype=np.uint8)
+with patch("build_direct.subprocess.run", side_effect=OSError("launch failed")):
+    try:
+        generate_tile(1, size, "fixture", 1, 1, rgb, rgb, work / "direct.png", work, [])
+    except OSError:
+        pass
+    else: raise AssertionError("expected direct launch failure")
+assert not list(work.glob("_directtile_*.canvas.png"))
+assert not list(work.glob("_directtile_*.mask.png"))
+with patch("build_layered.subprocess.run", side_effect=OSError("launch failed")):
+    try:
+        gen_corner_transition(filled_img=work / "reference.png", empty_img=work / "inpainted.png",
+                              filled_corner="NW", prompt="fixture", size=size, out_path=work / "layered.png",
+                              seed=1, steps=1, comfy_input=work, edge_config=[])
+    except OSError:
+        pass
+    else: raise AssertionError("expected layered launch failure")
+assert not list(work.glob("_layered_corner_*.canvas.png"))
+assert not list(work.glob("_layered_corner_*.mask.png"))
 
 # The client boundary must stay on the documented OpenAI Images API shape and
 # must not follow arbitrary response URLs with the bearer token.

@@ -44,7 +44,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from runtime import (GatewayImageClient, add_comfy_args, add_gateway_args, comfy_cli_args,
-                     contained_path, require, safe_spec_id)
+                     contained_path, require, safe_spec_id, spec_id_key)
 
 EDGE_STITCH = Path(__file__).parent / "edge_stitch.py"
 
@@ -183,8 +183,8 @@ def main() -> int:
 
     spec = json.loads(args.spec.read_text())
     size = int(spec.get("tile_size", 512)); edge_w = int(spec.get("edge_width", 32))
-    if size < 2 or size % 2 or edge_w < 1 or edge_w > size:
-        p.error("tile_size must be an even positive integer and edge_width must be in 1..tile_size")
+    if size < 2 or size % 2 or edge_w < 1 or edge_w > size or args.steps < 1:
+        p.error("tile_size must be an even positive integer, edge_width must be in 1..tile_size, and steps must be positive")
     default_prompt = spec.get("default_prompt", "")
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -198,9 +198,10 @@ def main() -> int:
             out_path = contained_path(args.out_dir, f"{tid}.png")
         except (KeyError, ValueError) as exc:
             p.error(str(exc))
-        if tid in seen_ids:
+        tid_key = spec_id_key(tid)
+        if tid_key in seen_ids:
             p.error(f"duplicate tile id: {tid}")
-        seen_ids.add(tid)
+        seen_ids.add(tid_key)
         prompt = tile.get("prompt", default_prompt) or default_prompt
         if not prompt:
             sys.exit(f"tile {tid} has no prompt and no default_prompt set")

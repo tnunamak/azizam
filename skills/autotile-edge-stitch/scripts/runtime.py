@@ -11,6 +11,7 @@ import argparse
 import base64
 import os
 import ipaddress
+import unicodedata
 from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
@@ -101,11 +102,18 @@ def safe_spec_id(value: object, label: str) -> str:
     """Accept only portable, single-component IDs suitable for filenames."""
     if not isinstance(value, str) or not value or value in {".", ".."}:
         raise ValueError(f"{label} must be a non-empty portable identifier")
-    if any(ch in value for ch in "/\\") or any(ord(ch) < 32 for ch in value):
+    if any(ch in value for ch in '<>:"/\\|?*') or any(ord(ch) < 32 for ch in value):
         raise ValueError(f"{label} must not contain path separators or control characters")
-    if ":" in value or value.startswith("~"):
-        raise ValueError(f"{label} must not contain platform path syntax")
+    if value[-1] in ". ":
+        raise ValueError(f"{label} must not end with a dot or space")
+    reserved = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+    if value.split(".", 1)[0].casefold() in reserved:
+        raise ValueError(f"{label} must not use a Windows reserved filename")
     return value
+
+
+def spec_id_key(value: str) -> str:
+    return unicodedata.normalize("NFC", value).casefold()
 
 
 def contained_path(root: Path, *parts: str) -> Path:

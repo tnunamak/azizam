@@ -37,7 +37,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from runtime import (GatewayImageClient, add_comfy_args, add_gateway_args, comfy_cli_args,
-                     contained_path, require, safe_spec_id)
+                     contained_path, require, safe_spec_id, spec_id_key)
 
 EDGE_STITCH = Path(__file__).parent / "edge_stitch.py"
 
@@ -84,18 +84,19 @@ def gen_corner_transition(
     work = comfy_input / f"_layered_corner_{uuid.uuid4().hex[:8]}"
     canvas_p = work.with_suffix(".canvas.png")
     mask_p = work.with_suffix(".mask.png")
-    Image.fromarray(canvas).save(canvas_p)
-    Image.fromarray(mask).save(mask_p)
-
-    print(f"    corner {filled_corner} -> {out_path.name}...")
-    r = subprocess.run([str(EDGE_STITCH),
+    try:
+        Image.fromarray(canvas).save(canvas_p)
+        Image.fromarray(mask).save(mask_p)
+        print(f"    corner {filled_corner} -> {out_path.name}...")
+        r = subprocess.run([str(EDGE_STITCH),
                         "--reference", str(canvas_p),
                         "--mask", str(mask_p),
                         "--prompt", prompt,
                         "--output", str(out_path),
                         "--seed", str(seed),
-                        "--steps", str(steps), *edge_config])
-    canvas_p.unlink(missing_ok=True); mask_p.unlink(missing_ok=True)
+                            "--steps", str(steps), *edge_config])
+    finally:
+        canvas_p.unlink(missing_ok=True); mask_p.unlink(missing_ok=True)
     if r.returncode != 0:
         sys.exit(f"corner-transition failed for {filled_corner}")
 
@@ -310,11 +311,13 @@ def main() -> int:
     spec = json.loads(args.spec.read_text())
     size = int(spec.get("size", 512))
     steps = int(spec.get("steps", 30))
+    if size < 2 or size % 2 or steps < 1:
+        p.error("size must be an even positive integer and steps must be positive")
     layers_cfg = spec["layers"]
     if not isinstance(layers_cfg, list) or not layers_cfg:
         p.error("layers must be a non-empty list")
     ids = [safe_spec_id(layer.get("id"), "layer id") for layer in layers_cfg]
-    if len(ids) != len(set(ids)):
+    if len(ids) != len({spec_id_key(value) for value in ids}):
         p.error("layer ids must be unique")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

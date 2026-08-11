@@ -109,12 +109,19 @@ def hard_post_composite(reference: Path, inpainted: Path, mask: Path, output: Pa
     if m.shape != ref.shape[:2]:
         sys.exit(f"mask shape mismatch: {m.shape} vs {ref.shape[:2]}")
     preserve = (m < 128)
-    diff = np.abs(ref.astype(int) - out.astype(int)).sum(-1)
+    ref_channels = ref[..., None] if ref.ndim == 2 else ref
+    out_channels = out[..., None] if out.ndim == 2 else out
+    diff = np.abs(ref_channels.astype(int) - out_channels.astype(int)).sum(-1)
     drift = diff[preserve]
     max_d = int(drift.max()) if drift.size else 0
     n_drift = int((drift > 0).sum())
-    composited = np.where(preserve[..., None], ref, out).astype(np.uint8)
-    Image.fromarray(composited, mode=ref_image.mode).save(output)
+    composite_mask = preserve if ref.ndim == 2 else preserve[..., None]
+    composited = np.where(composite_mask, ref, out).astype(np.uint8)
+    result_image = Image.fromarray(composited, mode=ref_image.mode)
+    if ref_image.mode == "P" and ref_image.palette is not None:
+        result_image.putpalette(ref_image.palette)
+    result_image.save(output)
+    result_image.close()
     ref_image.close(); out_image.close()
     return max_d, n_drift
 
