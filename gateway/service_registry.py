@@ -7,8 +7,11 @@ The gateway has two different kinds of configuration:
 
 This module turns legacy ``proxy_config.yml`` backend/API declarations into a
 durable registry document in ``admin.db``. After that first seed, the registry
-is the runtime source of truth. Provisioned/builtin/discovered rows can still
-be read-only, but their ownership is explicit instead of hidden in YAML.
+is the runtime source of truth. A service row's ``source`` is provenance, not
+permission: every non-managed row remains editable, enableable/disableable,
+and removable in the DB/UI registry. The managed LiteLLM substrate is the sole
+exception: its endpoint/protocol fields and removal are locked, while its name,
+enabled state, and note remain editable.
 """
 
 from __future__ import annotations

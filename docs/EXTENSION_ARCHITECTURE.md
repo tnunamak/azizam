@@ -114,9 +114,6 @@ min_gateway_version: "0.1"
 trust:
   tier: local
   signature: ""
-ownership:
-  mode: imported
-  editable: false
 objects:
   protocol_frontends:
     - protocol_frontends/example.yml
@@ -131,6 +128,12 @@ objects:
   translators:
     - translators/example-api.yml
 ```
+
+The manifest does not define a service-row ownership mode. Review fixes the
+package artifacts at their content hash and records source provenance; enabling
+an imported service creates a normal DB service row with `source: imported`.
+That row follows the normal editability law, not a package-specific permission
+mode.
 
 Code objects are referenced exactly like data objects, but their declarations
 live in separate files so package validation can hash the reviewed code
@@ -196,10 +199,11 @@ lifecycle: fetch, stage, validate, review, configure, test, then enable.
 - Discovered services or workflows that an operator adopts into a managed
   package record.
 
-Git URLs are convenient input, not authority. Enabled DB records store source
-URL, resolved ref, package hash, enabled objects, ownership mode, config
-overrides, and audit history. A Git-backed update is a new staged candidate
-that must pass validation before replacing the enabled package.
+Git URLs are convenient input, not authority. The enabled package index stores
+the package identity, enabled state, source/resolved ref, reviewed package
+hash, object IDs, code-review facts, warnings, and update time. It does not
+persist an ownership mode. A Git-backed update is a new staged candidate that
+must pass validation before replacing the enabled package.
 
 Local directories follow the same model. The path is an install source for
 staging and hashing package content; enablement writes DB registry records
