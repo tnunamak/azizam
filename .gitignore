@@ -46,6 +46,10 @@ data/migration-backups/
 # Stray root-level copy of the admin DB (never a canonical location).
 /admin.db
 
+# Bounded STT request workspaces can contain raw audio during a request and
+# must never become stageable after a crash or a mandatory-cleanup failure.
+data/stt-spool/
+
 # LiteLLM sidecar config is generated from the DB-owned service registry.
 # It is runtime state, not an editable source of truth. Generated backup/
 # snapshot copies of it are equally non-canonical.

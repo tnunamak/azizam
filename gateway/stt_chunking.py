@@ -70,6 +70,18 @@ _HOP_BY_HOP_RESPONSE_HEADERS = frozenset(
         "upgrade",
     }
 )
+_DECODED_RESPONSE_REPRESENTATION_HEADERS = frozenset(
+    {
+        "accept-ranges",
+        "content-encoding",
+        "content-length",
+        "content-md5",
+        "content-range",
+        "digest",
+        "etag",
+        "vary",
+    }
+)
 
 # Deliberately read from the installed SDK type instead of duplicating its
 # top-level contract in a hand-maintained list.  ``logprobs`` is recognized but
@@ -304,10 +316,23 @@ class ChunkingOutcome:
 class ParsedMultipart:
     form: FormData
     parser: "DiskBoundedMultiPartParser"
+    workspace: Path
+
+    async def close_form(self) -> None:
+        await self.form.close()
 
     async def aclose(self) -> None:
-        await self.form.close()
-        self.parser.remove_spool_files()
+        """Convenience cleanup for non-route callers; attempt each release."""
+        failures: list[Exception] = []
+        for action in (self.close_form, self.parser.remove_spool_files, lambda: remove_request_workspace(self.workspace)):
+            try:
+                result = action()
+                if result is not None:
+                    await result
+            except Exception as error:
+                failures.append(error)
+        if failures:
+            raise failures[0]
 
 
 class DiskBoundedMultiPartParser(MultiPartParser):
@@ -326,6 +351,7 @@ class DiskBoundedMultiPartParser(MultiPartParser):
         stream: Any,
         *,
         config: SttExecutionConfig,
+        workspace: Path,
     ) -> None:
         super().__init__(
             headers,
@@ -335,6 +361,7 @@ class DiskBoundedMultiPartParser(MultiPartParser):
             max_part_size=config.max_field_bytes,
         )
         self._config = config
+        self._workspace = workspace
         self._uploaded_bytes = 0
         self._spool_paths: set[Path] = set()
 
@@ -369,7 +396,7 @@ class DiskBoundedMultiPartParser(MultiPartParser):
                 mode="w+b",
                 prefix="upload-",
                 suffix=".part",
-                dir=self._config.spool_dir,
+                dir=self._workspace,
                 delete=False,
             )
         except OSError as error:
@@ -407,6 +434,8 @@ async def parse_bounded_multipart(
     request: Any,
     config: SttExecutionConfig,
     *,
+    workspace: Path | None = None,
+    cleanup: "SttCleanupOwner | None" = None,
     deadline_at: float | None = None,
 ) -> ParsedMultipart:
     """Parse the request body directly to bounded disk files, never bytes buffers."""
@@ -414,19 +443,51 @@ async def parse_bounded_multipart(
         config.spool_dir.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
-    parser = DiskBoundedMultiPartParser(request.headers, request.stream(), config=config)
+    owns_workspace = workspace is None
+    active_workspace = workspace or create_request_workspace(config)
+    parser = DiskBoundedMultiPartParser(
+        request.headers,
+        request.stream(),
+        config=config,
+        workspace=active_workspace,
+    )
+    if cleanup is not None:
+        cleanup.add("multipart_parser_spool_files", parser.remove_spool_files)
     try:
         form = await await_with_cancellation(parser.parse(), deadline_at=deadline_at)
     except ClientDisconnect as error:
-        _remove_spool_files_after_parse_failure(parser)
+        if cleanup is None:
+            _remove_spool_files_after_parse_failure(parser)
+        if owns_workspace:
+            _remove_workspace_after_parse_failure(active_workspace)
         raise SttCancelled("STT upload cancelled by client disconnect") from error
     except asyncio.CancelledError:
-        _remove_spool_files_after_parse_failure(parser)
+        if cleanup is None:
+            _remove_spool_files_after_parse_failure(parser)
+        if owns_workspace:
+            _remove_workspace_after_parse_failure(active_workspace)
         raise
     except Exception:
-        _remove_spool_files_after_parse_failure(parser)
+        if cleanup is None:
+            _remove_spool_files_after_parse_failure(parser)
+        if owns_workspace:
+            _remove_workspace_after_parse_failure(active_workspace)
         raise
-    return ParsedMultipart(form=form, parser=parser)
+    return ParsedMultipart(form=form, parser=parser, workspace=active_workspace)
+
+
+def create_request_workspace(config: SttExecutionConfig) -> Path:
+    """Allocate one private disk-backed directory beneath the configured spool root."""
+    try:
+        config.spool_dir.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix="request-", dir=config.spool_dir))
+    except OSError as error:
+        raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
+
+
+def remove_request_workspace(workspace: Path) -> None:
+    """Remove a request workspace after all independently owned children released."""
+    shutil.rmtree(workspace)
 
 
 def _remove_spool_files_after_parse_failure(parser: DiskBoundedMultiPartParser) -> None:
@@ -434,6 +495,13 @@ def _remove_spool_files_after_parse_failure(parser: DiskBoundedMultiPartParser) 
         parser.remove_spool_files()
     except OSError as error:
         _log_cleanup_failure("multipart_spool", error)
+
+
+def _remove_workspace_after_parse_failure(workspace: Path) -> None:
+    try:
+        remove_request_workspace(workspace)
+    except OSError as error:
+        _log_cleanup_failure("multipart_workspace", error)
 
 
 class SttResourceLease:
@@ -863,6 +931,7 @@ async def execute_chunking(
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
     on_attempt_started: Callable[[int], None] | None = None,
+    cleanup: "SttCleanupOwner | None" = None,
 ) -> ChunkingOutcome:
     """Probe, plan, extract, and submit chunks without a whole-file replay."""
     if not config.chunking_enabled or not request_supports_chunking(fields, file_count=1):
@@ -914,6 +983,8 @@ async def execute_chunking(
     attempts_started = 0
     for index, (start, end) in enumerate(segments):
         chunk_path = source_path.parent / f"segment-{index:03d}.wav"
+        if cleanup is not None:
+            cleanup.add(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
         try:
             try:
                 await extract_segment(
@@ -957,12 +1028,10 @@ async def execute_chunking(
                 )
             payloads.append(_parse_mergeable_chunk_payload(response.body))
         finally:
-            try:
-                chunk_path.unlink()
-            except FileNotFoundError:
-                pass
-            except OSError as error:
-                _log_cleanup_failure("chunk_file", error)
+            if cleanup is None:
+                _unlink_chunk_path(chunk_path)
+            else:
+                await cleanup.release(f"segment_{index:03d}", lambda path=chunk_path: _unlink_chunk_path(path))
 
     return ChunkingOutcome(
         "chunked",
@@ -1001,7 +1070,7 @@ def _parse_mergeable_chunk_payload(body: bytes) -> Mapping[str, Any]:
 def _merge_usage(values: Sequence[Any]) -> dict[str, Any] | None:
     if not any(value is not None for value in values):
         return None
-    if any(not isinstance(value, Mapping) for value in values):
+    if any(value is None for value in values) or any(not isinstance(value, Mapping) for value in values):
         raise SttChunkResponseError("STT chunk usage is invalid")
     usages = [dict(value) for value in values]
     for usage in usages:
@@ -1020,17 +1089,24 @@ def _merge_usage(values: Sequence[Any]) -> dict[str, Any] | None:
             "total_tokens": _sum_number(usages, "total_tokens"),
         }
         details = [usage.get("input_token_details") for usage in usages]
-        if any(detail is not None for detail in details):
-            if any(not isinstance(detail, Mapping) for detail in details):
-                raise SttChunkResponseError("STT chunk token usage details differ")
-            known_details = [dict(detail) for detail in details if isinstance(detail, Mapping)]
-            merged_details: dict[str, int | float] = {}
-            for field in _SDK_TOKEN_DETAIL_FIELDS:
-                present = [detail for detail in known_details if field in detail and detail[field] is not None]
-                if present:
-                    merged_details[field] = _sum_number(present, field)
-            if merged_details:
-                merged["input_token_details"] = merged_details
+        if all(detail is None for detail in details):
+            return merged
+        if any(not isinstance(detail, Mapping) for detail in details):
+            raise SttChunkResponseError("STT chunk token usage details differ")
+        detail_mappings = [dict(detail) for detail in details]
+        detail_shapes = {frozenset(detail) for detail in detail_mappings}
+        if len(detail_shapes) != 1:
+            raise SttChunkResponseError("STT chunk token usage details differ")
+        merged_details: dict[str, int] = {}
+        for field in detail_shapes.pop():
+            counters = [detail[field] for detail in detail_mappings]
+            if any(counter is None for counter in counters):
+                if any(counter is not None for counter in counters):
+                    raise SttChunkResponseError("STT chunk token usage details differ")
+                continue
+            merged_details[field] = _sum_integer(counters)
+        if merged_details:
+            merged["input_token_details"] = merged_details
         return merged
     raise SttChunkResponseError("STT chunk usage format is unsupported")
 
@@ -1041,7 +1117,7 @@ def _validate_usage(value: Any) -> None:
     kind = value.get("type")
     if kind == "duration":
         _validate_usage_mapping(value, _SDK_DURATION_USAGE_FIELDS, required={"type", "seconds"})
-        _validate_number(value["seconds"])
+        _validate_duration_seconds(value["seconds"])
         return
     if kind == "tokens":
         _validate_usage_mapping(
@@ -1050,13 +1126,13 @@ def _validate_usage(value: Any) -> None:
             required={"type", "input_tokens", "output_tokens", "total_tokens"},
         )
         for field in ("input_tokens", "output_tokens", "total_tokens"):
-            _validate_number(value[field])
+            _validate_integer(value[field])
         details = value.get("input_token_details")
         if details is not None:
             _validate_usage_mapping(details, _SDK_TOKEN_DETAIL_FIELDS, required=set())
             for field in _SDK_TOKEN_DETAIL_FIELDS:
                 if field in details and details[field] is not None:
-                    _validate_number(details[field])
+                    _validate_integer(details[field])
         return
     raise SttChunkResponseError("STT chunk usage format is unsupported")
 
@@ -1071,16 +1147,26 @@ def _validate_usage_mapping(
         raise SttChunkResponseError("STT chunk usage has unsupported fields")
 
 
-def _validate_number(value: Any) -> None:
+def _validate_duration_seconds(value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise SttChunkResponseError("STT chunk usage is invalid")
 
 
+def _validate_integer(value: Any) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SttChunkResponseError("STT chunk usage is invalid")
+
+
 def filtered_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """Filter headers after ``httpx.aiter_bytes`` has decoded the body.
+
+    HTTPX exposes decoded content here.  Keeping validators or encodings for
+    the upstream representation would lie about the bytes sent to the caller.
+    """
     return {
         name: value
         for name, value in headers.items()
-        if name.lower() not in _HOP_BY_HOP_RESPONSE_HEADERS
+        if name.lower() not in _HOP_BY_HOP_RESPONSE_HEADERS | _DECODED_RESPONSE_REPRESENTATION_HEADERS
     }
 
 
@@ -1140,6 +1226,12 @@ class SttCleanupOwner:
             raise asyncio.CancelledError
 
     async def release(self, name: str, action: Callable[[], Awaitable[None] | None]) -> None:
+        for index in range(len(self._actions) - 1, -1, -1):
+            registered_name, registered_action = self._actions[index]
+            if registered_name == name:
+                self._actions.pop(index)
+                await self._run(registered_name, registered_action)
+                return
         await self._run(name, action)
 
     async def _run(self, name: str, action: Callable[[], Awaitable[None] | None]) -> None:
@@ -1210,6 +1302,19 @@ def _sum_number(items: Sequence[Mapping[str, Any]], key: str) -> int | float:
         values.append(value)
     total = sum(values)
     return int(total) if all(isinstance(value, int) for value in values) else total
+
+
+def _sum_integer(values: Sequence[Any]) -> int:
+    for value in values:
+        _validate_integer(value)
+    return sum(values)
+
+
+def _unlink_chunk_path(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
 
 
 def _disk_free_bytes(path: Path) -> int:

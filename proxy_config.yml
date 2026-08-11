@@ -242,6 +242,9 @@ backends:
       max_media_output_bytes: 8388608
       spool_dir: data/stt-spool
       min_free_bytes: 67108864
+      # Despite its legacy name, this admission limit is per gateway Python
+      # process. Multiple workers multiply this limit and its reserved-disk
+      # budget; use one worker until a durable cross-process coordinator exists.
       global_concurrency: 2
       backend_timeout_seconds: 120
       deadline_seconds: 300

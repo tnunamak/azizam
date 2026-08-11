@@ -360,6 +360,12 @@ Bundled seed service records target these local development defaults:
 - Parakeet STT on `127.0.0.1:5092`
 - ComfyUI on `127.0.0.1:7890`
 
+Long-audio STT creates one request workspace below
+`backends.<service>.chunking.spool_dir`. Keep that directory on durable disk.
+Its legacy-named `global_concurrency` limit and reserved-disk accounting apply
+to one gateway Python process only. Run one worker unless you provide a durable
+cross-process admission coordinator; extra workers multiply both limits.
+
 After boot, provider/service availability lives in the DB/UI registry with an
 explicit ownership mode: `ui`, `provisioned`, `builtin`, or `discovered`.
 Provisioned services are visible and testable but read-only unless detached or

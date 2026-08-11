@@ -40,6 +40,7 @@ IGNORED_PATHS = [
     "data/litellm.config.yaml.old",
     "data/litellm.config.yaml.bak.20260630-103242",
     "data/litellm.config.yaml.mylllama-bak.20260605-182039",
+    "data/stt-spool/request-private-audio/upload-private.part",
     "core.73804",
     "core.348027",
     "docs/design/vivid-fish-handoff/gateway/core.348027",
@@ -127,3 +128,13 @@ def test_canonical_source_or_config_is_not_ignored(path):
         f"(returncode={result.returncode} stdout={result.stdout!r} "
         f"stderr={result.stderr!r})"
     )
+
+
+def test_stt_runtime_audio_workspace_is_ignored_by_repository_policy() -> None:
+    """The hermetic archive has no .git directory, so inspect the tracked rule."""
+    patterns = {
+        line.strip()
+        for line in REPO_GITIGNORE.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "data/stt-spool/" in patterns

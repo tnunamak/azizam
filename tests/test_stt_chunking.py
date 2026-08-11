@@ -10,6 +10,8 @@ import struct
 import tempfile
 import unittest
 import wave
+import zlib
+import gzip
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -20,6 +22,7 @@ from starlette.requests import Request
 import proxy
 from gateway import stt_chunking
 from gateway import service_registry
+from gateway.backends.cancellation import CancellationRegistry
 
 
 def _config(root: Path, **overrides: object) -> stt_chunking.SttExecutionConfig:
@@ -145,6 +148,77 @@ class SttChunkMergeTests(unittest.TestCase):
             search_seconds=8,
         )
         self.assertEqual(segments, [(0.0, 20.0), (20.0, 40.0), (40.0, 80)])
+
+    def test_sdk_exact_usage_null_integer_and_optional_detail_contracts(self) -> None:
+        self.assertEqual(
+            stt_chunking.merge_transcription_payloads([{"text": "one", "usage": None}, {"text": "two", "usage": None}]),
+            {"text": "one two"},
+        )
+        self.assertEqual(
+            stt_chunking.merge_transcription_payloads([
+                {"text": "one", "usage": {"type": "duration", "seconds": 1}},
+                {"text": "two", "usage": {"type": "duration", "seconds": 2.5}},
+            ])["usage"],
+            {"type": "duration", "seconds": 3.5},
+        )
+        for details, expected in (
+            ({}, None),
+            ({"audio_tokens": 2}, {"audio_tokens": 7}),
+            ({"text_tokens": 2}, {"text_tokens": 7}),
+            ({"audio_tokens": 2, "text_tokens": 3}, {"audio_tokens": 7, "text_tokens": 9}),
+            ({"audio_tokens": None}, None),
+        ):
+            with self.subTest(details=details):
+                second = {
+                    key: value + 3 if isinstance(value, int) else value
+                    for key, value in details.items()
+                }
+                payload = stt_chunking.merge_transcription_payloads([
+                    {"text": "one", "usage": {"type": "tokens", "input_tokens": 1, "output_tokens": 0, "total_tokens": 1, "input_token_details": details}},
+                    {"text": "two", "usage": {"type": "tokens", "input_tokens": 2, "output_tokens": 0, "total_tokens": 2, "input_token_details": second}},
+                ])
+                self.assertEqual(payload["usage"].get("input_token_details"), expected)
+
+        invalid = (
+            {"type": "tokens", "input_tokens": 1.5, "output_tokens": 0, "total_tokens": 1},
+            {"type": "tokens", "input_tokens": True, "output_tokens": 0, "total_tokens": 1},
+            {"type": "tokens", "input_tokens": 1, "output_tokens": 0, "total_tokens": 1, "input_token_details": {"audio_tokens": 1.5}},
+            {"type": "duration", "seconds": float("inf")},
+        )
+        for usage in invalid:
+            with self.subTest(usage=usage), self.assertRaises(stt_chunking.SttChunkResponseError):
+                stt_chunking._parse_mergeable_chunk_payload(json.dumps({"text": "x", "usage": usage}).encode())
+
+        heterogeneous = (
+            [{"text": "one", "usage": None}, {"text": "two", "usage": {"type": "duration", "seconds": 1}}],
+            [
+                {"text": "one", "usage": {"type": "tokens", "input_tokens": 1, "output_tokens": 0, "total_tokens": 1}},
+                {"text": "two", "usage": {"type": "tokens", "input_tokens": 2, "output_tokens": 0, "total_tokens": 2, "input_token_details": {"audio_tokens": 2}}},
+            ],
+            [
+                {"text": "one", "usage": {"type": "tokens", "input_tokens": 1, "output_tokens": 0, "total_tokens": 1, "input_token_details": {"audio_tokens": None}}},
+                {"text": "two", "usage": {"type": "tokens", "input_tokens": 2, "output_tokens": 0, "total_tokens": 2, "input_token_details": {"audio_tokens": 2}}},
+            ],
+            [
+                {"text": "one", "usage": {"type": "tokens", "input_tokens": 1, "output_tokens": 0, "total_tokens": 1, "input_token_details": {"audio_tokens": 1}}},
+                {"text": "two", "usage": {"type": "tokens", "input_tokens": 2, "output_tokens": 0, "total_tokens": 2, "input_token_details": {"text_tokens": 2}}},
+            ],
+        )
+        for payloads in heterogeneous:
+            with self.subTest(payloads=payloads), self.assertRaises(stt_chunking.SttChunkResponseError):
+                stt_chunking.merge_transcription_payloads(payloads)
+
+    def test_decoded_response_headers_never_describe_the_upstream_representation(self) -> None:
+        for encoding in ("gzip", "deflate", "gzip, deflate"):
+            with self.subTest(encoding=encoding):
+                headers = stt_chunking.filtered_response_headers({
+                    "content-type": "application/json",
+                    "content-encoding": encoding,
+                    "etag": "upstream-tag",
+                    "digest": "sha-256=upstream",
+                    "x-safe": "retained",
+                })
+                self.assertEqual(headers, {"x-safe": "retained"})
 
 
 class BoundedMultipartTests(unittest.IsolatedAsyncioTestCase):
@@ -313,6 +387,104 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(any(root.glob("segment-*.wav")))
 
 
+class RequestWorkspaceIsolationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_two_live_routes_cannot_cross_workspace_paths_audio_or_unlinks(self) -> None:
+        """Interleave both first chunks at the shipped process concurrency limit.
+
+        Old shared ``segment-000.wav`` allocation made both downstream bodies
+        observe the second request's audio. The route now proves isolation at
+        the actual multipart, extract, send, unlink, and workspace boundary.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = _config(root, global_concurrency=2)
+            first_extracts = 0
+            both_first_chunks_written = asyncio.Event()
+            observed: list[tuple[Path, bytes]] = []
+
+            async def extract(source: Path, destination: Path, **_kwargs: object) -> None:
+                nonlocal first_extracts
+                destination.write_bytes(source.read_bytes())
+                if destination.name == "segment-000.wav":
+                    first_extracts += 1
+                    if first_extracts == 2:
+                        both_first_chunks_written.set()
+                    else:
+                        await asyncio.wait_for(both_first_chunks_written.wait(), timeout=1)
+
+            class Response:
+                status_code = 200
+                headers = {"content-type": "application/json"}
+
+                def aiter_bytes(self):
+                    async def chunks():
+                        yield b'{"text":"chunk"}'
+                    return chunks()
+
+                async def aclose(self) -> None:
+                    return None
+
+            class Client:
+                closed = 0
+
+                def __init__(self, *_args: object, **_kwargs: object) -> None:
+                    pass
+
+                def build_request(self, _method: str, _url: str, *, files: list[tuple[str, tuple[str, object, str]]], **_kwargs: object) -> object:
+                    return files[0][1][1]
+
+                async def send(self, handle: object, *, stream: bool) -> Response:
+                    del stream
+                    path = Path(getattr(handle, "name"))
+                    observed.append((path, getattr(handle, "read")()))
+                    return Response()
+
+                async def aclose(self) -> None:
+                    self.__class__.closed += 1
+
+            def request_for(marker: bytes) -> Request:
+                body, content_type = _multipart_body(content=marker)
+                sent = False
+
+                async def receive():
+                    nonlocal sent
+                    if not sent:
+                        sent = True
+                        return {"type": "http.request", "body": body, "more_body": False}
+                    await asyncio.Future()
+
+                return Request(
+                    {"type": "http", "method": "POST", "path": "/v1/audio/transcriptions", "headers": [(b"content-type", content_type.encode())]},
+                    receive,
+                )
+
+            with (
+                patch.object(proxy, "_stt_execution_snapshot", return_value=config),
+                patch.object(proxy.httpx, "AsyncClient", Client),
+                patch.object(stt_chunking, "GLOBAL_STT_RESOURCE_GATE", stt_chunking.SttResourceGate()),
+                patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))),
+                patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=[])),
+                patch.object(stt_chunking, "plan_silence_only_segments", return_value=[(0.0, 1.0), (1.0, 2.0)]),
+                patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)),
+                patch.object(proxy.receipt_store, "begin"),
+                patch.object(proxy.receipt_store, "finalize", return_value=True),
+            ):
+                responses = await asyncio.gather(
+                    proxy.proxy_stt_request(request_for(b"request-A-private-audio"), proxy.NO_AUTH_CONTEXT),
+                    proxy.proxy_stt_request(request_for(b"request-B-private-audio"), proxy.NO_AUTH_CONTEXT),
+                )
+
+            self.assertEqual([response.status_code for response in responses], [200, 200])
+            self.assertEqual(len(observed), 4)
+            self.assertEqual({body for _path, body in observed}, {b"request-A-private-audio", b"request-B-private-audio"})
+            paths = [path for path, _body in observed]
+            self.assertEqual(len(set(paths)), 4)
+            self.assertEqual(len({path.parent for path in paths}), 2)
+            self.assertTrue(all(path.is_relative_to(config.spool_dir) for path in paths))
+            self.assertTrue(all(not path.exists() for path in paths))
+            self.assertEqual(list(config.spool_dir.iterdir()), [])
+
+
 class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
     async def test_probe_enforces_duration_rate_channel_and_decoded_byte_limits(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -446,6 +618,67 @@ class OutputAndCleanupBoundTests(unittest.IsolatedAsyncioTestCase):
         await owner.aclose()
         self.assertEqual(calls, ["broken", "released"])
         self.assertTrue(owner.failed)
+
+    async def test_route_terminalizes_once_when_cancellation_registry_is_full(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = _config(Path(temp_dir))
+            body, content_type = _multipart_body()
+            sent = False
+            begun, finalized = [], []
+
+            async def receive():
+                nonlocal sent
+                if not sent:
+                    sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                await asyncio.Future()
+
+            request = Request(
+                {"type": "http", "method": "POST", "path": "/v1/audio/transcriptions", "headers": [(b"content-type", content_type.encode())]},
+                receive,
+            )
+            with (
+                patch.object(proxy, "_stt_execution_snapshot", return_value=config),
+                patch.object(proxy, "cancellation_registry", return_value=CancellationRegistry(max_entries=0)),
+                patch.object(proxy.receipt_store, "begin", side_effect=begun.append),
+                patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
+            ):
+                response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT)
+
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(json.loads(response.body)["error"]["code"], "stt_cancellation_capacity")
+            self.assertEqual(finalized, begun)
+            self.assertEqual(len(finalized), 1)
+            self.assertEqual(finalized[0].status, "failed")
+
+    async def test_route_multipart_parse_error_releases_parser_uploads_and_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = _config(root, max_input_bytes=64)
+            body, content_type = _multipart_body(content=b"a" * 65)
+            sent = False
+
+            async def receive():
+                nonlocal sent
+                if not sent:
+                    sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                await asyncio.Future()
+
+            request = Request(
+                {"type": "http", "method": "POST", "path": "/v1/audio/transcriptions", "headers": [(b"content-type", content_type.encode())]},
+                receive,
+            )
+            with (
+                patch.object(proxy, "_stt_execution_snapshot", return_value=config),
+                patch.object(stt_chunking, "GLOBAL_STT_RESOURCE_GATE", stt_chunking.SttResourceGate()),
+                patch.object(proxy.receipt_store, "begin"),
+                patch.object(proxy.receipt_store, "finalize", return_value=True),
+            ):
+                response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT)
+
+            self.assertEqual(response.status_code, 413)
+            self.assertEqual(list(config.spool_dir.iterdir()), [])
 
 
 class ResourceGateTests(unittest.TestCase):
@@ -725,8 +958,77 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(probe.await_count, 1 if kind == "short" else 0)
                 self.assertEqual(list((root / "spool").glob("*")), [])
 
+    async def test_decoded_direct_success_error_and_redirect_drop_representation_headers(self) -> None:
+        real_async_client = httpx.AsyncClient
+        for status, encoding in ((200, "gzip"), (500, "deflate"), (302, "gzip, deflate")):
+            with self.subTest(status=status, encoding=encoding), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                config = _config(root, enabled=False)
+                body, content_type = _multipart_body(content=b"RIFF-encoded")
+                sent = False
+                decoded = b'{"text":"decoded"}'
+                encoded = gzip.compress(decoded) if encoding == "gzip" else zlib.compress(decoded)
+                if encoding == "gzip, deflate":
+                    encoded = zlib.compress(gzip.compress(decoded))
+
+                async def receive():
+                    nonlocal sent
+                    if not sent:
+                        sent = True
+                        return {"type": "http.request", "body": body, "more_body": False}
+                    await asyncio.Future()
+
+                async def transport_handler(_outgoing: httpx.Request) -> httpx.Response:
+                    return httpx.Response(
+                        status,
+                        content=encoded,
+                        headers={
+                            "content-type": "application/json",
+                            "content-encoding": encoding,
+                            "etag": "encoded-upstream",
+                            "digest": "sha-256=encoded-upstream",
+                            "x-safe": "retained",
+                        },
+                    )
+
+                request = Request(
+                    {"type": "http", "method": "POST", "path": "/v1/audio/transcriptions", "headers": [(b"content-type", content_type.encode())]},
+                    receive,
+                )
+                with (
+                    patch.object(proxy, "_stt_execution_snapshot", return_value=config),
+                    patch.object(proxy.httpx, "AsyncClient", side_effect=lambda *_args, **_kwargs: real_async_client(transport=httpx.MockTransport(transport_handler))),
+                    patch.object(proxy.receipt_store, "begin"),
+                    patch.object(proxy.receipt_store, "finalize", return_value=True),
+                ):
+                    response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT)
+
+                self.assertEqual(response.status_code, status)
+                self.assertEqual(response.body, decoded)
+                self.assertEqual(response.headers["x-safe"], "retained")
+                for header in ("content-encoding", "etag", "digest"):
+                    self.assertNotIn(header, response.headers)
+                self.assertEqual(response.headers["content-length"], str(len(decoded)))
+
 
 class HotReloadAndCapabilityTests(unittest.TestCase):
+    def test_existing_registry_global_concurrency_value_loads_exactly(self) -> None:
+        """The persisted field keeps its original value; no renamed default applies."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            execution = stt_chunking.SttExecutionConfig.from_service(
+                service_id="persisted-stt",
+                service_config={
+                    "host": "127.0.0.1",
+                    "port": 9876,
+                    "chunking": {
+                        "spool_dir": "data/stt-spool",
+                        "global_concurrency": 7,
+                    },
+                },
+                config_directory=Path(temp_dir),
+            )
+        self.assertEqual(execution.global_concurrency, 7)
+
     def test_service_selection_keeps_one_registry_snapshot_during_reload_interleaving(self) -> None:
         old = {
             "stt-old": {"host": "127.0.0.1", "port": 9011, "priority": 10, "enabled": True, "capabilities": ["audio", "transcriptions"]},

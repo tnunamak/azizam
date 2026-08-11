@@ -21,6 +21,7 @@ ROUTE_OWNER_FUNCTIONS = {
     "_forward_current_loaded_openai_request",
     "_forward_litellm_proxy_request",
     "proxy_request",
+    "proxy_stt_request",
 }
 
 

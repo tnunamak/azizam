@@ -143,7 +143,7 @@ from gateway.audio_extensions import (
 )
 from gateway.backends.chat import build_chat_loopback_request
 from gateway.backends.embeddings import build_embeddings_loopback_request
-from gateway.backends.cancellation import cancellation_registry
+from gateway.backends.cancellation import CancellationRegistryFull, cancellation_registry
 from gateway.backends.request_shape import (
     effective_output_limit,
     record_request_shape_stage,
@@ -3917,9 +3917,8 @@ async def proxy_stt_request(
         return unavailable
 
     owner = ReceiptLifecycleOwner(receipt)
-    cancellation = cancellation_registry().register(receipt.request_id)
     cleanup = stt_chunking.SttCleanupOwner()
-    cleanup.add("cancellation_handle", cancellation.release)
+    cancellation: Any | None = None
     cancellation_signalled = False
 
     def signal_cancellation() -> None:
@@ -3935,8 +3934,16 @@ async def proxy_stt_request(
             deadline_at = time.monotonic() + execution.deadline_seconds
             lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(request_id=receipt.request_id, config=execution)
             cleanup.add("capacity_lease", lease.release)
-            parsed = await stt_chunking.parse_bounded_multipart(request, execution, deadline_at=deadline_at)
-            cleanup.add("multipart", parsed.aclose)
+            workspace = stt_chunking.create_request_workspace(execution)
+            cleanup.add("request_workspace", lambda: stt_chunking.remove_request_workspace(workspace))
+            parsed = await stt_chunking.parse_bounded_multipart(
+                request,
+                execution,
+                workspace=workspace,
+                cleanup=cleanup,
+                deadline_at=deadline_at,
+            )
+            cleanup.add("multipart_form", parsed.close_form)
             fields, uploads = stt_chunking.upload_file_parts(parsed.form)
             if not uploads:
                 return openai_error_response("No file part in the request.", status_code=400, param="file", code="missing_file")
@@ -3959,6 +3966,8 @@ async def proxy_stt_request(
             url = f"{execution.host}/v1/audio/{operation}"
             watcher = RequestDisconnectWatcher(request.receive)
             cleanup.add("disconnect_watcher", watcher.aclose)
+            if cancellation is None:
+                raise RuntimeError("STT cancellation registration was not acquired")
             waiters = (watcher.wait, cancellation.token.wait)
             client = httpx.AsyncClient(timeout=httpx.Timeout(execution.timeout_seconds, connect=min(10.0, execution.timeout_seconds)))
             cleanup.add("http_client", client.aclose)
@@ -3967,6 +3976,7 @@ async def proxy_stt_request(
                 try:
                     outgoing = client.build_request("POST", url, headers=headers, data=multipart_fields, files=files)
                     upstream = await stt_chunking.await_with_cancellation(client.send(outgoing, stream=True), cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation)
+                    cleanup.add("upstream_response", upstream.aclose)
                     try:
                         body = await stt_chunking.read_bounded_response(upstream, max_bytes=execution.max_response_bytes, cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation)
                     finally:
@@ -3979,6 +3989,7 @@ async def proxy_stt_request(
 
             async def post_file(path: Path, filename: str, media_type: str) -> stt_chunking.UpstreamResponse:
                 handle = path.open("rb")
+                cleanup.add("chunk_upload_handle", handle.close)
                 try:
                     return await send_files([("file", (filename, handle, media_type))])
                 finally:
@@ -3987,13 +3998,14 @@ async def proxy_stt_request(
             async def post_uploads() -> stt_chunking.UpstreamResponse:
                 opened: list[tuple[str, Any, str, str]] = []
                 try:
-                    for name, upload in uploads:
+                    for index, (name, upload) in enumerate(uploads):
                         handle = stt_chunking.source_path(upload).open("rb")
                         opened.append((name, handle, upload.filename or "audio", upload.content_type or "application/octet-stream"))
+                        cleanup.add(f"direct_upload_handle_{index}", handle.close)
                     return await send_files([(name, (filename, handle, media_type)) for name, handle, filename, media_type in opened])
                 finally:
-                    for _name, handle, _filename, _media_type in opened:
-                        await cleanup.release("direct_upload_handle", handle.close)
+                    for index, (_name, handle, _filename, _media_type) in enumerate(opened):
+                        await cleanup.release(f"direct_upload_handle_{index}", handle.close)
 
             if len(uploads) == 1:
                 _name, upload = uploads[0]
@@ -4007,6 +4019,7 @@ async def proxy_stt_request(
                     deadline_at=deadline_at,
                     on_cancel=signal_cancellation,
                     on_attempt_started=lambda count: receipt.metadata["stt"].update({"attempts_started": count}),
+                    cleanup=cleanup,
                 )
             else:
                 outcome = stt_chunking.ChunkingOutcome("passthrough", 0, "multiple_files")
@@ -4028,55 +4041,61 @@ async def proxy_stt_request(
                 raise stt_chunking.SttCleanupFailure("STT cleanup failed")
 
     async with owner:
-            try:
-                response = await execute()
-            except ClientDisconnect:
-                signal_cancellation()
-                owner.report(status="cancelled", reason="cancelled")
-                return Response(status_code=499)
-            except stt_chunking.SttCancelled:
-                signal_cancellation()
-                owner.report(status="cancelled", reason="cancelled")
-                return Response(status_code=499)
-            except stt_chunking.SttDeadlineExceeded:
-                owner.report(status="timed_out", reason="idle_timeout")
-                return _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline")
-            except stt_chunking.SttResourceLimitExceeded as error:
-                owner.report(status="failed", reason="failed")
-                return _stt_error(str(error), status_code=413, code="stt_resource_limit")
-            except stt_chunking.MultiPartException as error:
-                owner.report(status="failed", reason="failed")
-                return _stt_error(str(error), status_code=413, code="stt_upload_limit")
-            except ModelCompatibilityError as error:
-                owner.report(status="failed", reason="failed")
-                return model_compatibility_error(str(error))
-            except stt_chunking.SttChunkResponseError:
-                owner.report(status="failed", reason="failed")
-                return _stt_error("STT backend returned a chunk response that cannot be merged.", status_code=502, code="invalid_stt_chunk_response")
-            except stt_chunking.SttResponseLimitExceeded:
-                owner.report(status="failed", reason="failed")
-                return _stt_error("STT backend response exceeded the configured limit.", status_code=502, code="stt_response_limit")
-            except stt_chunking.SttChunkAttemptError:
-                owner.report(status="failed", reason="failed")
-                return _stt_error("STT chunk request failed after chunk processing started.", status_code=502, code="stt_chunk_attempt_failed")
-            except stt_chunking.SttSetupFailure:
-                owner.report(status="failed", reason="failed")
-                return _stt_error("STT media setup failed.", status_code=502, code="stt_media_setup_failed")
-            except stt_chunking.SttBackendTimeout:
-                owner.report(status="timed_out", reason="idle_timeout")
-                return _stt_error("STT request timeout.", status_code=504, code="stt_request_timeout")
-            except stt_chunking.SttBackendUnavailable:
-                owner.report(status="failed", reason="connect_error")
-                return _stt_error("STT backend is unavailable.", status_code=502, code="stt_backend_unavailable")
-            except stt_chunking.SttCleanupFailure:
-                owner.report(status="failed", reason="failed")
-                return _stt_error("STT request cleanup failed.", status_code=502, code="stt_cleanup_failed")
-            except Exception:
-                owner.report(status="failed", reason="failed")
-                return _stt_error("STT proxy request failed.", status_code=502, code="stt_proxy_error")
-            succeeded = stt_chunking.upstream_response_succeeded(response.status_code)
-            owner.report(status="succeeded" if succeeded else "failed", reason="completed" if succeeded else "failed")
-            return response
+        try:
+            cancellation = cancellation_registry().register(receipt.request_id)
+            cleanup.add("cancellation_handle", cancellation.release)
+        except CancellationRegistryFull:
+            owner.report(status="failed", reason="failed")
+            return _stt_error("STT cancellation capacity is currently exhausted.", status_code=503, code="stt_cancellation_capacity")
+        try:
+            response = await execute()
+        except ClientDisconnect:
+            signal_cancellation()
+            owner.report(status="cancelled", reason="cancelled")
+            return Response(status_code=499)
+        except stt_chunking.SttCancelled:
+            signal_cancellation()
+            owner.report(status="cancelled", reason="cancelled")
+            return Response(status_code=499)
+        except stt_chunking.SttDeadlineExceeded:
+            owner.report(status="timed_out", reason="idle_timeout")
+            return _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline")
+        except stt_chunking.SttResourceLimitExceeded as error:
+            owner.report(status="failed", reason="failed")
+            return _stt_error(str(error), status_code=413, code="stt_resource_limit")
+        except stt_chunking.MultiPartException as error:
+            owner.report(status="failed", reason="failed")
+            return _stt_error(str(error), status_code=413, code="stt_upload_limit")
+        except ModelCompatibilityError as error:
+            owner.report(status="failed", reason="failed")
+            return model_compatibility_error(str(error))
+        except stt_chunking.SttChunkResponseError:
+            owner.report(status="failed", reason="failed")
+            return _stt_error("STT backend returned a chunk response that cannot be merged.", status_code=502, code="invalid_stt_chunk_response")
+        except stt_chunking.SttResponseLimitExceeded:
+            owner.report(status="failed", reason="failed")
+            return _stt_error("STT backend response exceeded the configured limit.", status_code=502, code="stt_response_limit")
+        except stt_chunking.SttChunkAttemptError:
+            owner.report(status="failed", reason="failed")
+            return _stt_error("STT chunk request failed after chunk processing started.", status_code=502, code="stt_chunk_attempt_failed")
+        except stt_chunking.SttSetupFailure:
+            owner.report(status="failed", reason="failed")
+            return _stt_error("STT media setup failed.", status_code=502, code="stt_media_setup_failed")
+        except stt_chunking.SttBackendTimeout:
+            owner.report(status="timed_out", reason="idle_timeout")
+            return _stt_error("STT request timeout.", status_code=504, code="stt_request_timeout")
+        except stt_chunking.SttBackendUnavailable:
+            owner.report(status="failed", reason="connect_error")
+            return _stt_error("STT backend is unavailable.", status_code=502, code="stt_backend_unavailable")
+        except stt_chunking.SttCleanupFailure:
+            owner.report(status="failed", reason="failed")
+            return _stt_error("STT request cleanup failed.", status_code=502, code="stt_cleanup_failed")
+        except Exception:
+            owner.report(status="failed", reason="failed")
+            return _stt_error("STT proxy request failed.", status_code=502, code="stt_proxy_error")
+        succeeded = stt_chunking.upstream_response_succeeded(response.status_code)
+        owner.report(status="succeeded" if succeeded else "failed", reason="completed" if succeeded else "failed")
+        return response
 
 
 # =============================================================================

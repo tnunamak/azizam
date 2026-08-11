@@ -58,3 +58,7 @@ or passed as environment variables):
   `${env:VAR_NAME}` syntax. See
   [`docs/design/ENGINE_REGISTRY_DESIGN.md`](docs/design/ENGINE_REGISTRY_DESIGN.md)
   for the env-ref convention.
+- `backends.<service>.chunking.global_concurrency` is a legacy-named,
+  process-local limit. The gateway has no durable multi-worker STT coordinator,
+  so each additional Python worker multiplies allowed uploads and reserved disk
+  budget.

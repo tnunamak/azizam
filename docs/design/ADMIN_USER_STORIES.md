@@ -36,7 +36,7 @@ new models and wants apps to route to it. Traced: **~35–40% self-serve.**
 | A6 | "Use it for a role (e.g. the 'coder' role points here)." | 🔴 | Role-model table silently drops entries whose backend ∉ ("kobold","tabby") (proxy.py:~502). |
 | A7 | "See its health in the admin." | ✅ | `check_service_health(id)` is generic (tier-2). Overview/Services reflect registry changes after the live reload path and the managed watcher's brief sidecar recycle. |
 | A8 | "See its process / VRAM on the status page." | 🔴 | `status_endpoint._SERVICE_UNITS` is a hardcoded process-name list. New engine invisible. |
-| A9 | "Let it serve embeddings / TTS / STT too (multi-modal engine)." | 🔴 | `/v1/embeddings`,`/v1/audio/*` pinned to single `EMBEDDINGS_HOST`/`TTS_HOST`/`STT_HOST` constants keyed to ids embeddings/tts/stt. A new id can't serve these even if it declares the capability. |
+| A9 | "Let it serve embeddings / TTS / STT too (multi-modal engine)." | 🟡 | `/v1/audio/*` selects the current registry service by declared audio capability, including STT execution limits and backend auth. Embeddings remain pinned to `EMBEDDINGS_HOST`, and audio translation still requires a declared translation capability. |
 | A10 | "Let it serve vision." | 🟡 | Included in `vision_capable_llm_backends()` (tier-2) after the registry mutation's live reload; but vision model-swap orchestration is kobold-mmproj hardcoded. |
 
 **Highest-leverage gaps to make A real (in order):**
@@ -45,8 +45,8 @@ new models and wants apps to route to it. Traced: **~35–40% self-serve.**
    instead of 503-ing at the literal gate. Full lifecycle config is Epic E.
 2. **Role table accepts any registry backend** (A6) — drop the
    ("kobold","tabby") gate; read from `LLM_BACKEND_HOSTS`.
-3. **Capability dispatch tables** (A9) — `/v1/embeddings` & `/v1/audio/*`
-   resolve backend from the registry by capability, not a single host const.
+3. **Capability dispatch tables** (A9) — `/v1/embeddings` must resolve its
+   backend from the registry by capability, as `/v1/audio/*` now does.
 4. **Registry-derived status process list** (A8).
 
 ---
