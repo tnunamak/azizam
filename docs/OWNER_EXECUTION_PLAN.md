@@ -342,3 +342,6 @@ Local extension -> shared feature only when at least two are true:
 - scheduler preemption
 - UI/dashboard redesign
 - broad app-profile installers
+- Trellis mesh route v1: planned but not implemented; it is not an MVP blocker. Its
+  fixed-route, exclusive-pool, and proof-gate constraints are canonical in
+  `docs/design/TRELLIS_MESH_ROUTE_DESIGN.md`.

@@ -217,6 +217,12 @@ turns them into core work:
 - Hosted provider marketplace behavior.
 - Full plugin marketplace/signing infrastructure.
 - Scheduler preemption and multi-worker event storage.
+- Trellis mesh route v1 (`POST /v1/meshes/generate`). It is planned, not
+  implemented: this checkout has no Trellis route, helper, module, or tests.
+  Do not start it until the fixed-route design's proof gates can be met,
+  including an operator-declared exclusive route pool with an explicit
+  whole-envelope capacity claim. See
+  `docs/design/TRELLIS_MESH_ROUTE_DESIGN.md`.
 
 ## Not Authoritative
 

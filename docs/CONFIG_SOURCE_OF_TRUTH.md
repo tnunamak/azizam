@@ -25,9 +25,14 @@ For the operator-facing first-run story this model implies, see
   roles, Apps, Profiles, App API keys, identity/Profile mappings, role/model
   bindings, admission caps, runtime routing toggles, OIDC provider settings,
   and the service/provider registry.
-- **Provisioning / as-code config export is deferred.** Default Profiles and
-  user-access defaults are seeded into `admin.db` on startup; once seeded, the
-  dashboard is authoritative. No YAML "policy file" exists for those settings.
+- **A read-only service-registry export is shipped.** Authenticated
+  `GET /admin/api/config/export` serializes the current registry's service
+  records and omits ephemeral runtime state. It is an operator download, not an
+  authoritative configuration file or a restore command.
+- **Full provisioning / as-code reconciliation is deferred.** Default Profiles
+  and user-access defaults are seeded into `admin.db` on startup; once seeded,
+  the dashboard is authoritative. No YAML "policy file" exists for those
+  settings, and no full bundle restore or file-wins reconciliation exists.
 
 > **Implementation invariant.** The first-run access path is DB-backed:
 > `/setup` and `/admin` create Apps, App keys, Profiles, identity/Profile
@@ -120,16 +125,22 @@ Implications:
   can seed or provision registry records; it is not the normal live operator
   surface.
 
-## Provisioning bundles (deferred)
+## Provisioning bundles, restore, and reconciliation (deferred)
 
-Provisioning / as-code config export is deliberately out of scope for the
-current MVP. The inventory still classifies rows with
-`provisioning == "bundle_candidate"` so a future serializer has an obvious
-target, but no shipped command consumes that classification today, and the
-normal first-run path does not assume a bundle exists.
+The gateway ships a narrow, read-only service-registry export at
+`GET /admin/api/config/export`. It serializes service records for operator
+download and excludes ephemeral runtime state. It does not restore a gateway,
+make the downloaded file authoritative, reconcile it with the dashboard, or
+cover all dashboard-owned settings.
 
-When this lands, the smallest useful "export this gateway" artifact will be
-the subset of `admin.db` rows whose inventory entry has
+Full provisioning / as-code reconciliation remains deliberately out of scope
+for the current MVP. The inventory still classifies rows with
+`provisioning == "bundle_candidate"` so a future bundle serializer has an
+obvious target, but no shipped restore command consumes that classification and
+the normal first-run path does not assume a bundle exists.
+
+When full provisioning lands, the smallest useful "export this gateway" artifact
+will be the subset of `admin.db` rows whose inventory entry has
 `provisioning == "bundle_candidate"`. That will give an operator a way to:
 
 - copy a gateway to a new machine without copying secrets,

@@ -165,10 +165,12 @@ Admin keys are never runtime keys. Use `oak_...` only for `/admin`,
 | Identity → Profile mappings, role/model bindings    | `/admin`                                 | no  |
 | Admission caps, throttles, runtime routing toggles  | `/admin`                                 | no  |
 | Provider/service enablement                         | `/admin` for UI-managed records; provisioned/builtin/discovered records are read-only until copied or detached | no  |
+| Service-registry export                             | Authenticated `GET /admin/api/config/export`; read-only download of service records | no |
 
-Provisioning bundles and as-code config export are deliberately out of scope
-for first-run. Default Profiles and user-access defaults are seeded into
-`admin.db` on startup; once seeded, dashboard state is authoritative.
+First-run does not require the shipped service-registry export. Full
+provisioning bundles, restore, and authoritative-file reconciliation remain out
+of scope. Default Profiles and user-access defaults are seeded into `admin.db`
+on startup; once seeded, dashboard state is authoritative.
 
 ## What Not To Build Here
 
