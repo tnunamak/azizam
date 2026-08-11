@@ -8,7 +8,13 @@
     "lint": "next lint",
     "format": "prettier --write .",
     "doctor": "react-doctor --no-telemetry --blocking error",
-    "check": "tsc --noEmit && next lint && npm run doctor && next build"
+    "check": "tsc --noEmit && next lint && npm run doctor && next build",
+    "test": "npm run test:components",
+    "test:e2e": "playwright test --config playwright.config.ts",
+    "test:components": "vitest run --config vitest.config.ts",
+    "test:browser": "playwright test --config playwright.config.ts",
+    "test:all": "npm run test:components && npm run test:browser",
+    "visual:capture": "darshana"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
@@ -31,15 +37,29 @@
     "tailwindcss": "^4.3.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "@opendatalabs/darshana": "1.4.0",
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "1.62.1",
+    "@testing-library/jest-dom": "6.6.3",
+    "@testing-library/react": "16.3.0",
+    "@testing-library/user-event": "14.6.1",
+    "@types/jest-axe": "3.5.9",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.5.19",
+    "jest-axe": "10.0.0",
+    "jsdom": "26.1.0",
     "prettier": "^3.8.4",
     "prettier-plugin-tailwindcss": "^0.8.0",
     "react-doctor": "^0.5.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "3.2.7"
+  },
+  "allowScripts": {
+    "@opendatalabs/darshana@1.4.0": false,
+    "esbuild@0.28.2": true
   }
 }

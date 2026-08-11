@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/test-results
+/darshana-output
 
 # next.js
 /.next/

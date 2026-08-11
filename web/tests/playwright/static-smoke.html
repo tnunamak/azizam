@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Vivid Fish browser smoke</title>
+  </head>
+  <body>
+    <main>
+      <h1>Browser test fixture</h1>
+      <button type="button" aria-pressed="false">Toggle state</button>
+    </main>
+    <script>
+      document.querySelector("button").addEventListener("click", (event) => {
+        const button = event.currentTarget;
+        button.setAttribute(
+          "aria-pressed",
+          String(button.getAttribute("aria-pressed") !== "true"),
+        );
+      });
+    </script>
+  </body>
+</html>
