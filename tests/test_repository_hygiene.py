@@ -18,6 +18,7 @@ paths remain unignored.
 """
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -70,11 +71,32 @@ _ISOLATED_ENV_OVERRIDES = {
 }
 
 
-def _check_ignore_verbose(path: str) -> subprocess.CompletedProcess:
+@pytest.fixture(scope="session")
+def isolated_git_worktree(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Give git an isolated repository while exercising this archive's rules."""
+    worktree = tmp_path_factory.mktemp("repository-hygiene")
+    copied_ignore = worktree / ".gitignore"
+    shutil.copyfile(REPO_GITIGNORE, copied_ignore)
+    subprocess.run(
+        ["git", "init", "--quiet", str(worktree)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_isolated_git_environment(),
+    )
+    assert copied_ignore.read_bytes() == REPO_GITIGNORE.read_bytes()
+    return worktree
+
+
+def _isolated_git_environment() -> dict[str, str]:
     import os
 
     env = dict(os.environ)
     env.update(_ISOLATED_ENV_OVERRIDES)
+    return env
+
+
+def _check_ignore_verbose(path: str, *, worktree: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [
             "git",
@@ -85,16 +107,16 @@ def _check_ignore_verbose(path: str) -> subprocess.CompletedProcess:
             "-v",
             path,
         ],
-        cwd=REPO_ROOT,
+        cwd=worktree,
         capture_output=True,
         text=True,
-        env=env,
+        env=_isolated_git_environment(),
     )
 
 
 @pytest.mark.parametrize("path", IGNORED_PATHS)
-def test_sensitive_runtime_artifact_is_ignored_by_repo_gitignore(path):
-    result = _check_ignore_verbose(path)
+def test_sensitive_runtime_artifact_is_ignored_by_repo_gitignore(path, isolated_git_worktree):
+    result = _check_ignore_verbose(path, worktree=isolated_git_worktree)
     assert result.returncode == 0, (
         f"expected {path!r} to be gitignored with global/system/excludesFile "
         f"neutralized, but git check-ignore reported no match "
@@ -108,12 +130,13 @@ def test_sensitive_runtime_artifact_is_ignored_by_repo_gitignore(path):
     verbose_match = re.match(r"^(?P<source>.*):(?P<line>\d+):[^\t]*\t", lines[-1])
     assert verbose_match, f"unexpected -v output for ignored path {path!r}: {lines[-1]!r}"
     source = verbose_match.group("source")
-    # git reports the source relative to the cwd it was invoked from (REPO_ROOT)
+    # git reports the source relative to the cwd it was invoked from.
     # when the source is inside the repo; resolve before comparing so this
     # holds regardless of git version/cwd-relative-path quirks.
-    resolved_source = (REPO_ROOT / source).resolve()
-    assert resolved_source == REPO_GITIGNORE.resolve(), (
-        f"expected {path!r} to be ignored by this worktree's .gitignore "
+    resolved_source = (isolated_git_worktree / source).resolve()
+    expected_source = (isolated_git_worktree / ".gitignore").resolve()
+    assert resolved_source == expected_source, (
+        f"expected {path!r} to be ignored by the archived repository .gitignore "
         f"({REPO_GITIGNORE!r}), but attribution source was {source!r} "
         f"-> {resolved_source!r} (full match: {lines[-1]!r}) — a false pass "
         f"from an external exclude source"
@@ -121,13 +144,19 @@ def test_sensitive_runtime_artifact_is_ignored_by_repo_gitignore(path):
 
 
 @pytest.mark.parametrize("path", NOT_IGNORED_PATHS)
-def test_canonical_source_or_config_is_not_ignored(path):
-    result = _check_ignore_verbose(path)
+def test_canonical_source_or_config_is_not_ignored(path, isolated_git_worktree):
+    result = _check_ignore_verbose(path, worktree=isolated_git_worktree)
     assert result.returncode == 1, (
         f"expected {path!r} to be tracked/unignored but it is gitignored "
         f"(returncode={result.returncode} stdout={result.stdout!r} "
         f"stderr={result.stderr!r})"
     )
+
+
+def test_gitless_archive_uses_isolated_git_worktree(isolated_git_worktree) -> None:
+    """Regression: hermetic archives omit .git but still exercise all contracts."""
+    assert (isolated_git_worktree / ".git").is_dir()
+    assert (isolated_git_worktree / ".gitignore").read_bytes() == REPO_GITIGNORE.read_bytes()
 
 
 def test_stt_runtime_audio_workspace_is_ignored_by_repository_policy() -> None:
