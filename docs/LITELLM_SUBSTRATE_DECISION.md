@@ -91,10 +91,12 @@ There are two distinct kinds of key, owned by two distinct planes:
   spend). The gateway does not store them; it forwards a virtual key to the
   substrate as the `X-Litellm-Key` delegated header on execution.
 
-A virtual key is an LLM-execution credential only: it reaches
-`/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` via the substrate
-and unlocks nothing else — media, jobs, admin, and provider-native routes stay
-behind gateway App-key auth and Profile policy.
+A virtual key authorizes eligible LLM-shaped protocol frontends: the three
+OpenAI execution routes above, the gateway's Anthropic Messages frontend, and
+the LiteLLM-filtered Ollama catalog. It bypasses gateway Profile policy for
+those calls. It does not authorize gateway-owned media, jobs, admin, or native
+passthrough routes; those remain behind gateway App-key auth and their own
+gateway policy.
 
 ### Operating LiteLLM virtual keys
 
@@ -230,15 +232,15 @@ Context for whoever revisits it:
 
 - `litellm[proxy]` is already a gateway dependency (importable in the venv), so
   the choice is about process topology, not dependency footprint.
-- The gateway owns its entire control plane (keys, Profiles, policy, admin UI,
--  receipts) **in the current state** and uses LiteLLM for raw execution,
+- The gateway owns its product control plane (App keys, Profiles, policy, admin
+  UI, receipts) **in the current state** and uses LiteLLM for raw execution,
   virtual-key administration, and `v1/models`; the target state moves eligible
   LLM runtime access to LiteLLM without moving local orchestration or product
   UX wholesale.
-- A 2026-06-03 incident was a config-sync staleness bug (the generated YAML the
-  sidecar reads went stale vs. the service registry), not an inherent flaw of
-  either mode. Hardening that reconciliation is tracked as Known Work #9 and is
-  worth doing regardless of which mode is chosen.
+- A 2026-06-03 incident exposed config-sync staleness. That reconciliation is
+  now completed: registry writes regenerate the YAML artifact, and the managed
+  launcher hash-watches it and restarts LiteLLM when it changes. The sidecar
+  still has a short watcher interval, but this is no longer open hardening work.
 
 Trade-offs to weigh when revisiting: process/config-sync simplicity (favors
 library) vs. crash isolation, noting an "AI gateway" largely fate-shares with

@@ -205,11 +205,9 @@ OpenAI-compatible form is wrong for ComfyUI and any non-LLM backend.
 
 Two deferred trust-breakers from the UX audit, both honesty-law violations:
 
-**Audit — filtering must not silently truncate (H1/H3).** Today the audit
-endpoint takes only `limit` (hard-capped at 200) and the UI filters the
-loaded window client-side. Filtering by an actor whose matching events are
-older than the 200 newest rows shows a confident, incomplete result that
-reads as "no more matches" — deception by omission. Fix:
+**Audit — filtering must not silently truncate (H1/H3).** The audit UI uses
+server-side filters and keyset pagination. Filtering by an actor searches the
+whole log, not a client-loaded window. The API contract is:
 - `GET /admin/api/audit` gains optional server-side filters `actor_id`,
   `action_prefix` (the family, e.g. `service.`), `before` (keyset cursor =
   the `created_at` of the last seen row; the schema already indexes
@@ -260,12 +258,13 @@ spacing and single hairline rules (`vf-border`) over boxes.
 **Per-surface specs** (each list-first; create/edit = Dialog; destructive =
 overflow + ConfirmDialog; every state designed):
 
-- **Overview**: attention list from `GET /overview` (single source:
-  `derive_admin_attention`) — each item one row: tone dot/badge, plain-language
-  line, action Button-link to the owning section. Empty = "All quiet." (light
-  EmptyState, no box). Below: one quiet stat strip (services up/total, apps,
-  active keys — text, not dashboard tiles) and the 3 most recent audit rows
-  with "View all" → Audit. NOTHING else; resist dashboard-itis.
+- **Overview**: the current route is the implemented operator working page:
+  attention banners from `GET /overview`, an optional four-step quickstart,
+  the metric strip, a two-column apps/activity body, and a bottom row with the
+  base URL plus API health/services. It uses the shared component contracts
+  from the component library spec, including their operational states. This is
+  the one current Overview shape; screenshots are visual references, not a
+  competing IA contract.
 - **Services**: DataTable — Service (EntityRef name; PROVENANCE badge
   `config`/`ui`/`managed` — provenance is history, NOT permission), Endpoint
   (host:port, mono small), Capabilities (human-labeled badge row), Status
@@ -285,8 +284,12 @@ overflow + ConfirmDialog; every state designed):
   served from GET /admin/api/operator/service-presets — never duplicated
   client-side), name, base URL, api-key ENV-REF field (never secret values),
   protocol + capabilities in collapsed advanced. Honest apply: banner
-  "Saved — restart the gateway to apply" after writes. LiteLLM substrate
-  config = read-only mono viewer behind a disclosure (genuinely derived).
+  "Saved — changes apply live" after writes. Gateway service edits persist to
+  the registry and hot-reload immediately. The derived LiteLLM config is
+  regenerated automatically; its managed watcher restarts LiteLLM when the
+  artifact hash changes, so substrate changes apply after that brief watcher
+  interval. LiteLLM substrate config = read-only mono viewer behind a
+  disclosure (genuinely derived).
 - **Profiles**: DataTable — Profile (EntityRef), Access summary (e.g.
   "4 models · chat, images" — derived, human), Apps using it (count), ⋯
   (Edit, Duplicate?, Delete → typed-name ConfirmDialog; block/explain when
@@ -303,9 +306,11 @@ overflow + ConfirmDialog; every state designed):
   empty/explainer copy.
 - **Audit**: reverse-chron DataTable — When (RelativeTime), Actor (EntityRef),
   Action (sentence-case human phrase mapped from the event type, micro mono
-  raw type as the quiet detail), Target (EntityRef). Filter chips above the
-  table client-side (actor, action family). Row → Sheet with the full record
-  (mono JSON, CopyButton). `GET /audit?limit=`, newest first, "Load more".
+  raw type as the quiet detail), Target (EntityRef). Filter chips drive
+  server-side `actor_id` and `action_prefix` filters. Row → Sheet with the
+  full record (mono JSON, CopyButton). Keyset-paginated
+  `GET /audit?limit=&actor_id=&action_prefix=&before=`, newest first, "Load
+  more" until the filtered result is exhausted.
 - **Settings**: grouped cards with SectionHeaders, in order: Sign-in (OIDC
   config — status line + edit Dialog; never render secrets), Extensions
   (package list + validate/enable flow), Media admission (the existing
