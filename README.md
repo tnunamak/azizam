@@ -134,6 +134,8 @@ The discovery document advertises:
 
 The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](skills/openai-proxy-gateway/SKILL.md). The skill ID is preserved as `openai-proxy-gateway` so existing skill catalogs and tests keep resolving it. The skill itself tells agents to discover capabilities before assuming a backend, keep bearer tokens out of chat, use `/openai/v1` for new OpenAI-compatible setup, and inspect `/gateway/v1/receipts` when workflow controls are rejected or ignored.
 
+The repository also carries [`autotile-edge-stitch`](skills/autotile-edge-stitch/SKILL.md), a source-only client workflow for composing 16-case game autotiles. It is intentionally not advertised from `/.well-known/skills`: it needs an operator-configured image model and direct ComfyUI inpaint workflow, so it is not a universal gateway capability. It uses the documented OpenAI Images API when configured and keeps its third-party references as links with provenance and licence notes in [its documentation](skills/autotile-edge-stitch/docs/README.md).
+
 ## Endpoint surface
 
 | Method + Path | Resolved lane | Purpose |
