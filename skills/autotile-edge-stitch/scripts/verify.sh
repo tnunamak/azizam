@@ -49,7 +49,7 @@ from PIL import Image
 
 from build_dualgrid import composite_tile, make_spritesheet
 from edge_stitch import hard_post_composite
-from runtime import GatewayImageClient
+from runtime import GatewayImageClient, contained_path, safe_spec_id
 
 work = Path(sys.argv[1])
 size = 8
@@ -67,6 +67,15 @@ composited = np.array(Image.open(work / "composited.png").convert("RGB"))
 assert np.array_equal(composited[:, : size // 2], reference[:, : size // 2])
 assert np.array_equal(composited[:, size // 2 :], inpainted[:, size // 2 :])
 assert max_diff > 0 and drift_count == size * (size // 2)
+rgba_reference = np.dstack([reference, np.full((size, size), 91, dtype=np.uint8)])
+Image.fromarray(rgba_reference).save(work / "rgba-reference.png")
+Image.fromarray(np.zeros_like(rgba_reference)).save(work / "rgba-inpainted.png")
+Image.fromarray(mask).save(work / "rgba-mask.png")
+hard_post_composite(work / "rgba-reference.png", work / "rgba-inpainted.png",
+                   work / "rgba-mask.png", work / "rgba-out.png")
+rgba_out = Image.open(work / "rgba-out.png")
+assert rgba_out.mode == "RGBA"
+assert np.array_equal(np.array(rgba_out)[:, : size // 2], rgba_reference[:, : size // 2])
 
 # Distinct palette values make every quadrant placement and all 16 bit patterns
 # observable without any diffusion runtime.
@@ -80,6 +89,13 @@ assert np.all(tiles[1][:4, :4] == 3)  # TL filled against BR empty.
 assert np.all(tiles[1][4:, 4:] == 3)  # BR sees the same TL-filled transition.
 sheet = make_spritesheet(tiles, size)
 assert sheet.size == (size * 4, size * 4)
+for bad in ("..", "../escape", "a/b", "a\\b", "/absolute", "C:drive"):
+    try: safe_spec_id(bad, "tile id")
+    except ValueError: pass
+    else: raise AssertionError(f"accepted unsafe id: {bad}")
+try: contained_path(work, "..", "escape.png")
+except ValueError: pass
+else: raise AssertionError("allowed output path escape")
 
 # The client boundary must stay on the documented OpenAI Images API shape and
 # must not follow arbitrary response URLs with the bearer token.
@@ -101,6 +117,18 @@ assert encoded == b"fixture-png"
 assert post.call_args.args[0] == "https://gateway.example/openai/v1/images/generations"
 assert post.call_args.kwargs["json"]["response_format"] == "b64_json"
 print("  PASS: post-composite preservation, 16-case lookup, atlas layout, and Images API contract")
+for url in ("http://gateway.example/openai/v1", "http://[2001:db8::1]/openai/v1"):
+    try: GatewayImageClient(url, "AUTOTILE_VERIFY_KEY").generate(model="m", prompt="p", size=8)
+    except ValueError: pass
+    else: raise AssertionError(f"sent bearer to unsafe URL: {url}")
+class ErrorResponse:
+    status_code = 401
+    text = "Bearer fixture-only-not-a-secret"
+with patch("httpx.post", return_value=ErrorResponse()):
+    try: GatewayImageClient("https://gateway.example/openai/v1", "AUTOTILE_VERIFY_KEY").generate(model="m", prompt="p", size=8)
+    except RuntimeError as exc:
+        assert "fixture-only-not-a-secret" not in str(exc)
+    else: raise AssertionError("expected mocked HTTP error")
 PY
 
 if ! "$live"; then
@@ -123,7 +151,7 @@ model = os.environ.get("AUTOTILE_TEXTURE_MODEL", "").strip()
 if not model:
     raise SystemExit("AUTOTILE_TEXTURE_MODEL is required for --live")
 client = GatewayImageClient(
-    base_url=os.environ.get("AUTOTILE_GATEWAY_BASE_URL", "http://127.0.0.1:5000/openai/v1").rstrip("/"),
+    base_url=os.environ["AUTOTILE_GATEWAY_BASE_URL"].rstrip("/"),
     api_key_env=os.environ.get("AUTOTILE_GATEWAY_API_KEY_ENV", "AI_GATEWAY_API_KEY"),
 )
 (work / "reference.png").write_bytes(client.generate(

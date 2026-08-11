@@ -30,9 +30,9 @@ Example configuration (replace every value with your own installation):
 
 ```bash
 export AI_GATEWAY_API_KEY='…' # set locally; never commit or paste this value
-export AUTOTILE_GATEWAY_BASE_URL='http://127.0.0.1:5000/openai/v1'
+export AUTOTILE_GATEWAY_BASE_URL='https://your-gateway.example/openai/v1'
 export AUTOTILE_TEXTURE_MODEL='my-seamless-image-model'
-export AUTOTILE_COMFY_URL='http://127.0.0.1:8188'
+export AUTOTILE_COMFY_URL='http://your-comfy-host:your-port'
 export AUTOTILE_COMFY_INPUT_DIR="$HOME/ComfyUI/input"
 export AUTOTILE_COMFY_OUTPUT_DIR="$HOME/ComfyUI/output"
 export AUTOTILE_INPAINT_MODEL_FILE='my-inpaint-model.gguf'
@@ -106,7 +106,7 @@ skills/autotile-edge-stitch/scripts/verify.sh --live
 ```
 
 The live smoke test checks only that a real configured request completes and
-that the preserved half of its output is byte-identical after post-composite. It
+that the preserved region of its output is byte-identical in every reference channel after post-composite. It
 does not certify visual quality or seamlessness; inspect the generated preview
 and `validate_tileset.py` contact sheet before shipping art.
 

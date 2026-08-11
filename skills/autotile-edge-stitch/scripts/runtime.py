@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import base64
 import os
+import ipaddress
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,7 +25,7 @@ def add_gateway_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("gateway image generation")
     group.add_argument(
         "--gateway-base-url",
-        default=_env("AUTOTILE_GATEWAY_BASE_URL", "http://127.0.0.1:5000/openai/v1"),
+        default=_env("AUTOTILE_GATEWAY_BASE_URL"),
         help="OpenAI-compatible API base URL (env: AUTOTILE_GATEWAY_BASE_URL)",
     )
     group.add_argument(
@@ -95,6 +97,40 @@ def require(value: str | Path | None, option: str) -> str | Path:
     return value
 
 
+def safe_spec_id(value: object, label: str) -> str:
+    """Accept only portable, single-component IDs suitable for filenames."""
+    if not isinstance(value, str) or not value or value in {".", ".."}:
+        raise ValueError(f"{label} must be a non-empty portable identifier")
+    if any(ch in value for ch in "/\\") or any(ord(ch) < 32 for ch in value):
+        raise ValueError(f"{label} must not contain path separators or control characters")
+    if ":" in value or value.startswith("~"):
+        raise ValueError(f"{label} must not contain platform path syntax")
+    return value
+
+
+def contained_path(root: Path, *parts: str) -> Path:
+    root = root.resolve()
+    candidate = (root.joinpath(*parts)).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError(f"resolved output path escapes output root: {candidate}")
+    return candidate
+
+
+def validate_gateway_url(base_url: str, *, bearer: bool) -> str:
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("gateway base URL must be an absolute http:// or https:// URL")
+    if bearer and parsed.scheme == "http":
+        try:
+            host = ipaddress.ip_address(parsed.hostname or "")
+            loopback = host.is_loopback
+        except ValueError:
+            loopback = parsed.hostname in {"localhost", "localhost."}
+        if not loopback:
+            raise ValueError("refusing to send bearer credentials over non-loopback HTTP")
+    return base_url.rstrip("/")
+
+
 @dataclass(frozen=True)
 class GatewayImageClient:
     base_url: str
@@ -113,18 +149,19 @@ class GatewayImageClient:
             )
         if not model or not model.strip():
             raise ValueError("--texture-model (or AUTOTILE_TEXTURE_MODEL) is required")
+        url = validate_gateway_url(self.base_url, bearer=True)
 
         import httpx
 
         response = httpx.post(
-            f"{self.base_url}/images/generations",
+            f"{url}/images/generations",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json={"model": model, "prompt": prompt, "size": f"{size}x{size}", "n": 1,
                   "response_format": "b64_json"},
             timeout=httpx.Timeout(connect=10, read=300, write=60, pool=None),
         )
         if response.status_code != 200:
-            raise RuntimeError(f"image generation failed with HTTP {response.status_code}: {response.text[:300]}")
+            raise RuntimeError(f"image generation failed with HTTP {response.status_code}")
         try:
             encoded = response.json()["data"][0]["b64_json"]
             return base64.b64decode(encoded, validate=True)

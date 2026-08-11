@@ -98,10 +98,11 @@ def submit_and_wait(workflow: dict, *, comfy_url: str, timeout_s: int = 600) -> 
 
 
 def hard_post_composite(reference: Path, inpainted: Path, mask: Path, output: Path) -> tuple[int, int]:
-    """Overwrite preserved region with reference pixels. Returns (max_diff, n_drift_pixels)
-    measured on the preserved region of the inpainted output before correction."""
-    ref = np.array(Image.open(reference).convert("RGB"))
-    out = np.array(Image.open(inpainted).convert("RGB"))
+    """Preserve every channel in the reference's image mode."""
+    ref_image = Image.open(reference)
+    out_image = Image.open(inpainted).convert(ref_image.mode)
+    ref = np.array(ref_image)
+    out = np.array(out_image)
     m = np.array(Image.open(mask).convert("L"))
     if ref.shape != out.shape:
         sys.exit(f"shape mismatch: reference {ref.shape} vs inpainted {out.shape}")
@@ -113,7 +114,8 @@ def hard_post_composite(reference: Path, inpainted: Path, mask: Path, output: Pa
     max_d = int(drift.max()) if drift.size else 0
     n_drift = int((drift > 0).sum())
     composited = np.where(preserve[..., None], ref, out).astype(np.uint8)
-    Image.fromarray(composited).save(output)
+    Image.fromarray(composited, mode=ref_image.mode).save(output)
+    ref_image.close(); out_image.close()
     return max_d, n_drift
 
 
@@ -188,7 +190,7 @@ def main() -> int:
         staged_reference.unlink(missing_ok=True)
         staged_mask.unlink(missing_ok=True)
     print(f"[edge-stitch] preserve-region drift before post-composite: max={max_d}, n_pixels={n_drift}")
-    print(f"[edge-stitch] hard post-composite applied; preserved region now byte-identical to reference")
+    print(f"[edge-stitch] hard post-composite applied; preserved region is byte-identical in all reference channels")
     print(f"[edge-stitch] wrote {args.output}")
 
     if args.require_byte_exact and n_drift:

@@ -36,7 +36,8 @@ import argparse, json, os, subprocess, sys, time, uuid
 from pathlib import Path
 import numpy as np
 from PIL import Image
-from runtime import GatewayImageClient, add_comfy_args, add_gateway_args, comfy_cli_args, require
+from runtime import (GatewayImageClient, add_comfy_args, add_gateway_args, comfy_cli_args,
+                     contained_path, require, safe_spec_id)
 
 EDGE_STITCH = Path(__file__).parent / "edge_stitch.py"
 
@@ -211,7 +212,7 @@ def build_layer(layer_id: str, filled_prompt: str, transition_prompt: str,
     *against*). We use a transparent-equivalent texture: typically the previous
     layer's filled material — visually the layer that would show through.
     """
-    layer_dir = out_dir / layer_id
+    layer_dir = contained_path(out_dir, safe_spec_id(layer_id, "layer id"))
     layer_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Phase 1: filled (seamless) ---
@@ -310,6 +311,11 @@ def main() -> int:
     size = int(spec.get("size", 512))
     steps = int(spec.get("steps", 30))
     layers_cfg = spec["layers"]
+    if not isinstance(layers_cfg, list) or not layers_cfg:
+        p.error("layers must be a non-empty list")
+    ids = [safe_spec_id(layer.get("id"), "layer id") for layer in layers_cfg]
+    if len(ids) != len(set(ids)):
+        p.error("layer ids must be unique")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -318,7 +324,7 @@ def main() -> int:
     prev_filled: Path | None = None  # for non-base layers: what's below
 
     for i, layer in enumerate(layers_cfg):
-        layer_id = layer["id"]
+        layer_id = ids[i]
         is_base = (i == 0)
         print(f"\n=== layer {i+1}/{len(layers_cfg)}: {layer_id} (base={is_base}) ===")
         m = build_layer(
@@ -339,7 +345,7 @@ def main() -> int:
             reuse_existing=args.reuse_existing,
         )
         layer_manifests.append(m)
-        prev_filled = args.out_dir / layer_id / "sub_filled.png"
+        prev_filled = contained_path(args.out_dir, layer_id, "sub_filled.png")
 
     manifest = {
         "biome": spec.get("biome", "unknown"),

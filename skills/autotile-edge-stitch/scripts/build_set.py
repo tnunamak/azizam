@@ -43,7 +43,8 @@ import argparse, json, os, subprocess, sys, time
 from pathlib import Path
 import numpy as np
 from PIL import Image
-from runtime import GatewayImageClient, add_comfy_args, add_gateway_args, comfy_cli_args, require
+from runtime import (GatewayImageClient, add_comfy_args, add_gateway_args, comfy_cli_args,
+                     contained_path, require, safe_spec_id)
 
 EDGE_STITCH = Path(__file__).parent / "edge_stitch.py"
 
@@ -181,17 +182,25 @@ def main() -> int:
     edge_config = comfy_cli_args(args)
 
     spec = json.loads(args.spec.read_text())
-    size = int(spec.get("tile_size", 512))
-    edge_w = int(spec.get("edge_width", 32))
+    size = int(spec.get("tile_size", 512)); edge_w = int(spec.get("edge_width", 32))
+    if size < 2 or size % 2 or edge_w < 1 or edge_w > size:
+        p.error("tile_size must be an even positive integer and edge_width must be in 1..tile_size")
     default_prompt = spec.get("default_prompt", "")
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     generated: dict[str, Path] = {}
+    seen_ids: set[str] = set()
     t0 = time.time()
 
     for i, tile in enumerate(spec["tiles"]):
-        tid = tile["id"]
-        out_path = args.out_dir / f"{tid}.png"
+        try:
+            tid = safe_spec_id(tile["id"], "tile id")
+            out_path = contained_path(args.out_dir, f"{tid}.png")
+        except (KeyError, ValueError) as exc:
+            p.error(str(exc))
+        if tid in seen_ids:
+            p.error(f"duplicate tile id: {tid}")
+        seen_ids.add(tid)
         prompt = tile.get("prompt", default_prompt) or default_prompt
         if not prompt:
             sys.exit(f"tile {tid} has no prompt and no default_prompt set")
@@ -218,22 +227,22 @@ def main() -> int:
             neighbor_paths[direction] = generated[neighbor_id]
 
         canvas, mask = build_constraint_canvas(size, edge_w, neighbor_paths)
-        canvas_path = args.out_dir / f"_{tid}_canvas.png"
-        mask_path = args.out_dir / f"_{tid}_mask.png"
-        big_out_path = args.out_dir / f"_{tid}_big.png"
+        canvas_path = contained_path(args.out_dir, f"_{tid}_canvas.png")
+        mask_path = contained_path(args.out_dir, f"_{tid}_mask.png")
+        big_out_path = contained_path(args.out_dir, f"_{tid}_big.png")
         canvas.save(canvas_path); mask.save(mask_path)
 
         # edge_stitch produces a 3*size output (same shape as the 3x3 canvas).
         # We then crop the center cell out as the final tile.
-        run_edge_stitch(canvas_path, mask_path, prompt, big_out_path,
-                        seed=args.seed + i, steps=args.steps, edge_config=edge_config)
-        big = np.array(Image.open(big_out_path).convert("RGB"))
-        center = big[size:size * 2, size:size * 2]
-        Image.fromarray(center).save(out_path)
-        generated[tid] = out_path
-
-        # cleanup intermediate files
-        canvas_path.unlink(); mask_path.unlink(); big_out_path.unlink()
+        try:
+            run_edge_stitch(canvas_path, mask_path, prompt, big_out_path,
+                            seed=args.seed + i, steps=args.steps, edge_config=edge_config)
+            big = np.array(Image.open(big_out_path).convert("RGB"))
+            center = big[size:size * 2, size:size * 2]
+            Image.fromarray(center).save(out_path)
+            generated[tid] = out_path
+        finally:
+            canvas_path.unlink(missing_ok=True); mask_path.unlink(missing_ok=True); big_out_path.unlink(missing_ok=True)
 
         if not args.skip_verify:
             checks = verify_adjacencies(out_path, neighbor_paths, edge_w)

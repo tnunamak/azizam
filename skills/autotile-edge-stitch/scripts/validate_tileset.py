@@ -82,17 +82,17 @@ def gate2_contact_sheet(tileset_dir: Path, manifest: dict, out_path: Path) -> No
     # Display each tile at 256 (reduce file size)
     DISP = 256
     pairs = [
-        (15, 15, "same: 15 | 15 (full | full)"),
-        (3, 15, "top-edge | full"),
-        (12, 15, "bottom-edge | full"),
-        (5, 10, "left-edge | right-edge"),
-        (1, 8, "TL-only | BR-only (diagonal interest)"),
-        (6, 9, "diag-TR+BL | diag-TL+BR"),
-        (14, 1, "empty-TL | TL-only"),
-        (15, 0, "full | empty (tests extreme boundary)"),
+        (15, 15, "horizontal: same 15 | 15"),
+        (3, 15, "vertical: top-edge above full"),
+        (12, 15, "vertical: bottom-edge above full"),
+        (5, 10, "horizontal: left-edge | right-edge"),
+        (1, 8, "horizontal: TL-only | BR-only"),
+        (6, 9, "vertical: diag-TR+BL above diag-TL+BR"),
+        (14, 1, "horizontal: empty-TL | TL-only"),
+        (15, 0, "vertical: full above empty"),
     ]
-    cell_w = DISP * 2 + 20  # 2 tiles side-by-side + small gap
-    cell_h = DISP + 30  # tile + label
+    cell_w = DISP * 2 + 20
+    cell_h = DISP * 2 + 30
     grid_w = cell_w
     grid_h = cell_h * (len(layers) * len(pairs)) + 30
 
@@ -125,9 +125,12 @@ def gate2_contact_sheet(tileset_dir: Path, manifest: dict, out_path: Path) -> No
             a_composed = Image.alpha_composite(checker, ta)
             b_composed = Image.alpha_composite(checker, tb)
 
+            vertical = lbl.startswith("vertical:")
             canvas.paste(a_composed, (0, y))
-            canvas.paste(b_composed, (DISP, y))  # touching — to inspect seam
-            draw.text((0, y + DISP + 4), f"[{layer['id']}] tile_{a:02d} | tile_{b:02d}  ·  {lbl}", fill=(220, 220, 220), font=font)
+            canvas.paste(b_composed, (0, y + DISP) if vertical else (DISP, y))
+            draw.text((0, y + (DISP * 2 if vertical else DISP) + 4),
+                      f"[{layer['id']}] tile_{a:02d} | tile_{b:02d}  ·  {lbl}",
+                      fill=(220, 220, 220), font=font)
             y += cell_h
     canvas.save(out_path)
     print(f"Gate 2 contact sheet saved: {out_path}")

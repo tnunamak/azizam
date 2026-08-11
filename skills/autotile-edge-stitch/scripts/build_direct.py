@@ -27,7 +27,8 @@ import argparse, json, os, subprocess, sys, time, uuid
 from pathlib import Path
 import numpy as np
 from PIL import Image
-from runtime import GatewayImageClient, add_comfy_args, add_gateway_args, comfy_cli_args, require
+from runtime import (GatewayImageClient, add_comfy_args, add_gateway_args, comfy_cli_args,
+                     contained_path, require, safe_spec_id)
 
 EDGE_STITCH = Path(__file__).parent / "edge_stitch.py"
 
@@ -218,7 +219,7 @@ def build_layer_direct(layer_id: str, filled_prompt: str, transition_prompt: str
                        is_base: bool, client: GatewayImageClient, texture_model: str | None,
                        comfy_input: Path, edge_config: list[str], reuse_existing: bool = False) -> dict:
     """Generate one layer's 16 tiles directly."""
-    layer_dir = out_dir / layer_id
+    layer_dir = contained_path(out_dir, safe_spec_id(layer_id, "layer id"))
     layer_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate the seamless filled material
@@ -277,6 +278,11 @@ def main() -> int:
     spec = json.loads(args.spec.read_text())
     size = int(spec.get("size", 512))
     steps = int(spec.get("steps", 30))
+    if size < 2 or size % 2 or steps < 1:
+        p.error("size must be an even positive integer and steps must be positive")
+    ids = [safe_spec_id(layer.get("id"), "layer id") for layer in spec.get("layers", [])]
+    if not ids or len(ids) != len(set(ids)):
+        p.error("layers must be a non-empty list with unique portable ids")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -286,7 +292,8 @@ def main() -> int:
 
     for i, layer in enumerate(spec["layers"]):
         is_base = (i == 0)
-        print(f"\n=== layer {i+1}/{len(spec['layers'])}: {layer['id']} (base={is_base}) ===")
+        layer["id"] = ids[i]
+        print(f"\n=== layer {i+1}/{len(spec['layers'])}: {ids[i]} (base={is_base}) ===")
         m = build_layer_direct(
             layer_id=layer["id"],
             filled_prompt=layer["filled_prompt"],
@@ -302,7 +309,7 @@ def main() -> int:
             reuse_existing=args.reuse_existing,
         )
         layer_manifests.append(m)
-        prev_filled = args.out_dir / layer["id"] / "sub_filled.png"
+        prev_filled = contained_path(args.out_dir, ids[i], "sub_filled.png")
 
     manifest = {
         "biome": spec.get("biome", "unknown"),

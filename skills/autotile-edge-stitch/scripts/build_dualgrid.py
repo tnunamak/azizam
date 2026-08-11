@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Build a dual-grid 16-tile autotile set with byte-zero seams via
+"""Build a dual-grid 16-tile autotile set via
 quarter-tile precomposition (Boris Eyrich's recommended technique for
 AI-generated tiles).
 
 Generates a small palette of canonical sub-tiles via diffusion, then
 composites the 16 dual-grid configurations by stamping sub-tiles at
-each of the 4 quadrant positions of each tile. Seams are byte-zero
-by construction because every "filled" quadrant in every tile is
-literally the same pixels.
+each of the 4 quadrant positions of each tile. Reused quadrants are
+byte-identical; independently generated transition boundaries are not
+promised to be seamless.
 
 The sub-tile palette:
   - Q_FILLED: a quadrant-sized (size/2 × size/2) tile of filled material
@@ -91,18 +91,19 @@ def gen_corner_transition(
     work = comfy_input / f"_dualgrid_corner_{uuid.uuid4().hex[:8]}"
     canvas_p = work.with_suffix(".canvas.png")
     mask_p = work.with_suffix(".mask.png")
-    Image.fromarray(canvas).save(canvas_p)
-    Image.fromarray(mask).save(mask_p)
-
-    print(f"  generating corner-transition {filled_corner} -> {out_path.name}...")
-    r = subprocess.run([str(EDGE_STITCH),
+    try:
+        Image.fromarray(canvas).save(canvas_p)
+        Image.fromarray(mask).save(mask_p)
+        print(f"  generating corner-transition {filled_corner} -> {out_path.name}...")
+        r = subprocess.run([str(EDGE_STITCH),
                         "--reference", str(canvas_p),
                         "--mask", str(mask_p),
                         "--prompt", prompt,
                         "--output", str(out_path),
                         "--seed", str(seed),
-                        "--steps", "20", *edge_config])
-    canvas_p.unlink(missing_ok=True); mask_p.unlink(missing_ok=True)
+                            "--steps", "20", *edge_config])
+    finally:
+        canvas_p.unlink(missing_ok=True); mask_p.unlink(missing_ok=True)
     if r.returncode != 0:
         sys.exit(f"corner-transition gen failed for {filled_corner}")
 
@@ -244,6 +245,8 @@ def main() -> int:
     add_gateway_args(p)
     add_comfy_args(p)
     args = p.parse_args()
+    if args.size < 2 or args.size % 2:
+        p.error("--size must be a positive even integer")
 
     texture_model = args.texture_model or os.environ.get("AUTOTILE_TEXTURE_MODEL")
     required_paths = [
