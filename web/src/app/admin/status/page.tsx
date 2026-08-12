@@ -13,6 +13,7 @@ import {
   Button,
   EmptyOperationalState,
   IncidentBanner,
+  MetricStrip,
   ObjectList,
   ObjectRow,
   SectionActionHeader,
@@ -41,6 +42,57 @@ function observationLabel(service: CurrentHealthService): string {
     default:
       return service.observation.replace(/_/g, " ");
   }
+}
+
+function formatServiceCount(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/** Facts derived only from the P0 current-health projection.  Keeping this
+ * local makes the read-first Status surface explicit without inventing a
+ * second health model or chart data. */
+function statusMetrics(
+  health: NonNullable<Awaited<ReturnType<typeof api.status>>["current_health"]>,
+) {
+  const services = health.services;
+  const observed = services.filter(
+    (service) => service.observation !== "unavailable",
+  ).length;
+  const routable = services.filter(
+    (service) => service.routable === true,
+  ).length;
+  const attention = services.filter(
+    (service) => service.tone === "warn" || service.tone === "bad",
+  ).length;
+
+  return [
+    {
+      label: "Observed",
+      value: health.observation_available
+        ? formatServiceCount(observed, "service")
+        : "Unavailable",
+      detail: health.observation_available
+        ? `of ${formatServiceCount(services.length, "configured service")}`
+        : "Live probes did not report",
+      tone: health.observation_available ? "neutral" : "warn",
+    },
+    {
+      label: "Routable",
+      value: formatServiceCount(routable, "service"),
+      detail: services.some((service) => service.routable === null)
+        ? "Some route coverage is unknown"
+        : "Current route declaration",
+      tone: services.some((service) => service.routable === null)
+        ? "warn"
+        : "neutral",
+    },
+    {
+      label: "Needs attention",
+      value: formatServiceCount(attention, "service"),
+      detail: attention > 0 ? "Degraded or down" : "No service advisories",
+      tone: attention > 0 ? "warn" : "ok",
+    },
+  ] as const;
 }
 
 function StatusContents() {
@@ -92,20 +144,22 @@ function StatusContents() {
 
   return (
     <div className="flex flex-col gap-6">
-      <SectionActionHeader
-        title="Status"
-        description="Current health and the next object to inspect."
-        action={
-          selectedServiceId ? (
-            <Link
-              href={adminStatusHref()}
-              className="text-vf-small text-vf-muted hover:text-vf-text"
-            >
-              Clear selection
-            </Link>
-          ) : undefined
-        }
-      />
+      <div className="flex items-end justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <h1 className="text-vf-title text-vf-text font-semibold">Status</h1>
+          <p className="text-vf-small text-vf-muted">
+            Current health and the next object to inspect.
+          </p>
+        </div>
+        {selectedServiceId && (
+          <Link
+            href={adminStatusHref()}
+            className="text-vf-small text-vf-muted hover:text-vf-text"
+          >
+            Clear selection
+          </Link>
+        )}
+      </div>
 
       <IncidentBanner
         tone={
@@ -118,6 +172,8 @@ function StatusContents() {
         title={health.label}
         detail={health.detail}
       />
+
+      <MetricStrip items={[...statusMetrics(health)]} />
 
       <section className="flex flex-col gap-3">
         <SectionActionHeader title="Current services" />

@@ -39,6 +39,7 @@ import {
   SheetTitle,
   SheetTrigger,
   StatusCluster,
+  StatusIcon,
   Toaster,
   UsersIcon,
 } from "@/components/ui";
@@ -61,7 +62,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Overview", href: "/admin", Icon: OverviewIcon },
-  { label: "Status", href: "/admin/status", Icon: OverviewIcon },
+  { label: "Status", href: "/admin/status", Icon: StatusIcon },
   { label: "Services", href: "/admin/services", Icon: ServicesIcon },
   { label: "Apps & keys", href: "/admin/apps", Icon: AppsIcon },
   { label: "Profiles", href: "/admin/profiles", Icon: ProfilesIcon },
