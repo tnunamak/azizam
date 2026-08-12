@@ -13,6 +13,12 @@ test("uses signed sessions, CSRF, and owner boundaries", async ({ browser }) => 
     const adminSession = await admin.context.request.get(`${admin.baseUrl}/admin/api/session`);
     expect(adminSession.ok()).toBeTruthy();
     expect((await adminSession.json()).actor.csrf_token).toBe(admin.csrf);
+    const adminWrite = await admin.context.request.put(`${admin.baseUrl}/admin/api/operator/user-access-defaults`, {
+      data: { self_service_apps: true },
+      headers: { "x-ai-gateway-csrf": admin.csrf },
+    });
+    expect(adminWrite.status()).toBe(200);
+    expect((await adminWrite.json()).user_access_defaults.self_service_apps).toBeTruthy();
 
     const created = await userA.context.request.post(`${userA.baseUrl}/me/api/apps`, {
       data: { name: "P1B browser-created app" },

@@ -194,6 +194,8 @@ backends:
     managed: false
     native_passthrough: true
     capabilities: [chat]
+    models:
+      fixture-model: fixture-model
   fixture-standby:
     name: Fixture standby service
     host: 127.0.0.1
@@ -202,6 +204,14 @@ backends:
     managed: false
     native_passthrough: true
     capabilities: [chat]
+    models:
+      fixture-standby-model: fixture-standby-model
+  comfyui:
+    enabled: false
+  stt:
+    enabled: false
+  tts:
+    enabled: false
 routing:
   default_backend: fixture-required
 roles:
@@ -213,6 +223,8 @@ images:
   media_jobs:
     payload_dir: $TMPDIR_ROOT/media_payloads
     resume_on_start: false
+  background_removal:
+    enabled: false
 YAML
 fi
 
@@ -242,7 +254,7 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
   export AGW_DRIFT_REPORT_PATH="$TMPDIR_ROOT/drift_status.json"
   echo "[harness] Launching authenticated fixture ($FIXTURE_SCENARIO)..."
   setsid env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" PYTHONPATH="$REPO_ROOT" PYTHONUNBUFFERED=1 \
-    AI_GATEWAY_ADMIN_DB="$AI_GATEWAY_ADMIN_DB" AI_GATEWAY_METRICS_DB="$AI_GATEWAY_METRICS_DB" AI_GATEWAY_RESPONSES_DB="$AI_GATEWAY_RESPONSES_DB" AI_GATEWAY_RECEIPTS_DB="$AI_GATEWAY_RECEIPTS_DB" AI_GATEWAY_MEDIA_JOBS_DB="$AI_GATEWAY_MEDIA_JOBS_DB" AI_GATEWAY_CONFIG_PATH="$AI_GATEWAY_CONFIG_PATH" AI_GATEWAY_ADMIN_SESSION_KEY="$AI_GATEWAY_ADMIN_SESSION_KEY" AI_GATEWAY_LITELLM_BASE_URL=http://127.0.0.1:9 AI_GATEWAY_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false AGW_IMAGE_CACHE_DIR="$AGW_IMAGE_CACHE_DIR" AGW_VRAM_ESTIMATES_PATH="$AGW_VRAM_ESTIMATES_PATH" AGW_DRIFT_REPORT_PATH="$AGW_DRIFT_REPORT_PATH" \
+    AI_GATEWAY_ADMIN_DB="$AI_GATEWAY_ADMIN_DB" AI_GATEWAY_METRICS_DB="$AI_GATEWAY_METRICS_DB" AI_GATEWAY_RESPONSES_DB="$AI_GATEWAY_RESPONSES_DB" AI_GATEWAY_RECEIPTS_DB="$AI_GATEWAY_RECEIPTS_DB" AI_GATEWAY_MEDIA_JOBS_DB="$AI_GATEWAY_MEDIA_JOBS_DB" AI_GATEWAY_CONFIG_PATH="$AI_GATEWAY_CONFIG_PATH" AI_GATEWAY_ADMIN_SESSION_KEY="$AI_GATEWAY_ADMIN_SESSION_KEY" AI_GATEWAY_LITELLM_BASE_URL=http://127.0.0.1:9 AI_GATEWAY_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AGW_IMAGE_CACHE_DIR="$AGW_IMAGE_CACHE_DIR" AGW_VRAM_ESTIMATES_PATH="$AGW_VRAM_ESTIMATES_PATH" AGW_DRIFT_REPORT_PATH="$AGW_DRIFT_REPORT_PATH" \
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --serve --state-root "$TMPDIR_ROOT" --scenario "$FIXTURE_SCENARIO" >"$STARTUP_LOG" 2>&1 &
   PROXY_PID=$!
   for _ in $(seq 1 200); do [[ -f "$TMPDIR_ROOT/fixture-ready.json" ]] && break; kill -0 "$PROXY_PID" 2>/dev/null || break; sleep 0.1; done
