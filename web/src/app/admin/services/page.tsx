@@ -16,6 +16,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -71,6 +72,7 @@ import {
   TrendLineChart,
 } from "@/components/ui";
 import { AddServiceDialog } from "@/components/admin/add-service-dialog";
+import { safeAuditReturnPath } from "@/lib/admin-links";
 
 // ---------------------------------------------------------------------------
 // History series helpers
@@ -176,11 +178,17 @@ function withPendingToggleIntents(
 function RouteServiceTargetSync({
   onChange,
 }: {
-  onChange: (target: string | null) => void;
+  onChange: (state: {
+    target: string | null;
+    returnPath: string | null;
+  }) => void;
 }) {
   const searchParams = useSearchParams();
   useEffect(() => {
-    onChange(searchParams.get("service"));
+    onChange({
+      target: searchParams.get("service"),
+      returnPath: safeAuditReturnPath(searchParams.get("return")),
+    });
   }, [onChange, searchParams]);
   return null;
 }
@@ -673,6 +681,7 @@ export default function AdminServicesPage() {
   const [routeServiceTarget, setRouteServiceTarget] = useState<string | null>(
     null,
   );
+  const [auditReturnPath, setAuditReturnPath] = useState<string | null>(null);
 
   const {
     data: registry,
@@ -1197,7 +1206,12 @@ export default function AdminServicesPage() {
   return (
     <div className="flex w-full flex-col gap-8">
       <Suspense fallback={null}>
-        <RouteServiceTargetSync onChange={setRouteServiceTarget} />
+        <RouteServiceTargetSync
+          onChange={({ target, returnPath }) => {
+            setRouteServiceTarget(target);
+            setAuditReturnPath(returnPath);
+          }}
+        />
       </Suspense>
       <section className="flex flex-col gap-4">
         <SectionActionHeader
@@ -1206,9 +1220,16 @@ export default function AdminServicesPage() {
           description="Configure upstream services. Diagnose current health on Status."
           count={services.length || undefined}
           action={
-            <Button variant="primary" onClick={() => setAddOpen(true)}>
-              Add service
-            </Button>
+            <>
+              {auditReturnPath && (
+                <Button asChild variant="secondary">
+                  <Link href={auditReturnPath}>Back to audit</Link>
+                </Button>
+              )}
+              <Button variant="primary" onClick={() => setAddOpen(true)}>
+                Add service
+              </Button>
+            </>
           }
         />
 

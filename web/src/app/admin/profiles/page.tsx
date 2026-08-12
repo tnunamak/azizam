@@ -27,6 +27,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -65,6 +66,7 @@ import {
   SummaryStrip,
   toast,
 } from "@/components/ui";
+import { safeAuditReturnPath } from "@/lib/admin-links";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -75,7 +77,10 @@ function errorMessage(error: unknown): string {
 }
 
 function normalizedRouteTarget(value: string | undefined): string {
-  return (value ?? "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-");
 }
 
 function profileMatchesRouteTarget(profile: Profile, target: string): boolean {
@@ -88,11 +93,17 @@ function profileMatchesRouteTarget(profile: Profile, target: string): boolean {
 function RouteProfileTargetSync({
   onChange,
 }: {
-  onChange: (target: string | null) => void;
+  onChange: (state: {
+    target: string | null;
+    returnPath: string | null;
+  }) => void;
 }) {
   const searchParams = useSearchParams();
   useEffect(() => {
-    onChange(searchParams.get("profile"));
+    onChange({
+      target: searchParams.get("profile"),
+      returnPath: safeAuditReturnPath(searchParams.get("return")),
+    });
   }, [onChange, searchParams]);
   return null;
 }
@@ -213,6 +224,7 @@ export default function AdminProfilesPage() {
   const [routeProfileTarget, setRouteProfileTarget] = useState<string | null>(
     null,
   );
+  const [auditReturnPath, setAuditReturnPath] = useState<string | null>(null);
   const consumedProfileTargetRef = useRef<string | null>(null);
 
   const {
@@ -317,7 +329,12 @@ export default function AdminProfilesPage() {
   return (
     <div className="flex w-full flex-col gap-8">
       <Suspense fallback={null}>
-        <RouteProfileTargetSync onChange={setRouteProfileTarget} />
+        <RouteProfileTargetSync
+          onChange={({ target, returnPath }) => {
+            setRouteProfileTarget(target);
+            setAuditReturnPath(returnPath);
+          }}
+        />
       </Suspense>
       <section className="flex flex-col gap-4">
         <SectionActionHeader
@@ -327,6 +344,11 @@ export default function AdminProfilesPage() {
           description="A profile defines what a caller is allowed to reach — which models, protocols, and capabilities."
           action={
             <div className="flex gap-2">
+              {auditReturnPath && (
+                <Button asChild variant="secondary">
+                  <Link href={auditReturnPath}>Back to audit</Link>
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 onClick={() => setTestGlobalOpen(true)}
@@ -396,7 +418,9 @@ export default function AdminProfilesPage() {
             title="No profiles yet"
             detail="Create one to control what callers can reach."
             action={
-              <Button onClick={() => setCreateOpen(true)}>Create profile</Button>
+              <Button onClick={() => setCreateOpen(true)}>
+                Create profile
+              </Button>
             }
           />
         ) : (
@@ -825,12 +849,12 @@ function ProfileDialogContent({
 
           {/* Progressive disclosure: customization rules */}
           <div className="border-vf-border rounded-vf-md border">
-              <button
-                type="button"
-                className="text-vf-small text-vf-muted hover:text-vf-text rounded-vf-md flex w-full items-center justify-between px-4 py-3 transition-colors"
-                onClick={() => setAdvancedOpen((v) => !v)}
-                aria-expanded={advancedOpen}
-              >
+            <button
+              type="button"
+              className="text-vf-small text-vf-muted hover:text-vf-text rounded-vf-md flex w-full items-center justify-between px-4 py-3 transition-colors"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              aria-expanded={advancedOpen}
+            >
               <span className="font-medium">Customize access</span>
               <span className="text-vf-micro font-mono uppercase">
                 {advancedOpen ? "hide" : "edit"}

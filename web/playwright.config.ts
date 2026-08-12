@@ -1,17 +1,18 @@
 import { defineConfig } from "@playwright/test";
 
 const channel = process.env.PLAYWRIGHT_BROWSER_CHANNEL;
+const port = Number(process.env.PLAYWRIGHT_PORT ?? "3417");
 
 export default defineConfig({
   testDir: "./tests/playwright",
   globalSetup: "./tests/playwright/global-setup.ts",
   use: {
-    baseURL: "http://127.0.0.1:3417",
+    baseURL: `http://127.0.0.1:${port}`,
     headless: true,
   },
   webServer: {
-    command: "npm run dev -- --port 3417",
-    url: "http://127.0.0.1:3417/ui/admin/status/p1v-fixture/",
+    command: `npm run dev -- --port ${port}`,
+    url: `http://127.0.0.1:${port}/ui/admin/status/p1v-fixture/`,
     reuseExistingServer: false,
     timeout: 120_000,
   },

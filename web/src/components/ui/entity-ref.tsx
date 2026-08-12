@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { cn } from "@/lib/cn";
+import { useCompactTouchTargetClass } from "./compact-touch-targets";
 import { CheckIcon } from "./icons";
 import { useCopied } from "./copy-button";
 
@@ -35,6 +36,7 @@ export function EntityRef({
   idVisibility = "always",
 }: EntityRefProps) {
   const { copied, copy } = useCopied();
+  const compactTouchTargetClass = useCompactTouchTargetClass();
 
   if (idVisibility === "hover") {
     // Owner / human-name mode: the raw id must not appear as visible text.
@@ -42,17 +44,24 @@ export function EntityRef({
     // visually-hidden (display:none) copy button so it never lands in
     // innerText or screen-reader announcement unless focus lands there.
     return (
-      <span className={cn("inline-flex min-w-0 flex-col items-start", className)}>
+      <span
+        className={cn("inline-flex min-w-0 flex-col items-start", className)}
+      >
         {href ? (
           <Link
             href={href}
             title={id}
-            className="rounded-vf-sm text-vf-body text-vf-text hover:text-vf-accent focus-visible:ring-vf-accent/60 truncate focus-visible:ring-2 focus-visible:outline-none"
+            className={cn(
+              "rounded-vf-sm text-vf-body text-vf-text hover:text-vf-accent focus-visible:ring-vf-accent/60 truncate focus-visible:ring-2 focus-visible:outline-none",
+              compactTouchTargetClass,
+            )}
           >
             {name}
           </Link>
         ) : (
-          <span className="text-vf-body text-vf-text truncate" title={id}>{name}</span>
+          <span className="text-vf-body text-vf-text truncate" title={id}>
+            {name}
+          </span>
         )}
         {/* Copy button: hidden from display but reachable via keyboard focus */}
         <button
@@ -60,7 +69,10 @@ export function EntityRef({
           onClick={() => void copy(id)}
           title={copied ? "Copied" : id}
           aria-label={copied ? "Copied" : `Copy id: ${id}`}
-          className="rounded-vf-sm text-vf-micro focus-visible:text-vf-subtle focus-visible:ring-vf-accent/60 hidden font-mono transition-colors focus-visible:inline-flex focus-visible:ring-2 focus-visible:outline-none"
+          className={cn(
+            "rounded-vf-sm text-vf-micro focus-visible:text-vf-subtle focus-visible:ring-vf-accent/60 hidden font-mono transition-colors focus-visible:inline-flex focus-visible:ring-2 focus-visible:outline-none",
+            compactTouchTargetClass,
+          )}
         >
           <span aria-live="polite" className="sr-only">
             {copied ? "Copied to clipboard" : ""}
@@ -75,7 +87,10 @@ export function EntityRef({
       {href ? (
         <Link
           href={href}
-          className="rounded-vf-sm text-vf-body text-vf-text hover:text-vf-accent focus-visible:ring-vf-accent/60 truncate focus-visible:ring-2 focus-visible:outline-none"
+          className={cn(
+            "rounded-vf-sm text-vf-body text-vf-text hover:text-vf-accent focus-visible:ring-vf-accent/60 truncate focus-visible:ring-2 focus-visible:outline-none",
+            compactTouchTargetClass,
+          )}
         >
           {name}
         </Link>
@@ -86,7 +101,10 @@ export function EntityRef({
         type="button"
         onClick={() => void copy(id)}
         title={copied ? "Copied" : "Copy id"}
-        className="rounded-vf-sm text-vf-micro text-vf-subtle hover:text-vf-muted focus-visible:ring-vf-accent/60 inline-flex max-w-full items-center gap-1 font-mono transition-colors focus-visible:ring-2 focus-visible:outline-none"
+        className={cn(
+          "rounded-vf-sm text-vf-micro text-vf-subtle hover:text-vf-muted focus-visible:ring-vf-accent/60 inline-flex max-w-full items-center gap-1 font-mono transition-colors focus-visible:ring-2 focus-visible:outline-none",
+          compactTouchTargetClass,
+        )}
       >
         <span className="truncate">{id}</span>
         {copied && <CheckIcon className="text-vf-ok size-3 shrink-0" />}

@@ -4,6 +4,7 @@ import { Slot } from "@radix-ui/react-slot";
 import type { ComponentPropsWithoutRef } from "react";
 
 import { cn } from "@/lib/cn";
+import { useCompactTouchTargetClass } from "./compact-touch-targets";
 import { Spinner } from "./spinner";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -54,10 +55,12 @@ export function Button({
   type,
   ...props
 }: ButtonProps) {
+  const compactTouchTargetClass = useCompactTouchTargetClass();
   const classes = cn(
     BASE,
     VARIANT_CLASSES[variant],
     SIZE_CLASSES[size],
+    compactTouchTargetClass,
     className,
   );
 

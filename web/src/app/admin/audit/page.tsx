@@ -40,6 +40,7 @@ import {
 import {
   ActivityFeedRow,
   Button,
+  CompactTouchTargets,
   CopyButton,
   EmptyOperationalState,
   EntityRef,
@@ -215,6 +216,10 @@ function RouteEventTargetSync({
 export default function AdminAuditPage() {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const auditSearch = searchParams.toString();
+  const adminPathname = pathname.replace(/^\/ui(?=\/admin\/)/, "");
+  const auditReturnPath = `${adminPathname}${auditSearch ? `?${auditSearch}` : ""}`;
   // Active server-side filters
   const [actorFilter, setActorFilter] = useState<string | null>(null);
   const [familyFilter, setFamilyFilter] = useState<string | null>(null);
@@ -467,249 +472,247 @@ export default function AdminAuditPage() {
     !routeEventFetching;
 
   return (
-    <div className="flex w-full flex-col gap-8">
-      <Suspense fallback={null}>
-        <RouteEventTargetSync onChange={handleRouteStateChange} />
-      </Suspense>
-      <SectionActionHeader
-        as="h1"
-        kicker="activity"
-        title="Audit"
-        description="A record of who changed what, when. Newest first."
-      />
-
-      {firstPageIsError && allEntries.length === 0 ? (
-        <IncidentBanner
-          tone="bad"
-          title="Couldn't load audit events."
-          detail={errorMessage(firstPageError)}
-          actions={
-            <Button
-              size="sm"
-              className="min-h-11 sm:min-h-0"
-              onClick={() => void refetchFirst()}
-            >
-              Retry
-            </Button>
-          }
+    <CompactTouchTargets>
+      <div className="flex w-full flex-col gap-8">
+        <Suspense fallback={null}>
+          <RouteEventTargetSync onChange={handleRouteStateChange} />
+        </Suspense>
+        <SectionActionHeader
+          as="h1"
+          kicker="activity"
+          title="Audit"
+          description="A record of who changed what, when. Newest first."
         />
-      ) : (
-        <>
-          {firstPageIsError && allEntries.length > 0 && (
-            <IncidentBanner
-              tone="bad"
-              title="Audit events may be stale."
-              detail={errorMessage(firstPageError)}
-              actions={
-                <Button
-                  size="sm"
-                  className="min-h-11 sm:min-h-0"
-                  onClick={() => void refetchFirst()}
-                >
-                  Retry
-                </Button>
-              }
-            />
-          )}
-          {missingRouteEvent && (
-            <IncidentBanner
-              tone="warn"
-              title="No audit event matches this link"
-              detail={`The audit event "${routeEventTarget}" is not in the current audit log.`}
-            />
-          )}
 
-          {/* Filter chips — drive the server query (not client-side slice). */}
-          {!loading &&
-            (actorOptions.length > 0 ||
-              actionFamilies.length > 0 ||
-              hasFilter) && (
-              <FilterToolbar
-                filters={
-                  <>
-                    {(actorOptions.length > 1 || actorFilter !== null) && (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
-                          Actor:
-                        </span>
-                        <FilterChip
-                          active={actorFilter === null}
-                          onClick={() => handleActorChange(null)}
-                        >
-                          All
-                        </FilterChip>
-                        {actorOptions.map(({ id, label }) => (
-                          <FilterChip
-                            key={id}
-                            active={actorFilter === id}
-                            onClick={() =>
-                              handleActorChange(actorFilter === id ? null : id)
-                            }
-                          >
-                            {label}
-                          </FilterChip>
-                        ))}
-                      </div>
-                    )}
-                    {(actionFamilies.length > 1 || familyFilter !== null) && (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
-                          Category:
-                        </span>
-                        <FilterChip
-                          active={familyFilter === null}
-                          onClick={() => handleFamilyChange(null)}
-                        >
-                          All
-                        </FilterChip>
-                        {actionFamilies.map((family) => (
-                          <FilterChip
-                            key={family}
-                            active={familyFilter === family}
-                            onClick={() =>
-                              handleFamilyChange(
-                                familyFilter === family ? null : family,
-                              )
-                            }
-                          >
-                            {family}
-                          </FilterChip>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                }
-              />
-            )}
-
-          {loading || (firstPageFetching && allEntries.length === 0) ? (
-            <div className="vf-activity-feed" aria-busy="true">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="vf-activity-row">
-                  <Skeleton className="mt-1 h-2 w-2 shrink-0 rounded-full" />
-                  <div className="flex flex-1 flex-col gap-1">
-                    <Skeleton className="h-4 w-48" />
-                    <Skeleton className="h-3 w-32" />
-                  </div>
-                  <Skeleton className="h-3 w-16 shrink-0" />
-                </div>
-              ))}
-            </div>
-          ) : allEntries.length === 0 ? (
-            hasFilter ? (
-              <EmptyOperationalState
-                title="No events match the current filters."
-                action={
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="min-h-11 sm:min-h-0"
-                    onClick={() => {
-                      applyFilters({ actor: null, category: null });
-                    }}
-                  >
-                    Clear filters
+        {firstPageIsError && allEntries.length === 0 ? (
+          <IncidentBanner
+            tone="bad"
+            title="Couldn't load audit events."
+            detail={errorMessage(firstPageError)}
+            actions={
+              <Button size="sm" onClick={() => void refetchFirst()}>
+                Retry
+              </Button>
+            }
+          />
+        ) : (
+          <>
+            {firstPageIsError && allEntries.length > 0 && (
+              <IncidentBanner
+                tone="bad"
+                title="Audit events may be stale."
+                detail={errorMessage(firstPageError)}
+                actions={
+                  <Button size="sm" onClick={() => void refetchFirst()}>
+                    Retry
                   </Button>
                 }
               />
-            ) : (
-              <EmptyOperationalState title="No audit events yet." />
-            )
-          ) : (
-            <div className="vf-activity-feed">
-              {allEntries.map((entry) => {
-                const { phrase } = actionMeta(entry.action);
-                const actor = actorDisplayLabel(entry, usersById);
-                const target = entry.target_id
-                  ? entry.metadata && typeof entry.metadata["name"] === "string"
-                    ? entry.metadata["name"]
-                    : entry.target_kind
-                      ? entry.target_kind.replace(/_/g, " ")
-                      : entry.target_id
-                  : undefined;
-                return (
-                  <ActivityFeedRow
-                    key={entry.id}
-                    title={phrase}
-                    detail={
-                      target ? `${target} · ${entry.action}` : entry.action
-                    }
-                    actor={actor}
-                    time={<RelativeTime ts={entry.created_at} />}
-                    stat={
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-vf-small min-h-11 px-3 sm:min-h-0"
-                        onClick={() => {
-                          setDetailEntry(entry);
-                          replaceRouteState({ event: entry.id });
-                        }}
-                        aria-label="View full event record"
-                      >
-                        Details
-                      </Button>
-                    }
-                  />
-                );
-              })}
-            </div>
-          )}
+            )}
+            {missingRouteEvent && (
+              <IncidentBanner
+                tone="warn"
+                title="No audit event matches this link"
+                detail={`The audit event "${routeEventTarget}" is not in the current audit log.`}
+              />
+            )}
 
-          {/* Load more / End of log — honest end state per the honesty law */}
-          {!loading && allEntries.length > 0 && (
-            <div className="flex flex-col items-center gap-2 pt-2">
-              {loadMoreError && (
-                <IncidentBanner
-                  tone="bad"
-                  title="Couldn't load more audit events."
-                  detail={loadMoreError}
+            {/* Filter chips — drive the server query (not client-side slice). */}
+            {!loading &&
+              (actorOptions.length > 0 ||
+                actionFamilies.length > 0 ||
+                hasFilter) && (
+                <FilterToolbar
+                  filters={
+                    <>
+                      {(actorOptions.length > 1 || actorFilter !== null) && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                            Actor:
+                          </span>
+                          <FilterChip
+                            active={actorFilter === null}
+                            onClick={() => handleActorChange(null)}
+                          >
+                            All
+                          </FilterChip>
+                          {actorOptions.map(({ id, label }) => (
+                            <FilterChip
+                              key={id}
+                              active={actorFilter === id}
+                              onClick={() =>
+                                handleActorChange(
+                                  actorFilter === id ? null : id,
+                                )
+                              }
+                            >
+                              {label}
+                            </FilterChip>
+                          ))}
+                        </div>
+                      )}
+                      {(actionFamilies.length > 1 || familyFilter !== null) && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                            Category:
+                          </span>
+                          <FilterChip
+                            active={familyFilter === null}
+                            onClick={() => handleFamilyChange(null)}
+                          >
+                            All
+                          </FilterChip>
+                          {actionFamilies.map((family) => (
+                            <FilterChip
+                              key={family}
+                              active={familyFilter === family}
+                              onClick={() =>
+                                handleFamilyChange(
+                                  familyFilter === family ? null : family,
+                                )
+                              }
+                            >
+                              {family}
+                            </FilterChip>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  }
                 />
               )}
-              {exhausted ? (
-                <p className="text-vf-small text-vf-subtle">
-                  {hasFilter ? "No more matching events" : "End of audit log"}
-                </p>
-              ) : nextCursor !== undefined ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="min-h-11 sm:min-h-0"
-                  loading={loadingMore}
-                  onClick={() => void loadMore()}
-                >
-                  Load more
-                </Button>
-              ) : null}
-            </div>
-          )}
-        </>
-      )}
 
-      {/* Row detail sheet — mono JSON of the full record + copy button. */}
-      <Sheet
-        open={detailEntry !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDetailEntry(null);
-            replaceRouteState({ event: null });
-          }
-        }}
-      >
-        {detailEntry && (
-          <SheetContent>
-            <SheetHeader>
-              <SheetTitle>{actionMeta(detailEntry.action).phrase}</SheetTitle>
-              <SheetDescription>
-                Safe event details —{" "}
-                <RelativeTime ts={detailEntry.created_at} />
-              </SheetDescription>
-            </SheetHeader>
-            <AuditDetailPanel entry={detailEntry} />
-          </SheetContent>
+            {loading || (firstPageFetching && allEntries.length === 0) ? (
+              <div className="vf-activity-feed" aria-busy="true">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="vf-activity-row">
+                    <Skeleton className="mt-1 h-2 w-2 shrink-0 rounded-full" />
+                    <div className="flex flex-1 flex-col gap-1">
+                      <Skeleton className="h-4 w-48" />
+                      <Skeleton className="h-3 w-32" />
+                    </div>
+                    <Skeleton className="h-3 w-16 shrink-0" />
+                  </div>
+                ))}
+              </div>
+            ) : allEntries.length === 0 ? (
+              hasFilter ? (
+                <EmptyOperationalState
+                  title="No events match the current filters."
+                  action={
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        applyFilters({ actor: null, category: null });
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyOperationalState title="No audit events yet." />
+              )
+            ) : (
+              <div className="vf-activity-feed">
+                {allEntries.map((entry) => {
+                  const { phrase } = actionMeta(entry.action);
+                  const actor = actorDisplayLabel(entry, usersById);
+                  const target = entry.target_id
+                    ? entry.metadata &&
+                      typeof entry.metadata["name"] === "string"
+                      ? entry.metadata["name"]
+                      : entry.target_kind
+                        ? entry.target_kind.replace(/_/g, " ")
+                        : entry.target_id
+                    : undefined;
+                  return (
+                    <ActivityFeedRow
+                      key={entry.id}
+                      title={phrase}
+                      detail={
+                        target ? `${target} · ${entry.action}` : entry.action
+                      }
+                      actor={actor}
+                      time={<RelativeTime ts={entry.created_at} />}
+                      stat={
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-vf-small px-3"
+                          onClick={() => {
+                            setDetailEntry(entry);
+                            replaceRouteState({ event: entry.id });
+                          }}
+                          aria-label="View full event record"
+                        >
+                          Details
+                        </Button>
+                      }
+                    />
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Load more / End of log — honest end state per the honesty law */}
+            {!loading && allEntries.length > 0 && (
+              <div className="flex flex-col items-center gap-2 pt-2">
+                {loadMoreError && (
+                  <IncidentBanner
+                    tone="bad"
+                    title="Couldn't load more audit events."
+                    detail={loadMoreError}
+                  />
+                )}
+                {exhausted ? (
+                  <p className="text-vf-small text-vf-subtle">
+                    {hasFilter ? "No more matching events" : "End of audit log"}
+                  </p>
+                ) : nextCursor !== undefined ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={loadingMore}
+                    onClick={() => void loadMore()}
+                  >
+                    Load more
+                  </Button>
+                ) : null}
+              </div>
+            )}
+          </>
         )}
-      </Sheet>
-    </div>
+
+        {/* Row detail sheet — mono JSON of the full record + copy button. */}
+        <Sheet
+          open={detailEntry !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setDetailEntry(null);
+              replaceRouteState({ event: null });
+            }
+          }}
+        >
+          {detailEntry && (
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>{actionMeta(detailEntry.action).phrase}</SheetTitle>
+                <SheetDescription>
+                  Safe event details —{" "}
+                  <RelativeTime ts={detailEntry.created_at} />
+                </SheetDescription>
+              </SheetHeader>
+              <AuditDetailPanel
+                entry={detailEntry}
+                returnPath={auditReturnPath}
+              />
+            </SheetContent>
+          )}
+        </Sheet>
+      </div>
+    </CompactTouchTargets>
   );
 }
 
@@ -728,8 +731,8 @@ function FilterChip({
       onClick={onClick}
       className={
         active
-          ? "rounded-vf-sm bg-vf-accent/15 text-vf-accent border-vf-accent/30 text-vf-small min-h-11 border px-3 font-medium transition-colors"
-          : "rounded-vf-sm border-vf-border text-vf-muted hover:text-vf-text hover:border-vf-border/80 text-vf-small min-h-11 border bg-transparent px-3 transition-colors"
+          ? "rounded-vf-sm bg-vf-accent/15 text-vf-accent border-vf-accent/30 text-vf-small min-h-11 min-w-11 border px-3 font-medium transition-colors min-[980px]:min-h-0 min-[980px]:min-w-0"
+          : "rounded-vf-sm border-vf-border text-vf-muted hover:text-vf-text hover:border-vf-border/80 text-vf-small min-h-11 min-w-11 border bg-transparent px-3 transition-colors min-[980px]:min-h-0 min-[980px]:min-w-0"
       }
     >
       {children}
@@ -740,10 +743,20 @@ function FilterChip({
 // ---------------------------------------------------------------------------
 // Audit detail sheet panel — mono JSON of the full record + a CopyButton.
 
-function AuditDetailPanel({ entry }: { entry: AuditEntry }) {
+function AuditDetailPanel({
+  entry,
+  returnPath,
+}: {
+  entry: AuditEntry;
+  returnPath: string;
+}) {
   const details = auditDetails(entry);
   const json = JSON.stringify(details, null, 2);
-  const targetHref = adminTargetHref(entry.target_kind, entry.target_id);
+  const targetHref = adminTargetHref(
+    entry.target_kind,
+    entry.target_id,
+    returnPath,
+  );
   const targetName =
     (entry.metadata &&
       typeof entry.metadata["name"] === "string" &&
@@ -788,11 +801,7 @@ function AuditDetailPanel({ entry }: { entry: AuditEntry }) {
           <span className="text-vf-micro text-vf-subtle font-mono uppercase">
             Safe event details
           </span>
-          <CopyButton
-            className="min-h-11 sm:min-h-0"
-            value={json}
-            aria-label="Copy event JSON"
-          />
+          <CopyButton value={json} aria-label="Copy event JSON" />
         </div>
         <pre className="rounded-vf-md border-vf-border bg-vf-surface-2 text-vf-micro text-vf-text max-h-[60vh] overflow-y-auto border p-3 font-mono break-all whitespace-pre-wrap">
           {json}

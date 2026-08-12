@@ -3,6 +3,7 @@
 import type { ComponentPropsWithoutRef } from "react";
 
 import { cn } from "@/lib/cn";
+import { useCompactTouchTargetClass } from "./compact-touch-targets";
 import { ChevronDownIcon } from "./icons";
 import { useFieldContext } from "./field";
 
@@ -12,6 +13,7 @@ export type SelectProps = ComponentPropsWithoutRef<"select">;
  * surfaces (profiles, owners); the platform picker beats a custom one on
  * mobile. Pass <option> children. */
 export function Select({ className, children, ...props }: SelectProps) {
+  const compactTouchTargetClass = useCompactTouchTargetClass();
   const field = useFieldContext();
   const invalid = field?.invalid || props["aria-invalid"] === true;
 
@@ -23,6 +25,7 @@ export function Select({ className, children, ...props }: SelectProps) {
         aria-invalid={invalid || undefined}
         className={cn(
           "rounded-vf-md bg-vf-surface-1 text-vf-body text-vf-text h-9 w-full appearance-none border pr-8 pl-3 transition-colors",
+          compactTouchTargetClass,
           "focus:border-vf-accent focus:ring-vf-accent/30 focus:ring-2 focus:outline-none",
           "disabled:cursor-not-allowed disabled:opacity-50",
           invalid

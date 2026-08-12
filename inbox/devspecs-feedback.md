@@ -34,3 +34,8 @@
 
 - Useful: `ds tldr` and `ds recent` gave the expected task workflow and confirmed there was no relevant prior Gateway UX task.
 - Rough edge: this bounded task took about 28 seconds to produce a task pack, but its primary-file list missed all three actual target files (`gateway/admin_api.py`, `web/src/app/admin/layout.tsx`, and `web/src/lib/admin-links.ts`) and instead elevated stale, unrelated sources. It also left `devspecs/` untracked in the worktree, so manual review and cleanup remained necessary.
+
+## 2026-08-11 — Audit and Settings final gate
+
+- Useful: `ds tldr` made the intended bounded-hotfix workflow clear.
+- Rough edge: `ds task --quick` spent about 29 seconds indexing and created an untracked `devspecs/tasks/...` pack, but returned no task identifier or usable prompt. The implementation still needed manual source/test orientation, and the generated artifact required cleanup.

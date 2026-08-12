@@ -12,6 +12,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -71,6 +72,7 @@ import {
   StatusDotLabel,
   toast,
 } from "@/components/ui";
+import { safeAuditReturnPath } from "@/lib/admin-links";
 
 // ---------------------------------------------------------------------------
 // Telemetry helpers
@@ -85,7 +87,9 @@ interface AppTelemetry {
 
 type AppStatusFilter = "active" | "disabled" | "all";
 
-function buildAppTelemetryMap(status: StatusPayload | undefined): Map<string, AppTelemetry> {
+function buildAppTelemetryMap(
+  status: StatusPayload | undefined,
+): Map<string, AppTelemetry> {
   const map = new Map<string, AppTelemetry>();
   for (const entry of status?.auth_keys ?? []) {
     if (!entry.app_id) continue;
@@ -157,7 +161,10 @@ function userLabel(user: User | undefined): string {
 }
 
 function normalizedRouteTarget(value: string | undefined): string {
-  return (value ?? "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-");
 }
 
 function appMatchesRouteTarget(app: App, target: string): boolean {
@@ -170,11 +177,17 @@ function appMatchesRouteTarget(app: App, target: string): boolean {
 function RouteAppTargetSync({
   onChange,
 }: {
-  onChange: (target: string | null) => void;
+  onChange: (state: {
+    target: string | null;
+    returnPath: string | null;
+  }) => void;
 }) {
   const searchParams = useSearchParams();
   useEffect(() => {
-    onChange(searchParams.get("app"));
+    onChange({
+      target: searchParams.get("app"),
+      returnPath: safeAuditReturnPath(searchParams.get("return")),
+    });
   }, [onChange, searchParams]);
   return null;
 }
@@ -192,7 +205,10 @@ function isActiveKey(credential: Credential): boolean {
  * `lg:hidden`, so "opening" it would only show Radix's overlay with no
  * visible content. */
 function isDesktopViewport(): boolean {
-  return typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches;
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia("(min-width: 1024px)").matches
+  );
 }
 
 /** Operator-facing profile name. The built-in fallback's stored name is the
@@ -224,6 +240,7 @@ interface RevealedKey {
 export default function AdminAppsPage() {
   const queryClient = useQueryClient();
   const [routeAppTarget, setRouteAppTarget] = useState<string | null>(null);
+  const [auditReturnPath, setAuditReturnPath] = useState<string | null>(null);
 
   const {
     data: appsData,
@@ -317,7 +334,8 @@ export default function AdminAppsPage() {
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false); // used by mobile Sheet trigger on row tap
   const [appSearch, setAppSearch] = useState("");
-  const [appStatusFilter, setAppStatusFilter] = useState<AppStatusFilter>("active");
+  const [appStatusFilter, setAppStatusFilter] =
+    useState<AppStatusFilter>("active");
   const [showRevokedAdminKeys, setShowRevokedAdminKeys] = useState(false);
   const consumedAppTargetRef = useRef<string | null>(null);
 
@@ -447,13 +465,17 @@ export default function AdminAppsPage() {
     return statusFiltered.filter(
       (a) =>
         a.name.toLowerCase().includes(q) ||
-        userLabel(usersById.get(a.owner_user_id ?? "")).toLowerCase().includes(q),
+        userLabel(usersById.get(a.owner_user_id ?? ""))
+          .toLowerCase()
+          .includes(q),
     );
   }, [apps, appSearch, appStatusFilter, usersById]);
 
   const routeSelectedApp = useMemo(() => {
     if (!routeAppTarget) return null;
-    return apps.find((app) => appMatchesRouteTarget(app, routeAppTarget)) ?? null;
+    return (
+      apps.find((app) => appMatchesRouteTarget(app, routeAppTarget)) ?? null
+    );
   }, [apps, routeAppTarget]);
 
   // Only render the row metric columns when at least one visible app has real
@@ -494,7 +516,10 @@ export default function AdminAppsPage() {
       if (selectedAppId !== null) setSelectedAppId(null);
       return;
     }
-    if (!selectedAppId || !filteredApps.some((app) => app.id === selectedAppId)) {
+    if (
+      !selectedAppId ||
+      !filteredApps.some((app) => app.id === selectedAppId)
+    ) {
       setSelectedAppId(filteredApps[0]!.id);
     }
   }, [filteredApps, routeAppTarget, routeSelectedApp, selectedAppId]);
@@ -531,7 +556,9 @@ export default function AdminAppsPage() {
       // Top-level protocols (e.g. "openai", "chat")
       for (const p of effectiveProfile.protocols ?? []) scopeTags.push(p);
       // allow.intents nested inside profile.profile
-      const allow = (effectiveProfile.profile as { allow?: { intents?: string[] } })?.allow;
+      const allow = (
+        effectiveProfile.profile as { allow?: { intents?: string[] } }
+      )?.allow;
       for (const intent of allow?.intents ?? []) scopeTags.push(intent);
     }
 
@@ -541,32 +568,44 @@ export default function AdminAppsPage() {
       content: (
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-vf-micro text-vf-subtle font-mono uppercase">Type</span>
-            <Badge sm>{selectedApp.kind === "personal" ? "Personal" : "Shared"}</Badge>
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+              Type
+            </span>
+            <Badge sm>
+              {selectedApp.kind === "personal" ? "Personal" : "Shared"}
+            </Badge>
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-vf-micro text-vf-subtle font-mono uppercase">Profile</span>
-            <span className="text-vf-small text-vf-text truncate max-w-[140px]">
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+              Profile
+            </span>
+            <span className="text-vf-small text-vf-text max-w-[140px] truncate">
               {profileLabel(selectedApp)}
             </span>
           </div>
           {selectedApp.owner_user_id && (
             <div className="flex items-center justify-between gap-2">
-              <span className="text-vf-micro text-vf-subtle font-mono uppercase">Owner</span>
-              <span className="text-vf-small text-vf-text truncate max-w-[140px]">
+              <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                Owner
+              </span>
+              <span className="text-vf-small text-vf-text max-w-[140px] truncate">
                 {userLabel(usersById.get(selectedApp.owner_user_id))}
               </span>
             </div>
           )}
           <div className="flex items-center justify-between gap-2">
-            <span className="text-vf-micro text-vf-subtle font-mono uppercase">Status</span>
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+              Status
+            </span>
             <StatusDotLabel
               tone={selectedApp.disabled_at !== null ? "warn" : "ok"}
               label={selectedApp.disabled_at !== null ? "disabled" : "active"}
             />
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-vf-micro text-vf-subtle font-mono uppercase">Last used</span>
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+              Last used
+            </span>
             <span className="text-vf-small text-vf-text">
               <RelativeTime
                 ts={
@@ -619,28 +658,36 @@ export default function AdminAppsPage() {
       title: "Summary",
       content: (
         <div className="grid grid-cols-2 gap-2">
-          <div className="flex flex-col gap-0.5 rounded border border-vf-border bg-vf-surface-2/60 p-2.5">
-            <span className="text-vf-micro text-vf-subtle font-mono uppercase">Active keys</span>
+          <div className="border-vf-border bg-vf-surface-2/60 flex flex-col gap-0.5 rounded border p-2.5">
+            <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+              Active keys
+            </span>
             <span className="text-vf-title text-vf-text font-mono font-bold tabular-nums">
               {activeKeyCount}
             </span>
           </div>
           {selectedHasTelemetry && (
             <>
-              <div className="flex flex-col gap-0.5 rounded border border-vf-border bg-vf-surface-2/60 p-2.5">
-                <span className="text-vf-micro text-vf-subtle font-mono uppercase">Requests 24h</span>
+              <div className="border-vf-border bg-vf-surface-2/60 flex flex-col gap-0.5 rounded border p-2.5">
+                <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                  Requests 24h
+                </span>
                 <span className="text-vf-title text-vf-text font-mono font-bold tabular-nums">
                   {fmtRequests(telemetry?.requests_24h ?? null)}
                 </span>
               </div>
-              <div className="flex flex-col gap-0.5 rounded border border-vf-border bg-vf-surface-2/60 p-2.5">
-                <span className="text-vf-micro text-vf-subtle font-mono uppercase">Latency p50</span>
+              <div className="border-vf-border bg-vf-surface-2/60 flex flex-col gap-0.5 rounded border p-2.5">
+                <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                  Latency p50
+                </span>
                 <span className="text-vf-title text-vf-text font-mono font-bold tabular-nums">
                   {fmtLatency(telemetry?.latency_ms_p50 ?? null)}
                 </span>
               </div>
-              <div className="flex flex-col gap-0.5 rounded border border-vf-border bg-vf-surface-2/60 p-2.5">
-                <span className="text-vf-micro text-vf-subtle font-mono uppercase">Error rate</span>
+              <div className="border-vf-border bg-vf-surface-2/60 flex flex-col gap-0.5 rounded border p-2.5">
+                <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                  Error rate
+                </span>
                 <span
                   className={`text-vf-title font-mono font-bold tabular-nums ${
                     fmtErrorRate(telemetry) !== "—" &&
@@ -669,10 +716,12 @@ export default function AdminAppsPage() {
             {appKeys.slice(0, 6).map((k) => (
               <li
                 key={k.id}
-                className="flex items-center justify-between gap-2 border-t border-vf-border/60 py-2 first:border-t-0"
+                className="border-vf-border/60 flex items-center justify-between gap-2 border-t py-2 first:border-t-0"
               >
                 <div className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-vf-small text-vf-text truncate">{k.display_name}</span>
+                  <span className="text-vf-small text-vf-text truncate">
+                    {k.display_name}
+                  </span>
                   <SecretMask prefix={k.prefix} />
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -682,7 +731,7 @@ export default function AdminAppsPage() {
                   {isActiveKey(k) && (
                     <button
                       type="button"
-                      className="vf-button vf-button-ghost vf-button-sm px-2 text-vf-bad hover:text-vf-bad"
+                      className="vf-button vf-button-ghost vf-button-sm text-vf-bad hover:text-vf-bad px-2"
                       onClick={() => setRevokeTarget(k)}
                       aria-label={`Revoke ${k.display_name}`}
                     >
@@ -771,7 +820,12 @@ export default function AdminAppsPage() {
   return (
     <div className="flex w-full flex-col gap-8">
       <Suspense fallback={null}>
-        <RouteAppTargetSync onChange={setRouteAppTarget} />
+        <RouteAppTargetSync
+          onChange={({ target, returnPath }) => {
+            setRouteAppTarget(target);
+            setAuditReturnPath(returnPath);
+          }}
+        />
       </Suspense>
       <section className="flex flex-col gap-4">
         <SectionActionHeader
@@ -780,9 +834,16 @@ export default function AdminAppsPage() {
           description="Apps connect callers to the gateway; every key belongs to an app."
           count={apps.length}
           action={
-            <Button variant="primary" onClick={() => setCreateOpen(true)}>
-              Create app
-            </Button>
+            <>
+              {auditReturnPath && (
+                <Button asChild variant="secondary">
+                  <Link href={auditReturnPath}>Back to audit</Link>
+                </Button>
+              )}
+              <Button variant="primary" onClick={() => setCreateOpen(true)}>
+                Create app
+              </Button>
+            </>
           }
         />
 
@@ -825,7 +886,7 @@ export default function AdminAppsPage() {
           />
         ) : (
           <div className="flex gap-4">
-            <div className="min-w-0 flex-1 flex flex-col gap-3">
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
               <FilterToolbar
                 search={
                   <input
@@ -839,11 +900,19 @@ export default function AdminAppsPage() {
                 }
                 filters={
                   <>
-                    {([
-                      ["active", `Active ${apps.filter((app) => app.disabled_at === null).length}`],
-                      ["disabled", `Disabled ${apps.filter((app) => app.disabled_at !== null).length}`],
-                      ["all", `All ${apps.length}`],
-                    ] as const).map(([value, label]) => (
+                    {(
+                      [
+                        [
+                          "active",
+                          `Active ${apps.filter((app) => app.disabled_at === null).length}`,
+                        ],
+                        [
+                          "disabled",
+                          `Disabled ${apps.filter((app) => app.disabled_at !== null).length}`,
+                        ],
+                        ["all", `All ${apps.length}`],
+                      ] as const
+                    ).map(([value, label]) => (
                       <button
                         key={value}
                         type="button"
@@ -906,7 +975,7 @@ export default function AdminAppsPage() {
                   />
                 )
               ) : (
-                <div className="vf-panel p-0 overflow-hidden">
+                <div className="vf-panel overflow-hidden p-0">
                   <AppAccessRowHeader
                     metricLabels={
                       anyVisibleTelemetry
@@ -915,7 +984,9 @@ export default function AdminAppsPage() {
                     }
                   />
                   {filteredApps.map((app) => {
-                    const activeKeyCount = (appKeysByApp.get(app.id) ?? []).filter(isActiveKey).length;
+                    const activeKeyCount = (
+                      appKeysByApp.get(app.id) ?? []
+                    ).filter(isActiveKey).length;
                     const isSelected = selectedAppId === app.id;
                     // Below lg, selecting a row also opens the mobile detail
                     // Sheet (SheetContent there is the only visible detail
@@ -956,53 +1027,96 @@ export default function AdminAppsPage() {
                           }
                           profile={profileLabel(app)}
                           keyCount={activeKeyCount}
-                          metrics={!anyVisibleTelemetry ? undefined : (() => {
-                            const t = appTelemetryByAppId.get(app.id);
-                            const req = fmtRequests(t?.requests_24h ?? null);
-                            const lat = fmtLatency(t?.latency_ms_p50 ?? null);
-                            const errRate = fmtErrorRate(t);
-                            return (
-                              <>
-                                <span className="flex flex-col items-end">
-                                  <span className="text-vf-small text-vf-text tabular-nums font-mono">{req}</span>
-                                  <span className="text-vf-micro text-vf-subtle font-mono uppercase">reqs 24h</span>
-                                </span>
-                                <span className="flex flex-col items-end">
-                                  <span className={`text-vf-small tabular-nums font-mono ${errRate !== "—" && errRate !== "0.0%" ? "text-vf-warn" : "text-vf-text"}`}>{errRate}</span>
-                                  <span className="text-vf-micro text-vf-subtle font-mono uppercase">errors</span>
-                                </span>
-                                <span className="flex flex-col items-end">
-                                  <span className="text-vf-small text-vf-text tabular-nums font-mono">{lat}</span>
-                                  <span className="text-vf-micro text-vf-subtle font-mono uppercase">p50</span>
-                                </span>
-                              </>
-                            );
-                          })()}
+                          metrics={
+                            !anyVisibleTelemetry
+                              ? undefined
+                              : (() => {
+                                  const t = appTelemetryByAppId.get(app.id);
+                                  const req = fmtRequests(
+                                    t?.requests_24h ?? null,
+                                  );
+                                  const lat = fmtLatency(
+                                    t?.latency_ms_p50 ?? null,
+                                  );
+                                  const errRate = fmtErrorRate(t);
+                                  return (
+                                    <>
+                                      <span className="flex flex-col items-end">
+                                        <span className="text-vf-small text-vf-text font-mono tabular-nums">
+                                          {req}
+                                        </span>
+                                        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                                          reqs 24h
+                                        </span>
+                                      </span>
+                                      <span className="flex flex-col items-end">
+                                        <span
+                                          className={`text-vf-small font-mono tabular-nums ${errRate !== "—" && errRate !== "0.0%" ? "text-vf-warn" : "text-vf-text"}`}
+                                        >
+                                          {errRate}
+                                        </span>
+                                        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                                          errors
+                                        </span>
+                                      </span>
+                                      <span className="flex flex-col items-end">
+                                        <span className="text-vf-small text-vf-text font-mono tabular-nums">
+                                          {lat}
+                                        </span>
+                                        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                                          p50
+                                        </span>
+                                      </span>
+                                    </>
+                                  );
+                                })()
+                          }
                           lastUsedLabel={(() => {
                             // Prefer status snapshot last_seen (float epoch seconds);
                             // fall back to credential last_used_at (int epoch seconds).
                             const t = appTelemetryByAppId.get(app.id);
-                            const lastSeenTs = t?.last_seen ? Math.floor(t.last_seen) : null;
+                            const lastSeenTs = t?.last_seen
+                              ? Math.floor(t.last_seen)
+                              : null;
                             const keys = appKeysByApp.get(app.id) ?? [];
-                            const credTs = keys.reduce<number | null>((best, k) => {
-                              if (k.last_used_at === null) return best;
-                              return best === null || k.last_used_at > best ? k.last_used_at : best;
-                            }, null);
+                            const credTs = keys.reduce<number | null>(
+                              (best, k) => {
+                                if (k.last_used_at === null) return best;
+                                return best === null || k.last_used_at > best
+                                  ? k.last_used_at
+                                  : best;
+                              },
+                              null,
+                            );
                             const ts = lastSeenTs ?? credTs;
                             if (!ts) return "Never";
                             const diffSec = Math.floor(Date.now() / 1000) - ts;
                             if (diffSec < 60) return "just now";
-                            if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-                            if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+                            if (diffSec < 3600)
+                              return `${Math.floor(diffSec / 60)}m ago`;
+                            if (diffSec < 86400)
+                              return `${Math.floor(diffSec / 3600)}h ago`;
                             return `${Math.floor(diffSec / 86400)}d ago`;
                           })()}
                           status={app.disabled_at !== null ? "warn" : "ok"}
-                          statusLabel={app.disabled_at !== null ? "disabled" : "active"}
+                          statusLabel={
+                            app.disabled_at !== null ? "disabled" : "active"
+                          }
                           actions={
-                            <span className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                            <span
+                              className="flex items-center gap-2"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <span className="vf-access-row-kind-badge">
-                                <Badge sm tone={app.kind === "personal" ? "info" : undefined}>
-                                  {app.kind === "personal" ? "Personal" : "Shared"}
+                                <Badge
+                                  sm
+                                  tone={
+                                    app.kind === "personal" ? "info" : undefined
+                                  }
+                                >
+                                  {app.kind === "personal"
+                                    ? "Personal"
+                                    : "Shared"}
                                 </Badge>
                               </span>
                               <OverflowMenu label={`Actions for ${app.name}`}>
@@ -1012,10 +1126,14 @@ export default function AdminAppsPage() {
                                 >
                                   Mint key…
                                 </OverflowMenuItem>
-                                <OverflowMenuItem onSelect={() => setKeysAppId(app.id)}>
+                                <OverflowMenuItem
+                                  onSelect={() => setKeysAppId(app.id)}
+                                >
                                   View keys
                                 </OverflowMenuItem>
-                                <OverflowMenuItem onSelect={() => setProfileTarget(app)}>
+                                <OverflowMenuItem
+                                  onSelect={() => setProfileTarget(app)}
+                                >
                                   Change profile…
                                 </OverflowMenuItem>
                                 <OverflowMenuSeparator />
@@ -1059,7 +1177,7 @@ export default function AdminAppsPage() {
                   </Button>
                 }
                 sections={appPanelSections}
-                className="w-72 shrink-0 hidden lg:flex lg:flex-col"
+                className="hidden w-72 shrink-0 lg:flex lg:flex-col"
               />
             )}
           </div>
@@ -1074,7 +1192,7 @@ export default function AdminAppsPage() {
         }}
       >
         {selectedApp && (
-          <SheetContent className="lg:hidden overflow-y-auto">
+          <SheetContent className="overflow-y-auto lg:hidden">
             <SheetHeader>
               <div className="flex items-center gap-3">
                 <Avatar
@@ -1082,22 +1200,31 @@ export default function AdminAppsPage() {
                   tone={avatarToneFor(selectedApp.name)}
                 />
                 <div className="min-w-0 flex-1">
-                  <SheetTitle className="truncate">{selectedApp.name}</SheetTitle>
-                  <SheetDescription className="truncate">{profileLabel(selectedApp)}</SheetDescription>
+                  <SheetTitle className="truncate">
+                    {selectedApp.name}
+                  </SheetTitle>
+                  <SheetDescription className="truncate">
+                    {profileLabel(selectedApp)}
+                  </SheetDescription>
                 </div>
               </div>
             </SheetHeader>
-            <div className="flex flex-col gap-0 mt-4">
+            <div className="mt-4 flex flex-col gap-0">
               {appPanelSections.map((section, i) => (
-                <div key={i} className="flex flex-col gap-2 py-3 border-t border-vf-border/60 first:border-t-0">
+                <div
+                  key={i}
+                  className="border-vf-border/60 flex flex-col gap-2 border-t py-3 first:border-t-0"
+                >
                   {section.title && (
-                    <p className="text-vf-micro text-vf-subtle font-mono uppercase">{section.title}</p>
+                    <p className="text-vf-micro text-vf-subtle font-mono uppercase">
+                      {section.title}
+                    </p>
                   )}
                   {section.content}
                 </div>
               ))}
             </div>
-            <div className="mt-4 pt-4 border-t border-vf-border/60">
+            <div className="border-vf-border/60 mt-4 border-t pt-4">
               <Button
                 size="sm"
                 variant="primary"
@@ -1168,7 +1295,11 @@ export default function AdminAppsPage() {
             title="No active admin keys"
             detail="Revoked admin keys are hidden by default."
             action={
-              <Button size="sm" variant="secondary" onClick={() => setShowRevokedAdminKeys(true)}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setShowRevokedAdminKeys(true)}
+              >
                 Show revoked
               </Button>
             }
@@ -1176,43 +1307,50 @@ export default function AdminAppsPage() {
         ) : (
           <div className="vf-feed-panel overflow-hidden">
             <ul>
-              {(showRevokedAdminKeys ? adminKeys : activeAdminKeys).map((credential) => (
-                <li
-                  key={credential.id}
-                  className="flex items-center gap-3 border-b border-[var(--vf-border)] px-4 py-3 last:border-b-0"
-                >
-                  {/* Key identity */}
-                  <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                    <span className="text-vf-small text-vf-text font-medium truncate">
-                      {credential.display_name}
-                    </span>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <SecretMask prefix={credential.prefix} />
-                      {credential.scopes.length > 0 && (
-                        <span className="text-vf-micro text-vf-muted font-mono">
-                          {credential.scopes.join(", ")}
-                        </span>
-                      )}
+              {(showRevokedAdminKeys ? adminKeys : activeAdminKeys).map(
+                (credential) => (
+                  <li
+                    key={credential.id}
+                    className="flex items-center gap-3 border-b border-[var(--vf-border)] px-4 py-3 last:border-b-0"
+                  >
+                    {/* Key identity */}
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="text-vf-small text-vf-text truncate font-medium">
+                        {credential.display_name}
+                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <SecretMask prefix={credential.prefix} />
+                        {credential.scopes.length > 0 && (
+                          <span className="text-vf-micro text-vf-muted font-mono">
+                            {credential.scopes.join(", ")}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  {/* Last used */}
-                  <span className="text-vf-micro text-vf-muted hidden sm:block shrink-0 tabular-nums">
-                    <RelativeTime ts={credential.last_used_at} fallback="Never" />
-                  </span>
-                  {/* Status badge */}
-                  <KeyStatusBadge credential={credential} />
-                  {/* Actions */}
-                  <OverflowMenu label={`Actions for ${credential.display_name}`}>
-                    <OverflowMenuItem
-                      danger
-                      disabled={!isActiveKey(credential)}
-                      onSelect={() => setRevokeTarget(credential)}
+                    {/* Last used */}
+                    <span className="text-vf-micro text-vf-muted hidden shrink-0 tabular-nums sm:block">
+                      <RelativeTime
+                        ts={credential.last_used_at}
+                        fallback="Never"
+                      />
+                    </span>
+                    {/* Status badge */}
+                    <KeyStatusBadge credential={credential} />
+                    {/* Actions */}
+                    <OverflowMenu
+                      label={`Actions for ${credential.display_name}`}
                     >
-                      Revoke key…
-                    </OverflowMenuItem>
-                  </OverflowMenu>
-                </li>
-              ))}
+                      <OverflowMenuItem
+                        danger
+                        disabled={!isActiveKey(credential)}
+                        onSelect={() => setRevokeTarget(credential)}
+                      >
+                        Revoke key…
+                      </OverflowMenuItem>
+                    </OverflowMenu>
+                  </li>
+                ),
+              )}
             </ul>
           </div>
         )}
@@ -1322,7 +1460,6 @@ export default function AdminAppsPage() {
     </div>
   );
 }
-
 
 function KeyStatusBadge({ credential }: { credential: Credential }) {
   return isActiveKey(credential) ? (
@@ -1435,37 +1572,37 @@ function AppKeysPanel({
           No active keys. {revokedKeys.length} revoked hidden.
         </span>
       ) : (
-      <ul className="divide-vf-border/60 flex flex-col divide-y">
-        {visibleKeys.map((credential) => (
-          <li
-            key={credential.id}
-            className="flex items-start justify-between gap-3 py-3"
-          >
-            <div className="flex min-w-0 flex-col gap-1">
-              <span className="text-vf-body text-vf-text truncate">
-                {credential.display_name}
-              </span>
-              <SecretMask prefix={credential.prefix} />
-              <span className="text-vf-micro text-vf-subtle">
-                Last used{" "}
-                <RelativeTime ts={credential.last_used_at} fallback="never" />
-              </span>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <KeyStatusBadge credential={credential} />
-              <OverflowMenu label={`Actions for ${credential.display_name}`}>
-                <OverflowMenuItem
-                  danger
-                  disabled={!isActiveKey(credential)}
-                  onSelect={() => onRevoke(credential)}
-                >
-                  Revoke key…
-                </OverflowMenuItem>
-              </OverflowMenu>
-            </div>
-          </li>
-        ))}
-      </ul>
+        <ul className="divide-vf-border/60 flex flex-col divide-y">
+          {visibleKeys.map((credential) => (
+            <li
+              key={credential.id}
+              className="flex items-start justify-between gap-3 py-3"
+            >
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-vf-body text-vf-text truncate">
+                  {credential.display_name}
+                </span>
+                <SecretMask prefix={credential.prefix} />
+                <span className="text-vf-micro text-vf-subtle">
+                  Last used{" "}
+                  <RelativeTime ts={credential.last_used_at} fallback="never" />
+                </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <KeyStatusBadge credential={credential} />
+                <OverflowMenu label={`Actions for ${credential.display_name}`}>
+                  <OverflowMenuItem
+                    danger
+                    disabled={!isActiveKey(credential)}
+                    onSelect={() => onRevoke(credential)}
+                  >
+                    Revoke key…
+                  </OverflowMenuItem>
+                </OverflowMenu>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
@@ -2037,11 +2174,7 @@ function RevealKeyDialogContent({
         </DialogDescription>
       </DialogHeader>
       <DialogBody>
-        <KeyRevealBlock
-          secret={credential.api_key}
-          label="Your key"
-          canCopy
-        />
+        <KeyRevealBlock secret={credential.api_key} label="Your key" canCopy />
         <CopyBlock label="Run this" value={curl} />
       </DialogBody>
       <DialogFooter>

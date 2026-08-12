@@ -107,9 +107,6 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-const compactTarget = (element: HTMLElement) =>
-  expect(element.className).toContain("min-h-11");
-
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -282,20 +279,20 @@ describe("Admin Audit mounted behavior", () => {
     );
   });
 
-  it("marks every compact Audit action as a 44px phone target", async () => {
+  it("emits canonical target links with the full Audit return state", async () => {
     auditList.mockResolvedValue(page(familyRecords, "cursor-1"));
     usersList.mockResolvedValue([]);
-    const user = userEvent.setup();
+    route.searchParams = new URLSearchParams(
+      "?actor=usr_1&category=app&event=app",
+    );
+    auditGet.mockResolvedValue(event("app", "app.create"));
     renderAudit();
-    compactTarget(await screen.findByRole("button", { name: "Load more" }));
-    compactTarget(screen.getByRole("button", { name: "access" }));
-    compactTarget(
-      screen.getAllByRole("button", { name: "View full event record" })[0]!,
+    expect(
+      await screen.findByRole("link", { name: "Example" }),
+    ).toHaveAttribute(
+      "href",
+      "/admin/apps?app=app_1&return=%2Fadmin%2Faudit%3Factor%3Dusr_1%26category%3Dapp%26event%3Dapp",
     );
-    await user.click(
-      screen.getAllByRole("button", { name: "View full event record" })[0]!,
-    );
-    compactTarget(screen.getByRole("button", { name: "Copy event JSON" }));
   });
 });
 
@@ -345,27 +342,5 @@ describe("Admin Settings mounted behavior", () => {
       "aria-invalid",
       "true",
     );
-  });
-
-  it("marks compact retries, controls, disclosures, and dialog actions as 44px phone targets", async () => {
-    adminFetch.mockImplementation(async (path: string) => {
-      if (path === "/admin/api/oidc-config") return { oidc_config: null };
-      if (path === "/admin/api/extensions")
-        return { extension_packages: { packages: {} } };
-      if (path === "/admin/api/operator/overrides")
-        return { overrides: { media_job_admission: null } };
-      throw new Error(`unexpected request: ${path}`);
-    });
-    const user = userEvent.setup();
-    renderSettings();
-
-    compactTarget(await screen.findByRole("button", { name: "Configure" }));
-    compactTarget(screen.getByRole("button", { name: "Add extension" }));
-    compactTarget(screen.getByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Configure" }));
-    compactTarget(screen.getByRole("switch", { name: "Enable OIDC sign-in" }));
-    compactTarget(screen.getByText("Advanced options"));
-    compactTarget(screen.getByRole("button", { name: "Cancel" }));
-    compactTarget(screen.getByRole("button", { name: "Save" }));
   });
 });

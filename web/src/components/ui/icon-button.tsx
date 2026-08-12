@@ -3,6 +3,7 @@
 import type { ComponentPropsWithoutRef } from "react";
 
 import { cn } from "@/lib/cn";
+import { useCompactTouchTargetClass } from "./compact-touch-targets";
 import { Spinner } from "./spinner";
 
 export type IconButtonVariant = "ghost" | "secondary" | "danger";
@@ -39,6 +40,7 @@ export function IconButton({
   type,
   ...props
 }: IconButtonProps) {
+  const compactTouchTargetClass = useCompactTouchTargetClass();
   return (
     <button
       type={type ?? "button"}
@@ -46,6 +48,7 @@ export function IconButton({
         "rounded-vf-md focus-visible:ring-offset-vf-bg inline-flex shrink-0 items-center justify-center transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
         VARIANT_CLASSES[variant],
         SIZE_CLASSES[size],
+        compactTouchTargetClass,
         className,
       )}
       disabled={disabled || loading}

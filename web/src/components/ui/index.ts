@@ -28,6 +28,7 @@ export {
   type TrendLineChartProps,
 } from "./charts";
 export { Checkbox, type CheckboxProps } from "./checkbox";
+export { CompactTouchTargets } from "./compact-touch-targets";
 export { ConfirmDialog, type ConfirmDialogProps } from "./confirm-dialog";
 export {
   CopyButton,
