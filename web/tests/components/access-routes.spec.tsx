@@ -399,6 +399,31 @@ describe("access route behavior", () => {
     );
   });
 
+  it("remounts Test Access evidence when the selected profile changes", async () => {
+    const user = userEvent.setup();
+    const profileA = profile({ id: "profile-a", name: "Profile A" });
+    const profileB = profile({ id: "profile-b", name: "Profile B" });
+    apiMock.policy.simulate.mockImplementation(({ profile: profileId }) =>
+      Promise.resolve(allowedResult(profileId)),
+    );
+    apiMock.profiles.list.mockResolvedValue([profileA, profileB]);
+    apiMock.apps.list.mockResolvedValue([]);
+    apiMock.runtimeProfileMappings.list.mockResolvedValue([]);
+    renderWithQuery(<AdminProfilesPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Test access" }),
+    );
+    await user.selectOptions(screen.getByLabelText("Profile"), "profile-b");
+    await user.click(screen.getByRole("button", { name: "Run test" }));
+    expect(await screen.findByText("profile:profile-b")).toBeVisible();
+
+    await user.selectOptions(screen.getByLabelText("Profile"), "profile-a");
+    expect(screen.queryByText("profile:profile-b")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Profile"), "profile-b");
+    expect(screen.queryByText("profile:profile-b")).not.toBeInTheDocument();
+  });
+
   it("clears Test Access evidence across deletion, reappearance, and in-flight replacement", async () => {
     const userEvents = userEvent.setup();
     const profileA = profile({ id: "profile-a", name: "Profile A" });

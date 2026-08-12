@@ -1269,62 +1269,6 @@ function TestAccessDialog(
     profileList.find((profile) => profile.id === visibleSelectedProfileId) ??
     null;
   const activeProfileId = activeProfile?.id ?? "";
-  const activeProfileIdRef = useRef(activeProfileId);
-  activeProfileIdRef.current = activeProfileId;
-
-  const [intent, setIntent] = useState<string>("");
-  const [protocol, setProtocol] = useState<string>("");
-  const [model, setModel] = useState<string>("");
-  const [result, setResult] = useState<SimulateResult | null>(null);
-  const [resultProfileId, setResultProfileId] = useState<string | null>(null);
-  const [simError, setSimError] = useState<string | null>(null);
-  const [simErrorProfileId, setSimErrorProfileId] = useState<string | null>(
-    null,
-  );
-  const [simErrorAttempt, setSimErrorAttempt] = useState(0);
-  const [expanded, setExpanded] = useState(false);
-
-  const clearSimulation = () => {
-    setResult(null);
-    setResultProfileId(null);
-    setSimError(null);
-    setSimErrorProfileId(null);
-    setSimErrorAttempt(0);
-  };
-
-  useEffect(() => {
-    clearSimulation();
-  }, [activeProfileId]);
-
-  const simulate = useMutation({
-    mutationFn: (submittedProfileId: string) => {
-      return api.policy.simulate({
-        profile: submittedProfileId,
-        request: {
-          protocol: protocol || null,
-          intent: intent || null,
-          model: model.trim() || null,
-          workflow: null,
-          backend: null,
-        },
-      });
-    },
-    onSuccess: (data, submittedProfileId) => {
-      if (submittedProfileId !== activeProfileIdRef.current) return;
-      setResult(data);
-      setResultProfileId(submittedProfileId);
-      setSimError(null);
-      setSimErrorProfileId(null);
-    },
-    onError: (error, submittedProfileId) => {
-      if (submittedProfileId !== activeProfileIdRef.current) return;
-      setSimError(errorMessage(error));
-      setSimErrorProfileId(submittedProfileId);
-      setSimErrorAttempt((attempt) => attempt + 1);
-      setResult(null);
-      setResultProfileId(null);
-    },
-  });
 
   const titleSuffix = activeProfile ? ` — ${activeProfile.name}` : "";
 
@@ -1338,98 +1282,161 @@ function TestAccessDialog(
             allowed or denied, with the exact reason.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          {/* Profile select — only shown in header (list) mode */}
-          {!fixedProfile && profileList.length > 0 && (
-            <Field label="Profile">
-              <Select
-                value={visibleSelectedProfileId}
-                onChange={(e) => {
-                  clearSimulation();
-                  setSelectedProfileId(e.target.value);
-                }}
-                disabled={simulate.isPending}
-              >
-                {profileList.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          )}
-
-          {/* Disclosure toggle */}
-          <button
-            type="button"
-            className="text-vf-small text-vf-muted hover:text-vf-text flex w-full items-center justify-between"
-            onClick={() => setExpanded((v) => !v)}
-            aria-expanded={expanded}
-          >
-            <span className="font-medium">Request parameters</span>
-            <span className="text-vf-micro font-mono uppercase">
-              {expanded ? "collapse" : "expand"}
-            </span>
-          </button>
-
-          {expanded && (
-            <div className="flex flex-col gap-3">
-              <Field label="Protocol" help="Optional — leave blank to omit.">
-                <Input
-                  value={protocol}
-                  onChange={(e) => setProtocol(e.target.value)}
-                  disabled={simulate.isPending}
-                />
-              </Field>
-              <Field
-                label="Capability / intent"
-                help="Optional — leave blank to omit."
-              >
-                <Input
-                  value={intent}
-                  onChange={(e) => setIntent(e.target.value)}
-                  disabled={simulate.isPending}
-                />
-              </Field>
-              <Field label="Model" help="Optional — leave blank to omit.">
-                <Input
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="Model ID"
-                  disabled={simulate.isPending}
-                />
-              </Field>
-            </div>
-          )}
-
-          {/* Result */}
-          {result && resultProfileId === activeProfileId && (
-            <SimulateResultView result={result} />
-          )}
-
-          {simError && simErrorProfileId === activeProfileId && (
-            <FormErrorSummary key={simErrorAttempt} message={simError} />
-          )}
-        </DialogBody>
-        <DialogFooter>
-          <Button
-            variant="ghost"
-            onClick={() => onOpenChange(false)}
-            disabled={simulate.isPending}
-          >
-            Close
-          </Button>
-          <Button
-            variant="primary"
-            loading={simulate.isPending}
-            disabled={!activeProfileId}
-            onClick={() => activeProfileId && simulate.mutate(activeProfileId)}
-          >
-            Run test
-          </Button>
-        </DialogFooter>
+        <TestAccessSimulation
+          key={activeProfileId}
+          fixedProfile={fixedProfile}
+          profileId={activeProfileId}
+          profileList={profileList}
+          selectedProfileId={visibleSelectedProfileId}
+          onProfileSelect={setSelectedProfileId}
+          onClose={() => onOpenChange(false)}
+        />
       </DialogContent>
     </Dialog>
+  );
+}
+
+function TestAccessSimulation({
+  fixedProfile,
+  profileId,
+  profileList,
+  selectedProfileId,
+  onProfileSelect,
+  onClose,
+}: {
+  fixedProfile: Profile | null;
+  profileId: string;
+  profileList: Profile[];
+  selectedProfileId: string;
+  onProfileSelect: (profileId: string) => void;
+  onClose: () => void;
+}) {
+  const profileIdRef = useRef(profileId);
+  profileIdRef.current = profileId;
+  const [intent, setIntent] = useState("");
+  const [protocol, setProtocol] = useState("");
+  const [model, setModel] = useState("");
+  const [result, setResult] = useState<SimulateResult | null>(null);
+  const [resultProfileId, setResultProfileId] = useState<string | null>(null);
+  const [simError, setSimError] = useState<string | null>(null);
+  const [simErrorProfileId, setSimErrorProfileId] = useState<string | null>(
+    null,
+  );
+  const [simErrorAttempt, setSimErrorAttempt] = useState(0);
+  const [expanded, setExpanded] = useState(false);
+
+  const simulate = useMutation({
+    mutationFn: (submittedProfileId: string) =>
+      api.policy.simulate({
+        profile: submittedProfileId,
+        request: {
+          protocol: protocol || null,
+          intent: intent || null,
+          model: model.trim() || null,
+          workflow: null,
+          backend: null,
+        },
+      }),
+    onSuccess: (data, submittedProfileId) => {
+      if (submittedProfileId !== profileIdRef.current) return;
+      setResult(data);
+      setResultProfileId(submittedProfileId);
+      setSimError(null);
+      setSimErrorProfileId(null);
+    },
+    onError: (error, submittedProfileId) => {
+      if (submittedProfileId !== profileIdRef.current) return;
+      setSimError(errorMessage(error));
+      setSimErrorProfileId(submittedProfileId);
+      setSimErrorAttempt((attempt) => attempt + 1);
+      setResult(null);
+      setResultProfileId(null);
+    },
+  });
+
+  return (
+    <>
+      <DialogBody>
+        {!fixedProfile && profileList.length > 0 && (
+          <Field label="Profile">
+            <Select
+              value={selectedProfileId}
+              onChange={(e) => onProfileSelect(e.target.value)}
+              disabled={simulate.isPending}
+            >
+              {profileList.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+
+        <button
+          type="button"
+          className="text-vf-small text-vf-muted hover:text-vf-text flex w-full items-center justify-between"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+        >
+          <span className="font-medium">Request parameters</span>
+          <span className="text-vf-micro font-mono uppercase">
+            {expanded ? "collapse" : "expand"}
+          </span>
+        </button>
+
+        {expanded && (
+          <div className="flex flex-col gap-3">
+            <Field label="Protocol" help="Optional — leave blank to omit.">
+              <Input
+                value={protocol}
+                onChange={(e) => setProtocol(e.target.value)}
+                disabled={simulate.isPending}
+              />
+            </Field>
+            <Field
+              label="Capability / intent"
+              help="Optional — leave blank to omit."
+            >
+              <Input
+                value={intent}
+                onChange={(e) => setIntent(e.target.value)}
+                disabled={simulate.isPending}
+              />
+            </Field>
+            <Field label="Model" help="Optional — leave blank to omit.">
+              <Input
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="Model ID"
+                disabled={simulate.isPending}
+              />
+            </Field>
+          </div>
+        )}
+
+        {result && resultProfileId === profileId && (
+          <SimulateResultView result={result} />
+        )}
+
+        {simError && simErrorProfileId === profileId && (
+          <FormErrorSummary key={simErrorAttempt} message={simError} />
+        )}
+      </DialogBody>
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose} disabled={simulate.isPending}>
+          Close
+        </Button>
+        <Button
+          variant="primary"
+          loading={simulate.isPending}
+          disabled={!profileId}
+          onClick={() => profileId && simulate.mutate(profileId)}
+        >
+          Run test
+        </Button>
+      </DialogFooter>
+    </>
   );
 }
 
