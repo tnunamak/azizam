@@ -74,6 +74,7 @@ __all__ = [
     "load_oidc_config",
     "record_state",
     "session_from_claims",
+    "validate_oidc_stored_override",
     "validate_id_token_claims",
 ]
 
@@ -272,7 +273,58 @@ def _coerce_scopes(values: Any) -> tuple[str, ...]:
         except TypeError as exc:
             raise OIDCConfigError("scopes must be a string or iterable") from exc
     cleaned = tuple(p.strip() for p in parts if p.strip())
-    return cleaned or ("openid", "email", "profile")
+    # ``None`` means the field was omitted and receives the runtime default.
+    # An explicit empty list is a persisted operator clear and must remain
+    # empty through parsing and response projection.
+    return cleaned
+
+
+_STORED_OIDC_STRING_FIELDS = frozenset(
+    {
+        "issuer",
+        "client_id",
+        "client_secret",
+        "redirect_uri",
+        "authorization_endpoint",
+        "token_endpoint",
+        "jwks_uri",
+        "groups_claim",
+    }
+)
+_STORED_OIDC_LIST_FIELDS = frozenset(
+    {
+        "scopes",
+        "allowed_email_domains",
+        "admin_emails",
+        "admin_groups",
+        "admin_roles",
+    }
+)
+
+
+def validate_oidc_stored_override(data: Mapping[str, Any]) -> None:
+    """Reject malformed persisted OIDC values before they influence runtime.
+
+    Bootstrap configuration supports a few convenient environment-shaped
+    forms. The database is a typed control-plane boundary: its scalar values
+    must be strings and its list values must be lists of strings. This avoids
+    silently turning corrupt persisted data into an apparently valid provider
+    configuration.
+    """
+    for key in _STORED_OIDC_STRING_FIELDS & data.keys():
+        if not isinstance(data[key], str):
+            raise OIDCConfigError(f"stored {key} must be a string")
+    for key in _STORED_OIDC_LIST_FIELDS & data.keys():
+        value = data[key]
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise OIDCConfigError(f"stored {key} must be a list of strings")
+    if "enabled" in data and not isinstance(data["enabled"], bool):
+        raise OIDCConfigError("stored enabled must be a boolean")
+    if "clock_skew_seconds" in data and (
+        isinstance(data["clock_skew_seconds"], bool)
+        or not isinstance(data["clock_skew_seconds"], int)
+    ):
+        raise OIDCConfigError("stored clock_skew_seconds must be an integer")
 
 
 def _coerce_bool(value: Any, *, default: bool = False) -> bool:

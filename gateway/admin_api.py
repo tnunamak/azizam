@@ -1410,6 +1410,11 @@ def _validate_oidc_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         if key not in payload:
             continue
         value = payload[key]
+        if value is None:
+            # ``null`` explicitly clears ordinary scalar fields. For the
+            # write-only secret it preserves the current stored value.
+            out[key] = None if key == "client_secret" else ""
+            continue
         if not isinstance(value, str):
             raise _RouteError(
                 status.HTTP_400_BAD_REQUEST,

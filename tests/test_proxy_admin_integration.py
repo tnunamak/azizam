@@ -118,6 +118,36 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         for field in ("scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles"):
             self.assertEqual(candidate[field], [])
 
+    def test_oidc_empty_lists_clear_through_put_runtime_get_and_omission(self) -> None:
+        bootstrap = {
+            "enabled": False,
+            "scopes": ["openid", "email"],
+            "allowed_email_domains": ["example.com"],
+            "admin_emails": ["owner@example.com"],
+            "admin_groups": ["owners"],
+            "admin_roles": ["operator"],
+        }
+        fields = (
+            "scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles",
+        )
+        clear = {field: [] for field in fields}
+        with patch.object(proxy, "_bootstrap_admin_oidc_cfg", return_value=bootstrap):
+            response = self.client.put("/admin/api/oidc-config", json=clear, headers=self._auth())
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(proxy._effective_admin_oidc_config().scopes, ())
+            for field in fields:
+                self.assertEqual(response.json()["oidc_config"][field], [])
+
+            # A later PUT that omits the fields retains the explicit clears.
+            response = self.client.put(
+                "/admin/api/oidc-config", json={"client_id": "changed"}, headers=self._auth()
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            response = self.client.get("/admin/api/oidc-config", headers=self._auth())
+            self.assertEqual(response.status_code, 200, response.text)
+            for field in fields:
+                self.assertEqual(response.json()["oidc_config"][field], [])
+
     def test_malformed_oidc_db_fallback_has_bootstrap_provenance(self) -> None:
         bootstrap = {
             "enabled": False,
@@ -128,17 +158,23 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             "admin_emails": ["owner@example.com"],
         }
         fallback = load_oidc_config(bootstrap, env={})
-        malformed = {"issuer": 42, "scopes": ["openid"]}
-        with (
-            patch.object(proxy, "_bootstrap_admin_oidc_cfg", return_value=bootstrap),
-            patch.object(proxy, "ADMIN_OIDC_CONFIG", fallback),
-            patch.object(proxy.ADMIN_STORE, "get_oidc_config_setting_raw", return_value=malformed),
-        ):
-            snapshot = proxy._admin_oidc_config_snapshot()
-        self.assertIsNotNone(snapshot)
-        self.assertEqual(snapshot["issuer"], "https://bootstrap.example")  # type: ignore[index]
-        self.assertEqual(snapshot["provenance"]["fields"]["issuer"], "bootstrap")  # type: ignore[index]
-        self.assertEqual(snapshot["provenance"]["fields"]["scopes"], "bootstrap")  # type: ignore[index]
+        malformed_values = (
+            {"issuer": 42},
+            {"scopes": ["openid", 42]},
+            {"admin_groups": "owners"},
+        )
+        for malformed in malformed_values:
+            with (
+                self.subTest(malformed=malformed),
+                patch.object(proxy, "_bootstrap_admin_oidc_cfg", return_value=bootstrap),
+                patch.object(proxy, "ADMIN_OIDC_CONFIG", fallback),
+                patch.object(proxy.ADMIN_STORE, "get_oidc_config_setting_raw", return_value=malformed),
+            ):
+                snapshot = proxy._admin_oidc_config_snapshot()
+            self.assertIsNotNone(snapshot)
+            self.assertEqual(snapshot["issuer"], "https://bootstrap.example")  # type: ignore[index]
+            self.assertEqual(snapshot["provenance"]["fields"]["issuer"], "bootstrap")  # type: ignore[index]
+            self.assertEqual(snapshot["provenance"]["fields"]["scopes"], "bootstrap")  # type: ignore[index]
 
     def test_admin_api_is_mounted_and_separates_app_keys(self) -> None:
         overview = self.client.get("/admin/api/overview", headers=self._auth())

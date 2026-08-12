@@ -951,6 +951,29 @@ class AdminOidcSettingsTests(unittest.TestCase):
         preserved = self.store.get_oidc_config_setting_raw()
         self.assertEqual(preserved["admin_emails"], [])  # type: ignore[index]
 
+    def test_put_null_clears_scalar_fields_and_preserves_secret(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key("owner-cli", path=self.db)
+        client = self._client(admin_key)
+        scalar_fields = (
+            "issuer", "client_id", "redirect_uri", "authorization_endpoint",
+            "token_endpoint", "jwks_uri", "groups_claim",
+        )
+        initial = {field: f"initial-{field}" for field in scalar_fields}
+        initial["client_secret"] = "secret-A"
+        self.assertEqual(client.put("/admin/api/oidc-config", json=initial).status_code, 200)
+        response = client.put(
+            "/admin/api/oidc-config",
+            json={**{field: None for field in scalar_fields}, "client_secret": None},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.store.get_oidc_config_setting_raw()
+        self.assertIsNotNone(stored)
+        for field in scalar_fields:
+            self.assertEqual(stored[field], "")  # type: ignore[index]
+            self.assertEqual(response.json()["oidc_config"][field], "")
+        self.assertEqual(stored["client_secret"], "secret-A")  # type: ignore[index]
+        self.assertEqual(response.json()["oidc_config"]["client_secret"], "<redacted>")
+
     def test_oidc_setting_and_audit_rollback_together(self) -> None:
         actor = AdminContext(
             subject="durable-service-id", actor_id="durable-service-id",

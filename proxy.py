@@ -103,6 +103,7 @@ from gateway.admin_oidc import (
     load_oidc_config,
     record_state,
     session_from_claims,
+    validate_oidc_stored_override,
     validate_id_token_claims,
 )
 from gateway.admin_render import render_admin_dashboard
@@ -9813,7 +9814,12 @@ def _resolved_admin_oidc_config() -> tuple[Any, Mapping[str, Any]]:
         db_value = None
     if not db_value:
         return ADMIN_OIDC_CONFIG, {}
-    merged = _merged_admin_oidc_config_candidate(db_value)
+    try:
+        validate_oidc_stored_override(db_value)
+        merged = _merged_admin_oidc_config_candidate(db_value)
+    except OIDCConfigError as exc:
+        print(f"[proxy] WARNING: admin OIDC db config invalid: {exc}", flush=True)
+        return ADMIN_OIDC_CONFIG, {}
     if not merged.get("signing_key") and not merged.get("signing_key_env"):
         if ADMIN_SESSION_SIGNING_KEY:
             merged["signing_key"] = ADMIN_SESSION_SIGNING_KEY
@@ -9845,10 +9851,7 @@ def _merged_admin_oidc_config_candidate(db_value: Mapping[str, Any] | None) -> d
     for key, value in (db_value or {}).items():
         # Empty string (scalar) and empty list (list) are deliberate DB
         # overrides. Omission is the only preserve operation.
-        if value is None:
-            merged[key] = [] if key in {"scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles"} else ""
-        else:
-            merged[key] = value
+        merged[key] = value
     if not merged.get("signing_key") and not merged.get("signing_key_env") and ADMIN_SESSION_SIGNING_KEY:
         merged["signing_key"] = ADMIN_SESSION_SIGNING_KEY
     return merged
@@ -9856,6 +9859,7 @@ def _merged_admin_oidc_config_candidate(db_value: Mapping[str, Any] | None) -> d
 
 def _validate_admin_oidc_db_candidate(db_value: Mapping[str, Any]) -> None:
     """Reject a write unless the live runtime parser accepts its merge."""
+    validate_oidc_stored_override(db_value)
     load_oidc_config(_merged_admin_oidc_config_candidate(db_value), env=os.environ)
 
 
