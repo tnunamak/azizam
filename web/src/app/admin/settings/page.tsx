@@ -21,7 +21,7 @@ import type { FormEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { adminFetch, adminRegistryMutation, ApiError } from "@/lib/api";
-import type { EffectiveOidcConfig } from "@/lib/api";
+import type { EffectiveOidcConfig, OidcConfigUpdate } from "@/lib/api";
 import {
   Badge,
   Button,
@@ -110,7 +110,9 @@ async function fetchOidcConfig(): Promise<EffectiveOidcConfig | null> {
   return data.oidc_config;
 }
 
-async function saveOidcConfig(input: Partial<EffectiveOidcConfig>): Promise<EffectiveOidcConfig> {
+async function saveOidcConfig(
+  input: OidcConfigUpdate,
+): Promise<EffectiveOidcConfig> {
   const data = await adminFetch<{ oidc_config: EffectiveOidcConfig }>(
     "/admin/api/oidc-config",
     { method: "PUT", body: input },
@@ -312,7 +314,10 @@ function SignInCard() {
           <Skeleton className="h-4 w-40" />
         </div>
       ) : isError ? (
-        <ErrorBanner title="Couldn't load sign-in settings." onRetry={() => void refetch()} />
+        <ErrorBanner
+          title="Couldn't load sign-in settings."
+          onRetry={() => void refetch()}
+        />
       ) : !isConfigured ? (
         <p className="text-vf-small text-vf-muted">
           Not configured — users sign in with local accounts only.
@@ -338,6 +343,10 @@ function SignInCard() {
 }
 
 function OidcStatusLine({ config }: { config: EffectiveOidcConfig }) {
+  const provenance = Object.entries(config.provenance.fields)
+    .filter(([, source]) => source !== "runtime_default")
+    .map(([field, source]) => `${field}: ${source}`)
+    .join(", ");
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
@@ -367,10 +376,24 @@ function OidcStatusLine({ config }: { config: EffectiveOidcConfig }) {
         )}
       </div>
       <div className="text-vf-small text-vf-muted">
-        Source: <span className="text-vf-text">{config.source}</span> · applies {config.apply_mode}
+        Source:{" "}
+        <span className="text-vf-text">{config.source} configuration</span> ·
+        applies {config.apply_mode}
       </div>
+      {config.admin_emails.length > 0 && (
+        <div className="text-vf-small text-vf-muted">
+          Admin emails:{" "}
+          <span className="text-vf-text">{config.admin_emails.join(", ")}</span>
+        </div>
+      )}
+      {provenance && (
+        <div className="text-vf-micro text-vf-subtle">
+          Field sources: {provenance}
+        </div>
+      )}
       <div className="text-vf-small text-vf-muted">
-        Recovery: use an existing admin session, or generate an admin key on the host and claim it at <code>/setup/claim</code>.
+        Recovery: use an existing admin session, or generate an admin key on the
+        host and claim it at <code>/setup/claim</code>.
       </div>
     </div>
   );
@@ -483,7 +506,7 @@ function OidcEditDialogContent({
 
   const save = useMutation({
     mutationFn: () => {
-      const payload: Partial<EffectiveOidcConfig> = {
+      const payload: OidcConfigUpdate = {
         enabled: form.enabled,
         issuer: form.issuer.trim(),
         client_id: form.client_id.trim(),
@@ -812,7 +835,10 @@ function ExtensionsCard() {
           <Skeleton className="h-12 w-full" />
         </div>
       ) : isError ? (
-        <ErrorBanner title="Couldn't load extensions." onRetry={() => void refetch()} />
+        <ErrorBanner
+          title="Couldn't load extensions."
+          onRetry={() => void refetch()}
+        />
       ) : packageList.length === 0 ? (
         <EmptyOperationalState
           title="No extensions installed."
@@ -1193,7 +1219,10 @@ function MediaAdmissionCard() {
           <Skeleton className="h-8 w-3/4" />
         </div>
       ) : isError ? (
-        <ErrorBanner title="Couldn't load media admission settings." onRetry={() => void refetch()} />
+        <ErrorBanner
+          title="Couldn't load media admission settings."
+          onRetry={() => void refetch()}
+        />
       ) : (
         <MediaAdmissionSummary admission={admission} />
       )}

@@ -309,7 +309,10 @@ def _attention_app_profile_id(record: Mapping[str, Any]) -> str:
 
 
 _AUDIT_ID_RE = re.compile(r"^(?:app|prof|svc|cred)_[a-f0-9]{8,64}$")
-_AUDIT_PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# ``_key_prefix`` persists exactly the first 18 characters of generated
+# operator/admin keys: the public marker plus 14 URL-safe token characters.
+# A broad "safe-looking string" grammar would also accept a full credential.
+_AUDIT_PREFIX_RE = re.compile(r"^(?:opk|oak)_[A-Za-z0-9_-]{14}$")
 _AUDIT_HASH_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 _AUDIT_ENUMS = {
     "kind": frozenset({"personal", "service"}),
@@ -1407,21 +1410,24 @@ def _validate_oidc_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         if key not in payload:
             continue
         value = payload[key]
-        if value is None:
-            out[key] = None
-            continue
         if not isinstance(value, str):
             raise _RouteError(
                 status.HTTP_400_BAD_REQUEST,
                 "invalid_oidc_config",
                 f"{key} must be a string",
             )
-        # Empty is an explicit clear for bootstrap-backed provider fields.
+        # Empty is the explicit clear for bootstrap-backed scalar fields.
         # Omission remains the only patch-preserve operation.
-        out[key] = value.strip() or None
+        out[key] = value.strip()
     for key in _OIDC_LIST_FIELDS:
         if key not in payload:
             continue
+        if payload[key] is None:
+            raise _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_oidc_config",
+                f"{key} must be a list of strings; use [] to clear it",
+            )
         out[key] = _validate_string_list(payload[key], field=key)
     if "clock_skew_seconds" in payload:
         value = payload["clock_skew_seconds"]

@@ -386,6 +386,25 @@ export interface EffectiveOidcConfig {
   provenance: OidcConfigProvenance;
 }
 
+/** Write-only PUT shape; it deliberately cannot carry response provenance. */
+export interface OidcConfigUpdate {
+  enabled?: boolean;
+  issuer?: string;
+  client_id?: string;
+  client_secret?: string;
+  redirect_uri?: string;
+  scopes?: string[];
+  allowed_email_domains?: string[];
+  admin_emails?: string[];
+  admin_groups?: string[];
+  admin_roles?: string[];
+  authorization_endpoint?: string;
+  token_endpoint?: string;
+  jwks_uri?: string;
+  clock_skew_seconds?: number;
+  groups_claim?: string;
+}
+
 /** Response shape for GET /admin/api/audit (keyset-paginated). */
 export interface AuditPage {
   records: AuditEntry[];

@@ -69,6 +69,9 @@ OIDC_PROVIDER_FIELDS: tuple[str, ...] = (
 )
 
 OIDC_SECRET_FIELDS: frozenset[str] = frozenset({"client_secret"})
+OIDC_LIST_FIELDS: frozenset[str] = frozenset({
+    "scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles",
+})
 _OIDC_SECRET_REDACTED = "<redacted>"
 
 
@@ -195,9 +198,21 @@ def _merge_oidc_setting(
                 if key in current:
                     merged[key] = current[key]
             else:
-                merged[key] = new_value
+                # Canonical stored clears are "" for scalar fields and [] for
+                # list fields. Normalize old direct-store nulls on their next
+                # write; HTTP input never creates them.
+                merged[key] = (
+                    [] if new_value is None and key in _OIDC_LIST_FIELDS
+                    else "" if new_value is None
+                    else new_value
+                )
         elif key in current:
-            merged[key] = current[key]
+            current_value = current[key]
+            merged[key] = (
+                [] if current_value is None and key in _OIDC_LIST_FIELDS
+                else "" if current_value is None
+                else current_value
+            )
     return merged
 
 
@@ -1104,20 +1119,17 @@ class AdminSQLiteStore:
         _validate_merged_oidc_setting(merged)
         if self.oidc_config_validator is not None:
             self.oidc_config_validator(merged)
-        record = admin_store.put_operator_setting(
+        record = admin_store.put_operator_setting_with_audit(
             OIDC_PROVIDER_SETTING_KEY,
             merged,
             updated_by=actor.subject,
-            path=self.path,
-        )
-        admin_store.record_audit(
-            "operator.oidc_provider_config.update",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="operator_setting",
-            target_id=OIDC_PROVIDER_SETTING_KEY,
-            metadata={
+            audit_action="operator.oidc_provider_config.update",
+            audit_actor_kind=actor.actor_kind,
+            audit_actor_id=actor.audit_actor_id,
+            audit_actor_label=actor.actor_label,
+            audit_target_kind="operator_setting",
+            audit_target_id=OIDC_PROVIDER_SETTING_KEY,
+            audit_metadata={
                 "fields": sorted(str(k) for k in data.keys()),
                 "secret_changed": _oidc_secret_changed(current_raw, data),
             },
@@ -1553,6 +1565,7 @@ def create_admin_service_account_key(
         "admin_key.create",
         actor_kind="cli",
         actor_id="cli",
+        actor_label="CLI",
         target_kind="credential",
         target_id=credential["id"],
         metadata={"service_account": name, "role": role, "prefix": credential["prefix"]},

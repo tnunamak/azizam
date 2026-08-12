@@ -21,6 +21,7 @@ from gateway.admin_oidc import (  # noqa: E402
     OIDCConfig,
     csrf_token_for_session,
     encode_session_cookie,
+    load_oidc_config,
     session_from_claims,
 )
 from gateway.admin_runtime import create_admin_service_account_key  # noqa: E402
@@ -96,6 +97,48 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
     def test_admin_authenticator_uses_configured_oidc_cookie_object(self) -> None:
         self.assertIs(proxy.ADMIN_AUTH.cookie, proxy.ADMIN_OIDC_CONFIG.cookie)
+
+    def test_oidc_runtime_merge_honors_list_and_scalar_clears(self) -> None:
+        bootstrap = {
+            "enabled": False,
+            "issuer": "https://bootstrap.example",
+            "scopes": ["openid", "email"],
+            "allowed_email_domains": ["example.com"],
+            "admin_emails": ["owner@example.com"],
+            "admin_groups": ["owners"],
+            "admin_roles": ["operator"],
+        }
+        stored = {
+            "issuer": "", "scopes": [], "allowed_email_domains": [],
+            "admin_emails": [], "admin_groups": [], "admin_roles": [],
+        }
+        with patch.object(proxy, "_bootstrap_admin_oidc_cfg", return_value=bootstrap):
+            candidate = proxy._merged_admin_oidc_config_candidate(stored)
+        self.assertEqual(candidate["issuer"], "")
+        for field in ("scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles"):
+            self.assertEqual(candidate[field], [])
+
+    def test_malformed_oidc_db_fallback_has_bootstrap_provenance(self) -> None:
+        bootstrap = {
+            "enabled": False,
+            "issuer": "https://bootstrap.example",
+            "client_id": "bootstrap-client",
+            "redirect_uri": "https://gateway.example/admin/oidc/callback",
+            "scopes": ["openid", "email"],
+            "admin_emails": ["owner@example.com"],
+        }
+        fallback = load_oidc_config(bootstrap, env={})
+        malformed = {"issuer": 42, "scopes": ["openid"]}
+        with (
+            patch.object(proxy, "_bootstrap_admin_oidc_cfg", return_value=bootstrap),
+            patch.object(proxy, "ADMIN_OIDC_CONFIG", fallback),
+            patch.object(proxy.ADMIN_STORE, "get_oidc_config_setting_raw", return_value=malformed),
+        ):
+            snapshot = proxy._admin_oidc_config_snapshot()
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot["issuer"], "https://bootstrap.example")  # type: ignore[index]
+        self.assertEqual(snapshot["provenance"]["fields"]["issuer"], "bootstrap")  # type: ignore[index]
+        self.assertEqual(snapshot["provenance"]["fields"]["scopes"], "bootstrap")  # type: ignore[index]
 
     def test_admin_api_is_mounted_and_separates_app_keys(self) -> None:
         overview = self.client.get("/admin/api/overview", headers=self._auth())

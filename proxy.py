@@ -1645,6 +1645,7 @@ def _seed_user_defaults_from_bootstrap_config() -> dict[str, int]:
             "operator.user_access_defaults.seed",
             actor_kind="system",
             actor_id="startup",
+            actor_label="System",
             target_kind="operator_setting",
             target_id=USER_ACCESS_DEFAULTS_SETTING_KEY,
             metadata={"fields": sorted(defaults)},
@@ -1688,6 +1689,7 @@ def _seed_user_defaults_from_bootstrap_config() -> dict[str, int]:
             "runtime_profile_mapping.seed",
             actor_kind="system",
             actor_id="startup",
+            actor_label="System",
             target_kind="runtime_profile_mapping",
             target_id="bootstrap-user-defaults",
             metadata={"count": seeded_mappings},
@@ -1833,6 +1835,7 @@ def _provision_existing_user_personal_apps() -> int:
             "app.self_create",
             actor_kind="system",
             actor_id="startup",
+            actor_label="System",
             target_kind="app",
             target_id=str(app["id"]),
             metadata={
@@ -1881,6 +1884,7 @@ def _ensure_personal_app_for_owner(
         "app.self_create",
         actor_kind="user",
         actor_id=user_id,
+        actor_label=str(user.get("display_name") or user.get("email") or user_id),
         target_kind="app",
         target_id=str(app["id"]),
         metadata={
@@ -9795,13 +9799,12 @@ app.include_router(
 )
 
 
-def _effective_admin_oidc_config():
-    """Return the OIDC config, preferring DB settings over YAML bootstrap.
+def _resolved_admin_oidc_config() -> tuple[Any, Mapping[str, Any]]:
+    """Return the parsed runtime config and the DB state it accepted.
 
-    DB-stored fields layer on top of the bootstrap config. The session
-    signing key always comes from the browser-session key resolver so that
-    the admin cookie remains valid across DB toggles (changing the signing
-    key on the fly would silently log everyone out).
+    A rejected DB document must not influence provenance. Keeping the accepted
+    document beside the parsed result gives callers one truthful state rather
+    than separately re-reading untrusted persisted input.
     """
     try:
         db_value = ADMIN_STORE.get_oidc_config_setting_raw()
@@ -9809,7 +9812,7 @@ def _effective_admin_oidc_config():
         print(f"[proxy] admin OIDC db read failed: {exc}", flush=True)
         db_value = None
     if not db_value:
-        return ADMIN_OIDC_CONFIG
+        return ADMIN_OIDC_CONFIG, {}
     merged = _merged_admin_oidc_config_candidate(db_value)
     if not merged.get("signing_key") and not merged.get("signing_key_env"):
         if ADMIN_SESSION_SIGNING_KEY:
@@ -9818,23 +9821,33 @@ def _effective_admin_oidc_config():
         cfg = load_oidc_config(merged, env=os.environ)
     except OIDCConfigError as exc:
         print(f"[proxy] WARNING: admin OIDC db config invalid: {exc}", flush=True)
-        return ADMIN_OIDC_CONFIG
+        return ADMIN_OIDC_CONFIG, {}
     # Preserve the established signing key/cookie so admin sessions survive
     # DB-driven provider changes.
-    return replace(
-        cfg,
-        signing_key=ADMIN_SESSION_SIGNING_KEY or cfg.signing_key,
-        cookie=ADMIN_OIDC_CONFIG.cookie,
+    return (
+        replace(
+            cfg,
+            signing_key=ADMIN_SESSION_SIGNING_KEY or cfg.signing_key,
+            cookie=ADMIN_OIDC_CONFIG.cookie,
+        ),
+        dict(db_value),
     )
 
 
+def _effective_admin_oidc_config():
+    """Return the parsed effective OIDC config for runtime authentication."""
+    return _resolved_admin_oidc_config()[0]
+
+
 def _merged_admin_oidc_config_candidate(db_value: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Merge bootstrap and DB overrides, including explicit null clears."""
+    """Merge bootstrap and DB overrides using canonical explicit clears."""
     merged = dict(_bootstrap_admin_oidc_cfg())
     for key, value in (db_value or {}).items():
+        # Empty string (scalar) and empty list (list) are deliberate DB
+        # overrides. Omission is the only preserve operation.
         if value is None:
             merged[key] = [] if key in {"scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles"} else ""
-        elif value not in ("", [], ()):
+        else:
             merged[key] = value
     if not merged.get("signing_key") and not merged.get("signing_key_env") and ADMIN_SESSION_SIGNING_KEY:
         merged["signing_key"] = ADMIN_SESSION_SIGNING_KEY
@@ -10600,10 +10613,8 @@ def _admin_config_sources(
 
 def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
     bootstrap = _bootstrap_admin_oidc_cfg()
-    db_display = ADMIN_STORE.get_oidc_config_setting() or {}
-    db_setting = ADMIN_STORE.get_oidc_config_setting_raw() or {}
-    cfg = _effective_admin_oidc_config()
-    if not db_setting and not (
+    cfg, accepted_db_setting = _resolved_admin_oidc_config()
+    if not accepted_db_setting and not (
         cfg.enabled
         or cfg.issuer
         or cfg.client_id
@@ -10615,8 +10626,7 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
         return None
     field_sources: dict[str, str] = {}
     for field_name in OIDC_PROVIDER_FIELDS:
-        db_value = db_setting.get(field_name)
-        if field_name in db_setting:
+        if field_name in accepted_db_setting:
             field_sources[field_name] = "database"
         elif field_name in bootstrap or (
             field_name == "client_secret" and bootstrap.get("client_secret_env")
@@ -10648,7 +10658,10 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
         "jwks_uri": cfg.jwks_uri,
         "clock_skew_seconds": cfg.clock_skew_seconds,
         "groups_claim": cfg.groups_claim,
-        "updated_at": db_display.get("updated_at"),
+        "updated_at": (
+            (ADMIN_STORE.get_oidc_config_setting() or {}).get("updated_at")
+            if accepted_db_setting else None
+        ),
     }
 
 
@@ -11595,6 +11608,7 @@ async def setup_claim_admin_key(request: Request):
         "setup.claim",
         actor_kind=subject_kind,
         actor_id=subject_id,
+        actor_label=session_email,
         target_kind=subject_kind,
         target_id=subject_id,
         metadata={"role": role, "credential_prefix": credential.get("prefix")},
@@ -11766,6 +11780,7 @@ async def setup_create_local_owner(request: Request):
         "setup.local_owner_create",
         actor_kind="user",
         actor_id=str(user["id"]),
+        actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
         target_kind="user",
         target_id=str(user["id"]),
         metadata={"email": email, "via": "setup_page"},
@@ -11862,6 +11877,7 @@ async def setup_local_login(request: Request):
         "setup.local_owner_login",
         actor_kind="user",
         actor_id=str(user["id"]),
+        actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
         target_kind="user",
         target_id=str(user["id"]),
         metadata={"email": email, "via": "setup_page"},
@@ -11933,6 +11949,7 @@ async def setup_create_first_app(request: Request):
                 "setup.first_app_key",
                 actor_kind="user",
                 actor_id=str(getattr(session, "subject", "") or ""),
+                actor_label=str(getattr(session, "email", "") or getattr(session, "subject", "") or "Unknown user"),
                 target_kind="credential",
                 target_id=str(credential.get("id") or ""),
                 metadata={
@@ -11956,6 +11973,7 @@ async def setup_create_first_app(request: Request):
                 "setup.first_app_key",
                 actor_kind=actor.actor_kind,
                 actor_id=actor.audit_actor_id,
+                actor_label=actor.actor_label,
                 target_kind="credential",
                 target_id=str(credential.get("id") or ""),
                 metadata={
@@ -12087,6 +12105,7 @@ async def admin_oidc_callback(request: Request):
                 "app.self_create",
                 actor_kind="user",
                 actor_id=str(user["id"]),
+                actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
                 target_kind="app",
                 target_id=str(app["id"]),
                 metadata={

@@ -18,18 +18,19 @@
  * chips show the families seen in the loaded pages. A note makes this clear
  * when a family filter is active. */
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
-import {
-  api,
-  ApiError,
-  queryKeys,
-  type AuditEntry,
-  type User,
-} from "@/lib/api";
+import { api, ApiError, queryKeys, type AuditEntry } from "@/lib/api";
 import {
   ActivityFeedRow,
   Button,
@@ -155,10 +156,6 @@ function errorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-function userLabel(user: User | undefined): string {
-  return user?.display_name ?? user?.email ?? "Unknown user";
-}
-
 function actorDisplayLabel(entry: AuditEntry): string {
   return entry.actor_label;
 }
@@ -264,16 +261,6 @@ export default function AdminAuditPage() {
     consumedEventTargetRef.current = routeEventTarget;
   }, [detailEntry?.id, routeEvent, routeEventTarget]);
 
-  const { data: usersData, isPending: usersPending } = useQuery({
-    queryKey: ["users"] as const,
-    queryFn: api.users.list,
-  });
-
-  const usersById = useMemo(
-    () => new Map((usersData ?? []).map((user) => [user.id, user])),
-    [usersData],
-  );
-
   // Unique actors for filter chips (computed from all loaded entries).
   const actorOptions = useMemo(() => {
     const seen = new Map<string, string>(); // actor_id → display label
@@ -284,7 +271,7 @@ export default function AdminAuditPage() {
       seen.set(entry.actor_id, label);
     }
     return Array.from(seen.entries()).map(([id, label]) => ({ id, label }));
-  }, [allEntries, usersById]);
+  }, [allEntries]);
 
   const actionFamilies = useMemo(
     () => deriveActionFamilies(allEntries),
@@ -327,7 +314,7 @@ export default function AdminAuditPage() {
     }
   }
 
-  const loading = firstPagePending || usersPending;
+  const loading = firstPagePending;
   const hasFilter = Boolean(actorFilter ?? familyFilter);
   // Exhausted = last page returned null cursor (and we've seen at least one page)
   const exhausted = nextCursor === null && !firstPagePending;
@@ -390,7 +377,9 @@ export default function AdminAuditPage() {
                           <FilterChip
                             key={id}
                             active={actorFilter === id}
-                            onClick={() => handleActorChange(actorFilter === id ? null : id)}
+                            onClick={() =>
+                              handleActorChange(actorFilter === id ? null : id)
+                            }
                           >
                             {label}
                           </FilterChip>
@@ -413,7 +402,9 @@ export default function AdminAuditPage() {
                             key={family}
                             active={familyFilter === family}
                             onClick={() =>
-                              handleFamilyChange(familyFilter === family ? null : family)
+                              handleFamilyChange(
+                                familyFilter === family ? null : family,
+                              )
                             }
                           >
                             {family}
@@ -465,18 +456,19 @@ export default function AdminAuditPage() {
                 const { phrase } = actionMeta(entry.action);
                 const actor = actorDisplayLabel(entry);
                 const target = entry.target_id
-                  ? (entry.metadata &&
-                      typeof entry.metadata["name"] === "string"
-                      ? entry.metadata["name"]
-                      : entry.target_kind
-                        ? entry.target_kind.replace(/_/g, " ")
-                        : entry.target_id)
+                  ? entry.metadata && typeof entry.metadata["name"] === "string"
+                    ? entry.metadata["name"]
+                    : entry.target_kind
+                      ? entry.target_kind.replace(/_/g, " ")
+                      : entry.target_id
                   : undefined;
                 return (
                   <ActivityFeedRow
                     key={entry.id}
                     title={phrase}
-                    detail={target ? `${target} · ${entry.action}` : entry.action}
+                    detail={
+                      target ? `${target} · ${entry.action}` : entry.action
+                    }
                     actor={actor}
                     time={<RelativeTime ts={entry.created_at} />}
                     stat={

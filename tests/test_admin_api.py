@@ -2097,6 +2097,34 @@ class AdminPolicySimulationTests(unittest.TestCase):
 
 
 class AdminAuditTests(unittest.TestCase):
+    def test_audit_prefix_fields_accept_only_derived_public_prefixes(self) -> None:
+        client, store = _make_client()
+        public_prefix = "opk_" + "A" * 14
+        full_app_key = "opk_" + "A" * 43
+        full_admin_key = "oak_" + "B" * 43
+        store.audit.append({
+            "id": "aud_prefix", "created_at": 1, "action": "credential.create",
+            "metadata": {
+                "prefix": public_prefix,
+                "credential_prefix": "oak_" + "C" * 14,
+            },
+        })
+        store.audit.append({
+            "id": "aud_rejected", "created_at": 2, "action": "credential.create",
+            "metadata": {"prefix": full_app_key, "credential_prefix": full_admin_key},
+        })
+        response = client.get("/admin/api/audit", headers=_auth())
+        self.assertEqual(response.status_code, 200, response.text)
+        rejected = response.json()["records"][0]["metadata"]
+        metadata = response.json()["records"][1]["metadata"]
+        self.assertIsNone(rejected)
+        self.assertEqual(metadata, {
+            "prefix": public_prefix,
+            "credential_prefix": "oak_" + "C" * 14,
+        })
+        self.assertNotIn(full_app_key, response.text)
+        self.assertNotIn(full_admin_key, response.text)
+
     def test_audit_detail_drops_nested_and_unknown_secret_values(self) -> None:
         client, store = _make_client()
         store.audit.append({

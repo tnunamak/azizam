@@ -1635,6 +1635,63 @@ def put_operator_setting(
     return _operator_setting_row_to_dict(row)
 
 
+def put_operator_setting_with_audit(
+    key: str,
+    value: Mapping[str, Any],
+    *,
+    updated_by: str | None,
+    audit_action: str,
+    audit_actor_kind: str | None,
+    audit_actor_id: str | None,
+    audit_actor_label: str | None,
+    audit_target_kind: str | None,
+    audit_target_id: str | None,
+    audit_metadata: Mapping[str, Any] | None = None,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Commit one ordinary setting and its audit fact in one transaction."""
+    setting_key = str(key or "").strip()
+    if not setting_key:
+        raise ValueError("operator setting key is required")
+    if setting_key == "service_registry":
+        raise ValueError(
+            "service_registry must be written through the registry transaction primitive"
+        )
+    if not isinstance(value, Mapping):
+        raise ValueError("operator setting value must be a mapping")
+    ts = _now() if now is None else int(now)
+    payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, "
+                "updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+                (setting_key, payload, ts, updated_by),
+            )
+            _record_audit_in_transaction(
+                conn, audit_action,
+                actor_kind=audit_actor_kind,
+                actor_id=audit_actor_id,
+                actor_label=audit_actor_label,
+                target_kind=audit_target_kind,
+                target_id=audit_target_id,
+                metadata=audit_metadata,
+                now=ts,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        row = conn.execute(
+            "SELECT * FROM operator_settings WHERE key = ?", (setting_key,)
+        ).fetchone()
+    return _operator_setting_row_to_dict(row)
+
+
 class OperatorSettingsGenerationConflict(ValueError):
     """A registry document changed after the caller read its ETag."""
 
@@ -1862,6 +1919,7 @@ __all__ = [
     "list_runtime_profile_mappings",
     "resolve_runtime_profile_mapping",
     "put_operator_setting",
+    "put_operator_setting_with_audit",
     "get_service_registry_with_generation",
     "write_service_registry",
     "write_service_registry_with_audit",

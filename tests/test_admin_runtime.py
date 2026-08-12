@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -923,6 +924,49 @@ class AdminOidcSettingsTests(unittest.TestCase):
         raw = self.store.get_oidc_config_setting_raw()
         self.assertEqual(raw["client_secret"], "rotated-B")
 
+    def test_put_list_clear_is_stored_and_omission_preserves(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key("owner-cli", path=self.db)
+        client = self._client(admin_key)
+        initial = {
+            "enabled": False,
+            "scopes": ["openid", "email"],
+            "allowed_email_domains": ["example.com"],
+            "admin_emails": ["owner@example.com"],
+            "admin_groups": ["owners"],
+            "admin_roles": ["operator"],
+        }
+        self.assertEqual(client.put("/admin/api/oidc-config", json=initial).status_code, 200)
+        clear = {
+            "scopes": [], "allowed_email_domains": [], "admin_emails": [],
+            "admin_groups": [], "admin_roles": [], "issuer": "",
+        }
+        response = client.put("/admin/api/oidc-config", json=clear)
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.store.get_oidc_config_setting_raw()
+        self.assertIsNotNone(stored)
+        for field in ("scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles"):
+            self.assertEqual(stored[field], [])  # type: ignore[index]
+        self.assertEqual(stored["issuer"], "")  # type: ignore[index]
+        self.assertEqual(client.put("/admin/api/oidc-config", json={"client_id": "changed"}).status_code, 200)
+        preserved = self.store.get_oidc_config_setting_raw()
+        self.assertEqual(preserved["admin_emails"], [])  # type: ignore[index]
+
+    def test_oidc_setting_and_audit_rollback_together(self) -> None:
+        actor = AdminContext(
+            subject="durable-service-id", actor_id="durable-service-id",
+            actor_kind="service_account", actor_label="Release bot",
+            roles=frozenset({"owner"}),
+        )
+        before = admin_store.get_operator_setting(OIDC_PROVIDER_SETTING_KEY, path=self.db)
+        with patch.object(
+            admin_store, "_record_audit_in_transaction",
+            side_effect=RuntimeError("injected audit failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected audit failure"):
+                self.store.update_oidc_config_setting(data={"enabled": False}, actor=actor)
+        self.assertEqual(admin_store.get_operator_setting(OIDC_PROVIDER_SETTING_KEY, path=self.db), before)
+        self.assertEqual(admin_store.list_audit(path=self.db), [])
+
     def test_get_endpoint_redacts_secret(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db
@@ -1066,6 +1110,18 @@ class AdminOidcSettingsTests(unittest.TestCase):
         system_record = next(record for record in records if record["action"] == "system.seed")
         self.assertEqual(system_record["actor_kind"], "system")
         self.assertEqual(system_record["actor_label"], "System")
+
+    def test_new_service_account_audit_uses_event_label_not_id_shape(self) -> None:
+        actor = AdminContext(
+            subject="opaque-automation-id", actor_id="opaque-automation-id",
+            actor_kind="service_account", actor_label="Release bot",
+            roles=frozenset({"owner"}),
+        )
+        self.store.create_app(data={"name": "opaque-actor-app"}, actor=actor)
+        event = next(event for event in admin_store.list_audit(path=self.db)
+                     if event["action"] == "app.create")
+        self.assertEqual(event["actor_id"], "opaque-automation-id")
+        self.assertEqual(event["actor_label"], "Release bot")
 
 
 class ServicePatchRoundTripTests(unittest.TestCase):
