@@ -62,6 +62,7 @@ import {
   Select,
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
   Skeleton,
@@ -330,7 +331,6 @@ function ServiceTableRow({
   return (
     <div
       className={`vf-service-row transition-colors ${isSelected ? "bg-[var(--vf-row-hover)]" : ""}`}
-      aria-selected={isSelected}
     >
       {/* Top line: name + endpoint + caps + actions */}
       <div className="vf-service-row-main">
@@ -339,6 +339,7 @@ function ServiceTableRow({
           className="min-w-0 flex-1 cursor-pointer text-left"
           onClick={onSelect}
           aria-label={`${svc.name} — click for details`}
+          aria-expanded={isSelected}
         >
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="text-vf-body text-vf-text shrink-0 font-semibold">
@@ -627,6 +628,24 @@ function ErrorBanner({
   );
 }
 
+/** Keep the compact modal and desktop context rail mutually exclusive. */
+function useDesktopServiceContext() {
+  const query = "(min-width: 980px)";
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(query).matches,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setIsDesktop(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return isDesktop;
+}
+
 // ---------------------------------------------------------------------------
 // The surface
 
@@ -681,6 +700,7 @@ export default function AdminServicesPage() {
   const consumedServiceTargetRef = useRef<string | null>(null);
   /** Banner shown after any write confirming live apply. */
   const [restartBanner, setRestartBanner] = useState(false);
+  const isDesktopServiceContext = useDesktopServiceContext();
 
   function showRestartBanner() {
     setRestartBanner(true);
@@ -1275,6 +1295,9 @@ export default function AdminServicesPage() {
                       );
                       const metrics = serviceLiveMetrics(backend);
                       const isSelected = panelService?.id === svc.id;
+                      const togglePendingServiceId = toggleMutation.isPending
+                        ? toggleMutation.variables?.serviceId
+                        : null;
                       return (
                         <ServiceTableRow
                           key={svc.id}
@@ -1284,7 +1307,7 @@ export default function AdminServicesPage() {
                           metrics={metrics}
                           history={backend?.history}
                           isSelected={isSelected}
-                          togglePending={toggleMutation.isPending}
+                          togglePending={togglePendingServiceId === svc.id}
                           onSelect={() =>
                             setPanelService(isSelected ? null : svc)
                           }
@@ -1306,89 +1329,92 @@ export default function AdminServicesPage() {
                 )}
               </div>
 
-              {/* Mobile sheet — shown when a service is tapped on small screens */}
-              <Sheet
-                open={panelService !== null}
-                onOpenChange={(open) => {
-                  if (!open) setPanelService(null);
-                }}
-              >
-                <SheetContent>
-                  {panelService && (
-                    <>
-                      <SheetHeader>
-                        <SheetTitle>{panelService.name}</SheetTitle>
-                      </SheetHeader>
-                      <div className="mt-4">
-                        <RightContextPanel
-                          title={panelService.name}
-                          subtitle={
-                            isManagedSubstrate(panelService)
-                              ? "managed substrate"
-                              : endpointDisplay(panelService)
-                          }
-                          status={(() => {
-                            const { tone, label } = serviceLiveTone(
-                              panelService,
-                              currentHealthByService.get(panelService.id),
-                            );
-                            return (
-                              <StatusDotLabel
-                                tone={tone}
-                                label={label}
-                                pulse={tone === "ok"}
-                              />
-                            );
-                          })()}
-                          sections={panelSections}
-                          className="border-0 shadow-none"
-                        />
-                      </div>
-                    </>
+              {isDesktopServiceContext ? (
+                <div className="vf-right-rail flex">
+                  {panelService ? (
+                    <RightContextPanel
+                      title={panelService.name}
+                      subtitle={
+                        isManagedSubstrate(panelService)
+                          ? "managed substrate"
+                          : endpointDisplay(panelService)
+                      }
+                      status={(() => {
+                        const { tone, label } = serviceLiveTone(
+                          panelService,
+                          currentHealthByService.get(panelService.id),
+                        );
+                        return (
+                          <StatusDotLabel
+                            tone={tone}
+                            label={label}
+                            pulse={tone === "ok"}
+                          />
+                        );
+                      })()}
+                      sections={panelSections}
+                    />
+                  ) : (
+                    <StatusSummaryRail
+                      healthLabel={heroTitle}
+                      healthTone={heroTone}
+                      enabledCount={enabledCount}
+                      totalCount={services.length}
+                      healthSummary={healthSummary}
+                      avgLatencyMs={avgLatencyMs}
+                      modelMappingCount={modelMappingCount}
+                      capabilityCoverage={capabilityCoverage}
+                      avgUptime24h={avgUptime24h}
+                      avgP95Latency24h={avgP95Latency24h}
+                    />
                   )}
-                </SheetContent>
-              </Sheet>
-
-              {/* Phone and Compact use the Sheet; the context rail starts at Desktop. */}
-              <div className="vf-right-rail hidden min-[980px]:flex">
-                {panelService ? (
-                  <RightContextPanel
-                    title={panelService.name}
-                    subtitle={
-                      isManagedSubstrate(panelService)
-                        ? "managed substrate"
-                        : endpointDisplay(panelService)
-                    }
-                    status={(() => {
-                      const { tone, label } = serviceLiveTone(
-                        panelService,
-                        currentHealthByService.get(panelService.id),
-                      );
-                      return (
-                        <StatusDotLabel
-                          tone={tone}
-                          label={label}
-                          pulse={tone === "ok"}
-                        />
-                      );
-                    })()}
-                    sections={panelSections}
-                  />
-                ) : (
-                  <StatusSummaryRail
-                    healthLabel={heroTitle}
-                    healthTone={heroTone}
-                    enabledCount={enabledCount}
-                    totalCount={services.length}
-                    healthSummary={healthSummary}
-                    avgLatencyMs={avgLatencyMs}
-                    modelMappingCount={modelMappingCount}
-                    capabilityCoverage={capabilityCoverage}
-                    avgUptime24h={avgUptime24h}
-                    avgP95Latency24h={avgP95Latency24h}
-                  />
-                )}
-              </div>
+                </div>
+              ) : (
+                <Sheet
+                  open={panelService !== null}
+                  onOpenChange={(open) => {
+                    if (!open) setPanelService(null);
+                  }}
+                >
+                  <SheetContent>
+                    {panelService && (
+                      <>
+                        <SheetHeader>
+                          <SheetTitle>{panelService.name}</SheetTitle>
+                          <SheetDescription>
+                            Live service context and configuration details.
+                          </SheetDescription>
+                        </SheetHeader>
+                        <div className="mt-4">
+                          <RightContextPanel
+                            title={panelService.name}
+                            subtitle={
+                              isManagedSubstrate(panelService)
+                                ? "managed substrate"
+                                : endpointDisplay(panelService)
+                            }
+                            status={(() => {
+                              const { tone, label } = serviceLiveTone(
+                                panelService,
+                                currentHealthByService.get(panelService.id),
+                              );
+                              return (
+                                <StatusDotLabel
+                                  tone={tone}
+                                  label={label}
+                                  pulse={tone === "ok"}
+                                />
+                              );
+                            })()}
+                            sections={panelSections}
+                            className="border-0 shadow-none"
+                          />
+                        </div>
+                      </>
+                    )}
+                  </SheetContent>
+                </Sheet>
+              )}
             </div>
           </>
         )}
@@ -1476,26 +1502,25 @@ export default function AdminServicesPage() {
             removeTarget.source === "provisioned" ? (
               <>
                 <strong>{removeTarget.name}</strong> will be removed from the
-                registry. Routes that depend on it will stop working after the
-                next gateway restart.{" "}
+                registry. Routes that depend on it stop working immediately when
+                this live change is applied.{" "}
                 <em>
-                  Your YAML config file is not modified and will not re-import
-                  this service on the next restart.
+                  Its provisioned seed is not re-imported on the next restart.
                 </em>
               </>
             ) : (
               <>
                 <strong>{removeTarget.name}</strong> will be removed from the
-                registry. Routes that depend on it will stop working after the
-                next gateway restart.
+                registry. Routes that depend on it stop working immediately when
+                this live change is applied.
               </>
             )
           ) : undefined
         }
         confirmLabel="Remove service"
         typedName={removeTarget?.name}
-        onConfirm={() => {
-          if (removeTarget) removeMutation.mutate(removeTarget.id);
+        onConfirm={async () => {
+          if (removeTarget) await removeMutation.mutateAsync(removeTarget.id);
         }}
       />
     </div>
@@ -1517,6 +1542,7 @@ interface ServiceFormProps {
   onChange: (value: ServiceFormState) => void;
   disabled?: boolean;
   error?: string | null;
+  errorSummaryRef?: React.RefObject<HTMLParagraphElement | null>;
   fieldErrors?: Partial<Record<"name" | "base_url" | "preset", string>>;
   showAdvanced?: boolean;
   onToggleAdvanced?: () => void;
@@ -1531,6 +1557,7 @@ function ServiceForm({
   onChange,
   disabled,
   error,
+  errorSummaryRef,
   fieldErrors,
   showAdvanced,
   onToggleAdvanced,
@@ -1547,13 +1574,19 @@ function ServiceForm({
   return (
     <div className="flex flex-col gap-4">
       {error && (
-        <p role="alert" className="text-vf-small text-vf-bad">
+        <p
+          ref={errorSummaryRef}
+          role="alert"
+          tabIndex={-1}
+          className="text-vf-small text-vf-bad"
+        >
           {error}
         </p>
       )}
 
       <Field
         label="Provider"
+        required
         help="Choose an API-supplied preset to pre-fill its declared defaults."
         error={fieldErrors?.preset}
       >
@@ -1711,7 +1744,7 @@ function AddServiceDialog({
   );
 }
 
-function AddServiceDialogContent({
+export function AddServiceDialogContent({
   onOpenChange,
   onSaved,
 }: {
@@ -1737,6 +1770,11 @@ function AddServiceDialogContent({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [probe, setProbe] = useState<TestProbe | null>(null);
   const [testing, setTesting] = useState(false);
+  const formErrorRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    if (formError) formErrorRef.current?.focus();
+  }, [formError]);
 
   const save = useMutation({
     mutationFn: () => api.services.add(formToApiBody(form)),
@@ -1858,6 +1896,7 @@ function AddServiceDialogContent({
             onChange={setForm}
             disabled={save.isPending}
             error={formError}
+            errorSummaryRef={formErrorRef}
             fieldErrors={fieldErrors}
             showAdvanced={showAdvanced}
             onToggleAdvanced={() => setShowAdvanced((v) => !v)}
@@ -1919,12 +1958,18 @@ interface EditFormState {
 
 // Role values per registry semantics
 const ROLE_OPTIONS = [
-  { value: "required", label: "Required — gateway will error if unavailable" },
+  {
+    value: "required",
+    label: "Required — expected to be available; outages raise required alerts",
+  },
   {
     value: "optional",
-    label: "Optional — gateway routes around if unavailable",
+    label: "Optional — outages raise optional alerts",
   },
-  { value: "standby", label: "Standby — only used when explicitly requested" },
+  {
+    value: "standby",
+    label: "Standby — outages raise standby alerts",
+  },
 ];
 
 const DURATION_CLASS_OPTIONS = [
@@ -2095,6 +2140,9 @@ function EditServiceDialogContent({
   // Managed-row only fields
   const [managedName, setManagedName] = useState(service.name);
   const [managedEnabled, setManagedEnabled] = useState(service.enabled);
+  const [managedNote, setManagedNote] = useState(
+    String(service.config.note ?? ""),
+  );
   const [formError, setFormError] = useState<string | null>(null);
   const [probe, setProbe] = useState<TestProbe | null>(null);
   const [testing, setTesting] = useState(false);
@@ -2128,6 +2176,7 @@ function EditServiceDialogContent({
         return api.services.edit(service.id, {
           name: managedName.trim() || service.name,
           enabled: managedEnabled,
+          note: managedNote,
         });
       }
       return api.services.edit(service.id, editFormToApiBody(form));
@@ -2194,6 +2243,16 @@ function EditServiceDialogContent({
                   aria-label="Enable or disable this service"
                 />
               </div>
+              <Field label="Note">
+                <textarea
+                  value={managedNote}
+                  onChange={(event) => setManagedNote(event.target.value)}
+                  rows={3}
+                  disabled={save.isPending}
+                  placeholder="Optional operator note about this service."
+                  className="border-vf-border bg-vf-surface focus:ring-vf-accent/30 text-vf-small text-vf-text placeholder:text-vf-subtle w-full resize-none rounded-md border px-3 py-2 focus:ring-2 focus:outline-none disabled:opacity-50"
+                />
+              </Field>
               <p className="text-vf-small text-vf-muted rounded-vf-md border-vf-border bg-vf-surface-2 border p-3">
                 Endpoint, protocol, and execution substrate are managed by the
                 gateway and cannot be edited here.

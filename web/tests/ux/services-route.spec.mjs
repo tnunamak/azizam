@@ -47,3 +47,39 @@ test("Services uses the frozen operational primitives for context and destructiv
   }
   assert.doesNotMatch(contents, /window\.confirm\(/);
 });
+
+test("Services keeps responsive context, live removal, and role semantics honest", async () => {
+  const contents = await source();
+
+  assert.match(contents, /\(min-width: 980px\)/);
+  assert.match(contents, /isDesktopServiceContext \? \(/);
+  assert.match(contents, /<SheetDescription>/);
+  assert.match(contents, /aria-expanded=\{isSelected\}/);
+  assert.doesNotMatch(contents, /aria-selected=\{isSelected\}/);
+  assert.match(
+    contents,
+    /await removeMutation\.mutateAsync\(removeTarget\.id\)/,
+  );
+  assert.match(
+    contents,
+    /stop working immediately when\s+this live change is applied/,
+  );
+  assert.match(contents, /provisioned seed is not re-imported/);
+  assert.match(contents, /outages raise required alerts/);
+  assert.match(contents, /outages raise optional alerts/);
+  assert.match(contents, /outages raise standby alerts/);
+  assert.doesNotMatch(contents, /routes around if unavailable/);
+  assert.doesNotMatch(contents, /only used when explicitly requested/);
+});
+
+test("Services retains editable managed metadata and accessible validation", async () => {
+  const contents = await source();
+
+  assert.match(contents, /const \[managedNote, setManagedNote\]/);
+  assert.match(contents, /note: managedNote/);
+  assert.match(contents, /<Field label="Note">/);
+  assert.match(contents, /label="Provider"\s+required/);
+  assert.match(contents, /errorSummaryRef/);
+  assert.match(contents, /formErrorRef\.current\?\.focus\(\)/);
+  assert.match(contents, /Advanced — managed in config/);
+});

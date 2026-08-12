@@ -30,13 +30,17 @@ export interface ConfirmDialogProps {
    * confirm button stays disabled until the user types this exact name. */
   typedName?: string;
   /** Runs on confirm; the dialog shows a loading state while a returned
-   * promise is pending and closes only on success. Errors propagate to the
-   * caller (toast there) and leave the dialog open. */
+   * promise is pending and closes only on success. The caller owns error
+   * reporting; failures leave the confirmation open for retry. */
   onConfirm: () => void | Promise<void>;
 }
 
 /** Replaces window.confirm()/alert() everywhere (presentation law #5). */
-export function ConfirmDialog({ open, onOpenChange, ...rest }: ConfirmDialogProps) {
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  ...rest
+}: ConfirmDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Mounted only while open so typed/pending state starts fresh each
@@ -66,6 +70,9 @@ function ConfirmDialogContent({
     try {
       await onConfirm();
       onOpenChange(false);
+    } catch {
+      // The caller reports mutation failures. Keep the target and typed value
+      // in place so the operator can review and retry the destructive action.
     } finally {
       setPending(false);
     }
