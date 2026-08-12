@@ -1244,7 +1244,6 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
         + '<div id="account-toast" class="toast" role="status" aria-live="polite"></div>'
         + _key_reveal_sheet()
         + _key_detail_sheet()
-        + _destructive_confirmation_sheet()
         + _receipt_detail_sheet()
         + connect_block
         + apps_html
@@ -1289,7 +1288,7 @@ def _key_detail_sheet() -> str:
     """
     return (
         '<div id="key-detail-sheet" class="vf-sheet-backdrop" hidden>'
-        '<div class="vf-sheet" role="dialog" aria-modal="true" '
+        '<div class="vf-sheet" role="dialog" aria-modal="true" tabindex="-1" '
         'aria-labelledby="key-detail-title">'
         '<span class="vf-sheet-grip" aria-hidden="true"></span>'
         '<div class="key-reveal-head">'
@@ -1316,7 +1315,7 @@ def _destructive_confirmation_sheet() -> str:
     """
     return (
         '<div id="destructive-confirm-sheet" class="vf-sheet-backdrop" hidden>'
-        '<div class="vf-sheet" role="dialog" aria-modal="true" '
+        '<div class="vf-sheet" role="dialog" aria-modal="true" tabindex="-1" '
         'aria-labelledby="destructive-confirm-title" '
         'aria-describedby="destructive-confirm-description">'
         '<span class="vf-sheet-grip" aria-hidden="true"></span>'
@@ -1575,6 +1574,11 @@ def render_user_portal(
     tabbar_html = (
         render_bottom_tabs(active="home", admin=show_admin) if is_signed_in else ""
     )
+    # This sheet is a direct body child so opening it can make every portal
+    # surface inert without also inverting the confirmation itself.
+    destructive_confirmation_sheet = (
+        _destructive_confirmation_sheet() if is_signed_in else ""
+    )
     body_class = "has-tabbar" if is_signed_in else ""
 
     return f"""<!doctype html>
@@ -1591,6 +1595,7 @@ def render_user_portal(
     {body}
   </main>
   {tabbar_html}
+  {destructive_confirmation_sheet}
   <script>
 (() => {{
   const publicBase = {base_json};
@@ -1900,30 +1905,78 @@ def render_user_portal(
 
   let destructiveConfirmation = null;
 
-  function closeDestructiveConfirmation({{ restoreFocus = true }} = {{}}) {{
-    const sheet = $("destructive-confirm-sheet");
-    if (sheet) sheet.hidden = true;
-    const trigger = destructiveConfirmation && destructiveConfirmation.trigger;
-    destructiveConfirmation = null;
-    if (restoreFocus && trigger && trigger.isConnected) trigger.focus();
+  function focusAccountStatus() {{
+    const status = $("account-toast");
+    if (status) {{
+      status.tabIndex = -1;
+      status.focus({{ preventScroll: true }});
+    }}
   }}
 
-  function openDestructiveConfirmation({{ title, description, confirmLabel, trigger, action }}) {{
+  function makeDestructiveBackgroundInert(sheet) {{
+    return Array.from(document.body.children)
+      .filter((element) => element !== sheet && element.tagName !== "SCRIPT")
+      .map((element) => {{
+        const previous = {{
+          element,
+          inert: Boolean(element.inert),
+          ariaHidden: element.getAttribute("aria-hidden")
+        }};
+        element.inert = true;
+        element.setAttribute("aria-hidden", "true");
+        return previous;
+      }});
+  }}
+
+  function restoreDestructiveBackground(background) {{
+    (background || []).forEach((previous) => {{
+      previous.element.inert = previous.inert;
+      if (previous.ariaHidden === null) previous.element.removeAttribute("aria-hidden");
+      else previous.element.setAttribute("aria-hidden", previous.ariaHidden);
+    }});
+  }}
+
+  function destructiveFocusableElements(sheet) {{
+    return Array.from(sheet.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+  }}
+
+  function closeDestructiveConfirmation({{ restoreFocus = true }} = {{}}) {{
+    const sheet = $("destructive-confirm-sheet");
+    const state = destructiveConfirmation;
+    if (sheet) sheet.hidden = true;
+    restoreDestructiveBackground(state && state.background);
+    destructiveConfirmation = null;
+    if (restoreFocus && state && state.trigger && state.trigger.isConnected) state.trigger.focus();
+  }}
+
+  function openDestructiveConfirmation({{
+    title, description, confirmLabel, trigger, mutation, onCommitted, refresh,
+    successMessage, refreshFailureMessage
+  }}) {{
     const sheet = $("destructive-confirm-sheet");
     const heading = $("destructive-confirm-title");
     const detail = $("destructive-confirm-description");
     const status = $("destructive-confirm-status");
+    const cancel = sheet && sheet.querySelector("[data-cancel-destructive-confirm]");
     const confirm = sheet && sheet.querySelector("[data-confirm-destructive-action]");
-    if (!sheet || !heading || !detail || !status || !(confirm instanceof HTMLButtonElement)) return;
-    destructiveConfirmation = {{ trigger, action, pending: false }};
+    if (!sheet || !heading || !detail || !status ||
+        !(cancel instanceof HTMLButtonElement) || !(confirm instanceof HTMLButtonElement)) return;
+    destructiveConfirmation = {{
+      trigger, mutation, onCommitted, refresh, successMessage, refreshFailureMessage,
+      pending: false, committed: false, background: makeDestructiveBackgroundInert(sheet)
+    }};
     heading.textContent = title;
     detail.textContent = description;
     status.className = "confirm-status";
     status.textContent = "";
     confirm.textContent = confirmLabel;
+    cancel.disabled = false;
     confirm.disabled = false;
     sheet.hidden = false;
-    confirm.focus();
+    // A destructive confirmation starts at the least-destructive action.
+    cancel.focus();
   }}
 
   async function submitDestructiveConfirmation() {{
@@ -1940,18 +1993,34 @@ def render_user_portal(
       status.className = "confirm-status";
       status.textContent = "Working…";
     }}
+
     try {{
-      await state.action();
-      closeDestructiveConfirmation({{ restoreFocus: false }});
+      await state.mutation();
     }} catch (error) {{
-      state.pending = false;
-      confirm.disabled = false;
-      if (cancel instanceof HTMLButtonElement) cancel.disabled = false;
-      if (status) {{
-        status.className = "confirm-status bad";
-        status.textContent = (error && error.message) || "Could not complete that action. Try again.";
-      }}
+      // The DELETE did not commit. Close and return to its still-live invoker,
+      // where a retry is truthful and deliberate.
+      closeDestructiveConfirmation();
+      setAccountMessage((error && error.message) || "Could not complete that action. Try again.", "bad");
+      return;
     }}
+
+    // From this point on the DELETE is committed. The confirmation cannot be
+    // retried, even if refreshing the surrounding account snapshot fails.
+    state.committed = true;
+    if (typeof state.onCommitted === "function") state.onCommitted();
+    closeDestructiveConfirmation({{ restoreFocus: false }});
+    try {{
+      if (typeof state.refresh === "function") await state.refresh();
+      setAccountMessage(state.successMessage || "Action completed.", "good");
+    }} catch (error) {{
+      setAccountMessage(
+        state.refreshFailureMessage || "Action completed, but the account view could not refresh. Reload this page.",
+        "warn"
+      );
+    }}
+    // The invoker may be gone after a committed delete. The durable status is
+    // the logical surviving target for both refreshed and stale views.
+    focusAccountStatus();
   }}
 
   document.addEventListener("click", (event) => {{
@@ -1967,6 +2036,24 @@ def render_user_portal(
   }});
   document.addEventListener("keydown", (event) => {{
     const sheet = $("destructive-confirm-sheet");
+    if (event.key === "Tab" && sheet && !sheet.hidden) {{
+      const focusable = destructiveFocusableElements(sheet);
+      if (!focusable.length) {{
+        event.preventDefault();
+        sheet.focus();
+        return;
+      }}
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !sheet.contains(document.activeElement))) {{
+        event.preventDefault();
+        last.focus();
+      }} else if (!event.shiftKey && (document.activeElement === last || !sheet.contains(document.activeElement))) {{
+        event.preventDefault();
+        first.focus();
+      }}
+      return;
+    }}
     if (event.key === "Escape" && sheet && !sheet.hidden &&
         !(destructiveConfirmation && destructiveConfirmation.pending)) {{
       event.preventDefault();
@@ -2472,14 +2559,13 @@ def render_user_portal(
           description: "Apps using it lose access immediately.",
           confirmLabel: "Revoke key",
           trigger: revoke,
-          action: async () => {{
-          await accountJson(
+          mutation: () => accountJson(
             "/me/api/credentials/" + encodeURIComponent(credentialId), {{ method: "DELETE" }}
-          );
-          closeKeyDetailSheet();
-          await refreshAccount();
-          setAccountMessage("Key revoked.", "good");
-          }}
+          ),
+          onCommitted: () => closeKeyDetailSheet(),
+          refresh: () => refreshAccount(),
+          successMessage: "Key revoked.",
+          refreshFailureMessage: "Key revoked, but the account view could not refresh. Reload this page."
         }});
       }});
       body.append(revoke);
@@ -2839,14 +2925,13 @@ def render_user_portal(
         description: "Its API keys will stop working immediately.",
         confirmLabel: "Delete App",
         trigger: deleteApp,
-        action: async () => {{
-          await accountJson(
+        mutation: () => accountJson(
             "/me/api/apps/" + encodeURIComponent(appId),
             {{ method: "DELETE" }}
-          );
-          await refreshAccount();
-          setAccountMessage("App deleted.", "good");
-        }}
+          ),
+        refresh: () => refreshAccount(),
+        successMessage: "App deleted.",
+        refreshFailureMessage: "App deleted, but the account view could not refresh. Reload this page."
       }});
     }}
   }});

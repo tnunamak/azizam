@@ -18,6 +18,7 @@ from gateway.user_runtime import (  # noqa: E402
     build_user_portal_snapshot,
     create_user_app,
     delete_user_app,
+    get_user_app_credential,
     mint_user_app_key,
     request_user_access,
     revoke_user_app_key,
@@ -208,7 +209,7 @@ class UserRuntimeTests(unittest.TestCase):
         snapshot = build_user_portal_snapshot(self.session, path=self.db)
         self.assertEqual(snapshot["apps"], [])
 
-    def test_user_cannot_revoke_another_users_app_key(self) -> None:
+    def test_inaccessible_app_credentials_share_one_runtime_not_found(self) -> None:
         other = admin_store.upsert_oidc_user(
             "https://idp.example",
             "other-sub",
@@ -230,9 +231,39 @@ class UserRuntimeTests(unittest.TestCase):
             path=self.db,
         )
 
+        inactive = admin_store.create_credential_hash(
+            subject_kind="app",
+            subject_id=self.app["id"],
+            hash=hash_api_key("opk_inactive_secret"),
+            prefix="opk_inactive_prefix",
+            path=self.db,
+        )
+        admin_store.revoke_credential(inactive["id"], path=self.db)
+        wrong_kind = admin_store.create_credential_hash(
+            subject_kind="user",
+            subject_id=self.user["id"],
+            hash=hash_api_key("opk_wrong_kind_secret"),
+            prefix="opk_wrong_kind_prefix",
+            path=self.db,
+        )
+
+        for credential_id in (
+            "cred_does_not_exist",
+            credential["id"],
+            inactive["id"],
+            wrong_kind["id"],
+        ):
+            with self.subTest(credential_id=credential_id), self.assertRaises(
+                UserPortalError
+            ) as ctx:
+                get_user_app_credential(self.session, credential_id, path=self.db)
+            self.assertEqual(ctx.exception.code, "credential_not_found")
+            self.assertEqual(ctx.exception.message, "API key not found for this account")
+            self.assertEqual(ctx.exception.status_code, 404)
+
         with self.assertRaises(UserPortalError) as ctx:
             revoke_user_app_key(self.session, credential["id"], path=self.db)
-        self.assertEqual(ctx.exception.code, "app_not_found")
+        self.assertEqual(ctx.exception.code, "credential_not_found")
 
 
 if __name__ == "__main__":

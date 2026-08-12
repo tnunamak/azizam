@@ -1043,6 +1043,21 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             display_name="User B key",
             path=self.db,
         )
+        inactive_credential = admin_store.create_credential_hash(
+            subject_kind="app",
+            subject_id=app_a["id"],
+            hash=hash_api_key("user-a-inactive-secret"),
+            prefix="opk_user_a_inactive",
+            path=self.db,
+        )
+        admin_store.revoke_credential(inactive_credential["id"], path=self.db)
+        wrong_kind_credential = admin_store.create_credential_hash(
+            subject_kind="user",
+            subject_id=user_a["id"],
+            hash=hash_api_key("user-a-wrong-kind-secret"),
+            prefix="opk_user_a_wrong_kind",
+            path=self.db,
+        )
         receipts_db = Path(self.tmp.name) / "portal-matrix-receipts.db"
         old_receipts_path = receipt_store.DB_PATH
         receipt_store.DB_PATH = receipts_db
@@ -1085,35 +1100,107 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 }
 
             headers_b = sign_in(user_b, "b@example.com")
-            denied = {
-                "app delete": self.client.delete(
-                    f"/me/api/apps/{app_a['id']}", headers=headers_b
-                ),
-                "key mint": self.client.post(
+
+            def owner_state() -> dict[str, list[dict[str, object]]]:
+                # Snapshot the complete durable state, not just the original
+                # App/key flags. This catches a denied mint that created an
+                # extra credential or audit row before returning its 404.
+                return {
+                    "apps": admin_store.list_apps(path=self.db),
+                    "credentials": admin_store.list_credentials(path=self.db),
+                    "audit": admin_store.list_audit(path=self.db),
+                }
+
+            def assert_denied_and_non_disclosing(
+                operation: str, foreign_request, nonexistent_request
+            ) -> None:
+                before_foreign = owner_state()
+                foreign = foreign_request()
+                self.assertEqual(foreign.status_code, 404, foreign.text)
+                self.assertEqual(owner_state(), before_foreign)
+
+                before_nonexistent = owner_state()
+                nonexistent = nonexistent_request()
+                self.assertEqual(nonexistent.status_code, 404, nonexistent.text)
+                self.assertEqual(owner_state(), before_nonexistent)
+                self.assertEqual(
+                    foreign.content,
+                    nonexistent.content,
+                    f"{operation} disclosed a foreign resource through its 404 body",
+                )
+                for private_a_value in (app_a["id"], credential_a["id"], "User A"):
+                    self.assertNotIn(private_a_value, foreign.text)
+
+            # Each foreign denial is compared byte-for-byte with its generic
+            # nonexistent control. Every denied write also proves no stored App,
+            # credential, or audit state changed before the route returned.
+            assert_denied_and_non_disclosing(
+                "app delete",
+                lambda: self.client.delete(f"/me/api/apps/{app_a['id']}", headers=headers_b),
+                lambda: self.client.delete("/me/api/apps/app_does_not_exist", headers=headers_b),
+            )
+            assert_denied_and_non_disclosing(
+                "key mint",
+                lambda: self.client.post(
                     f"/me/api/apps/{app_a['id']}/keys",
                     json={"label": "must not mint"},
                     headers=headers_b,
                 ),
-                "key access": self.client.get(
-                    f"/me/api/credentials/{credential_a['id']}/access"
+                lambda: self.client.post(
+                    "/me/api/apps/app_does_not_exist/keys",
+                    json={"label": "must not mint"},
+                    headers=headers_b,
                 ),
-                "key revoke": self.client.delete(
+            )
+            assert_denied_and_non_disclosing(
+                "key access",
+                lambda: self.client.get(f"/me/api/credentials/{credential_a['id']}/access"),
+                lambda: self.client.get("/me/api/credentials/cred_does_not_exist/access"),
+            )
+            assert_denied_and_non_disclosing(
+                "key revoke",
+                lambda: self.client.delete(
                     f"/me/api/credentials/{credential_a['id']}", headers=headers_b
                 ),
-                "receipt detail": self.client.get(f"/me/api/receipts/{receipt_a}"),
-            }
-            for operation, response in denied.items():
-                with self.subTest(operation=operation):
-                    self.assertEqual(response.status_code, 404, response.text)
-                    self.assertNotIn(app_a["id"], response.text)
-                    self.assertNotIn(credential_a["id"], response.text)
-                    self.assertNotIn("User A", response.text)
-
-            # Every denied route is non-disclosing and leaves User A untouched.
-            self.assertIsNone(admin_store.get_app(app_a["id"], path=self.db)["disabled_at"])
-            self.assertIsNone(
-                admin_store.get_credential(credential_a["id"], path=self.db)["revoked_at"]
+                lambda: self.client.delete(
+                    "/me/api/credentials/cred_does_not_exist", headers=headers_b
+                ),
             )
+            assert_denied_and_non_disclosing(
+                "receipt detail",
+                lambda: self.client.get(f"/me/api/receipts/{receipt_a}"),
+                lambda: self.client.get("/me/api/receipts/receipt_does_not_exist"),
+            )
+
+            # Credential state variants also use the identical public 404 body
+            # for both access and revoke. Ownership stays checked server-side.
+            for operation, path in (
+                ("inactive access", f"/me/api/credentials/{inactive_credential['id']}/access"),
+                ("wrong-kind access", f"/me/api/credentials/{wrong_kind_credential['id']}/access"),
+                ("inactive revoke", f"/me/api/credentials/{inactive_credential['id']}"),
+                ("wrong-kind revoke", f"/me/api/credentials/{wrong_kind_credential['id']}"),
+            ):
+                with self.subTest(operation=operation):
+                    before = owner_state()
+                    response = (
+                        self.client.delete(path, headers=headers_b)
+                        if operation.endswith("revoke")
+                        else self.client.get(path)
+                    )
+                    self.assertEqual(response.status_code, 404, response.text)
+                    self.assertEqual(owner_state(), before)
+                    nonexistent_path = (
+                        "/me/api/credentials/cred_does_not_exist"
+                        if operation.endswith("revoke")
+                        else "/me/api/credentials/cred_does_not_exist/access"
+                    )
+                    control = (
+                        self.client.delete(nonexistent_path, headers=headers_b)
+                        if operation.endswith("revoke")
+                        else self.client.get(nonexistent_path)
+                    )
+                    self.assertEqual(owner_state(), before)
+                    self.assertEqual(response.content, control.content)
             user_b_snapshot = self.client.get("/me/api/session")
             user_b_activity = self.client.get("/me/api/activity")
             self.assertEqual(user_b_snapshot.status_code, 200, user_b_snapshot.text)

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import sys
+import subprocess
+import tempfile
 import unittest
+from shutil import which
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -390,11 +393,18 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("data-confirm-destructive-action", html)
         self.assertIn("function openDestructiveConfirmation", html)
         self.assertIn("function closeDestructiveConfirmation", html)
-        self.assertIn("trigger.isConnected) trigger.focus()", html)
+        self.assertIn("makeDestructiveBackgroundInert", html)
+        self.assertIn("restoreDestructiveBackground", html)
+        self.assertIn("element.inert = true", html)
+        self.assertIn('element.setAttribute("aria-hidden", "true")', html)
+        self.assertIn('event.key === "Tab"', html)
+        self.assertIn("cancel.focus()", html)
         self.assertIn('event.key === "Escape"', html)
         self.assertIn("target === sheet", html)
         self.assertIn('status.textContent = "Working…"', html)
-        self.assertIn('status.className = "confirm-status bad"', html)
+        self.assertIn("await state.mutation()", html)
+        self.assertIn("await state.refresh()", html)
+        self.assertIn("focusAccountStatus()", html)
         self.assertIn('confirmLabel: "Revoke key"', html)
         self.assertIn('confirmLabel: "Delete App"', html)
         # The page only refreshes after the DELETE resolves; it never removes an
@@ -402,6 +412,165 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("await accountJson(", html)
         self.assertIn("await refreshAccount();", html)
         self.assertIn(".confirm-actions > button { flex: 1 1 10rem; }", html)
+
+    @unittest.skipUnless(which("node"), "requires the local Node JavaScript runtime")
+    def test_destructive_confirmation_control_flow_is_executable(self) -> None:
+        """Run the rendered confirmation code against a deterministic tiny DOM.
+
+        This exercises the actual client functions, rather than treating source
+        substrings as proof of focus containment or post-commit behavior.
+        """
+        html = render_user_portal(
+            account={
+                "authenticated": True,
+                "user": {"email": "user@example.com", "role": "none"},
+                "apps": [],
+            },
+        )
+        node_test = r'''
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const start = html.indexOf("  let destructiveConfirmation = null;");
+const end = html.indexOf("\n\n  function badge", start);
+assert(start >= 0 && end > start, "confirmation code was not rendered");
+
+class Element {
+  constructor(tagName = "DIV") {
+    this.tagName = tagName;
+    this.hidden = false;
+    this.disabled = false;
+    this.inert = false;
+    this.isConnected = true;
+    this.attributes = new Map();
+  }
+  getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
+  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  removeAttribute(name) { this.attributes.delete(name); }
+  focus() { document.activeElement = this; }
+  closest() { return null; }
+}
+class HTMLButtonElement extends Element { constructor() { super("BUTTON"); } }
+globalThis.HTMLElement = Element;
+globalThis.HTMLButtonElement = HTMLButtonElement;
+
+const header = new Element("HEADER");
+const main = new Element("MAIN");
+const tabbar = new Element("NAV");
+const sheet = new Element("DIV");
+const script = new Element("SCRIPT");
+const cancel = new HTMLButtonElement();
+const confirm = new HTMLButtonElement();
+sheet.querySelector = (selector) => selector.includes("cancel") ? cancel : selector.includes("confirm") ? confirm : null;
+sheet.querySelectorAll = () => [cancel, confirm].filter((element) => !element.disabled);
+sheet.contains = (element) => element === sheet || element === cancel || element === confirm;
+const heading = new Element();
+const detail = new Element();
+const confirmStatus = new Element();
+const toast = new Element();
+const elements = {
+  "destructive-confirm-sheet": sheet,
+  "destructive-confirm-title": heading,
+  "destructive-confirm-description": detail,
+  "destructive-confirm-status": confirmStatus,
+  "account-toast": toast,
+};
+const listeners = {};
+globalThis.document = {
+  activeElement: null,
+  body: { children: [header, main, tabbar, sheet, script] },
+  getElementById: (id) => elements[id] || null,
+  addEventListener: (type, listener) => { listeners[type] = listener; },
+};
+globalThis.$ = (id) => document.getElementById(id);
+const messages = [];
+globalThis.setAccountMessage = (message, kind) => messages.push({ message, kind });
+let source = html.slice(start, end);
+source += "\nglobalThis.confirmationTestApi = { openDestructiveConfirmation, closeDestructiveConfirmation, submitDestructiveConfirmation, state: () => destructiveConfirmation };";
+vm.runInThisContext(source, { filename: "rendered-confirmation.js" });
+const api = globalThis.confirmationTestApi;
+;(async () => {
+const trigger = new HTMLButtonElement();
+const open = (overrides = {}) => api.openDestructiveConfirmation({
+  title: "Delete app?", description: "Irreversible.", confirmLabel: "Delete App",
+  trigger, mutation: async () => {}, refresh: async () => {},
+  successMessage: "Deleted.", refreshFailureMessage: "Deleted, refresh failed.",
+  ...overrides,
+});
+const key = (key, shiftKey = false) => {
+  let prevented = false;
+  listeners.keydown({ key, shiftKey, preventDefault: () => { prevented = true; } });
+  return prevented;
+};
+
+// Open: portal/background (including a nested key-detail sheet in main) is inert,
+// and the least-destructive action is focused.
+open();
+assert.equal(sheet.hidden, false);
+assert.equal(main.inert, true);
+assert.equal(main.getAttribute("aria-hidden"), "true");
+assert.equal(document.activeElement, cancel);
+confirm.focus();
+assert.equal(key("Tab"), true);
+assert.equal(document.activeElement, cancel);
+assert.equal(key("Tab", true), true);
+assert.equal(document.activeElement, confirm);
+key("Escape");
+assert.equal(sheet.hidden, true);
+assert.equal(main.inert, false);
+assert.equal(main.getAttribute("aria-hidden"), null);
+assert.equal(document.activeElement, trigger);
+
+// A failed, uncommitted mutation returns focus to its still-live invoker.
+open({ mutation: async () => { throw new Error("request failed"); } });
+await api.submitDestructiveConfirmation();
+assert.equal(api.state(), null);
+assert.equal(sheet.hidden, true);
+assert.equal(document.activeElement, trigger);
+assert.equal(messages.at(-1).kind, "bad");
+
+// Pending work ignores Escape/backdrop dismissal; a committed delete stays closed
+// and cannot become a second destructive retry when refresh fails.
+let resolveMutation;
+open({
+  mutation: () => new Promise((resolve) => { resolveMutation = resolve; }),
+  refresh: async () => { throw new Error("refresh failed"); },
+});
+const pending = api.submitDestructiveConfirmation();
+key("Escape");
+assert.equal(sheet.hidden, false);
+resolveMutation();
+await pending;
+assert.equal(api.state(), null);
+assert.equal(sheet.hidden, true);
+assert.equal(confirm.disabled, true);
+assert.equal(document.activeElement, toast);
+assert.equal(messages.at(-1).kind, "warn");
+
+// If refresh succeeds after the invoker has disappeared, focus still reaches the
+// durable account status instead of a detached deleted control.
+trigger.isConnected = false;
+open({ successMessage: "Deleted." });
+await api.submitDestructiveConfirmation();
+assert.equal(api.state(), null);
+assert.equal(document.activeElement, toast);
+assert.equal(messages.at(-1).kind, "good");
+})().catch((error) => {
+  console.error(error.stack || error);
+  process.exitCode = 1;
+});
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            html_path = Path(tmp) / "portal.html"
+            html_path.write_text(html, encoding="utf-8")
+            result = subprocess.run(
+                ["node", "-e", node_test, str(html_path)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
     def test_sign_in_door_is_a_warm_two_option_landing(self) -> None:
         # OIDC on + wordmark: invite pill, an "or" divider between the two

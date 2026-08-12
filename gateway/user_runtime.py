@@ -52,6 +52,21 @@ def _credential_active(record: Mapping[str, Any]) -> bool:
     return record.get("revoked_at") is None
 
 
+def _credential_not_found() -> UserPortalError:
+    """Return the single public 404 for every inaccessible App credential.
+
+    Credential lookup has to inspect the stored record before it can prove App
+    ownership.  That internal distinction must not escape through the portal:
+    a missing, inactive, wrong-kind, or another user's credential is the same
+    public result.
+    """
+    return UserPortalError(
+        "credential_not_found",
+        "API key not found for this account",
+        status_code=404,
+    )
+
+
 def _profile_summary(profile_id: str | None, *, path: Path) -> dict[str, Any] | None:
     if not profile_id:
         return None
@@ -540,7 +555,11 @@ def get_user_app_credential(
     *,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Return an active App credential owned by ``session.subject``."""
+    """Return an active App credential owned by ``session.subject``.
+
+    The ownership lookup stays server-side.  Its result is deliberately folded
+    into the same public 404 as every other inaccessible credential state.
+    """
     user = _user_from_session(session, path=path)
     credential = admin_store.get_credential(credential_id, path=path)
     if (
@@ -548,13 +567,17 @@ def get_user_app_credential(
         or credential.get("subject_kind") != "app"
         or not _credential_active(credential)
     ):
-        raise UserPortalError(
-            "credential_not_found",
-            "API key not found for this account",
-            status_code=404,
-        )
+        raise _credential_not_found()
     app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
-    _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    app = admin_store.get_app(app_id, path=path)
+    if app is None or app.get("owner_user_id") != str(user["id"]):
+        raise _credential_not_found()
+    if app.get("disabled_at"):
+        raise UserPortalError(
+            "app_disabled",
+            "App is disabled",
+            status_code=403,
+        )
     return credential
 
 
