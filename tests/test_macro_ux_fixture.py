@@ -37,6 +37,47 @@ class TestMacroUxFixture(unittest.TestCase):
                 expected = "down" if observation == "standby_stopped" else observation
                 self.assertEqual(by_id[service_id], expected)
 
+    def test_history_dense_scenario_reports_a_real_backendhistory_shape(self) -> None:
+        # history_dense is declared fixture data (see _HISTORY_DENSE_SAMPLES),
+        # not a live metrics_store computation — but it must still shape
+        # exactly like the real BackendHistory contract (web/src/lib/api.ts)
+        # and its aggregates must be internally consistent with the raw
+        # samples, so a future edit to one without the other fails here
+        # rather than silently drifting from what the UI actually renders.
+        observed = asyncio.run(fixture._status("history_dense")())
+        by_key = {row["key"]: row for row in observed["backends"]}
+        history = by_key["fixture-required"]["history"]
+
+        samples = fixture._HISTORY_DENSE_SAMPLES
+        expected_uptime_pct = round(100.0 * sum(up for _, up, _, _ in samples) / len(samples), 3)
+        expected_avg_latency = round(sum(latency for _, _, _, latency in samples) / len(samples))
+        self.assertEqual(history["uptime_pct_24h"], expected_uptime_pct)
+        self.assertEqual(history["avg_latency_ms_24h"], expected_avg_latency)
+        self.assertGreaterEqual(history["sample_count_24h"], 3)
+
+        for series_key in ("latency_series", "status_series"):
+            series = history[series_key]
+            self.assertGreaterEqual(len(series), 3)
+            for point in series:
+                self.assertEqual(len(point), 2)
+                self.assertIsInstance(point[0], int)
+                self.assertIsInstance(point[1], float)
+
+        self.assertEqual(
+            sorted(point[1] for point in history["latency_series"]),
+            sorted(latency for _, _, _, latency in samples),
+        )
+        self.assertEqual(
+            sorted(point[1] for point in history["status_series"]),
+            sorted(status_code for _, _, status_code, _ in samples),
+        )
+        # No other scenario fabricates history — the chart-forward Status
+        # page must show an honest no-data state for them instead.
+        for scenario in fixture.SCENARIOS - {"history_dense", "status_unavailable"}:
+            other = asyncio.run(fixture._status(scenario)())
+            other_required = next(row for row in other["backends"] if row["key"] == "fixture-required")
+            self.assertNotIn("history", other_required)
+
     def test_fixture_listener_is_ephemeral_and_protected_ports_are_not_used(self) -> None:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:

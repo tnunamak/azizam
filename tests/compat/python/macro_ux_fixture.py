@@ -26,7 +26,7 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURE = ROOT / "tests/fixtures/macro_ux_fixture.json"
 PRIVATE_MODE = 0o600
-SCENARIOS = frozenset({"all_clear", "required_down", "degraded", "status_unavailable", "standby_stopped"})
+SCENARIOS = frozenset({"all_clear", "required_down", "degraded", "status_unavailable", "standby_stopped", "history_dense"})
 _DISABLED_FIXTURE_SERVICES = {"comfyui": ("disabled", "neutral"), "stt": ("disabled", "neutral"), "tts": ("disabled", "neutral")}
 SAFE_RECEIPT_FIELDS = frozenset({
     "_stored_at", "accepted_at_ms", "accepted_inputs", "effective_output_limit",
@@ -41,7 +41,21 @@ SCENARIO_EXPECTATIONS = {
     "degraded": ("warn", "warn", True, {"fixture-required": ("degraded", "warn"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, True),
     "status_unavailable": ("unavailable", "neutral", False, {"fixture-required": ("unavailable", "neutral"), "fixture-standby": ("unavailable", "neutral"), "litellm": ("unavailable", "neutral"), **_DISABLED_FIXTURE_SERVICES}, False),
     "standby_stopped": ("ok", "ok", True, {"fixture-required": ("up", "ok"), "fixture-standby": ("standby_stopped", "neutral"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, False),
+    "history_dense": ("ok", "ok", True, {"fixture-required": ("up", "ok"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, False),
 }
+# Declared 24h history samples for the history_dense scenario's
+# "fixture-required" backend. Values are realistic, not decorative: mostly
+# up with one brief degraded dip, so the chart-forward Status page has a
+# genuine non-trivial trend to render rather than a flat line.
+_HISTORY_DENSE_SAMPLES = (
+    # (age_seconds_ago, up, status_code, latency_ms)
+    (3600 * 20, 1.0, 1.0, 80.0),
+    (3600 * 16, 1.0, 1.0, 95.0),
+    (3600 * 12, 1.0, 1.0, 260.0),
+    (3600 * 8, 0.0, 0.5, 260.0),
+    (3600 * 4, 1.0, 1.0, 110.0),
+    (3600 * 1, 1.0, 1.0, 90.0),
+)
 
 
 def _private_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -114,14 +128,41 @@ def assert_os_containment(state_root: Path, readonly_root: Path) -> None:
     denied("symlink escape", lambda: os.open(escape / "p1b-containment-symlink", os.O_WRONLY | os.O_CREAT, PRIVATE_MODE))
 
 
+def _dense_history_block(now: int) -> dict[str, Any]:
+    """Explicit, self-consistent fixture history for "fixture-required",
+    shaped exactly like status_endpoint's real BackendHistory contract
+    (see web/src/lib/api.ts's BackendHistory type). This is declared fixture
+    data, not a live computation — verify() below re-derives the same
+    aggregates from _HISTORY_DENSE_SAMPLES and asserts they match exactly, so
+    a future edit to one without the other fails loudly."""
+    latency_series = [[now - age_s, latency] for age_s, _up, _status_code, latency in _HISTORY_DENSE_SAMPLES]
+    status_series = [[now - age_s, status_code] for age_s, _up, status_code, _latency in _HISTORY_DENSE_SAMPLES]
+    uptime_pct_24h = round(100.0 * sum(up for _, up, _, _ in _HISTORY_DENSE_SAMPLES) / len(_HISTORY_DENSE_SAMPLES), 3)
+    avg_latency_ms_24h = round(sum(latency for _, _, _, latency in _HISTORY_DENSE_SAMPLES) / len(_HISTORY_DENSE_SAMPLES))
+    return {
+        "uptime_pct_24h": uptime_pct_24h,
+        "uptime_pct_7d": uptime_pct_24h,
+        "avg_latency_ms_24h": avg_latency_ms_24h,
+        "p95_latency_ms_24h": max(latency for _, _, _, latency in _HISTORY_DENSE_SAMPLES),
+        "avg_latency_ms_7d": avg_latency_ms_24h,
+        "p95_latency_ms_7d": max(latency for _, _, _, latency in _HISTORY_DENSE_SAMPLES),
+        "sample_count_24h": len(_HISTORY_DENSE_SAMPLES),
+        "status_series": status_series,
+        "latency_series": latency_series,
+    }
+
+
 def _status(scenario: str):
     async def provider() -> Mapping[str, Any]:
         if scenario == "status_unavailable":
             raise RuntimeError("fixture status unavailable")
         required = "down" if scenario == "required_down" else "degraded" if scenario == "degraded" else "up"
         standby = "down" if scenario == "standby_stopped" else "up"
+        required_backend: dict[str, Any] = {"key": "fixture-required", "status": required}
+        if scenario == "history_dense":
+            required_backend["history"] = _dense_history_block(int(time.time()))
         return {"backends": [
-            {"key": "fixture-required", "status": required},
+            required_backend,
             {"key": "fixture-standby", "status": standby},
             {"key": "litellm", "status": "up"},
         ]}
@@ -278,6 +319,27 @@ def verify(path: Path) -> None:
     for service_id, (observation, tone) in expected_services.items():
         if (services.get(service_id, {}).get("observation"), services.get(service_id, {}).get("tone")) != (observation, tone):
             raise RuntimeError(f"fixture service projection failed: {service_id} {services.get(service_id)}")
+    if bootstrap.get("scenario") == "history_dense":
+        backends_by_key = {row.get("key"): row for row in health.get("status", {}).get("backends", [])}
+        required_history = backends_by_key.get("fixture-required", {}).get("history") or {}
+        expected_uptime_pct = round(100.0 * sum(up for _, up, _, _ in _HISTORY_DENSE_SAMPLES) / len(_HISTORY_DENSE_SAMPLES), 3)
+        expected_avg_latency = round(sum(latency for _, _, _, latency in _HISTORY_DENSE_SAMPLES) / len(_HISTORY_DENSE_SAMPLES))
+        if required_history.get("uptime_pct_24h") != expected_uptime_pct:
+            raise RuntimeError(f"fixture dense uptime failed: {required_history.get('uptime_pct_24h')} != {expected_uptime_pct}")
+        if required_history.get("avg_latency_ms_24h") != expected_avg_latency:
+            raise RuntimeError(f"fixture dense avg latency failed: {required_history.get('avg_latency_ms_24h')} != {expected_avg_latency}")
+        latency_series = required_history.get("latency_series") or []
+        status_series = required_history.get("status_series") or []
+        if len(latency_series) < 3 or len(status_series) < 3:
+            raise RuntimeError(f"fixture dense series too short: latency={len(latency_series)} status={len(status_series)}")
+        observed_latencies = sorted(point[1] for point in latency_series)
+        expected_latencies = sorted(latency for _, _, _, latency in _HISTORY_DENSE_SAMPLES)
+        if observed_latencies != expected_latencies:
+            raise RuntimeError(f"fixture dense latency series failed: {observed_latencies} != {expected_latencies}")
+        observed_statuses = sorted(point[1] for point in status_series)
+        expected_statuses = sorted(status_code for _, _, status_code, _ in _HISTORY_DENSE_SAMPLES)
+        if observed_statuses != expected_statuses:
+            raise RuntimeError(f"fixture dense status series failed: {observed_statuses} != {expected_statuses}")
     status, overview = _request(bootstrap, "admin", "GET", "/admin/api/overview")
     service_attention = [item for item in overview.get("attention", []) if item.get("kind") == "service"]
     expected_attention = {"fixture-required"} if expect_attention else set()

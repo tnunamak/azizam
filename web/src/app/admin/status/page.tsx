@@ -23,7 +23,9 @@ import {
   Badge,
   Button,
   EmptyOperationalState,
+  hasMinimumChartSamples,
   IncidentBanner,
+  MetricStrip,
   RightContextPanel,
   type RightContextPanelSection,
   SectionActionHeader,
@@ -95,6 +97,35 @@ function endpointLabel(backend: LiveBackend | undefined): string | null {
 
 function advisoryTone(value: string): "warn" | "bad" {
   return healthTone(value) === "bad" ? "bad" : "warn";
+}
+
+function mean(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+interface AggregateHistory {
+  uptimePct: number | null;
+  avgLatencyMs: number | null;
+}
+
+/** Aggregate metrics across every configured backend that actually reported
+ * history — never invented for a backend the gateway has no samples for.
+ * Numeric means are honest aggregates; a per-backend trend series is not
+ * (there is no shared-timestamp series to sum across backends), so this
+ * intentionally has no aggregate chart — the row-level sparkline in the
+ * service list is each service's own real series instead. */
+function aggregateHistory(backends: LiveBackend[]): AggregateHistory {
+  const uptimes = backends
+    .map((backend) => backend.history?.uptime_pct_24h)
+    .filter((value): value is number => typeof value === "number");
+  const latencies = backends
+    .map((backend) => backend.history?.avg_latency_ms_24h)
+    .filter((value): value is number => typeof value === "number");
+  return {
+    uptimePct: mean(uptimes),
+    avgLatencyMs: mean(latencies),
+  };
 }
 
 /** Current advisories retain identity as a target tuple, never a display name. */
@@ -342,6 +373,7 @@ function StatusContents() {
     (service) => service.observation !== "unavailable",
   ).length;
   const staleFacts = projection.state === "stale-known";
+  const aggregate = aggregateHistory(Array.from(backends.values()));
 
   return (
     <div className="flex max-w-[1080px] flex-col gap-6">
@@ -416,6 +448,35 @@ function StatusContents() {
         ]}
       />
 
+      <MetricStrip
+        items={[
+          {
+            label: "Uptime (24h)",
+            value:
+              aggregate.uptimePct !== null
+                ? `${aggregate.uptimePct.toFixed(1)}%`
+                : "No data",
+            detail:
+              aggregate.uptimePct !== null
+                ? "average across observed services"
+                : "no 24h availability samples yet",
+            tone: aggregate.uptimePct !== null ? "ok" : "neutral",
+          },
+          {
+            label: "Avg latency (24h)",
+            value:
+              aggregate.avgLatencyMs !== null
+                ? `${Math.round(aggregate.avgLatencyMs)} ms`
+                : "No data",
+            detail:
+              aggregate.avgLatencyMs !== null
+                ? "average across observed services"
+                : "no 24h latency samples yet",
+            tone: "neutral",
+          },
+        ]}
+      />
+
       <section className="flex flex-col gap-3" aria-label="Current advisories">
         <SectionActionHeader title="Current advisories" />
         {advisories.length === 0 ? (
@@ -480,6 +541,9 @@ function StatusContents() {
                 const selected = service.service_id === selectedServiceId;
                 const latency = latencyLabel(backend?.latency_ms);
                 const errorText = service.last_error ?? backend?.last_error;
+                const latencyTrend = historyPoints(
+                  backend?.history?.latency_series,
+                );
                 return (
                   <button
                     key={service.service_id}
@@ -516,6 +580,23 @@ function StatusContents() {
                           )}
                         </span>
                       </span>
+                      {hasMinimumChartSamples(latencyTrend) && (
+                        <span
+                          className="vf-desktop-inline shrink-0"
+                          aria-label={`${service.name} latency trend`}
+                        >
+                          <TrendLineChart
+                            series={latencyTrend}
+                            tone="info"
+                            height={24}
+                            className="w-20"
+                            accessibility={{
+                              mode: "data-table",
+                              label: `${service.name} latency observations`,
+                            }}
+                          />
+                        </span>
+                      )}
                       <span className="text-vf-micro text-vf-accent shrink-0">
                         Inspect
                       </span>

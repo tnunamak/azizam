@@ -109,6 +109,95 @@ describe("admin Status", () => {
     expect(screen.getByText("Gateway API")).toBeVisible();
   });
 
+  it("shows honest no-data aggregate metrics when no backend has reported history", async () => {
+    statusState.load = async () => ({ current_health: health() });
+    renderStatus();
+
+    expect(await screen.findByText("Uptime (24h)")).toBeVisible();
+    expect(screen.getByText("Avg latency (24h)")).toBeVisible();
+    expect(screen.getAllByText("No data").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("no 24h availability samples yet")).toBeVisible();
+    expect(screen.getByText("no 24h latency samples yet")).toBeVisible();
+  });
+
+  it("computes real aggregate uptime/latency metrics from reported backend history", async () => {
+    statusState.load = async () => ({
+      current_health: health({
+        services: [
+          health().services[0],
+          {
+            ...health().services[0],
+            service_id: "litellm",
+            name: "LiteLLM",
+          },
+        ],
+      }),
+      backends: [
+        {
+          service_id: "gateway",
+          history: { uptime_pct_24h: 99, avg_latency_ms_24h: 100 },
+        },
+        {
+          service_id: "litellm",
+          history: { uptime_pct_24h: 97, avg_latency_ms_24h: 300 },
+        },
+      ],
+    });
+    renderStatus();
+
+    expect(await screen.findByText("98.0%")).toBeVisible();
+    expect(screen.getByText("200 ms")).toBeVisible();
+    expect(
+      screen.getAllByText("average across observed services").length,
+    ).toBe(2);
+  });
+
+  it("renders a real per-service latency sparkline only with three or more samples", async () => {
+    statusState.load = async () => ({
+      current_health: health(),
+      backends: [
+        {
+          service_id: "gateway",
+          latency_ms: 123,
+          history: {
+            latency_series: [
+              [1, 100],
+              [2, 110],
+              [3, 120],
+            ],
+          },
+        },
+      ],
+    });
+    renderStatus();
+
+    await screen.findByText("Gateway API");
+    expect(
+      screen.getByLabelText("Gateway API latency trend"),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".vf-chart-sparkline")).not.toBeNull();
+  });
+
+  it("omits the per-service sparkline without three real samples", async () => {
+    statusState.load = async () => ({
+      current_health: health(),
+      backends: [
+        {
+          service_id: "gateway",
+          latency_ms: 123,
+          history: { latency_series: [[1, 120]] },
+        },
+      ],
+    });
+    renderStatus();
+
+    await screen.findByText("Gateway API");
+    expect(
+      screen.queryByLabelText("Gateway API latency trend"),
+    ).not.toBeInTheDocument();
+    expect(document.querySelector(".vf-chart-sparkline")).toBeNull();
+  });
+
   it("does not present unavailable or degraded observations as all clear", async () => {
     statusState.load = async () => ({
       current_health: health({

@@ -48,7 +48,7 @@ done
 
 if [[ "$FIXTURE_MODE" == 1 ]]; then
   case "$FIXTURE_SCENARIO" in
-    all_clear|required_down|degraded|status_unavailable|standby_stopped) ;;
+    all_clear|required_down|degraded|status_unavailable|standby_stopped|history_dense) ;;
     *) echo "ERROR: unsupported fixture scenario: $FIXTURE_SCENARIO" >&2; exit 1 ;;
   esac
   if [[ "$HARNESS_PORT" != 15000 && "$HARNESS_PORT" != 0 ]]; then
