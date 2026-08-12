@@ -47,22 +47,33 @@ class TestMacroUxFixture(unittest.TestCase):
 
     def test_fixture_child_environment_and_owned_paths_are_explicit(self) -> None:
         source = HARNESS_PATH.read_text(encoding="utf-8")
-        self.assertIn("env -i PATH=\"$PATH\" HOME=\"$HOME\"", source)
+        self.assertIn('env -i PATH="$PATH" HOME="$TMPDIR_ROOT/home"', source)
         for name in ("AI_GATEWAY_ADMIN_DB", "AI_GATEWAY_METRICS_DB", "AI_GATEWAY_RESPONSES_DB", "AI_GATEWAY_RECEIPTS_DB", "AI_GATEWAY_MEDIA_JOBS_DB", "AI_GATEWAY_CONFIG_PATH", "OPENAI_PROXY_KEY_ACTIVITY_LOG", "PYTHONPYCACHEPREFIX"):
             self.assertIn(f'{name}=\"$TMPDIR_ROOT/', source)
         self.assertIn('TMPDIR="$TMPDIR_ROOT"', source)
-        self.assertIn('strace -f -qq -o "$TMPDIR_ROOT/file-trace.log" -e trace=%file', source)
-        self.assertIn('--assert-file-trace "$TMPDIR_ROOT/file-trace.log" --state-root "$TMPDIR_ROOT"', source)
+        self.assertIn('--ro-bind / /', source)
+        self.assertIn('--bind "$TMPDIR_ROOT" "$TMPDIR_ROOT"', source)
+        self.assertIn('--dev-bind /dev/null /dev/null', source)
+        self.assertIn('strace -f -qq -o "$TMPDIR_ROOT/network-trace.log" -e trace=network', source)
+        self.assertIn('--assert-network-trace "$TMPDIR_ROOT/network-trace.log" --fixture-port "$HARNESS_PORT"', source)
+        self.assertIn('--assert-os-containment --state-root "$TMPDIR_ROOT" --readonly-root "$REPO_ROOT"', source)
         self.assertIn('rm -rf "$TMPDIR_ROOT"', source)
         self.assertIn('kill -TERM -- "-$pgid"', source)
 
-    def test_file_trace_rejects_write_outside_fixture_root(self) -> None:
+    def test_network_trace_rejects_non_fixture_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             trace = root / "trace.log"
-            trace.write_text('openat(AT_FDCWD, "/outside/cache.jsonl", O_WRONLY|O_CREAT, 0666) = 3\n', encoding="utf-8")
-            with self.assertRaisesRegex(RuntimeError, "outside its state root"):
-                fixture.assert_file_writes_are_rooted(trace, root)
+            trace.write_text('connect(3, {sa_family=AF_INET, sin_port=htons(5051), sin_addr=inet_addr("127.0.0.1")}, 16) = -1 ECONNREFUSED\n', encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "non-fixture endpoint"):
+                fixture.assert_network_trace_is_fixture_only(trace, 48123)
+
+    def test_network_trace_allows_fixture_and_declared_unreachable_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            trace = Path(tmp) / "trace.log"
+            trace.write_text('connect(3, {sa_family=AF_INET, sin_port=htons(9), sin_addr=inet_addr("127.0.0.1")}, 16) = -1 ECONNREFUSED\n'
+                             'bind(4, {sa_family=AF_INET, sin_port=htons(48123), sin_addr=inet_addr("127.0.0.1")}, 16) = 0\n', encoding="utf-8")
+            fixture.assert_network_trace_is_fixture_only(trace, 48123)
 
 
 if __name__ == "__main__":

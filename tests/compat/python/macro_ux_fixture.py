@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ctypes
+import errno
 import hashlib
 import json
 import os
-import re
 import socket
 import sqlite3
 import stat
@@ -27,6 +28,12 @@ FIXTURE = ROOT / "tests/fixtures/macro_ux_fixture.json"
 PRIVATE_MODE = 0o600
 SCENARIOS = frozenset({"all_clear", "required_down", "degraded", "status_unavailable", "standby_stopped"})
 _DISABLED_FIXTURE_SERVICES = {"comfyui": ("disabled", "neutral"), "stt": ("disabled", "neutral"), "tts": ("disabled", "neutral")}
+SAFE_RECEIPT_FIELDS = frozenset({
+    "_stored_at", "accepted_at_ms", "accepted_inputs", "effective_output_limit",
+    "fallback_reasons", "ignored_inputs", "intent", "job_id", "latency_ms", "path",
+    "protocol", "rejected_inputs", "request_id", "requested_model", "requested_workflow",
+    "resolved_model", "resolved_workflow", "status", "stream", "updated_at_ms", "warnings",
+})
 SCENARIO_EXPECTATIONS = {
     "all_clear": ("ok", "ok", True, {"fixture-required": ("up", "ok"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, False),
     "required_down": ("bad", "bad", True, {"fixture-required": ("down", "bad"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, True),
@@ -45,21 +52,59 @@ def _private_json(path: Path, value: Mapping[str, Any]) -> None:
         raise RuntimeError("fixture credential artifact is not mode 0600")
 
 
-def assert_file_writes_are_rooted(trace_path: Path, state_root: Path) -> None:
-    """Reject write-capable file syscalls whose resolved path escapes fixture state."""
-    root_path = str(state_root.resolve())
-    root = root_path + "/"
-    write_flags = re.compile(r"O_(?:WRONLY|RDWR|CREAT|TRUNC|APPEND)")
-    mutation_calls = re.compile(r"\b(?:rename|unlink|mkdir|rmdir|chmod|chown|truncate|utime|symlink|link)\(")
-    escaped: list[str] = []
+def assert_network_trace_is_fixture_only(trace_path: Path, fixture_port: int) -> None:
+    """Accept only the fixture listener and declared unreachable loopback peer."""
+    import re
+
+    endpoint = re.compile(r'sin_port=htons\((\d+)\), sin_addr=inet_addr\("([^"]+)"\)')
+    violations: list[str] = []
     for line in trace_path.read_text(encoding="utf-8").splitlines():
-        if not (write_flags.search(line) or mutation_calls.search(line)):
+        if "connect(" not in line and "bind(" not in line:
             continue
-        paths = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', line)
-        if any(path not in {root_path, "/dev/null"} and not path.startswith(root) for path in paths):
-            escaped.append(line)
-    if escaped:
-        raise RuntimeError("fixture wrote outside its state root:\n" + "\n".join(escaped))
+        match = endpoint.search(line)
+        if match is None:
+            continue
+        port, host = int(match.group(1)), match.group(2)
+        allowed_ports = {9, fixture_port}
+        if "bind(" in line:
+            allowed_ports.add(0)
+        if host != "127.0.0.1" or port not in allowed_ports:
+            violations.append(line)
+    if violations:
+        raise RuntimeError("fixture network trace reached a non-fixture endpoint:\n" + "\n".join(violations))
+
+
+def assert_os_containment(state_root: Path, readonly_root: Path) -> None:
+    """Exercise mutation syscalls that must fail outside bwrap's sole writable root."""
+    root = state_root.resolve()
+    readonly = readonly_root.resolve()
+    outside = readonly / ".p1b-containment-probe"
+    dotdot = root / ".." / ".p1b-containment-dotdot"
+    escape = root / "p1b-containment-link"
+    escape.symlink_to(readonly, target_is_directory=True)
+
+    def denied(label: str, operation: Any) -> None:
+        try:
+            operation()
+        except OSError as exc:
+            if exc.errno not in {errno.EROFS, errno.EACCES, errno.EPERM}:
+                raise RuntimeError(f"{label} failed for the wrong reason: {exc}") from exc
+        else:
+            raise RuntimeError(f"{label} mutated outside the fixture root")
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.creat.argtypes = [ctypes.c_char_p, ctypes.c_int]
+    libc.creat.restype = ctypes.c_int
+    def creat() -> None:
+        fd = libc.creat(os.fsencode(outside), PRIVATE_MODE)
+        if fd >= 0:
+            os.close(fd)
+        raise OSError(ctypes.get_errno(), "creat")
+    denied("creat", creat)
+    denied("mknod", lambda: os.mknod(outside, stat.S_IFREG | PRIVATE_MODE))
+    denied("setxattr", lambda: os.setxattr(readonly / "README.md", "user.p1b", b"x"))
+    denied("dotdot escape", lambda: os.open(dotdot, os.O_WRONLY | os.O_CREAT, PRIVATE_MODE))
+    denied("symlink escape", lambda: os.open(escape / "p1b-containment-symlink", os.O_WRONLY | os.O_CREAT, PRIVATE_MODE))
 
 
 def _status(scenario: str):
@@ -119,6 +164,11 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
         metrics_store.record_sample(conn, now, "fixture.scalar", 7, {})
         conn.commit()
     compat_key, _, _ = create_admin_service_account_key("P1B compatibility", path=db)
+    credential_fields = ("id", "subject_kind", "subject_id", "app_id", "profile_id", "prefix", "display_name", "scopes", "expires_at")
+    expected_credentials = [
+        {key: row.get(key) for key in credential_fields}
+        for row in admin_store.list_credentials(path=db)
+    ]
     sessions: dict[str, dict[str, str]] = {}
     for label, user in people.items():
         role = "owner" if label == "admin" else "none"
@@ -128,6 +178,7 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
         "base_url": f"http://127.0.0.1:{port}", "cookie_name": proxy.ADMIN_OIDC_CONFIG.cookie.name,
         "sessions": sessions, "compatibility_key": compat_key, "scenario": os.environ.get("P1B_FIXTURE_SCENARIO", "all_clear"),
         "fixture": fixture,
+        "expected_credentials": expected_credentials,
         "resolved_ids": {"users.admin": people["admin"]["id"], "users.user_a": people["user_a"]["id"], "users.user_b": people["user_b"]["id"], "profiles.fixture": profile["id"], "apps.user_a": app_a["id"], "apps.user_b": app_b["id"], "receipts.user_a": receipt_a, "service_principals.fixture_automation": principal["id"], "credentials.fixture_automation": principal_credential["id"], "audit.fixture_seed": audit_id["id"]},
     })
 
@@ -196,8 +247,8 @@ def verify(path: Path) -> None:
     if telemetry != {"fixture.absent": 0, "fixture.two": 2, "fixture.requests": 3, "fixture.daily": 3, "fixture.scalar": 1}:
         raise RuntimeError(f"fixture telemetry shapes failed: {telemetry}")
     with sqlite3.connect(path.parent / "metrics.db") as conn:
-        daily = conn.execute("SELECT value FROM samples WHERE metric = 'fixture.daily' ORDER BY ts ASC").fetchall()
-    if daily != [(3.0,), (2.0,), (1.0,)]:
+        daily = conn.execute("SELECT ts, value FROM samples WHERE metric = 'fixture.daily' ORDER BY ts ASC").fetchall()
+    if [value for _, value in daily] != [3.0, 2.0, 1.0] or len(daily) != 3 or [daily[index + 1][0] - daily[index][0] for index in range(2)] != [86400, 86400]:
         raise RuntimeError(f"fixture daily series failed: {daily}")
     attempts = path.parent / "blocked-operator-connects.jsonl"
     if attempts.exists() and attempts.read_text(encoding="utf-8").strip():
@@ -223,20 +274,33 @@ def verify(path: Path) -> None:
     if status != 200 or {item.get("target_id") for item in service_attention} != expected_attention:
         raise RuntimeError(f"fixture attention projection failed: {status} {service_attention}")
     status, users = _request(bootstrap, "admin", "GET", "/admin/api/users")
-    if status != 200 or len(users.get("users", [])) != 3:
+    expected_users = [{key: row.get(key) for key in ("id", "issuer", "subject", "email", "display_name")} for row in bootstrap["fixture"]["users"] for row in [dict(row, id=bootstrap["resolved_ids"][f"users.{row['label']}"])] ]
+    observed_users = [{key: row.get(key) for key in ("id", "issuer", "subject", "email", "display_name")} for row in users.get("users", [])]
+    for row in expected_users:
+        row["issuer"] = "fixture"
+    if status != 200 or observed_users != expected_users:
         raise RuntimeError(f"fixture human-user projection failed: {status} {users}")
     status, profiles = _request(bootstrap, "admin", "GET", "/admin/api/profiles")
     profile_id = bootstrap["resolved_ids"]["profiles.fixture"]
-    if status != 200 or {(row.get("id"), row.get("name")) for row in profiles.get("profiles", []) if row.get("id") == profile_id} != {(profile_id, bootstrap["fixture"]["profile_name"])}:
+    expected_profile = {"id": profile_id, "name": bootstrap["fixture"]["profile_name"], "profile": {"id": "fixture-profile", "protocols": ["openai.chat"]}}
+    observed_profile = next(({key: row.get(key) for key in expected_profile} for row in profiles.get("profiles", []) if row.get("id") == profile_id), None)
+    if status != 200 or observed_profile != expected_profile:
         raise RuntimeError(f"fixture profile projection failed: {status} {profiles}")
     status, credentials = _request(bootstrap, "admin", "GET", "/admin/api/credentials")
     credential_id = bootstrap["resolved_ids"]["credentials.fixture_automation"]
-    fixture_credential = next((row for row in credentials.get("credentials", []) if row.get("id") == credential_id), None)
-    if status != 200 or fixture_credential is None or fixture_credential.get("display_name") != bootstrap["fixture"]["credential_name"] or fixture_credential.get("subject_id") != bootstrap["resolved_ids"]["service_principals.fixture_automation"] or {"hash", "api_key", "key", "secret"} & set(fixture_credential):
-        raise RuntimeError(f"fixture principal credential projection failed: {status} {fixture_credential}")
+    credential_fields = ("id", "subject_kind", "subject_id", "app_id", "profile_id", "prefix", "display_name", "scopes", "expires_at")
+    observed_credentials = [{key: row.get(key) for key in credential_fields} for row in credentials.get("credentials", [])]
+    if status != 200 or observed_credentials != bootstrap["expected_credentials"] or any({"hash", "api_key", "key", "secret"} & set(row) for row in credentials.get("credentials", [])):
+        raise RuntimeError(f"fixture principal credential projection failed: {status} {credentials}")
+    with sqlite3.connect(path.parent / "admin.db") as conn:
+        principal = conn.execute("SELECT id, name, description FROM service_accounts WHERE id = ?", (bootstrap["resolved_ids"]["service_principals.fixture_automation"],)).fetchone()
+    if principal != (bootstrap["resolved_ids"]["service_principals.fixture_automation"], bootstrap["fixture"]["principal_name"], "P1B only"):
+        raise RuntimeError(f"fixture service-principal projection failed: {principal}")
     status, audit = _request(bootstrap, "admin", "GET", "/admin/api/audit")
     audit_id = bootstrap["resolved_ids"]["audit.fixture_seed"]
-    if status != 200 or {(row.get("id"), row.get("action")) for row in audit.get("records", []) if row.get("id") == audit_id} != {(audit_id, bootstrap["fixture"]["audit_action"])}:
+    expected_audit = {"id": audit_id, "action": bootstrap["fixture"]["audit_action"], "actor_kind": "user", "actor_id": bootstrap["resolved_ids"]["users.admin"], "target_kind": "app", "target_id": bootstrap["resolved_ids"]["apps.user_a"], "metadata": {"fixture": True}}
+    observed_audit = next(({key: row.get(key) for key in expected_audit} for row in audit.get("records", []) if row.get("id") == audit_id), None)
+    if status != 200 or observed_audit != expected_audit:
         raise RuntimeError(f"fixture audit projection failed: {status} {audit}")
     status, apps = _request(bootstrap, "admin", "GET", "/admin/api/apps")
     if status != 200 or len(apps.get("apps", [])) < bootstrap["fixture"]["pagination_apps"] + 2 or bootstrap["fixture"]["long_value"] not in {app.get("name") for app in apps.get("apps", [])}:
@@ -264,7 +328,7 @@ def verify(path: Path) -> None:
         raise RuntimeError(f"User A receipt visibility failed: {status} {activity}")
     status, receipt = _request(bootstrap, "user_a", "GET", f"/me/api/receipts/{receipt_a}")
     expected_receipt = {"request_id": receipt_a, "protocol": "openai.chat", "path": "/v1/chat/completions", "intent": "chat.generate", "requested_model": "fixture-model", "resolved_model": "fixture-model", "status": "200"}
-    if status != 200 or {key: receipt.get(key) for key in expected_receipt} != expected_receipt or {"app_id", "api_key_name", "metadata", "policy_decision", "policy_reasons", "policy_sources"} & set(receipt):
+    if status != 200 or {key: receipt.get(key) for key in expected_receipt} != expected_receipt or set(receipt) != SAFE_RECEIPT_FIELDS:
         raise RuntimeError(f"fixture safe receipt failed: {status} {receipt}")
     status, _ = _request(bootstrap, "user_b", "GET", f"/me/api/receipts/{receipt_a}")
     if status != 404:
@@ -283,7 +347,7 @@ def verify(path: Path) -> None:
         raise RuntimeError(f"fixture redacted setting projection failed: {status} {setting}")
     status, policy = _request(bootstrap, "admin", "POST", "/admin/api/policy/simulate", {"profile": bootstrap["resolved_ids"]["profiles.fixture"], "request": bootstrap["fixture"]["policy_request"]})
     expected_policy = bootstrap["fixture"]["policy_result"]
-    if status != 200 or {key: policy.get("decision", {}).get(key) for key in expected_policy} != expected_policy:
+    if status != 200 or policy != {"profile_id": "fixture-profile", "decision": expected_policy}:
         raise RuntimeError(f"fixture policy input failed: {status} {policy}")
 
 
@@ -294,15 +358,23 @@ def main() -> None:
     parser.add_argument("--state-root")
     parser.add_argument("--scenario", default="all_clear")
     parser.add_argument("--verify")
-    parser.add_argument("--assert-file-trace")
+    parser.add_argument("--assert-network-trace")
+    parser.add_argument("--fixture-port", type=int)
+    parser.add_argument("--assert-os-containment", action="store_true")
+    parser.add_argument("--readonly-root")
     args = parser.parse_args()
     if args.verify:
         verify(Path(args.verify))
         return
-    if args.assert_file_trace:
-        if not args.state_root:
-            parser.error("--assert-file-trace requires --state-root")
-        assert_file_writes_are_rooted(Path(args.assert_file_trace), Path(args.state_root))
+    if args.assert_network_trace:
+        if args.fixture_port is None:
+            parser.error("--assert-network-trace requires --fixture-port")
+        assert_network_trace_is_fixture_only(Path(args.assert_network_trace), args.fixture_port)
+        return
+    if args.assert_os_containment:
+        if not args.state_root or not args.readonly_root:
+            parser.error("--assert-os-containment requires --state-root and --readonly-root")
+        assert_os_containment(Path(args.state_root), Path(args.readonly_root))
         return
     if not args.serve or not args.state_root:
         parser.error("--serve and --state-root are required")

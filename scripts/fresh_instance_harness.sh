@@ -242,6 +242,7 @@ echo "[harness] Python: $PYTHON"
 
 if [[ "$FIXTURE_MODE" == 1 ]]; then
   STARTUP_LOG="$TMPDIR_ROOT/startup.log"
+  mkdir -p "$TMPDIR_ROOT/home"
   export AI_GATEWAY_ADMIN_DB="$TMPDIR_ROOT/admin.db"
   export AI_GATEWAY_METRICS_DB="$TMPDIR_ROOT/metrics.db"
   export AI_GATEWAY_RESPONSES_DB="$TMPDIR_ROOT/responses.db"
@@ -255,8 +256,24 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
   export OPENAI_PROXY_KEY_ACTIVITY_LOG="$TMPDIR_ROOT/key_activity.jsonl"
   export PYTHONPYCACHEPREFIX="$TMPDIR_ROOT/pycache"
   export TMPDIR="$TMPDIR_ROOT"
+  fixture_sandbox_args=(
+    # Reuse the hermetic runner's boundary: host filesystem is read-only and
+    # this disposable fixture root is the only writable mount.  Keep only the
+    # device nodes Python needs; the host network stays shared for the browser
+    # journey, while strace proves every traced process-tree endpoint below.
+    --die-with-parent --new-session --unshare-user --uid 0 --gid 0
+    --disable-userns --assert-userns-disabled --unshare-pid --unshare-ipc
+    --ro-bind / / --proc /proc
+    --dev-bind /dev/null /dev/null --dev-bind /dev/urandom /dev/urandom --dev-bind /dev/random /dev/random
+    --bind "$TMPDIR_ROOT" "$TMPDIR_ROOT" --setenv HOME "$TMPDIR_ROOT/home"
+  )
+  fixture_sandbox() {
+    bwrap "${fixture_sandbox_args[@]}" -- "$@"
+  }
+  fixture_sandbox env -i PATH="$PATH" HOME="$TMPDIR_ROOT/home" TMPDIR="$TMPDIR" PYTHONPATH="$REPO_ROOT" \
+    "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --assert-os-containment --state-root "$TMPDIR_ROOT" --readonly-root "$REPO_ROOT"
   echo "[harness] Launching authenticated fixture ($FIXTURE_SCENARIO)..."
-  setsid strace -f -qq -o "$TMPDIR_ROOT/file-trace.log" -e trace=%file env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" PYTHONPATH="$REPO_ROOT" PYTHONUNBUFFERED=1 PYTHONPYCACHEPREFIX="$PYTHONPYCACHEPREFIX" \
+  setsid strace -f -qq -o "$TMPDIR_ROOT/network-trace.log" -e trace=network bwrap "${fixture_sandbox_args[@]}" -- env -i PATH="$PATH" HOME="$TMPDIR_ROOT/home" TMPDIR="$TMPDIR" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" PYTHONPATH="$REPO_ROOT" PYTHONUNBUFFERED=1 PYTHONPYCACHEPREFIX="$PYTHONPYCACHEPREFIX" \
     AI_GATEWAY_ADMIN_DB="$AI_GATEWAY_ADMIN_DB" AI_GATEWAY_METRICS_DB="$AI_GATEWAY_METRICS_DB" AI_GATEWAY_RESPONSES_DB="$AI_GATEWAY_RESPONSES_DB" AI_GATEWAY_RECEIPTS_DB="$AI_GATEWAY_RECEIPTS_DB" AI_GATEWAY_MEDIA_JOBS_DB="$AI_GATEWAY_MEDIA_JOBS_DB" AI_GATEWAY_CONFIG_PATH="$AI_GATEWAY_CONFIG_PATH" AI_GATEWAY_ADMIN_SESSION_KEY="$AI_GATEWAY_ADMIN_SESSION_KEY" AI_GATEWAY_LITELLM_BASE_URL=http://127.0.0.1:9 AI_GATEWAY_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AGW_IMAGE_CACHE_DIR="$AGW_IMAGE_CACHE_DIR" AGW_VRAM_ESTIMATES_PATH="$AGW_VRAM_ESTIMATES_PATH" AGW_DRIFT_REPORT_PATH="$AGW_DRIFT_REPORT_PATH" OPENAI_PROXY_KEY_ACTIVITY_LOG="$OPENAI_PROXY_KEY_ACTIVITY_LOG" \
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --serve --state-root "$TMPDIR_ROOT" --scenario "$FIXTURE_SCENARIO" >"$STARTUP_LOG" 2>&1 &
   PROXY_PID=$!
@@ -274,7 +291,7 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
     (cd "$REPO_ROOT/web" && P1B_BOOTSTRAP_PATH="$TMPDIR_ROOT/bootstrap-private.json" npm run test:e2e -- tests/playwright/p1b/authenticated-gateway.spec.ts)
   fi
   (cd "$TMPDIR_ROOT" && PYTHONPATH="$REPO_ROOT" OPENAI_PROXY_BASE_URL="http://127.0.0.1:$HARNESS_PORT" OPENAI_PROXY_ADMIN_KEY="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["compatibility_key"])' "$TMPDIR_ROOT/bootstrap-private.json")" "$PYTHON" -m unittest tests.compat.python.probe_fresh_instance_journey -v) || exit 1
-  "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --assert-file-trace "$TMPDIR_ROOT/file-trace.log" --state-root "$TMPDIR_ROOT"
+  "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --assert-network-trace "$TMPDIR_ROOT/network-trace.log" --fixture-port "$HARNESS_PORT"
   exit 0
 fi
 

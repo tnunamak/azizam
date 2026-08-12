@@ -15,5 +15,5 @@
   "profile_name": "Fixture profile",
   "credential_name": "Fixture automation credential",
   "audit_action": "fixture.seed",
-  "policy_result": {"decision": "denied", "allowed": false, "reasons": ["protocol 'openai' not permitted by profile"]}
+  "policy_result": {"decision": "denied", "allowed": false, "sources": ["profile:fixture-profile"], "reasons": ["protocol 'openai' not permitted by profile"], "visibility_level": "basic"}
 }
