@@ -439,6 +439,56 @@ class DeriveAdminAttentionTests(unittest.TestCase):
         )
         self.assertEqual((legacy_aggregate_only["state"], legacy_aggregate_only["tone"]), ("ok", "ok"))
 
+    def test_current_health_keeps_known_severity_when_coverage_is_incomplete(self) -> None:
+        required_down = derive_admin_health_projection(
+            {
+                "services": {
+                    "unknown": {"config": {"models": []}},
+                    "broken": {"config": {"models": [{"model_group": "mapped"}]}},
+                },
+            },
+            {
+                "backends": [
+                    {"key": "unknown", "status": "up"},
+                    {"key": "broken", "status": "down"},
+                ],
+            },
+            observation_available=True,
+        )
+        self.assertEqual((required_down["state"], required_down["tone"]), ("bad", "bad"))
+        self.assertEqual(required_down["incomplete"], {"routing": ["unknown"]})
+        self.assertIn("No route declaration for unknown.", required_down["detail"])
+
+        degraded_with_unobserved = derive_admin_health_projection(
+            {
+                "services": {
+                    "degraded": {"config": {"models": [{"model_group": "mapped"}]}},
+                    "missing": {"config": {"models": [{"model_group": "mapped"}]}},
+                },
+            },
+            {"backends": [{"key": "degraded", "status": "degraded"}]},
+            observation_available=True,
+        )
+        self.assertEqual(
+            (degraded_with_unobserved["state"], degraded_with_unobserved["tone"]),
+            ("warn", "warn"),
+        )
+        self.assertEqual(degraded_with_unobserved["incomplete"], {"observations": ["missing"]})
+
+        signal_with_unknown = derive_admin_health_projection(
+            {"services": {"unknown": {"config": {"models": []}}}},
+            {
+                "backends": [{"key": "unknown", "status": "up"}],
+                "health_sources": {
+                    "api": {"tone": "warn", "reasons": ["maintenance in progress"]},
+                },
+            },
+            observation_available=True,
+        )
+        self.assertEqual((signal_with_unknown["state"], signal_with_unknown["tone"]), ("warn", "warn"))
+        self.assertEqual(signal_with_unknown["incomplete"], {"routing": ["unknown"]})
+        self.assertEqual(signal_with_unknown["signals"][0]["source"], "api")
+
     def test_independent_health_attention_has_no_service_target(self) -> None:
         items = derive_admin_attention({
             "current_health": {

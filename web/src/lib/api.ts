@@ -497,6 +497,11 @@ export interface CurrentHealthSignal {
   reasons: string[];
 }
 
+export interface CurrentHealthIncomplete {
+  observations?: string[];
+  routing?: string[];
+}
+
 /** The one current health projection shared by all admin read surfaces. */
 export interface CurrentHealth {
   state: "ok" | "warn" | "bad" | "unavailable" | "empty" | "inactive" | string;
@@ -506,6 +511,8 @@ export interface CurrentHealth {
   observation_available: boolean;
   /** Producer-authored API/host facts, distinct from per-service probes. */
   signals?: CurrentHealthSignal[];
+  /** Explicit gaps in otherwise live coverage; never a replacement severity. */
+  incomplete?: CurrentHealthIncomplete;
   services: CurrentHealthService[];
 }
 

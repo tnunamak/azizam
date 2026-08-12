@@ -31,6 +31,10 @@ import {
   type StatusSeriesPoint,
 } from "@/lib/api";
 import {
+  deriveServicesHealthSummary,
+  type ServicesHealthSummary,
+} from "@/lib/services-health-summary";
+import {
   Badge,
   Button,
   type ChartPoint,
@@ -415,7 +419,7 @@ interface StatusSummaryRailProps {
   healthTone: "ok" | "warn" | "bad" | "neutral";
   enabledCount: number;
   totalCount: number;
-  downCount: number;
+  healthSummary: ServicesHealthSummary;
   avgLatencyMs: number | null;
   modelMappingCount: number;
   capabilityCoverage: string[];
@@ -428,7 +432,7 @@ function StatusSummaryRail({
   healthTone,
   enabledCount,
   totalCount,
-  downCount,
+  healthSummary,
   avgLatencyMs,
   modelMappingCount,
   capabilityCoverage,
@@ -447,7 +451,10 @@ function StatusSummaryRail({
     {
       label: "Backends enabled",
       value: `${enabledCount} / ${totalCount}`,
-      tone: enabledCount < totalCount ? "warn" : "ok",
+      tone:
+        healthSummary.metricTone === "neutral"
+          ? undefined
+          : healthSummary.metricTone,
     },
     {
       label: "Avg latency",
@@ -475,8 +482,25 @@ function StatusSummaryRail({
             : undefined,
     });
   }
-  if (downCount > 0) {
-    metricRows.push({ label: "Down", value: String(downCount), tone: "bad" });
+  if (healthSummary.badCount > 0) {
+    metricRows.push({
+      label: "Action needed",
+      value: String(healthSummary.badCount),
+      tone: "bad",
+    });
+  }
+  if (healthSummary.warnCount > 0) {
+    metricRows.push({
+      label: "Needs attention",
+      value: String(healthSummary.warnCount),
+      tone: "warn",
+    });
+  }
+  if (healthSummary.incompleteCount > 0) {
+    metricRows.push({
+      label: "Coverage incomplete",
+      value: String(healthSummary.incompleteCount),
+    });
   }
 
   const sections: RightContextPanelSection[] = [
@@ -614,7 +638,6 @@ export default function AdminServicesPage() {
     [statusData],
   );
   const enabledCount = services.filter((svc) => svc.enabled).length;
-  const disabledCount = services.length - enabledCount;
   const modelMappingCount = services.reduce(
     (count, svc) => count + (svc.config.models?.length ?? 0),
     0,
@@ -1010,13 +1033,11 @@ export default function AdminServicesPage() {
   }, [statusData]);
 
   const currentHealth = statusData?.current_health;
-  const downCount =
-    currentHealth?.services.filter((service) => service.observation === "down")
-      .length ?? 0;
-  const degradedCount =
-    currentHealth?.services.filter(
-      (service) => service.observation === "degraded",
-    ).length ?? 0;
+  const healthSummary = deriveServicesHealthSummary(
+    currentHealth,
+    enabledCount,
+    services.length,
+  );
   const heroTone =
     currentHealth?.tone === "bad" ||
     currentHealth?.tone === "warn" ||
@@ -1029,7 +1050,6 @@ export default function AdminServicesPage() {
       ? "No services configured yet."
       : (currentHealth?.detail ??
         "The gateway did not provide a current health projection.");
-  const unreachableCount = downCount + degradedCount;
 
   // Capability coverage for the right rail
   const capabilityCoverage = useMemo(() => {
@@ -1040,14 +1060,10 @@ export default function AdminServicesPage() {
     return [...caps].map(capabilityLabel);
   }, [services]);
 
-  // Services with real errors from status data
-  const servicesWithErrors = useMemo(() => {
-    return (statusData?.backends ?? []).filter(
-      (b) =>
-        b.last_error &&
-        (b.live_status === "down" || b.live_status === "degraded"),
-    );
-  }, [statusData]);
+  const servicesWithErrors = (currentHealth?.services ?? []).filter(
+    (service) =>
+      (service.tone === "bad" || service.tone === "warn") && service.last_error,
+  );
 
   // Aggregate history stats across all backends for the summary rail
   const avgUptime24h = useMemo(() => {
@@ -1100,21 +1116,19 @@ export default function AdminServicesPage() {
             <div className="vf-health-metric">
               <span
                 className={`vf-health-metric-value tabular-nums ${
-                  unreachableCount > 0
+                  healthSummary.metricTone === "bad"
                     ? "text-vf-bad"
-                    : services.length > 0 && enabledCount === services.length
-                      ? "text-vf-ok"
-                      : disabledCount > 0
-                        ? "text-vf-warn"
+                    : healthSummary.metricTone === "warn"
+                      ? "text-vf-warn"
+                      : healthSummary.metricTone === "ok"
+                        ? "text-vf-ok"
                         : ""
                 }`}
               >
                 {enabledCount}/{services.length || "0"}
               </span>
               <span className="vf-health-metric-label">
-                {unreachableCount > 0
-                  ? `enabled · ${unreachableCount} unreachable`
-                  : "services enabled"}
+                {healthSummary.metricLabel}
               </span>
             </div>
             <div className="vf-health-metric">
@@ -1139,14 +1153,13 @@ export default function AdminServicesPage() {
         </div>
 
         {/* Incident banner — only shown when real problems exist */}
-        {(downCount > 0 || degradedCount > 0) &&
-          servicesWithErrors.length > 0 && (
-            <IncidentBanner
-              tone={downCount > 0 ? "bad" : "warn"}
-              title={heroTitle}
-              detail={servicesWithErrors[0]?.last_error ?? undefined}
-            />
-          )}
+        {healthSummary.incidentTone && servicesWithErrors.length > 0 && (
+          <IncidentBanner
+            tone={healthSummary.incidentTone}
+            title={heroTitle}
+            detail={servicesWithErrors[0]?.last_error ?? undefined}
+          />
+        )}
 
         {restartBanner && (
           <LiveApplyBanner onDismiss={() => setRestartBanner(false)} />
@@ -1328,7 +1341,7 @@ export default function AdminServicesPage() {
                     healthTone={heroTone}
                     enabledCount={enabledCount}
                     totalCount={services.length}
-                    downCount={downCount}
+                    healthSummary={healthSummary}
                     avgLatencyMs={avgLatencyMs}
                     modelMappingCount={modelMappingCount}
                     capabilityCoverage={capabilityCoverage}

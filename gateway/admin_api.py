@@ -558,29 +558,36 @@ def derive_admin_health_projection(
         })
 
     unobserved = [row["name"] for row in rows if row["observation"] == "unavailable"]
-    if unobserved:
-        return _with_source_signals({
-            "state": "unavailable",
-            "tone": "neutral",
-            "label": "Live status incomplete",
-            "detail": f"No current health observation for {', '.join(unobserved[:3])}.",
-            "observation_available": True,
-            "services": rows,
-        })
-
     routing_unknown = [
         row["name"]
         for row in active_rows
         if row["observation"] == "up" and row["routable"] is None
     ]
+    incomplete: dict[str, list[str]] = {}
+    incomplete_details: list[str] = []
+    if unobserved:
+        incomplete["observations"] = unobserved
+        incomplete_details.append(
+            f"No current health observation for {', '.join(unobserved[:3])}."
+        )
     if routing_unknown:
+        incomplete["routing"] = routing_unknown
+        incomplete_details.append(
+            f"No route declaration for {', '.join(routing_unknown[:3])}."
+        )
+
+    # Incomplete coverage is a separate fact, not a severity. It remains the
+    # neutral aggregate only when no known service or producer fact needs
+    # attention; a known warning or failure must dominate this projection.
+    if incomplete and worst == "ok":
         return _with_source_signals({
             "state": "unavailable",
             "tone": "neutral",
             "label": "Live status incomplete",
-            "detail": f"No route declaration for {', '.join(routing_unknown[:3])}.",
+            "detail": " ".join(incomplete_details),
             "observation_available": True,
             "services": rows,
+            "incomplete": incomplete,
         })
 
     labels = {
@@ -589,6 +596,8 @@ def derive_admin_health_projection(
         "bad": ("Action needed", "; ".join(reasons[:3]) or "A required service cannot route requests."),
     }
     label, detail = labels[worst]
+    if incomplete:
+        detail = " ".join([detail, *incomplete_details])
     return _with_source_signals({
         "state": worst,
         "tone": worst,
@@ -596,6 +605,7 @@ def derive_admin_health_projection(
         "detail": detail,
         "observation_available": True,
         "services": rows,
+        **({"incomplete": incomplete} if incomplete else {}),
     })
 
 

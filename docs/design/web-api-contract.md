@@ -130,6 +130,10 @@ registry-only count or make a second all-clear calculation in the client.
       "label": "Operational",
       "detail": "Current configured-service health is normal.",
       "observation_available": true,
+      "incomplete": {
+        "observations": ["service display name"],
+        "routing": ["service display name"]
+      },
       "signals": [ {
         "source": "api" | "host" | "…",
         "tone": "warn" | "bad",
@@ -169,6 +173,11 @@ both `null`; a capability list or `native_passthrough` flag is also `null`
 until a producer supplies a comprehensive route-family fact with all dispatch
 prerequisites. The projection does not emit `false` until a producer supplies
 a comprehensive fact covering every supported route family.
+`incomplete` is optional coverage detail: `observations` identifies services
+without a current live observation and `routing` identifies live-up services
+without a global route fact. It never reduces a simultaneous known `warn` or
+`bad` aggregate; that severity remains authoritative while the incomplete fact
+and detail stay visible.
 
 ## Surface 2 — Overview
 
