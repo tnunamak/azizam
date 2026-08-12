@@ -149,14 +149,14 @@ function SidebarBottom() {
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a
           href="/"
-          className="text-vf-muted hover:text-vf-text flex items-center gap-1.5 px-2.5 py-1.5 text-sm transition-colors"
+          className="vf-sidebar-action text-vf-muted hover:text-vf-text gap-1.5 px-2.5 text-sm transition-colors"
         >
           <ExternalLinkIcon className="size-3.5 shrink-0" />
           Open portal
         </a>
         <a
           href="/me/logout"
-          className="text-vf-muted hover:text-vf-text px-2.5 py-1.5 text-sm transition-colors"
+          className="vf-sidebar-action text-vf-muted hover:text-vf-text px-2.5 text-sm transition-colors"
         >
           Sign out
         </a>
@@ -172,7 +172,11 @@ function SidebarNav({ onNav }: { onNav?: () => void }) {
   return (
     <div className="flex h-full flex-col gap-5">
       {/* Wordmark + admin kicker */}
-      <BrandLockup href="/admin" kicker="AI Gateway" />
+      <BrandLockup
+        href="/admin"
+        kicker="AI Gateway"
+        className="vf-touch-target"
+      />
 
       {/* Nav items */}
       <nav
@@ -261,7 +265,7 @@ function TopBar() {
   const searchItems = useAdminSearchItems();
 
   return (
-    <div className="vf-console-topbar hidden min-[980px]:flex">
+    <header className="vf-console-topbar hidden min-[980px]:flex">
       <div className="flex min-w-0 items-center gap-3">
         <Link href={adminStatusHref()} className="text-vf-text no-underline">
           <StatusCluster
@@ -291,7 +295,7 @@ function TopBar() {
           <a href="/me/logout">Sign out</a>
         </Button>
       </div>
-    </div>
+    </header>
   );
 }
 

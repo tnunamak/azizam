@@ -61,7 +61,7 @@ export function OverflowMenuItem({
   return (
     <DropdownMenuPrimitive.Item
       className={cn(
-        "rounded-vf-sm text-vf-small flex cursor-pointer items-center gap-2 px-3 py-2 outline-none select-none",
+        "rounded-vf-sm text-vf-small flex min-h-[var(--vf-hit-target)] cursor-pointer items-center gap-2 px-3 py-2 outline-none select-none",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         danger
           ? "text-vf-bad data-[highlighted]:bg-vf-bad/15"

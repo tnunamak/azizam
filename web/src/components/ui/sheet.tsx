@@ -43,7 +43,7 @@ export function SheetContent({
             aria-label="Close"
             variant="ghost"
             size="sm"
-            className="absolute top-4 right-4"
+            className="vf-touch-target absolute top-4 right-4"
           >
             <XIcon className="size-4" />
           </IconButton>

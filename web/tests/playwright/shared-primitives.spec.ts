@@ -3,6 +3,23 @@ import AxeBuilder from "@axe-core/playwright";
 
 const widths = [639, 640, 767, 768, 979, 980] as const;
 
+async function assertPointerTargets(
+  locator: import("@playwright/test").Locator,
+) {
+  const targets = locator.locator("a, button, [role='menuitem']");
+  const count = await targets.count();
+  expect(count).toBeGreaterThan(0);
+
+  for (let index = 0; index < count; index += 1) {
+    const target = targets.nth(index);
+    await expect(target).toBeVisible();
+    const box = await target.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
+}
+
 async function assertGeometry(
   page: import("@playwright/test").Page,
   width: number,
@@ -129,9 +146,7 @@ test("desktop table has separate keyboard actions and no nested interactions", a
   await page.keyboard.press("Enter");
   await expect(status).toHaveText("actionable-menu");
 
-  const axe = await new AxeBuilder({ page })
-    .include("[data-testid='shared-primitives-stage']")
-    .analyze();
+  const axe = await new AxeBuilder({ page }).analyze();
   expect(axe.violations).toEqual([]);
 });
 
@@ -140,7 +155,7 @@ test("mobile shell and card controls meet the 44px target baseline", async ({
 }) => {
   await page.setViewportSize({ width: 639, height: 812 });
   await page.goto("/ui/admin/status/p1v-fixture/");
-  const controls = [
+  const closedControls = [
     page.getByRole("link", { name: /vivid\.fish console/i }),
     page.getByRole("link", { name: /checking live status/i }),
     page.getByRole("button", { name: "Open navigation" }),
@@ -151,11 +166,27 @@ test("mobile shell and card controls meet the 44px target baseline", async ({
       .first(),
     page.getByRole("button", { name: "More actions for Actionable card" }),
   ];
-  for (const control of controls) {
+  for (const control of closedControls) {
     const box = await control.boundingBox();
     expect(box).not.toBeNull();
     expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
+
+  const menuTrigger = page.getByRole("button", {
+    name: "More actions for Actionable card",
+  });
+  await menuTrigger.click();
+  await assertPointerTargets(page.getByRole("menu"));
+  await page.keyboard.press("Escape");
+
+  for (const trigger of [
+    page.getByRole("button", { name: "Open navigation" }),
+    page.getByRole("button", { name: "More navigation" }),
+  ]) {
+    await trigger.click();
+    await assertPointerTargets(page.getByRole("dialog", { name: "Navigation" }));
+    await page.keyboard.press("Escape");
   }
 });
 
