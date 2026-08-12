@@ -245,20 +245,6 @@ function ErrorBanner({
 }
 
 // ---------------------------------------------------------------------------
-// OIDC save banner — most settings apply immediately; signing key / cookie
-// name are captured at boot and require a restart to take effect.
-
-function RestartBanner({ onDismiss }: { onDismiss: () => void }) {
-  return (
-    <IncidentBanner
-      tone="info"
-      title="Saved — restart required to apply sign-in changes."
-      detail="OIDC is bootstrap authentication configuration. Use the existing local admin account or configured recovery method until the gateway has restarted."
-      onDismiss={onDismiss}
-    />
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Card wrapper — a quiet grouped card matching the shell rhythm
 
@@ -298,7 +284,6 @@ function CardHeader({
 function SignInCard() {
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
-  const [showRestartBanner, setShowRestartBanner] = useState(false);
 
   const {
     data: oidcConfig,
@@ -313,7 +298,6 @@ function SignInCard() {
   function handleSaved(updated: OidcConfig) {
     queryClient.setQueryData(settingsQueryKeys.oidcConfig, updated);
     setEditOpen(false);
-    setShowRestartBanner(true);
   }
 
   const isConfigured = oidcConfig !== null && oidcConfig !== undefined;
@@ -326,8 +310,9 @@ function SignInCard() {
         action={
           <Button
             size="sm"
+            className="min-h-11"
             onClick={() => setEditOpen(true)}
-            disabled={isPending}
+            disabled={isPending || isError}
           >
             {isConfigured ? "Edit" : "Configure"}
           </Button>
@@ -346,14 +331,11 @@ function SignInCard() {
         />
       ) : !isConfigured ? (
         <p className="text-vf-small text-vf-muted">
-          Not configured — users sign in with local accounts only.
+          No dashboard OIDC override is saved. Effective sign-in configuration
+          and its source will be shown when the typed API contract is available.
         </p>
       ) : (
         <OidcStatusLine config={oidcConfig} />
-      )}
-
-      {showRestartBanner && (
-        <RestartBanner onDismiss={() => setShowRestartBanner(false)} />
       )}
 
       <OidcEditDialog
@@ -501,6 +483,7 @@ function OidcEditDialogContent({
     oidcFormDefaults(existing),
   );
   const [formError, setFormError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const errorSummaryRef = useRef<HTMLParagraphElement>(null);
 
   function set<K extends keyof OidcFormState>(key: K, value: OidcFormState[K]) {
@@ -546,8 +529,16 @@ function OidcEditDialogContent({
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setFormError(null);
-    if (!form.issuer.trim() || !form.client_id.trim()) {
-      setFormError("Issuer URL and Client ID are required.");
+    const nextFieldErrors: Record<string, string> = {};
+    if (form.enabled && !form.issuer.trim()) nextFieldErrors.issuer = "Issuer URL is required when OIDC is enabled.";
+    if (form.enabled && !form.client_id.trim()) nextFieldErrors.clientId = "Client ID is required when OIDC is enabled.";
+    if (form.enabled && !form.redirect_uri.trim()) nextFieldErrors.redirectUri = "Redirect URI is required when OIDC is enabled.";
+    if (form.enabled && !existing?.client_secret_set && !form.client_secret.trim()) {
+      nextFieldErrors.clientSecret = "A client secret is required before enabling a new provider.";
+    }
+    setFieldErrors(nextFieldErrors);
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFormError("Fix the highlighted fields before saving.");
       requestAnimationFrame(() => errorSummaryRef.current?.focus());
       return;
     }
@@ -570,10 +561,9 @@ function OidcEditDialogContent({
             {existing ? "Edit sign-in settings" : "Configure sign-in"}
           </DialogTitle>
           <DialogDescription>
-            These OIDC settings take effect after a gateway restart. Keep a
-            local admin account or your existing recovery method available until
-            you verify the new sign-in path. The client secret is write-only —
-            leave it blank to keep the current value.
+            The client secret is write-only — leave it blank to keep the current
+            value. Apply timing and recovery guidance will be shown when the
+            typed API contract is available.
           </DialogDescription>
         </DialogHeader>
 
@@ -597,7 +587,7 @@ function OidcEditDialogContent({
           </div>
 
           {/* Core fields */}
-          <Field label="Issuer URL" required>
+          <Field label="Issuer URL" required error={fieldErrors.issuer}>
             <Input
               value={form.issuer}
               onChange={(e) => set("issuer", e.target.value)}
@@ -606,7 +596,7 @@ function OidcEditDialogContent({
             />
           </Field>
 
-          <Field label="Client ID" required>
+          <Field label="Client ID" required error={fieldErrors.clientId}>
             <Input
               value={form.client_id}
               onChange={(e) => set("client_id", e.target.value)}
@@ -617,6 +607,7 @@ function OidcEditDialogContent({
 
           <Field
             label="Client secret"
+            error={fieldErrors.clientSecret}
             help={
               existing?.client_secret_set
                 ? "A secret is already saved. Leave blank to keep it."
@@ -639,6 +630,7 @@ function OidcEditDialogContent({
 
           <Field
             label="Redirect URI"
+            error={fieldErrors.redirectUri}
             help="Must match what you configured in your identity provider."
           >
             <Input
@@ -845,8 +837,9 @@ function ExtensionsCard() {
         action={
           <Button
             size="sm"
+            className="min-h-11"
             onClick={() => setAddOpen(true)}
-            disabled={isPending}
+            disabled={isPending || isError}
           >
             Add extension
           </Button>
@@ -1245,8 +1238,9 @@ function MediaAdmissionCard() {
         action={
           <Button
             size="sm"
+            className="min-h-11"
             onClick={() => setEditOpen(true)}
-            disabled={isPending}
+            disabled={isPending || isError}
           >
             Edit
           </Button>

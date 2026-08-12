@@ -14,32 +14,34 @@ async function routeSource(route: "audit" | "settings") {
 }
 
 describe("admin audit and settings route contracts", () => {
-  it("keeps audit filters and cursors server-backed, and only copies safe details", async () => {
+  it("keeps audit filters, URL state, and cursors server-backed", async () => {
     const source = await routeSource("audit");
 
     expect(source).toContain("api.audit.list(firstPageParams)");
-    expect(source).toContain("before: nextCursor");
-    expect(source).toContain(
-      "setAllEntries((prev) => [...prev, ...result.records])",
-    );
+    expect(source).toContain("before: cursor");
+    expect(source).toContain("generationRef.current");
+    expect(source).toContain('params.set(key, value)');
+    expect(source).toContain('searchParams.get("category")');
+    expect(source).toContain('family: "credential"');
+    expect(source).toContain('family: "admin_key"');
     expect(source).toContain('"No more matching events"');
-    expect(source).toContain("function safeAuditDetails");
+    expect(source).toContain("function auditDetails");
     expect(source).toContain("Safe event details");
-    expect(source).not.toContain("JSON.stringify(entry, null, 2)");
+    expect(source).not.toContain("startsWith(\"svc_\")");
+    expect(source).not.toContain("/(secret|token");
   });
 
   it("keeps OIDC secrets write-only and settings mutations scoped to their cards", async () => {
     const source = await routeSource("settings");
 
     expect(source).toContain('if (secret && secret !== "<redacted>")');
-    expect(source).toContain("restart required to apply sign-in changes");
-    expect(source).toContain(
-      "local admin account or your existing recovery method",
-    );
+    expect(source).toContain("typed API contract is available");
+    expect(source).toContain("disabled={isPending || isError}");
+    expect(source).toContain("error={fieldErrors.redirectUri}");
     expect(source).toContain(
       "Queue depth and retry delay must be whole numbers zero or greater.",
     );
-    expect(source).toContain("setShowRestartBanner(true)");
+    expect(source).not.toContain("restart required to apply sign-in changes");
     expect(source).not.toMatch(/(?<![\w/])window\.confirm\s*\(/);
   });
 });

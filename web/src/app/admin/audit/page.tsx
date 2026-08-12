@@ -27,7 +27,7 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
 import {
@@ -73,12 +73,12 @@ const ACTION_PHRASES: Record<string, ActionMeta> = {
   "app.create": { phrase: "Created app", family: "app" },
   "app.disable": { phrase: "Disabled app", family: "app" },
   "app.enable": { phrase: "Re-enabled app", family: "app" },
-  "credential.create": { phrase: "Created key", family: "key" },
-  "credential.revoke": { phrase: "Revoked key", family: "key" },
+  "credential.create": { phrase: "Created key", family: "credential" },
+  "credential.revoke": { phrase: "Revoked key", family: "credential" },
   "profile.create": { phrase: "Created profile", family: "profile" },
   "profile.update": { phrase: "Updated profile", family: "profile" },
   "profile.delete": { phrase: "Deleted profile", family: "profile" },
-  "admin_key.create": { phrase: "Created admin key", family: "key" },
+  "admin_key.create": { phrase: "Created admin key", family: "admin_key" },
   "runtime_profile_mapping.create": {
     phrase: "Added access mapping",
     family: "access",
@@ -131,19 +131,7 @@ function actionMeta(action: string): ActionMeta {
 
 /** Map a family name to the action_prefix server param. */
 function familyToPrefix(family: string): string {
-  // Special families that don't share the family name as a prefix.
-  if (family === "key") return "credential.";
-  if (family === "access") return "runtime_profile_mapping.";
   return `${family}.`;
-}
-
-/** All unique action families present in the accumulated entries. */
-function deriveActionFamilies(entries: AuditEntry[]): string[] {
-  const families = new Set<string>();
-  for (const entry of entries) {
-    families.add(actionMeta(entry.action).family ?? "other");
-  }
-  return Array.from(families).sort();
 }
 
 // ---------------------------------------------------------------------------
@@ -173,29 +161,14 @@ function actorDisplayLabel(
   if (entry.actor_id === "cli" || entry.actor_kind === "cli") return "System";
   const user = usersById.get(entry.actor_id);
   if (user) return userLabel(user);
-  if (
-    entry.actor_kind === "service_account" ||
-    entry.actor_id.startsWith("svc_")
-  ) {
-    const name = entry.metadata?.["actor_name"];
-    return typeof name === "string" && name.trim()
-      ? `Service principal: ${name}`
-      : "Service principal";
-  }
+  if (entry.actor_kind === "service_account") return "Service principal";
   if (entry.actor_kind === "admin") return "Admin";
   return "Unattributed actor";
 }
 
-function safeAuditDetails(entry: AuditEntry): Record<string, unknown> {
-  const metadata = Object.fromEntries(
-    Object.entries(entry.metadata ?? {}).filter(
-      ([key]) =>
-        !/(secret|token|credential|authorization|api[_-]?key|password)/i.test(
-          key,
-        ),
-    ),
-  );
-
+function auditDetails(entry: AuditEntry): Record<string, unknown> {
+  // Audit-detail redaction is a server trust-boundary contract. Until that
+  // typed projection lands, do not pretend client-side key matching is safe.
   return {
     action: actionMeta(entry.action).phrase,
     actor:
@@ -203,18 +176,21 @@ function safeAuditDetails(entry: AuditEntry): Record<string, unknown> {
         ? "System"
         : (entry.actor_kind ?? "Unattributed actor"),
     target: entry.target_kind ?? undefined,
-    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
   };
 }
 
 function RouteEventTargetSync({
   onChange,
 }: {
-  onChange: (target: string | null) => void;
+  onChange: (state: { event: string | null; actor: string | null; category: string | null }) => void;
 }) {
   const searchParams = useSearchParams();
   useEffect(() => {
-    onChange(searchParams.get("event"));
+    onChange({
+      event: searchParams.get("event"),
+      actor: searchParams.get("actor"),
+      category: searchParams.get("category"),
+    });
   }, [onChange, searchParams]);
   return null;
 }
@@ -223,13 +199,14 @@ function RouteEventTargetSync({
 // Page
 
 export default function AdminAuditPage() {
+  const router = useRouter();
+  const pathname = usePathname();
   // Active server-side filters
   const [actorFilter, setActorFilter] = useState<string | null>(null);
   const [familyFilter, setFamilyFilter] = useState<string | null>(null);
 
   // Accumulated pages: list of cursors consumed (tracked for future
   // refetch-all support; not read directly by render logic).
-  const [, setCursors] = useState<Array<string | undefined>>([undefined]);
   // next_cursor returned by the last fetched page (null = exhausted)
   const [nextCursor, setNextCursor] = useState<string | null | undefined>(
     undefined,
@@ -239,6 +216,13 @@ export default function AdminAuditPage() {
   // Whether we're fetching an additional page (beyond the first)
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+
+  // Options are discovered from unfiltered and filtered responses, but never
+  // discarded when a narrow result page replaces the visible rows.
+  const actorOptionsRef = useRef(new Map<string, string>());
+  const familyOptionsRef = useRef(new Set<string>());
+  const [, setOptionVersion] = useState(0);
+  const generationRef = useRef(0);
 
   const [detailEntry, setDetailEntry] = useState<AuditEntry | null>(null);
   const [routeEventTarget, setRouteEventTarget] = useState<string | null>(null);
@@ -250,8 +234,8 @@ export default function AdminAuditPage() {
     actor_id: actorFilter ?? undefined,
     action_prefix: familyFilter ? familyToPrefix(familyFilter) : undefined,
   };
-
   const {
+    data: firstPageData,
     isPending: firstPagePending,
     isError: firstPageIsError,
     error: firstPageError,
@@ -262,14 +246,10 @@ export default function AdminAuditPage() {
       actorId: actorFilter,
       actionPrefix: familyFilter,
     }),
-    queryFn: async () => {
-      const result = await api.audit.list(firstPageParams);
-      // On first page response, reset accumulated state
-      setAllEntries(result.records);
-      setNextCursor(result.next_cursor);
-      setCursors([undefined]);
-      return result;
-    },
+    queryFn: async () => ({
+      generation: generationRef.current,
+      page: await api.audit.list(firstPageParams),
+    }),
     // Don't cache stale data when filters change — always treat as fresh
     staleTime: 0,
   });
@@ -319,40 +299,64 @@ export default function AdminAuditPage() {
     [usersData],
   );
 
-  // Unique actors for filter chips (computed from all loaded entries).
-  const actorOptions = useMemo(() => {
-    const seen = new Map<string, string>(); // actor_id → display label
-    for (const entry of allEntries) {
-      if (seen.has(entry.actor_id)) continue;
-      const label = actorDisplayLabel(entry, usersById);
-      seen.set(entry.actor_id, label);
+  useEffect(() => {
+    if (!firstPageData || firstPageData.generation !== generationRef.current) return;
+    const result = firstPageData.page;
+    setAllEntries(result.records);
+    setNextCursor(result.next_cursor);
+    setLoadMoreError(null);
+    for (const entry of result.records) {
+      actorOptionsRef.current.set(entry.actor_id, actorDisplayLabel(entry, usersById));
+      familyOptionsRef.current.add(actionMeta(entry.action).family ?? "other");
     }
-    return Array.from(seen.entries()).map(([id, label]) => ({ id, label }));
-  }, [allEntries, usersById]);
+    setOptionVersion((version) => version + 1);
+  }, [firstPageData, usersById]);
 
-  const actionFamilies = useMemo(
-    () => deriveActionFamilies(allEntries),
-    [allEntries],
-  );
+  // Keep the currently selected values present even for empty filtered pages.
+  const actorOptions = (() => {
+    if (actorFilter && !actorOptionsRef.current.has(actorFilter)) {
+      return [...actorOptionsRef.current, [actorFilter, "Selected actor"]].map(([id, label]) => ({ id, label }));
+    }
+    return Array.from(actorOptionsRef.current, ([id, label]) => ({ id, label }));
+  })();
+
+  const actionFamilies = Array.from(
+    new Set([...familyOptionsRef.current, ...(familyFilter ? [familyFilter] : [])]),
+  ).sort();
+
+  const replaceRouteState = useCallback((next: { event?: string | null; actor?: string | null; category?: string | null }) => {
+    const params = new URLSearchParams(window.location.search);
+    for (const [key, value] of Object.entries(next)) {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    }
+    router.replace(`${pathname}${params.size ? `?${params}` : ""}`);
+  }, [pathname, router]);
 
   // Reset all pagination state when a filter changes
   const handleActorChange = useCallback((id: string | null) => {
+    generationRef.current += 1;
     setActorFilter(id);
     setAllEntries([]);
     setNextCursor(undefined);
-    setCursors([undefined]);
-  }, []);
+    setLoadMoreError(null);
+    replaceRouteState({ actor: id });
+  }, [replaceRouteState]);
 
   const handleFamilyChange = useCallback((family: string | null) => {
+    generationRef.current += 1;
     setFamilyFilter(family);
     setAllEntries([]);
     setNextCursor(undefined);
-    setCursors([undefined]);
-  }, []);
+    setLoadMoreError(null);
+    replaceRouteState({ category: family });
+  }, [replaceRouteState]);
 
   // Load the next page
   async function loadMore() {
     if (!nextCursor || loadingMore) return;
+    const generation = generationRef.current;
+    const cursor = nextCursor;
     setLoadingMore(true);
     setLoadMoreError(null);
     try {
@@ -360,15 +364,15 @@ export default function AdminAuditPage() {
         limit: PAGE_SIZE,
         actor_id: actorFilter ?? undefined,
         action_prefix: familyFilter ? familyToPrefix(familyFilter) : undefined,
-        before: nextCursor,
+        before: cursor,
       });
+      if (generation !== generationRef.current) return;
       setAllEntries((prev) => [...prev, ...result.records]);
       setNextCursor(result.next_cursor);
-      setCursors((prev) => [...prev, nextCursor]);
     } catch (error) {
-      setLoadMoreError(errorMessage(error));
+      if (generation === generationRef.current) setLoadMoreError(errorMessage(error));
     } finally {
-      setLoadingMore(false);
+      if (generation === generationRef.current) setLoadingMore(false);
     }
   }
 
@@ -385,7 +389,17 @@ export default function AdminAuditPage() {
   return (
     <div className="flex w-full flex-col gap-8">
       <Suspense fallback={null}>
-        <RouteEventTargetSync onChange={setRouteEventTarget} />
+        <RouteEventTargetSync onChange={({ event, actor, category }) => {
+          setRouteEventTarget(event);
+          if (actor !== actorFilter || category !== familyFilter) {
+            generationRef.current += 1;
+            setActorFilter(actor);
+            setFamilyFilter(category);
+            setAllEntries([]);
+            setNextCursor(undefined);
+            setLoadMoreError(null);
+          }
+        }} />
       </Suspense>
       <SectionActionHeader
         kicker="activity"
@@ -428,11 +442,11 @@ export default function AdminAuditPage() {
 
           {/* Filter chips — drive the server query (not client-side slice). */}
           {!loading &&
-            (actorOptions.length > 0 || actionFamilies.length > 0) && (
+            (actorOptions.length > 0 || actionFamilies.length > 0 || hasFilter) && (
               <FilterToolbar
                 filters={
                   <>
-                    {actorOptions.length > 1 && (
+                    {(actorOptions.length > 1 || actorFilter !== null) && (
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-vf-micro text-vf-subtle font-mono uppercase">
                           Actor:
@@ -456,7 +470,7 @@ export default function AdminAuditPage() {
                         ))}
                       </div>
                     )}
-                    {actionFamilies.length > 1 && (
+                    {(actionFamilies.length > 1 || familyFilter !== null) && (
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-vf-micro text-vf-subtle font-mono uppercase">
                           Category:
@@ -545,8 +559,11 @@ export default function AdminAuditPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-vf-small h-7 px-2"
-                        onClick={() => setDetailEntry(entry)}
+                        className="text-vf-small min-h-11 px-3"
+                        onClick={() => {
+                          setDetailEntry(entry);
+                          replaceRouteState({ event: entry.id });
+                        }}
                         aria-label="View full event record"
                       >
                         Details
@@ -591,7 +608,10 @@ export default function AdminAuditPage() {
       <Sheet
         open={detailEntry !== null}
         onOpenChange={(open) => {
-          if (!open) setDetailEntry(null);
+          if (!open) {
+            setDetailEntry(null);
+            replaceRouteState({ event: null });
+          }
         }}
       >
         {detailEntry && (
@@ -626,8 +646,8 @@ function FilterChip({
       onClick={onClick}
       className={
         active
-          ? "rounded-vf-sm bg-vf-accent/15 text-vf-accent border-vf-accent/30 text-vf-small border px-2.5 py-0.5 font-medium transition-colors"
-          : "rounded-vf-sm border-vf-border text-vf-muted hover:text-vf-text hover:border-vf-border/80 text-vf-small border bg-transparent px-2.5 py-0.5 transition-colors"
+          ? "rounded-vf-sm bg-vf-accent/15 text-vf-accent border-vf-accent/30 text-vf-small min-h-11 border px-3 font-medium transition-colors"
+          : "rounded-vf-sm border-vf-border text-vf-muted hover:text-vf-text hover:border-vf-border/80 text-vf-small min-h-11 border bg-transparent px-3 transition-colors"
       }
     >
       {children}
@@ -639,7 +659,7 @@ function FilterChip({
 // Audit detail sheet panel — mono JSON of the full record + a CopyButton.
 
 function AuditDetailPanel({ entry }: { entry: AuditEntry }) {
-  const details = safeAuditDetails(entry);
+  const details = auditDetails(entry);
   const json = JSON.stringify(details, null, 2);
   const targetHref = adminTargetHref(entry.target_kind, entry.target_id);
   const targetName =
