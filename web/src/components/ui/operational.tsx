@@ -635,6 +635,7 @@ export function EmptyOperationalState({
 
 export interface SectionActionHeaderProps {
   title: string;
+  as?: "h1" | "h2" | "h3";
   kicker?: string;
   count?: string | number;
   description?: string;
@@ -644,6 +645,7 @@ export interface SectionActionHeaderProps {
 
 export function SectionActionHeader({
   title,
+  as: Heading = "h2",
   kicker,
   count,
   description,
@@ -663,14 +665,14 @@ export function SectionActionHeader({
             {kicker}
           </p>
         )}
-        <h2 className="text-vf-title text-vf-text flex items-baseline gap-2 font-semibold">
+        <Heading className="text-vf-title text-vf-text flex items-baseline gap-2 font-semibold">
           {title}
           {count !== undefined && (
             <span className="text-vf-small text-vf-muted font-normal tabular-nums">
               {count}
             </span>
           )}
-        </h2>
+        </Heading>
         {description && (
           <p className="text-vf-small text-vf-muted">{description}</p>
         )}

@@ -43,6 +43,7 @@ import AdminLayout from "@/app/admin/layout";
 import {
   CurrentAdvisory,
   DataTable,
+  SectionActionHeader,
   type DataTableColumn,
   TrendLineChart,
 } from "@/components/ui";
@@ -249,5 +250,26 @@ describe("shared operational primitives", () => {
       <CurrentAdvisory tone="warn" title="Needs attention" items={[]} />,
     );
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("uses an h2 by default without duplicate headings", () => {
+    const { container } = render(
+      <SectionActionHeader title="Service health" count={3} />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Service health 3", level: 2 }),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll("h1, h2, h3")).toHaveLength(1);
+  });
+
+  it("renders a page-level h1 instead of nesting or duplicating the title", () => {
+    const { container } = render(<SectionActionHeader as="h1" title="Audit" />);
+
+    expect(
+      screen.getByRole("heading", { name: "Audit", level: 1 }),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll("h1, h2, h3")).toHaveLength(1);
+    expect(container.querySelector("h1 h1, h1 h2, h1 h3")).toBeNull();
   });
 });
