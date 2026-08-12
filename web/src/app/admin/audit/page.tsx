@@ -213,7 +213,7 @@ function RouteEventTargetSync({
 // ---------------------------------------------------------------------------
 // Page
 
-export default function AdminAuditPage() {
+function AdminAuditContents() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -474,9 +474,7 @@ export default function AdminAuditPage() {
   return (
     <CompactTouchTargets>
       <div className="flex w-full flex-col gap-8">
-        <Suspense fallback={null}>
-          <RouteEventTargetSync onChange={handleRouteStateChange} />
-        </Suspense>
+        <RouteEventTargetSync onChange={handleRouteStateChange} />
         <SectionActionHeader
           as="h1"
           kicker="activity"
@@ -713,6 +711,14 @@ export default function AdminAuditPage() {
         </Sheet>
       </div>
     </CompactTouchTargets>
+  );
+}
+
+export default function AdminAuditPage() {
+  return (
+    <Suspense fallback={null}>
+      <AdminAuditContents />
+    </Suspense>
   );
 }
 
