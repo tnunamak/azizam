@@ -7,6 +7,7 @@ const auditPage = {
       created_at: 1_770_000_000,
       actor_kind: "cli",
       actor_id: "cli",
+      actor_label: "System",
       action: "app.create",
       target_kind: "app",
       target_id: "app_1",
@@ -97,7 +98,7 @@ test("Audit and Settings retain dense, accessible layouts at route boundaries", 
   await page.goto("/ui/admin/settings/");
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   await expect(
-    page.getByText("No dashboard OIDC override is saved."),
+    page.getByText("OIDC sign-in is not configured."),
   ).toBeVisible();
   expect(
     await page
