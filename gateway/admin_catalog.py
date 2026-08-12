@@ -16,10 +16,13 @@ import yaml
 
 from gateway import service_registry
 from gateway.policy import (
+    default_profile_id,
     TARGET_ACTIVATION_MODES,
     TARGET_VISIBILITY_MODES,
     VISIBILITY_LEVELS,
 )
+from gateway.profiles import serialize_default_profile
+from gateway.admin_store import RUNTIME_PROFILE_MAPPING_SOURCE_SPECS
 
 _REGISTRY_DIR = Path(__file__).resolve().parent.parent / "registry"
 _PROFILE_POLICY_CATALOG_PATH = _REGISTRY_DIR / "profile_policy_catalog.yml"
@@ -129,11 +132,11 @@ def _string_list(value: Any) -> list[str]:
 
 
 @lru_cache(maxsize=1)
-def _bundled_profile_policy_catalog() -> dict[str, list[dict[str, Any]]]:
+def _bundled_profile_policy_catalog() -> dict[str, Any]:
     return load_profile_policy_catalog(_PROFILE_POLICY_CATALOG_PATH)
 
 
-def load_profile_policy_catalog(path: Path) -> dict[str, list[dict[str, Any]]]:
+def load_profile_policy_catalog(path: Path) -> dict[str, Any]:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return _normalize_profile_policy_catalog(raw, source=path)
 
@@ -142,13 +145,21 @@ def _normalize_profile_policy_catalog(
     raw: Any,
     *,
     source: object = "profile policy catalog",
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         raise ValueError(f"{source} must contain a mapping of catalog sections")
 
-    catalog: dict[str, list[dict[str, Any]]] = {}
+    catalog: dict[str, Any] = {}
     for section, options in raw.items():
         if not isinstance(section, str):
+            continue
+        if section == "fallback_profile":
+            if not isinstance(options, Mapping):
+                raise ValueError(f"{source}:fallback_profile must contain a mapping")
+            fallback_id = str(options.get("id") or "").strip()
+            if fallback_id != default_profile_id():
+                raise ValueError(f"{source}:fallback_profile must use {default_profile_id()!r}")
+            catalog[section] = dict(options, id=fallback_id)
             continue
         if not isinstance(options, list):
             raise ValueError(f"{source}:{section} must contain a list of options")
@@ -179,7 +190,7 @@ def _normalize_profile_policy_option(
 def profile_policy_catalog(
     *,
     catalog_dir: str | Path | None = None,
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, Any]:
     if catalog_dir is None:
         catalog = _bundled_profile_policy_catalog()
     else:
@@ -212,3 +223,107 @@ def coerce_policy_catalog(value: Any) -> dict[str, list[dict[str, Any]]]:
                 if isinstance(option, Mapping) and option.get("id")
             ]
     return out
+
+
+def _catalog_option_map(catalog: Mapping[str, Any], section: str) -> dict[str, Mapping[str, Any]]:
+    options = catalog.get(section)
+    if not isinstance(options, list):
+        return {}
+    return {str(option["id"]): option for option in options if isinstance(option, Mapping) and option.get("id")}
+
+
+def _choice(option_id: str, *, available: bool | None, prose: Mapping[str, Any] | None = None, fallback_label: str | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "id": option_id,
+        "label": str((prose or {}).get("label") or fallback_label or option_id),
+        "description": (str((prose or {})["description"]) if (prose or {}).get("description") else None),
+    }
+    if available is not None:
+        out["available"] = available
+    return out
+
+
+def _policy_values(record: Mapping[str, Any]) -> list[str]:
+    values: list[str] = []
+    for route in record.get("routes") or []:
+        if not isinstance(route, Mapping):
+            continue
+        for key in ("runtime_policy", "openai_proxy_policy"):
+            policy = route.get(key)
+            if isinstance(policy, Mapping) and isinstance(policy.get("intent"), str):
+                values.append(policy["intent"])
+    return values
+
+
+def policy_editor_contract(registry: Mapping[str, Any]) -> dict[str, Any]:
+    """Safely join normalized registry facts with presentation-only catalog data."""
+    normalized = service_registry.normalize_service_registry(registry)
+    catalog = profile_policy_catalog()
+    dynamic: dict[str, dict[str, bool]] = {key: {} for key in ("protocols", "intents", "workflows", "models")}
+
+    def add(section: str, value: object, available: bool) -> None:
+        option_id = str(value or "").strip()
+        if option_id:
+            dynamic[section][option_id] = dynamic[section].get(option_id, False) or available
+
+    for frontend in normalized["protocol_frontends"].values():
+        if not isinstance(frontend, Mapping):
+            continue
+        enabled = bool(frontend.get("enabled", True))
+        add("protocols", frontend.get("protocol"), enabled)
+        for intent in frontend.get("intents") or []:
+            add("intents", intent, enabled)
+        for intent in _policy_values(frontend):
+            add("intents", intent, enabled)
+    for workflow in normalized["workflows"].values():
+        if not isinstance(workflow, Mapping):
+            continue
+        enabled = bool(workflow.get("enabled", True))
+        add("workflows", workflow.get("id"), enabled)
+        manifest = workflow.get("manifest")
+        if isinstance(manifest, Mapping):
+            add("intents", manifest.get("intent"), enabled)
+    capability_values: dict[str, set[str]] = {key: set() for key in ("exposure", "trust_tiers", "resource_tiers", "tags")}
+    for capability in normalized["capabilities"].values():
+        if not isinstance(capability, Mapping):
+            continue
+        enabled = bool(capability.get("enabled", True))
+        add("intents", capability.get("intent"), enabled)
+        for key, source_key in (("exposure", "exposure"), ("trust_tiers", "trust_tier"), ("resource_tiers", "resource_tier")):
+            value = str(capability.get(source_key) or "").strip()
+            if value:
+                capability_values[key].add(value)
+        for tag in capability.get("tags") or []:
+            if str(tag).strip():
+                capability_values["tags"].add(str(tag).strip())
+    for service in normalized["services"].values():
+        if not isinstance(service, Mapping):
+            continue
+        enabled = bool(service.get("enabled", True))
+        config = service.get("config")
+        if isinstance(config, Mapping):
+            for model in config.get("models") or []:
+                if isinstance(model, Mapping):
+                    add("models", model.get("model_group") or model.get("id"), enabled)
+
+    choices: dict[str, list[dict[str, Any]]] = {}
+    for section in ("protocols", "intents", "workflows", "models"):
+        prose = _catalog_option_map(catalog, section)
+        choices[section] = [_choice(option_id, available=available, prose=prose.get(option_id)) for option_id, available in sorted(dynamic[section].items())]
+    for section in ("exposure", "trust_tiers", "resource_tiers", "tags"):
+        prose = _catalog_option_map(catalog, section)
+        ids = capability_values[section] | set(prose)
+        choices[section] = [_choice(option_id, available=None, prose=prose.get(option_id)) for option_id in sorted(ids)]
+    for section in ("status_visibility", "target_visibility", "target_activation"):
+        choices[section] = [_choice(str(option["id"]), available=None, prose=option) for option in catalog.get(section, [])]
+    fallback = catalog.get("fallback_profile")
+    if not isinstance(fallback, Mapping):
+        raise ValueError("profile policy catalog is missing fallback_profile")
+    return {
+        "schema_version": 1,
+        "profile": {"create": {"profile": serialize_default_profile()}, "set_semantics": {"omitted": "no_opinion", "empty": "deny_all"}, "choices": choices},
+        "runtime_mappings": {
+            "source_kinds": [{key: value for key, value in spec.items() if key != "priority"} for spec in RUNTIME_PROFILE_MAPPING_SOURCE_SPECS],
+            "fallback_profile": {"id": default_profile_id(), "label": str(fallback.get("label") or default_profile_id()), "description": str(fallback.get("description") or "") or None, "assignable": True},
+        },
+    }

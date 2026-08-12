@@ -35,6 +35,9 @@ import {
   api,
   queryKeys,
   type Profile,
+  type PolicyEditorChoice,
+  type PolicyEditorContract,
+  type ProfilePolicyDocument,
   type SimulateResult,
 } from "@/lib/api";
 import {
@@ -72,10 +75,6 @@ import {
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return "Something went wrong. Please try again.";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function FormErrorSummary({ message }: { message: string }) {
@@ -119,25 +118,6 @@ function RouteProfileTargetSync({
   return null;
 }
 
-/** Known intents mapped to human-readable capability names.
- *
- * Remaining API/data dependency: the server does not yet publish the policy
- * metadata catalog/default document needed to make these choices data-derived.
- * Keep this catalog explicit; do not add new policy literals here as a
- * regression workaround.
- */
-const INTENT_LABELS: Record<string, string> = {
-  "chat.completions": "chat",
-  completions: "completions",
-  embeddings: "embeddings",
-  "images.generate": "images",
-  "images.edit": "image edit",
-  "audio.speech": "speech",
-  "audio.transcriptions": "transcriptions",
-  "video.generate": "video",
-  moderations: "moderations",
-};
-
 /** Derive the human access summary from a profile.
  *
  * Produces e.g. "4 models · chat, images" or "all models · chat"
@@ -147,20 +127,19 @@ function accessSummary(profile: Profile): string {
 
   // The allow block lives in the policy document
   const allow = profile.profile?.allow as
-    | { intents?: string[]; models?: string[] }
+    | { intents?: string[] }
     | undefined;
 
   if (allow?.intents && allow.intents.length > 0) {
     for (const intent of allow.intents) {
-      const label = INTENT_LABELS[intent] ?? intent.replace(".", " ");
-      if (!intents.includes(label)) intents.push(label);
+      if (!intents.includes(intent)) intents.push(intent);
     }
   } else if (profile.workflows && profile.workflows.length > 0) {
     // workflows can substitute for explicit intents
     intents.push(...profile.workflows.map((w) => w.replace(/-/g, " ")));
   }
 
-  const models = allow?.models;
+  const models = profile.profile.models;
   let modelPart: string;
   if (!models || models.length === 0) {
     modelPart = "all models";
@@ -197,20 +176,19 @@ interface ProfileFacets {
 
 function profileFacets(profile: Profile): ProfileFacets {
   const allow = profile.profile?.allow as
-    | { intents?: string[]; models?: string[] }
+    | { intents?: string[] }
     | undefined;
 
   const capabilities: string[] = [];
   if (allow?.intents && allow.intents.length > 0) {
     for (const intent of allow.intents) {
-      const label = INTENT_LABELS[intent] ?? intent.replace(".", " ");
-      if (!capabilities.includes(label)) capabilities.push(label);
+      if (!capabilities.includes(intent)) capabilities.push(intent);
     }
   } else if (profile.workflows && profile.workflows.length > 0) {
     capabilities.push(...profile.workflows.map((w) => w.replace(/-/g, " ")));
   }
 
-  const models = allow?.models;
+  const models = profile.profile.models;
   const unrestrictedModels = !models || models.length === 0;
   const modelScope = unrestrictedModels
     ? "all models"
@@ -247,6 +225,11 @@ export default function AdminProfilesPage() {
     error: profilesError,
     refetch: refetchProfiles,
   } = useQuery({ queryKey: queryKeys.profiles, queryFn: api.profiles.list });
+  const {
+    data: editor,
+    isError: editorIsError,
+    isPending: editorPending,
+  } = useQuery({ queryKey: queryKeys.policyEditor, queryFn: api.policyEditor.get });
 
   const {
     data: appsData,
@@ -480,6 +463,9 @@ export default function AdminProfilesPage() {
         mode="create"
         open={createOpen}
         onOpenChange={setCreateOpen}
+        editor={editor}
+        editorStale={editorIsError && Boolean(editor)}
+        editorUnavailable={!editor && !editorPending}
       />
 
       {/* Edit dialog */}
@@ -490,6 +476,9 @@ export default function AdminProfilesPage() {
         onOpenChange={(open) => {
           if (!open) setEditTarget(null);
         }}
+        editor={editor}
+        editorStale={editorIsError && Boolean(editor)}
+        editorUnavailable={!editor && !editorPending}
       />
 
       {/* Test access dialog — opened from row overflow (fixed profile) */}
@@ -680,50 +669,37 @@ function ErrorBanner({
 interface ProfileFormState {
   name: string;
   description: string;
-  protocols: string[];
-  /** Comma-separated model list (free-form; '' = unrestricted). */
-  models: string;
-  intents: string[];
+  protocols: string[] | undefined;
+  workflows: string[] | undefined;
+  models: string[] | undefined;
+  intents: string[] | undefined;
+  tags: string[] | undefined;
   statusVisibility: string;
 }
 
-function defaultFormState(profile?: Profile): ProfileFormState {
-  if (!profile) {
-    return {
-      name: "",
-      description: "",
-      protocols: ["openai"],
-      models: "",
-      intents: [],
-      statusVisibility: "basic",
-    };
-  }
-  const allow = profile.profile?.allow as
-    | { intents?: string[]; models?: string[] }
-    | undefined;
+function defaultFormState(editor: PolicyEditorContract | undefined, profile?: Profile): ProfileFormState {
+  const document = profile?.profile ?? editor?.profile.create.profile;
   return {
-    name: profile.name,
-    description: profile.description ?? "",
-    protocols: profile.protocols ?? ["openai"],
-    models: (allow?.models ?? []).join(", "),
-    intents: allow?.intents ?? [],
-    statusVisibility: profile.status_visibility ?? "basic",
+    name: profile?.name ?? "",
+    description: profile?.description ?? "",
+    protocols: document?.protocols,
+    workflows: document?.workflows,
+    models: document?.models,
+    intents: document?.allow?.intents,
+    tags: document?.allow?.tags,
+    statusVisibility: document?.status_visibility?.level ?? "",
   };
 }
 
 function profileFormSummary(form: ProfileFormState): string {
-  const protocols =
-    form.protocols.length > 0 ? form.protocols.join(", ") : "no protocols";
-  const modelCount = form.models
-    .split(",")
-    .map((model) => model.trim())
-    .filter(Boolean).length;
+  const protocols = form.protocols === undefined ? "all protocols" : form.protocols.length ? form.protocols.join(", ") : "no protocols";
+  const modelCount = form.models?.length ?? 0;
   const models =
-    modelCount === 0
+    form.models === undefined
       ? "all models"
       : `${modelCount} ${modelCount === 1 ? "model" : "models"}`;
   const capabilities =
-    form.intents.length === 0
+    form.intents === undefined
       ? "all capabilities"
       : `${form.intents.length} ${form.intents.length === 1 ? "capability" : "capabilities"}`;
   return `${protocols} · ${models} · ${capabilities}`;
@@ -734,11 +710,17 @@ function ProfileDialog({
   profile,
   open,
   onOpenChange,
+  editor,
+  editorStale,
+  editorUnavailable,
 }: {
   mode: "create" | "edit";
   profile?: Profile;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  editor: PolicyEditorContract | undefined;
+  editorStale: boolean;
+  editorUnavailable: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -747,6 +729,9 @@ function ProfileDialog({
           mode={mode}
           profile={profile}
           onOpenChange={onOpenChange}
+          editor={editor}
+          editorStale={editorStale}
+          editorUnavailable={editorUnavailable}
         />
       )}
     </Dialog>
@@ -757,14 +742,20 @@ function ProfileDialogContent({
   mode,
   profile,
   onOpenChange,
+  editor,
+  editorStale,
+  editorUnavailable,
 }: {
   mode: "create" | "edit";
   profile?: Profile;
   onOpenChange: (open: boolean) => void;
+  editor: PolicyEditorContract | undefined;
+  editorStale: boolean;
+  editorUnavailable: boolean;
 }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProfileFormState>(() =>
-    defaultFormState(profile),
+    defaultFormState(editor, profile),
   );
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ name?: string }>({});
@@ -777,46 +768,22 @@ function ProfileDialogContent({
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function toggleIntent(intent: string) {
-    setForm((prev) => ({
-      ...prev,
-      intents: prev.intents.includes(intent)
-        ? prev.intents.filter((i) => i !== intent)
-        : [...prev.intents, intent],
-    }));
-  }
-
-  function buildProfileDoc() {
-    const modelsRaw = form.models
-      .split(",")
-      .map((m) => m.trim())
-      .filter(Boolean);
-
-    const storedProfile = profile?.profile ?? {};
-    const { allow: storedAllow, status_visibility: storedStatusVisibility } =
-      storedProfile;
-    const unknownFields = Object.fromEntries(
-      Object.entries(storedProfile).filter(
-        ([key]) =>
-          key !== "allow" && key !== "protocols" && key !== "status_visibility",
-      ),
-    );
-    const allow = isRecord(storedAllow) ? { ...storedAllow } : {};
-    delete allow.intents;
-    delete allow.models;
-    if (form.intents.length > 0) allow.intents = form.intents;
-    if (modelsRaw.length > 0) allow.models = modelsRaw;
-
-    const statusVisibility = isRecord(storedStatusVisibility)
-      ? { ...storedStatusVisibility, level: form.statusVisibility }
-      : { level: form.statusVisibility };
-
-    return {
-      ...unknownFields,
-      protocols: form.protocols,
-      status_visibility: statusVisibility,
-      ...(Object.keys(allow).length > 0 ? { allow } : {}),
-    };
+  function buildProfileDoc(): ProfilePolicyDocument {
+    const source = profile?.profile ?? editor?.profile.create.profile ?? {};
+    const document = structuredClone(source);
+    const allow = { ...(document.allow ?? {}) };
+    for (const [field, value] of Object.entries({ protocols: form.protocols, workflows: form.workflows, models: form.models }) as Array<["protocols" | "workflows" | "models", string[] | undefined]>) {
+      if (value === undefined) delete document[field];
+      else document[field] = value;
+    }
+    for (const [field, value] of Object.entries({ intents: form.intents, tags: form.tags }) as Array<["intents" | "tags", string[] | undefined]>) {
+      if (value === undefined) delete allow[field];
+      else allow[field] = value;
+    }
+    if (Object.keys(allow).length) document.allow = allow;
+    else delete document.allow;
+    if (form.statusVisibility) document.status_visibility = { ...document.status_visibility, level: form.statusVisibility };
+    return document;
   }
 
   const save = useMutation({
@@ -919,79 +886,16 @@ function ProfileDialogContent({
 
             {advancedOpen && (
               <div className="border-vf-border flex flex-col gap-4 border-t px-4 py-4">
-                <p className="text-vf-small text-vf-muted">
-                  Start broad and add restrictions only when this caller should
-                  be denied a protocol, capability, or model.
-                </p>
-
-                {/* Protocols */}
-                <Field
-                  label="API protocols"
-                  help="The protocol front doors this profile can use."
-                >
-                  <Input
-                    value={form.protocols.join(", ")}
-                    onChange={(event) =>
-                      setField(
-                        "protocols",
-                        event.target.value
-                          .split(",")
-                          .map((value) => value.trim())
-                          .filter(Boolean),
-                      )
-                    }
-                    placeholder="Comma-separated protocol names"
-                    disabled={save.isPending}
-                  />
-                </Field>
-
-                {/* Capabilities / intents */}
-                <Field
-                  label="Capabilities"
-                  help="Leave all unchecked to allow all capabilities."
-                >
-                  <div className="flex flex-wrap gap-3">
-                    {Object.entries(INTENT_LABELS).map(([intent, label]) => (
-                      <Checkbox
-                        key={intent}
-                        checked={form.intents.includes(intent)}
-                        onCheckedChange={() => toggleIntent(intent)}
-                        disabled={save.isPending}
-                      >
-                        {label}
-                      </Checkbox>
-                    ))}
-                  </div>
-                </Field>
-
-                {/* Model allowlist */}
-                <Field
-                  label="Allowed models"
-                  help="Comma-separated model IDs. Leave blank to allow all models."
-                >
-                  <Input
-                    value={form.models}
-                    onChange={(e) => setField("models", e.target.value)}
-                    placeholder="Comma-separated model IDs"
-                    disabled={save.isPending}
-                  />
-                </Field>
-
-                {/* Status visibility */}
-                <Field
-                  label="Status visibility"
-                  help="How much queue/status info callers can see."
-                >
-                  <Select
-                    value={form.statusVisibility}
-                    onChange={(e) =>
-                      setField("statusVisibility", e.target.value)
-                    }
-                    disabled={save.isPending}
-                  >
-                    <option value="none">None</option>
-                    <option value="basic">Basic</option>
-                    <option value="full">Full</option>
+                {editorUnavailable ? <NoticeBanner tone="warn">Unavailable — policy choices could not be read. Saved values remain visible, but discovery controls are disabled.</NoticeBanner> : editorStale ? <NoticeBanner tone="warn">Stale — showing prior choices. You may remove retained values, but cannot add a stale choice.</NoticeBanner> : null}
+                <PolicySetField label="API protocols" choices={editor?.profile.choices.protocols ?? []} value={form.protocols} onChange={(value) => setField("protocols", value)} disabled={save.isPending || editorUnavailable} stale={editorStale} />
+                <PolicySetField label="Capabilities" choices={editor?.profile.choices.intents ?? []} value={form.intents} onChange={(value) => setField("intents", value)} disabled={save.isPending || editorUnavailable} stale={editorStale} />
+                <PolicySetField label="Workflows" choices={editor?.profile.choices.workflows ?? []} value={form.workflows} onChange={(value) => setField("workflows", value)} disabled={save.isPending || editorUnavailable} stale={editorStale} />
+                <PolicySetField label="Allowed models" choices={editor?.profile.choices.models ?? []} value={form.models} onChange={(value) => setField("models", value)} disabled={save.isPending || editorUnavailable} stale={editorStale} />
+                <PolicySetField label="Tags" choices={editor?.profile.choices.tags ?? []} value={form.tags} onChange={(value) => setField("tags", value)} disabled={save.isPending || editorUnavailable} stale={editorStale} />
+                <Field label="Status visibility" help="How much queue/status info callers can see.">
+                  <Select value={form.statusVisibility} onChange={(e) => setField("statusVisibility", e.target.value)} disabled={save.isPending || editorUnavailable}>
+                    <option value="">Select status visibility…</option>
+                    {(editor?.profile.choices.status_visibility ?? []).map((choice) => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
                   </Select>
                 </Field>
               </div>
@@ -1014,6 +918,45 @@ function ProfileDialogContent({
         </DialogFooter>
       </DialogForm>
     </DialogContent>
+  );
+}
+
+function PolicySetField({
+  label,
+  choices,
+  value,
+  onChange,
+  disabled,
+  stale,
+}: {
+  label: string;
+  choices: PolicyEditorChoice[];
+  value: string[] | undefined;
+  onChange: (value: string[] | undefined) => void;
+  disabled: boolean;
+  stale: boolean;
+}) {
+  const selected = value ?? [];
+  const advertised = new Map(choices.map((choice) => [choice.id, choice]));
+  const visible = [...choices, ...selected.filter((id) => !advertised.has(id)).map((id) => ({ id, label: `${id} — Not currently advertised`, description: "Retaining this value retains the grant if it becomes active again.", available: false }))];
+  const changeMode = (mode: "unrestricted" | "deny") => onChange(mode === "unrestricted" ? undefined : []);
+  const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id]);
+  return (
+    <Field label={label} help="No restriction omits this field. Deny all stores an explicit empty set.">
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-3 text-vf-small">
+          <label><input type="radio" checked={value === undefined} onChange={() => changeMode("unrestricted")} disabled={disabled} /> No restriction</label>
+          <label><input type="radio" checked={value !== undefined} onChange={() => changeMode("deny")} disabled={disabled} /> Restrict</label>
+        </div>
+        {value !== undefined && <div className="flex flex-wrap gap-3">
+          {visible.map((choice) => {
+            const checked = selected.includes(choice.id);
+            const mayAdd = !stale && choice.available !== false;
+            return <Checkbox key={choice.id} checked={checked} onCheckedChange={() => toggle(choice.id)} disabled={disabled || (!checked && !mayAdd)}>{choice.label}</Checkbox>;
+          })}
+        </div>}
+      </div>
+    </Field>
   );
 }
 

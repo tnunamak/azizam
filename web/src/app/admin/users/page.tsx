@@ -29,8 +29,8 @@ import {
   type Profile,
   type User,
   type UserAccessDefaults,
-  type RuntimeMappingSourceKind,
   type RuntimeProfileMapping,
+  type PolicyEditorContract,
 } from "@/lib/api";
 import {
   Badge,
@@ -88,23 +88,23 @@ function roleBadgeTone(
   return "neutral";
 }
 
-const SOURCE_KIND_LABELS: Record<RuntimeMappingSourceKind, string> = {
-  oidc_group: "OIDC group",
-  oidc_role: "OIDC role",
-  email: "Email",
-  domain: "Domain",
-  gateway_role: "Gateway role",
-  all_users: "All users",
-};
-
-function mappingLabel(mapping: RuntimeProfileMapping): string {
-  if (mapping.source_kind === "all_users") return "Everyone (catch-all)";
-  return `${SOURCE_KIND_LABELS[mapping.source_kind]}: ${mapping.source_value}`;
+function sourceDescriptor(editor: PolicyEditorContract | undefined, sourceKind: string) {
+  return editor?.runtime_mappings.source_kinds.find((source) => source.id === sourceKind);
 }
 
-function profileName(profileId: string, profiles: Profile[]): string {
+function mappingLabel(mapping: RuntimeProfileMapping, editor?: PolicyEditorContract): string {
+  const source = sourceDescriptor(editor, mapping.source_kind);
+  if (!source) return `${mapping.source_kind} — Not currently advertised: ${mapping.source_value}`;
+  if (source.value_mode === "fixed") return source.label;
+  return `${source.label}: ${mapping.source_value}`;
+}
+
+function profileName(profileId: string, profiles: Profile[], editor?: PolicyEditorContract): string {
   return (
-    profiles.find((p) => p.id === profileId)?.name ?? "Profile unavailable"
+    profiles.find((p) => p.id === profileId)?.name ??
+    (editor?.runtime_mappings.fallback_profile.id === profileId
+      ? editor.runtime_mappings.fallback_profile.label
+      : "Profile unavailable")
   );
 }
 
@@ -164,6 +164,10 @@ export default function AdminUsersPage() {
   const { data: profilesData } = useQuery({
     queryKey: queryKeys.profiles,
     queryFn: api.profiles.list,
+  });
+  const { data: editor, isError: editorIsError, isPending: editorPending } = useQuery({
+    queryKey: queryKeys.policyEditor,
+    queryFn: api.policyEditor.get,
   });
 
   const profiles = profilesData ?? [];
@@ -433,7 +437,7 @@ export default function AdminUsersPage() {
             count={mappings.length > 0 ? mappings.length : undefined}
             description="Map a sign-in attribute — OIDC group, email, domain — to a profile. New users matching a rule get that profile automatically."
             action={
-              <Button size="sm" onClick={() => setCreateMappingOpen(true)}>
+              <Button size="sm" onClick={() => setCreateMappingOpen(true)} disabled={!editor && !editorPending}>
                 Add mapping
               </Button>
             }
@@ -448,6 +452,7 @@ export default function AdminUsersPage() {
               mappings={mappings}
               profiles={profiles}
               users={users}
+              editor={editor}
               loading={mappingsPending}
               onDisable={setDisableMappingTarget}
             />
@@ -460,6 +465,9 @@ export default function AdminUsersPage() {
         open={createMappingOpen}
         onOpenChange={setCreateMappingOpen}
         profiles={profiles}
+        editor={editor}
+        editorStale={editorIsError && Boolean(editor)}
+        editorUnavailable={!editor && !editorPending}
       />
 
       {/* Destructive confirm */}
@@ -471,7 +479,7 @@ export default function AdminUsersPage() {
         title="Disable mapping?"
         description={
           disableMappingTarget
-            ? `New users matching "${mappingLabel(disableMappingTarget)}" will no longer be assigned the "${profileName(disableMappingTarget.profile_id, profiles)}" profile automatically. Existing users are not affected.`
+            ? `New users matching "${mappingLabel(disableMappingTarget, editor)}" will no longer be assigned the "${profileName(disableMappingTarget.profile_id, profiles, editor)}" profile automatically. Existing users are not affected.`
             : undefined
         }
         confirmLabel="Disable mapping"
@@ -649,22 +657,6 @@ function SwitchRow({
 // ---------------------------------------------------------------------------
 // Mappings table
 
-const SOURCE_KIND_OPTIONS: {
-  value: RuntimeMappingSourceKind;
-  label: string;
-}[] = [
-  { value: "oidc_group", label: "OIDC group" },
-  { value: "oidc_role", label: "OIDC role" },
-  { value: "email", label: "Email address" },
-  { value: "domain", label: "Email domain" },
-  { value: "gateway_role", label: "Gateway role" },
-  { value: "all_users", label: "All users (catch-all)" },
-];
-// Remaining API/data dependency: source-kind choices and create-mapping
-// defaults should come from route metadata. The API does not yet publish that
-// catalog, so this route keeps the existing hardcoded choices explicit rather
-// than adding new literals or free-form regression controls.
-
 interface MappingRow {
   mapping: RuntimeProfileMapping;
   profileLabel: string;
@@ -674,12 +666,14 @@ function MappingsTable({
   mappings,
   profiles,
   users,
+  editor,
   loading,
   onDisable,
 }: {
   mappings: RuntimeProfileMapping[];
   profiles: Profile[];
   users: User[];
+  editor: PolicyEditorContract | undefined;
   loading: boolean;
   onDisable: (mapping: RuntimeProfileMapping) => void;
 }) {
@@ -695,10 +689,10 @@ function MappingsTable({
       cell: ({ mapping }) => (
         <span className="flex min-w-0 flex-col gap-0.5">
           <span className="text-vf-small text-vf-text">
-            {mappingLabel(mapping)}
+            {mappingLabel(mapping, editor)}
           </span>
           <span className="text-vf-micro text-vf-subtle font-mono">
-            {SOURCE_KIND_LABELS[mapping.source_kind]}
+            {sourceDescriptor(editor, mapping.source_kind)?.label ?? "Not currently advertised"}
           </span>
         </span>
       ),
@@ -751,7 +745,7 @@ function MappingsTable({
         />
       }
       rowMenu={({ mapping }) => (
-        <OverflowMenu label={`Actions for mapping ${mappingLabel(mapping)}`}>
+        <OverflowMenu label={`Actions for mapping ${mappingLabel(mapping, editor)}`}>
           <OverflowMenuItem danger onSelect={() => onDisable(mapping)}>
             Disable mapping…
           </OverflowMenuItem>
@@ -768,10 +762,16 @@ function CreateMappingDialog({
   open,
   onOpenChange,
   profiles,
+  editor,
+  editorStale,
+  editorUnavailable,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   profiles: Profile[];
+  editor: PolicyEditorContract | undefined;
+  editorStale: boolean;
+  editorUnavailable: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -779,6 +779,9 @@ function CreateMappingDialog({
         <CreateMappingDialogContent
           onOpenChange={onOpenChange}
           profiles={profiles}
+          editor={editor}
+          editorStale={editorStale}
+          editorUnavailable={editorUnavailable}
         />
       )}
     </Dialog>
@@ -788,31 +791,31 @@ function CreateMappingDialog({
 function CreateMappingDialogContent({
   onOpenChange,
   profiles,
+  editor,
+  editorStale,
+  editorUnavailable,
 }: {
   onOpenChange: (open: boolean) => void;
   profiles: Profile[];
+  editor: PolicyEditorContract | undefined;
+  editorStale: boolean;
+  editorUnavailable: boolean;
 }) {
   const queryClient = useQueryClient();
-  const [sourceKind, setSourceKind] =
-    useState<RuntimeMappingSourceKind>("oidc_group");
+  const [sourceKind, setSourceKind] = useState("");
   const [sourceValue, setSourceValue] = useState("");
   const [profileId, setProfileId] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<{
-    source_value?: string;
-  }>({});
+  const [fieldErrors, setFieldErrors] = useState<{ source_kind?: string; source_value?: string; profile_id?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!profileId && profiles[0]) setProfileId(profiles[0].id);
-  }, [profileId, profiles]);
-
-  const sourceValueRequired = sourceKind !== "all_users";
+  const source = sourceDescriptor(editor, sourceKind);
+  const sourceValueRequired = source?.value_mode === "required";
 
   const create = useMutation({
     mutationFn: () =>
       api.runtimeProfileMappings.create({
         source_kind: sourceKind,
-        source_value: sourceKind === "all_users" ? "" : sourceValue.trim(),
+        source_value: source?.value_mode === "fixed" ? (source.fixed_value ?? "") : sourceValue.trim(),
         profile_id: profileId,
       }),
     onSuccess: async () => {
@@ -825,10 +828,12 @@ function CreateMappingDialogContent({
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    const errors: { source_value?: string } = {};
+    const errors: { source_kind?: string; source_value?: string; profile_id?: string } = {};
+    if (!source) errors.source_kind = "Choose a source to match.";
     if (sourceValueRequired && !sourceValue.trim()) {
       errors.source_value = "Enter a value to match against.";
     }
+    if (!profileId) errors.profile_id = "Choose a profile to assign.";
     setFieldErrors(errors);
     setFormError(null);
     if (Object.keys(errors).length > 0) return;
@@ -846,16 +851,15 @@ function CreateMappingDialogContent({
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
-          <Field label="Match on" help="The sign-in attribute to inspect.">
+          <Field label="Match on" help="The sign-in attribute to inspect." error={fieldErrors.source_kind}>
             <Select
               value={sourceKind}
-              onChange={(event) =>
-                setSourceKind(event.target.value as RuntimeMappingSourceKind)
-              }
-              disabled={create.isPending}
+              onChange={(event) => setSourceKind(event.target.value)}
+              disabled={create.isPending || editorUnavailable}
             >
-              {SOURCE_KIND_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
+              <option value="">Select a source…</option>
+              {(editor?.runtime_mappings.source_kinds ?? []).map((opt) => (
+                <option key={opt.id} value={opt.id} disabled={editorStale}>
                   {opt.label}
                 </option>
               ))}
@@ -868,27 +872,13 @@ function CreateMappingDialogContent({
               required
               error={fieldErrors.source_value}
               help={
-                sourceKind === "email"
-                  ? "Exact email address, e.g. tim@example.com"
-                  : sourceKind === "domain"
-                    ? "Domain without @, e.g. example.com"
-                    : sourceKind === "oidc_group"
-                      ? "Group name as it appears in the OIDC token"
-                      : sourceKind === "oidc_role"
-                        ? "Role name as it appears in the OIDC token"
-                        : "Value to match"
+                source?.description ?? "Value to match"
               }
             >
               <Input
                 value={sourceValue}
                 onChange={(event) => setSourceValue(event.target.value)}
-                placeholder={
-                  sourceKind === "email"
-                    ? "tim@example.com"
-                    : sourceKind === "domain"
-                      ? "example.com"
-                      : "value"
-                }
+                placeholder="value"
                 autoFocus
                 disabled={create.isPending}
               />
@@ -898,13 +888,15 @@ function CreateMappingDialogContent({
           <Field
             label="Assign profile"
             help="The profile new matching users will receive."
+            error={fieldErrors.profile_id}
           >
             <Select
               value={profileId}
               onChange={(event) => setProfileId(event.target.value)}
-              disabled={create.isPending}
+              disabled={create.isPending || editorUnavailable}
             >
               <option value="">Select a profile…</option>
+              {editor?.runtime_mappings.fallback_profile.assignable && <option value={editor.runtime_mappings.fallback_profile.id}>{editor.runtime_mappings.fallback_profile.label}</option>}
               {profiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
                   {profile.name}
@@ -919,7 +911,7 @@ function CreateMappingDialogContent({
           <Button
             variant="ghost"
             onClick={() => onOpenChange(false)}
-            disabled={create.isPending}
+            disabled={create.isPending || editorUnavailable || editorStale}
           >
             Cancel
           </Button>

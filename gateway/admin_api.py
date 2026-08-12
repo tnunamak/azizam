@@ -32,14 +32,16 @@ from fastapi.responses import JSONResponse
 
 from gateway.policy import (
     AppProfile,
+    default_profile_id,
     PolicyDecision,
     PolicyRequest,
     evaluate,
+    is_default_profile_id,
 )
 from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.backends.litellm_admin import LiteLLMAdminError
 from gateway.profiles import ProfileLoadError, load_profile
-from gateway import admin_store, extension_packages, service_registry
+from gateway import admin_catalog, admin_store, extension_packages, service_registry
 
 __all__ = [
     "AdminAuthError",
@@ -280,7 +282,7 @@ def _attention_app_profile_id(record: Mapping[str, Any]) -> str:
         or record.get("profile_id")
         or record.get("profile")
     )
-    return str(profile_id) if profile_id else "default-local"
+    return str(profile_id) if profile_id else default_profile_id()
 
 
 def _admin_target_href(target_kind: str, target_id: str) -> str | None:
@@ -654,7 +656,7 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
         profile_id = _attention_app_profile_id(app)
         if app.get("disabled_at"):
             continue
-        elif profile_id != "default-local" and profile_id not in profile_ids:
+        elif not is_default_profile_id(profile_id) and profile_id not in profile_ids:
             items.append(_attention_item(
                 kind="app", severity="problem",
                 title=f"{name}'s profile is missing",
@@ -1724,7 +1726,7 @@ def create_admin_router(
         if profile_id:
             profile_key = str(profile_id).strip()
             if (
-                profile_key != "default-local"
+                not is_default_profile_id(profile_key)
                 and store.get_profile(profile_key) is None
             ):
                 return _RouteError(
@@ -1798,6 +1800,27 @@ def create_admin_router(
             status_code=status.HTTP_200_OK,
             content={"profiles": list(store.list_profiles())},
         )
+
+    @router.get("/policy/editor")
+    def policy_editor(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            contract = admin_catalog.policy_editor_contract(
+                store.get_service_registry()
+            )
+        except Exception:  # A failed projection must never look like no choices.
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={
+                    "error": {
+                        "code": "policy_editor_unavailable",
+                        "message": "Policy editor choices could not be read.",
+                    }
+                },
+            )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=contract)
 
     @router.post("/profiles")
     async def create_profile(request: Request) -> JSONResponse:
@@ -1938,7 +1961,7 @@ def create_admin_router(
         except _RouteError as exc:
             return exc.as_response()
         profile_id = str(body.get("profile_id") or "").strip()
-        if profile_id and profile_id != "default-local":
+        if profile_id and not is_default_profile_id(profile_id):
             if store.get_profile(profile_id) is None:
                 return _RouteError(
                     status.HTTP_400_BAD_REQUEST,

@@ -1257,6 +1257,22 @@ def _auth() -> dict[str, str]:
     return {"Authorization": "Bearer admin-token", "If-Match": '"os-1"'}
 
 
+def test_policy_editor_is_admin_projected_and_fails_closed() -> None:
+    client, store = _make_client()
+    store.service_registry["protocol_frontends"] = {
+        "extension": {"protocol": "extension-api", "enabled": True}
+    }
+    response = client.get("/admin/api/policy/editor", headers=_auth())
+    assert response.status_code == 200
+    body = response.json()
+    assert body["profile"]["create"]["profile"]["status_visibility"] == {"level": "basic"}
+    assert "extension-api" in {choice["id"] for choice in body["profile"]["choices"]["protocols"]}
+    store.get_service_registry = lambda: (_ for _ in ()).throw(ValueError("broken"))  # type: ignore[method-assign]
+    unavailable = client.get("/admin/api/policy/editor", headers=_auth())
+    assert unavailable.status_code == 503
+    assert unavailable.json() == {"error": {"code": "policy_editor_unavailable", "message": "Policy editor choices could not be read."}}
+
+
 class AdminAuthTests(unittest.TestCase):
     def test_missing_token_returns_401_json(self) -> None:
         client, _ = _make_client()

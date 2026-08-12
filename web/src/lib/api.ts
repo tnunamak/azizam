@@ -149,10 +149,78 @@ export interface Profile {
   name: string;
   description: string | null;
   created_at: number;
-  profile: Record<string, unknown>;
+  profile: ProfilePolicyDocument;
   protocols: string[];
   workflows: string[];
   status_visibility: string;
+}
+
+export interface ProfilePolicyDocument {
+  id?: string;
+  protocols?: string[];
+  workflows?: string[];
+  models?: string[];
+  backends?: string[];
+  allow?: {
+    intents?: string[];
+    exposure?: string[];
+    trust_tiers?: string[];
+    resource_tiers?: string[];
+    tags?: string[];
+  };
+  fallback?: { cloud_allowed?: boolean };
+  native_passthrough?: {
+    enabled?: boolean;
+    allowed_backends?: string[];
+    allowed_operations?: string[];
+    audit?: boolean;
+  };
+  status_visibility?: { level?: string };
+  target_policy?: { visibility?: string; activation?: string };
+  model_access?: { mode?: string };
+}
+
+export interface PolicyEditorChoice {
+  id: string;
+  label: string;
+  description: string | null;
+  available?: boolean;
+}
+
+export interface PolicyEditorContract {
+  schema_version: 1;
+  profile: {
+    create: { profile: ProfilePolicyDocument };
+    set_semantics: { omitted: "no_opinion"; empty: "deny_all" };
+    choices: {
+      protocols: PolicyEditorChoice[];
+      intents: PolicyEditorChoice[];
+      workflows: PolicyEditorChoice[];
+      models: PolicyEditorChoice[];
+      exposure: PolicyEditorChoice[];
+      trust_tiers: PolicyEditorChoice[];
+      resource_tiers: PolicyEditorChoice[];
+      tags: PolicyEditorChoice[];
+      status_visibility: PolicyEditorChoice[];
+      target_visibility: PolicyEditorChoice[];
+      target_activation: PolicyEditorChoice[];
+    };
+  };
+  runtime_mappings: {
+    source_kinds: Array<{
+      id: string;
+      label: string;
+      description: string | null;
+      value_mode: "required" | "fixed";
+      fixed_value?: string;
+    }>;
+    fallback_profile: {
+      id: string;
+      label: string;
+      description: string | null;
+      assignable: boolean;
+    };
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -249,30 +317,13 @@ export interface PresetsResponse {
 export interface CreateProfileInput {
   name: string;
   description?: string;
-  profile: {
-    id?: string;
-    protocols?: string[];
-    status_visibility?: { level: string };
-    allow?: {
-      intents?: string[];
-      models?: string[];
-      workflows?: string[];
-    };
-  };
+  profile: ProfilePolicyDocument;
 }
 
 export interface UpdateProfileInput {
   name?: string;
   description?: string;
-  profile?: {
-    protocols?: string[];
-    status_visibility?: { level: string };
-    allow?: {
-      intents?: string[];
-      models?: string[];
-      workflows?: string[];
-    };
-  };
+  profile?: ProfilePolicyDocument;
 }
 
 export interface SimulateRequest {
@@ -313,13 +364,7 @@ export interface UserAccessDefaults {
   auto_create_personal_app: boolean;
 }
 
-export type RuntimeMappingSourceKind =
-  | "oidc_group"
-  | "oidc_role"
-  | "email"
-  | "domain"
-  | "gateway_role"
-  | "all_users";
+export type RuntimeMappingSourceKind = string;
 
 export interface RuntimeProfileMapping {
   id: string;
@@ -812,6 +857,10 @@ export const api = {
       }).then((r) => r.profile),
   },
 
+  policyEditor: {
+    get: () => adminFetch<PolicyEditorContract>("/admin/api/policy/editor"),
+  },
+
   policy: {
     simulate: (input: SimulateRequest) =>
       adminFetch<SimulateResult>("/admin/api/policy/simulate", {
@@ -838,7 +887,7 @@ export const api = {
         "/admin/api/runtime-profile-mappings",
       ).then((r) => r.mappings),
     create: (input: {
-      source_kind: RuntimeMappingSourceKind;
+      source_kind: string;
       source_value: string;
       profile_id: string;
     }) =>
@@ -961,6 +1010,7 @@ export const queryKeys = {
   litellmConfig: ["litellmConfig"] as const,
   operatorOverrides: ["operator", "overrides"] as const,
   runtimeProfileMappings: ["runtime-profile-mappings"] as const,
+  policyEditor: ["policy-editor"] as const,
 };
 
 /** QueryClient with contract-aware retry: 4xx errors are deterministic
