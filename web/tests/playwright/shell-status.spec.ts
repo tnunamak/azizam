@@ -5,9 +5,9 @@ const responsiveWidths = [
   360, 375, 390, 639, 640, 767, 768, 979, 980, 1280,
 ] as const;
 
-type StatusMode = "healthy" | "degraded" | "unknown" | "error";
+type StatusMode = "healthy" | "degraded" | "unknown" | "loading" | "error";
 
-function currentHealth(mode: Exclude<StatusMode, "error">) {
+function currentHealth(mode: Exclude<StatusMode, "loading" | "error">) {
   if (mode === "unknown") {
     return {
       state: "unavailable",
@@ -71,6 +71,7 @@ async function stubAdminApi(
       });
 
     if (path === "/admin/api/status") {
+      if (mode === "loading") return new Promise(() => undefined);
       if (mode === "error")
         return json({ error: { code: "offline", message: "offline" } }, 503);
       return json({
@@ -182,6 +183,25 @@ test("Status keeps healthy, degraded, unavailable, loading, and error projection
       page.locator(".vf-incident-banner-title").filter({ hasText: label }),
     ).toBeVisible();
   }
+
+  await openStatus(page, "loading");
+  await expect(
+    page.getByRole("heading", { name: "Status", level: 1 }),
+  ).toBeVisible();
+  await expect(page.locator("h1")).toHaveCount(1);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  await openStatus(page, "error");
+  await expect(
+    page
+      .locator(".vf-incident-banner-title")
+      .filter({ hasText: "Could not load status" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Status", level: 1 }),
+  ).toBeVisible();
+  await expect(page.locator("h1")).toHaveCount(1);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await openStatus(page, "degraded");
