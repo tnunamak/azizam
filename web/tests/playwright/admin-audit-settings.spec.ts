@@ -55,7 +55,7 @@ test("Audit and Settings retain dense, accessible layouts at route boundaries", 
   await page.goto("/ui/admin/settings/");
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   await expect(
-    page.getByText("Not configured — users sign in with local accounts only."),
+    page.getByText("No dashboard OIDC override is saved."),
   ).toBeVisible();
   expect(
     await page

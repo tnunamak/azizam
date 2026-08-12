@@ -129,9 +129,19 @@ function actionMeta(action: string): ActionMeta {
   return { phrase, family };
 }
 
-/** Map a family name to the action_prefix server param. */
+/** Server predicates for the visible action families. */
+const FAMILY_ACTION_PREFIXES: Record<string, string> = {
+  access: "runtime_profile_mapping.",
+  admin_key: "admin_key.",
+  app: "app.",
+  credential: "credential.",
+  operator: "operator.",
+  profile: "profile.",
+};
+
+/** Map a displayed family to its exact server-side action predicate. */
 function familyToPrefix(family: string): string {
-  return `${family}.`;
+  return FAMILY_ACTION_PREFIXES[family] ?? `${family}.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +192,11 @@ function auditDetails(entry: AuditEntry): Record<string, unknown> {
 function RouteEventTargetSync({
   onChange,
 }: {
-  onChange: (state: { event: string | null; actor: string | null; category: string | null }) => void;
+  onChange: (state: {
+    event: string | null;
+    actor: string | null;
+    category: string | null;
+  }) => void;
 }) {
   const searchParams = useSearchParams();
   useEffect(() => {
@@ -204,6 +218,10 @@ export default function AdminAuditPage() {
   // Active server-side filters
   const [actorFilter, setActorFilter] = useState<string | null>(null);
   const [familyFilter, setFamilyFilter] = useState<string | null>(null);
+  const activeFiltersRef = useRef({
+    actor: null as string | null,
+    category: null as string | null,
+  });
 
   // Accumulated pages: list of cursors consumed (tracked for future
   // refetch-all support; not read directly by render logic).
@@ -213,8 +231,11 @@ export default function AdminAuditPage() {
   );
   // Accumulated rows across all pages
   const [allEntries, setAllEntries] = useState<AuditEntry[]>([]);
-  // Whether we're fetching an additional page (beyond the first)
-  const [loadingMore, setLoadingMore] = useState(false);
+  // The pending load belongs to the generation that started it. A filter
+  // transition immediately makes an older pending request invisible.
+  const [loadingMoreGeneration, setLoadingMoreGeneration] = useState<
+    number | null
+  >(null);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
   // Options are discovered from unfiltered and filtered responses, but never
@@ -223,6 +244,7 @@ export default function AdminAuditPage() {
   const familyOptionsRef = useRef(new Set<string>());
   const [, setOptionVersion] = useState(0);
   const generationRef = useRef(0);
+  const loadingMore = loadingMoreGeneration === generationRef.current;
 
   const [detailEntry, setDetailEntry] = useState<AuditEntry | null>(null);
   const [routeEventTarget, setRouteEventTarget] = useState<string | null>(null);
@@ -246,10 +268,11 @@ export default function AdminAuditPage() {
       actorId: actorFilter,
       actionPrefix: familyFilter,
     }),
-    queryFn: async () => ({
-      generation: generationRef.current,
-      page: await api.audit.list(firstPageParams),
-    }),
+    queryFn: async () => {
+      const generation = generationRef.current;
+      const page = await api.audit.list(firstPageParams);
+      return { generation, page };
+    },
     // Don't cache stale data when filters change — always treat as fresh
     staleTime: 0,
   });
@@ -300,13 +323,17 @@ export default function AdminAuditPage() {
   );
 
   useEffect(() => {
-    if (!firstPageData || firstPageData.generation !== generationRef.current) return;
+    if (!firstPageData || firstPageData.generation !== generationRef.current)
+      return;
     const result = firstPageData.page;
     setAllEntries(result.records);
     setNextCursor(result.next_cursor);
     setLoadMoreError(null);
     for (const entry of result.records) {
-      actorOptionsRef.current.set(entry.actor_id, actorDisplayLabel(entry, usersById));
+      actorOptionsRef.current.set(
+        entry.actor_id,
+        actorDisplayLabel(entry, usersById),
+      );
       familyOptionsRef.current.add(actionMeta(entry.action).family ?? "other");
     }
     setOptionVersion((version) => version + 1);
@@ -315,49 +342,101 @@ export default function AdminAuditPage() {
   // Keep the currently selected values present even for empty filtered pages.
   const actorOptions = (() => {
     if (actorFilter && !actorOptionsRef.current.has(actorFilter)) {
-      return [...actorOptionsRef.current, [actorFilter, "Selected actor"]].map(([id, label]) => ({ id, label }));
+      return [...actorOptionsRef.current, [actorFilter, "Selected actor"]].map(
+        ([id, label]) => ({ id, label }),
+      );
     }
-    return Array.from(actorOptionsRef.current, ([id, label]) => ({ id, label }));
+    return Array.from(actorOptionsRef.current, ([id, label]) => ({
+      id,
+      label,
+    }));
   })();
 
   const actionFamilies = Array.from(
-    new Set([...familyOptionsRef.current, ...(familyFilter ? [familyFilter] : [])]),
+    new Set([
+      ...familyOptionsRef.current,
+      ...(familyFilter ? [familyFilter] : []),
+    ]),
   ).sort();
 
-  const replaceRouteState = useCallback((next: { event?: string | null; actor?: string | null; category?: string | null }) => {
-    const params = new URLSearchParams(window.location.search);
-    for (const [key, value] of Object.entries(next)) {
-      if (value) params.set(key, value);
-      else params.delete(key);
-    }
-    router.replace(`${pathname}${params.size ? `?${params}` : ""}`);
-  }, [pathname, router]);
+  const replaceRouteState = useCallback(
+    (next: {
+      event?: string | null;
+      actor?: string | null;
+      category?: string | null;
+    }) => {
+      const params = new URLSearchParams(window.location.search);
+      for (const [key, value] of Object.entries(next)) {
+        if (value) params.set(key, value);
+        else params.delete(key);
+      }
+      router.replace(`${pathname}${params.size ? `?${params}` : ""}`);
+    },
+    [pathname, router],
+  );
 
-  // Reset all pagination state when a filter changes
-  const handleActorChange = useCallback((id: string | null) => {
+  const resetPagination = useCallback(() => {
     generationRef.current += 1;
-    setActorFilter(id);
     setAllEntries([]);
     setNextCursor(undefined);
+    setLoadingMoreGeneration(null);
     setLoadMoreError(null);
-    replaceRouteState({ actor: id });
-  }, [replaceRouteState]);
+  }, []);
 
-  const handleFamilyChange = useCallback((family: string | null) => {
-    generationRef.current += 1;
-    setFamilyFilter(family);
-    setAllEntries([]);
-    setNextCursor(undefined);
-    setLoadMoreError(null);
-    replaceRouteState({ category: family });
-  }, [replaceRouteState]);
+  // Update both filter atoms in one route transition so event and return
+  // context survive while actor/category never race each other in the URL.
+  const applyFilters = useCallback(
+    (next: { actor: string | null; category: string | null }) => {
+      resetPagination();
+      activeFiltersRef.current = next;
+      setActorFilter(next.actor);
+      setFamilyFilter(next.category);
+      replaceRouteState(next);
+    },
+    [replaceRouteState, resetPagination],
+  );
+
+  const handleActorChange = useCallback(
+    (actor: string | null) => {
+      applyFilters({ actor, category: familyFilter });
+    },
+    [applyFilters, familyFilter],
+  );
+
+  const handleFamilyChange = useCallback(
+    (category: string | null) => {
+      applyFilters({ actor: actorFilter, category });
+    },
+    [actorFilter, applyFilters],
+  );
+
+  const handleRouteStateChange = useCallback(
+    ({
+      event,
+      actor,
+      category,
+    }: {
+      event: string | null;
+      actor: string | null;
+      category: string | null;
+    }) => {
+      setRouteEventTarget(event);
+      const active = activeFiltersRef.current;
+      if (actor === active.actor && category === active.category) return;
+      resetPagination();
+      activeFiltersRef.current = { actor, category };
+      setActorFilter(actor);
+      setFamilyFilter(category);
+    },
+    [resetPagination],
+  );
 
   // Load the next page
   async function loadMore() {
     if (!nextCursor || loadingMore) return;
     const generation = generationRef.current;
     const cursor = nextCursor;
-    setLoadingMore(true);
+    setLoadingMoreGeneration(generation);
     setLoadMoreError(null);
     try {
       const result = await api.audit.list({
@@ -370,9 +449,10 @@ export default function AdminAuditPage() {
       setAllEntries((prev) => [...prev, ...result.records]);
       setNextCursor(result.next_cursor);
     } catch (error) {
-      if (generation === generationRef.current) setLoadMoreError(errorMessage(error));
+      if (generation === generationRef.current)
+        setLoadMoreError(errorMessage(error));
     } finally {
-      if (generation === generationRef.current) setLoadingMore(false);
+      if (generation === generationRef.current) setLoadingMoreGeneration(null);
     }
   }
 
@@ -389,19 +469,10 @@ export default function AdminAuditPage() {
   return (
     <div className="flex w-full flex-col gap-8">
       <Suspense fallback={null}>
-        <RouteEventTargetSync onChange={({ event, actor, category }) => {
-          setRouteEventTarget(event);
-          if (actor !== actorFilter || category !== familyFilter) {
-            generationRef.current += 1;
-            setActorFilter(actor);
-            setFamilyFilter(category);
-            setAllEntries([]);
-            setNextCursor(undefined);
-            setLoadMoreError(null);
-          }
-        }} />
+        <RouteEventTargetSync onChange={handleRouteStateChange} />
       </Suspense>
       <SectionActionHeader
+        as="h1"
         kicker="activity"
         title="Audit"
         description="A record of who changed what, when. Newest first."
@@ -413,7 +484,11 @@ export default function AdminAuditPage() {
           title="Couldn't load audit events."
           detail={errorMessage(firstPageError)}
           actions={
-            <Button size="sm" onClick={() => void refetchFirst()}>
+            <Button
+              size="sm"
+              className="min-h-11 sm:min-h-0"
+              onClick={() => void refetchFirst()}
+            >
               Retry
             </Button>
           }
@@ -426,7 +501,11 @@ export default function AdminAuditPage() {
               title="Audit events may be stale."
               detail={errorMessage(firstPageError)}
               actions={
-                <Button size="sm" onClick={() => void refetchFirst()}>
+                <Button
+                  size="sm"
+                  className="min-h-11 sm:min-h-0"
+                  onClick={() => void refetchFirst()}
+                >
                   Retry
                 </Button>
               }
@@ -442,7 +521,9 @@ export default function AdminAuditPage() {
 
           {/* Filter chips — drive the server query (not client-side slice). */}
           {!loading &&
-            (actorOptions.length > 0 || actionFamilies.length > 0 || hasFilter) && (
+            (actorOptions.length > 0 ||
+              actionFamilies.length > 0 ||
+              hasFilter) && (
               <FilterToolbar
                 filters={
                   <>
@@ -522,9 +603,9 @@ export default function AdminAuditPage() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    className="min-h-11 sm:min-h-0"
                     onClick={() => {
-                      handleActorChange(null);
-                      handleFamilyChange(null);
+                      applyFilters({ actor: null, category: null });
                     }}
                   >
                     Clear filters
@@ -559,7 +640,7 @@ export default function AdminAuditPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-vf-small min-h-11 px-3"
+                        className="text-vf-small min-h-11 px-3 sm:min-h-0"
                         onClick={() => {
                           setDetailEntry(entry);
                           replaceRouteState({ event: entry.id });
@@ -593,6 +674,7 @@ export default function AdminAuditPage() {
                 <Button
                   variant="secondary"
                   size="sm"
+                  className="min-h-11 sm:min-h-0"
                   loading={loadingMore}
                   onClick={() => void loadMore()}
                 >
@@ -706,7 +788,11 @@ function AuditDetailPanel({ entry }: { entry: AuditEntry }) {
           <span className="text-vf-micro text-vf-subtle font-mono uppercase">
             Safe event details
           </span>
-          <CopyButton value={json} aria-label="Copy event JSON" />
+          <CopyButton
+            className="min-h-11 sm:min-h-0"
+            value={json}
+            aria-label="Copy event JSON"
+          />
         </div>
         <pre className="rounded-vf-md border-vf-border bg-vf-surface-2 text-vf-micro text-vf-text max-h-[60vh] overflow-y-auto border p-3 font-mono break-all whitespace-pre-wrap">
           {json}

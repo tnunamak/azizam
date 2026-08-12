@@ -236,7 +236,7 @@ function ErrorBanner({
       tone="bad"
       title={title}
       actions={
-        <Button size="sm" onClick={onRetry}>
+        <Button size="sm" className="min-h-11 sm:min-h-0" onClick={onRetry}>
           Retry
         </Button>
       }
@@ -530,11 +530,20 @@ function OidcEditDialogContent({
     event.preventDefault();
     setFormError(null);
     const nextFieldErrors: Record<string, string> = {};
-    if (form.enabled && !form.issuer.trim()) nextFieldErrors.issuer = "Issuer URL is required when OIDC is enabled.";
-    if (form.enabled && !form.client_id.trim()) nextFieldErrors.clientId = "Client ID is required when OIDC is enabled.";
-    if (form.enabled && !form.redirect_uri.trim()) nextFieldErrors.redirectUri = "Redirect URI is required when OIDC is enabled.";
-    if (form.enabled && !existing?.client_secret_set && !form.client_secret.trim()) {
-      nextFieldErrors.clientSecret = "A client secret is required before enabling a new provider.";
+    if (form.enabled && !form.issuer.trim())
+      nextFieldErrors.issuer = "Issuer URL is required when OIDC is enabled.";
+    if (form.enabled && !form.client_id.trim())
+      nextFieldErrors.clientId = "Client ID is required when OIDC is enabled.";
+    if (form.enabled && !form.redirect_uri.trim())
+      nextFieldErrors.redirectUri =
+        "Redirect URI is required when OIDC is enabled.";
+    if (
+      form.enabled &&
+      !existing?.client_secret_set &&
+      !form.client_secret.trim()
+    ) {
+      nextFieldErrors.clientSecret =
+        "A client secret is required before enabling a new provider.";
     }
     setFieldErrors(nextFieldErrors);
     if (Object.keys(nextFieldErrors).length > 0) {
@@ -579,6 +588,7 @@ function OidcEditDialogContent({
               </span>
             </div>
             <Switch
+              className="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
               checked={form.enabled}
               onCheckedChange={(checked) => set("enabled", checked)}
               aria-label="Enable OIDC sign-in"
@@ -668,7 +678,7 @@ function OidcEditDialogContent({
 
           {/* Advanced — always visible but low-prominence */}
           <details className="flex flex-col gap-4">
-            <summary className="text-vf-small text-vf-muted cursor-pointer py-1 select-none">
+            <summary className="text-vf-small text-vf-muted min-h-11 cursor-pointer py-1 select-none sm:min-h-0">
               Advanced options
             </summary>
             <div className="mt-3 flex flex-col gap-4">
@@ -788,12 +798,18 @@ function OidcEditDialogContent({
         <DialogFooter>
           <Button
             variant="ghost"
+            className="min-h-11 sm:min-h-0"
             onClick={() => onOpenChange(false)}
             disabled={save.isPending}
           >
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={save.isPending}>
+          <Button
+            className="min-h-11 sm:min-h-0"
+            type="submit"
+            variant="primary"
+            loading={save.isPending}
+          >
             Save
           </Button>
         </DialogFooter>
@@ -860,7 +876,11 @@ function ExtensionsCard() {
         <EmptyOperationalState
           title="No extensions installed."
           action={
-            <Button size="sm" onClick={() => setAddOpen(true)}>
+            <Button
+              size="sm"
+              className="min-h-11 sm:min-h-0"
+              onClick={() => setAddOpen(true)}
+            >
               Add extension
             </Button>
           }
@@ -1095,6 +1115,7 @@ function AddExtensionDialogContent({
           <DialogFooter>
             <Button
               variant="ghost"
+              className="min-h-11 sm:min-h-0"
               onClick={() => {
                 setStep("form");
                 setFormError(null);
@@ -1106,6 +1127,7 @@ function AddExtensionDialogContent({
             <Button
               type="submit"
               variant="primary"
+              className="min-h-11 sm:min-h-0"
               loading={enable.isPending}
               disabled={!review.ok || review.errors.length > 0}
             >
@@ -1194,12 +1216,18 @@ function AddExtensionDialogContent({
         <DialogFooter>
           <Button
             variant="ghost"
+            className="min-h-11 sm:min-h-0"
             onClick={() => onOpenChange(false)}
             disabled={validate.isPending}
           >
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={validate.isPending}>
+          <Button
+            className="min-h-11 sm:min-h-0"
+            type="submit"
+            variant="primary"
+            loading={validate.isPending}
+          >
             Validate
           </Button>
         </DialogFooter>
@@ -1530,12 +1558,18 @@ function MediaAdmissionEditDialogContent({
         <DialogFooter>
           <Button
             variant="ghost"
+            className="min-h-11 sm:min-h-0"
             onClick={() => onOpenChange(false)}
             disabled={save.isPending}
           >
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={save.isPending}>
+          <Button
+            className="min-h-11 sm:min-h-0"
+            type="submit"
+            variant="primary"
+            loading={save.isPending}
+          >
             Save
           </Button>
         </DialogFooter>
@@ -1551,6 +1585,7 @@ export default function AdminSettingsPage() {
   return (
     <div className="flex flex-col gap-10">
       <SectionActionHeader
+        as="h1"
         kicker="gateway"
         title="Settings"
         description="Sign-in, extensions, and gateway-wide configuration."
