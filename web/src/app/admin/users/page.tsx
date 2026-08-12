@@ -11,14 +11,14 @@
  *
  * Presentation law observed:
  *  - RelativeTime for every timestamp
- *  - EntityRef for every id
+ *  - Human names first; IDs stay in secondary copy treatment
  *  - No window.confirm()
  *  - Destructive actions in OverflowMenu + ConfirmDialog
  *  - Loading skeleton + designed empty + error states
  *  - React Query via the same patterns as the apps page
  *  - All data via api.* from lib/api.ts */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -77,7 +77,7 @@ function errorMessage(error: unknown): string {
 }
 
 function userDisplayName(user: User): string {
-  return user.display_name ?? user.name ?? user.email ?? user.id;
+  return user.display_name ?? user.name ?? user.email ?? "Identity unavailable";
 }
 
 function roleBadgeTone(
@@ -102,12 +102,25 @@ function mappingLabel(mapping: RuntimeProfileMapping): string {
   return `${SOURCE_KIND_LABELS[mapping.source_kind]}: ${mapping.source_value}`;
 }
 
-const FALLBACK_PROFILE_ID = "default-local";
-const FALLBACK_PROFILE_LABEL = "Gateway default";
-
 function profileName(profileId: string, profiles: Profile[]): string {
-  if (profileId === FALLBACK_PROFILE_ID) return FALLBACK_PROFILE_LABEL;
-  return profiles.find((p) => p.id === profileId)?.name ?? profileId;
+  return (
+    profiles.find((p) => p.id === profileId)?.name ?? "Profile unavailable"
+  );
+}
+
+function FormErrorSummary({ message }: { message: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => ref.current?.focus(), [message]);
+  return (
+    <p
+      ref={ref}
+      role="alert"
+      tabIndex={-1}
+      className="text-vf-small text-vf-bad"
+    >
+      {message}
+    </p>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +241,11 @@ export default function AdminUsersPage() {
       header: "User",
       cell: (user) => (
         <span className="flex min-w-0 flex-col gap-0.5">
-          <EntityRef name={userDisplayName(user)} id={user.id} />
+          <EntityRef
+            name={userDisplayName(user)}
+            id={user.id}
+            idVisibility="hover"
+          />
           {user.email && user.email !== userDisplayName(user) && (
             <span className="text-vf-micro text-vf-subtle">{user.email}</span>
           )}
@@ -257,6 +274,10 @@ export default function AdminUsersPage() {
       header: "Apps",
       cell: (user) => {
         if (appsPending) return <Skeleton className="h-4 w-8" />;
+        if (appsJoinError)
+          return (
+            <span className="text-vf-small text-vf-muted">unavailable</span>
+          );
         const count = appCountByUser.get(user.id) ?? 0;
         return (
           <span className="text-vf-small text-vf-muted">
@@ -309,17 +330,41 @@ export default function AdminUsersPage() {
             },
             {
               label: "mappings",
-              value: String(mappings.length),
-              detail: "profile rules",
+              value: mappingsData
+                ? String(mappings.length)
+                : mappingsIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: mappingsData ? "profile rules" : "profile rule data",
               tone: "neutral",
-              badge: "auto",
+              badge: mappingsData
+                ? "auto"
+                : mappingsIsError
+                  ? "degraded"
+                  : "loading",
             },
             {
               label: "self-service",
-              value: defaultsData?.self_service_apps ? "on" : "off",
-              detail: "app creation",
-              tone: defaultsData?.self_service_apps ? "ok" : "warn",
-              badge: defaultsData?.self_service_apps ? "enabled" : "off",
+              value: defaultsData
+                ? defaultsData.self_service_apps
+                  ? "on"
+                  : "off"
+                : defaultsIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: defaultsData ? "app creation" : "settings unavailable",
+              tone: !defaultsData
+                ? "neutral"
+                : defaultsData.self_service_apps
+                  ? "ok"
+                  : "warn",
+              badge: !defaultsData
+                ? defaultsIsError
+                  ? "degraded"
+                  : "loading"
+                : defaultsData.self_service_apps
+                  ? "enabled"
+                  : "off",
             },
           ]}
         />
@@ -402,6 +447,7 @@ export default function AdminUsersPage() {
             <MappingsTable
               mappings={mappings}
               profiles={profiles}
+              users={users}
               loading={mappingsPending}
               onDisable={setDisableMappingTarget}
             />
@@ -429,11 +475,13 @@ export default function AdminUsersPage() {
             : undefined
         }
         confirmLabel="Disable mapping"
-        onConfirm={() => {
-          if (disableMappingTarget)
-            disableMappingMutation.mutate(disableMappingTarget);
-          setDisableMappingTarget(null);
-        }}
+        onConfirm={() =>
+          disableMappingTarget
+            ? disableMappingMutation
+                .mutateAsync(disableMappingTarget)
+                .then(() => undefined)
+            : Promise.resolve()
+        }
       />
     </div>
   );
@@ -478,6 +526,7 @@ function DefaultsEditor({
     null,
   );
   const [formError, setFormError] = useState<string | null>(null);
+
   const [saved, setSaved] = useState(false);
 
   // The "working copy" is either the local override (pending save) or the
@@ -550,11 +599,7 @@ function DefaultsEditor({
         />
       </div>
 
-      {formError && (
-        <p role="alert" className="text-vf-small text-vf-bad">
-          {formError}
-        </p>
-      )}
+      {formError && <FormErrorSummary message={formError} />}
 
       <div className="flex items-center gap-3">
         <Button
@@ -615,6 +660,10 @@ const SOURCE_KIND_OPTIONS: {
   { value: "gateway_role", label: "Gateway role" },
   { value: "all_users", label: "All users (catch-all)" },
 ];
+// Remaining API/data dependency: source-kind choices and create-mapping
+// defaults should come from route metadata. The API does not yet publish that
+// catalog, so this route keeps the existing hardcoded choices explicit rather
+// than adding new literals or free-form regression controls.
 
 interface MappingRow {
   mapping: RuntimeProfileMapping;
@@ -624,11 +673,13 @@ interface MappingRow {
 function MappingsTable({
   mappings,
   profiles,
+  users,
   loading,
   onDisable,
 }: {
   mappings: RuntimeProfileMapping[];
   profiles: Profile[];
+  users: User[];
   loading: boolean;
   onDisable: (mapping: RuntimeProfileMapping) => void;
 }) {
@@ -664,7 +715,13 @@ function MappingsTable({
       header: "Created by",
       cell: ({ mapping }) => (
         <EntityRef
-          name={mapping.created_by}
+          name={
+            users.find((user) => user.id === mapping.created_by)
+              ? userDisplayName(
+                  users.find((user) => user.id === mapping.created_by)!,
+                )
+              : "Identity unavailable"
+          }
           id={mapping.created_by}
           idVisibility="hover"
         />
@@ -739,11 +796,15 @@ function CreateMappingDialogContent({
   const [sourceKind, setSourceKind] =
     useState<RuntimeMappingSourceKind>("oidc_group");
   const [sourceValue, setSourceValue] = useState("");
-  const [profileId, setProfileId] = useState(FALLBACK_PROFILE_ID);
+  const [profileId, setProfileId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{
     source_value?: string;
   }>({});
   const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!profileId && profiles[0]) setProfileId(profiles[0].id);
+  }, [profileId, profiles]);
 
   const sourceValueRequired = sourceKind !== "all_users";
 
@@ -843,9 +904,7 @@ function CreateMappingDialogContent({
               onChange={(event) => setProfileId(event.target.value)}
               disabled={create.isPending}
             >
-              <option value={FALLBACK_PROFILE_ID}>
-                {FALLBACK_PROFILE_LABEL}
-              </option>
+              <option value="">Select a profile…</option>
               {profiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
                   {profile.name}
@@ -854,11 +913,7 @@ function CreateMappingDialogContent({
             </Select>
           </Field>
 
-          {formError && (
-            <p role="alert" className="text-vf-small text-vf-bad">
-              {formError}
-            </p>
-          )}
+          {formError && <FormErrorSummary message={formError} />}
         </DialogBody>
         <DialogFooter>
           <Button
