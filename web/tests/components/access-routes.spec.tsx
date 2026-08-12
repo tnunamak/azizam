@@ -535,6 +535,50 @@ describe("access route behavior", () => {
     );
   });
 
+  it("explains an empty choice set instead of rendering nothing when Restrict is selected", async () => {
+    const user = userEvent.setup();
+    const fresh = policyEditor();
+    fresh.profile.choices.workflows = [];
+    fresh.profile.choices.models = [];
+    fresh.profile.choices.tags = [];
+    apiMock.policyEditor.get.mockResolvedValueOnce(fresh);
+    apiMock.profiles.list.mockResolvedValue([]);
+    apiMock.apps.list.mockResolvedValue([]);
+    apiMock.runtimeProfileMappings.list.mockResolvedValue([]);
+
+    renderWithQuery(<AdminProfilesPage />);
+    await user.click(
+      await screen.findByRole("button", { name: "Create profile" }),
+    );
+    await user.click(screen.getByRole("button", { name: /Customize access/ }));
+
+    // Field order: API protocols(0), Capabilities(1), Workflows(2),
+    // Allowed models(3), Tags(4) -- see the PolicySetField call sites.
+    const restrictRadios = screen.getAllByLabelText("Restrict");
+    await user.click(restrictRadios[1]!); // Capabilities (has real choices)
+    await user.click(restrictRadios[2]!); // Workflows
+    await user.click(restrictRadios[3]!); // Allowed models
+    await user.click(restrictRadios[4]!); // Tags
+
+    expect(
+      screen.getByText(
+        "No workflows are registered yet on this instance — restricting this field denies all workflows access until one is added.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "No allowed models are registered yet on this instance — restricting this field denies all allowed models access until one is added.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "No tags are registered yet on this instance — restricting this field denies all tags access until one is added.",
+      ),
+    ).toBeVisible();
+    // The sibling Capabilities field is unaffected -- it has real choices.
+    expect(screen.getByText("extension.run")).toBeVisible();
+  });
+
   it("selects an app row with Enter and Space, then opens sibling overflow in focus order", async () => {
     const user = userEvent.setup();
     apiMock.apps.list.mockResolvedValue([app()]);

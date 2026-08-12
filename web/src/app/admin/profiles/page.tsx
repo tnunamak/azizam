@@ -1110,24 +1110,31 @@ function PolicySetField({
             Restrict
           </label>
         </div>
-        {value !== undefined && (
-          <div className="flex flex-wrap gap-3">
-            {visible.map((choice) => {
-              const checked = selected.includes(choice.id);
-              const mayAdd = !stale && choice.available !== false;
-              return (
-                <Checkbox
-                  key={choice.id}
-                  checked={checked}
-                  onCheckedChange={() => toggle(choice.id)}
-                  disabled={disabled || (!checked && !mayAdd)}
-                >
-                  {choice.label}
-                </Checkbox>
-              );
-            })}
-          </div>
-        )}
+        {value !== undefined &&
+          (visible.length > 0 ? (
+            <div className="flex flex-wrap gap-3">
+              {visible.map((choice) => {
+                const checked = selected.includes(choice.id);
+                const mayAdd = !stale && choice.available !== false;
+                return (
+                  <Checkbox
+                    key={choice.id}
+                    checked={checked}
+                    onCheckedChange={() => toggle(choice.id)}
+                    disabled={disabled || (!checked && !mayAdd)}
+                  >
+                    {choice.label}
+                  </Checkbox>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-vf-micro text-vf-subtle">
+              No {label.toLowerCase()} are registered yet on this instance —
+              restricting this field denies all {label.toLowerCase()} access
+              until one is added.
+            </p>
+          ))}
       </div>
     </Field>
   );
