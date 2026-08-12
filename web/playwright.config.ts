@@ -14,6 +14,7 @@ export default defineConfig({
     url: "http://127.0.0.1:3417/ui/admin/status/p1v-fixture/",
     reuseExistingServer: false,
     timeout: 120_000,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
   },
   projects: [
     {
