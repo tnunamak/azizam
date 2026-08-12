@@ -34,6 +34,7 @@ import {
   Skeleton,
   StatusAdvisory,
   StatusDotLabel,
+  SystemHealthBand,
   type HealthTone,
   type ChartPoint,
 } from "@/components/ui";
@@ -105,25 +106,6 @@ function serviceList(
   );
 }
 
-function asChartSeries(series: StatusSeriesPoint[] | undefined): ChartPoint[] {
-  return (series ?? [])
-    .filter(
-      (point) =>
-        Array.isArray(point) &&
-        point.length >= 2 &&
-        Number.isFinite(point[0]) &&
-        Number.isFinite(point[1]),
-    )
-    .map(([ts, value]) => ({
-      x: ts,
-      y: value,
-      label: new Date(ts * 1000).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    }));
-}
-
 function sumSeries(
   seriesByName: Record<string, StatusSeriesPoint[]> | undefined,
 ): ChartPoint[] {
@@ -153,11 +135,6 @@ function sumSeries(
     }));
 }
 
-function latestValue(series: ChartPoint[]): number | null {
-  const last = series.at(-1);
-  return last && Number.isFinite(last.y) ? last.y : null;
-}
-
 function formatCompact(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "—";
   return new Intl.NumberFormat(undefined, {
@@ -169,9 +146,10 @@ function formatCompact(value: number | null | undefined): string {
 function healthSummary(status: StatusPayload | undefined, error: boolean) {
   if (error) {
     return {
-      tone: "bad" as HealthTone,
-      label: "Status unavailable",
-      detail: "The admin status endpoint did not respond.",
+      tone: "neutral" as HealthTone,
+      label: "Live status unavailable",
+      detail:
+        "The admin status endpoint did not respond. Retry to check current health.",
     };
   }
   if (!status) {
@@ -199,6 +177,18 @@ function healthSummary(status: StatusPayload | undefined, error: boolean) {
   };
 }
 
+function statusFreshness(generatedAt: number | undefined): string {
+  if (!generatedAt || !Number.isFinite(generatedAt)) {
+    return "Freshness unavailable";
+  }
+  const ageSeconds = Math.max(0, Math.floor(Date.now() / 1000 - generatedAt));
+  if (ageSeconds < 60) return "Updated just now";
+  if (ageSeconds < 3_600) return `Updated ${Math.floor(ageSeconds / 60)}m ago`;
+  if (ageSeconds < 86_400)
+    return `Updated ${Math.floor(ageSeconds / 3_600)}h ago`;
+  return `Updated ${Math.floor(ageSeconds / 86_400)}d ago`;
+}
+
 function buildTelemetryCards(status: StatusPayload | undefined) {
   const requestSeries = sumSeries(
     status?.metrics?.trends?.per_key_request_series_1h,
@@ -209,23 +199,37 @@ function buildTelemetryCards(status: StatusPayload | undefined) {
       sum + (typeof value === "number" && Number.isFinite(value) ? value : 0)
     );
   }, 0);
-
-  const firstGpu = status?.metrics?.gpus?.[0];
-  const vramSeries = asChartSeries(firstGpu?.vram_pct_24h_series);
-  const tempSeries = asChartSeries(firstGpu?.temp_24h_series);
-  const xidSeries = asChartSeries(status?.metrics?.trends?.xid_109_hourly_24h);
-  const xid24h = status?.metrics?.trends?.xid_109_24h_count;
+  const requestWindowAvailable = (status?.auth_keys ?? []).some(
+    (key) =>
+      typeof key.requests_24h === "number" && Number.isFinite(key.requests_24h),
+  );
+  const failedRequests24h = (status?.auth_keys ?? []).reduce((sum, key) => {
+    const clientErrors = key.errors_4xx_24h;
+    const serverErrors = key.errors_5xx_24h;
+    return (
+      sum +
+      (typeof clientErrors === "number" && Number.isFinite(clientErrors)
+        ? clientErrors
+        : 0) +
+      (typeof serverErrors === "number" && Number.isFinite(serverErrors)
+        ? serverErrors
+        : 0)
+    );
+  }, 0);
+  const errorWindowAvailable = (status?.auth_keys ?? []).some(
+    (key) =>
+      (typeof key.errors_4xx_24h === "number" &&
+        Number.isFinite(key.errors_4xx_24h)) ||
+      (typeof key.errors_5xx_24h === "number" &&
+        Number.isFinite(key.errors_5xx_24h)),
+  );
 
   return {
     requestSeries,
     requests24h,
-    vramSeries,
-    vramValue: latestValue(vramSeries) ?? firstGpu?.vram_pct_max_24h ?? null,
-    tempSeries,
-    tempValue: latestValue(tempSeries) ?? firstGpu?.temp_max_24h_c ?? null,
-    xidSeries,
-    xid24h:
-      typeof xid24h === "number" && Number.isFinite(xid24h) ? xid24h : null,
+    requestWindowAvailable,
+    failedRequests24h,
+    errorWindowAvailable,
   };
 }
 
@@ -257,17 +261,24 @@ function AttentionSection({
   items,
   loading,
   error,
+  onRetry,
 }: {
   items: AttentionItem[];
   loading: boolean;
   error: boolean;
+  onRetry: () => void;
 }) {
   if (error) {
     return (
       <IncidentBanner
         tone="bad"
         title="Couldn't load attention items"
-        detail="Check the gateway log for errors."
+        detail="The rest of Overview remains available."
+        actions={
+          <Button variant="ghost" size="sm" onClick={onRetry}>
+            Retry
+          </Button>
+        }
       />
     );
   }
@@ -411,11 +422,13 @@ function RecentActivitySection({
   usersById,
   loading,
   error,
+  onRetry,
 }: {
   entries: AuditEntry[] | undefined;
   usersById: Map<string, User>;
   loading: boolean;
   error: boolean;
+  onRetry: () => void;
 }) {
   if (error) {
     return (
@@ -423,7 +436,12 @@ function RecentActivitySection({
         <IncidentBanner
           tone="bad"
           title="Couldn't load recent activity"
-          detail="Check the gateway log for errors."
+          detail="Other Overview data remains available."
+          actions={
+            <Button variant="ghost" size="sm" onClick={onRetry}>
+              Retry
+            </Button>
+          }
         />
       </div>
     );
@@ -487,6 +505,7 @@ export default function AdminOverviewPage() {
     data: overview,
     isPending: overviewPending,
     isError: overviewError,
+    refetch: refetchOverview,
   } = useQuery({
     queryKey: queryKeys.overview,
     queryFn: api.overview,
@@ -496,6 +515,7 @@ export default function AdminOverviewPage() {
     data: auditEntries,
     isPending: auditPending,
     isError: auditError,
+    refetch: refetchAudit,
   } = useQuery({
     queryKey: queryKeys.auditRecent,
     queryFn: () => api.audit.list({ limit: 8 }).then((r) => r.records),
@@ -505,7 +525,11 @@ export default function AdminOverviewPage() {
     queryKey: queryKeys.users,
     queryFn: api.users.list,
   });
-  const { data: appsData } = useQuery({
+  const {
+    data: appsData,
+    isError: appsError,
+    refetch: refetchApps,
+  } = useQuery({
     queryKey: queryKeys.apps,
     queryFn: api.apps.list,
   });
@@ -513,11 +537,19 @@ export default function AdminOverviewPage() {
     queryKey: queryKeys.credentials,
     queryFn: api.credentials.list,
   });
-  const { data: registry } = useQuery({
+  const {
+    data: registry,
+    isError: registryError,
+    refetch: refetchRegistry,
+  } = useQuery({
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
   });
-  const { data: statusData, isError: statusError } = useQuery({
+  const {
+    data: statusData,
+    isError: statusError,
+    refetch: refetchStatus,
+  } = useQuery({
     queryKey: queryKeys.status,
     queryFn: api.status,
     staleTime: 10_000,
@@ -543,14 +575,13 @@ export default function AdminOverviewPage() {
     [statusData],
   );
 
-  // Show quickstart until all four conditions hold.
+  // Keep setup visible until each real prerequisite is in place.
   const setupIncomplete =
     appsData === undefined ||
     credentialsData === undefined ||
     apps.length === 0 ||
     activeKeys.length === 0 ||
-    enabledServices === 0 ||
-    telemetry.requests24h === 0;
+    enabledServices === 0;
 
   const attention = overview?.attention ?? [];
   const hasAttention = overviewError || attention.length > 0;
@@ -587,16 +618,72 @@ export default function AdminOverviewPage() {
         }
       />
 
+      <SystemHealthBand
+        tone={health.tone}
+        title={health.label}
+        detail={`${health.detail} ${statusFreshness(statusData?.generated_at)}.`}
+        metrics={[
+          {
+            label: "Apps",
+            value: appsData === undefined ? "—" : String(apps.length),
+            detail: "configured",
+          },
+          {
+            label: "Active keys",
+            value:
+              credentialsData === undefined ? "—" : String(activeKeys.length),
+            detail: "credentials",
+          },
+          {
+            label: "Services",
+            value:
+              registry === undefined
+                ? "—"
+                : `${enabledServices}/${services.length}`,
+            detail: "enabled",
+            tone:
+              services.length > 0 && enabledServices < services.length
+                ? "warn"
+                : services.length > 0
+                  ? "ok"
+                  : "neutral",
+          },
+        ]}
+        action={
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/admin/status">Diagnose status</Link>
+          </Button>
+        }
+      />
+
+      {statusError && (
+        <IncidentBanner
+          tone="bad"
+          title="Couldn't load live status"
+          detail="Known apps and activity remain visible."
+          actions={
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void refetchStatus()}
+            >
+              Retry
+            </Button>
+          }
+        />
+      )}
+
       {/* Attention banners — shown only when items exist or erroring */}
       {hasAttention && (
         <AttentionSection
           items={attention}
           loading={overviewPending}
           error={overviewError}
+          onRetry={() => void refetchOverview()}
         />
       )}
 
-      {/* QuickStart stepper — visible until all 4 steps complete */}
+      {/* QuickStart stepper — visible until all prerequisites are complete */}
       {setupIncomplete && (
         <QuickStartChecklist
           items={[
@@ -627,24 +714,13 @@ export default function AdminOverviewPage() {
               ),
             },
             {
-              id: "enable-service",
-              label: "Copy base URL",
-              detail: "Use this URL as your OpenAI base URL.",
+              id: "configure-service",
+              label: "Configure a service",
+              detail: "Add or enable a service before routing requests.",
               complete: enabledServices > 0,
               action: (
                 <Button asChild variant="ghost" size="sm">
-                  <Link href="#base-url">Show URL</Link>
-                </Button>
-              ),
-            },
-            {
-              id: "send-request",
-              label: "Send a test request",
-              detail: "Confirm the gateway routes requests end to end.",
-              complete: telemetry.requests24h > 0,
-              action: (
-                <Button asChild variant="ghost" size="sm">
-                  <Link href="/admin/services">Docs</Link>
+                  <Link href="/admin/services">Configure service</Link>
                 </Button>
               ),
             },
@@ -652,48 +728,39 @@ export default function AdminOverviewPage() {
         />
       )}
 
-      {/* KPI strip — always visible */}
-      <MetricStrip
-        items={[
-          {
-            label: "Apps",
-            value: appsData !== undefined ? String(apps.length) : "—",
-            detail: "registered",
-          },
-          {
-            label: "Active keys",
-            value:
-              credentialsData !== undefined ? String(activeKeys.length) : "—",
-            detail: "credentials",
-          },
-          {
-            label: "Requests",
-            value: formatCompact(
-              telemetry.requests24h > 0 ? telemetry.requests24h : null,
-            ),
-            detail: "24h",
-            tone: "info" as const,
-            series:
-              telemetry.requestSeries.length >= 3
-                ? telemetry.requestSeries
-                : undefined,
-          },
-          {
-            label: "Services on",
-            value:
-              registry !== undefined
-                ? `${enabledServices}/${services.length || 0}`
-                : "—",
-            detail: "enabled",
-            tone:
-              services.length > 0 && enabledServices < services.length
-                ? ("warn" as const)
-                : services.length > 0
-                  ? ("ok" as const)
-                  : ("neutral" as const),
-          },
-        ]}
-      />
+      {(telemetry.requestWindowAvailable || telemetry.errorWindowAvailable) && (
+        <MetricStrip
+          items={[
+            ...(telemetry.requestWindowAvailable
+              ? [
+                  {
+                    label: "Requests",
+                    value: formatCompact(telemetry.requests24h),
+                    detail: "last 24h",
+                    tone: "info" as const,
+                    series:
+                      telemetry.requestSeries.length >= 3
+                        ? telemetry.requestSeries
+                        : undefined,
+                  },
+                ]
+              : []),
+            ...(telemetry.errorWindowAvailable
+              ? [
+                  {
+                    label: "Failed requests",
+                    value: formatCompact(telemetry.failedRequests24h),
+                    detail: "last 24h",
+                    tone:
+                      telemetry.failedRequests24h > 0
+                        ? ("warn" as const)
+                        : ("neutral" as const),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
 
       {/* Two-column body: left = apps table, right = activity feed */}
       <div className="vf-overview-body">
@@ -713,19 +780,52 @@ export default function AdminOverviewPage() {
               }
             />
             <div className="mt-3">
-              {appsData === undefined ? (
+              {appsError && appsData === undefined ? (
+                <IncidentBanner
+                  tone="bad"
+                  title="Couldn't load apps"
+                  detail="Retry to load configured callers."
+                  actions={
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void refetchApps()}
+                    >
+                      Retry
+                    </Button>
+                  }
+                />
+              ) : appsData === undefined ? (
                 <div className="flex flex-col gap-2">
                   <Skeleton className="h-12 w-full" />
                   <Skeleton className="h-12 w-full" />
                   <Skeleton className="h-12 w-full" />
                 </div>
               ) : (
-                <AppsSection
-                  apps={apps}
-                  credentialsData={credentialsData}
-                  usersById={usersById}
-                  statusData={statusData}
-                />
+                <div className="flex flex-col gap-3">
+                  {appsError && (
+                    <IncidentBanner
+                      tone="bad"
+                      title="Apps may be stale"
+                      detail="Couldn't refresh the app list."
+                      actions={
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void refetchApps()}
+                        >
+                          Retry
+                        </Button>
+                      }
+                    />
+                  )}
+                  <AppsSection
+                    apps={apps}
+                    credentialsData={credentialsData}
+                    usersById={usersById}
+                    statusData={statusData}
+                  />
+                </div>
               )}
             </div>
             {appsData !== undefined && apps.length > 0 && (
@@ -757,6 +857,7 @@ export default function AdminOverviewPage() {
                 usersById={usersById}
                 loading={auditPending || usersPending}
                 error={auditError}
+                onRetry={() => void refetchAudit()}
               />
             </div>
           </section>
@@ -795,7 +896,32 @@ export default function AdminOverviewPage() {
               <p className="text-vf-micro text-vf-muted">{health.detail}</p>
             </div>
 
-            {services.length > 0 && (
+            {registryError ? (
+              <IncidentBanner
+                tone="bad"
+                title="Couldn't load services"
+                detail="Live health and configured services are separate facts."
+                actions={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void refetchRegistry()}
+                  >
+                    Retry
+                  </Button>
+                }
+              />
+            ) : registry !== undefined && services.length === 0 ? (
+              <EmptyOperationalState
+                title="No services configured."
+                detail="Add a service before the gateway can route requests."
+                action={
+                  <Button asChild variant="ghost" size="sm">
+                    <Link href="/admin/services">Open services</Link>
+                  </Button>
+                }
+              />
+            ) : services.length > 0 ? (
               <ProductPanel tight>
                 <PanelHeader
                   title="Services"
@@ -844,7 +970,7 @@ export default function AdminOverviewPage() {
                   })}
                 </ObjectList>
               </ProductPanel>
-            )}
+            ) : null}
           </div>
         </section>
       </div>
