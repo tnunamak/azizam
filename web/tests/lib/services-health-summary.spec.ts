@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CurrentHealth, CurrentHealthService } from "../../src/lib/api";
 import { deriveServicesHealthSummary } from "../../src/lib/services-health-summary";
+import producerHealth from "../fixtures/gateway/current-health-routing-unknown.json";
 
 function service(
   overrides: Partial<CurrentHealthService>,
@@ -87,45 +88,33 @@ describe("Services health summary", () => {
   });
 
   it("keeps routing unknown explicit and neutral when no known severity exists", () => {
-    const unknown = service({
-      service_id: "unknown",
-      observation: "up",
-      routable: null,
-      tone: "neutral",
-    });
+    const summary = deriveServicesHealthSummary(
+      producerHealth.routingUnknown,
+      1,
+      1,
+    );
 
-    expect(deriveServicesHealthSummary(health([unknown]), 1, 1)).toMatchObject({
+    expect(summary).toMatchObject({
       metricTone: "neutral",
       incompleteCount: 1,
       incidentTone: null,
     });
+    expect(summary.metricLabel).toBe("enabled · 1 incomplete");
   });
 
   it("keeps a known bad above simultaneous incomplete coverage", () => {
-    const unknown = service({
-      service_id: "unknown",
-      observation: "up",
-      routable: null,
-      tone: "neutral",
-    });
+    const summary = deriveServicesHealthSummary(
+      producerHealth.badWithRoutingUnknown,
+      2,
+      2,
+    );
 
-    expect(
-      deriveServicesHealthSummary(
-        health(
-          [
-            unknown,
-            service({ service_id: "broken", observation: "down", tone: "bad" }),
-          ],
-          { routing: ["unknown"] },
-        ),
-        2,
-        2,
-      ),
-    ).toMatchObject({
+    expect(summary).toMatchObject({
       metricTone: "bad",
       badCount: 1,
       incompleteCount: 1,
       incidentTone: "bad",
     });
+    expect(summary.metricLabel).toBe("enabled · 1 action needed");
   });
 });

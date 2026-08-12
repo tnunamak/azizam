@@ -1,0 +1,61 @@
+{
+  "routingUnknown": {
+    "state": "unavailable",
+    "tone": "neutral",
+    "label": "Live status incomplete",
+    "detail": "No route declaration for Route declaration pending.",
+    "observation_available": true,
+    "services": [
+      {
+        "service_id": "route-unknown",
+        "name": "Route declaration pending",
+        "configured": true,
+        "enabled": true,
+        "role": "required",
+        "observation": "up",
+        "routable": null,
+        "tone": "ok",
+        "last_error": null
+      }
+    ],
+    "incomplete": {
+      "routing": ["Route declaration pending"]
+    },
+    "signals": []
+  },
+  "badWithRoutingUnknown": {
+    "state": "bad",
+    "tone": "bad",
+    "label": "Action needed",
+    "detail": "Required service down is down No route declaration for Route declaration pending.",
+    "observation_available": true,
+    "services": [
+      {
+        "service_id": "route-unknown",
+        "name": "Route declaration pending",
+        "configured": true,
+        "enabled": true,
+        "role": "required",
+        "observation": "up",
+        "routable": null,
+        "tone": "ok",
+        "last_error": null
+      },
+      {
+        "service_id": "required-down",
+        "name": "Required service down",
+        "configured": true,
+        "enabled": true,
+        "role": "required",
+        "observation": "down",
+        "routable": true,
+        "tone": "bad",
+        "last_error": null
+      }
+    ],
+    "incomplete": {
+      "routing": ["Route declaration pending"]
+    },
+    "signals": []
+  }
+}

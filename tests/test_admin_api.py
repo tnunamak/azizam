@@ -489,6 +489,54 @@ class DeriveAdminAttentionTests(unittest.TestCase):
         self.assertEqual(signal_with_unknown["incomplete"], {"routing": ["unknown"]})
         self.assertEqual(signal_with_unknown["signals"][0]["source"], "api")
 
+    def test_current_health_routing_unknown_fixture_matches_producer_by_service_id(self) -> None:
+        """Keep the shared frontend fixture aligned with the server projection."""
+        fixture_path = ROOT / "web/tests/fixtures/gateway/current-health-routing-unknown.json"
+        expected = json.loads(fixture_path.read_text(encoding="utf-8"))
+        cases = {
+            "routingUnknown": (
+                {"services": {
+                    "route-unknown": {
+                        "id": "route-unknown",
+                        "name": "Route declaration pending",
+                        "config": {"models": []},
+                    },
+                }},
+                {"backends": [{"service_id": "route-unknown", "live_status": "up"}]},
+            ),
+            "badWithRoutingUnknown": (
+                {"services": {
+                    "route-unknown": {
+                        "id": "route-unknown",
+                        "name": "Route declaration pending",
+                        "config": {"models": []},
+                    },
+                    "required-down": {
+                        "id": "required-down",
+                        "name": "Required service down",
+                        "config": {"models": [{"model_group": "mapped"}]},
+                    },
+                }},
+                {"backends": [
+                    {"service_id": "route-unknown", "live_status": "up"},
+                    {"service_id": "required-down", "live_status": "down"},
+                ]},
+            ),
+        }
+
+        for case_id, (registry, payload) in cases.items():
+            with self.subTest(case_id=case_id):
+                projection = derive_admin_health_projection(
+                    registry,
+                    payload,
+                    observation_available=True,
+                )
+                self.assertEqual(projection, expected[case_id])
+                self.assertEqual(
+                    {row["service_id"] for row in projection["services"]},
+                    {row["service_id"] for row in expected[case_id]["services"]},
+                )
+
     def test_independent_health_attention_has_no_service_target(self) -> None:
         items = derive_admin_attention({
             "current_health": {

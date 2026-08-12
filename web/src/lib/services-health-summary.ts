@@ -27,9 +27,8 @@ export function deriveServicesHealthSummary(
     if (service.tone === "bad") badCount += 1;
     if (service.tone === "warn") warnCount += 1;
     if (
-      service.tone === "neutral" &&
-      (service.observation === "unavailable" ||
-        (service.observation === "up" && service.routable === null))
+      service.observation === "unavailable" ||
+      (service.observation === "up" && service.routable === null)
     ) {
       incompleteIds.add(service.service_id);
     }
