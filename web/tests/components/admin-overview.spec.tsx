@@ -140,6 +140,19 @@ describe("Admin Overview query-state behavior", () => {
     expect(document.querySelectorAll(".animate-pulse")).toHaveLength(0);
   });
 
+  it("keeps loaded apps visible while key attribution is pending", async () => {
+    setResolvedDefaults();
+    apiState.credentials.mockImplementation(() => pending());
+
+    const { container } = renderOverview();
+
+    expect(await screen.findByTitle("Relay")).toBeVisible();
+    expect(screen.getByText("Keys loading")).toBeVisible();
+    expect(screen.queryByText("Keys unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("0 keys")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".animate-pulse")).toHaveLength(0);
+  });
+
   it("shows independent users and credentials failures without clearing app rows, and retries locally", async () => {
     setResolvedDefaults();
     apiState.users.mockRejectedValue(new Error("users unavailable"));
