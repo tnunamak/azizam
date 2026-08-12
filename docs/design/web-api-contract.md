@@ -576,6 +576,31 @@ idempotent: revoking an already-revoked key returns `200`.
 
 ## Surface 5 — Profiles
 
+### GET /admin/api/policy/editor
+
+Admin-only discovery contract for the Profiles and Users editors. It is
+intentionally separate from Overview and does not carry a registry revision or
+become a write precondition. `200` returns schema version `1`, a create policy
+document serialized from the runtime default, `omitted: "no_opinion"` / `empty:
+"deny_all"` set semantics, opaque policy choices, mapping source descriptors,
+and the helper-defined fallback profile descriptor. Dynamic choices are
+projected from normalized registry data; catalog data supplies only labels and
+descriptions. A saved identifier absent from the response is not invalid: the
+client renders it as **Not currently advertised** and retains it unless the
+operator removes it.
+
+If registry or presentation projection fails, the endpoint returns `503`:
+
+```json
+{"error":{"code":"policy_editor_unavailable","message":"Policy editor choices could not be read."}}
+```
+
+Clients with no previous successful response present Unavailable and disable
+discovery controls. Clients retaining a previous response mark it Stale, do
+not add stale choices, and may still retain/remove saved values or edit
+name/description. Profile and mapping writes remain independent of the
+registry and accept opaque saved policy identifiers.
+
 ### GET /admin/api/profiles
 
 ```json

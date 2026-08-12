@@ -49,14 +49,16 @@ SCHEMA_VERSION = 3
 SUBJECT_KINDS = ("user", "service_account", "app")
 APP_KINDS = ("personal", "service")
 IDENTITY_CLAIM_KINDS = ("oidc_group", "oidc_role")
-RUNTIME_PROFILE_MAPPING_SOURCE_KINDS = (
-    "email",
-    "domain",
-    "oidc_group",
-    "oidc_role",
-    "gateway_role",
-    "all_users",
+RUNTIME_PROFILE_MAPPING_SOURCE_SPECS = (
+    {"id": "oidc_group", "label": "OIDC group", "description": "Match a configured OIDC group.", "value_mode": "required", "priority": 20},
+    {"id": "oidc_role", "label": "OIDC role", "description": "Match a configured OIDC role.", "value_mode": "required", "priority": 30},
+    {"id": "email", "label": "Email", "description": "Match one normalized email address.", "value_mode": "required", "priority": 10},
+    {"id": "domain", "label": "Domain", "description": "Match one normalized email domain.", "value_mode": "required", "priority": 40},
+    {"id": "gateway_role", "label": "Gateway role", "description": "Match one gateway admin role.", "value_mode": "required", "priority": 50},
+    {"id": "all_users", "label": "All signed-in users", "description": "Match every signed-in user.", "value_mode": "fixed", "fixed_value": "*", "priority": 100},
 )
+RUNTIME_PROFILE_MAPPING_SOURCE_KINDS = tuple(spec["id"] for spec in RUNTIME_PROFILE_MAPPING_SOURCE_SPECS)
+_RUNTIME_PROFILE_MAPPING_SOURCE_SPEC_BY_ID = {spec["id"]: spec for spec in RUNTIME_PROFILE_MAPPING_SOURCE_SPECS}
 
 # Credentials attached to an app are data-plane (a runtime client uses them
 # to call /v1/chat/completions etc.). Credentials attached to a user or
@@ -1292,13 +1294,14 @@ def _normalize_runtime_mapping(
     source_value: str | None,
 ) -> tuple[str, str]:
     kind = str(source_kind or "").strip().lower()
-    if kind not in RUNTIME_PROFILE_MAPPING_SOURCE_KINDS:
+    spec = _RUNTIME_PROFILE_MAPPING_SOURCE_SPEC_BY_ID.get(kind)
+    if spec is None:
         raise ValueError(
             "source_kind must be one of "
             f"{RUNTIME_PROFILE_MAPPING_SOURCE_KINDS}"
         )
-    if kind == "all_users":
-        return kind, "*"
+    if spec["value_mode"] == "fixed":
+        return kind, str(spec["fixed_value"])
     value = _normalize_access_value(source_value)
     if not value:
         raise ValueError("source_value is required")
@@ -1306,14 +1309,7 @@ def _normalize_runtime_mapping(
 
 
 def _default_runtime_mapping_priority(source_kind: str) -> int:
-    return {
-        "email": 10,
-        "oidc_group": 20,
-        "oidc_role": 30,
-        "domain": 40,
-        "gateway_role": 50,
-        "all_users": 100,
-    }[source_kind]
+    return int(_RUNTIME_PROFILE_MAPPING_SOURCE_SPEC_BY_ID[source_kind]["priority"])
 
 
 def create_runtime_profile_mapping(
@@ -1882,6 +1878,7 @@ __all__ = [
     "APP_KINDS",
     "IDENTITY_CLAIM_KINDS",
     "RUNTIME_PROFILE_MAPPING_SOURCE_KINDS",
+    "RUNTIME_PROFILE_MAPPING_SOURCE_SPECS",
     "init_db",
     "schema_version",
     "upsert_oidc_user",

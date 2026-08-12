@@ -36,6 +36,9 @@ import {
   api,
   queryKeys,
   type Profile,
+  type PolicyEditorChoice,
+  type PolicyEditorContract,
+  type ProfilePolicyDocument,
   type SimulateResult,
 } from "@/lib/api";
 import {
@@ -76,6 +79,21 @@ function errorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
+function FormErrorSummary({ message }: { message: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => ref.current?.focus(), [message]);
+  return (
+    <p
+      ref={ref}
+      role="alert"
+      tabIndex={-1}
+      className="text-vf-small text-vf-bad"
+    >
+      {message}
+    </p>
+  );
+}
+
 function normalizedRouteTarget(value: string | undefined): string {
   return (value ?? "")
     .trim()
@@ -108,22 +126,6 @@ function RouteProfileTargetSync({
   return null;
 }
 
-/** Known gateway protocols in a human order. */
-const KNOWN_PROTOCOLS = ["openai", "anthropic", "google", "azure"];
-
-/** Known intents mapped to human-readable capability names. */
-const INTENT_LABELS: Record<string, string> = {
-  "chat.completions": "chat",
-  completions: "completions",
-  embeddings: "embeddings",
-  "images.generate": "images",
-  "images.edit": "image edit",
-  "audio.speech": "speech",
-  "audio.transcriptions": "transcriptions",
-  "video.generate": "video",
-  moderations: "moderations",
-};
-
 /** Derive the human access summary from a profile.
  *
  * Produces e.g. "4 models · chat, images" or "all models · chat"
@@ -132,21 +134,18 @@ function accessSummary(profile: Profile): string {
   const intents: string[] = [];
 
   // The allow block lives in the policy document
-  const allow = profile.profile?.allow as
-    | { intents?: string[]; models?: string[] }
-    | undefined;
+  const allow = profile.profile?.allow as { intents?: string[] } | undefined;
 
   if (allow?.intents && allow.intents.length > 0) {
     for (const intent of allow.intents) {
-      const label = INTENT_LABELS[intent] ?? intent.replace(".", " ");
-      if (!intents.includes(label)) intents.push(label);
+      if (!intents.includes(intent)) intents.push(intent);
     }
   } else if (profile.workflows && profile.workflows.length > 0) {
     // workflows can substitute for explicit intents
     intents.push(...profile.workflows.map((w) => w.replace(/-/g, " ")));
   }
 
-  const models = allow?.models;
+  const models = profile.profile.models;
   let modelPart: string;
   if (!models || models.length === 0) {
     modelPart = "all models";
@@ -182,21 +181,18 @@ interface ProfileFacets {
 }
 
 function profileFacets(profile: Profile): ProfileFacets {
-  const allow = profile.profile?.allow as
-    | { intents?: string[]; models?: string[] }
-    | undefined;
+  const allow = profile.profile?.allow as { intents?: string[] } | undefined;
 
   const capabilities: string[] = [];
   if (allow?.intents && allow.intents.length > 0) {
     for (const intent of allow.intents) {
-      const label = INTENT_LABELS[intent] ?? intent.replace(".", " ");
-      if (!capabilities.includes(label)) capabilities.push(label);
+      if (!capabilities.includes(intent)) capabilities.push(intent);
     }
   } else if (profile.workflows && profile.workflows.length > 0) {
     capabilities.push(...profile.workflows.map((w) => w.replace(/-/g, " ")));
   }
 
-  const models = allow?.models;
+  const models = profile.profile.models;
   const unrestrictedModels = !models || models.length === 0;
   const modelScope = unrestrictedModels
     ? "all models"
@@ -234,10 +230,30 @@ export default function AdminProfilesPage() {
     error: profilesError,
     refetch: refetchProfiles,
   } = useQuery({ queryKey: queryKeys.profiles, queryFn: api.profiles.list });
+  const {
+    data: editor,
+    isError: editorIsError,
+    isPending: editorPending,
+  } = useQuery({
+    queryKey: queryKeys.policyEditor,
+    queryFn: api.policyEditor.get,
+  });
 
-  const { data: appsData, isPending: appsPending } = useQuery({
+  const {
+    data: appsData,
+    isPending: appsPending,
+    isError: appsIsError,
+  } = useQuery({
     queryKey: queryKeys.apps,
     queryFn: api.apps.list,
+  });
+  const {
+    data: mappingsData,
+    isPending: mappingsPending,
+    isError: mappingsIsError,
+  } = useQuery({
+    queryKey: queryKeys.runtimeProfileMappings,
+    queryFn: api.runtimeProfileMappings.list,
   });
 
   // Client-side count: apps per profile (contract §Surface 4)
@@ -269,11 +285,26 @@ export default function AdminProfilesPage() {
       toast.success(`${profile.name} deleted`);
       setDeleteTarget(null);
     },
-    onError: (error) => {
+    onError: async (error) => {
+      if (
+        error instanceof ApiError &&
+        (error.status === 409 || error.status === 412)
+      ) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: queryKeys.profiles }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.apps }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.runtimeProfileMappings,
+          }),
+        ]);
+      }
       // 409 profile_in_use: the server blocks the delete — we surface the
       // reason in the dialog and close on success only.
       toast.error("Couldn't delete profile", {
-        description: errorMessage(error),
+        description:
+          error instanceof ApiError && error.status === 412
+            ? `${errorMessage(error)} The latest dependencies were refreshed; review them and try again.`
+            : errorMessage(error),
       });
     },
   });
@@ -340,7 +371,9 @@ export default function AdminProfilesPage() {
         <SectionActionHeader
           kicker="access"
           title="Profiles"
-          count={profiles.length > 0 ? profiles.length : undefined}
+          count={
+            profilesData && profiles.length > 0 ? profiles.length : undefined
+          }
           description="A profile defines what a caller is allowed to reach — which models, protocols, and capabilities."
           action={
             <div className="flex gap-2">
@@ -367,31 +400,62 @@ export default function AdminProfilesPage() {
           items={[
             {
               label: "profiles",
-              value: String(profiles.length),
-              detail: "access policies",
+              value: profilesData
+                ? String(profiles.length)
+                : profilesIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: profilesData ? "access policies" : "profile data",
               tone: "info",
-              badge: "live",
+              badge: profilesData
+                ? "live"
+                : profilesIsError
+                  ? "degraded"
+                  : "loading",
             },
             {
               label: "assigned apps",
-              value: String(appsUsingProfiles),
-              detail: "explicit profile",
+              value: appsData
+                ? String(appsUsingProfiles)
+                : appsIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: appsData ? "explicit profile" : "app assignment data",
               tone: "accent",
-              badge: "live",
+              badge: appsData ? "live" : appsIsError ? "degraded" : "loading",
             },
             {
               label: "protocols",
-              value: String(protocolCount),
-              detail: "represented",
+              value: profilesData
+                ? String(protocolCount)
+                : profilesIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: profilesData ? "represented" : "profile data",
               tone: "neutral",
-              badge: "scope",
+              badge: profilesData
+                ? "scope"
+                : profilesIsError
+                  ? "degraded"
+                  : "loading",
             },
             {
               label: "unrestricted",
-              value: String(unrestrictedProfiles),
-              detail: "broad access",
-              tone: unrestrictedProfiles > 0 ? "warn" : "ok",
-              badge: unrestrictedProfiles > 0 ? "review" : "none",
+              value: profilesData
+                ? String(unrestrictedProfiles)
+                : profilesIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: profilesData ? "broad access" : "profile data",
+              tone:
+                profilesData && unrestrictedProfiles > 0 ? "warn" : "neutral",
+              badge: profilesData
+                ? unrestrictedProfiles > 0
+                  ? "review"
+                  : "none"
+                : profilesIsError
+                  ? "degraded"
+                  : "loading",
             },
           ]}
         />
@@ -431,6 +495,7 @@ export default function AdminProfilesPage() {
                 profile={profile}
                 appCount={appCountByProfile.get(profile.id) ?? 0}
                 appsPending={appsPending}
+                appsUnavailable={appsIsError && !appsData}
                 onEdit={() => setEditTarget(profile)}
                 onTest={() => setTestTarget(profile)}
                 onDelete={() => setDeleteTarget(profile)}
@@ -445,6 +510,9 @@ export default function AdminProfilesPage() {
         mode="create"
         open={createOpen}
         onOpenChange={setCreateOpen}
+        editor={editor}
+        editorStale={editorIsError && Boolean(editor)}
+        editorUnavailable={!editor && !editorPending}
       />
 
       {/* Edit dialog */}
@@ -455,6 +523,9 @@ export default function AdminProfilesPage() {
         onOpenChange={(open) => {
           if (!open) setEditTarget(null);
         }}
+        editor={editor}
+        editorStale={editorIsError && Boolean(editor)}
+        editorUnavailable={!editor && !editorPending}
       />
 
       {/* Test access dialog — opened from row overflow (fixed profile) */}
@@ -481,12 +552,25 @@ export default function AdminProfilesPage() {
         appsUsingIt={
           deleteTarget ? (appCountByProfile.get(deleteTarget.id) ?? 0) : 0
         }
+        mappingsUsingIt={
+          deleteTarget
+            ? (mappingsData ?? []).filter(
+                (mapping) =>
+                  mapping.profile_id === deleteTarget.id &&
+                  mapping.disabled_at === null,
+              ).length
+            : 0
+        }
+        dependenciesLoading={appsPending || mappingsPending}
+        dependenciesUnavailable={(!appsData && !appsPending) || mappingsIsError}
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null);
         }}
-        onConfirm={() => {
-          if (deleteTarget) deleteProfile.mutate(deleteTarget);
-        }}
+        onConfirm={() =>
+          deleteTarget
+            ? deleteProfile.mutateAsync(deleteTarget).then(() => undefined)
+            : Promise.resolve()
+        }
       />
     </div>
   );
@@ -495,7 +579,7 @@ export default function AdminProfilesPage() {
 // ---------------------------------------------------------------------------
 // ProfileRow — operational list row (replaces a flat table cell)
 //
-// Line 1: name + id ref, apps-using count, overflow menu.
+// Line 1: name, apps-using count, overflow menu.
 // Line 2: access facets as badges (model scope, capabilities, protocols) —
 //         derived from existing profile fields only; no invented policy data.
 
@@ -503,6 +587,7 @@ function ProfileRow({
   profile,
   appCount,
   appsPending,
+  appsUnavailable,
   onEdit,
   onTest,
   onDelete,
@@ -510,6 +595,7 @@ function ProfileRow({
   profile: Profile;
   appCount: number;
   appsPending: boolean;
+  appsUnavailable: boolean;
   onEdit: () => void;
   onTest: () => void;
   onDelete: () => void;
@@ -532,9 +618,6 @@ function ProfileRow({
             <span className="text-vf-body text-vf-text shrink-0 font-semibold">
               {profile.name}
             </span>
-            <span className="text-vf-micro text-vf-subtle shrink-0 font-mono">
-              {profile.id}
-            </span>
           </span>
         </button>
         <div
@@ -544,6 +627,8 @@ function ProfileRow({
           <span className="text-vf-micro text-vf-muted hidden font-mono tabular-nums sm:inline">
             {appsPending ? (
               <Skeleton className="h-4 w-10" />
+            ) : appsUnavailable ? (
+              <span className="text-vf-subtle">unavailable</span>
             ) : appCount === 0 ? (
               <span className="text-vf-subtle">unused</span>
             ) : (
@@ -631,50 +716,45 @@ function ErrorBanner({
 interface ProfileFormState {
   name: string;
   description: string;
-  protocols: string[];
-  /** Comma-separated model list (free-form; '' = unrestricted). */
-  models: string;
-  intents: string[];
+  protocols: string[] | undefined;
+  workflows: string[] | undefined;
+  models: string[] | undefined;
+  intents: string[] | undefined;
+  tags: string[] | undefined;
   statusVisibility: string;
 }
 
-function defaultFormState(profile?: Profile): ProfileFormState {
-  if (!profile) {
-    return {
-      name: "",
-      description: "",
-      protocols: ["openai"],
-      models: "",
-      intents: [],
-      statusVisibility: "basic",
-    };
-  }
-  const allow = profile.profile?.allow as
-    | { intents?: string[]; models?: string[] }
-    | undefined;
+function defaultFormState(
+  editor: PolicyEditorContract | undefined,
+  profile?: Profile,
+): ProfileFormState {
+  const document = profile?.profile ?? editor?.profile.create.profile;
   return {
-    name: profile.name,
-    description: profile.description ?? "",
-    protocols: profile.protocols ?? ["openai"],
-    models: (allow?.models ?? []).join(", "),
-    intents: allow?.intents ?? [],
-    statusVisibility: profile.status_visibility ?? "basic",
+    name: profile?.name ?? "",
+    description: profile?.description ?? "",
+    protocols: document?.protocols,
+    workflows: document?.workflows,
+    models: document?.models,
+    intents: document?.allow?.intents,
+    tags: document?.allow?.tags,
+    statusVisibility: document?.status_visibility?.level ?? "",
   };
 }
 
 function profileFormSummary(form: ProfileFormState): string {
   const protocols =
-    form.protocols.length > 0 ? form.protocols.join(", ") : "no protocols";
-  const modelCount = form.models
-    .split(",")
-    .map((model) => model.trim())
-    .filter(Boolean).length;
+    form.protocols === undefined
+      ? "all protocols"
+      : form.protocols.length
+        ? form.protocols.join(", ")
+        : "no protocols";
+  const modelCount = form.models?.length ?? 0;
   const models =
-    modelCount === 0
+    form.models === undefined
       ? "all models"
       : `${modelCount} ${modelCount === 1 ? "model" : "models"}`;
   const capabilities =
-    form.intents.length === 0
+    form.intents === undefined
       ? "all capabilities"
       : `${form.intents.length} ${form.intents.length === 1 ? "capability" : "capabilities"}`;
   return `${protocols} · ${models} · ${capabilities}`;
@@ -685,11 +765,17 @@ function ProfileDialog({
   profile,
   open,
   onOpenChange,
+  editor,
+  editorStale,
+  editorUnavailable,
 }: {
   mode: "create" | "edit";
   profile?: Profile;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  editor: PolicyEditorContract | undefined;
+  editorStale: boolean;
+  editorUnavailable: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -698,6 +784,9 @@ function ProfileDialog({
           mode={mode}
           profile={profile}
           onOpenChange={onOpenChange}
+          editor={editor}
+          editorStale={editorStale}
+          editorUnavailable={editorUnavailable}
         />
       )}
     </Dialog>
@@ -708,14 +797,20 @@ function ProfileDialogContent({
   mode,
   profile,
   onOpenChange,
+  editor,
+  editorStale,
+  editorUnavailable,
 }: {
   mode: "create" | "edit";
   profile?: Profile;
   onOpenChange: (open: boolean) => void;
+  editor: PolicyEditorContract | undefined;
+  editorStale: boolean;
+  editorUnavailable: boolean;
 }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProfileFormState>(() =>
-    defaultFormState(profile),
+    defaultFormState(editor, profile),
   );
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ name?: string }>({});
@@ -728,39 +823,33 @@ function ProfileDialogContent({
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function toggleProtocol(protocol: string) {
-    setForm((prev) => ({
-      ...prev,
-      protocols: prev.protocols.includes(protocol)
-        ? prev.protocols.filter((p) => p !== protocol)
-        : [...prev.protocols, protocol],
-    }));
-  }
-
-  function toggleIntent(intent: string) {
-    setForm((prev) => ({
-      ...prev,
-      intents: prev.intents.includes(intent)
-        ? prev.intents.filter((i) => i !== intent)
-        : [...prev.intents, intent],
-    }));
-  }
-
-  function buildProfileDoc() {
-    const modelsRaw = form.models
-      .split(",")
-      .map((m) => m.trim())
-      .filter(Boolean);
-
-    const allow: Record<string, unknown> = {};
-    if (form.intents.length > 0) allow.intents = form.intents;
-    if (modelsRaw.length > 0) allow.models = modelsRaw;
-
-    return {
+  function buildProfileDoc(): ProfilePolicyDocument {
+    const source = profile?.profile ?? editor?.profile.create.profile ?? {};
+    const document = structuredClone(source);
+    const allow = { ...(document.allow ?? {}) };
+    for (const [field, value] of Object.entries({
       protocols: form.protocols,
-      status_visibility: { level: form.statusVisibility },
-      ...(Object.keys(allow).length > 0 ? { allow } : {}),
-    };
+      workflows: form.workflows,
+      models: form.models,
+    }) as Array<["protocols" | "workflows" | "models", string[] | undefined]>) {
+      if (value === undefined) delete document[field];
+      else document[field] = value;
+    }
+    for (const [field, value] of Object.entries({
+      intents: form.intents,
+      tags: form.tags,
+    }) as Array<["intents" | "tags", string[] | undefined]>) {
+      if (value === undefined) delete allow[field];
+      else allow[field] = value;
+    }
+    if (Object.keys(allow).length) document.allow = allow;
+    else delete document.allow;
+    if (form.statusVisibility)
+      document.status_visibility = {
+        ...document.status_visibility,
+        level: form.statusVisibility,
+      };
+    return document;
   }
 
   const save = useMutation({
@@ -863,63 +952,57 @@ function ProfileDialogContent({
 
             {advancedOpen && (
               <div className="border-vf-border flex flex-col gap-4 border-t px-4 py-4">
-                <p className="text-vf-small text-vf-muted">
-                  Start broad and add restrictions only when this caller should
-                  be denied a protocol, capability, or model.
-                </p>
-
-                {/* Protocols */}
-                <Field
+                {editorUnavailable ? (
+                  <NoticeBanner tone="warn">
+                    Unavailable — policy choices could not be read. Saved values
+                    remain visible, but discovery controls are disabled.
+                  </NoticeBanner>
+                ) : editorStale ? (
+                  <NoticeBanner tone="warn">
+                    Stale — showing prior choices. You may remove retained
+                    values, but cannot add a stale choice.
+                  </NoticeBanner>
+                ) : null}
+                <PolicySetField
                   label="API protocols"
-                  help="The protocol front doors this profile can use."
-                >
-                  <div className="flex flex-wrap gap-3">
-                    {KNOWN_PROTOCOLS.map((p) => (
-                      <Checkbox
-                        key={p}
-                        checked={form.protocols.includes(p)}
-                        onCheckedChange={() => toggleProtocol(p)}
-                        disabled={save.isPending}
-                      >
-                        {p}
-                      </Checkbox>
-                    ))}
-                  </div>
-                </Field>
-
-                {/* Capabilities / intents */}
-                <Field
+                  choices={editor?.profile.choices.protocols ?? []}
+                  value={form.protocols}
+                  onChange={(value) => setField("protocols", value)}
+                  disabled={save.isPending || editorUnavailable}
+                  stale={editorStale}
+                />
+                <PolicySetField
                   label="Capabilities"
-                  help="Leave all unchecked to allow all capabilities."
-                >
-                  <div className="flex flex-wrap gap-3">
-                    {Object.entries(INTENT_LABELS).map(([intent, label]) => (
-                      <Checkbox
-                        key={intent}
-                        checked={form.intents.includes(intent)}
-                        onCheckedChange={() => toggleIntent(intent)}
-                        disabled={save.isPending}
-                      >
-                        {label}
-                      </Checkbox>
-                    ))}
-                  </div>
-                </Field>
-
-                {/* Model allowlist */}
-                <Field
+                  choices={editor?.profile.choices.intents ?? []}
+                  value={form.intents}
+                  onChange={(value) => setField("intents", value)}
+                  disabled={save.isPending || editorUnavailable}
+                  stale={editorStale}
+                />
+                <PolicySetField
+                  label="Workflows"
+                  choices={editor?.profile.choices.workflows ?? []}
+                  value={form.workflows}
+                  onChange={(value) => setField("workflows", value)}
+                  disabled={save.isPending || editorUnavailable}
+                  stale={editorStale}
+                />
+                <PolicySetField
                   label="Allowed models"
-                  help="Comma-separated model IDs. Leave blank to allow all models."
-                >
-                  <Input
-                    value={form.models}
-                    onChange={(e) => setField("models", e.target.value)}
-                    placeholder="e.g. gpt-4o, claude-3-5-sonnet"
-                    disabled={save.isPending}
-                  />
-                </Field>
-
-                {/* Status visibility */}
+                  choices={editor?.profile.choices.models ?? []}
+                  value={form.models}
+                  onChange={(value) => setField("models", value)}
+                  disabled={save.isPending || editorUnavailable}
+                  stale={editorStale}
+                />
+                <PolicySetField
+                  label="Tags"
+                  choices={editor?.profile.choices.tags ?? []}
+                  value={form.tags}
+                  onChange={(value) => setField("tags", value)}
+                  disabled={save.isPending || editorUnavailable}
+                  stale={editorStale}
+                />
                 <Field
                   label="Status visibility"
                   help="How much queue/status info callers can see."
@@ -929,22 +1012,23 @@ function ProfileDialogContent({
                     onChange={(e) =>
                       setField("statusVisibility", e.target.value)
                     }
-                    disabled={save.isPending}
+                    disabled={save.isPending || editorUnavailable}
                   >
-                    <option value="none">None</option>
-                    <option value="basic">Basic</option>
-                    <option value="full">Full</option>
+                    <option value="">Select status visibility…</option>
+                    {(editor?.profile.choices.status_visibility ?? []).map(
+                      (choice) => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.label}
+                        </option>
+                      ),
+                    )}
                   </Select>
                 </Field>
               </div>
             )}
           </div>
 
-          {formError && (
-            <p role="alert" className="text-vf-small text-vf-bad">
-              {formError}
-            </p>
-          )}
+          {formError && <FormErrorSummary message={formError} />}
         </DialogBody>
         <DialogFooter>
           <Button
@@ -963,21 +1047,113 @@ function ProfileDialogContent({
   );
 }
 
+function PolicySetField({
+  label,
+  choices,
+  value,
+  onChange,
+  disabled,
+  stale,
+}: {
+  label: string;
+  choices: PolicyEditorChoice[];
+  value: string[] | undefined;
+  onChange: (value: string[] | undefined) => void;
+  disabled: boolean;
+  stale: boolean;
+}) {
+  const selected = value ?? [];
+  const advertised = new Map(choices.map((choice) => [choice.id, choice]));
+  const visible = [
+    ...choices,
+    ...selected
+      .filter((id) => !advertised.has(id))
+      .map((id) => ({
+        id,
+        label: `${id} — Not currently advertised`,
+        description:
+          "Retaining this value retains the grant if it becomes active again.",
+        available: false,
+      })),
+  ];
+  const changeMode = (mode: "unrestricted" | "deny") =>
+    onChange(mode === "unrestricted" ? undefined : []);
+  const toggle = (id: string) =>
+    onChange(
+      selected.includes(id)
+        ? selected.filter((item) => item !== id)
+        : [...selected, id],
+    );
+  return (
+    <Field
+      label={label}
+      help="No restriction omits this field. Deny all stores an explicit empty set."
+    >
+      <div className="flex flex-col gap-2">
+        <div className="text-vf-small flex gap-3">
+          <label>
+            <input
+              type="radio"
+              checked={value === undefined}
+              onChange={() => changeMode("unrestricted")}
+              disabled={disabled}
+            />{" "}
+            No restriction
+          </label>
+          <label>
+            <input
+              type="radio"
+              checked={value !== undefined}
+              onChange={() => changeMode("deny")}
+              disabled={disabled}
+            />{" "}
+            Restrict
+          </label>
+        </div>
+        {value !== undefined && (
+          <div className="flex flex-wrap gap-3">
+            {visible.map((choice) => {
+              const checked = selected.includes(choice.id);
+              const mayAdd = !stale && choice.available !== false;
+              return (
+                <Checkbox
+                  key={choice.id}
+                  checked={checked}
+                  onCheckedChange={() => toggle(choice.id)}
+                  disabled={disabled || (!checked && !mayAdd)}
+                >
+                  {choice.label}
+                </Checkbox>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Field>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Delete profile dialog (explains + blocks when apps still reference it)
 
 function DeleteProfileDialog({
   profile,
   appsUsingIt,
+  mappingsUsingIt,
+  dependenciesLoading,
+  dependenciesUnavailable,
   onOpenChange,
   onConfirm,
 }: {
   profile: Profile | null;
   appsUsingIt: number;
+  mappingsUsingIt: number;
+  dependenciesLoading: boolean;
+  dependenciesUnavailable: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
 }) {
-  const inUse = appsUsingIt > 0;
+  const inUse = appsUsingIt > 0 || mappingsUsingIt > 0;
 
   if (inUse) {
     // Block the delete: show an informational dialog, no confirm button.
@@ -988,15 +1164,54 @@ function DeleteProfileDialog({
             <DialogHeader>
               <DialogTitle>Can&apos;t delete {profile.name}</DialogTitle>
               <DialogDescription>
-                {appsUsingIt} {appsUsingIt === 1 ? "app is" : "apps are"} still
-                using this profile. Reassign{" "}
-                {appsUsingIt === 1 ? "that app" : "those apps"} to a different
-                profile before deleting this one.
+                {appsUsingIt > 0 && (
+                  <>
+                    {appsUsingIt} {appsUsingIt === 1 ? "app is" : "apps are"}{" "}
+                    still using this profile. Reassign{" "}
+                    {appsUsingIt === 1 ? "that app" : "those apps"}
+                    {mappingsUsingIt > 0 ? " and " : " "}
+                  </>
+                )}
+                {mappingsUsingIt > 0 && (
+                  <>
+                    {mappingsUsingIt} active{" "}
+                    {mappingsUsingIt === 1
+                      ? "profile mapping is"
+                      : "profile mappings are"}{" "}
+                    still assigning it. Reassign or disable{" "}
+                    {mappingsUsingIt === 1 ? "that mapping" : "those mappings"}
+                  </>
+                )}
+                {" before deleting this profile."}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button variant="primary" onClick={() => onOpenChange(false)}>
                 Got it
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
+    );
+  }
+
+  if (dependenciesLoading || dependenciesUnavailable) {
+    return (
+      <Dialog open={profile !== null} onOpenChange={onOpenChange}>
+        {profile && (
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Check dependencies first</DialogTitle>
+              <DialogDescription>
+                {dependenciesLoading
+                  ? "Checking whether apps or profile mappings still use this profile."
+                  : "The profile dependency check is unavailable. Refresh the route before attempting deletion again."}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="primary" onClick={() => onOpenChange(false)}>
+                Close
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1013,8 +1228,8 @@ function DeleteProfileDialog({
       description={
         profile ? (
           <>
-            <strong>{profile.name}</strong> will be permanently deleted. Any app
-            that was using it will fall back to the gateway default.
+            <strong>{profile.name}</strong> will be permanently deleted. No apps
+            or active profile mappings currently reference it.
           </>
         ) : undefined
       }
@@ -1027,9 +1242,6 @@ function DeleteProfileDialog({
 
 // ---------------------------------------------------------------------------
 // Test access dialog (POST /policy/simulate)
-
-const SIMULATE_INTENTS = Object.keys(INTENT_LABELS);
-const SIMULATE_PROTOCOLS = KNOWN_PROTOCOLS;
 
 /**
  * TestAccessDialog — two calling modes:
@@ -1055,51 +1267,27 @@ function TestAccessDialog(
   const { open, onOpenChange } = props;
   // When a fixed profile is provided (row mode) we don't render the profile Select.
   const fixedProfile = props.profile ?? null;
-  const profileList = props.profiles ?? (fixedProfile ? [fixedProfile] : []);
+  const profileList = useMemo(
+    () => props.profiles ?? (fixedProfile ? [fixedProfile] : []),
+    [fixedProfile, props.profiles],
+  );
 
-  // Selected profile id — default to the fixed profile or the first in the list.
+  // Retain the user's choice, but derive its usable value from the current
+  // list. A refetch can replace that list while this dialog is open.
   const [selectedProfileId, setSelectedProfileId] = useState<string>(
     fixedProfile?.id ?? profileList[0]?.id ?? "",
   );
-
-  // Keep selected id in sync when the list or fixed profile changes (e.g. after refetch).
-  const activeProfileId = fixedProfile?.id ?? selectedProfileId;
+  const visibleSelectedProfileId = fixedProfile
+    ? fixedProfile.id
+    : profileList.some((profile) => profile.id === selectedProfileId)
+      ? selectedProfileId
+      : (profileList[0]?.id ?? "");
+  // Never submit a stale id: selection is valid only while it identifies a
+  // currently visible profile (or the fixed row profile).
   const activeProfile =
-    profileList.find((p) => p.id === activeProfileId) ?? fixedProfile ?? null;
-
-  const [intent, setIntent] = useState<string>("chat.completions");
-  const [protocol, setProtocol] = useState<string>(
-    activeProfile?.protocols[0] ?? "openai",
-  );
-  const [model, setModel] = useState<string>("");
-  const [result, setResult] = useState<SimulateResult | null>(null);
-  const [simError, setSimError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
-
-  const simulate = useMutation({
-    mutationFn: () => {
-      if (!activeProfileId)
-        return Promise.reject(new Error("No profile selected"));
-      return api.policy.simulate({
-        profile: activeProfileId,
-        request: {
-          protocol: protocol || null,
-          intent: intent || null,
-          model: model.trim() || null,
-          workflow: null,
-          backend: null,
-        },
-      });
-    },
-    onSuccess: (data) => {
-      setResult(data);
-      setSimError(null);
-    },
-    onError: (error) => {
-      setSimError(errorMessage(error));
-      setResult(null);
-    },
-  });
+    profileList.find((profile) => profile.id === visibleSelectedProfileId) ??
+    null;
+  const activeProfileId = activeProfile?.id ?? "";
 
   const titleSuffix = activeProfile ? ` — ${activeProfile.name}` : "";
 
@@ -1113,108 +1301,161 @@ function TestAccessDialog(
             allowed or denied, with the exact reason.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          {/* Profile select — only shown in header (list) mode */}
-          {!fixedProfile && profileList.length > 0 && (
-            <Field label="Profile">
-              <Select
-                value={selectedProfileId}
-                onChange={(e) => {
-                  setSelectedProfileId(e.target.value);
-                  setResult(null);
-                  setSimError(null);
-                }}
-                disabled={simulate.isPending}
-              >
-                {profileList.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          )}
-
-          {/* Disclosure toggle */}
-          <button
-            type="button"
-            className="text-vf-small text-vf-muted hover:text-vf-text flex w-full items-center justify-between"
-            onClick={() => setExpanded((v) => !v)}
-            aria-expanded={expanded}
-          >
-            <span className="font-medium">Request parameters</span>
-            <span className="text-vf-micro font-mono uppercase">
-              {expanded ? "collapse" : "expand"}
-            </span>
-          </button>
-
-          {expanded && (
-            <div className="flex flex-col gap-3">
-              <Field label="Protocol">
-                <Select
-                  value={protocol}
-                  onChange={(e) => setProtocol(e.target.value)}
-                  disabled={simulate.isPending}
-                >
-                  {SIMULATE_PROTOCOLS.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Capability / intent">
-                <Select
-                  value={intent}
-                  onChange={(e) => setIntent(e.target.value)}
-                  disabled={simulate.isPending}
-                >
-                  {SIMULATE_INTENTS.map((i) => (
-                    <option key={i} value={i}>
-                      {INTENT_LABELS[i]} ({i})
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Model" help="Optional — leave blank to omit.">
-                <Input
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="e.g. gpt-4o"
-                  disabled={simulate.isPending}
-                />
-              </Field>
-            </div>
-          )}
-
-          {/* Result */}
-          {result && <SimulateResultView result={result} />}
-
-          {simError && (
-            <p role="alert" className="text-vf-small text-vf-bad">
-              {simError}
-            </p>
-          )}
-        </DialogBody>
-        <DialogFooter>
-          <Button
-            variant="ghost"
-            onClick={() => onOpenChange(false)}
-            disabled={simulate.isPending}
-          >
-            Close
-          </Button>
-          <Button
-            variant="primary"
-            loading={simulate.isPending}
-            disabled={!activeProfileId}
-            onClick={() => simulate.mutate()}
-          >
-            Run test
-          </Button>
-        </DialogFooter>
+        <TestAccessSimulation
+          key={activeProfileId}
+          fixedProfile={fixedProfile}
+          profileId={activeProfileId}
+          profileList={profileList}
+          selectedProfileId={visibleSelectedProfileId}
+          onProfileSelect={setSelectedProfileId}
+          onClose={() => onOpenChange(false)}
+        />
       </DialogContent>
     </Dialog>
+  );
+}
+
+function TestAccessSimulation({
+  fixedProfile,
+  profileId,
+  profileList,
+  selectedProfileId,
+  onProfileSelect,
+  onClose,
+}: {
+  fixedProfile: Profile | null;
+  profileId: string;
+  profileList: Profile[];
+  selectedProfileId: string;
+  onProfileSelect: (profileId: string) => void;
+  onClose: () => void;
+}) {
+  const profileIdRef = useRef(profileId);
+  profileIdRef.current = profileId;
+  const [intent, setIntent] = useState("");
+  const [protocol, setProtocol] = useState("");
+  const [model, setModel] = useState("");
+  const [result, setResult] = useState<SimulateResult | null>(null);
+  const [resultProfileId, setResultProfileId] = useState<string | null>(null);
+  const [simError, setSimError] = useState<string | null>(null);
+  const [simErrorProfileId, setSimErrorProfileId] = useState<string | null>(
+    null,
+  );
+  const [simErrorAttempt, setSimErrorAttempt] = useState(0);
+  const [expanded, setExpanded] = useState(false);
+
+  const simulate = useMutation({
+    mutationFn: (submittedProfileId: string) =>
+      api.policy.simulate({
+        profile: submittedProfileId,
+        request: {
+          protocol: protocol || null,
+          intent: intent || null,
+          model: model.trim() || null,
+          workflow: null,
+          backend: null,
+        },
+      }),
+    onSuccess: (data, submittedProfileId) => {
+      if (submittedProfileId !== profileIdRef.current) return;
+      setResult(data);
+      setResultProfileId(submittedProfileId);
+      setSimError(null);
+      setSimErrorProfileId(null);
+    },
+    onError: (error, submittedProfileId) => {
+      if (submittedProfileId !== profileIdRef.current) return;
+      setSimError(errorMessage(error));
+      setSimErrorProfileId(submittedProfileId);
+      setSimErrorAttempt((attempt) => attempt + 1);
+      setResult(null);
+      setResultProfileId(null);
+    },
+  });
+
+  return (
+    <>
+      <DialogBody>
+        {!fixedProfile && profileList.length > 0 && (
+          <Field label="Profile">
+            <Select
+              value={selectedProfileId}
+              onChange={(e) => onProfileSelect(e.target.value)}
+              disabled={simulate.isPending}
+            >
+              {profileList.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+
+        <button
+          type="button"
+          className="text-vf-small text-vf-muted hover:text-vf-text flex w-full items-center justify-between"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+        >
+          <span className="font-medium">Request parameters</span>
+          <span className="text-vf-micro font-mono uppercase">
+            {expanded ? "collapse" : "expand"}
+          </span>
+        </button>
+
+        {expanded && (
+          <div className="flex flex-col gap-3">
+            <Field label="Protocol" help="Optional — leave blank to omit.">
+              <Input
+                value={protocol}
+                onChange={(e) => setProtocol(e.target.value)}
+                disabled={simulate.isPending}
+              />
+            </Field>
+            <Field
+              label="Capability / intent"
+              help="Optional — leave blank to omit."
+            >
+              <Input
+                value={intent}
+                onChange={(e) => setIntent(e.target.value)}
+                disabled={simulate.isPending}
+              />
+            </Field>
+            <Field label="Model" help="Optional — leave blank to omit.">
+              <Input
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="Model ID"
+                disabled={simulate.isPending}
+              />
+            </Field>
+          </div>
+        )}
+
+        {result && resultProfileId === profileId && (
+          <SimulateResultView result={result} />
+        )}
+
+        {simError && simErrorProfileId === profileId && (
+          <FormErrorSummary key={simErrorAttempt} message={simError} />
+        )}
+      </DialogBody>
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose} disabled={simulate.isPending}>
+          Close
+        </Button>
+        <Button
+          variant="primary"
+          loading={simulate.isPending}
+          disabled={!profileId}
+          onClick={() => profileId && simulate.mutate(profileId)}
+        >
+          Run test
+        </Button>
+      </DialogFooter>
+    </>
   );
 }
 

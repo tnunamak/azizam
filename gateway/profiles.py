@@ -41,6 +41,7 @@ __all__ = [
     "load_profile_from_entry",
     "load_profiles_from_entries",
     "profile_for_key_entry",
+    "serialize_default_profile",
 ]
 
 _PROFILE_KEYS = {
@@ -68,6 +69,39 @@ _ALLOW_KEYS = {
 
 class ProfileLoadError(ValueError):
     """Raised when a profile dict cannot be loaded into an AppProfile."""
+
+
+def serialize_default_profile() -> dict[str, object]:
+    """Return a document with exactly ``DEFAULT_PROFILE`` policy semantics."""
+    profile = DEFAULT_PROFILE
+    document: dict[str, object] = {
+        "fallback": {"cloud_allowed": profile.fallback.cloud_allowed},
+        "native_passthrough": {
+            "enabled": profile.native_passthrough.enabled,
+            "allowed_backends": sorted(profile.native_passthrough.allowed_backends),
+            "allowed_operations": sorted(profile.native_passthrough.allowed_operations),
+            "audit": profile.native_passthrough.audit,
+        },
+        "status_visibility": {"level": profile.status_visibility.level},
+        "target_policy": {
+            "visibility": profile.target_policy.visibility,
+            "activation": profile.target_policy.activation,
+        },
+    }
+    for field_name, values in (
+        ("protocols", profile.protocols), ("workflows", profile.workflows),
+        ("models", profile.models), ("backends", profile.backends),
+    ):
+        if values is not None:
+            document[field_name] = sorted(values)
+    allow = {key: sorted(values) for key, values in (
+        ("intents", profile.allow.intents), ("exposure", profile.allow.exposure),
+        ("trust_tiers", profile.allow.trust_tiers), ("resource_tiers", profile.allow.resource_tiers),
+        ("tags", profile.allow.tags),
+    ) if values is not None}
+    if allow:
+        document["allow"] = allow
+    return document
 
 
 def _require_mapping(value: object, *, where: str) -> Mapping[str, object]:

@@ -27,6 +27,16 @@ MODEL_ACCESS_MODES = ("catalog", "current_loaded")
 DEFAULT_PROFILE_ID = "default-local"
 
 
+def default_profile_id() -> str:
+    """Return the one runtime authority for the built-in fallback identity."""
+    return DEFAULT_PROFILE_ID
+
+
+def is_default_profile_id(profile_id: object) -> bool:
+    """Whether ``profile_id`` denotes the built-in fallback profile."""
+    return str(profile_id or "").strip() == default_profile_id()
+
+
 @dataclass(frozen=True)
 class CapabilitySelector:
     """Category selectors used to keep profiles from becoming ID lists.

@@ -31,7 +31,7 @@ from gateway.admin_oidc import (
     decode_session_cookie,
     load_oidc_config,
 )
-from gateway.policy import DEFAULT_PROFILE
+from gateway.policy import DEFAULT_PROFILE, default_profile_id, is_default_profile_id
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway.litellm_substrate import write_litellm_config_artifact
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key
@@ -150,7 +150,7 @@ def _copy_override_value(value: Mapping[str, Any]) -> dict[str, Any]:
 def _stored_profile_id(value: Any) -> str | None:
     """Return a stored Profile id, treating the built-in default as inherited."""
     profile_id = str(value or "").strip()
-    if not profile_id or profile_id == "default-local":
+    if not profile_id or is_default_profile_id(profile_id):
         return None
     return profile_id
 
@@ -289,8 +289,8 @@ class AdminSQLiteStore:
             )
             record["effective_profile_source"] = "app_default"
         else:
-            record["effective_profile_id"] = "default-local"
-            record["effective_profile_name"] = "default-local"
+            record["effective_profile_id"] = default_profile_id()
+            record["effective_profile_name"] = default_profile_id()
             record["effective_profile_source"] = "fallback"
         return record
 
@@ -1146,7 +1146,7 @@ class AdminSQLiteStore:
         source_kind = str(data.get("source_kind") or "").strip()
         source_value = str(data.get("source_value") or "").strip()
         profile_id = str(data.get("profile_id") or "").strip()
-        if profile_id not in {"", "default-local"} and admin_store.get_profile(
+        if profile_id and not is_default_profile_id(profile_id) and admin_store.get_profile(
             profile_id,
             path=self.path,
         ) is None:
@@ -1154,7 +1154,7 @@ class AdminSQLiteStore:
         record = admin_store.create_runtime_profile_mapping(
             source_kind=source_kind,
             source_value=source_value,
-            profile_id=profile_id or "default-local",
+            profile_id=profile_id or default_profile_id(),
             created_by=actor.subject,
             path=self.path,
         )

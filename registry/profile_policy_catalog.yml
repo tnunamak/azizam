@@ -139,3 +139,8 @@ status_visibility:
     label: Standard
   - id: full
     label: Full
+
+fallback_profile:
+  id: default-local
+  label: Gateway default
+  description: Built-in local-only policy used when no stored Profile is assigned.

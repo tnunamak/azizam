@@ -31,7 +31,7 @@ export interface ConfirmDialogProps {
   typedName?: string;
   /** Runs on confirm; the dialog shows a loading state while a returned
    * promise is pending and closes only on success. The caller owns error
-   * reporting; failures leave the confirmation open for retry. */
+   * presentation; rejected mutations leave the dialog open. */
   onConfirm: () => void | Promise<void>;
 }
 
@@ -71,8 +71,8 @@ function ConfirmDialogContent({
       await onConfirm();
       onOpenChange(false);
     } catch {
-      // The caller reports mutation failures. Keep the target and typed value
-      // in place so the operator can review and retry the destructive action.
+      // Route mutations report the failure. Consume it here so the event
+      // handler never creates an unhandled rejection while retaining target.
     } finally {
       setPending(false);
     }

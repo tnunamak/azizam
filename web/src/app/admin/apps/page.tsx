@@ -86,6 +86,7 @@ interface AppTelemetry {
 }
 
 type AppStatusFilter = "active" | "disabled" | "all";
+type JoinState = "pending" | "available" | "unavailable";
 
 function buildAppTelemetryMap(
   status: StatusPayload | undefined,
@@ -143,8 +144,6 @@ function fmtErrorRate(t: AppTelemetry | undefined): string {
 // ---------------------------------------------------------------------------
 // Shared helpers
 
-/** Built-in fallback profile; not in GET /profiles, so selects prepend it. */
-const FALLBACK_PROFILE_ID = "default-local";
 const FALLBACK_PROFILE_LABEL = "Gateway default";
 
 function nowSeconds(): number {
@@ -157,7 +156,13 @@ function errorMessage(error: unknown): string {
 }
 
 function userLabel(user: User | undefined): string {
-  return user?.display_name ?? user?.email ?? "Unknown user";
+  return user?.display_name ?? user?.email ?? "Owner unavailable";
+}
+
+function appOwnerLabel(app: App, usersById: Map<string, User>): string {
+  if (app.owner_service_account_id) return "Service principal";
+  if (app.owner_user_id) return userLabel(usersById.get(app.owner_user_id));
+  return "No owner";
 }
 
 function normalizedRouteTarget(value: string | undefined): string {
@@ -196,27 +201,41 @@ function isActiveKey(credential: Credential): boolean {
   return credential.revoked_at === null;
 }
 
-/** True at/above Tailwind's `lg` breakpoint (1024px), the same breakpoint
+/** True at/above the product's 980px desktop breakpoint, the same breakpoint
  * SheetContent and RightContextPanel switch on. Checked at click/keydown time
  * (not cached in state) so an early interaction can't read a stale default
  * before a mount effect resolves the real viewport. Row selection needs this
- * to decide whether opening the mobile detail Sheet is meaningful — below lg,
- * SheetContent renders the visible bottom sheet; at/above lg it's
- * `lg:hidden`, so "opening" it would only show Radix's overlay with no
- * visible content. */
+ * to decide whether opening the mobile detail Sheet is meaningful — below
+ * 980px, SheetContent renders the visible bottom sheet; at/above 980px it's
+ * `min-[980px]:hidden`, so "opening" it would only show Radix's overlay with
+ * no visible content. */
 function isDesktopViewport(): boolean {
   return (
     typeof window !== "undefined" &&
-    window.matchMedia("(min-width: 1024px)").matches
+    window.matchMedia("(min-width: 980px)").matches
   );
 }
 
-/** Operator-facing profile name. The built-in fallback's stored name is the
- * internal id ("default-local"); never show that as cell text (vocab law). */
+/** Operator-facing profile name. */
 function profileLabel(app: App): string {
   return app.effective_profile_source === "fallback"
     ? FALLBACK_PROFILE_LABEL
     : app.effective_profile_name;
+}
+
+function FormErrorSummary({ message }: { message: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => ref.current?.focus(), [message]);
+  return (
+    <p
+      ref={ref}
+      role="alert"
+      tabIndex={-1}
+      className="text-vf-small text-vf-bad"
+    >
+      {message}
+    </p>
+  );
 }
 
 /** Active keys first, newest first within each group. */
@@ -264,7 +283,11 @@ export default function AdminAppsPage() {
     queryKey: queryKeys.credentials,
     queryFn: api.credentials.list,
   });
-  const { data: profilesData, refetch: refetchProfiles } = useQuery({
+  const {
+    data: profilesData,
+    isError: profilesIsError,
+    refetch: refetchProfiles,
+  } = useQuery({
     queryKey: queryKeys.profiles,
     queryFn: api.profiles.list,
   });
@@ -296,6 +319,17 @@ export default function AdminAppsPage() {
     }
     return grouped;
   }, [credentialsData]);
+  const credentialsJoinState: JoinState = credentialsData
+    ? "available"
+    : credentialsIsError
+      ? "unavailable"
+      : "pending";
+  const profilesJoinState: JoinState = profilesData
+    ? "available"
+    : profilesIsError
+      ? "unavailable"
+      : "pending";
+  const profilesStale = profilesIsError && Boolean(profilesData);
   const adminKeys = useMemo(
     () =>
       sortKeys(
@@ -344,7 +378,7 @@ export default function AdminAppsPage() {
     : null;
 
   // Optimistic disable: flip disabled_at in the cache immediately, roll back
-  // on error. The contract has no re-enable endpoint, so no undo is offered.
+  // on error. The real re-enable endpoint powers the Undo action below.
   const disableApp = useMutation({
     mutationFn: (app: App) => api.apps.disable(app.id),
     onMutate: async (app) => {
@@ -537,7 +571,10 @@ export default function AdminAppsPage() {
 
   const appPanelSections = useMemo((): RightContextPanelSection[] => {
     if (!selectedApp) return [];
-    const appKeys = sortKeys(appKeysByApp.get(selectedApp.id) ?? []);
+    const appKeys =
+      credentialsJoinState === "available"
+        ? sortKeys(appKeysByApp.get(selectedApp.id) ?? [])
+        : [];
     const activeKeys = appKeys.filter(isActiveKey);
     const activeKeyCount = activeKeys.length;
     const lastUsed = appKeys.reduce<number | null>((best, k) => {
@@ -583,13 +620,14 @@ export default function AdminAppsPage() {
               {profileLabel(selectedApp)}
             </span>
           </div>
-          {selectedApp.owner_user_id && (
+          {(selectedApp.owner_user_id ||
+            selectedApp.owner_service_account_id) && (
             <div className="flex items-center justify-between gap-2">
               <span className="text-vf-micro text-vf-subtle font-mono uppercase">
                 Owner
               </span>
               <span className="text-vf-small text-vf-text max-w-[140px] truncate">
-                {userLabel(usersById.get(selectedApp.owner_user_id))}
+                {appOwnerLabel(selectedApp, usersById)}
               </span>
             </div>
           )}
@@ -607,14 +645,20 @@ export default function AdminAppsPage() {
               Last used
             </span>
             <span className="text-vf-small text-vf-text">
-              <RelativeTime
-                ts={
-                  telemetry?.last_seen
-                    ? Math.floor(telemetry.last_seen)
-                    : lastUsed
-                }
-                fallback="Never"
-              />
+              {telemetry?.last_seen || credentialsJoinState === "available" ? (
+                <RelativeTime
+                  ts={
+                    telemetry?.last_seen
+                      ? Math.floor(telemetry.last_seen)
+                      : lastUsed
+                  }
+                  fallback="Never"
+                />
+              ) : credentialsJoinState === "pending" ? (
+                "Loading…"
+              ) : (
+                "Unavailable"
+              )}
             </span>
           </div>
         </div>
@@ -644,9 +688,22 @@ export default function AdminAppsPage() {
       sections.push({
         title: "Scope",
         content: (
-          <span className="text-vf-micro text-vf-muted">
-            Loading profile capabilities…
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-vf-micro text-vf-muted">
+              {profilesJoinState === "unavailable"
+                ? "Profile capabilities unavailable."
+                : "Loading profile capabilities…"}
+            </span>
+            {profilesJoinState === "unavailable" && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void refetchProfiles()}
+              >
+                Retry
+              </Button>
+            )}
+          </div>
         ),
       });
     }
@@ -663,7 +720,11 @@ export default function AdminAppsPage() {
               Active keys
             </span>
             <span className="text-vf-title text-vf-text font-mono font-bold tabular-nums">
-              {activeKeyCount}
+              {credentialsJoinState === "available"
+                ? activeKeyCount
+                : credentialsJoinState === "pending"
+                  ? "…"
+                  : "Unavailable"}
             </span>
           </div>
           {selectedHasTelemetry && (
@@ -707,9 +768,17 @@ export default function AdminAppsPage() {
 
     // Linked API keys with inline revoke
     sections.push({
-      title: `Linked API keys${activeKeyCount > 0 ? ` · ${activeKeyCount} active` : ""}`,
+      title: `Linked API keys${
+        credentialsJoinState === "available" && activeKeyCount > 0
+          ? ` · ${activeKeyCount} active`
+          : ""
+      }`,
       content:
-        appKeys.length === 0 ? (
+        credentialsJoinState === "pending" ? (
+          <span className="text-vf-micro text-vf-muted">Loading keys…</span>
+        ) : credentialsJoinState === "unavailable" ? (
+          <span className="text-vf-micro text-vf-muted">Keys unavailable.</span>
+        ) : appKeys.length === 0 ? (
           <span className="text-vf-micro text-vf-muted">No keys yet.</span>
         ) : (
           <ul className="flex flex-col">
@@ -804,7 +873,16 @@ export default function AdminAppsPage() {
     });
 
     return sections;
-  }, [selectedApp, appKeysByApp, usersById, appTelemetryByAppId, profilesById]);
+  }, [
+    selectedApp,
+    appKeysByApp,
+    usersById,
+    appTelemetryByAppId,
+    profilesById,
+    credentialsJoinState,
+    profilesJoinState,
+    refetchProfiles,
+  ]);
 
   const loading = appsPending;
   const appsFailed = appsIsError && !appsData;
@@ -832,7 +910,7 @@ export default function AdminAppsPage() {
           kicker="access"
           title="Apps & keys"
           description="Apps connect callers to the gateway; every key belongs to an app."
-          count={apps.length}
+          count={appsData ? apps.length : undefined}
           action={
             <>
               {auditReturnPath && (
@@ -851,21 +929,41 @@ export default function AdminAppsPage() {
           items={[
             {
               label: "Active",
-              value: apps.filter((a) => a.disabled_at === null).length,
+              value: appsData
+                ? apps.filter((a) => a.disabled_at === null).length
+                : appsIsError
+                  ? "Unavailable"
+                  : "…",
+              badge: appsData ? "live" : appsIsError ? "degraded" : "loading",
             },
             {
               label: "Disabled",
-              value: apps.filter((a) => a.disabled_at !== null).length,
+              value: appsData
+                ? apps.filter((a) => a.disabled_at !== null).length
+                : appsIsError
+                  ? "Unavailable"
+                  : "…",
+              badge: appsData ? "live" : appsIsError ? "degraded" : "loading",
             },
             {
               label: "Active keys",
-              value: (credentialsData ?? []).filter(
-                (c) => c.subject_kind === "app" && c.revoked_at === null,
-              ).length,
+              value:
+                credentialsJoinState === "available"
+                  ? (credentialsData ?? []).filter(
+                      (c) => c.subject_kind === "app" && c.revoked_at === null,
+                    ).length
+                  : credentialsJoinState === "unavailable"
+                    ? "Unavailable"
+                    : "…",
             },
             {
               label: "Admin keys",
-              value: activeAdminKeys.length,
+              value:
+                credentialsJoinState === "available"
+                  ? activeAdminKeys.length
+                  : credentialsJoinState === "unavailable"
+                    ? "Unavailable"
+                    : "…",
             },
           ]}
         />
@@ -984,16 +1082,18 @@ export default function AdminAppsPage() {
                     }
                   />
                   {filteredApps.map((app) => {
-                    const activeKeyCount = (
-                      appKeysByApp.get(app.id) ?? []
-                    ).filter(isActiveKey).length;
+                    const activeKeyCount =
+                      credentialsJoinState === "available"
+                        ? (appKeysByApp.get(app.id) ?? []).filter(isActiveKey)
+                            .length
+                        : undefined;
                     const isSelected = selectedAppId === app.id;
-                    // Below lg, selecting a row also opens the mobile detail
-                    // Sheet (SheetContent there is the only visible detail
-                    // view). At/above lg, SheetContent is `lg:hidden` — the
-                    // RightContextPanel already shows the selection, so
-                    // opening the Sheet would only render Radix's overlay
-                    // with nothing visible inside it.
+                    // Below 980px, selecting a row also opens the mobile
+                    // detail Sheet (SheetContent there is the only visible
+                    // detail view). At/above 980px, SheetContent is
+                    // `min-[980px]:hidden` — the RightContextPanel already
+                    // shows the selection, so opening the Sheet would only
+                    // render Radix's overlay with nothing visible inside it.
                     const selectApp = () => {
                       setSelectedAppId(app.id);
                       if (!isDesktopViewport()) setMobileDetailOpen(true);
@@ -1001,153 +1101,162 @@ export default function AdminAppsPage() {
                     return (
                       <div
                         key={app.id}
-                        role="button"
-                        tabIndex={0}
                         className={`cursor-pointer transition-colors ${isSelected ? "bg-vf-row-hover ring-vf-accent/30 ring-1 ring-inset" : ""}`}
-                        onClick={selectApp}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            selectApp();
-                          }
-                        }}
                       >
-                        <AppAccessRow
-                          name={app.name}
-                          avatar={
-                            <Avatar
-                              initials={app.name.slice(0, 2)}
-                              tone={avatarToneFor(app.name)}
+                        <div className="relative flex min-w-0 items-stretch">
+                          <button
+                            type="button"
+                            onClick={selectApp}
+                            className="rounded-vf-md focus-visible:outline-vf-accent absolute inset-0 z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
+                            aria-label={`Select ${app.name}`}
+                          />
+                          <div className="pointer-events-none min-w-0 flex-1">
+                            <AppAccessRow
+                              name={app.name}
+                              avatar={
+                                <Avatar
+                                  initials={app.name.slice(0, 2)}
+                                  tone={avatarToneFor(app.name)}
+                                />
+                              }
+                              owner={
+                                app.owner_user_id
+                                  ? appOwnerLabel(app, usersById)
+                                  : app.owner_service_account_id
+                                    ? appOwnerLabel(app, usersById)
+                                    : undefined
+                              }
+                              profile={profileLabel(app)}
+                              keyCount={activeKeyCount}
+                              metrics={
+                                !anyVisibleTelemetry
+                                  ? undefined
+                                  : (() => {
+                                      const t = appTelemetryByAppId.get(app.id);
+                                      const req = fmtRequests(
+                                        t?.requests_24h ?? null,
+                                      );
+                                      const lat = fmtLatency(
+                                        t?.latency_ms_p50 ?? null,
+                                      );
+                                      const errRate = fmtErrorRate(t);
+                                      return (
+                                        <>
+                                          <span className="flex flex-col items-end">
+                                            <span className="text-vf-small text-vf-text font-mono tabular-nums">
+                                              {req}
+                                            </span>
+                                            <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                                              reqs 24h
+                                            </span>
+                                          </span>
+                                          <span className="flex flex-col items-end">
+                                            <span
+                                              className={`text-vf-small font-mono tabular-nums ${errRate !== "—" && errRate !== "0.0%" ? "text-vf-warn" : "text-vf-text"}`}
+                                            >
+                                              {errRate}
+                                            </span>
+                                            <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                                              errors
+                                            </span>
+                                          </span>
+                                          <span className="flex flex-col items-end">
+                                            <span className="text-vf-small text-vf-text font-mono tabular-nums">
+                                              {lat}
+                                            </span>
+                                            <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                                              p50
+                                            </span>
+                                          </span>
+                                        </>
+                                      );
+                                    })()
+                              }
+                              lastUsedLabel={(() => {
+                                // Prefer status snapshot last_seen (float epoch seconds);
+                                // fall back to credential last_used_at (int epoch seconds).
+                                const t = appTelemetryByAppId.get(app.id);
+                                const lastSeenTs = t?.last_seen
+                                  ? Math.floor(t.last_seen)
+                                  : null;
+                                if (credentialsJoinState !== "available") {
+                                  return credentialsJoinState === "pending"
+                                    ? "Loading…"
+                                    : "Unavailable";
+                                }
+                                const keys = appKeysByApp.get(app.id) ?? [];
+                                const credTs = keys.reduce<number | null>(
+                                  (best, k) => {
+                                    if (k.last_used_at === null) return best;
+                                    return best === null ||
+                                      k.last_used_at > best
+                                      ? k.last_used_at
+                                      : best;
+                                  },
+                                  null,
+                                );
+                                const ts = lastSeenTs ?? credTs;
+                                if (!ts) return "Never";
+                                const diffSec =
+                                  Math.floor(Date.now() / 1000) - ts;
+                                if (diffSec < 60) return "just now";
+                                if (diffSec < 3600)
+                                  return `${Math.floor(diffSec / 60)}m ago`;
+                                if (diffSec < 86400)
+                                  return `${Math.floor(diffSec / 3600)}h ago`;
+                                return `${Math.floor(diffSec / 86400)}d ago`;
+                              })()}
+                              status={app.disabled_at !== null ? "warn" : "ok"}
+                              statusLabel={
+                                app.disabled_at !== null ? "disabled" : "active"
+                              }
+                              actions={
+                                <span className="vf-access-row-kind-badge">
+                                  <Badge
+                                    sm
+                                    tone={
+                                      app.kind === "personal"
+                                        ? "info"
+                                        : undefined
+                                    }
+                                  >
+                                    {app.kind === "personal"
+                                      ? "Personal"
+                                      : "Shared"}
+                                  </Badge>
+                                </span>
+                              }
                             />
-                          }
-                          owner={
-                            app.owner_user_id
-                              ? userLabel(usersById.get(app.owner_user_id))
-                              : undefined
-                          }
-                          profile={profileLabel(app)}
-                          keyCount={activeKeyCount}
-                          metrics={
-                            !anyVisibleTelemetry
-                              ? undefined
-                              : (() => {
-                                  const t = appTelemetryByAppId.get(app.id);
-                                  const req = fmtRequests(
-                                    t?.requests_24h ?? null,
-                                  );
-                                  const lat = fmtLatency(
-                                    t?.latency_ms_p50 ?? null,
-                                  );
-                                  const errRate = fmtErrorRate(t);
-                                  return (
-                                    <>
-                                      <span className="flex flex-col items-end">
-                                        <span className="text-vf-small text-vf-text font-mono tabular-nums">
-                                          {req}
-                                        </span>
-                                        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
-                                          reqs 24h
-                                        </span>
-                                      </span>
-                                      <span className="flex flex-col items-end">
-                                        <span
-                                          className={`text-vf-small font-mono tabular-nums ${errRate !== "—" && errRate !== "0.0%" ? "text-vf-warn" : "text-vf-text"}`}
-                                        >
-                                          {errRate}
-                                        </span>
-                                        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
-                                          errors
-                                        </span>
-                                      </span>
-                                      <span className="flex flex-col items-end">
-                                        <span className="text-vf-small text-vf-text font-mono tabular-nums">
-                                          {lat}
-                                        </span>
-                                        <span className="text-vf-micro text-vf-subtle font-mono uppercase">
-                                          p50
-                                        </span>
-                                      </span>
-                                    </>
-                                  );
-                                })()
-                          }
-                          lastUsedLabel={(() => {
-                            // Prefer status snapshot last_seen (float epoch seconds);
-                            // fall back to credential last_used_at (int epoch seconds).
-                            const t = appTelemetryByAppId.get(app.id);
-                            const lastSeenTs = t?.last_seen
-                              ? Math.floor(t.last_seen)
-                              : null;
-                            const keys = appKeysByApp.get(app.id) ?? [];
-                            const credTs = keys.reduce<number | null>(
-                              (best, k) => {
-                                if (k.last_used_at === null) return best;
-                                return best === null || k.last_used_at > best
-                                  ? k.last_used_at
-                                  : best;
-                              },
-                              null,
-                            );
-                            const ts = lastSeenTs ?? credTs;
-                            if (!ts) return "Never";
-                            const diffSec = Math.floor(Date.now() / 1000) - ts;
-                            if (diffSec < 60) return "just now";
-                            if (diffSec < 3600)
-                              return `${Math.floor(diffSec / 60)}m ago`;
-                            if (diffSec < 86400)
-                              return `${Math.floor(diffSec / 3600)}h ago`;
-                            return `${Math.floor(diffSec / 86400)}d ago`;
-                          })()}
-                          status={app.disabled_at !== null ? "warn" : "ok"}
-                          statusLabel={
-                            app.disabled_at !== null ? "disabled" : "active"
-                          }
-                          actions={
-                            <span
-                              className="flex items-center gap-2"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <span className="vf-access-row-kind-badge">
-                                <Badge
-                                  sm
-                                  tone={
-                                    app.kind === "personal" ? "info" : undefined
-                                  }
-                                >
-                                  {app.kind === "personal"
-                                    ? "Personal"
-                                    : "Shared"}
-                                </Badge>
-                              </span>
-                              <OverflowMenu label={`Actions for ${app.name}`}>
-                                <OverflowMenuItem
-                                  disabled={app.disabled_at !== null}
-                                  onSelect={() => setMintTarget(app)}
-                                >
-                                  Mint key…
-                                </OverflowMenuItem>
-                                <OverflowMenuItem
-                                  onSelect={() => setKeysAppId(app.id)}
-                                >
-                                  View keys
-                                </OverflowMenuItem>
-                                <OverflowMenuItem
-                                  onSelect={() => setProfileTarget(app)}
-                                >
-                                  Change profile…
-                                </OverflowMenuItem>
-                                <OverflowMenuSeparator />
-                                <OverflowMenuItem
-                                  danger
-                                  disabled={app.disabled_at !== null}
-                                  onSelect={() => setDisableTarget(app)}
-                                >
-                                  Disable app…
-                                </OverflowMenuItem>
-                              </OverflowMenu>
-                            </span>
-                          }
-                        />
+                          </div>
+                          <span className="z-20 flex shrink-0 items-center px-2">
+                            <OverflowMenu label={`Actions for ${app.name}`}>
+                              <OverflowMenuItem
+                                disabled={app.disabled_at !== null}
+                                onSelect={() => setMintTarget(app)}
+                              >
+                                Mint key…
+                              </OverflowMenuItem>
+                              <OverflowMenuItem
+                                onSelect={() => setKeysAppId(app.id)}
+                              >
+                                View keys
+                              </OverflowMenuItem>
+                              <OverflowMenuItem
+                                onSelect={() => setProfileTarget(app)}
+                              >
+                                Change profile…
+                              </OverflowMenuItem>
+                              <OverflowMenuSeparator />
+                              <OverflowMenuItem
+                                danger
+                                disabled={app.disabled_at !== null}
+                                onSelect={() => setDisableTarget(app)}
+                              >
+                                Disable app…
+                              </OverflowMenuItem>
+                            </OverflowMenu>
+                          </span>
+                        </div>
                       </div>
                     );
                   })}
@@ -1177,7 +1286,7 @@ export default function AdminAppsPage() {
                   </Button>
                 }
                 sections={appPanelSections}
-                className="hidden w-72 shrink-0 lg:flex lg:flex-col"
+                className="hidden w-72 shrink-0 min-[980px]:flex min-[980px]:flex-col"
               />
             )}
           </div>
@@ -1192,7 +1301,7 @@ export default function AdminAppsPage() {
         }}
       >
         {selectedApp && (
-          <SheetContent className="overflow-y-auto lg:hidden">
+          <SheetContent className="overflow-y-auto min-[980px]:hidden">
             <SheetHeader>
               <div className="flex items-center gap-3">
                 <Avatar
@@ -1373,10 +1482,15 @@ export default function AdminAppsPage() {
             </SheetHeader>
             <AppKeysPanel
               app={keysApp}
-              keys={sortKeys(appKeysByApp.get(keysApp.id) ?? [])}
-              loading={credentialsPending}
+              keys={
+                credentialsJoinState === "available"
+                  ? sortKeys(appKeysByApp.get(keysApp.id) ?? [])
+                  : []
+              }
+              joinState={credentialsJoinState}
               onMint={() => setMintTarget(keysApp)}
               onRevoke={setRevokeTarget}
+              onRetry={() => void refetchCredentials()}
             />
           </SheetContent>
         )}
@@ -1388,6 +1502,9 @@ export default function AdminAppsPage() {
         onOpenChange={setCreateOpen}
         users={usersData ?? []}
         profiles={profilesData ?? []}
+        profilesJoinState={profilesJoinState}
+        profilesStale={profilesStale}
+        onRetryProfiles={() => void refetchProfiles()}
       />
       <ChangeProfileDialog
         app={profileTarget}
@@ -1395,6 +1512,9 @@ export default function AdminAppsPage() {
           if (!open) setProfileTarget(null);
         }}
         profiles={profilesData ?? []}
+        profilesJoinState={profilesJoinState}
+        profilesStale={profilesStale}
+        onRetryProfiles={() => void refetchProfiles()}
       />
       <MintKeyDialog
         app={mintTarget}
@@ -1430,14 +1550,16 @@ export default function AdminAppsPage() {
         title="Disable app?"
         description={
           disableTarget
-            ? `${disableTarget.name} and all of its keys stop working immediately. There is no re-enable.`
+            ? `${disableTarget.name} and all of its keys stop working immediately. You can re-enable the app from the success message if needed.`
             : undefined
         }
         confirmLabel="Disable app"
         typedName={disableTarget?.name}
         onConfirm={() => {
           // Optimistic: the cache flips immediately; errors roll back + toast.
-          if (disableTarget) disableApp.mutate(disableTarget);
+          if (disableTarget)
+            return disableApp.mutateAsync(disableTarget).then(() => undefined);
+          return Promise.resolve();
         }}
       />
       <ConfirmDialog
@@ -1454,7 +1576,9 @@ export default function AdminAppsPage() {
         confirmLabel="Revoke key"
         typedName={revokeTarget?.display_name}
         onConfirm={() => {
-          if (revokeTarget) revokeKey.mutate(revokeTarget);
+          if (revokeTarget)
+            return revokeKey.mutateAsync(revokeTarget).then(() => undefined);
+          return Promise.resolve();
         }}
       />
     </div>
@@ -1503,24 +1627,36 @@ function ErrorBanner({
 function AppKeysPanel({
   app,
   keys,
-  loading,
+  joinState,
   onMint,
   onRevoke,
+  onRetry,
 }: {
   app: App;
   keys: Credential[];
-  loading: boolean;
+  joinState: JoinState;
   onMint: () => void;
   onRevoke: (credential: Credential) => void;
+  onRetry: () => void;
 }) {
   const [showRevoked, setShowRevoked] = useState(false);
 
-  if (loading) {
+  if (joinState === "pending") {
     return (
       <div className="flex flex-col gap-3" aria-busy="true">
         <Skeleton className="h-12 w-full" />
         <Skeleton className="h-12 w-full" />
       </div>
+    );
+  }
+
+  if (joinState === "unavailable") {
+    return (
+      <ErrorBanner
+        title="Couldn't load app keys"
+        detail="Refresh to try again."
+        onRetry={onRetry}
+      />
     );
   }
 
@@ -1616,11 +1752,17 @@ function CreateAppDialog({
   onOpenChange,
   users,
   profiles,
+  profilesJoinState,
+  profilesStale,
+  onRetryProfiles,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   users: User[];
   profiles: Profile[];
+  profilesJoinState: JoinState;
+  profilesStale: boolean;
+  onRetryProfiles: () => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1630,6 +1772,9 @@ function CreateAppDialog({
           onOpenChange={onOpenChange}
           users={users}
           profiles={profiles}
+          profilesJoinState={profilesJoinState}
+          profilesStale={profilesStale}
+          onRetryProfiles={onRetryProfiles}
         />
       )}
     </Dialog>
@@ -1640,16 +1785,22 @@ function CreateAppDialogContent({
   onOpenChange,
   users,
   profiles,
+  profilesJoinState,
+  profilesStale,
+  onRetryProfiles,
 }: {
   onOpenChange: (open: boolean) => void;
   users: User[];
   profiles: Profile[];
+  profilesJoinState: JoinState;
+  profilesStale: boolean;
+  onRetryProfiles: () => void;
 }) {
   const queryClient = useQueryClient();
   const [kind, setKind] = useState<AppKind>("service");
   const [name, setName] = useState("");
   const [ownerId, setOwnerId] = useState("");
-  const [profileId, setProfileId] = useState(FALLBACK_PROFILE_ID);
+  const [profileId, setProfileId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{
     name?: string;
     owner?: string;
@@ -1681,8 +1832,7 @@ function CreateAppDialogContent({
     create.mutate({
       name: trimmed,
       kind,
-      // The fallback profile is the server default; omit it from the create.
-      ...(profileId !== FALLBACK_PROFILE_ID ? { profile_id: profileId } : {}),
+      ...(profileId ? { profile_id: profileId } : {}),
       ...(kind === "personal" ? { owner_user_id: ownerId } : {}),
     });
   }
@@ -1743,26 +1893,54 @@ function CreateAppDialogContent({
             label="Profile"
             help="Controls what the app can reach. You can change it later."
           >
+            {profilesJoinState !== "available" && (
+              <div className="text-vf-small text-vf-muted mb-2 flex items-center gap-2">
+                <span>
+                  {profilesJoinState === "unavailable"
+                    ? "Profiles are unavailable; retry before choosing one."
+                    : "Loading profiles before you choose one."}
+                </span>
+                {profilesJoinState === "unavailable" && (
+                  <Button type="button" size="sm" onClick={onRetryProfiles}>
+                    Retry
+                  </Button>
+                )}
+              </div>
+            )}
+            {profilesStale && (
+              <div className="text-vf-small text-vf-muted mb-2 flex items-center gap-2">
+                <span>
+                  Showing retained profile facts; refresh them before saving.
+                </span>
+                <Button type="button" size="sm" onClick={onRetryProfiles}>
+                  Retry
+                </Button>
+              </div>
+            )}
             <Select
               value={profileId}
               onChange={(event) => setProfileId(event.target.value)}
-              disabled={create.isPending}
+              disabled={
+                create.isPending ||
+                profilesJoinState !== "available" ||
+                profilesStale
+              }
             >
-              <option value={FALLBACK_PROFILE_ID}>
-                {FALLBACK_PROFILE_LABEL}
-              </option>
-              {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name}
-                </option>
-              ))}
+              {profilesJoinState === "available" && !profilesStale ? (
+                <>
+                  <option value="">Use gateway default</option>
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </>
+              ) : (
+                <option value="">Profiles are not ready</option>
+              )}
             </Select>
           </Field>
-          {formError && (
-            <p role="alert" className="text-vf-small text-vf-bad">
-              {formError}
-            </p>
-          )}
+          {formError && <FormErrorSummary message={formError} />}
         </DialogBody>
         <DialogFooter>
           <Button
@@ -1772,7 +1950,12 @@ function CreateAppDialogContent({
           >
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={create.isPending}>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={create.isPending}
+            disabled={profilesJoinState !== "available" || profilesStale}
+          >
             Create app
           </Button>
         </DialogFooter>
@@ -1788,10 +1971,16 @@ function ChangeProfileDialog({
   app,
   onOpenChange,
   profiles,
+  profilesJoinState,
+  profilesStale,
+  onRetryProfiles,
 }: {
   app: App | null;
   onOpenChange: (open: boolean) => void;
   profiles: Profile[];
+  profilesJoinState: JoinState;
+  profilesStale: boolean;
+  onRetryProfiles: () => void;
 }) {
   return (
     <Dialog open={app !== null} onOpenChange={onOpenChange}>
@@ -1800,6 +1989,9 @@ function ChangeProfileDialog({
           app={app}
           onOpenChange={onOpenChange}
           profiles={profiles}
+          profilesJoinState={profilesJoinState}
+          profilesStale={profilesStale}
+          onRetryProfiles={onRetryProfiles}
         />
       )}
     </Dialog>
@@ -1810,20 +2002,27 @@ function ChangeProfileDialogContent({
   app,
   onOpenChange,
   profiles,
+  profilesJoinState,
+  profilesStale,
+  onRetryProfiles,
 }: {
   app: App;
   onOpenChange: (open: boolean) => void;
   profiles: Profile[];
+  profilesJoinState: JoinState;
+  profilesStale: boolean;
+  onRetryProfiles: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [profileId, setProfileId] = useState(
-    app.default_profile_id ?? FALLBACK_PROFILE_ID,
-  );
+  const [profileId, setProfileId] = useState(app.default_profile_id ?? "");
   const [formError, setFormError] = useState<string | null>(null);
 
   const update = useMutation({
     mutationFn: () =>
-      api.apps.update(app.id, { default_profile_id: profileId }),
+      api.apps.update(
+        app.id,
+        profileId ? { default_profile_id: profileId } : {},
+      ),
     onSuccess: async (serverApp) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.apps });
       toast.success(`${serverApp.name} now uses ${profileLabel(serverApp)}`);
@@ -1849,27 +2048,55 @@ function ChangeProfileDialogContent({
         </DialogHeader>
         <DialogBody>
           <Field label="Profile">
+            {profilesJoinState !== "available" && (
+              <div className="text-vf-small text-vf-muted mb-2 flex items-center gap-2">
+                <span>
+                  {profilesJoinState === "unavailable"
+                    ? "Profiles are unavailable; retry before changing this app."
+                    : "Loading profiles before you change this app."}
+                </span>
+                {profilesJoinState === "unavailable" && (
+                  <Button type="button" size="sm" onClick={onRetryProfiles}>
+                    Retry
+                  </Button>
+                )}
+              </div>
+            )}
+            {profilesStale && (
+              <div className="text-vf-small text-vf-muted mb-2 flex items-center gap-2">
+                <span>
+                  Showing retained profile facts; refresh them before saving.
+                </span>
+                <Button type="button" size="sm" onClick={onRetryProfiles}>
+                  Retry
+                </Button>
+              </div>
+            )}
             <Select
               value={profileId}
               onChange={(event) => setProfileId(event.target.value)}
               autoFocus
-              disabled={update.isPending}
+              disabled={
+                update.isPending ||
+                profilesJoinState !== "available" ||
+                profilesStale
+              }
             >
-              <option value={FALLBACK_PROFILE_ID}>
-                {FALLBACK_PROFILE_LABEL}
-              </option>
-              {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name}
-                </option>
-              ))}
+              {profilesJoinState === "available" && !profilesStale ? (
+                <>
+                  <option value="">Use gateway default</option>
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </>
+              ) : (
+                <option value="">Profiles are not ready</option>
+              )}
             </Select>
           </Field>
-          {formError && (
-            <p role="alert" className="text-vf-small text-vf-bad">
-              {formError}
-            </p>
-          )}
+          {formError && <FormErrorSummary message={formError} />}
         </DialogBody>
         <DialogFooter>
           <Button
@@ -1879,7 +2106,12 @@ function ChangeProfileDialogContent({
           >
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={update.isPending}>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={update.isPending}
+            disabled={profilesJoinState !== "available" || profilesStale}
+          >
             Save
           </Button>
         </DialogFooter>
@@ -1965,11 +2197,7 @@ function MintKeyDialogContent({
               disabled={mint.isPending}
             />
           </Field>
-          {formError && (
-            <p role="alert" className="text-vf-small text-vf-bad">
-              {formError}
-            </p>
-          )}
+          {formError && <FormErrorSummary message={formError} />}
         </DialogBody>
         <DialogFooter>
           <Button
@@ -2091,11 +2319,7 @@ function CreateAdminKeyDialogContent({
               disabled={!canMintOwner}
             />
           </RadioCards>
-          {formError && (
-            <p role="alert" className="text-vf-small text-vf-bad">
-              {formError}
-            </p>
-          )}
+          {formError && <FormErrorSummary message={formError} />}
         </DialogBody>
         <DialogFooter>
           <Button
