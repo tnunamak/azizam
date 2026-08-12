@@ -573,13 +573,19 @@ export default function AdminAppsPage() {
       if (selectedAppId !== null) setSelectedAppId(null);
       return;
     }
+    // A null selectedAppId can mean "nothing selected yet" (auto-select the
+    // first row) or "the right-panel selection was deliberately cleared
+    // because another Sheet/dialog took over for this app" (View all keys,
+    // mobile detail Sheet). Re-selecting in the latter case would remount
+    // the desktop panel with its own actions underneath the open Sheet.
+    if (keysAppId !== null) return;
     if (
       !selectedAppId ||
       !filteredApps.some((app) => app.id === selectedAppId)
     ) {
       setSelectedAppId(filteredApps[0]!.id);
     }
-  }, [filteredApps, routeAppTarget, routeSelectedApp, selectedAppId]);
+  }, [filteredApps, keysAppId, routeAppTarget, routeSelectedApp, selectedAppId]);
 
   // Build a map from profile id → Profile for the panel scope lookup.
   const profilesById = useMemo(

@@ -579,6 +579,38 @@ describe("access route behavior", () => {
     expect(screen.getByText("extension.run")).toBeVisible();
   });
 
+  it("hides the background app rail and inert-s the page behind the View all keys Sheet", async () => {
+    const user = userEvent.setup();
+    apiMock.apps.list.mockResolvedValue([app()]);
+    apiMock.users.list.mockResolvedValue([]);
+    apiMock.credentials.list.mockResolvedValue([]);
+    apiMock.profiles.list.mockResolvedValue([profile()]);
+    apiMock.session.mockResolvedValue({ actor: { roles: [] } });
+    apiMock.status.mockResolvedValue({ auth_keys: [] });
+
+    renderWithQuery(<AdminAppsPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Select Fixture app" }),
+    );
+    await user.click(screen.getByRole("button", { name: "View all keys" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeVisible();
+    // Opening "View all keys" also clears the right-panel selection, so the
+    // panel with its own "Mint key"/"Change profile"/"Revoke" actions isn't
+    // left mounted and interactive underneath the Sheet at the same time.
+    await waitFor(() => {
+      expect(screen.queryByText("Change profile…")).not.toBeInTheDocument();
+    });
+    // Radix Dialog wraps its content in react-remove-scroll by default,
+    // which locks background scroll while any Sheet/dialog is open.
+    expect(document.body).toHaveAttribute("data-scroll-locked");
+    // Only one dialog-role element exists — no second, independently
+    // reachable copy of the same actions bleeding through behind it.
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+
   it("selects an app row with Enter and Space, then opens sibling overflow in focus order", async () => {
     const user = userEvent.setup();
     apiMock.apps.list.mockResolvedValue([app()]);
