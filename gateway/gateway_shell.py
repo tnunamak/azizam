@@ -227,10 +227,12 @@ _GATEWAY_CHROME_CSS = """
     padding: var(--space-6) var(--gutter) var(--space-12);
     display: grid;
     gap: var(--space-6);
+    min-width: 0;
   }
   .shell-main > section {
     display: grid;
     gap: var(--space-3);
+    min-width: 0;
   }
   .shell-main > section > h2 {
     margin: 0;

@@ -735,8 +735,15 @@ _PAGE_CSS = """
     gap: var(--space-3);
     padding: 0.55rem 0;
     border-top: 1px solid var(--line);
+    min-width: 0;
   }
-  .cap-row-name { font-size: 0.9rem; color: var(--text); flex: 1; min-width: 0; }
+  .cap-row-name {
+    font-size: 0.9rem;
+    color: var(--text);
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: break-word;
+  }
   .cap-row-count {
     font-family: var(--font-mono);
     font-size: 0.78rem;

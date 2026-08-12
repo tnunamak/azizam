@@ -85,6 +85,28 @@ class BottomTabsTests(unittest.TestCase):
         self.assertIn("env(safe-area-inset-bottom", SHELL_CSS)
         self.assertIn("@media (min-width: 721px)", SHELL_CSS)
 
+    def test_shell_main_grid_tracks_cannot_force_document_overflow(self) -> None:
+        # .shell-main and its direct section children are `display: grid`
+        # with a single implicit track. A grid item's default min-width is
+        # `auto`, which resolves toward the item's max-content size — so an
+        # unbroken-looking child (e.g. a long capability sentence on the
+        # normal-user portal home) can force the whole track, and therefore
+        # the document, wider than the viewport at mobile widths even though
+        # the child itself wraps fine once it has room. `min-width: 0`
+        # lets the track shrink to the container and rely on child wrapping
+        # instead. Reproduced live at 375x812/390x844 (scrollWidth 484 vs
+        # clientWidth 375/390) before this fix.
+        from gateway.gateway_shell import SHELL_CSS
+
+        self.assertRegex(
+            SHELL_CSS,
+            r"\.shell-main\s*\{[^}]*min-width:\s*0;[^}]*\}",
+        )
+        self.assertRegex(
+            SHELL_CSS,
+            r"\.shell-main > section\s*\{[^}]*min-width:\s*0;[^}]*\}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -719,6 +719,18 @@ assert.equal(messages.at(-1).kind, "good");
         self.assertNotIn("Chat only", html)
         self.assertNotIn("Full runtime access", html)
 
+    def test_capability_rows_can_shrink_below_their_content(self) -> None:
+        # .cap-row is a flex row inside the health card's capability list; a
+        # flex item's default min-width is `auto` (its content's min-content
+        # size), which can force the row — and the page — wider than a
+        # mobile viewport even though .cap-row-name already wraps once it has
+        # room. min-width: 0 lets the row shrink to the available width.
+        html = render_user_portal()
+        self.assertRegex(
+            html,
+            r"\.cap-row\s*\{[^}]*min-width:\s*0;[^}]*\}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
