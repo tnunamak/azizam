@@ -1446,6 +1446,40 @@ class AdminAuthTests(unittest.TestCase):
         self.assertEqual(body["current_health"]["state"], "empty")
         self.assertTrue(body["current_health"]["observation_available"])
 
+    def test_admin_status_normalizes_key_to_service_id_for_the_frontend_contract(self) -> None:
+        """The React Status page keys its backend lookup by service_id
+        (web/src/app/admin/status/page.tsx), but the real status provider's
+        live probes (status_endpoint._probe) only guarantee ``key``. Without
+        server-side normalization the frontend Map is built empty and no
+        chart ever renders, even when the provider supplies real history."""
+        history = {
+            "uptime_pct_24h": 83.333,
+            "avg_latency_ms_24h": 149,
+            "status_series": [[1, 1.0], [2, 1.0], [3, 0.5]],
+            "latency_series": [[1, 80], [2, 95], [3, 260]],
+        }
+
+        async def status_provider() -> Mapping[str, Any]:
+            return {
+                "banner": "ok",
+                "backends": [
+                    {"key": "fixture-required", "status": "up", "history": history},
+                    {"name": "unidentifiable-probe", "status": "down"},
+                ],
+            }
+
+        client, _store = _make_client(status_provider=status_provider)
+
+        resp = client.get("/admin/api/status", headers=_auth())
+        self.assertEqual(resp.status_code, 200, resp.text)
+        backends = resp.json()["status"]["backends"]
+        self.assertEqual(len(backends), 2)
+        required = next(row for row in backends if row.get("key") == "fixture-required")
+        self.assertEqual(required["service_id"], "fixture-required")
+        self.assertEqual(required["history"], history)
+        unidentifiable = next(row for row in backends if row.get("name") == "unidentifiable-probe")
+        self.assertNotIn("service_id", unidentifiable)
+
     def test_admin_status_projects_unavailable_when_provider_missing(self) -> None:
         client, _store = _make_client()
 

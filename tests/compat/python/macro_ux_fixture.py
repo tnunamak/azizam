@@ -319,8 +319,13 @@ def verify(path: Path) -> None:
     for service_id, (observation, tone) in expected_services.items():
         if (services.get(service_id, {}).get("observation"), services.get(service_id, {}).get("tone")) != (observation, tone):
             raise RuntimeError(f"fixture service projection failed: {service_id} {services.get(service_id)}")
+    raw_backends = health.get("status", {}).get("backends", [])
+    if not raw_backends or any(not row.get("service_id") for row in raw_backends):
+        raise RuntimeError(f"fixture backend contract failed: missing service_id: {raw_backends}")
+    if any(row.get("service_id") != row.get("key") for row in raw_backends):
+        raise RuntimeError(f"fixture backend contract failed: service_id/key mismatch: {raw_backends}")
     if bootstrap.get("scenario") == "history_dense":
-        backends_by_key = {row.get("key"): row for row in health.get("status", {}).get("backends", [])}
+        backends_by_key = {row.get("key"): row for row in raw_backends}
         required_history = backends_by_key.get("fixture-required", {}).get("history") or {}
         expected_uptime_pct = round(100.0 * sum(up for _, up, _, _ in _HISTORY_DENSE_SAMPLES) / len(_HISTORY_DENSE_SAMPLES), 3)
         expected_avg_latency = round(sum(latency for _, _, _, latency in _HISTORY_DENSE_SAMPLES) / len(_HISTORY_DENSE_SAMPLES))

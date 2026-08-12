@@ -422,6 +422,36 @@ def _attention_item(
     return item
 
 
+def _normalize_status_backends(status_payload: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Return ``status.backends[]`` with a canonical ``service_id`` where identifiable.
+
+    The live status provider's backend probes key each row by ``key``
+    (``status_endpoint._probe``); some producers only set ``key``. The React
+    admin UI keys its backend lookups by ``service_id``, so this is the one
+    place that contract gets reconciled before the payload leaves the admin
+    API. ``key`` is retained for any external consumer still reading it. A
+    row with neither field is not a known service — it is passed through
+    unmodified rather than assigned a fabricated empty identity, so callers
+    can tell "unidentifiable" apart from "identified as an empty string".
+    """
+    payload = status_payload if isinstance(status_payload, Mapping) else {}
+    raw_backends = payload.get("backends")
+    if not isinstance(raw_backends, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for backend in raw_backends:
+        if not isinstance(backend, Mapping):
+            continue
+        existing = backend.get("service_id") or backend.get("key")
+        if not existing:
+            normalized.append(dict(backend))
+            continue
+        row = dict(backend)
+        row["service_id"] = str(existing)
+        normalized.append(row)
+    return normalized
+
+
 def derive_admin_health_projection(
     registry: Mapping[str, Any],
     status_payload: Mapping[str, Any] | None,
@@ -442,10 +472,8 @@ def derive_admin_health_projection(
     services = services_raw if isinstance(services_raw, Mapping) else {}
     payload = status_payload if isinstance(status_payload, Mapping) else {}
     observations: dict[str, Mapping[str, Any]] = {}
-    for backend in payload.get("backends") or []:
-        if not isinstance(backend, Mapping):
-            continue
-        service_id = str(backend.get("service_id") or backend.get("key") or "")
+    for backend in _normalize_status_backends(payload):
+        service_id = backend.get("service_id")
         if service_id:
             observations[service_id] = backend
 
@@ -1738,6 +1766,7 @@ def create_admin_router(
                 available = False
         registry = store.get_service_registry()
         projected = dict(payload)
+        projected["backends"] = _normalize_status_backends(payload)
         projected["current_health"] = derive_admin_health_projection(
             registry,
             payload,

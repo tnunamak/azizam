@@ -513,7 +513,9 @@ export interface StatusPayload {
   generated_at?: number;
   current_health?: CurrentHealth;
   backends?: Array<{
+    /** Legacy alias retained for backward compatibility; prefer service_id. */
     key?: string;
+    /** Canonical identity, normalized server-side from key when identifiable. Absent for unidentifiable rows. */
     service_id?: string;
     name?: string;
     url?: string;
