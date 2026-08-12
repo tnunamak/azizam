@@ -62,6 +62,18 @@ function Fixture() {
   );
 }
 
+describe("Services page heading", () => {
+  it("gives Services a real page-level h1 without inflating the compact heading", async () => {
+    render(<Fixture />);
+    const heading = await screen.findByRole("heading", {
+      name: "Services",
+      level: 1,
+    });
+    expect(heading.tagName).toBe("H1");
+    expect(document.querySelectorAll("h1")).toHaveLength(1);
+  });
+});
+
 describe("Services concurrent toggles", () => {
   it("keeps another pending intent after a 412 settles", async () => {
     const first = deferred<unknown>();

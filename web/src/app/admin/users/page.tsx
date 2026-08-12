@@ -327,6 +327,7 @@ export default function AdminUsersPage() {
       {/* People table */}
       <section className="flex flex-col gap-4">
         <SectionActionHeader
+          as="h1"
           kicker="people"
           title="Users"
           count={usersData && users.length > 0 ? users.length : undefined}

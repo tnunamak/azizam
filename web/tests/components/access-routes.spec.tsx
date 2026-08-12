@@ -235,6 +235,42 @@ describe("access route behavior", () => {
     expect(screen.queryByText("live")).not.toBeInTheDocument();
   });
 
+  it("gives Apps, Profiles, and Users a real page-level h1 without inflating the compact heading", async () => {
+    apiMock.apps.list.mockResolvedValue([]);
+    apiMock.users.list.mockResolvedValue([]);
+    apiMock.credentials.list.mockResolvedValue([]);
+    apiMock.profiles.list.mockResolvedValue([]);
+    apiMock.session.mockResolvedValue({ actor: { roles: [] } });
+    apiMock.status.mockResolvedValue({ auth_keys: [] });
+    apiMock.runtimeProfileMappings.list.mockResolvedValue([]);
+
+    const appsView = renderWithQuery(<AdminAppsPage />);
+    const appsHeading = await screen.findByRole("heading", {
+      name: "Apps & keys",
+      level: 1,
+    });
+    expect(appsHeading.tagName).toBe("H1");
+    expect(document.querySelectorAll("h1")).toHaveLength(1);
+    appsView.unmount();
+
+    const profilesView = renderWithQuery(<AdminProfilesPage />);
+    const profilesHeading = await screen.findByRole("heading", {
+      name: "Profiles",
+      level: 1,
+    });
+    expect(profilesHeading.tagName).toBe("H1");
+    expect(document.querySelectorAll("h1")).toHaveLength(1);
+    profilesView.unmount();
+
+    renderWithQuery(<AdminUsersPage />);
+    const usersHeading = await screen.findByRole("heading", {
+      name: "Users",
+      level: 1,
+    });
+    expect(usersHeading.tagName).toBe("H1");
+    expect(document.querySelectorAll("h1")).toHaveLength(1);
+  });
+
   it("keeps the Apps profile join explicit in detail, mobile Sheet, and forms", async () => {
     const userEvents = userEvent.setup();
     apiMock.apps.list.mockResolvedValue([app()]);

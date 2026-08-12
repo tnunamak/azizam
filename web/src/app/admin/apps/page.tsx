@@ -936,6 +936,7 @@ export default function AdminAppsPage() {
       </Suspense>
       <section className="flex flex-col gap-4">
         <SectionActionHeader
+          as="h1"
           kicker="access"
           title="Apps & keys"
           description="Apps connect callers to the gateway; every key belongs to an app."

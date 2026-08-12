@@ -369,6 +369,7 @@ export default function AdminProfilesPage() {
       </Suspense>
       <section className="flex flex-col gap-4">
         <SectionActionHeader
+          as="h1"
           kicker="access"
           title="Profiles"
           count={
