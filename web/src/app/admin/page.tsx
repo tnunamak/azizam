@@ -35,7 +35,6 @@ import {
   StatusAdvisory,
   StatusDotLabel,
   SystemHealthBand,
-  type HealthTone,
   type ChartPoint,
 } from "@/components/ui";
 import {
@@ -61,6 +60,7 @@ import {
   adminServiceHref,
   adminTargetHref,
 } from "@/lib/admin-links";
+import { projectStatusHealth } from "@/lib/status-health-projection";
 
 // ---------------------------------------------------------------------------
 // Human phrases for audit action types
@@ -143,40 +143,6 @@ function formatCompact(value: number | null | undefined): string {
     notation: Math.abs(value) >= 10_000 ? "compact" : "standard",
     maximumFractionDigits: value < 10 ? 1 : 0,
   }).format(value);
-}
-
-function healthSummary(status: StatusPayload | undefined, error: boolean) {
-  if (error) {
-    return {
-      tone: "neutral" as HealthTone,
-      label: "Live status unavailable",
-      detail:
-        "The admin status endpoint did not respond. Retry to check current health.",
-    };
-  }
-  if (!status) {
-    return {
-      tone: "neutral" as HealthTone,
-      label: "Loading status",
-      detail: "Checking API and host health.",
-    };
-  }
-  const current = status.current_health;
-  if (!current) {
-    return {
-      tone: "neutral" as HealthTone,
-      label: "Live status unavailable",
-      detail: "The gateway did not provide a current health projection.",
-    };
-  }
-  return {
-    tone:
-      current.tone === "ok" || current.tone === "warn" || current.tone === "bad"
-        ? current.tone
-        : ("neutral" as HealthTone),
-    label: current.label,
-    detail: current.detail,
-  };
 }
 
 function statusFreshness(generatedAt: number | undefined): string {
@@ -501,6 +467,7 @@ export default function AdminOverviewPage() {
   const {
     data: statusData,
     isError: statusError,
+    isPending: statusPending,
     refetch: refetchStatus,
   } = useQuery({
     queryKey: queryKeys.status,
@@ -569,8 +536,13 @@ export default function AdminOverviewPage() {
   }, []);
 
   const health = useMemo(
-    () => healthSummary(statusData, statusError),
-    [statusData, statusError],
+    () =>
+      projectStatusHealth({
+        data: statusData,
+        isPending: statusPending,
+        isError: statusError,
+      }),
+    [statusData, statusPending, statusError],
   );
   const liveServiceById = useMemo(() => {
     const map = new Map<

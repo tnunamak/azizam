@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
@@ -1100,11 +1100,18 @@ export function RightContextPanel({
   sections,
   className,
 }: RightContextPanelProps) {
+  const titleId = useId();
   return (
-    <aside className={cn("vf-context-panel", className)}>
+    <aside
+      className={cn("vf-context-panel", className)}
+      aria-labelledby={titleId}
+    >
       <div className="vf-context-panel-head">
         <div className="min-w-0 flex-1">
-          <h2 className="text-vf-body text-vf-text truncate font-semibold">
+          <h2
+            id={titleId}
+            className="text-vf-body text-vf-text truncate font-semibold"
+          >
             {title}
           </h2>
           {subtitle && (
@@ -1182,12 +1189,14 @@ export interface CommandSearchProps {
   items?: CommandSearchItem[];
   placeholder?: string;
   className?: string;
+  inputClassName?: string;
 }
 
 export function CommandSearch({
   items,
   placeholder = "Search…",
   className,
+  inputClassName,
 }: CommandSearchProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -1212,7 +1221,7 @@ export function CommandSearch({
         aria-disabled="true"
       >
         <input
-          className="vf-command-search-input"
+          className={cn("vf-command-search-input", inputClassName)}
           placeholder="Search unavailable"
           disabled
           aria-label="Search unavailable"
@@ -1226,7 +1235,7 @@ export function CommandSearch({
       <input
         ref={inputRef}
         role="combobox"
-        className="vf-command-search-input"
+        className={cn("vf-command-search-input", inputClassName)}
         placeholder={placeholder}
         value={query}
         onChange={(e) => setQuery(e.target.value)}

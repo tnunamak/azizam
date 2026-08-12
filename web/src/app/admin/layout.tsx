@@ -44,6 +44,7 @@ import {
   UsersIcon,
 } from "@/components/ui";
 import { api, createQueryClient, queryKeys } from "@/lib/api";
+import { projectStatusHealth } from "@/lib/status-health-projection";
 import {
   adminAppHref,
   adminProfileHref,
@@ -196,7 +197,11 @@ function SidebarNav({ onNav }: { onNav?: () => void }) {
 }
 
 function useShellStatus() {
-  const { data: status } = useQuery({
+  const {
+    data: status,
+    isPending,
+    isError,
+  } = useQuery({
     queryKey: queryKeys.status,
     queryFn: api.status,
   });
@@ -205,14 +210,9 @@ function useShellStatus() {
     queryFn: api.session,
   });
 
-  const current = status?.current_health;
-  const statusTone: BadgeTone =
-    current?.tone === "bad" ||
-    current?.tone === "warn" ||
-    current?.tone === "ok"
-      ? current.tone
-      : "neutral";
-  const statusLabel = current?.label ?? "Checking live status";
+  const projection = projectStatusHealth({ data: status, isPending, isError });
+  const statusTone: BadgeTone = projection.tone;
+  const statusLabel = projection.label;
   const email = sessionData?.actor.email ?? "Signed in";
   return { statusTone, statusLabel, email };
 }
@@ -282,17 +282,18 @@ function TopBar() {
           items={searchItems}
           placeholder="Search apps, services, profiles..."
           className="w-full max-w-xs"
+          inputClassName="min-h-11"
         />
       </div>
 
       <div className="flex min-w-0 items-center gap-2">
-        <Button asChild variant="secondary" size="sm">
+        <Button asChild variant="secondary" size="sm" className="min-h-11">
           {/* Root is the server-rendered user portal, outside the static admin app. */}
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a href="/">Portal</a>
         </Button>
         <AccountChip email={email} />
-        <Button asChild variant="ghost" size="sm">
+        <Button asChild variant="ghost" size="sm" className="min-h-11">
           <a href="/me/logout">Sign out</a>
         </Button>
       </div>

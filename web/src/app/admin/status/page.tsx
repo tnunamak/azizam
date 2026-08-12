@@ -3,34 +3,50 @@
 /** Admin → Status — read-first diagnosis. Configuration remains Services. */
 
 import Link from "next/link";
-import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
-import { api, queryKeys, type CurrentHealthService } from "@/lib/api";
-import { adminServiceHref, adminStatusHref } from "@/lib/admin-links";
 import {
+  api,
+  queryKeys,
+  type BackendHistory,
+  type CurrentHealth,
+  type CurrentHealthService,
+  type StatusPayload,
+  type StatusSeriesPoint,
+} from "@/lib/api";
+import { adminServiceHref, adminStatusHref } from "@/lib/admin-links";
+import { projectStatusHealth } from "@/lib/status-health-projection";
+import {
+  Badge,
   Button,
   EmptyOperationalState,
   IncidentBanner,
-  MetricStrip,
-  ObjectList,
-  ObjectRow,
+  RelativeTime,
+  RightContextPanel,
+  type RightContextPanelSection,
   SectionActionHeader,
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
   Skeleton,
   StatusDotLabel,
+  SystemHealthBand,
+  TrendBarChart,
+  TrendLineChart,
+  type ChartPoint,
   type HealthTone,
 } from "@/components/ui";
 
-function toneFor(service: CurrentHealthService): HealthTone {
-  if (
-    service.tone === "ok" ||
-    service.tone === "warn" ||
-    service.tone === "bad"
-  ) {
-    return service.tone;
-  }
-  return "neutral";
+type LiveBackend = NonNullable<StatusPayload["backends"]>[number];
+
+function healthTone(value: string): HealthTone {
+  return value === "ok" || value === "warn" || value === "bad"
+    ? value
+    : "neutral";
 }
 
 function observationLabel(service: CurrentHealthService): string {
@@ -44,92 +60,274 @@ function observationLabel(service: CurrentHealthService): string {
   }
 }
 
-function formatServiceCount(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+function historyPoints(series: StatusSeriesPoint[] | undefined): ChartPoint[] {
+  return (series ?? [])
+    .filter(
+      (point) =>
+        Array.isArray(point) &&
+        Number.isFinite(point[0]) &&
+        Number.isFinite(point[1]),
+    )
+    .map(([x, y]) => ({
+      x,
+      y,
+      label: new Date(x * 1000).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    }));
 }
 
-/** Facts derived only from the P0 current-health projection.  Keeping this
- * local makes the read-first Status surface explicit without inventing a
- * second health model or chart data. */
-function statusMetrics(
-  health: NonNullable<Awaited<ReturnType<typeof api.status>>["current_health"]>,
-) {
-  const services = health.services;
-  const observed = services.filter(
-    (service) => service.observation !== "unavailable",
-  ).length;
-  const routable = services.filter(
-    (service) => service.routable === true,
-  ).length;
-  const attention = services.filter(
-    (service) => service.tone === "warn" || service.tone === "bad",
-  ).length;
-
-  return [
-    {
-      label: "Observed",
-      value: health.observation_available
-        ? formatServiceCount(observed, "service")
-        : "Unavailable",
-      detail: health.observation_available
-        ? `of ${formatServiceCount(services.length, "configured service")}`
-        : "Live probes did not report",
-      tone: health.observation_available ? "neutral" : "warn",
-    },
-    {
-      label: "Routable",
-      value: formatServiceCount(routable, "service"),
-      detail: services.some((service) => service.routable === null)
-        ? "Some route coverage is unknown"
-        : "Current route declaration",
-      tone: services.some((service) => service.routable === null)
-        ? "warn"
-        : "neutral",
-    },
-    {
-      label: "Needs attention",
-      value: formatServiceCount(attention, "service"),
-      detail: attention > 0 ? "Degraded or down" : "No service advisories",
-      tone: attention > 0 ? "warn" : "ok",
-    },
-  ] as const;
+function latencyLabel(value: number | null | undefined): string | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${Math.round(value)} ms`
+    : null;
 }
 
-function StatusContents() {
-  const searchParams = useSearchParams();
-  const selectedServiceId = searchParams.get("service");
-  const { data, error, isPending, refetch } = useQuery({
-    queryKey: queryKeys.status,
-    queryFn: api.status,
-  });
-  const health = data?.current_health;
+function endpointLabel(backend: LiveBackend | undefined): string | null {
+  if (!backend?.url) return null;
+  try {
+    return new URL(backend.url).host;
+  } catch {
+    return backend.url;
+  }
+}
 
-  if (isPending) {
+function advisoryTone(value: string): "warn" | "bad" {
+  return healthTone(value) === "bad" ? "bad" : "warn";
+}
+
+/** Current advisories retain identity as a target tuple, never a display name. */
+function currentAdvisories(health: CurrentHealth) {
+  const serviceAdvisories = health.services
+    .filter((service) => service.tone === "warn" || service.tone === "bad")
+    .map((service) => ({
+      target_kind: "service" as const,
+      target_id: service.service_id,
+      configured: service.configured,
+      title: service.name,
+      detail:
+        service.last_error ??
+        `${observationLabel(service)}${service.role ? ` · ${service.role}` : ""}`,
+      tone: advisoryTone(service.tone),
+    }));
+  const signalAdvisories = (health.signals ?? []).map((signal) => ({
+    target_kind: null,
+    target_id: null,
+    title: signal.source,
+    detail: signal.reasons.join(" "),
+    tone: advisoryTone(signal.tone),
+  }));
+  return [...serviceAdvisories, ...signalAdvisories];
+}
+
+function HistoryTreatment({
+  history,
+  latencyMs,
+}: {
+  history: BackendHistory | undefined;
+  latencyMs: number | null | undefined;
+}) {
+  const latency = historyPoints(history?.latency_series);
+  const status = historyPoints(history?.status_series);
+  const scalarLatency = latencyLabel(latencyMs);
+  const hasHistory = latency.length >= 3 || status.length >= 3;
+
+  if (!history || !hasHistory) {
     return (
-      <div className="flex flex-col gap-4">
-        <SectionActionHeader
-          as="h1"
-          title="Status"
-          description="Checking current gateway health."
-        />
-        <Skeleton className="h-28 w-full" />
-        <Skeleton className="h-12 w-full" />
+      <div className="flex flex-col gap-1">
+        {scalarLatency && (
+          <p className="text-vf-small text-vf-text">Latency: {scalarLatency}</p>
+        )}
+        <p className="text-vf-micro text-vf-subtle">No history available</p>
       </div>
     );
   }
 
-  if (error || !health) {
+  return (
+    <div className="flex flex-col gap-3" aria-label="Observed history">
+      <div className="text-vf-micro text-vf-subtle flex flex-wrap gap-x-4 gap-y-1">
+        {history.uptime_pct_24h != null && (
+          <span>24h availability: {history.uptime_pct_24h.toFixed(1)}%</span>
+        )}
+        {history.p95_latency_ms_24h != null && (
+          <span>24h p95: {Math.round(history.p95_latency_ms_24h)} ms</span>
+        )}
+        {scalarLatency && <span>Current latency: {scalarLatency}</span>}
+      </div>
+      {latency.length >= 3 && (
+        <div>
+          <p className="text-vf-micro text-vf-subtle mb-1">
+            Latency observations
+          </p>
+          <TrendLineChart
+            series={latency}
+            tone="info"
+            height={72}
+            accessibility={{
+              mode: "data-table",
+              label: "Latency observations",
+            }}
+          />
+        </div>
+      )}
+      {status.length >= 3 && (
+        <div>
+          <p className="text-vf-micro text-vf-subtle mb-1">
+            Availability observations
+          </p>
+          <TrendBarChart
+            series={status}
+            tone="ok"
+            height={72}
+            accessibility={{
+              mode: "data-table",
+              label: "Availability observations",
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ServiceDetail({
+  service,
+  backend,
+}: {
+  service: CurrentHealthService;
+  backend: LiveBackend | undefined;
+}) {
+  const sections = useMemo((): RightContextPanelSection[] => {
+    const endpoint = endpointLabel(backend);
+    const error = service.last_error ?? backend?.last_error;
+    return [
+      {
+        title: "Current observation",
+        content: (
+          <div className="flex flex-col gap-2">
+            <StatusDotLabel
+              tone={healthTone(service.tone)}
+              label={observationLabel(service)}
+            />
+            <div className="flex flex-wrap gap-1">
+              <Badge sm tone="neutral">
+                {service.enabled ? "enabled" : "disabled"}
+              </Badge>
+              {service.role && (
+                <Badge sm tone="neutral">
+                  {service.role}
+                </Badge>
+              )}
+              {service.routable !== null && (
+                <Badge sm tone={service.routable ? "ok" : "warn"}>
+                  {service.routable ? "routable" : "not routable"}
+                </Badge>
+              )}
+            </div>
+            {endpoint && (
+              <p className="text-vf-micro text-vf-subtle font-mono break-all">
+                {endpoint}
+              </p>
+            )}
+            {error && (
+              <p className="text-vf-micro text-vf-bad font-mono break-all">
+                {error}
+              </p>
+            )}
+          </div>
+        ),
+      },
+      {
+        title: "History",
+        content: (
+          <HistoryTreatment
+            history={backend?.history}
+            latencyMs={backend?.latency_ms}
+          />
+        ),
+      },
+    ];
+  }, [backend, service]);
+
+  return (
+    <RightContextPanel
+      title={service.name}
+      subtitle={
+        service.configured ? "Service diagnosis" : "Unregistered service"
+      }
+      status={<StatusDotLabel tone={healthTone(service.tone)} label="" />}
+      actions={
+        service.configured ? (
+          <Link
+            href={adminServiceHref(service.service_id)}
+            className="vf-button vf-button-secondary vf-button-sm vf-touch-target"
+          >
+            Open Services configuration
+          </Link>
+        ) : undefined
+      }
+      sections={sections}
+    />
+  );
+}
+
+function StatusContents() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectedServiceId = searchParams.get("service");
+  const lastTrigger = useRef<HTMLElement | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const { data, isPending, isError, isFetching, refetch } = useQuery({
+    queryKey: queryKeys.status,
+    queryFn: api.status,
+  });
+  const projection = projectStatusHealth({ data, isPending, isError });
+  const health = projection.health;
+
+  const backends = useMemo(
+    () =>
+      new Map(
+        (data?.backends ?? []).flatMap((backend) =>
+          backend.service_id ? [[backend.service_id, backend] as const] : [],
+        ),
+      ),
+    [data?.backends],
+  );
+  const selectedService = health?.services.find(
+    (service) => service.service_id === selectedServiceId,
+  );
+  const advisories = health ? currentAdvisories(health) : [];
+
+  useEffect(() => {
+    const compactViewport =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(max-width: 979px)").matches;
+    if (!selectedService || !compactViewport) return;
+    setSheetOpen(true);
+  }, [selectedService]);
+
+  const closeDetail = () => {
+    setSheetOpen(false);
+    router.replace(adminStatusHref());
+  };
+
+  if (projection.state === "loading") {
+    return <StatusLoading />;
+  }
+
+  if (!health) {
     return (
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-6">
         <SectionActionHeader
           as="h1"
-          title="Status"
-          description="Current health could not be loaded."
+          title="System Status"
+          description="Current gateway health and the next object to inspect."
         />
         <IncidentBanner
           tone="bad"
-          title="Could not load status"
-          detail="The gateway did not return current health."
+          title={projection.label}
+          detail={projection.detail}
           actions={
             <Button size="sm" onClick={() => void refetch()}>
               Retry
@@ -140,108 +338,280 @@ function StatusContents() {
     );
   }
 
-  const selectedService = health.services.find(
-    (service) => service.service_id === selectedServiceId,
-  );
+  const observedCount = health.services.filter(
+    (service) => service.observation !== "unavailable",
+  ).length;
+  const staleFacts = projection.state === "stale-known";
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-end justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <h1 className="text-vf-title text-vf-text font-semibold">Status</h1>
-          <p className="text-vf-small text-vf-muted">
-            Current health and the next object to inspect.
-          </p>
-        </div>
-        {selectedServiceId && (
-          <Link
-            href={adminStatusHref()}
-            className="text-vf-small text-vf-muted hover:text-vf-text"
+    <div className="flex max-w-[1080px] flex-col gap-6">
+      <SectionActionHeader
+        as="h1"
+        title="System Status"
+        description="Current gateway health and the next object to inspect."
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            className="min-h-11"
+            disabled={isFetching}
+            onClick={() => void refetch()}
           >
-            Clear selection
-          </Link>
-        )}
-      </div>
-
-      <IncidentBanner
-        tone={
-          health.state === "bad"
-            ? "bad"
-            : health.state === "warn"
-              ? "warn"
-              : "info"
+            {isFetching ? "Refreshing…" : "Refresh"}
+          </Button>
         }
+      />
+      {staleFacts && (
+        <IncidentBanner
+          tone="warn"
+          title="Showing last known status"
+          detail="A refresh failed. Known observations remain visible."
+          actions={
+            <Button size="sm" onClick={() => void refetch()}>
+              Retry
+            </Button>
+          }
+        />
+      )}
+      <SystemHealthBand
+        tone={healthTone(health.tone)}
         title={health.label}
         detail={health.detail}
+        metrics={[
+          {
+            label: "Observed",
+            value: health.observation_available
+              ? `${observedCount} of ${health.services.length}`
+              : "Unavailable",
+            detail: health.observation_available
+              ? "configured services"
+              : "live probes did not report",
+            tone: health.observation_available ? "neutral" : "warn",
+          },
+          {
+            label: "Needs attention",
+            value: `${advisories.length}`,
+            detail:
+              advisories.length === 0
+                ? "no current advisory"
+                : `${advisories.length} current ${
+                    advisories.length === 1 ? "advisory" : "advisories"
+                  }`,
+            tone: advisories.some((advisory) => advisory.tone === "bad")
+              ? "bad"
+              : advisories.length > 0
+                ? "warn"
+                : "neutral",
+          },
+          {
+            label: "Generated",
+            value: data?.generated_at ? "Timestamp supplied" : "Not supplied",
+            detail: data?.generated_at
+              ? "freshness is not supplied"
+              : "observation time unavailable",
+            tone: data?.generated_at ? "neutral" : "neutral",
+          },
+        ]}
+        action={
+          data?.generated_at ? (
+            <p className="text-vf-micro text-vf-subtle">
+              Observed <RelativeTime ts={data.generated_at} />
+            </p>
+          ) : undefined
+        }
       />
 
-      <MetricStrip items={[...statusMetrics(health)]} />
-
-      <section className="flex flex-col gap-3">
-        <SectionActionHeader title="Current services" />
-        {health.services.length === 0 ? (
+      <section className="flex flex-col gap-3" aria-label="Current advisories">
+        <SectionActionHeader title="Current advisories" />
+        {advisories.length === 0 ? (
           <EmptyOperationalState
-            title="No services configured"
-            detail="Add a service in Services to begin routing gateway requests."
+            title="No current advisories"
+            detail="No observed issue requires a separate action."
           />
         ) : (
-          <ObjectList>
-            {health.services.map((service) => {
-              const selected = selectedServiceId === service.service_id;
-              return (
-                <ObjectRow
-                  key={service.service_id}
-                  href={adminStatusHref(service.service_id)}
-                  title={service.name}
-                  meta={
-                    <span className="flex flex-wrap items-center gap-2">
-                      <StatusDotLabel
-                        tone={toneFor(service)}
-                        label={observationLabel(service)}
-                      />
-                      <span className="text-vf-micro text-vf-subtle">
-                        {!service.configured
-                          ? "unregistered"
-                          : service.enabled
-                            ? service.role
-                            : "disabled"}
-                      </span>
-                      {service.routable === null &&
-                        service.observation === "up" && (
-                          <span className="text-vf-micro text-vf-warn">
-                            route coverage unknown
-                          </span>
-                        )}
-                      {service.last_error && (
-                        <span className="text-vf-micro text-vf-muted">
-                          {service.last_error}
-                        </span>
-                      )}
-                    </span>
-                  }
-                  side={selected ? "Viewing" : undefined}
-                  className={selected ? "bg-vf-surface-2" : undefined}
-                />
-              );
-            })}
-          </ObjectList>
+          advisories.map((advisory) => (
+            <IncidentBanner
+              key={advisory.target_id ?? `${advisory.title}-${advisory.detail}`}
+              tone={advisory.tone}
+              title={advisory.title}
+              detail={advisory.detail}
+              actions={
+                advisory.target_kind === "service" && advisory.target_id ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      className="vf-button vf-button-ghost vf-button-sm vf-touch-target"
+                      href={adminStatusHref(advisory.target_id)}
+                    >
+                      Inspect
+                    </Link>
+                    {advisory.configured && (
+                      <Link
+                        className="vf-button vf-button-secondary vf-button-sm vf-touch-target"
+                        href={adminServiceHref(advisory.target_id)}
+                      >
+                        Services
+                      </Link>
+                    )}
+                  </div>
+                ) : undefined
+              }
+            />
+          ))
         )}
       </section>
-      {selectedService?.configured && (
-        <Link
-          href={adminServiceHref(selectedService.service_id)}
-          className="text-vf-small text-vf-accent hover:text-vf-text"
+
+      <div className="grid min-w-0 gap-6 min-[980px]:grid-cols-[minmax(0,1fr)_20rem]">
+        <section className="min-w-0" aria-label="Service health">
+          <SectionActionHeader title="Service health" />
+          {health.services.length === 0 ? (
+            <div className="mt-3">
+              <EmptyOperationalState
+                title="No services configured"
+                detail="Add a service in Services to begin routing gateway requests."
+                action={
+                  <Link
+                    href="/admin/services"
+                    className="vf-button vf-button-primary vf-touch-target"
+                  >
+                    Open Services
+                  </Link>
+                }
+              />
+            </div>
+          ) : (
+            <div className="vf-feed-panel mt-3 overflow-hidden">
+              {health.services.map((service) => {
+                const backend = backends.get(service.service_id);
+                const selected = service.service_id === selectedServiceId;
+                const latency = latencyLabel(backend?.latency_ms);
+                const errorText = service.last_error ?? backend?.last_error;
+                return (
+                  <button
+                    key={service.service_id}
+                    type="button"
+                    aria-pressed={selected}
+                    className={`vf-service-row w-full text-left ${selected ? "bg-vf-row-hover" : ""}`}
+                    onClick={(event) => {
+                      lastTrigger.current = event.currentTarget;
+                      router.push(adminStatusHref(service.service_id));
+                    }}
+                  >
+                    <span className="vf-service-row-main">
+                      <span className="min-w-0 flex-1">
+                        <span className="text-vf-body text-vf-text block truncate font-semibold">
+                          {service.name}
+                        </span>
+                        <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <StatusDotLabel
+                            tone={healthTone(service.tone)}
+                            label={observationLabel(service)}
+                          />
+                          <span className="text-vf-micro text-vf-subtle">
+                            {service.enabled ? service.role : "disabled"}
+                          </span>
+                          {latency && (
+                            <span className="text-vf-micro text-vf-subtle">
+                              {latency}
+                            </span>
+                          )}
+                          {service.routable === null && (
+                            <span className="text-vf-micro text-vf-warn">
+                              route coverage unknown
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                      <span className="text-vf-micro text-vf-accent shrink-0">
+                        Inspect
+                      </span>
+                    </span>
+                    {errorText && (
+                      <span className="text-vf-micro text-vf-bad mt-1 block font-mono break-all">
+                        {errorText}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
+        <div className="hidden min-w-0 min-[980px]:block">
+          {selectedService ? (
+            <ServiceDetail
+              service={selectedService}
+              backend={backends.get(selectedService.service_id)}
+            />
+          ) : (
+            <RightContextPanel
+              title="Select a service"
+              subtitle="Service diagnosis"
+              sections={[
+                {
+                  title: "History and incidents",
+                  content: (
+                    <p className="text-vf-micro text-vf-subtle">
+                      Select a service to inspect its observed history. No
+                      durable incident history is available from the current
+                      status contract.
+                    </p>
+                  ),
+                },
+              ]}
+            />
+          )}
+        </div>
+      </div>
+
+      <Sheet
+        open={sheetOpen}
+        onOpenChange={(open) => {
+          setSheetOpen(open);
+          if (!open) closeDetail();
+        }}
+      >
+        <SheetContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            lastTrigger.current?.focus();
+          }}
         >
-          Configure selected service
-        </Link>
-      )}
+          {selectedService && (
+            <>
+              <SheetHeader>
+                <SheetTitle>{selectedService.name}</SheetTitle>
+                <SheetDescription>Current service diagnosis</SheetDescription>
+              </SheetHeader>
+              <ServiceDetail
+                service={selectedService}
+                backend={backends.get(selectedService.service_id)}
+              />
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
+function StatusLoading() {
+  return (
+    <div className="flex flex-col gap-6" aria-busy="true">
+      <SectionActionHeader
+        as="h1"
+        title="System Status"
+        description="Checking current gateway health."
+      />
+      <Skeleton className="h-32 w-full" />
+      <Skeleton className="h-20 w-full" />
+      <Skeleton className="h-56 w-full" />
     </div>
   );
 }
 
 export default function AdminStatusPage() {
   return (
-    <Suspense fallback={<Skeleton className="h-28 w-full" />}>
+    <Suspense fallback={<StatusLoading />}>
       <StatusContents />
     </Suspense>
   );

@@ -91,7 +91,20 @@ async function stubAdminApi(
       });
     }
     if (path === "/admin/api/apps") return json({ apps: [] });
+    if (path === "/admin/api/users") return json({ users: [] });
+    if (path === "/admin/api/credentials") return json({ credentials: [] });
     if (path === "/admin/api/profiles") return json({ profiles: [] });
+    if (path === "/admin/api/overview") {
+      return json({
+        actor: { subject: "admin", email: "operator@example.test", roles: [] },
+        counts: {},
+        attention: [],
+        current_health: currentHealth("healthy"),
+        runtime_profile_mappings: {},
+      });
+    }
+    if (path === "/admin/api/audit")
+      return json({ records: [], next_cursor: null });
     if (path === "/admin/api/operator/service-registry") {
       return json({ service_registry: { schema_version: 1, services: {} } });
     }
@@ -104,9 +117,36 @@ async function openStatus(
   mode: StatusMode,
 ) {
   await stubAdminApi(page, mode);
+  const statusResponses =
+    mode === "loading"
+      ? undefined
+      : waitForStatusResponses(
+          page,
+          mode === "error" ? 503 : 200,
+          mode === "error" ? 3 : 1,
+        );
   await page.goto(`/ui/admin/status/?scenario=${mode}-${Date.now()}`, {
     waitUntil: "commit",
   });
+  await statusResponses;
+}
+
+/**
+ * A route is settled only after every status response that the query can use
+ * has arrived. The shared query client retries a 5xx status request twice.
+ */
+async function waitForStatusResponses(
+  page: import("@playwright/test").Page,
+  status: number,
+  count: number,
+) {
+  for (let received = 0; received < count; received += 1) {
+    await page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/admin/api/status" &&
+        response.status() === status,
+    );
+  }
 }
 
 test("shell preserves all destinations, focus origins, target size, and containment at every breakpoint", async ({
@@ -116,8 +156,12 @@ test("shell preserves all destinations, focus origins, target size, and containm
 
   for (const width of responsiveWidths) {
     await page.setViewportSize({ width, height: 812 });
-    await page.goto("/ui/admin/status/");
-    await expect(page.getByRole("heading", { name: "Status" })).toBeVisible();
+    const statusResponse = waitForStatusResponses(page, 200, 1);
+    await page.goto("/ui/admin/status/", { waitUntil: "commit" });
+    await statusResponse;
+    await expect(
+      page.getByRole("heading", { name: "System Status" }),
+    ).toBeVisible();
 
     const overflow = await page.evaluate(() => ({
       document:
@@ -152,11 +196,29 @@ test("shell preserves all destinations, focus origins, target size, and containm
       await expect(
         page.getByRole("link", { name: "Status", exact: true }),
       ).toHaveAttribute("aria-current", "page");
+      for (const target of [
+        page.getByRole("combobox", { name: "Search" }),
+        page
+          .getByRole("banner")
+          .getByRole("link", { name: "Portal", exact: true }),
+        page
+          .getByRole("banner")
+          .getByRole("link", { name: "Sign out", exact: true }),
+        page
+          .locator("main")
+          .getByRole("button", { name: "Refresh", exact: true }),
+      ]) {
+        const box = await target.boundingBox();
+        expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+        expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+      }
     }
   }
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui/admin/status/");
+  const statusResponse = waitForStatusResponses(page, 200, 1);
+  await page.goto("/ui/admin/status/", { waitUntil: "commit" });
+  await statusResponse;
   for (const trigger of ["Open navigation", "More navigation"] as const) {
     const button = page.getByRole("button", { name: trigger });
     await button.focus();
@@ -176,29 +238,27 @@ test("Status keeps healthy, degraded, unavailable, loading, and error projection
     ["healthy", "All services available"],
     ["degraded", "One service needs attention"],
     ["unknown", "Live status unavailable"],
-    ["error", "Could not load status"],
+    ["error", "Status unavailable"],
   ] as const) {
     await openStatus(page, mode);
     await expect(
-      page.locator(".vf-incident-banner-title").filter({ hasText: label }),
+      page.locator("main").getByText(label, { exact: true }),
     ).toBeVisible();
   }
 
   await openStatus(page, "loading");
   await expect(
-    page.getByRole("heading", { name: "Status", level: 1 }),
+    page.getByRole("heading", { name: "System Status", level: 1 }),
   ).toBeVisible();
   await expect(page.locator("h1")).toHaveCount(1);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
   await openStatus(page, "error");
   await expect(
-    page
-      .locator(".vf-incident-banner-title")
-      .filter({ hasText: "Could not load status" }),
+    page.locator("main").getByText("Status unavailable", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Status", level: 1 }),
+    page.getByRole("heading", { name: "System Status", level: 1 }),
   ).toBeVisible();
   await expect(page.locator("h1")).toHaveCount(1);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
@@ -213,4 +273,72 @@ test("Status keeps healthy, degraded, unavailable, loading, and error projection
     path: screenshot,
     contentType: "image/png",
   });
+});
+
+test("Status uses one desktop right rail and one compact Sheet detail", async ({
+  page,
+}) => {
+  await stubAdminApi(page, "healthy");
+
+  await page.setViewportSize({ width: 979, height: 844 });
+  await page.goto("/ui/admin/status/?service=gateway", { waitUntil: "commit" });
+  const compactSheet = page.getByRole("dialog", { name: "Gateway API" });
+  await expect(compactSheet).toBeVisible();
+  await expect(compactSheet.locator(".vf-context-panel")).toHaveCount(1);
+  await expect(page.locator("main .vf-context-panel:visible")).toHaveCount(0);
+  await expect(page.locator(".vf-context-panel:visible")).toHaveCount(1);
+
+  await page.setViewportSize({ width: 980, height: 844 });
+  await page.goto("/ui/admin/status/?service=gateway", { waitUntil: "commit" });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator("main .vf-context-panel:visible")).toHaveCount(1);
+  await expect(page.locator(".vf-context-panel:visible")).toHaveCount(1);
+});
+
+test("shared query health state stays honest across shell, Overview, Status, and Services", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await stubAdminApi(page, "healthy");
+  await page.goto("/ui/admin/status/", { waitUntil: "commit" });
+  await expect(
+    page.locator("main").getByText("All services available"),
+  ).toBeVisible();
+
+  await stubAdminApi(page, "error");
+  await page.locator("main").getByRole("button", { name: "Refresh" }).click();
+  await expect(
+    page
+      .locator("main")
+      .getByText("Showing last known status", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("banner")
+      .getByRole("link", { name: "Showing last known status" }),
+  ).toBeVisible();
+
+  await Promise.all([
+    page.waitForURL(/\/ui\/admin\/?$/),
+    page.getByRole("link", { name: "Overview", exact: true }).first().click(),
+  ]);
+  await expect(
+    page
+      .locator("main")
+      .getByText("Showing last known status", { exact: true }),
+  ).toBeVisible();
+
+  await Promise.all([
+    page.waitForURL(/\/ui\/admin\/services\/?$/),
+    page.getByRole("link", { name: "Services", exact: true }).first().click(),
+  ]);
+  await expect(
+    page
+      .locator("main")
+      .getByRole("heading", { name: "Showing last known status", exact: true })
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Checking live status", { exact: true }),
+  ).toHaveCount(0);
 });
