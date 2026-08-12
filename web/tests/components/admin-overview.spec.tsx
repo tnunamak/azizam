@@ -1,6 +1,6 @@
 import type { ComponentPropsWithoutRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const apiState = vi.hoisted(() => ({
@@ -306,5 +306,34 @@ describe("Admin Overview query-state behavior", () => {
     expect(await screen.findByText("2 items need attention")).toBeVisible();
     expect(screen.getByText("Relay has no active key")).toBeVisible();
     expect(screen.getByText("Backend is down")).toBeVisible();
+  });
+
+  it("shows all four quickstart steps including sending a test request", async () => {
+    setResolvedDefaults();
+
+    renderOverview();
+
+    await screen.findByText("Create an app");
+    expect(screen.getByText("Generate an API key")).toBeVisible();
+    expect(screen.getByText("Configure a service")).toBeVisible();
+    expect(screen.getByText("Send a test request")).toBeVisible();
+  });
+
+  it("marks the test-request step complete once real request telemetry exists", async () => {
+    setResolvedDefaults();
+    apiState.status.mockResolvedValue({
+      current_health: null,
+      auth_keys: [{ app_id: "app_1", requests_24h: 42 }],
+    });
+
+    renderOverview();
+
+    await screen.findByText("Send a test request");
+    await waitFor(() => {
+      const step = screen
+        .getByText("Send a test request")
+        .closest('[role="listitem"]');
+      expect(step).toHaveClass("vf-quickstart-strip-step-done");
+    });
   });
 });

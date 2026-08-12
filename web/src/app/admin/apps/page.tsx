@@ -370,6 +370,7 @@ export default function AdminAppsPage() {
   const [appSearch, setAppSearch] = useState("");
   const [appStatusFilter, setAppStatusFilter] =
     useState<AppStatusFilter>("active");
+  const [appPage, setAppPage] = useState(0);
   const [showRevokedAdminKeys, setShowRevokedAdminKeys] = useState(false);
   const consumedAppTargetRef = useRef<string | null>(null);
 
@@ -505,6 +506,27 @@ export default function AdminAppsPage() {
     );
   }, [apps, appSearch, appStatusFilter, usersById]);
 
+  // A large registry (or the pagination-test fixture rows) would otherwise
+  // render every app in one unbounded list; page it client-side like the
+  // reference "Showing N-M of T" pattern.
+  const APPS_PAGE_SIZE = 8;
+  const appPageCount = Math.max(
+    1,
+    Math.ceil(filteredApps.length / APPS_PAGE_SIZE),
+  );
+  const clampedAppPage = Math.min(appPage, appPageCount - 1);
+  const pagedApps = useMemo(
+    () =>
+      filteredApps.slice(
+        clampedAppPage * APPS_PAGE_SIZE,
+        (clampedAppPage + 1) * APPS_PAGE_SIZE,
+      ),
+    [filteredApps, clampedAppPage],
+  );
+  useEffect(() => {
+    setAppPage(0);
+  }, [appSearch, appStatusFilter]);
+
   const routeSelectedApp = useMemo(() => {
     if (!routeAppTarget) return null;
     return (
@@ -512,14 +534,15 @@ export default function AdminAppsPage() {
     );
   }, [apps, routeAppTarget]);
 
-  // Only render the row metric columns when at least one visible app has real
-  // telemetry; otherwise the columns are a wall of em-dashes (data-honesty).
+  // Only render the row metric columns when at least one visible (on-page)
+  // app has real telemetry; otherwise the columns are a wall of em-dashes
+  // (data-honesty).
   const anyVisibleTelemetry = useMemo(
     () =>
-      filteredApps.some((app) =>
+      pagedApps.some((app) =>
         hasMetricTelemetry(appTelemetryByAppId.get(app.id)),
       ),
-    [filteredApps, appTelemetryByAppId],
+    [pagedApps, appTelemetryByAppId],
   );
 
   useEffect(() => {
@@ -1081,7 +1104,7 @@ export default function AdminAppsPage() {
                         : undefined
                     }
                   />
-                  {filteredApps.map((app) => {
+                  {pagedApps.map((app) => {
                     const activeKeyCount =
                       credentialsJoinState === "available"
                         ? (appKeysByApp.get(app.id) ?? []).filter(isActiveKey)
@@ -1260,6 +1283,41 @@ export default function AdminAppsPage() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+              {filteredApps.length > APPS_PAGE_SIZE && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-vf-micro text-vf-subtle">
+                    Showing {clampedAppPage * APPS_PAGE_SIZE + 1}–
+                    {Math.min(
+                      (clampedAppPage + 1) * APPS_PAGE_SIZE,
+                      filteredApps.length,
+                    )}{" "}
+                    of {filteredApps.length} apps
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={clampedAppPage === 0}
+                      onClick={() => setAppPage((p) => Math.max(0, p - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <span className="text-vf-micro text-vf-subtle">
+                      Page {clampedAppPage + 1} of {appPageCount}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={clampedAppPage >= appPageCount - 1}
+                      onClick={() =>
+                        setAppPage((p) => Math.min(appPageCount - 1, p + 1))
+                      }
+                    >
+                      Next
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>

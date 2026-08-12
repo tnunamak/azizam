@@ -135,3 +135,46 @@ describe("Services concurrent toggles", () => {
     await waitFor(() => expect(secondToggle).not.toBeDisabled());
   });
 });
+
+describe("Services row selection", () => {
+  it("populates the right context panel with the clicked service's own details", async () => {
+    render(<Fixture />);
+
+    // Both the generic "nothing selected" summary and each service's own
+    // panel must be distinguishable, otherwise a click that silently no-ops
+    // would be indistinguishable from a correct render.
+    await screen.findByText("First");
+    expect(screen.queryByRole("heading", { name: "First" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Second" })).not.toBeInTheDocument();
+
+    const firstRow = screen.getByRole("button", { name: /First — click for details/i });
+    fireEvent.click(firstRow);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "First" })).toBeVisible();
+    });
+    expect(screen.queryByRole("heading", { name: "Second" })).not.toBeInTheDocument();
+
+    const secondRow = screen.getByRole("button", { name: /Second — click for details/i });
+    fireEvent.click(secondRow);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Second" })).toBeVisible();
+    });
+    expect(screen.queryByRole("heading", { name: "First" })).not.toBeInTheDocument();
+  });
+
+  it("deselects and restores the generic summary when the selected row is clicked again", async () => {
+    render(<Fixture />);
+    const firstRow = await screen.findByRole("button", { name: /First — click for details/i });
+    fireEvent.click(firstRow);
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "First" })).toBeVisible();
+    });
+
+    fireEvent.click(firstRow);
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "First" })).not.toBeInTheDocument();
+    });
+  });
+});

@@ -747,6 +747,19 @@ export default function AdminOverviewPage() {
                 </Button>
               ),
             },
+            {
+              id: "send-test-request",
+              label: "Send a test request",
+              detail: "Call the base URL with your key to confirm it routes.",
+              complete: Boolean(
+                telemetry.requestWindowAvailable && (telemetry.requests24h ?? 0) > 0,
+              ),
+              action: (
+                <Button asChild variant="ghost" size="sm">
+                  <Link href="#base-url">View base URL</Link>
+                </Button>
+              ),
+            },
           ]}
         />
       )}

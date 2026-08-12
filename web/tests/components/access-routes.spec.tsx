@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ConfirmDialog } from "@/components/ui";
@@ -564,5 +564,67 @@ describe("access route behavior", () => {
     ).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(screen.getByRole("menu")).toBeVisible();
+  });
+
+  it("opens a detail Sheet when an app row is tapped below the desktop breakpoint", async () => {
+    const user = userEvent.setup();
+    apiMock.apps.list.mockResolvedValue([app()]);
+    apiMock.users.list.mockResolvedValue([]);
+    apiMock.credentials.list.mockResolvedValue([]);
+    apiMock.profiles.list.mockResolvedValue([profile()]);
+    apiMock.session.mockResolvedValue({ actor: { roles: [] } });
+    apiMock.status.mockResolvedValue({ auth_keys: [] });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: false }),
+    });
+
+    renderWithQuery(<AdminAppsPage />);
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(
+      await screen.findByRole("button", { name: "Select Fixture app" }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeVisible();
+    expect(
+      within(dialog).getByRole("heading", { name: "Fixture app" }),
+    ).toBeVisible();
+  });
+
+  it("paginates a large app list instead of rendering every row unbounded", async () => {
+    const user = userEvent.setup();
+    const manyApps = Array.from({ length: 12 }, (_, i) =>
+      app({ id: `app-${i}`, name: `Fixture app ${String(i).padStart(2, "0")}` }),
+    );
+    apiMock.apps.list.mockResolvedValue(manyApps);
+    apiMock.users.list.mockResolvedValue([]);
+    apiMock.credentials.list.mockResolvedValue([]);
+    apiMock.profiles.list.mockResolvedValue([profile()]);
+    apiMock.session.mockResolvedValue({ actor: { roles: [] } });
+    apiMock.status.mockResolvedValue({ auth_keys: [] });
+
+    renderWithQuery(<AdminAppsPage />);
+
+    expect(
+      await screen.findByRole("button", { name: "Select Fixture app 00" }),
+    ).toBeVisible();
+    expect(screen.getByText("Showing 1–8 of 12 apps")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Select Fixture app 08" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Page 1 of 2")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Select Fixture app 08" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Select Fixture app 00" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Showing 9–12 of 12 apps")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
   });
 });
