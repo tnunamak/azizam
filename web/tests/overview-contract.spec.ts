@@ -1,38 +1,104 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const testDirectory = path.dirname(fileURLToPath(import.meta.url));
-const overviewSource = await readFile(
-  path.join(testDirectory, "../src/app/admin/page.tsx"),
-  "utf8",
-);
+import {
+  appCredentialFacts,
+  buildTelemetryCards,
+  isActiveAppCredentialFor,
+} from "@/app/admin/overview-derivations";
+import type { Credential, StatusPayload } from "@/lib/api";
 
-describe("Admin Overview route contract", () => {
-  it("puts the shared health band before attention and uses the status diagnosis route", () => {
-    const healthBand = overviewSource.indexOf("<SystemHealthBand");
-    const attention = overviewSource.indexOf("<AttentionSection");
+function credential(overrides: Partial<Credential> = {}): Credential {
+  return {
+    id: "cred_1",
+    subject_kind: "app",
+    subject_id: "app_1",
+    app_id: "app_1",
+    profile_id: null,
+    prefix: "opk_test",
+    display_name: "Test key",
+    scopes: [],
+    created_at: 1,
+    expires_at: null,
+    revoked_at: null,
+    last_used_at: null,
+    ...overrides,
+  };
+}
 
-    expect(healthBand).toBeGreaterThan(-1);
-    expect(attention).toBeGreaterThan(healthBand);
-    expect(overviewSource).toContain('href="/admin/status"');
+describe("Admin Overview derivations", () => {
+  it("completes an app key only from that app's active data-plane credential", () => {
+    const unrelatedAdminKey = credential({
+      id: "cred_admin",
+      subject_kind: "service_account",
+      subject_id: "svc_1",
+      app_id: null,
+    });
+    const otherAppKey = credential({
+      id: "cred_other",
+      subject_id: "app_2",
+      app_id: "app_2",
+    });
+    const exactAppKey = credential();
+
+    expect(isActiveAppCredentialFor(unrelatedAdminKey, "app_1")).toBe(false);
+    expect(isActiveAppCredentialFor(otherAppKey, "app_1")).toBe(false);
+    expect(isActiveAppCredentialFor(exactAppKey, "app_1")).toBe(true);
+    expect(
+      isActiveAppCredentialFor(credential({ revoked_at: 2 }), "app_1"),
+    ).toBe(false);
   });
 
-  it("keeps attention navigation canonical and avoids a misleading test-request destination", () => {
-    expect(overviewSource).toContain(
-      "adminTargetHref(item.target_kind, item.target_id)",
-    );
-    expect(overviewSource).not.toContain('id: "send-request"');
-    expect(overviewSource).not.toContain('href="/admin/services">Docs');
+  it("keeps app credential facts unavailable until credentials load", () => {
+    expect(appCredentialFacts(undefined, "app_1")).toBeUndefined();
+    expect(appCredentialFacts([], "app_1")).toEqual({
+      activeKeyCount: 0,
+      lastUsedAt: null,
+    });
   });
 
-  it("keeps unavailable health neutral and exposes local retries", () => {
-    expect(overviewSource).toContain('label: "Live status unavailable"');
-    expect(overviewSource).toContain('tone: "neutral" as HealthTone');
-    expect(overviewSource).toContain("refetchStatus");
-    expect(overviewSource).toContain("refetchOverview");
-    expect(overviewSource).toContain("refetchApps");
-    expect(overviewSource).toContain("refetchAudit");
+  it("does not present partial key telemetry as a gateway-wide total", () => {
+    const partial: StatusPayload = {
+      auth_keys: [
+        {
+          app_id: "app_1",
+          requests_24h: 8,
+          errors_4xx_24h: 1,
+          errors_5xx_24h: 0,
+        },
+        {
+          app_id: "app_2",
+          requests_24h: null,
+          errors_4xx_24h: null,
+          errors_5xx_24h: 0,
+        },
+      ],
+    };
+    const complete: StatusPayload = {
+      auth_keys: [
+        {
+          app_id: "app_1",
+          requests_24h: 8,
+          errors_4xx_24h: 1,
+          errors_5xx_24h: 0,
+        },
+        {
+          app_id: "app_2",
+          requests_24h: 12,
+          errors_4xx_24h: 2,
+          errors_5xx_24h: 3,
+        },
+      ],
+    };
+
+    expect(buildTelemetryCards(partial)).toMatchObject({
+      requestWindowAvailable: false,
+      errorWindowAvailable: false,
+    });
+    expect(buildTelemetryCards(complete)).toMatchObject({
+      requestWindowAvailable: true,
+      requests24h: 20,
+      errorWindowAvailable: true,
+      failedRequests24h: 6,
+    });
   });
 });

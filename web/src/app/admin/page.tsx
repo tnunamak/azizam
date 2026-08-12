@@ -50,6 +50,12 @@ import {
   type User,
 } from "@/lib/api";
 import {
+  appCredentialFacts,
+  buildTelemetryCards,
+  isActiveAppCredentialFor,
+  isActiveKey,
+} from "./overview-derivations";
+import {
   adminAppHref,
   adminAuditHref,
   adminServiceHref,
@@ -92,10 +98,6 @@ function actionLabel(action: string): string {
   const parts = action.split(".");
   const last = parts[parts.length - 1] ?? action;
   return last.charAt(0).toUpperCase() + last.slice(1).replace(/_/g, " ");
-}
-
-function isActiveKey(credential: Credential): boolean {
-  return credential.revoked_at === null;
 }
 
 function serviceList(
@@ -189,52 +191,8 @@ function statusFreshness(generatedAt: number | undefined): string {
   return `Updated ${Math.floor(ageSeconds / 86_400)}d ago`;
 }
 
-function buildTelemetryCards(status: StatusPayload | undefined) {
-  const requestSeries = sumSeries(
-    status?.metrics?.trends?.per_key_request_series_1h,
-  );
-  const requests24h = (status?.auth_keys ?? []).reduce((sum, key) => {
-    const value = key.requests_24h;
-    return (
-      sum + (typeof value === "number" && Number.isFinite(value) ? value : 0)
-    );
-  }, 0);
-  const requestWindowAvailable = (status?.auth_keys ?? []).some(
-    (key) =>
-      typeof key.requests_24h === "number" && Number.isFinite(key.requests_24h),
-  );
-  const failedRequests24h = (status?.auth_keys ?? []).reduce((sum, key) => {
-    const clientErrors = key.errors_4xx_24h;
-    const serverErrors = key.errors_5xx_24h;
-    return (
-      sum +
-      (typeof clientErrors === "number" && Number.isFinite(clientErrors)
-        ? clientErrors
-        : 0) +
-      (typeof serverErrors === "number" && Number.isFinite(serverErrors)
-        ? serverErrors
-        : 0)
-    );
-  }, 0);
-  const errorWindowAvailable = (status?.auth_keys ?? []).some(
-    (key) =>
-      (typeof key.errors_4xx_24h === "number" &&
-        Number.isFinite(key.errors_4xx_24h)) ||
-      (typeof key.errors_5xx_24h === "number" &&
-        Number.isFinite(key.errors_5xx_24h)),
-  );
-
-  return {
-    requestSeries,
-    requests24h,
-    requestWindowAvailable,
-    failedRequests24h,
-    errorWindowAvailable,
-  };
-}
-
-function userLabel(user: User | undefined): string {
-  return user?.display_name ?? user?.email ?? "Unknown user";
+function userLabel(user: User): string {
+  return user.display_name ?? user.email ?? user.name ?? "Unnamed user";
 }
 
 function auditActorLabel(
@@ -283,7 +241,7 @@ function AttentionSection({
     );
   }
   if (loading) {
-    return null;
+    return <Skeleton className="h-20 w-full" />;
   }
   if (items.length === 0) return null;
 
@@ -316,12 +274,16 @@ function AttentionSection({
 function AppsSection({
   apps,
   credentialsData,
+  credentialsUnavailable,
   usersById,
+  usersUnavailable,
   statusData,
 }: {
   apps: Awaited<ReturnType<typeof api.apps.list>>;
   credentialsData: Credential[] | undefined;
+  credentialsUnavailable: boolean;
   usersById: Map<string, User>;
+  usersUnavailable: boolean;
   statusData: StatusPayload | undefined;
 }) {
   if (apps.length === 0) {
@@ -355,25 +317,10 @@ function AppsSection({
       </div>
       <div className="vf-activity-feed">
         {apps.slice(0, 5).map((app) => {
-          const appActiveKeys = (credentialsData ?? []).filter(
-            (c) =>
-              c.subject_kind === "app" &&
-              c.app_id === app.id &&
-              c.revoked_at === null,
-          ).length;
+          const credentialFacts = appCredentialFacts(credentialsData, app.id);
           const t = statusData?.auth_keys?.find((k) => k.app_id === app.id);
           const lastSeenTs = t?.last_seen ? Math.floor(t.last_seen) : null;
-          const credTs = (credentialsData ?? [])
-            .filter(
-              (c) =>
-                c.subject_kind === "app" &&
-                c.app_id === app.id &&
-                c.last_used_at !== null,
-            )
-            .reduce<number | null>((best, c) => {
-              const v = c.last_used_at!;
-              return best === null || v > best ? v : best;
-            }, null);
+          const credTs = credentialFacts?.lastUsedAt ?? null;
           const ts = lastSeenTs ?? credTs;
           const lastUsedLabel = ts
             ? (() => {
@@ -397,11 +344,20 @@ function AppsSection({
               }
               owner={
                 app.owner_user_id
-                  ? userLabel(usersById.get(app.owner_user_id))
+                  ? usersUnavailable
+                    ? "Owner unavailable"
+                    : (() => {
+                        const owner = usersById.get(app.owner_user_id!);
+                        return owner ? userLabel(owner) : "Owner unavailable";
+                      })()
                   : undefined
               }
               profile={app.effective_profile_name}
-              keyCount={appActiveKeys}
+              keyCount={
+                credentialsUnavailable
+                  ? undefined
+                  : credentialFacts?.activeKeyCount
+              }
               lastUsedLabel={lastUsedLabel}
               status={app.disabled_at !== null ? "warn" : "ok"}
               statusLabel={app.disabled_at !== null ? "disabled" : "active"}
@@ -420,12 +376,16 @@ function AppsSection({
 function RecentActivitySection({
   entries,
   usersById,
+  usersUnavailable,
+  onRetryUsers,
   loading,
   error,
   onRetry,
 }: {
   entries: AuditEntry[] | undefined;
   usersById: Map<string, User>;
+  usersUnavailable: boolean;
+  onRetryUsers: () => void;
   loading: boolean;
   error: boolean;
   onRetry: () => void;
@@ -449,11 +409,11 @@ function RecentActivitySection({
   if (loading) {
     return (
       <div className="rounded-md border border-[var(--vf-border)]">
-        <EmptyOperationalState
-          title="Loading activity"
-          detail="Recent gateway events will appear here."
-          tone="info"
-        />
+        <div className="flex flex-col gap-2 p-3">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+        </div>
       </div>
     );
   }
@@ -468,29 +428,43 @@ function RecentActivitySection({
     );
   }
   return (
-    <div className="overflow-hidden rounded-md border border-[var(--vf-border)]">
-      <div className="vf-activity-feed">
-        {entries.map((entry) => {
-          const actor = auditActorLabel(entry, usersById);
-          const targetName =
-            entry.metadata && typeof entry.metadata["name"] === "string"
-              ? entry.metadata["name"]
-              : undefined;
-          return (
-            <ActivityFeedRow
-              key={entry.id}
-              href={
-                adminTargetHref(entry.target_kind, entry.target_id) ??
-                adminAuditHref(entry.id)
-              }
-              tone="info"
-              title={actionLabel(entry.action)}
-              detail={targetName ?? undefined}
-              actor={actor !== "Unknown user" ? actor : undefined}
-              time={<RelativeTime ts={entry.created_at} />}
-            />
-          );
-        })}
+    <div className="flex flex-col gap-3">
+      {usersUnavailable && (
+        <IncidentBanner
+          tone="bad"
+          title="Couldn't load people for activity"
+          detail="Activity remains visible, but user attribution is unavailable."
+          actions={
+            <Button variant="ghost" size="sm" onClick={onRetryUsers}>
+              Retry
+            </Button>
+          }
+        />
+      )}
+      <div className="overflow-hidden rounded-md border border-[var(--vf-border)]">
+        <div className="vf-activity-feed">
+          {entries.map((entry) => {
+            const actor = auditActorLabel(entry, usersById);
+            const targetName =
+              entry.metadata && typeof entry.metadata["name"] === "string"
+                ? entry.metadata["name"]
+                : undefined;
+            return (
+              <ActivityFeedRow
+                key={entry.id}
+                href={
+                  adminTargetHref(entry.target_kind, entry.target_id) ??
+                  adminAuditHref(entry.id)
+                }
+                tone="info"
+                title={actionLabel(entry.action)}
+                detail={targetName ?? undefined}
+                actor={actor !== "Unknown user" ? actor : undefined}
+                time={<RelativeTime ts={entry.created_at} />}
+              />
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -521,7 +495,12 @@ export default function AdminOverviewPage() {
     queryFn: () => api.audit.list({ limit: 8 }).then((r) => r.records),
   });
 
-  const { data: usersData, isPending: usersPending } = useQuery({
+  const {
+    data: usersData,
+    isPending: usersPending,
+    isError: usersError,
+    refetch: refetchUsers,
+  } = useQuery({
     queryKey: queryKeys.users,
     queryFn: api.users.list,
   });
@@ -533,7 +512,11 @@ export default function AdminOverviewPage() {
     queryKey: queryKeys.apps,
     queryFn: api.apps.list,
   });
-  const { data: credentialsData } = useQuery({
+  const {
+    data: credentialsData,
+    isError: credentialsError,
+    refetch: refetchCredentials,
+  } = useQuery({
     queryKey: queryKeys.credentials,
     queryFn: api.credentials.list,
   });
@@ -570,8 +553,21 @@ export default function AdminOverviewPage() {
     () => (credentialsData ?? []).filter(isActiveKey),
     [credentialsData],
   );
+  const hasFirstAppCredential = useMemo(
+    () =>
+      firstApp !== null &&
+      (credentialsData ?? []).some((credential) =>
+        isActiveAppCredentialFor(credential, firstApp.id),
+      ),
+    [credentialsData, firstApp],
+  );
   const telemetry = useMemo(
-    () => buildTelemetryCards(statusData),
+    () => ({
+      ...buildTelemetryCards(statusData),
+      requestSeries: sumSeries(
+        statusData?.metrics?.trends?.per_key_request_series_1h,
+      ),
+    }),
     [statusData],
   );
 
@@ -580,11 +576,11 @@ export default function AdminOverviewPage() {
     appsData === undefined ||
     credentialsData === undefined ||
     apps.length === 0 ||
-    activeKeys.length === 0 ||
+    !hasFirstAppCredential ||
     enabledServices === 0;
 
   const attention = overview?.attention ?? [];
-  const hasAttention = overviewError || attention.length > 0;
+  const hasAttention = overviewPending || overviewError || attention.length > 0;
 
   useEffect(() => {
     setBaseUrl(`${window.location.origin}/v1`);
@@ -607,6 +603,7 @@ export default function AdminOverviewPage() {
 
   return (
     <div className="flex flex-col gap-5">
+      <h1 className="sr-only">Overview</h1>
       {/* Page header */}
       <SectionActionHeader
         kicker="operator"
@@ -641,12 +638,7 @@ export default function AdminOverviewPage() {
                 ? "—"
                 : `${enabledServices}/${services.length}`,
             detail: "enabled",
-            tone:
-              services.length > 0 && enabledServices < services.length
-                ? "warn"
-                : services.length > 0
-                  ? "ok"
-                  : "neutral",
+            tone: "neutral",
           },
         ]}
         action={
@@ -702,7 +694,7 @@ export default function AdminOverviewPage() {
               id: "mint-key",
               label: "Generate an API key",
               detail: "Mint a key for the app so callers can authenticate.",
-              complete: activeKeys.length > 0,
+              complete: hasFirstAppCredential,
               action: firstApp ? (
                 <Button asChild variant="ghost" size="sm">
                   <Link href={adminAppHref(firstApp.id)}>Create key</Link>
@@ -752,7 +744,7 @@ export default function AdminOverviewPage() {
                     value: formatCompact(telemetry.failedRequests24h),
                     detail: "last 24h",
                     tone:
-                      telemetry.failedRequests24h > 0
+                      telemetry.failedRequests24h! > 0
                         ? ("warn" as const)
                         : ("neutral" as const),
                   },
@@ -763,9 +755,9 @@ export default function AdminOverviewPage() {
       )}
 
       {/* Two-column body: left = apps table, right = activity feed */}
-      <div className="vf-overview-body">
+      <div className="grid gap-5 min-[980px]:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.85fr)]">
         {/* LEFT — apps table */}
-        <div className="vf-overview-left">
+        <div className="min-w-0">
           <section>
             <SectionActionHeader
               title="Your apps"
@@ -819,10 +811,52 @@ export default function AdminOverviewPage() {
                       }
                     />
                   )}
+                  {credentialsError && (
+                    <IncidentBanner
+                      tone="bad"
+                      title={
+                        credentialsData === undefined
+                          ? "Couldn't load app key facts"
+                          : "App key facts may be stale"
+                      }
+                      detail="Key counts and credential last-used times are unavailable until this retry succeeds."
+                      actions={
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void refetchCredentials()}
+                        >
+                          Retry
+                        </Button>
+                      }
+                    />
+                  )}
+                  {usersError && (
+                    <IncidentBanner
+                      tone="bad"
+                      title={
+                        usersData === undefined
+                          ? "Couldn't load app owners"
+                          : "App owner details may be stale"
+                      }
+                      detail="Owner names are unavailable until this retry succeeds."
+                      actions={
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void refetchUsers()}
+                        >
+                          Retry
+                        </Button>
+                      }
+                    />
+                  )}
                   <AppsSection
                     apps={apps}
                     credentialsData={credentialsData}
+                    credentialsUnavailable={credentialsData === undefined}
                     usersById={usersById}
+                    usersUnavailable={usersData === undefined}
                     statusData={statusData}
                   />
                 </div>
@@ -838,7 +872,7 @@ export default function AdminOverviewPage() {
         </div>
 
         {/* RIGHT — activity feed */}
-        <div className="vf-overview-right">
+        <div className="min-w-0">
           <section>
             <SectionActionHeader
               title="Recent activity"
@@ -858,6 +892,8 @@ export default function AdminOverviewPage() {
                 loading={auditPending || usersPending}
                 error={auditError}
                 onRetry={() => void refetchAudit()}
+                usersUnavailable={usersError && usersData === undefined}
+                onRetryUsers={() => void refetchUsers()}
               />
             </div>
           </section>
@@ -865,7 +901,7 @@ export default function AdminOverviewPage() {
       </div>
 
       {/* Bottom row: Base URL (left) + Health/Services (right) */}
-      <div className="vf-overview-bottom">
+      <div className="grid gap-5 min-[980px]:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.85fr)]">
         {/* Base URL */}
         <section id="base-url">
           <SectionActionHeader
@@ -887,7 +923,7 @@ export default function AdminOverviewPage() {
         <section>
           <SectionActionHeader title="API Health" />
           <div className="mt-3 flex flex-col gap-3">
-            <div className="vf-health-summary">
+            <div className="flex flex-col gap-1 rounded-md border border-[var(--vf-border)] bg-[var(--vf-surface-1)] px-3 py-2">
               <StatusDotLabel
                 tone={health.tone}
                 label={health.label}
@@ -911,7 +947,12 @@ export default function AdminOverviewPage() {
                   </Button>
                 }
               />
-            ) : registry !== undefined && services.length === 0 ? (
+            ) : registry === undefined ? (
+              <div className="flex flex-col gap-2">
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            ) : services.length === 0 ? (
               <EmptyOperationalState
                 title="No services configured."
                 detail="Add a service before the gateway can route requests."
