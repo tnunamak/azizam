@@ -1,15 +1,19 @@
 import type { ComponentPropsWithoutRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { axe } from "jest-axe";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const statusState = vi.hoisted(() => ({
   load: async (): Promise<any> => ({ current_health: null }),
+  search: "",
+  push: vi.fn(),
+  replace: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(statusState.search),
+  useRouter: () => ({ push: statusState.push, replace: statusState.replace }),
 }));
 
 vi.mock("next/link", () => ({
@@ -74,6 +78,9 @@ async function expectPageHasHeadingOne() {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  statusState.search = "";
+  statusState.push.mockReset();
+  statusState.replace.mockReset();
 });
 
 describe("admin Status", () => {
@@ -83,27 +90,22 @@ describe("admin Status", () => {
 
     expect(screen.getByText("Checking current gateway health.")).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "Status", level: 1 }),
+      screen.getByRole("heading", { name: "System Status", level: 1 }),
     ).toBeVisible();
     expect(document.querySelectorAll("h1")).toHaveLength(1);
     await expectPageHasHeadingOne();
   });
 
-  it("uses one factual metric strip for a healthy projection", async () => {
+  it("uses the shared health projection as the first-viewport state", async () => {
     statusState.load = async () => ({ current_health: health() });
     renderStatus();
 
     expect(
       await screen.findByText("All configured services are available"),
     ).toBeVisible();
-    const strip = document.querySelector<HTMLElement>(".vf-metric-strip");
-    if (!strip) throw new Error("Expected the Status metric strip");
-    expect(within(strip).getByText("Observed")).toBeVisible();
-    expect(within(strip).getByText("Routable")).toBeVisible();
-    expect(within(strip).getByText("Needs attention")).toBeVisible();
-    expect(
-      within(strip).getAllByText("1 service", { exact: true }),
-    ).toHaveLength(2);
+    expect(screen.getByText("Observed")).toBeVisible();
+    expect(screen.getByText("Needs attention")).toBeVisible();
+    expect(screen.getByText("No current advisories")).toBeVisible();
     expect(screen.getByText("Gateway API")).toBeVisible();
   });
 
@@ -143,7 +145,7 @@ describe("admin Status", () => {
 
     expect(await screen.findByText("Could not load status")).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "Status", level: 1 }),
+      screen.getByRole("heading", { name: "System Status", level: 1 }),
     ).toBeVisible();
     expect(document.querySelectorAll("h1")).toHaveLength(1);
     await expectPageHasHeadingOne();
@@ -151,5 +153,105 @@ describe("admin Status", () => {
     expect(
       await screen.findByText("All configured services are available"),
     ).toBeVisible();
+  });
+
+  it("keeps no-history treatment scalar and does not render a decorative chart", async () => {
+    statusState.load = async () => ({
+      current_health: health(),
+      backends: [
+        {
+          service_id: "gateway",
+          latency_ms: 123,
+          history: { latency_series: [[1, 120]], status_series: [[1, 1]] },
+        },
+      ],
+    });
+    statusState.search = "service=gateway";
+    renderStatus();
+
+    expect(
+      (await screen.findAllByText("Latency: 123 ms")).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("No history available").length).toBeGreaterThan(
+      0,
+    );
+    expect(document.querySelector(".vf-chart-sparkline")).toBeNull();
+  });
+
+  it("uses the stable service id for diagnostic and configuration navigation", async () => {
+    statusState.load = async () => ({ current_health: health() });
+    statusState.search = "service=gateway";
+    renderStatus();
+
+    const configurations = await screen.findAllByRole("link", {
+      name: "Open Services configuration",
+    });
+    expect(configurations).not.toHaveLength(0);
+    for (const configuration of configurations) {
+      expect(configuration).toHaveAttribute(
+        "href",
+        "/admin/services?service=gateway",
+      );
+    }
+    expect(
+      screen.getByRole("button", { name: /Gateway API/i }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("selects a service with its stable id rather than its display name", async () => {
+    statusState.load = async () => ({ current_health: health() });
+    renderStatus();
+
+    const service = await screen.findByRole("button", { name: /Gateway API/i });
+    service.click();
+    expect(statusState.push).toHaveBeenCalledWith(
+      "/admin/status?service=gateway",
+    );
+  });
+
+  it("retains known facts and exposes Retry after a refresh failure", async () => {
+    statusState.load = async () => ({ current_health: health() });
+    renderStatus();
+    await screen.findByText("All configured services are available");
+    statusState.load = async () => {
+      throw new Error("offline");
+    };
+
+    screen.getByRole("button", { name: "Refresh" }).click();
+    expect(await screen.findByText("Showing last known status")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(screen.getByText("Gateway API")).toBeVisible();
+  });
+
+  it("renders chart semantics only for three real samples", async () => {
+    statusState.load = async () => ({
+      current_health: health(),
+      backends: [
+        {
+          service_id: "gateway",
+          history: {
+            latency_series: [
+              [1, 100],
+              [2, 110],
+              [3, 120],
+            ],
+            status_series: [
+              [1, 1],
+              [2, 0.5],
+              [3, 1],
+            ],
+          },
+        },
+      ],
+    });
+    statusState.search = "service=gateway";
+    renderStatus();
+
+    expect(
+      await screen.findAllByRole("group", { name: "Latency observations" }),
+    ).not.toHaveLength(0);
+    expect(
+      screen.getAllByRole("group", { name: "Availability observations" }),
+    ).not.toHaveLength(0);
   });
 });

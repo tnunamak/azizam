@@ -117,7 +117,9 @@ test("shell preserves all destinations, focus origins, target size, and containm
   for (const width of responsiveWidths) {
     await page.setViewportSize({ width, height: 812 });
     await page.goto("/ui/admin/status/");
-    await expect(page.getByRole("heading", { name: "Status" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "System Status" }),
+    ).toBeVisible();
 
     const overflow = await page.evaluate(() => ({
       document:
@@ -179,26 +181,22 @@ test("Status keeps healthy, degraded, unavailable, loading, and error projection
     ["error", "Could not load status"],
   ] as const) {
     await openStatus(page, mode);
-    await expect(
-      page.locator(".vf-incident-banner-title").filter({ hasText: label }),
-    ).toBeVisible();
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
 
   await openStatus(page, "loading");
   await expect(
-    page.getByRole("heading", { name: "Status", level: 1 }),
+    page.getByRole("heading", { name: "System Status", level: 1 }),
   ).toBeVisible();
   await expect(page.locator("h1")).toHaveCount(1);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
   await openStatus(page, "error");
   await expect(
-    page
-      .locator(".vf-incident-banner-title")
-      .filter({ hasText: "Could not load status" }),
+    page.getByText("Could not load status", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Status", level: 1 }),
+    page.getByRole("heading", { name: "System Status", level: 1 }),
   ).toBeVisible();
   await expect(page.locator("h1")).toHaveCount(1);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
