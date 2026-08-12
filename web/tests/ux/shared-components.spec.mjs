@@ -82,7 +82,7 @@ test("mobile cards use a sibling primary control and empty advisories remain abs
 });
 
 test("browser evidence mounts shared React output instead of a hand-authored DOM mirror", () => {
-  assert.match(browserFixture, /import \{ DataTable/);
+  assert.match(browserFixture, /import \{[\s\S]*DataTable/);
   assert.match(browserFixture, /<DataTable/);
   assert.match(browserTest, /p1v-fixture/);
   assert.match(browserTest, /scrollWidth/);

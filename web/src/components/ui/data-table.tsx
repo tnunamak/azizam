@@ -37,9 +37,8 @@ export interface DataTableProps<T> {
   /** Accessible table caption (visually hidden). */
   label?: string;
   className?: string;
-  /** Called by the desktop row body and the mobile card's primary button (not
-   * the row-menu or semantic child controls). Desktop rows support Enter and
-   * Space. */
+  /** Called by the desktop primary action and the mobile card's primary button
+   * (not row-menu or semantic child controls). */
   onRowClick?: (row: T) => void;
   /** Accessible name for the mobile card's real primary action. */
   mobileRowActionLabel?: (row: T) => string;
@@ -92,6 +91,11 @@ export function DataTable<T>({
           {label && <caption className="sr-only">{label}</caption>}
           <thead>
             <tr>
+              {onRowClick && (
+                <th scope="col" className={cn(HEADER_CELL, "w-14")}>
+                  <span className="sr-only">Open</span>
+                </th>
+              )}
               {columns.map((column) => (
                 <th
                   key={column.id}
@@ -118,6 +122,11 @@ export function DataTable<T>({
                     key={i}
                     className="border-vf-border/60 border-b last:border-b-0"
                   >
+                    {onRowClick && (
+                      <td className="px-3 py-3">
+                        <Skeleton className="size-8" />
+                      </td>
+                    )}
                     {columns.map((column) => (
                       <td key={column.id} className="px-3 py-3">
                         <Skeleton className="h-4 w-24" />
@@ -135,22 +144,20 @@ export function DataTable<T>({
                     key={rowKey(row)}
                     className={cn(
                       "border-vf-border/60 hover:bg-vf-row-hover border-b transition-colors last:border-b-0",
-                      onRowClick && "cursor-pointer",
                     )}
-                    {...(onRowClick
-                      ? {
-                          tabIndex: 0,
-                          role: "button",
-                          onClick: () => onRowClick(row),
-                          onKeyDown: (e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              onRowClick(row);
-                            }
-                          },
-                        }
-                      : {})}
                   >
+                    {onRowClick && (
+                      <td className="px-3 py-2 align-middle">
+                        <button
+                          type="button"
+                          className="vf-touch-target text-vf-small text-vf-accent hover:bg-vf-row-hover rounded-vf-sm px-2 font-medium"
+                          onClick={() => onRowClick(row)}
+                          aria-label={mobileRowActionLabel?.(row) ?? "Open row"}
+                        >
+                          Open
+                        </button>
+                      </td>
+                    )}
                     {columns.map((column) => (
                       <td
                         key={column.id}
@@ -163,10 +170,7 @@ export function DataTable<T>({
                       </td>
                     ))}
                     {rowMenu && (
-                      <td
-                        className="px-3 py-2 text-right align-middle"
-                        onClick={(e) => e.stopPropagation()}
-                      >
+                      <td className="px-3 py-2 text-right align-middle">
                         {rowMenu(row)}
                       </td>
                     )}

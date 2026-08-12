@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 
-import { DataTable, type DataTableColumn } from "@/components/ui";
+import {
+  DataTable,
+  OverflowMenu,
+  OverflowMenuItem,
+  type DataTableColumn,
+} from "@/components/ui";
 
 type FixtureRow = {
   id: string;
@@ -27,7 +32,11 @@ export function SharedPrimitivesBrowserFixture() {
       id: "name",
       header: "Name",
       cell: (row) => (
-        <button type="button" onClick={() => setEvent(`${row.id}-head`)}>
+        <button
+          type="button"
+          className="vf-touch-target"
+          onClick={() => setEvent(`${row.id}-head`)}
+        >
           Nested action: {row.name}
         </button>
       ),
@@ -38,6 +47,7 @@ export function SharedPrimitivesBrowserFixture() {
       cell: (row) => (
         <a
           href={`#${row.id}`}
+          className="vf-touch-target"
           onClick={(event) => {
             event.preventDefault();
             setEvent(`${row.id}-link`);
@@ -51,6 +61,7 @@ export function SharedPrimitivesBrowserFixture() {
 
   return (
     <section data-testid="shared-primitives-stage" className="min-w-0">
+      <h1>Shared primitives fixture</h1>
       <p data-testid="event-status" className="break-all">
         {event}
       </p>
@@ -62,9 +73,11 @@ export function SharedPrimitivesBrowserFixture() {
         mobileRowActionLabel={(row) => `Open ${row.name}`}
         onRowClick={(row) => setEvent(`${row.id}-primary`)}
         rowMenu={(row) => (
-          <button type="button" onClick={() => setEvent(`${row.id}-menu`)}>
-            More actions for {row.name}
-          </button>
+          <OverflowMenu label={`More actions for ${row.name}`}>
+            <OverflowMenuItem onSelect={() => setEvent(`${row.id}-menu`)}>
+              Menu action for {row.name}
+            </OverflowMenuItem>
+          </OverflowMenu>
         )}
       />
     </section>

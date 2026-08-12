@@ -24,7 +24,12 @@ export function OverflowMenu({
   return (
     <DropdownMenuPrimitive.Root>
       <DropdownMenuPrimitive.Trigger asChild>
-        <IconButton aria-label={label} variant="ghost" size="sm">
+        <IconButton
+          aria-label={label}
+          variant="ghost"
+          size="sm"
+          className="vf-touch-target"
+        >
           <DotsIcon className="size-4" />
         </IconButton>
       </DropdownMenuPrimitive.Trigger>

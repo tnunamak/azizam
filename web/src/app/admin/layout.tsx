@@ -301,12 +301,18 @@ function MobileTopBar() {
   return (
     <MobileTopRail
       className="min-[980px]:hidden"
-      brand={<BrandLockup href="/admin" kicker="console" />}
+      brand={
+        <BrandLockup
+          href="/admin"
+          kicker="console"
+          className="vf-touch-target"
+        />
+      }
       account={
         <div className="flex items-center gap-2">
           <Link
             href={adminStatusHref()}
-            className="text-vf-text min-w-0 no-underline"
+            className="vf-touch-target text-vf-text min-w-0 no-underline"
           >
             <StatusCluster
               tone={statusTone}
@@ -316,7 +322,11 @@ function MobileTopBar() {
           </Link>
           <MobileNavigationSheet
             trigger={
-              <IconButton aria-label="Open navigation" variant="ghost">
+              <IconButton
+                aria-label="Open navigation"
+                variant="ghost"
+                className="vf-touch-target"
+              >
                 <MenuIcon className="size-5" />
               </IconButton>
             }

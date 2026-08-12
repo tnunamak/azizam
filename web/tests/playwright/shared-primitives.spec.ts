@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 const widths = [639, 640, 767, 768, 979, 980] as const;
 
@@ -82,11 +83,80 @@ test("actual React shell preserves native card controls over the primary overlay
   await page
     .getByRole("button", { name: "More actions for Actionable card" })
     .click();
+  await page
+    .getByRole("menuitem", { name: "Menu action for Actionable card" })
+    .click();
   await expect(status).toHaveText("actionable-menu");
   await page
     .getByRole("button", { name: "Open Actionable card" })
     .click({ position: { x: 4, y: 4 } });
   await expect(status).toHaveText("actionable-primary");
+});
+
+test("desktop table has separate keyboard actions and no nested interactions", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 980, height: 812 });
+  await page.goto("/ui/admin/status/p1v-fixture/");
+  const status = page.getByTestId("event-status");
+
+  const primary = page.getByRole("button", { name: "Open Actionable card" });
+  await primary.focus();
+  await page.keyboard.press("Enter");
+  await expect(status).toHaveText("actionable-primary");
+  await page.keyboard.press("Space");
+  await expect(status).toHaveText("actionable-primary");
+
+  const cellAction = page.getByRole("button", {
+    name: "Nested action: Actionable card",
+  });
+  await cellAction.focus();
+  await page.keyboard.press("Enter");
+  await expect(status).toHaveText("actionable-head");
+
+  const link = page
+    .getByRole("link", { name: /this-is-an-intentionally-long-route-value/ })
+    .first();
+  await link.focus();
+  await page.keyboard.press("Enter");
+  await expect(status).toHaveText("actionable-link");
+
+  const menu = page.getByRole("button", {
+    name: "More actions for Actionable card",
+  });
+  await menu.focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await expect(status).toHaveText("actionable-menu");
+
+  const axe = await new AxeBuilder({ page })
+    .include("[data-testid='shared-primitives-stage']")
+    .analyze();
+  expect(axe.violations).toEqual([]);
+});
+
+test("mobile shell and card controls meet the 44px target baseline", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 639, height: 812 });
+  await page.goto("/ui/admin/status/p1v-fixture/");
+  const controls = [
+    page.getByRole("link", { name: /vivid\.fish console/i }),
+    page.getByRole("link", { name: /checking live status/i }),
+    page.getByRole("button", { name: "Open navigation" }),
+    page.getByRole("button", { name: "Open Actionable card" }),
+    page.getByRole("button", { name: "Nested action: Actionable card" }),
+    page
+      .getByRole("link", { name: /this-is-an-intentionally-long-route-value/ })
+      .first(),
+    page.getByRole("button", { name: "More actions for Actionable card" }),
+  ];
+  for (const control of controls) {
+    const box = await control.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
 });
 
 test("actual React shell has containment and the exact 980px visibility switch", async ({
