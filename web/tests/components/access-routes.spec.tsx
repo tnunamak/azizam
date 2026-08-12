@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { ConfirmDialog } from "@/components/ui";
 import AdminAppsPage from "@/app/admin/apps/page";
 import AdminProfilesPage from "@/app/admin/profiles/page";
-import type { App, Profile, SimulateResult } from "@/lib/api";
+import type { App, PolicyEditorContract, Profile, SimulateResult } from "@/lib/api";
 
 const searchParams = vi.hoisted(() => new URLSearchParams());
 const apiMock = vi.hoisted(() => ({
@@ -31,6 +31,7 @@ const apiMock = vi.hoisted(() => ({
   policy: {
     simulate: vi.fn(),
   },
+  policyEditor: { get: vi.fn() },
 }));
 
 vi.mock("next/navigation", () => ({
@@ -104,6 +105,19 @@ function allowedResult(profileId: string): SimulateResult {
   };
 }
 
+function policyEditor(): PolicyEditorContract {
+  const dynamic = (id: string) => ({ id, label: id, description: null, available: true });
+  return {
+    schema_version: 1,
+    profile: {
+      create: { profile: { fallback: { cloud_allowed: false }, native_passthrough: { enabled: false, allowed_backends: [], allowed_operations: [], audit: true }, status_visibility: { level: "basic" }, target_policy: { visibility: "catalog", activation: "may_activate" } } },
+      set_semantics: { omitted: "no_opinion", empty: "deny_all" },
+      choices: { protocols: [dynamic("extension-api")], intents: [dynamic("extension.run")], workflows: [dynamic("extension.workflow")], models: [dynamic("extension-model")], exposure: [], trust_tiers: [], resource_tiers: [], tags: [dynamic("extension-tag")], status_visibility: [{ id: "basic", label: "Basic", description: null }], target_visibility: [], target_activation: [] },
+    },
+    runtime_mappings: { source_kinds: [], fallback_profile: { id: "fallback-from-server", label: "Gateway default", description: null, assignable: true } },
+  };
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -115,6 +129,13 @@ beforeEach(() => {
     configurable: true,
     value: vi.fn().mockReturnValue({ matches: true }),
   });
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  apiMock.policyEditor.get.mockResolvedValue(policyEditor());
 });
 
 describe("access route behavior", () => {
@@ -227,6 +248,27 @@ describe("access route behavior", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Something went wrong");
     expect(alert).toHaveFocus();
+  });
+
+  it("submits a data-discovered policy ID without a React catalog entry", async () => {
+    const user = userEvent.setup();
+    apiMock.profiles.create.mockResolvedValue(profile({ id: "extension-profile" }));
+    apiMock.profiles.list.mockResolvedValue([]);
+    apiMock.apps.list.mockResolvedValue([]);
+    apiMock.runtimeProfileMappings.list.mockResolvedValue([]);
+
+    renderWithQuery(<AdminProfilesPage />);
+    await user.click(await screen.findByRole("button", { name: "Create profile" }));
+    await user.type(screen.getByLabelText(/Name/), "Extension profile");
+    await user.click(screen.getByRole("button", { name: /Customize access/ }));
+    await user.click(screen.getAllByLabelText("Restrict")[0]);
+    await user.click(screen.getByText("extension-api"));
+    await user.click(screen.getByRole("button", { name: "Create profile" }));
+
+    await waitFor(() => expect(apiMock.profiles.create).toHaveBeenCalledOnce());
+    expect(apiMock.profiles.create).toHaveBeenCalledWith(expect.objectContaining({
+      profile: expect.objectContaining({ protocols: ["extension-api"] }),
+    }));
   });
 
   it("selects an app row from the keyboard with noninteractive row content", async () => {
