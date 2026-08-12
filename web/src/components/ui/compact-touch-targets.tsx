@@ -18,7 +18,8 @@ export function CompactTouchTargets({ children }: { children: ReactNode }) {
 }
 
 export function useCompactTouchTargetClass(): string | undefined {
-  return useContext(CompactTouchTargetsContext)
+  const compact = useContext(CompactTouchTargetsContext);
+  return compact
     ? "min-h-11 min-w-11 min-[980px]:min-h-0 min-[980px]:min-w-0"
     : undefined;
 }
