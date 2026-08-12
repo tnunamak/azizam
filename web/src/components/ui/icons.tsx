@@ -3,6 +3,8 @@
 
 import type { SVGProps } from "react";
 
+export type StatusIconTone = "ok" | "warn" | "bad" | "info" | "neutral";
+
 function base(props: SVGProps<SVGSVGElement>): SVGProps<SVGSVGElement> {
   return {
     viewBox: "0 0 16 16",
@@ -141,6 +143,30 @@ export function MenuIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base(props)}>
       <path d="M2.5 5h11M2.5 8h11M2.5 11h11" />
+    </svg>
+  );
+}
+
+/** Generic operational-state glyph. Pair it with visible state text whenever
+ * it communicates meaning; the tone class is token-derived in brand CSS. */
+export function StatusIcon({
+  tone = "neutral",
+  label,
+  className,
+  ...props
+}: SVGProps<SVGSVGElement> & { tone?: StatusIconTone; label?: string }) {
+  return (
+    <svg
+      {...base({
+        ...props,
+        className: `vf-status-icon vf-status-icon-${tone}${className ? ` ${className}` : ""}`,
+        "aria-hidden": label ? undefined : true,
+        "aria-label": label,
+        role: label ? "img" : undefined,
+      })}
+    >
+      <circle cx="8" cy="8" r="5.25" />
+      <path d="M8 5.25v3.1M8 10.75h.01" />
     </svg>
   );
 }

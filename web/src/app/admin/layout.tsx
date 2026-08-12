@@ -25,6 +25,7 @@ import {
   IconButton,
   MenuIcon,
   type MobileNavItem,
+  MobileTabAction,
   MobileTabBar,
   MobileTopRail,
   OverviewIcon,
@@ -33,6 +34,7 @@ import {
   SettingsIcon,
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -330,19 +332,22 @@ function MobileTopBar() {
 
 function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const mobileTabs: MobileNavItem[] = NAV_ITEMS.slice(0, 4).map((item) => ({
-    label: item.label === "Apps & keys" ? "Apps" : item.label,
-    href: item.href,
-    icon: <item.Icon />,
-  }));
+  const primaryMobileNav: MobileNavItem[] = NAV_ITEMS.slice(0, 4).map(
+    (item) => ({
+      id: item.href,
+      label: item.label === "Apps & keys" ? "Apps" : item.label,
+      href: item.href,
+      icon: <item.Icon />,
+      current:
+        item.href === "/admin"
+          ? pathname === "/admin" || pathname === "/admin/"
+          : pathname === item.href || pathname.startsWith(`${item.href}/`),
+    }),
+  );
   const moreItems = NAV_ITEMS.slice(4);
-  mobileTabs.push({
-    label: "More",
-    href: "#more",
-    icon: <MenuIcon />,
-    active: moreItems.some((item) => pathname.startsWith(item.href)),
-    trigger: (tab) => <MobileNavigationSheet trigger={tab} />,
-  });
+  const moreIsCurrent = moreItems.some(
+    (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
+  );
 
   return (
     <div className="vf-app vf-console-shell relative overflow-x-hidden">
@@ -364,7 +369,22 @@ function AdminShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
 
-      <MobileTabBar items={mobileTabs} />
+      <MobileTabBar
+        items={primaryMobileNav}
+        more={
+          <MobileNavigationSheet
+            trigger={
+              <MobileTabAction
+                icon={<MenuIcon />}
+                label="More"
+                current={moreIsCurrent}
+                aria-label="More navigation"
+                aria-haspopup="dialog"
+              />
+            }
+          />
+        }
+      />
     </div>
   );
 }
@@ -388,12 +408,12 @@ function MobileNavigationSheet({ trigger }: { trigger: React.ReactElement }) {
 // can read the pathname after the sheet portal mounts.
 function MobileNavSheet({ onNavigate }: { onNavigate: () => void }) {
   return (
-    <SheetContent
-      aria-describedby={undefined}
-      className="max-md:inset-y-0 max-md:right-auto max-md:left-0 max-md:max-h-none max-md:w-72 max-md:rounded-none max-md:border-r"
-    >
+    <SheetContent className="max-md:inset-y-0 max-md:right-auto max-md:left-0 max-md:max-h-none max-md:w-72 max-md:rounded-none max-md:border-r">
       <SheetHeader>
         <SheetTitle>Navigation</SheetTitle>
+        <SheetDescription>
+          Choose an admin section or account action.
+        </SheetDescription>
       </SheetHeader>
       <div className="min-h-0 flex-1 pb-4">
         <SidebarNav onNav={onNavigate} />

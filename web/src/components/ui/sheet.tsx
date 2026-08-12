@@ -24,7 +24,10 @@ export function SheetContent({
 }: SheetContentProps) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="bg-vf-bg/70 fixed inset-0 z-50 backdrop-blur-sm" />
+      <DialogPrimitive.Overlay
+        className="bg-vf-bg/70 fixed inset-0 z-50 backdrop-blur-sm"
+        data-testid="sheet-overlay"
+      />
       <DialogPrimitive.Content
         className={cn(
           "border-vf-border bg-vf-surface-1 shadow-vf-caustic-2 fixed z-50 flex flex-col gap-4 overflow-y-auto p-6 focus:outline-none",

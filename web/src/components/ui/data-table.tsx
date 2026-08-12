@@ -1,6 +1,6 @@
 "use client";
 
-import type { KeyboardEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { formatCellValue, isEpochSeconds } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -13,7 +13,8 @@ export interface DataTableColumn<T> {
    * omitted (e.g. id "name" reads row.name). */
   id: string;
   header: ReactNode;
-  /** Full custom renderer (EntityRef, Badge, SecretMask, …). */
+  /** Full custom renderer (EntityRef, Badge, SecretMask, …). Native child
+   * controls remain usable in the mobile-card representation. */
   cell?: (row: T) => ReactNode;
   /** Raw value accessor for the default formatter when `cell` is omitted. */
   value?: (row: T) => unknown;
@@ -36,9 +37,12 @@ export interface DataTableProps<T> {
   /** Accessible table caption (visually hidden). */
   label?: string;
   className?: string;
-  /** Called when a row body is clicked (not the rowMenu cell). Makes rows
-   * cursor-pointer and keyboard-activatable (Enter/Space). */
+  /** Called by the desktop row body and the mobile card's primary button (not
+   * the row-menu or semantic child controls). Desktop rows support Enter and
+   * Space. */
   onRowClick?: (row: T) => void;
+  /** Accessible name for the mobile card's real primary action. */
+  mobileRowActionLabel?: (row: T) => string;
 }
 
 /** Default cell rendering routes through the shared formatters: epoch-second
@@ -74,6 +78,7 @@ export function DataTable<T>({
   label,
   className,
   onRowClick,
+  mobileRowActionLabel,
 }: DataTableProps<T>) {
   const isEmpty = !loading && rows.length === 0;
   const [primary, ...rest] = columns;
@@ -82,7 +87,7 @@ export function DataTable<T>({
   return (
     <div className={cn("w-full", className)} aria-busy={loading || undefined}>
       {/* Desktop: real table */}
-      <div className="vf-table-wrap hidden md:block">
+      <div className="vf-table-wrap vf-desktop-only">
         <table className="vf-table">
           {label && <caption className="sr-only">{label}</caption>}
           <thead>
@@ -172,10 +177,10 @@ export function DataTable<T>({
       </div>
 
       {/* Mobile: card collapse (CSS-only switch) */}
-      <div className="flex flex-col gap-2 md:hidden">
+      <div className="vf-mobile-data-stack">
         {loading
           ? Array.from({ length: Math.min(skeletonRows, 3) }, (_, i) => (
-              <div key={i} className="vf-panel vf-panel-tight">
+              <div key={i} className="vf-mobile-data-card">
                 <Skeleton className="h-4 w-32" />
                 <Skeleton className="mt-3 h-3 w-full" />
                 <Skeleton className="mt-2 h-3 w-2/3" />
@@ -185,48 +190,39 @@ export function DataTable<T>({
               <div
                 key={rowKey(row)}
                 className={cn(
-                  "vf-panel vf-panel-tight",
-                  onRowClick &&
-                    "hover:bg-vf-row-hover cursor-pointer transition-colors",
+                  "vf-mobile-data-card",
+                  onRowClick && "vf-mobile-data-card-actionable",
                 )}
-                {...(onRowClick
-                  ? {
-                      tabIndex: 0,
-                      role: "button",
-                      onClick: () => onRowClick(row),
-                      onKeyDown: (e: KeyboardEvent) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          onRowClick(row);
-                        }
-                      },
-                    }
-                  : {})}
               >
-                <div className="flex items-start justify-between gap-3">
+                {onRowClick && (
+                  <button
+                    type="button"
+                    className="vf-mobile-data-card-primary"
+                    onClick={() => onRowClick(row)}
+                    aria-label={mobileRowActionLabel?.(row) ?? "Open row"}
+                  />
+                )}
+                <div className="vf-mobile-data-card-head">
                   <div className="text-vf-body text-vf-text min-w-0">
                     {primary ? renderCell(primary, row) : null}
                   </div>
                   {rowMenu && (
-                    <div
-                      className="shrink-0"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    <div className="vf-mobile-data-card-menu shrink-0">
                       {rowMenu(row)}
                     </div>
                   )}
                 </div>
                 {mobileDetailColumns.length > 0 && (
-                  <dl className="mt-3 flex flex-col gap-1.5">
+                  <dl className="vf-mobile-data-card-fields">
                     {mobileDetailColumns.map((column) => (
                       <div
                         key={column.id}
-                        className="flex items-baseline justify-between gap-3"
+                        className="vf-mobile-data-card-field"
                       >
-                        <dt className="text-vf-micro text-vf-subtle shrink-0 font-mono uppercase">
+                        <dt className="vf-mobile-data-card-label">
                           {column.header}
                         </dt>
-                        <dd className="text-vf-small text-vf-text min-w-0 text-right">
+                        <dd className="vf-mobile-data-card-value">
                           {renderCell(column, row)}
                         </dd>
                       </div>

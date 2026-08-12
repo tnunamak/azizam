@@ -1,14 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import type {
-  ComponentPropsWithoutRef,
-  CSSProperties,
-  ReactElement,
-  ReactNode,
-} from "react";
-import { cloneElement } from "react";
+import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from "react";
+import { forwardRef } from "react";
 
 import { cn } from "@/lib/cn";
 import { type BadgeTone } from "./badge";
@@ -301,55 +295,71 @@ export function ActionCard({
 }
 
 export interface MobileNavItem {
+  id: string;
   label: string;
   href: string;
   icon: ReactNode;
-  onClick?: () => void;
-  active?: boolean;
-  /** Lets an owning Radix primitive attach its real trigger semantics. */
-  trigger?: (tab: ReactElement) => ReactElement;
+  current?: boolean;
 }
 
-export function MobileTabBar({ items }: { items: MobileNavItem[] }) {
-  const pathname = usePathname();
+export interface MobileTabActionProps extends ComponentPropsWithoutRef<"button"> {
+  icon: ReactNode;
+  label: ReactNode;
+  current?: boolean;
+}
+
+/** A composable mobile-nav action. Consumers can wrap it in Radix SheetTrigger
+ * so the navigation shell owns destinations while Radix owns modal semantics. */
+export const MobileTabAction = forwardRef<
+  HTMLButtonElement,
+  MobileTabActionProps
+>(function MobileTabAction({ icon, label, current, className, ...props }, ref) {
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className={cn("vf-mobile-tab", className)}
+      aria-current={current ? "page" : undefined}
+      {...props}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+});
+
+export function MobileTabBar({
+  items,
+  more,
+}: {
+  items: MobileNavItem[];
+  /** A composed secondary action, normally a Radix SheetTrigger around
+   * MobileTabAction. It is supplied by the shell; this component infers no
+   * route state or product navigation. */
+  more?: ReactNode;
+}) {
   return (
     <nav
       className="vf-mobile-tabbar"
-      style={{ "--vf-mobile-tabs": String(items.length) } as CSSProperties}
+      style={
+        {
+          "--vf-mobile-tabs": String(items.length + (more ? 1 : 0)),
+        } as CSSProperties
+      }
       aria-label="Primary navigation"
     >
-      {items.map((item) => {
-        const active =
-          item.active ??
-          (item.href === "/admin"
-            ? pathname === "/admin" || pathname === "/admin/"
-            : pathname.startsWith(item.href));
-        const tab = item.onClick ? (
-            <button
-              key={item.href}
-              type="button"
-              onClick={item.onClick}
-              className="vf-mobile-tab"
-              aria-current={active ? "page" : undefined}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-            </button>
-          ) : (
-          <Link
-            key={item.href}
-            href={item.href}
-            className="vf-mobile-tab"
-            aria-current={active ? "page" : undefined}
-          >
-            {item.icon}
-            <span>{item.label}</span>
-          </Link>
-        );
-        return item.trigger
-          ? cloneElement(item.trigger(tab), { key: item.href })
-          : tab;
-      })}
+      {items.map((item) => (
+        <Link
+          key={item.id}
+          href={item.href}
+          className="vf-mobile-tab"
+          aria-current={item.current ? "page" : undefined}
+        >
+          {item.icon}
+          <span>{item.label}</span>
+        </Link>
+      ))}
+      {more}
     </nav>
   );
 }

@@ -5,7 +5,11 @@ import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
-import { TrendLineChart, type ChartPoint } from "./charts";
+import {
+  hasMinimumChartSamples,
+  TrendLineChart,
+  type ChartPoint,
+} from "./charts";
 import { useCopied } from "./copy-button";
 import { CheckIcon, CopyIcon } from "./icons";
 
@@ -35,11 +39,17 @@ export interface AvatarProps {
 export function avatarToneFor(name: string): AvatarTone {
   const tones: AvatarTone[] = ["accent", "info", "ok", "warn"];
   let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < name.length; i++)
+    hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
   return tones[hash % tones.length]!;
 }
 
-export function Avatar({ initials, tone = "accent", size, className }: AvatarProps) {
+export function Avatar({
+  initials,
+  tone = "accent",
+  size,
+  className,
+}: AvatarProps) {
   return (
     <span
       className={cn(
@@ -79,11 +89,13 @@ export function MetricStrip({ items, className }: MetricStripProps) {
         <div key={i} className="vf-metric-cell">
           <div className="flex items-center justify-between gap-2">
             <span className="vf-health-metric-label">{item.label}</span>
-            {item.series && item.series.length >= 3 && (
-              <span className="hidden md:inline-flex">
+            {hasMinimumChartSamples(item.series) && (
+              <span className="vf-desktop-inline">
                 <TrendLineChart
                   series={item.series}
-                  tone={item.tone && item.tone !== "neutral" ? item.tone : "accent"}
+                  tone={
+                    item.tone && item.tone !== "neutral" ? item.tone : "accent"
+                  }
                   height={20}
                   className="vf-trend"
                 />
@@ -137,7 +149,12 @@ export function StatusDotLabel({
   className,
 }: StatusDotLabelProps) {
   return (
-    <span className={cn("vf-status-label inline-flex items-center gap-1.5", className)}>
+    <span
+      className={cn(
+        "vf-status-label inline-flex items-center gap-1.5",
+        className,
+      )}
+    >
       <span className={toneStatusDotClass(tone, pulse)} aria-hidden />
       <span className="text-vf-small text-vf-text">{label}</span>
     </span>
@@ -150,7 +167,12 @@ export interface SystemHealthBandProps {
   tone: HealthTone;
   title: string;
   detail?: string;
-  metrics: Array<{ label: string; value: string; detail?: string; tone?: HealthTone }>;
+  metrics: Array<{
+    label: string;
+    value: string;
+    detail?: string;
+    tone?: HealthTone;
+  }>;
   action?: ReactNode;
   className?: string;
 }
@@ -167,7 +189,9 @@ export function SystemHealthBand({
     <div className={cn("vf-health-band", className)}>
       <div className="vf-health-band-main">
         <StatusDotLabel tone={tone} label={title} pulse={tone === "ok"} />
-        {detail && <p className="text-vf-micro text-vf-subtle mt-0.5">{detail}</p>}
+        {detail && (
+          <p className="text-vf-micro text-vf-subtle mt-0.5">{detail}</p>
+        )}
         {action && <div className="mt-2">{action}</div>}
       </div>
       {metrics.length > 0 && (
@@ -271,6 +295,9 @@ export interface StatusAdvisoryProps {
   className?: string;
 }
 
+export type CurrentAdvisoryItem = StatusAdvisoryItem;
+export type CurrentAdvisoryProps = StatusAdvisoryProps;
+
 /** Compact composed "needs attention" panel.
  *
  * One panel with a state header and dense single-line rows — replaces a stack
@@ -307,7 +334,13 @@ export function StatusAdvisory({
             <span
               className={cn(
                 "mt-1 shrink-0",
-                toneStatusDotClass(item.tone === "bad" ? "bad" : item.tone === "info" ? "info" : "warn"),
+                toneStatusDotClass(
+                  item.tone === "bad"
+                    ? "bad"
+                    : item.tone === "info"
+                      ? "info"
+                      : "warn",
+                ),
               )}
               aria-hidden
             />
@@ -317,11 +350,17 @@ export function StatusAdvisory({
                 <span className="vf-advisory-row-detail">{item.detail}</span>
               )}
             </span>
-            {item.side && <span className="vf-advisory-row-side">{item.side}</span>}
+            {item.side && (
+              <span className="vf-advisory-row-side">{item.side}</span>
+            )}
           </>
         );
         return item.href ? (
-          <a key={i} href={mountedUiHref(item.href)} className="vf-advisory-row">
+          <a
+            key={i}
+            href={mountedUiHref(item.href)}
+            className="vf-advisory-row"
+          >
             {inner}
           </a>
         ) : (
@@ -333,6 +372,12 @@ export function StatusAdvisory({
       {footer && <div className="vf-advisory-row">{footer}</div>}
     </div>
   );
+}
+
+/** Current-only alias. The component intentionally owns no incident history. */
+export function CurrentAdvisory(props: CurrentAdvisoryProps) {
+  if (props.items.length === 0) return null;
+  return <StatusAdvisory {...props} />;
 }
 
 // ─── MiniSparkline ────────────────────────────────────────────────────────────
@@ -381,7 +426,7 @@ export function TelemetryCard({
     <div className={cn("vf-telemetry-card", className)}>
       <div className="vf-telemetry-card-head">
         <span className="vf-health-metric-label">{label}</span>
-        {series && series.length >= 2 && (
+        {hasMinimumChartSamples(series) && (
           <TrendLineChart
             series={series}
             tone={tone && tone !== "neutral" ? tone : "accent"}
@@ -436,7 +481,9 @@ export function ServiceHealthRow({
       <div className="vf-service-row-main min-w-0">
         <span className="text-vf-body text-vf-text font-medium">{name}</span>
         {description && (
-          <span className="text-vf-small text-vf-subtle block">{description}</span>
+          <span className="text-vf-small text-vf-subtle block">
+            {description}
+          </span>
         )}
         {meta && meta.length > 0 && (
           <span className="text-vf-micro text-vf-muted mt-0.5 flex flex-wrap gap-2 font-mono">
@@ -447,14 +494,22 @@ export function ServiceHealthRow({
         )}
       </div>
       <div className="vf-service-row-status shrink-0">
-        <StatusDotLabel tone={status} label={statusLabel} pulse={status === "ok"} />
+        <StatusDotLabel
+          tone={status}
+          label={statusLabel}
+          pulse={status === "ok"}
+        />
       </div>
       {metrics && metrics.length > 0 && (
-        <div className="vf-service-row-metrics shrink-0 flex gap-4">
+        <div className="vf-service-row-metrics flex shrink-0 gap-4">
           {metrics.map((m, i) => (
             <span key={i} className="flex flex-col items-end">
-              <span className="text-vf-small text-vf-text tabular-nums">{m.value}</span>
-              <span className="text-vf-micro text-vf-subtle font-mono uppercase">{m.label}</span>
+              <span className="text-vf-small text-vf-text tabular-nums">
+                {m.value}
+              </span>
+              <span className="text-vf-micro text-vf-subtle font-mono uppercase">
+                {m.label}
+              </span>
             </span>
           ))}
         </div>
@@ -515,13 +570,15 @@ export function ActivityFeedRow({
       <span className="vf-activity-row-meta min-w-0 flex-1">
         <span className="text-vf-small text-vf-text block">{title}</span>
         {detail && (
-          <span className="text-vf-micro text-vf-subtle block truncate">{detail}</span>
+          <span className="text-vf-micro text-vf-subtle block truncate">
+            {detail}
+          </span>
         )}
         {actor && (
           <span className="text-vf-micro text-vf-muted block">{actor}</span>
         )}
       </span>
-      <span className="vf-activity-row-stat shrink-0 flex flex-col items-end gap-0.5">
+      <span className="vf-activity-row-stat flex shrink-0 flex-col items-end gap-0.5">
         {time && <span className="text-vf-micro text-vf-muted">{time}</span>}
         {stat && <span className="text-vf-micro text-vf-subtle">{stat}</span>}
       </span>
@@ -594,15 +651,22 @@ export function SectionActionHeader({
   className,
 }: SectionActionHeaderProps) {
   return (
-    <div className={cn("vf-section-head flex items-end justify-between gap-3", className)}>
+    <div
+      className={cn(
+        "vf-section-head flex items-end justify-between gap-3",
+        className,
+      )}
+    >
       <div className="flex min-w-0 flex-col gap-0.5">
         {kicker && (
-          <p className="text-vf-micro text-vf-subtle font-mono uppercase">{kicker}</p>
+          <p className="text-vf-micro text-vf-subtle font-mono uppercase">
+            {kicker}
+          </p>
         )}
         <h2 className="text-vf-title text-vf-text flex items-baseline gap-2 font-semibold">
           {title}
           {count !== undefined && (
-            <span className="text-vf-small text-vf-muted tabular-nums font-normal">
+            <span className="text-vf-small text-vf-muted font-normal tabular-nums">
               {count}
             </span>
           )}
@@ -611,7 +675,9 @@ export function SectionActionHeader({
           <p className="text-vf-small text-vf-muted">{description}</p>
         )}
       </div>
-      {action && <div className="shrink-0 flex items-center gap-2">{action}</div>}
+      {action && (
+        <div className="flex shrink-0 items-center gap-2">{action}</div>
+      )}
     </div>
   );
 }
@@ -642,7 +708,11 @@ export function QuickStartChecklist({
   const pct = Math.round((doneCount / items.length) * 100);
 
   return (
-    <div className={cn("vf-quickstart-strip", className)} role="list" aria-label="Setup progress">
+    <div
+      className={cn("vf-quickstart-strip", className)}
+      role="list"
+      aria-label="Setup progress"
+    >
       <div className="vf-quickstart-strip-steps">
         {items.map((item, index) => (
           <div
@@ -714,7 +784,7 @@ export function CopyField({
         </span>
         <button
           type="button"
-          className="vf-copy-field-button vf-button vf-button-ghost vf-button-sm shrink-0 w-16 justify-center"
+          className="vf-copy-field-button vf-button vf-button-ghost vf-button-sm w-16 shrink-0 justify-center"
           onClick={() => void copy(toCopy)}
           aria-label={copied ? "Copied" : "Copy"}
         >
@@ -765,13 +835,13 @@ export function KeyRevealBlock({
   return (
     <div className={cn("vf-key-reveal", className)}>
       {label && (
-        <p className="text-vf-micro text-vf-subtle font-mono uppercase mb-1">
+        <p className="text-vf-micro text-vf-subtle mb-1 font-mono uppercase">
           {label}
         </p>
       )}
       <div className="vf-key-reveal-value relative">
         {secret ? (
-          <pre className="vf-key-block pr-12 text-vf-small font-mono break-all whitespace-pre-wrap">
+          <pre className="vf-key-block text-vf-small pr-12 font-mono break-all whitespace-pre-wrap">
             {secret}
           </pre>
         ) : fingerprint ? (
@@ -839,7 +909,11 @@ export function FilterToolbar({
         </div>
       )}
       {sort && <div className="shrink-0">{sort}</div>}
-      {actions && <div className="vf-filter-group shrink-0 flex items-center gap-2">{actions}</div>}
+      {actions && (
+        <div className="vf-filter-group flex shrink-0 items-center gap-2">
+          {actions}
+        </div>
+      )}
     </div>
   );
 }
@@ -874,43 +948,50 @@ export interface AppAccessRowHeaderProps {
   className?: string;
 }
 
-const COL_LABEL = "text-[10px] text-[var(--vf-text-subtle)] font-mono uppercase tracking-wide leading-none";
+const COL_LABEL =
+  "text-[10px] text-[var(--vf-text-subtle)] font-mono uppercase tracking-wide leading-none";
 
-export function AppAccessRowHeader({ metricLabels, className }: AppAccessRowHeaderProps) {
+export function AppAccessRowHeader({
+  metricLabels,
+  className,
+}: AppAccessRowHeaderProps) {
   return (
     <div
       aria-hidden
       className={cn(
-        "hidden md:flex items-center gap-[10px] px-3 py-[7px]",
+        "hidden items-center gap-[10px] px-3 py-[7px] md:flex",
         "border-b border-[var(--vf-border)] bg-[color-mix(in_srgb,var(--vf-surface-2)_40%,transparent)]",
         className,
       )}
     >
       {/* avatar — 34px, same as vf-access-row-avatar on desktop */}
-      <div className="shrink-0 w-[34px]" />
+      <div className="w-[34px] shrink-0" />
       {/* identity — flex-1 */}
-      <span className={cn("flex-1 min-w-0", COL_LABEL)}>App name</span>
+      <span className={cn("min-w-0 flex-1", COL_LABEL)}>App name</span>
       {/* metrics — hidden md:flex gap-4, each cell matches "flex flex-col items-end" */}
       {metricLabels && metricLabels.length > 0 && (
-        <div className="hidden md:flex shrink-0 items-center gap-4">
+        <div className="hidden shrink-0 items-center gap-4 md:flex">
           {metricLabels.map((label) => (
-            <span key={label} className={cn("flex flex-col items-end w-[3.75rem]", COL_LABEL)}>
+            <span
+              key={label}
+              className={cn("flex w-[3.75rem] flex-col items-end", COL_LABEL)}
+            >
               {label}
             </span>
           ))}
         </div>
       )}
       {/* badges — vf-access-row-badges: shrink-0 flex gap-2; widths sized to typical content */}
-      <div className="shrink-0 flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {/* status dot + label typically ~80px */}
         <span className={cn("w-[5rem]", COL_LABEL)}>Status</span>
         {/* key count "N keys" typically ~42px */}
         <span className={cn("w-[3rem]", COL_LABEL)}>Keys</span>
       </div>
       {/* usage — vf-access-row-usage: shrink-0, whitespace-nowrap; ~72px typical */}
-      <span className={cn("shrink-0 w-[4.5rem]", COL_LABEL)}>Last used</span>
+      <span className={cn("w-[4.5rem] shrink-0", COL_LABEL)}>Last used</span>
       {/* actions — shrink-0; overflow menu button ~32px + kind badge ~50px */}
-      <div className="shrink-0 w-[5.5rem]" />
+      <div className="w-[5.5rem] shrink-0" />
     </div>
   );
 }
@@ -933,16 +1014,24 @@ export function AppAccessRow({
     <>
       {avatar && <div className="vf-access-row-avatar shrink-0">{avatar}</div>}
       <div className="vf-access-row-identity min-w-0 flex-1">
-        <span className="text-vf-body text-vf-text font-medium truncate block" title={name}>{name}</span>
+        <span
+          className="text-vf-body text-vf-text block truncate font-medium"
+          title={name}
+        >
+          {name}
+        </span>
         {(owner || profile) && (
-          <span className="text-vf-micro text-vf-subtle mt-0.5 flex gap-2 font-mono min-w-0" title={[owner, profile].filter(Boolean).join(" · ")}>
-            {owner && <span className="truncate shrink">{owner}</span>}
-            {profile && <span className="truncate shrink">{profile}</span>}
+          <span
+            className="text-vf-micro text-vf-subtle mt-0.5 flex min-w-0 gap-2 font-mono"
+            title={[owner, profile].filter(Boolean).join(" · ")}
+          >
+            {owner && <span className="shrink truncate">{owner}</span>}
+            {profile && <span className="shrink truncate">{profile}</span>}
           </span>
         )}
       </div>
       {metrics && (
-        <div className="vf-access-row-metrics hidden md:flex shrink-0 items-center gap-4">
+        <div className="vf-access-row-metrics hidden shrink-0 items-center gap-4 md:flex">
           {metrics}
         </div>
       )}
@@ -1011,7 +1100,7 @@ export function RightContextPanel({
     <aside className={cn("vf-context-panel", className)}>
       <div className="vf-context-panel-head">
         <div className="min-w-0 flex-1">
-          <h2 className="text-vf-body text-vf-text font-semibold truncate">
+          <h2 className="text-vf-body text-vf-text truncate font-semibold">
             {title}
           </h2>
           {subtitle && (
@@ -1020,9 +1109,7 @@ export function RightContextPanel({
         </div>
         {status && <div className="shrink-0">{status}</div>}
       </div>
-      {actions && (
-        <div className="vf-context-panel-actions">{actions}</div>
-      )}
+      {actions && <div className="vf-context-panel-actions">{actions}</div>}
       {sections.map((section, i) => (
         <div key={i} className="vf-context-panel-section">
           {section.title && (
@@ -1114,7 +1201,10 @@ export function CommandSearch({
   if (!items || items.length === 0) {
     return (
       <div
-        className={cn("vf-command-search vf-command-search-disabled", className)}
+        className={cn(
+          "vf-command-search vf-command-search-disabled",
+          className,
+        )}
         aria-disabled="true"
       >
         <input
@@ -1163,7 +1253,9 @@ export function CommandSearch({
                   className="vf-command-item"
                   onClick={() => setQuery("")}
                 >
-                  <span className="text-vf-small text-vf-text">{item.label}</span>
+                  <span className="text-vf-small text-vf-text">
+                    {item.label}
+                  </span>
                   {item.description && (
                     <span className="vf-command-item-meta text-vf-micro text-vf-subtle">
                       {item.description}
@@ -1179,7 +1271,9 @@ export function CommandSearch({
                     setQuery("");
                   }}
                 >
-                  <span className="text-vf-small text-vf-text">{item.label}</span>
+                  <span className="text-vf-small text-vf-text">
+                    {item.label}
+                  </span>
                   {item.description && (
                     <span className="vf-command-item-meta text-vf-micro text-vf-subtle">
                       {item.description}
