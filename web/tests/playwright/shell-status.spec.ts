@@ -117,8 +117,37 @@ async function openStatus(
   mode: StatusMode,
 ) {
   await stubAdminApi(page, mode);
+  const terminalError =
+    mode === "error" ? waitForTerminalStatusError(page) : undefined;
   await page.goto(`/ui/admin/status/?scenario=${mode}-${Date.now()}`, {
     waitUntil: "commit",
+  });
+  await terminalError;
+}
+
+/**
+ * The shared query client retries a 5xx status request twice. During those
+ * retries React Query remains pending, so wait for the final intercepted
+ * failure before asserting the terminal error projection.
+ */
+function waitForTerminalStatusError(page: import("@playwright/test").Page) {
+  let failures = 0;
+  return new Promise<void>((resolve) => {
+    const onResponse = (response: import("@playwright/test").Response) => {
+      if (
+        new URL(response.url()).pathname !== "/admin/api/status" ||
+        response.status() !== 503
+      ) {
+        return;
+      }
+
+      failures += 1;
+      if (failures === 3) {
+        page.off("response", onResponse);
+        resolve();
+      }
+    };
+    page.on("response", onResponse);
   });
 }
 
