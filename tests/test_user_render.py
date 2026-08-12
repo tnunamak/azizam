@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import subprocess
 import tempfile
@@ -207,8 +208,11 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertNotIn("Connection settings", html)
         self.assertIn("min-width: 6.25rem;", html)
         # The base-card content column carries the overflow guard so a long
-        # base URL can't push the card wider than its grid track.
-        self.assertIn(".base-card > div, .shell-main > section", html)
+        # base URL can't push the card wider than its grid track. The
+        # broader .shell-main, .shell-main * rule (see test_gateway_shell.py)
+        # already covers this element too; the explicit .base-card > div
+        # rule predates that and is kept as a harmless, explicit duplicate.
+        self.assertIn(".base-card > div, .vf-section-head > div", html)
         self.assertIn("min-width: 0;", html)
         self.assertIn("white-space: nowrap;", html)
         self.assertIn('button.textContent = "Copied";', html)
@@ -718,6 +722,143 @@ assert.equal(messages.at(-1).kind, "good");
         self.assertNotIn("policy matrix", html)
         self.assertNotIn("Chat only", html)
         self.assertNotIn("Full runtime access", html)
+
+    @unittest.skipUnless(which("node"), "requires the local Node JavaScript runtime")
+    def test_portal_home_has_no_horizontal_overflow_at_either_required_mobile_breakpoint(
+        self,
+    ) -> None:
+        """Real-browser proof that the portal home never forces the document
+        wider than the viewport at 375x812 or 390x844.
+
+        This is deliberately NOT a CSS-source-text assertion (those only
+        prove a rule exists, not that layout actually resolves without
+        overflow) and NOT a synthetic capability payload (an earlier session
+        pass tried that and failed to reproduce a defect that a real
+        fresh-instance harness reproduced live) — it renders the real
+        server template with realistic long-content data (many capability
+        groups, a long app name, a real usage timestamp) and measures
+        `document.documentElement.scrollWidth <= clientWidth` in a real
+        headless Chromium, exactly the acceptance bar the blueprint states.
+        Requires the web workspace's Playwright (a JS devDependency, not a
+        Python package) — skipped if `web/node_modules/playwright` isn't
+        resolvable, e.g. before `npm install`.
+        """
+        playwright_pkg = (
+            ROOT / "web" / "node_modules" / "playwright"
+        )
+        if not playwright_pkg.exists():
+            self.skipTest("requires web/node_modules/playwright (npm install)")
+
+        html = render_user_portal(
+            public_base_url="https://ai.vivid.fish",
+            oidc_enabled=False,
+            wordmark=("vivid", "fish"),
+            account={
+                "authenticated": True,
+                "user": {"email": "owner@example.test", "role": "owner"},
+                "apps": [
+                    {
+                        "id": "app-1",
+                        "name": "A fairly long personal automation app name",
+                        "kind": "personal",
+                        "credentials": [
+                            {
+                                "id": "cred-1",
+                                "prefix": "opk_",
+                                "display_name": "Default key",
+                                "created_at": 1_700_000_000,
+                                "last_seen": 1_700_000_100,
+                                "revoked_at": None,
+                            },
+                        ],
+                        "default_profile_id": "profile-1",
+                        "default_profile_name": "Owner (local)",
+                    },
+                ],
+            },
+        )
+        capabilities = {
+            "capabilities": [
+                {"object": "model", "id": f"chat-model-{i}", "intent": "chat.completions"}
+                for i in range(4)
+            ] + [
+                {"object": "model", "id": f"text-model-{i}", "intent": "text.completions"}
+                for i in range(3)
+            ] + [
+                {"object": "model", "id": f"image-model-{i}", "intent": "image.generate"}
+                for i in range(2)
+            ] + [
+                {"object": "model", "id": f"audio-model-{i}", "intent": "audio.generate"}
+                for i in range(1)
+            ],
+        }
+
+        node_script = r'''
+const fs = require("fs");
+const path = require("path");
+const { chromium } = require(process.argv[3]);
+
+(async () => {
+  const htmlPath = process.argv[1];
+  const capsPath = process.argv[2];
+  const caps = JSON.parse(fs.readFileSync(capsPath, "utf8"));
+  const browser = await chromium.launch();
+  const results = {};
+  for (const [label, viewport] of [
+    ["390x844", { width: 390, height: 844 }],
+    ["375x812", { width: 375, height: 812 }],
+  ]) {
+    const page = await browser.newPage({ viewport });
+    await page.route("**/gateway/v1/capabilities", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(caps),
+      }),
+    );
+    await page.goto("file://" + path.resolve(htmlPath));
+    await page.click("#gateway-health").catch(() => {});
+    await page.waitForTimeout(300);
+    results[label] = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    await page.close();
+  }
+  await browser.close();
+  console.log(JSON.stringify(results));
+})().catch((error) => {
+  console.error(error.stack || error);
+  process.exitCode = 1;
+});
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            html_path = Path(tmp) / "portal.html"
+            html_path.write_text(html, encoding="utf-8")
+            caps_path = Path(tmp) / "capabilities.json"
+            caps_path.write_text(json.dumps(capabilities), encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "node",
+                    "-e",
+                    node_script,
+                    str(html_path),
+                    str(caps_path),
+                    str(playwright_pkg),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        overflow = json.loads(result.stdout)
+        for breakpoint_label, measurement in overflow.items():
+            self.assertLessEqual(
+                measurement["scrollWidth"],
+                measurement["clientWidth"],
+                f"{breakpoint_label}: scrollWidth {measurement['scrollWidth']} > "
+                f"clientWidth {measurement['clientWidth']}",
+            )
 
     def test_capability_rows_can_shrink_below_their_content(self) -> None:
         # .cap-row is a flex row inside the health card's capability list; a

@@ -85,26 +85,49 @@ class BottomTabsTests(unittest.TestCase):
         self.assertIn("env(safe-area-inset-bottom", SHELL_CSS)
         self.assertIn("@media (min-width: 721px)", SHELL_CSS)
 
-    def test_shell_main_grid_tracks_cannot_force_document_overflow(self) -> None:
-        # .shell-main and its direct section children are `display: grid`
-        # with a single implicit track. A grid item's default min-width is
-        # `auto`, which resolves toward the item's max-content size — so an
-        # unbroken-looking child (e.g. a long capability sentence on the
-        # normal-user portal home) can force the whole track, and therefore
-        # the document, wider than the viewport at mobile widths even though
-        # the child itself wraps fine once it has room. `min-width: 0`
-        # lets the track shrink to the container and rely on child wrapping
-        # instead. Reproduced live at 375x812/390x844 (scrollWidth 484 vs
-        # clientWidth 375/390) before this fix.
+    def test_shell_main_descendants_cannot_force_document_overflow(self) -> None:
+        # The portal home nests many display:grid/display:flex containers
+        # (.shell-main > section, .vf-section, .apps-list, .app-card-body,
+        # .key-list, ...). A flex/grid item's default min-width is `auto`
+        # (its content's max-content size), not 0 — so ANY one of those
+        # nesting levels can force its ancestor track, and therefore the
+        # whole document, wider than the viewport at mobile widths, even
+        # though the text itself would wrap fine given room. Patching this
+        # selector-by-selector as new chains are discovered is exactly the
+        # failure mode that let it recur four times in one session — this
+        # single universal rule removes the trap at every current AND
+        # future nesting depth in one place. Explicit fixed-width children
+        # (flex: 0 0 auto, an explicit min-width, or an overflow-x: auto
+        # code block) are unaffected: min-width: 0 only relaxes the
+        # *default* floor, it never overrides an explicit one.
+        #
+        # Reproduced live at 375x812/390x844 (scrollWidth 484-490 vs
+        # clientWidth 375/390) across four narrower fix attempts before
+        # this universal rule; re-verified live scrollWidth == clientWidth
+        # at both breakpoints after it (see the session's final report).
         from gateway.gateway_shell import SHELL_CSS
 
         self.assertRegex(
             SHELL_CSS,
-            r"\.shell-main\s*\{[^}]*min-width:\s*0;[^}]*\}",
+            r"\.shell-main,\s*\.shell-main \*\s*\{[^}]*min-width:\s*0;[^}]*\}",
         )
-        self.assertRegex(
+
+    def test_no_narrow_reintroduced_min_width_zero_patch_shadows_the_universal_rule(self) -> None:
+        # Guards against regressing back to selector-by-selector patching:
+        # once the universal .shell-main * rule exists, a narrower
+        # `min-width: 0` added later for one specific selector is dead
+        # weight (or worse, a sign the universal rule was scoped away by
+        # accident). This does not forbid EVERY narrow min-width: 0 in the
+        # file (some predate the universal rule and are harmless no-ops),
+        # but it does assert the specific selectors this session added and
+        # then folded into the universal rule stay folded, so a future
+        # editor doesn't reintroduce narrow patches under the mistaken
+        # belief the universal rule doesn't cover them.
+        from gateway.gateway_shell import SHELL_CSS
+
+        self.assertNotRegex(
             SHELL_CSS,
-            r"\.shell-main > section\s*\{[^}]*min-width:\s*0;[^}]*\}",
+            r"\.shell-main > section > \*\s*\{[^}]*min-width:\s*0;[^}]*\}",
         )
 
 

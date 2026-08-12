@@ -227,12 +227,25 @@ _GATEWAY_CHROME_CSS = """
     padding: var(--space-6) var(--gutter) var(--space-12);
     display: grid;
     gap: var(--space-6);
+  }
+  /* Every element inside the shell is a candidate flex/grid item somewhere
+     in this nested layout, and a flex/grid item's default min-width is
+     `auto` (its content's max-content size) — not 0. That default lets one
+     unbroken-looking descendant (a long sentence, a timestamp-suffixed row)
+     force its ancestor grid/flex track wider than the viewport, and that
+     forces every ancestor up to <html> wider too, even though the text
+     itself would wrap fine given room. This single rule removes that trap
+     at every nesting depth in one place instead of chasing it selector by
+     selector; explicit fixed-width children (flex: 0 0 auto, explicit
+     min-width, or overflow-x: auto code blocks) are unaffected because
+     min-width: 0 only relaxes the *default* floor, it never shrinks
+     something that has its own explicit sizing. */
+  .shell-main, .shell-main * {
     min-width: 0;
   }
   .shell-main > section {
     display: grid;
     gap: var(--space-3);
-    min-width: 0;
   }
   .shell-main > section > h2 {
     margin: 0;
