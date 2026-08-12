@@ -33,7 +33,6 @@ import {
   ServicesIcon,
   Skeleton,
   StatusAdvisory,
-  StatusDotLabel,
   SystemHealthBand,
   type ChartPoint,
 } from "@/components/ui";
@@ -870,19 +869,10 @@ export default function AdminOverviewPage() {
           </div>
         </section>
 
-        {/* API Health + Services */}
+        {/* Services */}
         <section>
-          <SectionActionHeader title="API Health" />
+          <SectionActionHeader title="Services" />
           <div className="mt-3 flex flex-col gap-3">
-            <div className="flex flex-col gap-1 rounded-md border border-[var(--vf-border)] bg-[var(--vf-surface-1)] px-3 py-2">
-              <StatusDotLabel
-                tone={health.tone}
-                label={health.label}
-                pulse={health.tone === "ok"}
-              />
-              <p className="text-vf-micro text-vf-muted">{health.detail}</p>
-            </div>
-
             {registryError ? (
               <IncidentBanner
                 tone="bad"
@@ -916,8 +906,7 @@ export default function AdminOverviewPage() {
             ) : services.length > 0 ? (
               <ProductPanel tight>
                 <PanelHeader
-                  title="Services"
-                  description={`${enabledServices} of ${services.length} enabled`}
+                  title={`${enabledServices} of ${services.length} enabled`}
                   action={
                     <Link
                       href="/admin/services"
