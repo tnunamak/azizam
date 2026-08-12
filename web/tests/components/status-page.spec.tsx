@@ -1,5 +1,6 @@
 import type { ComponentPropsWithoutRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { axe } from "jest-axe";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -61,17 +62,31 @@ function renderStatus() {
   );
 }
 
+async function expectPageHasHeadingOne() {
+  const accessibility = await axe(document.body);
+  expect(
+    accessibility.violations.find(
+      (violation) => violation.id === "page-has-heading-one",
+    ),
+  ).toBeUndefined();
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
 describe("admin Status", () => {
-  it("renders a read-first loading state before observations arrive", () => {
+  it("renders a page-level heading that passes axe while observations are loading", async () => {
     statusState.load = () => new Promise(() => undefined);
     renderStatus();
 
     expect(screen.getByText("Checking current gateway health.")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Status", level: 1 }),
+    ).toBeVisible();
+    expect(document.querySelectorAll("h1")).toHaveLength(1);
+    await expectPageHasHeadingOne();
   });
 
   it("uses one factual metric strip for a healthy projection", async () => {
@@ -117,7 +132,7 @@ describe("admin Status", () => {
     expect(screen.getByText("live status unavailable")).toBeVisible();
   });
 
-  it("keeps the error state honest and retryable", async () => {
+  it("keeps an error page with an axe-valid heading honest and retryable", async () => {
     let attempts = 0;
     statusState.load = async () => {
       attempts += 1;
@@ -127,6 +142,11 @@ describe("admin Status", () => {
     renderStatus();
 
     expect(await screen.findByText("Could not load status")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Status", level: 1 }),
+    ).toBeVisible();
+    expect(document.querySelectorAll("h1")).toHaveLength(1);
+    await expectPageHasHeadingOne();
     await screen.getByRole("button", { name: "Retry" }).click();
     expect(
       await screen.findByText("All configured services are available"),

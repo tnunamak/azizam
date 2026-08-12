@@ -108,6 +108,7 @@ function StatusContents() {
     return (
       <div className="flex flex-col gap-4">
         <SectionActionHeader
+          as="h1"
           title="Status"
           description="Checking current gateway health."
         />
@@ -121,6 +122,7 @@ function StatusContents() {
     return (
       <div className="flex flex-col gap-4">
         <SectionActionHeader
+          as="h1"
           title="Status"
           description="Current health could not be loaded."
         />
