@@ -91,7 +91,20 @@ async function stubAdminApi(
       });
     }
     if (path === "/admin/api/apps") return json({ apps: [] });
+    if (path === "/admin/api/users") return json({ users: [] });
+    if (path === "/admin/api/credentials") return json({ credentials: [] });
     if (path === "/admin/api/profiles") return json({ profiles: [] });
+    if (path === "/admin/api/overview") {
+      return json({
+        actor: { subject: "admin", email: "operator@example.test", roles: [] },
+        counts: {},
+        attention: [],
+        current_health: currentHealth("healthy"),
+        runtime_profile_mappings: {},
+      });
+    }
+    if (path === "/admin/api/audit")
+      return json({ records: [], next_cursor: null });
     if (path === "/admin/api/operator/service-registry") {
       return json({ service_registry: { schema_version: 1, services: {} } });
     }
@@ -154,6 +167,22 @@ test("shell preserves all destinations, focus origins, target size, and containm
       await expect(
         page.getByRole("link", { name: "Status", exact: true }),
       ).toHaveAttribute("aria-current", "page");
+      for (const target of [
+        page.getByRole("combobox", { name: "Search" }),
+        page
+          .getByRole("banner")
+          .getByRole("link", { name: "Portal", exact: true }),
+        page
+          .getByRole("banner")
+          .getByRole("link", { name: "Sign out", exact: true }),
+        page
+          .locator("main")
+          .getByRole("button", { name: "Refresh", exact: true }),
+      ]) {
+        const box = await target.boundingBox();
+        expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+        expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+      }
     }
   }
 
@@ -178,10 +207,12 @@ test("Status keeps healthy, degraded, unavailable, loading, and error projection
     ["healthy", "All services available"],
     ["degraded", "One service needs attention"],
     ["unknown", "Live status unavailable"],
-    ["error", "Could not load status"],
+    ["error", "Status unavailable"],
   ] as const) {
     await openStatus(page, mode);
-    await expect(page.getByText(label, { exact: true })).toBeVisible();
+    await expect(
+      page.locator("main").getByText(label, { exact: true }),
+    ).toBeVisible();
   }
 
   await openStatus(page, "loading");
@@ -193,7 +224,7 @@ test("Status keeps healthy, degraded, unavailable, loading, and error projection
 
   await openStatus(page, "error");
   await expect(
-    page.getByText("Could not load status", { exact: true }),
+    page.locator("main").getByText("Status unavailable", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "System Status", level: 1 }),
@@ -211,4 +242,74 @@ test("Status keeps healthy, degraded, unavailable, loading, and error projection
     path: screenshot,
     contentType: "image/png",
   });
+});
+
+test("Status uses one desktop right rail and one compact Sheet detail", async ({
+  page,
+}) => {
+  await stubAdminApi(page, "healthy");
+
+  await page.setViewportSize({ width: 979, height: 844 });
+  await page.goto("/ui/admin/status/?service=gateway");
+  const compactSheet = page.getByRole("dialog", { name: "Gateway API" });
+  await expect(compactSheet).toBeVisible();
+  await expect(compactSheet.locator(".vf-context-panel")).toHaveCount(1);
+  await expect(page.locator("main .vf-context-panel:visible")).toHaveCount(0);
+  await expect(page.locator(".vf-context-panel:visible")).toHaveCount(1);
+
+  await page.setViewportSize({ width: 980, height: 844 });
+  await page.goto("/ui/admin/status/?service=gateway");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator("main .vf-context-panel:visible")).toHaveCount(1);
+  await expect(page.locator(".vf-context-panel:visible")).toHaveCount(1);
+});
+
+test("shared query health state stays honest across shell, Overview, Status, and Services", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await stubAdminApi(page, "healthy");
+  await page.goto("/ui/admin/status/");
+  await expect(
+    page.locator("main").getByText("All services available"),
+  ).toBeVisible();
+
+  await stubAdminApi(page, "error");
+  await page.locator("main").getByRole("button", { name: "Refresh" }).click();
+  await expect(
+    page
+      .locator("main")
+      .getByText("Showing last known status", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("banner")
+      .getByRole("link", { name: "Showing last known status" }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("link", { name: "Overview", exact: true })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/\/ui\/admin\/?$/);
+  await expect(
+    page
+      .locator("main")
+      .getByText("Showing last known status", { exact: true }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("link", { name: "Services", exact: true })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/\/ui\/admin\/services\/?$/);
+  await expect(
+    page
+      .locator("main")
+      .getByRole("heading", { name: "Showing last known status", exact: true })
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Checking live status", { exact: true }),
+  ).toHaveCount(0);
 });

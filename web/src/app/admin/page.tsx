@@ -34,7 +34,6 @@ import {
   Skeleton,
   StatusAdvisory,
   StatusDotLabel,
-  type HealthTone,
   type ChartPoint,
 } from "@/components/ui";
 import {
@@ -54,6 +53,7 @@ import {
   adminServiceHref,
   adminTargetHref,
 } from "@/lib/admin-links";
+import { projectStatusHealth } from "@/lib/status-health-projection";
 
 // ---------------------------------------------------------------------------
 // Human phrases for audit action types
@@ -164,39 +164,6 @@ function formatCompact(value: number | null | undefined): string {
     notation: Math.abs(value) >= 10_000 ? "compact" : "standard",
     maximumFractionDigits: value < 10 ? 1 : 0,
   }).format(value);
-}
-
-function healthSummary(status: StatusPayload | undefined, error: boolean) {
-  if (error) {
-    return {
-      tone: "bad" as HealthTone,
-      label: "Status unavailable",
-      detail: "The admin status endpoint did not respond.",
-    };
-  }
-  if (!status) {
-    return {
-      tone: "neutral" as HealthTone,
-      label: "Loading status",
-      detail: "Checking API and host health.",
-    };
-  }
-  const current = status.current_health;
-  if (!current) {
-    return {
-      tone: "neutral" as HealthTone,
-      label: "Live status unavailable",
-      detail: "The gateway did not provide a current health projection.",
-    };
-  }
-  return {
-    tone:
-      current.tone === "ok" || current.tone === "warn" || current.tone === "bad"
-        ? current.tone
-        : ("neutral" as HealthTone),
-    label: current.label,
-    detail: current.detail,
-  };
 }
 
 function buildTelemetryCards(status: StatusPayload | undefined) {
@@ -517,7 +484,11 @@ export default function AdminOverviewPage() {
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
   });
-  const { data: statusData, isError: statusError } = useQuery({
+  const {
+    data: statusData,
+    isError: statusError,
+    isPending: statusPending,
+  } = useQuery({
     queryKey: queryKeys.status,
     queryFn: api.status,
     staleTime: 10_000,
@@ -559,10 +530,11 @@ export default function AdminOverviewPage() {
     setBaseUrl(`${window.location.origin}/v1`);
   }, []);
 
-  const health = useMemo(
-    () => healthSummary(statusData, statusError),
-    [statusData, statusError],
-  );
+  const health = projectStatusHealth({
+    data: statusData,
+    isPending: statusPending,
+    isError: statusError,
+  });
   const liveServiceById = useMemo(() => {
     const map = new Map<
       string,

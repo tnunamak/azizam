@@ -1180,12 +1180,14 @@ export interface CommandSearchProps {
   items?: CommandSearchItem[];
   placeholder?: string;
   className?: string;
+  inputClassName?: string;
 }
 
 export function CommandSearch({
   items,
   placeholder = "Search…",
   className,
+  inputClassName,
 }: CommandSearchProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -1210,7 +1212,7 @@ export function CommandSearch({
         aria-disabled="true"
       >
         <input
-          className="vf-command-search-input"
+          className={cn("vf-command-search-input", inputClassName)}
           placeholder="Search unavailable"
           disabled
           aria-label="Search unavailable"
@@ -1224,7 +1226,7 @@ export function CommandSearch({
       <input
         ref={inputRef}
         role="combobox"
-        className="vf-command-search-input"
+        className={cn("vf-command-search-input", inputClassName)}
         placeholder={placeholder}
         value={query}
         onChange={(e) => setQuery(e.target.value)}

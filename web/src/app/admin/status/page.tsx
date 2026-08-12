@@ -17,7 +17,7 @@ import {
   type StatusSeriesPoint,
 } from "@/lib/api";
 import { adminServiceHref, adminStatusHref } from "@/lib/admin-links";
-import { deriveServicesHealthSummary } from "@/lib/services-health-summary";
+import { projectStatusHealth } from "@/lib/status-health-projection";
 import {
   Badge,
   Button,
@@ -104,6 +104,7 @@ function currentAdvisories(health: CurrentHealth) {
     .map((service) => ({
       target_kind: "service" as const,
       target_id: service.service_id,
+      configured: service.configured,
       title: service.name,
       detail:
         service.last_error ??
@@ -164,9 +165,8 @@ function HistoryTreatment({
             tone="info"
             height={72}
             accessibility={{
-              mode: "summary",
+              mode: "data-table",
               label: "Latency observations",
-              summary: `${latency.length} measured latency observations.`,
             }}
           />
         </div>
@@ -181,9 +181,8 @@ function HistoryTreatment({
             tone="ok"
             height={72}
             accessibility={{
-              mode: "summary",
+              mode: "data-table",
               label: "Availability observations",
-              summary: `${status.length} observed availability samples.`,
             }}
           />
         </div>
@@ -259,12 +258,14 @@ function ServiceDetail({
       }
       status={<StatusDotLabel tone={healthTone(service.tone)} label="" />}
       actions={
-        <Link
-          href={adminServiceHref(service.service_id)}
-          className="vf-button vf-button-secondary vf-button-sm vf-touch-target"
-        >
-          Open Services configuration
-        </Link>
+        service.configured ? (
+          <Link
+            href={adminServiceHref(service.service_id)}
+            className="vf-button vf-button-secondary vf-button-sm vf-touch-target"
+          >
+            Open Services configuration
+          </Link>
+        ) : undefined
       }
       sections={sections}
     />
@@ -277,11 +278,12 @@ function StatusContents() {
   const selectedServiceId = searchParams.get("service");
   const lastTrigger = useRef<HTMLElement | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const { data, error, isPending, isFetching, refetch } = useQuery({
+  const { data, isPending, isError, isFetching, refetch } = useQuery({
     queryKey: queryKeys.status,
     queryFn: api.status,
   });
-  const health = data?.current_health;
+  const projection = projectStatusHealth({ data, isPending, isError });
+  const health = projection.health;
 
   const backends = useMemo(
     () =>
@@ -310,7 +312,7 @@ function StatusContents() {
     router.replace(adminStatusHref());
   };
 
-  if (isPending && !data) {
+  if (projection.state === "loading") {
     return <StatusLoading />;
   }
 
@@ -324,8 +326,8 @@ function StatusContents() {
         />
         <IncidentBanner
           tone="bad"
-          title="Could not load status"
-          detail="The gateway did not return current health."
+          title={projection.label}
+          detail={projection.detail}
           actions={
             <Button size="sm" onClick={() => void refetch()}>
               Retry
@@ -336,18 +338,10 @@ function StatusContents() {
     );
   }
 
-  const enabledCount = health.services.filter(
-    (service) => service.enabled,
-  ).length;
-  const summary = deriveServicesHealthSummary(
-    health,
-    enabledCount,
-    health.services.length,
-  );
   const observedCount = health.services.filter(
     (service) => service.observation !== "unavailable",
   ).length;
-  const staleFacts = Boolean(error && data);
+  const staleFacts = projection.state === "stale-known";
 
   return (
     <div className="flex max-w-[1080px] flex-col gap-6">
@@ -359,6 +353,7 @@ function StatusContents() {
           <Button
             variant="ghost"
             size="sm"
+            className="min-h-11"
             disabled={isFetching}
             onClick={() => void refetch()}
           >
@@ -395,19 +390,24 @@ function StatusContents() {
           },
           {
             label: "Needs attention",
-            value: `${summary.badCount + summary.warnCount}`,
-            detail: summary.badCount
-              ? "required service failure"
-              : summary.warnCount
-                ? "degraded or optional service"
-                : "no current advisory",
-            tone: summary.metricTone,
+            value: `${advisories.length}`,
+            detail:
+              advisories.length === 0
+                ? "no current advisory"
+                : `${advisories.length} current ${
+                    advisories.length === 1 ? "advisory" : "advisories"
+                  }`,
+            tone: advisories.some((advisory) => advisory.tone === "bad")
+              ? "bad"
+              : advisories.length > 0
+                ? "warn"
+                : "neutral",
           },
           {
             label: "Generated",
-            value: data?.generated_at ? "Current" : "Not supplied",
+            value: data?.generated_at ? "Timestamp supplied" : "Not supplied",
             detail: data?.generated_at
-              ? undefined
+              ? "freshness is not supplied"
               : "observation time unavailable",
             tone: data?.generated_at ? "neutral" : "neutral",
           },
@@ -444,12 +444,14 @@ function StatusContents() {
                     >
                       Inspect
                     </Link>
-                    <Link
-                      className="vf-button vf-button-secondary vf-button-sm vf-touch-target"
-                      href={adminServiceHref(advisory.target_id)}
-                    >
-                      Services
-                    </Link>
+                    {advisory.configured && (
+                      <Link
+                        className="vf-button vf-button-secondary vf-button-sm vf-touch-target"
+                        href={adminServiceHref(advisory.target_id)}
+                      >
+                        Services
+                      </Link>
+                    )}
                   </div>
                 ) : undefined
               }
@@ -535,41 +537,33 @@ function StatusContents() {
           )}
         </section>
         <aside
-          className="flex min-w-0 flex-col gap-3"
-          aria-label="History and durable incidents"
+          className="hidden min-w-0 min-[980px]:block"
+          aria-label="Service diagnosis"
         >
-          <SectionActionHeader title="History and incidents" />
-          {selectedService ? (
-            <div className="min-[980px]:hidden">
-              <ServiceDetail
-                service={selectedService}
-                backend={backends.get(selectedService.service_id)}
-              />
-            </div>
-          ) : (
-            <EmptyOperationalState
-              title="Select a service"
-              detail="Open a service to inspect its observed history."
-            />
-          )}
-          <p className="text-vf-micro text-vf-subtle">
-            No durable incident history is available from the current status
-            contract.
-          </p>
-        </aside>
-        <div className="hidden min-[980px]:block">
           {selectedService ? (
             <ServiceDetail
               service={selectedService}
               backend={backends.get(selectedService.service_id)}
             />
           ) : (
-            <EmptyOperationalState
+            <RightContextPanel
               title="Select a service"
-              detail="Open a service to inspect its observed state and history."
+              subtitle="Service diagnosis"
+              sections={[
+                {
+                  title: "History and incidents",
+                  content: (
+                    <p className="text-vf-micro text-vf-subtle">
+                      Select a service to inspect its observed history. No
+                      durable incident history is available from the current
+                      status contract.
+                    </p>
+                  ),
+                },
+              ]}
             />
           )}
-        </div>
+        </aside>
       </div>
 
       <Sheet

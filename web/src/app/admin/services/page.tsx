@@ -34,6 +34,7 @@ import {
   deriveServicesHealthSummary,
   type ServicesHealthSummary,
 } from "@/lib/services-health-summary";
+import { projectStatusHealth } from "@/lib/status-health-projection";
 import {
   Badge,
   Button,
@@ -619,7 +620,11 @@ export default function AdminServicesPage() {
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
   });
-  const { data: statusData } = useQuery({
+  const {
+    data: statusData,
+    isPending: statusPending,
+    isError: statusError,
+  } = useQuery({
     queryKey: queryKeys.status,
     queryFn: api.status,
     staleTime: 10_000,
@@ -1032,24 +1037,23 @@ export default function AdminServicesPage() {
     return latencies.reduce((sum, v) => sum + v, 0) / latencies.length;
   }, [statusData]);
 
-  const currentHealth = statusData?.current_health;
+  const healthProjection = projectStatusHealth({
+    data: statusData,
+    isPending: statusPending,
+    isError: statusError,
+  });
+  const currentHealth = healthProjection.health;
   const healthSummary = deriveServicesHealthSummary(
     currentHealth,
     enabledCount,
     services.length,
   );
-  const heroTone =
-    currentHealth?.tone === "bad" ||
-    currentHealth?.tone === "warn" ||
-    currentHealth?.tone === "ok"
-      ? currentHealth.tone
-      : ("neutral" as const);
-  const heroTitle = currentHealth?.label ?? "Live status unavailable";
+  const heroTone = healthProjection.tone;
+  const heroTitle = healthProjection.label;
   const heroDetail =
     services.length === 0
       ? "No services configured yet."
-      : (currentHealth?.detail ??
-        "The gateway did not provide a current health projection.");
+      : healthProjection.detail;
 
   // Capability coverage for the right rail
   const capabilityCoverage = useMemo(() => {

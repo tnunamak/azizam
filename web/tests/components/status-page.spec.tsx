@@ -143,7 +143,7 @@ describe("admin Status", () => {
     };
     renderStatus();
 
-    expect(await screen.findByText("Could not load status")).toBeVisible();
+    expect(await screen.findByText("Status unavailable")).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "System Status", level: 1 }),
     ).toBeVisible();
@@ -198,6 +198,33 @@ describe("admin Status", () => {
     ).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("does not emit a Services configuration target for an unregistered service", async () => {
+    statusState.load = async () => ({
+      current_health: health({
+        services: [
+          {
+            ...health().services[0],
+            configured: false,
+            tone: "warn",
+            observation: "degraded",
+          },
+        ],
+      }),
+    });
+    statusState.search = "service=gateway";
+    renderStatus();
+
+    expect(await screen.findByText("Unregistered service")).toBeVisible();
+    expect(
+      screen.queryByRole("link", { name: "Open Services configuration" }),
+    ).toBeNull();
+    expect(screen.getByRole("link", { name: "Inspect" })).toHaveAttribute(
+      "href",
+      "/admin/status?service=gateway",
+    );
+    expect(screen.queryByRole("link", { name: "Services" })).toBeNull();
+  });
+
   it("selects a service with its stable id rather than its display name", async () => {
     statusState.load = async () => ({ current_health: health() });
     renderStatus();
@@ -247,11 +274,53 @@ describe("admin Status", () => {
     statusState.search = "service=gateway";
     renderStatus();
 
+    const latencyTables = await screen.findAllByRole("table", {
+      name: "Latency observations",
+    });
+    expect(latencyTables).not.toHaveLength(0);
+    expect(latencyTables[0]).toHaveTextContent("100");
+    expect(latencyTables[0]).toHaveTextContent("120");
+    const availabilityTables = screen.getAllByRole("table", {
+      name: "Availability observations",
+    });
+    expect(availabilityTables).not.toHaveLength(0);
+    expect(availabilityTables[0]).toHaveTextContent("0.5");
+  });
+
+  it("counts host advisories as Needs attention", async () => {
+    statusState.load = async () => ({
+      current_health: health({
+        signals: [
+          {
+            source: "Host signal needs attention",
+            tone: "warn",
+            reasons: ["Disk space is low."],
+          },
+        ],
+      }),
+    });
+    renderStatus();
+
     expect(
-      await screen.findAllByRole("group", { name: "Latency observations" }),
-    ).not.toHaveLength(0);
-    expect(
-      screen.getAllByRole("group", { name: "Availability observations" }),
-    ).not.toHaveLength(0);
+      await screen.findByText("Host signal needs attention"),
+    ).toBeVisible();
+    expect(screen.getByText("Needs attention").parentElement).toHaveTextContent(
+      "1",
+    );
+    expect(screen.getByText("1 current advisory")).toBeVisible();
+  });
+
+  it("shows an old generated timestamp without claiming it is current", async () => {
+    const twoYearsAgo = Math.floor(Date.now() / 1000) - 2 * 365 * 24 * 60 * 60;
+    statusState.load = async () => ({
+      current_health: health(),
+      generated_at: twoYearsAgo,
+    });
+    renderStatus();
+
+    expect(await screen.findByText("Timestamp supplied")).toBeVisible();
+    expect(screen.getByText("freshness is not supplied")).toBeVisible();
+    expect(screen.getByText("2y ago")).toBeVisible();
+    expect(screen.queryByText("Current", { exact: true })).toBeNull();
   });
 });
