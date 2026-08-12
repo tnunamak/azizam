@@ -71,6 +71,7 @@ import {
   toast,
   TrendLineChart,
 } from "@/components/ui";
+import { AddServiceDialog } from "@/components/admin/add-service-dialog";
 
 // ---------------------------------------------------------------------------
 // History series helpers
@@ -700,6 +701,9 @@ export default function AdminServicesPage() {
   const consumedServiceTargetRef = useRef<string | null>(null);
   /** Banner shown after any write confirming live apply. */
   const [restartBanner, setRestartBanner] = useState(false);
+  const [pendingToggleServiceIds, setPendingToggleServiceIds] = useState<
+    ReadonlySet<string>
+  >(new Set());
   const isDesktopServiceContext = useDesktopServiceContext();
 
   function showRestartBanner() {
@@ -720,6 +724,7 @@ export default function AdminServicesPage() {
       enabled: boolean;
     }) => api.services.toggleEnabled(serviceId, enabled),
     onMutate: async ({ serviceId, enabled }) => {
+      setPendingToggleServiceIds((pending) => new Set(pending).add(serviceId));
       await queryClient.cancelQueries({ queryKey: queryKeys.serviceRegistry });
       const previous = queryClient.getQueryData<ServiceRegistry>(
         queryKeys.serviceRegistry,
@@ -741,9 +746,24 @@ export default function AdminServicesPage() {
       );
       return { previous };
     },
-    onError: (err, _vars, context) => {
+    onError: (err, variables, context) => {
       if (context?.previous) {
-        queryClient.setQueryData(queryKeys.serviceRegistry, context.previous);
+        queryClient.setQueryData<ServiceRegistry>(
+          queryKeys.serviceRegistry,
+          (current) => {
+            if (!current || !context.previous) return context.previous;
+            const previousService = context.previous.services[variables.serviceId];
+            const currentService = current.services[variables.serviceId];
+            if (!previousService || !currentService) return current;
+            return {
+              ...current,
+              services: {
+                ...current.services,
+                [variables.serviceId]: previousService,
+              },
+            };
+          },
+        );
       }
       toast.error(`Couldn't update service`, {
         description: errorMessage(err),
@@ -753,7 +773,12 @@ export default function AdminServicesPage() {
       updateRegistry(newRegistry);
       showRestartBanner();
     },
-    onSettled: () => {
+    onSettled: (_data, _error, variables) => {
+      setPendingToggleServiceIds((pending) => {
+        const next = new Set(pending);
+        next.delete(variables.serviceId);
+        return next;
+      });
       void queryClient.invalidateQueries({
         queryKey: queryKeys.serviceRegistry,
       });
@@ -1295,9 +1320,6 @@ export default function AdminServicesPage() {
                       );
                       const metrics = serviceLiveMetrics(backend);
                       const isSelected = panelService?.id === svc.id;
-                      const togglePendingServiceId = toggleMutation.isPending
-                        ? toggleMutation.variables?.serviceId
-                        : null;
                       return (
                         <ServiceTableRow
                           key={svc.id}
@@ -1307,7 +1329,7 @@ export default function AdminServicesPage() {
                           metrics={metrics}
                           history={backend?.history}
                           isSelected={isSelected}
-                          togglePending={togglePendingServiceId === svc.id}
+                          togglePending={pendingToggleServiceIds.has(svc.id)}
                           onSelect={() =>
                             setPanelService(isSelected ? null : svc)
                           }
@@ -1723,7 +1745,11 @@ function formToApiBody(state: ServiceFormState): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 // Add service dialog — presets fetched from the API
 
-function AddServiceDialog({
+// The production dialog now lives in components/admin/add-service-dialog.tsx.
+// Keep this old implementation temporarily unreachable only until the shared
+// edit form is extracted; it is intentionally not a Next page export.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function LegacyAddServiceDialog({
   open,
   onOpenChange,
   onSaved,
@@ -1735,7 +1761,7 @@ function AddServiceDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open && (
-        <AddServiceDialogContent
+        <LegacyAddServiceDialogContent
           onOpenChange={onOpenChange}
           onSaved={onSaved}
         />
@@ -1744,7 +1770,7 @@ function AddServiceDialog({
   );
 }
 
-export function AddServiceDialogContent({
+function LegacyAddServiceDialogContent({
   onOpenChange,
   onSaved,
 }: {
@@ -1960,15 +1986,15 @@ interface EditFormState {
 const ROLE_OPTIONS = [
   {
     value: "required",
-    label: "Required — expected to be available; outages raise required alerts",
+    label: "Required — expected to be available; a down service needs action",
   },
   {
     value: "optional",
-    label: "Optional — outages raise optional alerts",
+    label: "Optional — a down service is a warning",
   },
   {
     value: "standby",
-    label: "Standby — outages raise standby alerts",
+    label: "Standby — stopped or disabled is expected and neutral",
   },
 ];
 

@@ -901,9 +901,17 @@ def upsert_service_in_registry(
     if replace and existing is not None and is_litellm_service_record(sid, existing):
         # For managed substrate: preserve the existing config; only patch allowed fields.
         updated = dict(existing)
-        for field in ("name", "enabled", "note"):
+        for field in ("name", "enabled"):
             if field in raw:
                 updated[field] = raw[field]
+        if "note" in raw:
+            # ``config.note`` is the canonical persisted location.  Do not put
+            # this managed metadata at the record top level: normalization
+            # intentionally discards unknown top-level fields.
+            updated["config"] = {
+                **copy.deepcopy(dict(existing.get("config") or {})),
+                "note": raw["note"],
+            }
         record = normalize_service_record(sid, updated)
     else:
         # Preserve the original source for non-UI rows (editability law: source is

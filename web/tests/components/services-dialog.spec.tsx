@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
@@ -32,7 +32,11 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { Dialog } from "@/components/ui";
-import { AddServiceDialogContent } from "@/app/admin/services/page";
+import { AddServiceDialogContent } from "@/components/admin/add-service-dialog";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function AddServiceFixture() {
   const client = new QueryClient({
@@ -51,6 +55,19 @@ function AddServiceFixture() {
 }
 
 describe("Services add dialog", () => {
+  it("fails if Radix reports a missing dialog description", async () => {
+    const failure = (args: unknown[]) => {
+      if (args.some((arg) => String(arg).includes("Missing `Description`"))) {
+        throw new Error("Radix dialog description warning");
+      }
+    };
+    vi.spyOn(console, "warn").mockImplementation((...args) => failure(args));
+    vi.spyOn(console, "error").mockImplementation((...args) => failure(args));
+
+    render(<AddServiceFixture />);
+    await screen.findByRole("option", { name: "OpenAI compatible" });
+  });
+
   it("marks Provider as required and focuses the validation summary", async () => {
     render(<AddServiceFixture />);
 

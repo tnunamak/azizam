@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import admin_store  # noqa: E402
+from gateway import admin_store, service_registry  # noqa: E402
 from gateway.admin_api import AdminContext, create_admin_router  # noqa: E402
 from gateway.admin_oidc import (  # noqa: E402
     CookieConfig,
@@ -39,13 +39,15 @@ def _install_registry_writer_test_helpers(store: AdminSQLiteStore, path: Path) -
 
         def write(*, _writer=writer, **kwargs):
             current = admin_store.get_service_registry_with_generation(path=path)
+            api_call = "expected_generation" in kwargs
+            kwargs.pop("expected_generation", None)
             result = _writer(
                 **kwargs,
                 expected_generation=(
                     int(current["operator_settings_generation"]) if current else 0
                 ),
             )
-            return result["value"]
+            return result if api_call else result["value"]
 
         setattr(store, name, write)
 
@@ -1032,6 +1034,39 @@ class ServicePatchRoundTripTests(unittest.TestCase):
             },
             actor=self.ctx,
         )
+
+    def test_managed_note_round_trips_through_patch_api_and_registry(self) -> None:
+        """The API stores managed notes at config.note without dropping config."""
+        seed = service_registry.build_service_registry_seed({"backends": {}})
+        original_config = dict(seed["services"]["litellm"]["config"])
+        write_service_registry_for_test(seed, path=self.db)
+        admin_key, _, _ = create_admin_service_account_key("owner-cli", path=self.db)
+        app = FastAPI()
+        app.include_router(
+            create_admin_router(
+                self.store,
+                auth=AdminAuthenticator(self.store),
+                profile_resolver=self.store.profile_for_id,
+            )
+        )
+        client = TestClient(app)
+        client.headers.update({
+            "Authorization": f"Bearer {admin_key}",
+            "x-ai-gateway-admin-action": "1",
+        })
+        before = client.get("/admin/api/operator/service-registry")
+        self.assertEqual(before.status_code, 200, before.text)
+        response = client.patch(
+            "/admin/api/operator/services/litellm",
+            json={"note": "Operator-owned note"},
+            headers={"If-Match": before.headers["ETag"]},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        service = response.json()["service_registry"]["services"]["litellm"]
+        self.assertEqual(service["config"], {**original_config, "note": "Operator-owned note"})
+        self.assertNotIn("note", service)
+        persisted = self.store.get_service_registry()["services"]["litellm"]
+        self.assertEqual(persisted["config"], service["config"])
 
     def test_partial_patch_preserves_health_endpoint_and_timeout(self) -> None:
         """PATCH that only changes name must not lose health_endpoint or timeout."""

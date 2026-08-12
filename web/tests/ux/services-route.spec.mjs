@@ -48,7 +48,7 @@ test("Services uses the frozen operational primitives for context and destructiv
   assert.doesNotMatch(contents, /window\.confirm\(/);
 });
 
-test("Services keeps responsive context, live removal, and role semantics honest", async () => {
+test("Services keeps responsive context and live removal honest", async () => {
   const contents = await source();
 
   assert.match(contents, /\(min-width: 980px\)/);
@@ -65,9 +65,9 @@ test("Services keeps responsive context, live removal, and role semantics honest
     /stop working immediately when\s+this live change is applied/,
   );
   assert.match(contents, /provisioned seed is not re-imported/);
-  assert.match(contents, /outages raise required alerts/);
-  assert.match(contents, /outages raise optional alerts/);
-  assert.match(contents, /outages raise standby alerts/);
+  assert.match(contents, /down service needs action/);
+  assert.match(contents, /down service is a warning/);
+  assert.match(contents, /stopped or disabled is expected and neutral/);
   assert.doesNotMatch(contents, /routes around if unavailable/);
   assert.doesNotMatch(contents, /only used when explicitly requested/);
 });

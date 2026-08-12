@@ -716,6 +716,24 @@ def test_upsert_edit_allows_managed_substrate_rename() -> None:
     assert rec["config"]["execution_substrate"] == "litellm"
 
 
+def test_upsert_edit_persists_managed_note_in_canonical_config() -> None:
+    """Managed metadata PATCH stores note in config without losing config data."""
+    reg = service_registry.build_service_registry_seed({"backends": {}})
+    original_config = dict(reg["services"]["litellm"]["config"])
+
+    reg2, rec = service_registry.upsert_service_in_registry(
+        reg,
+        service_id="litellm",
+        raw={"note": "Operator-owned note"},
+        replace=True,
+    )
+
+    assert rec["config"]["note"] == "Operator-owned note"
+    assert reg2["services"]["litellm"]["config"]["note"] == "Operator-owned note"
+    assert rec["config"] == {**original_config, "note": "Operator-owned note"}
+    assert "note" not in {key for key in rec if key != "config"}
+
+
 def test_remove_allows_any_non_managed_source() -> None:
     # EDITABILITY LAW: all sources are removable except managed-substrate.
     # provisioned rows (like tabby) can now be removed.
