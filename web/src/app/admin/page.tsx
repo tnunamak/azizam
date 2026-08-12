@@ -274,16 +274,16 @@ function AttentionSection({
 function AppsSection({
   apps,
   credentialsData,
-  credentialsUnavailable,
+  credentialFactsState,
   usersById,
-  usersUnavailable,
+  ownerFactsState,
   statusData,
 }: {
   apps: Awaited<ReturnType<typeof api.apps.list>>;
   credentialsData: Credential[] | undefined;
-  credentialsUnavailable: boolean;
+  credentialFactsState: "ready" | "loading" | "unavailable";
   usersById: Map<string, User>;
-  usersUnavailable: boolean;
+  ownerFactsState: "ready" | "loading" | "unavailable";
   statusData: StatusPayload | undefined;
 }) {
   if (apps.length === 0) {
@@ -344,19 +344,23 @@ function AppsSection({
               }
               owner={
                 app.owner_user_id
-                  ? usersUnavailable
-                    ? "Owner unavailable"
-                    : (() => {
-                        const owner = usersById.get(app.owner_user_id!);
-                        return owner ? userLabel(owner) : "Owner unavailable";
-                      })()
+                  ? ownerFactsState === "loading"
+                    ? "Owner loading"
+                    : ownerFactsState === "unavailable"
+                      ? "Owner unavailable"
+                      : (() => {
+                          const owner = usersById.get(app.owner_user_id!);
+                          return owner ? userLabel(owner) : "Owner unavailable";
+                        })()
                   : undefined
               }
               profile={app.effective_profile_name}
               keyCount={
-                credentialsUnavailable
-                  ? undefined
-                  : credentialFacts?.activeKeyCount
+                credentialFactsState === "loading"
+                  ? "Keys loading"
+                  : credentialFactsState === "unavailable"
+                    ? "Keys unavailable"
+                    : credentialFacts?.activeKeyCount
               }
               lastUsedLabel={lastUsedLabel}
               status={app.disabled_at !== null ? "warn" : "ok"}
@@ -497,7 +501,6 @@ export default function AdminOverviewPage() {
 
   const {
     data: usersData,
-    isPending: usersPending,
     isError: usersError,
     refetch: refetchUsers,
   } = useQuery({
@@ -581,6 +584,18 @@ export default function AdminOverviewPage() {
 
   const attention = overview?.attention ?? [];
   const hasAttention = overviewPending || overviewError || attention.length > 0;
+  const ownerFactsState =
+    usersData === undefined
+      ? usersError
+        ? ("unavailable" as const)
+        : ("loading" as const)
+      : ("ready" as const);
+  const credentialFactsState =
+    credentialsData === undefined
+      ? credentialsError
+        ? ("unavailable" as const)
+        : ("loading" as const)
+      : ("ready" as const);
 
   useEffect(() => {
     setBaseUrl(`${window.location.origin}/v1`);
@@ -603,9 +618,9 @@ export default function AdminOverviewPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <h1 className="sr-only">Overview</h1>
       {/* Page header */}
       <SectionActionHeader
+        as="h1"
         kicker="operator"
         title="Overview"
         action={
@@ -854,9 +869,9 @@ export default function AdminOverviewPage() {
                   <AppsSection
                     apps={apps}
                     credentialsData={credentialsData}
-                    credentialsUnavailable={credentialsData === undefined}
+                    credentialFactsState={credentialFactsState}
                     usersById={usersById}
-                    usersUnavailable={usersData === undefined}
+                    ownerFactsState={ownerFactsState}
                     statusData={statusData}
                   />
                 </div>
@@ -889,7 +904,7 @@ export default function AdminOverviewPage() {
               <RecentActivitySection
                 entries={auditEntries}
                 usersById={usersById}
-                loading={auditPending || usersPending}
+                loading={auditPending}
                 error={auditError}
                 onRetry={() => void refetchAudit()}
                 usersUnavailable={usersError && usersData === undefined}

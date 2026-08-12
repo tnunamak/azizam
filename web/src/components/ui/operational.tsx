@@ -927,7 +927,7 @@ export interface AppAccessRowProps {
   avatar?: ReactNode;
   owner?: string;
   profile?: string;
-  keyCount?: number;
+  keyCount?: number | string;
   lastUsedLabel?: string;
   status?: HealthTone;
   statusLabel?: string;
@@ -1043,7 +1043,9 @@ export function AppAccessRow({
         )}
         {keyCount !== undefined && (
           <span className="text-vf-micro text-vf-muted font-mono">
-            {keyCount} {keyCount === 1 ? "key" : "keys"}
+            {typeof keyCount === "number"
+              ? `${keyCount} ${keyCount === 1 ? "key" : "keys"}`
+              : keyCount}
           </span>
         )}
         {lastUsedLabel && (
