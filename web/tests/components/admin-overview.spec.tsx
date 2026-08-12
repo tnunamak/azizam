@@ -210,4 +210,101 @@ describe("Admin Overview query-state behavior", () => {
     expect(container.querySelector("h1.sr-only")).toBeNull();
     expect(document.querySelectorAll(".animate-pulse")).toHaveLength(3);
   });
+
+  it("does not claim freshness is unavailable when the source omits a timestamp on an otherwise healthy projection", async () => {
+    setResolvedDefaults();
+    apiState.status.mockResolvedValue({
+      current_health: {
+        state: "ok",
+        tone: "ok",
+        label: "Operational",
+        detail: "Current configured-service health is normal.",
+        observation_available: true,
+        services: [],
+      },
+      // generated_at intentionally omitted, as a synthetic/fixture status
+      // provider may do -- this must not be read as "health is stale".
+    });
+
+    renderOverview();
+
+    expect(await screen.findByText("Operational")).toBeVisible();
+    expect(
+      screen.getByText("Current configured-service health is normal."),
+    ).toBeVisible();
+    expect(screen.queryByText(/Freshness unavailable/i)).not.toBeInTheDocument();
+  });
+
+  it("shows real freshness when the source supplies a generation timestamp", async () => {
+    setResolvedDefaults();
+    const generatedAt = Math.floor(Date.now() / 1000) - 5;
+    apiState.status.mockResolvedValue({
+      generated_at: generatedAt,
+      current_health: {
+        state: "ok",
+        tone: "ok",
+        label: "Operational",
+        detail: "Current configured-service health is normal.",
+        observation_available: true,
+        services: [],
+      },
+    });
+
+    renderOverview();
+
+    expect(await screen.findByText("Operational")).toBeVisible();
+    expect(screen.getByText(/Updated just now/i)).toBeVisible();
+  });
+
+  it("caps and groups a large unbounded attention list instead of dumping every row", async () => {
+    setResolvedDefaults();
+    const attention = Array.from({ length: 24 }, (_, i) => ({
+      kind: "app",
+      severity: "attention" as const,
+      title: `Fixture page ${String(i).padStart(2, "0")} has no active key`,
+      detail: "Mint a key so it can reach the gateway.",
+      target_kind: "app",
+      target_id: `app_${i}`,
+    }));
+    apiState.overview.mockResolvedValue({ attention });
+
+    renderOverview();
+
+    expect(await screen.findByText("24 items need attention")).toBeVisible();
+    // Grouped into one summarized row rather than 24 identical rows.
+    expect(screen.getByText("24 apps need attention")).toBeVisible();
+    expect(
+      screen.queryByText("Fixture page 00 has no active key"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps small distinct attention groups as individual rows with real targets", async () => {
+    setResolvedDefaults();
+    apiState.overview.mockResolvedValue({
+      attention: [
+        {
+          kind: "app",
+          severity: "attention",
+          title: "Relay has no active key",
+          detail: "Mint a key so it can reach the gateway.",
+          target_kind: "app",
+          target_id: "app_1",
+        },
+        {
+          kind: "service",
+          severity: "problem",
+          title: "Backend is down",
+          detail: "A required service cannot route requests.",
+          target_kind: "service",
+          target_id: "svc_1",
+        },
+      ],
+    });
+
+    renderOverview();
+
+    expect(await screen.findByText("2 items need attention")).toBeVisible();
+    expect(screen.getByText("Relay has no active key")).toBeVisible();
+    expect(screen.getByText("Backend is down")).toBeVisible();
+  });
 });

@@ -144,9 +144,12 @@ function formatCompact(value: number | null | undefined): string {
   }).format(value);
 }
 
-function statusFreshness(generatedAt: number | undefined): string {
+/** Returns null (render nothing) rather than claim staleness we can't prove:
+ * an absent timestamp means the source didn't supply one, not that the
+ * observation is known to be stale. */
+function statusFreshness(generatedAt: number | undefined): string | null {
   if (!generatedAt || !Number.isFinite(generatedAt)) {
-    return "Freshness unavailable";
+    return null;
   }
   const ageSeconds = Math.max(0, Math.floor(Date.now() / 1000 - generatedAt));
   if (ageSeconds < 60) return "Updated just now";
@@ -165,7 +168,66 @@ function auditActorLabel(entry: AuditEntry): string {
 }
 
 // ---------------------------------------------------------------------------
-// Attention section — one IncidentBanner per item, or an all-clear card
+// Attention section — bounded, grouped advisories; never an unbounded dump.
+
+/** Overview shows compact advisories, not a data dump: cap the visible rows
+ * and group identical-shape items (e.g. "N apps have no active key") so a
+ * fixture or instance with many similar problems doesn't bury the page. */
+const ATTENTION_VISIBLE_CAP = 5;
+const ATTENTION_GROUP_THRESHOLD = 3;
+
+interface AttentionRow {
+  key: string;
+  title: string;
+  detail: string;
+  tone: "warn" | "bad" | "info";
+  href?: string;
+  side?: string;
+  count: number;
+}
+
+function groupAttentionItems(items: AttentionItem[]): AttentionRow[] {
+  const byShape = new Map<string, AttentionItem[]>();
+  for (const item of items) {
+    const shapeKey = `${item.kind}:${item.detail}`;
+    const bucket = byShape.get(shapeKey);
+    if (bucket) bucket.push(item);
+    else byShape.set(shapeKey, [item]);
+  }
+
+  const rows: AttentionRow[] = [];
+  for (const [shapeKey, group] of byShape) {
+    const first = group[0]!;
+    const tone = first.severity === "problem" ? "bad" : "warn";
+    if (group.length < ATTENTION_GROUP_THRESHOLD) {
+      for (const item of group) {
+        const href = adminTargetHref(item.target_kind, item.target_id) ?? undefined;
+        rows.push({
+          key: `${shapeKey}:${item.target_id ?? item.title}`,
+          title: item.title,
+          detail: item.detail,
+          tone,
+          href,
+          side: href ? "View →" : undefined,
+          count: 1,
+        });
+      }
+      continue;
+    }
+    // Same kind + detail across many targets: one summarized row rather than
+    // N identical-looking rows. There is no single real target for a
+    // summarized row, so — unlike the per-item rows above — it carries no
+    // href/"View" action rather than guessing a listing URL.
+    rows.push({
+      key: shapeKey,
+      title: `${group.length} ${first.kind}s need attention`,
+      detail: first.detail,
+      tone,
+      count: group.length,
+    });
+  }
+  return rows;
+}
 
 function AttentionSection({
   items,
@@ -178,6 +240,8 @@ function AttentionSection({
   error: boolean;
   onRetry: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   if (error) {
     return (
       <IncidentBanner
@@ -201,21 +265,32 @@ function AttentionSection({
   const tone = problemCount > 0 ? ("bad" as const) : ("warn" as const);
   const headline = `${items.length} item${items.length === 1 ? "" : "s"} need${items.length === 1 ? "s" : ""} attention`;
 
+  const rows = groupAttentionItems(items);
+  const visibleRows = expanded ? rows : rows.slice(0, ATTENTION_VISIBLE_CAP);
+  const hiddenCount = rows.length - visibleRows.length;
+
   return (
     <StatusAdvisory
       tone={tone}
       title={headline}
-      items={items.map((item) => {
-        const href =
-          adminTargetHref(item.target_kind, item.target_id) ?? undefined;
-        return {
-          title: item.title,
-          detail: item.detail,
-          tone: item.severity === "problem" ? "bad" : "warn",
-          href,
-          side: href ? "View →" : undefined,
-        };
-      })}
+      items={visibleRows.map((row) => ({
+        title: row.title,
+        detail: row.detail,
+        tone: row.tone,
+        href: row.href,
+        side: row.side,
+      }))}
+      footer={
+        hiddenCount > 0 ? (
+          <Button variant="ghost" size="sm" onClick={() => setExpanded(true)}>
+            Show {hiddenCount} more
+          </Button>
+        ) : expanded && rows.length > ATTENTION_VISIBLE_CAP ? (
+          <Button variant="ghost" size="sm" onClick={() => setExpanded(false)}>
+            Show fewer
+          </Button>
+        ) : undefined
+      }
     />
   );
 }
@@ -571,7 +646,10 @@ export default function AdminOverviewPage() {
       <SystemHealthBand
         tone={health.tone}
         title={health.label}
-        detail={`${health.detail} ${statusFreshness(statusData?.generated_at)}.`}
+        detail={(() => {
+          const freshness = statusFreshness(statusData?.generated_at);
+          return freshness ? `${health.detail} ${freshness}.` : health.detail;
+        })()}
         metrics={[
           {
             label: "Apps",

@@ -74,6 +74,20 @@ _DAISY_AUDIT_PATH = Path(
     os.environ.get("AGW_DAISY_AUDIT_PATH", "")
 ) if os.environ.get("AGW_DAISY_AUDIT_PATH") else None
 
+# Host machine telemetry (disk/thermal) is operator-machine-specific and must
+# never be assumed present. `AGW_HOST_TELEMETRY_DISABLED` is the isolation seam
+# any isolated launch mode (harness, dev, tests) sets to skip the `df`/`sensors`
+# shell-outs entirely rather than leaking the runner's own host state into a
+# fresh instance's health projection. `AGW_DISK_PARTITIONS` lets an operator
+# declare which mount points they actually want watched; it defaults to just
+# `/` rather than a maintainer-specific hardcoded list.
+_HOST_TELEMETRY_DISABLED = os.environ.get("AGW_HOST_TELEMETRY_DISABLED", "") not in (
+    "", "0", "false", "False",
+)
+_DISK_PARTITIONS_CONFIG = [
+    p.strip() for p in os.environ.get("AGW_DISK_PARTITIONS", "/").split(",") if p.strip()
+]
+
 # Hot-spot directories the firehose should surface separately from the root partition.
 def _optional_path(env_key: str, default: str | None = None) -> Path | None:
     val = os.environ.get(env_key, default or "")
@@ -1835,9 +1849,11 @@ def _load_average() -> Optional[list[float]]:
 # --- disk -----------------------------------------------------------------
 
 def _disk_partitions() -> list[dict]:
-    """df for root, /home, /media/windows, /var/log."""
+    """df for the operator-declared partitions (``AGW_DISK_PARTITIONS``, default `/`)."""
+    if _HOST_TELEMETRY_DISABLED:
+        return []
     out_rows: list[dict] = []
-    for target in ("/", "/home", "/media/windows", "/var/log"):
+    for target in _DISK_PARTITIONS_CONFIG:
         rc, out, _ = _run(["df", "-B1", "--output=source,size,used,avail,pcent,target", target], timeout=1.0)
         if rc != 0:
             continue
@@ -1959,6 +1975,8 @@ def _journal_disk_usage() -> Optional[int]:
 # --- thermal / CPU --------------------------------------------------------
 
 def _read_sensors() -> dict:
+    if _HOST_TELEMETRY_DISABLED:
+        return {"unavailable_reason": "host telemetry disabled for this instance"}
     rc, out, _ = _run(["sensors", "-j"], timeout=1.5)
     if rc != 0 or not out:
         return {"unavailable_reason": "sensors not found or failed"}

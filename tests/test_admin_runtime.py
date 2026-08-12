@@ -307,6 +307,46 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertEqual(clear_profile.status_code, 200, clear_profile.text)
         self.assertIsNone(clear_profile.json()["app"]["default_profile_id"])
 
+    def test_ui_created_profile_without_inner_id_reports_its_own_identity(
+        self,
+    ) -> None:
+        """A profile created via the admin UI never carries an inner ``id``
+        (only the seeded builtins do). ``profile_for_id`` must still resolve
+        it to its own outer app-profile id, not silently fall back to the
+        global ``default-local`` identity — that would misattribute every
+        policy decision made against it (see profile identity audit)."""
+        admin_key, _, _ = create_admin_service_account_key(
+            "owner-cli", path=self.db
+        )
+        client = self._client(admin_key)
+        profile = client.post(
+            "/admin/api/profiles",
+            json={
+                "name": "Household media profile",
+                "profile": {
+                    "allow": {"intents": ["chat.generate"]},
+                },
+            },
+        ).json()["profile"]
+        self.assertNotEqual(profile["id"], "default-local")
+
+        resolved = self.store.profile_for_id(profile["id"])
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.id, profile["id"])
+
+        simulated = client.post(
+            "/admin/api/policy/simulate",
+            json={
+                "profile": profile["id"],
+                "request": {"intent": "video.generate"},
+            },
+        )
+        self.assertEqual(simulated.status_code, 200, simulated.text)
+        body = simulated.json()
+        self.assertEqual(body["profile_id"], profile["id"])
+        self.assertNotEqual(body["profile_id"], "default-local")
+        self.assertFalse(body["decision"]["allowed"])
+
     def test_disabling_app_immediately_blocks_existing_runtime_keys(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db

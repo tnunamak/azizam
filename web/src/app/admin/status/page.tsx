@@ -17,13 +17,13 @@ import {
   type StatusSeriesPoint,
 } from "@/lib/api";
 import { adminServiceHref, adminStatusHref } from "@/lib/admin-links";
+import { formatRelativeTime } from "@/lib/format";
 import { projectStatusHealth } from "@/lib/status-health-projection";
 import {
   Badge,
   Button,
   EmptyOperationalState,
   IncidentBanner,
-  RelativeTime,
   RightContextPanel,
   type RightContextPanelSection,
   SectionActionHeader,
@@ -404,21 +404,16 @@ function StatusContents() {
                 : "neutral",
           },
           {
-            label: "Generated",
-            value: data?.generated_at ? "Timestamp supplied" : "Not supplied",
+            label: "Last observed",
+            value: data?.generated_at
+              ? formatRelativeTime(data.generated_at)
+              : "Unknown",
             detail: data?.generated_at
-              ? "freshness is not supplied"
-              : "observation time unavailable",
-            tone: data?.generated_at ? "neutral" : "neutral",
+              ? "gateway health observation"
+              : "the gateway did not report an observation time",
+            tone: "neutral",
           },
         ]}
-        action={
-          data?.generated_at ? (
-            <p className="text-vf-micro text-vf-subtle">
-              Observed <RelativeTime ts={data.generated_at} />
-            </p>
-          ) : undefined
-        }
       />
 
       <section className="flex flex-col gap-3" aria-label="Current advisories">

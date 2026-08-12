@@ -1309,7 +1309,7 @@ class AdminSQLiteStore:
         if not record:
             return None
         try:
-            return load_profile(record.get("profile"))
+            return load_profile(record.get("profile"), default_id=record.get("id"))
         except ProfileLoadError:
             return None
 

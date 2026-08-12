@@ -335,9 +335,10 @@ describe("admin Status", () => {
     });
     renderStatus();
 
-    expect(await screen.findByText("Timestamp supplied")).toBeVisible();
-    expect(screen.getByText("freshness is not supplied")).toBeVisible();
-    expect(screen.getByText("2y ago")).toBeVisible();
+    expect(await screen.findByText("2y ago")).toBeVisible();
+    expect(screen.getByText("gateway health observation")).toBeVisible();
     expect(screen.queryByText("Current", { exact: true })).toBeNull();
+    expect(screen.queryByText(/not supplied/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/GENERATED/i)).not.toBeInTheDocument();
   });
 });
