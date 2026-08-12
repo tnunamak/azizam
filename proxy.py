@@ -115,6 +115,7 @@ from gateway.setup_render import render_setup_page
 from gateway.admin_runtime import (
     AdminAuthenticator,
     AdminSQLiteStore,
+    OIDC_PROVIDER_FIELDS,
     USER_ACCESS_DEFAULTS_SETTING_KEY,
     create_admin_service_account_key,
     is_human_user_record,
@@ -10108,6 +10109,7 @@ app.include_router(
         known_model_names_getter=lambda: litellm_known_model_names(
             ADMIN_STORE.get_service_registry()
         ),
+        effective_oidc_config_provider=lambda: _admin_oidc_config_snapshot(),
     )
 )
 
@@ -10582,11 +10584,11 @@ def _admin_config_sources(
 
 
 def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
-    db_setting = ADMIN_STORE.get_oidc_config_setting()
-    if db_setting is not None:
-        return db_setting
+    bootstrap = _bootstrap_admin_oidc_cfg()
+    db_display = ADMIN_STORE.get_oidc_config_setting() or {}
+    db_setting = ADMIN_STORE.get_oidc_config_setting_raw() or {}
     cfg = _effective_admin_oidc_config()
-    if not (
+    if not db_setting and not (
         cfg.enabled
         or cfg.issuer
         or cfg.client_id
@@ -10596,8 +10598,25 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
         or cfg.jwks_uri
     ):
         return None
+    field_sources: dict[str, str] = {}
+    for field_name in OIDC_PROVIDER_FIELDS:
+        db_value = db_setting.get(field_name)
+        if field_name in db_setting and db_value not in (None, "", [], ()):
+            field_sources[field_name] = "database"
+        elif field_name in bootstrap or (
+            field_name == "client_secret" and bootstrap.get("client_secret_env")
+        ):
+            field_sources[field_name] = "bootstrap"
+        else:
+            field_sources[field_name] = "runtime_default"
+    configured_sources = set(field_sources.values()) - {"runtime_default"}
+    source = "merged" if len(configured_sources) > 1 else (
+        next(iter(configured_sources), "runtime_default")
+    )
     return {
-        "source": "bootstrap",
+        "source": source,
+        "apply_mode": "live",
+        "provenance": {"summary": source, "fields": field_sources},
         "enabled": cfg.enabled,
         "issuer": cfg.issuer,
         "client_id": cfg.client_id,
@@ -10612,6 +10631,8 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
         "token_endpoint": cfg.token_endpoint,
         "jwks_uri": cfg.jwks_uri,
         "clock_skew_seconds": cfg.clock_skew_seconds,
+        "groups_claim": cfg.groups_claim,
+        "updated_at": db_display.get("updated_at"),
     }
 
 
@@ -11917,8 +11938,8 @@ async def setup_create_first_app(request: Request):
             )
             admin_store.record_audit(
                 "setup.first_app_key",
-                actor_kind="admin",
-                actor_id=actor.subject,
+                actor_kind=actor.actor_kind,
+                actor_id=actor.audit_actor_id,
                 target_kind="credential",
                 target_id=str(credential.get("id") or ""),
                 metadata={

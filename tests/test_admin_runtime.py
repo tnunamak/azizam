@@ -990,6 +990,83 @@ class AdminOidcSettingsTests(unittest.TestCase):
         # External callers (config_sources, proxy.py) depend on this key.
         self.assertEqual(OIDC_PROVIDER_SETTING_KEY, "oidc_provider_config")
 
+    def test_get_effective_oidc_contract_covers_bootstrap_override_and_merge(self) -> None:
+        admin_key, _, _ = create_admin_service_account_key("owner-cli", path=self.db)
+        cases = (
+            ("bootstrap", {"issuer": "bootstrap", "client_id": "bootstrap-client"}),
+            ("database", {"issuer": "database", "client_id": "database-client"}),
+            ("merged", {"issuer": "bootstrap", "client_id": "database-client"}),
+        )
+        for summary, expected in cases:
+            with self.subTest(summary=summary):
+                app = FastAPI()
+                app.include_router(
+                    create_admin_router(
+                        self.store,
+                        auth=AdminAuthenticator(self.store),
+                        effective_oidc_config_provider=lambda summary=summary, expected=expected: {
+                            **expected,
+                            "enabled": True,
+                            "client_secret": "<redacted>",
+                            "client_secret_set": True,
+                            "source": summary,
+                            "apply_mode": "live",
+                            "provenance": {
+                                "summary": summary,
+                                "fields": {
+                                    "issuer": "bootstrap" if expected["issuer"] == "bootstrap" else "database",
+                                    "client_id": "bootstrap" if expected["client_id"] == "bootstrap-client" else "database",
+                                },
+                            },
+                        },
+                    )
+                )
+                response = TestClient(app).get(
+                    "/admin/api/oidc-config",
+                    headers={"Authorization": f"Bearer {admin_key}"},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                config = response.json()["oidc_config"]
+                self.assertEqual(config["issuer"], expected["issuer"])
+                self.assertEqual(config["client_id"], expected["client_id"])
+                self.assertEqual(config["provenance"]["summary"], summary)
+                self.assertEqual(config["source"], summary)
+                self.assertEqual(config["apply_mode"], "live")
+                self.assertNotIn("topsecret", response.text)
+
+    def test_audit_projects_human_service_and_system_actors_without_id_inference(self) -> None:
+        human = admin_store.upsert_oidc_user(
+            "https://idp.example", "owner", email="owner@example.com",
+            display_name="Owner Human", path=self.db,
+        )
+        service = admin_store.ensure_service_account("release-bot", path=self.db)
+        self.store.create_app(
+            data={"name": "human-app"},
+            actor=AdminContext(subject=human["id"], actor_kind="user", roles=frozenset({"owner"})),
+        )
+        self.store.create_app(
+            data={"name": "service-app"},
+            actor=AdminContext(subject=service["id"], actor_kind="service_account", roles=frozenset({"owner"})),
+        )
+        admin_store.record_audit(
+            "system.seed", actor_kind="system", actor_id="startup", path=self.db,
+        )
+        admin_key, _, _ = create_admin_service_account_key("reader", path=self.db)
+        records = self._client(admin_key).get("/admin/api/audit").json()["records"]
+        service_record = next(
+            record for record in records
+            if record["action"] == "app.create" and record["actor_kind"] == "service_account"
+        )
+        self.assertEqual(service_record["actor_label"], "release-bot")
+        human_record = next(
+            record for record in records
+            if record["action"] == "app.create" and record["actor_kind"] == "user"
+        )
+        self.assertEqual(human_record["actor_label"], "Owner Human")
+        system_record = next(record for record in records if record["action"] == "system.seed")
+        self.assertEqual(system_record["actor_kind"], "system")
+        self.assertEqual(system_record["actor_label"], "System")
+
 
 class ServicePatchRoundTripTests(unittest.TestCase):
     """PATCH /operator/services/{id} via AdminSQLiteStore.update_service.

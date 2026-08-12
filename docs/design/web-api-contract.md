@@ -799,7 +799,8 @@ with `next_cursor` to reach arbitrarily old events for any filter.
   "records": [ {
     "id": "aud_…",
     "created_at": 1765…,
-    "actor_kind": "admin" | "user" | "service_account" | "cli" | null,
+    "actor_kind": "admin" | "user" | "service_account" | "system" | "cli" | null,
+    "actor_label": "Owner" | "release-bot" | "System" | "Unknown principal",
     "actor_id": "usr_… | svc_… | cli",
     "action": "app.create",
     "target_kind": "app" | "profile" | "credential" | "operator_setting" | "service" | "extension_package" | "runtime_profile_mapping" | null,
@@ -826,12 +827,16 @@ Field notes:
   `"operator.oidc_provider_config.update"`).
   Map to sentence-case human phrases client-side; display the raw value as
   `micro` mono detail.
-- `actor_id` resolves through the principal kind. A human resolves via
-  `GET /admin/api/users`; a service account renders as named automation from
-  the audit/credential context. `"cli"` is a system actor. Do not display a
-  service principal as "Unknown user".
-- `metadata` is a free-form object specific to each action; render as
-  mono JSON in the row detail Sheet.
+- `actor_kind` and `actor_label` are authoritative server facts. The gateway
+  obtains them from the authenticated principal record when it writes an
+  event, then resolves the display label through that recorded kind. Clients
+  must not infer a kind or label from `actor_id` prefixes. `"system"` and
+  `"cli"` render as `"System"`.
+- `metadata` is a bounded safe-detail projection, not the stored free-form
+  event payload. The API permits only its documented non-secret field
+  vocabulary, limits keys/list items/string length, and drops unknown nested
+  objects at this trust boundary. Clients may copy or render this response,
+  but must not fetch or reconstruct raw event metadata.
 - Results are sorted newest-first (`created_at DESC`).
 - `next_cursor` is `null` exactly when no more rows exist **for the current
   filter set** — the UI may display "End of audit log" (or "No more matching
@@ -850,10 +855,11 @@ endpoint; the React client should prefer `/audit`.
 
 ### GET /admin/api/oidc-config
 
-**Never returns raw secrets.** `client_secret` is replaced with `"<redacted>"`
-and the companion boolean `client_secret_set` indicates whether a secret is
-saved. Returns `null` when no OIDC config has been saved yet (UI shows "Not
-configured").
+Returns the **effective** runtime configuration: bootstrap OIDC configuration
+merged with non-blank database overrides. **Never returns raw secrets.**
+`client_secret` is replaced with `"<redacted>"` and the companion boolean
+`client_secret_set` indicates whether the effective configuration has a
+secret. Returns `null` only when neither source configures OIDC.
 
 ```json
 {
@@ -874,7 +880,13 @@ configured").
     "jwks_uri": "",
     "clock_skew_seconds": 60,
     "groups_claim": "groups",
-    "updated_at": 1765…
+    "updated_at": 1765…,
+    "source": "bootstrap" | "database" | "merged" | "runtime_default",
+    "provenance": {
+      "summary": "bootstrap" | "database" | "merged" | "runtime_default",
+      "fields": { "issuer": "bootstrap", "client_id": "database" }
+    },
+    "apply_mode": "live"
   } | null
 }
 ```
@@ -892,11 +904,13 @@ namespaced claim. The gateway reads this claim for two purposes:
 `groups_claim` is returned plainly by GET (it is not a secret). `client_secret`
 is **always** redacted in GET responses; it is write-only.
 
-> **Runtime gap note**: the `groups_claim` field is fully wired — the live
+> **Runtime note**: the `groups_claim` field is fully wired — the live
 > OIDC auth path in `proxy.py` reads the configured claim name for both admin
 > role evaluation and profile mapping. Setting this field is immediately
-> effective after the next gateway restart because OIDC settings are static
-> authentication configuration, not service-registry runtime state.
+> effective for the next login/callback without a gateway restart. `apply_mode`
+> is `"live"` because the current runtime reads the effective setting on those
+> paths; session signing key and cookie settings are not editable through this
+> endpoint.
 
 ### PUT /admin/api/oidc-config  (save OIDC config)
 
@@ -912,10 +926,12 @@ Accepted fields: `enabled`, `issuer`, `client_id`, `client_secret`,
 
 `200` → `{ "oidc_config": { …same scrubbed shape… } }`
 
-After saving, the gateway must be restarted for the new OIDC config to take
-effect. Display an OIDC-specific "Saved — restart to apply" banner. Service
-registry changes follow their API-reported apply state; do not promise a
-runtime-specific side effect in the UI.
+The existing write-only secret behavior is preserved. An empty, omitted, or
+`"<redacted>"` `client_secret` preserves the stored database secret. Dashboard
+provider changes apply live for subsequent OIDC authentication requests. To
+recover access, use an existing authenticated admin session, or generate an
+admin key on the host and claim it at `/setup/claim`; do not promise a hidden
+local-owner sign-in path while OIDC is enabled.
 
 ### GET /admin/api/extensions
 

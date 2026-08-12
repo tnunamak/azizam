@@ -2097,6 +2097,30 @@ class AdminPolicySimulationTests(unittest.TestCase):
 
 
 class AdminAuditTests(unittest.TestCase):
+    def test_audit_detail_drops_nested_and_unknown_secret_values(self) -> None:
+        client, store = _make_client()
+        store.audit.append({
+            "id": "aud_safe",
+            "created_at": 1,
+            "actor_kind": "service_account",
+            "actor_id": "not-a-prefix-contract",
+            "actor_label": "Release bot",
+            "action": "app.create",
+            "metadata": {
+                "name": "safe app",
+                "context": {"authorization": "Bearer nested-secret"},
+                "innocuous": "also-secret",
+            },
+        })
+        response = client.get("/admin/api/audit", headers=_auth())
+        self.assertEqual(response.status_code, 200, response.text)
+        record = response.json()["records"][0]
+        self.assertEqual(record["actor_kind"], "service_account")
+        self.assertEqual(record["actor_label"], "Release bot")
+        self.assertEqual(record["metadata"], {"name": "safe app"})
+        self.assertNotIn("nested-secret", response.text)
+        self.assertNotIn("also-secret", response.text)
+
     def test_audit_returns_recent_entries(self) -> None:
         client, store = _make_client()
         client.post(

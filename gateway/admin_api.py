@@ -62,6 +62,11 @@ class AdminContext:
 
     subject: str
     email: str | None = None
+    # These values come from the authenticator's resolved principal record.
+    # They deliberately do not derive meaning from an ID format.
+    actor_kind: str = "user"
+    actor_label: str | None = None
+    actor_id: str | None = None
     roles: frozenset[str] = field(default_factory=frozenset)
     auth_method: str | None = None
     csrf_token: str | None = None
@@ -69,6 +74,10 @@ class AdminContext:
     @property
     def is_admin(self) -> bool:
         return bool({"owner", "admin", "superadmin"} & set(self.roles))
+
+    @property
+    def audit_actor_id(self) -> str:
+        return self.actor_id or self.subject
 
 
 class AdminAuthError(Exception):
@@ -252,10 +261,25 @@ StatusProvider = Callable[[], "Awaitable[Mapping[str, Any]]"]
 # LiteLLMAdminError. Kept as a parameter (like ``service_probe``) so this module
 # never reads os.environ or touches proxy.py to find the sidecar.
 LiteLLMKeyClient = Any
+EffectiveOidcConfigProvider = Callable[[], Mapping[str, Any] | None]
 
 
 _AUDIT_DEFAULT_LIMIT = 50
 _AUDIT_MAX_LIMIT = 200  # max page size; pagination via cursor reaches arbitrarily old events
+_AUDIT_ACTOR_KINDS = frozenset({"user", "service_account", "system", "cli", "admin"})
+# Audit metadata is intentionally not a general-purpose diagnostic dump.  This
+# allowlist contains the bounded, non-secret event facts emitted by gateway
+# producers.  Unknown keys (including nested objects) are omitted at this API
+# boundary rather than asking every client to recognize secrets.
+_AUDIT_SAFE_DETAIL_FIELDS = frozenset({
+    "app_id", "capability_count", "count", "credential_prefix", "effective_profile_id",
+    "email", "fields", "kind", "name", "override_count", "package_hash", "prefix",
+    "profile_id", "protocol_frontend_count", "role", "secret_changed", "service_account",
+    "service_count", "source_kind", "source_value", "via", "workflow_count",
+})
+_AUDIT_DETAIL_MAX_KEYS = 24
+_AUDIT_DETAIL_MAX_ITEMS = 24
+_AUDIT_DETAIL_MAX_STRING = 256
 _SERVICE_AVAILABILITY_STATES = frozenset(
     {"available", "degraded", "draining", "maintenance", "disabled"}
 )
@@ -281,6 +305,54 @@ def _attention_app_profile_id(record: Mapping[str, Any]) -> str:
         or record.get("profile")
     )
     return str(profile_id) if profile_id else "default-local"
+
+
+def _safe_audit_detail(value: Any, *, depth: int = 0) -> Any:
+    """Return a bounded JSON value from the explicit audit-detail vocabulary."""
+    if depth > 2:
+        return None
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:_AUDIT_DETAIL_MAX_STRING]
+    if isinstance(value, (list, tuple)):
+        return [
+            item for item in (
+                _safe_audit_detail(item, depth=depth + 1)
+                for item in value[:_AUDIT_DETAIL_MAX_ITEMS]
+            ) if item is not None
+        ]
+    # Metadata producers do not emit nested objects.  Dropping them means an
+    # unknown nested "authorization" or an innocently named secret cannot
+    # cross the API boundary.
+    return None
+
+
+def _safe_audit_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a stored audit event into the public, copy-safe contract."""
+    out = dict(record)
+    kind = str(out.get("actor_kind") or "")
+    out["actor_kind"] = kind if kind in _AUDIT_ACTOR_KINDS else None
+    label = out.get("actor_label")
+    if isinstance(label, str) and label.strip():
+        out["actor_label"] = label.strip()[:_AUDIT_DETAIL_MAX_STRING]
+    elif kind in {"system", "cli"}:
+        out["actor_label"] = "System"
+    else:
+        out["actor_label"] = "Unknown principal"
+    metadata = out.get("metadata")
+    if not isinstance(metadata, Mapping):
+        out["metadata"] = None
+        return out
+    detail: dict[str, Any] = {}
+    for key in sorted(metadata)[:_AUDIT_DETAIL_MAX_KEYS]:
+        if key not in _AUDIT_SAFE_DETAIL_FIELDS:
+            continue
+        safe_value = _safe_audit_detail(metadata[key])
+        if safe_value is not None:
+            detail[key] = safe_value
+    out["metadata"] = detail or None
+    return out
 
 
 def _admin_target_href(target_kind: str, target_id: str) -> str | None:
@@ -1504,6 +1576,7 @@ def create_admin_router(
     status_provider: StatusProvider | None = None,
     litellm_key_client: LiteLLMKeyClient | None = None,
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
+    effective_oidc_config_provider: EffectiveOidcConfigProvider | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -1524,7 +1597,9 @@ def create_admin_router(
     ``known_model_names_getter`` is an optional zero-arg callable that returns
     the current set of model names in the compiled LiteLLM catalog; when
     provided and non-empty, virtual-key ``models`` allowlists are validated
-    against it at mint time.
+    against it at mint time. ``effective_oidc_config_provider`` exposes the
+    runtime's already-resolved OIDC view (including bootstrap provenance)
+    without coupling this router to a configuration source.
     """
 
     router = APIRouter(prefix=prefix, tags=["admin"])
@@ -2744,7 +2819,11 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.get_oidc_config_setting()
+        record = (
+            effective_oidc_config_provider()
+            if effective_oidc_config_provider is not None
+            else store.get_oidc_config_setting()
+        )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"oidc_config": record},
@@ -2841,7 +2920,7 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
-                "records": page["records"],
+                "records": [_safe_audit_record(row) for row in page["records"]],
                 "next_cursor": page["next_cursor"],
             },
         )
@@ -2865,7 +2944,7 @@ def create_admin_router(
             ).as_response()
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"event": record},
+            content={"event": _safe_audit_record(record)},
         )
 
     @router.post("/policy/simulate")

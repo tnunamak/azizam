@@ -347,12 +347,30 @@ export interface AttentionItem {
 export interface AuditEntry {
   id: string;
   created_at: number;
-  actor_kind: "admin" | "cli" | "service_account" | "user" | null;
+  actor_kind: "admin" | "cli" | "service_account" | "system" | "user" | null;
+  /** Server-resolved from the authenticated principal; never infer from actor_id. */
+  actor_label: string;
   actor_id: string;
   action: string;
   target_kind: string | null;
   target_id: string | null;
   metadata: Record<string, unknown> | null;
+}
+
+export interface OidcConfigProvenance {
+  summary: "bootstrap" | "database" | "merged" | "runtime_default";
+  fields: Record<string, "bootstrap" | "database" | "runtime_default">;
+}
+
+/** Effective, redacted OIDC configuration returned by GET /admin/api/oidc-config. */
+export interface EffectiveOidcConfig {
+  enabled: boolean;
+  client_secret: "<redacted>" | "";
+  client_secret_set: boolean;
+  source: OidcConfigProvenance["summary"];
+  apply_mode: "live";
+  provenance: OidcConfigProvenance;
+  [field: string]: unknown;
 }
 
 /** Response shape for GET /admin/api/audit (keyset-paginated). */

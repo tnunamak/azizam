@@ -333,8 +333,8 @@ class AdminSQLiteStore:
             )
         admin_store.record_audit(
             "app.create",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="app",
             target_id=record["id"],
             metadata={"name": name, "kind": record.get("kind")},
@@ -370,8 +370,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "app.update",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="app",
             target_id=app_id,
             metadata={"name": name, "default_profile_id": profile_id},
@@ -388,8 +388,8 @@ class AdminSQLiteStore:
         record = admin_store.disable_app(app_id, path=self.path)
         admin_store.record_audit(
             "app.disable",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="app",
             target_id=app_id,
             metadata={"name": before.get("name")},
@@ -406,8 +406,8 @@ class AdminSQLiteStore:
         record = admin_store.enable_app(app_id, path=self.path)
         admin_store.record_audit(
             "app.enable",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="app",
             target_id=app_id,
             metadata={"name": before.get("name")},
@@ -442,8 +442,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "profile.create",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="profile",
             target_id=record["id"],
             metadata={"name": name},
@@ -487,8 +487,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "profile.update",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="profile",
             target_id=profile_id,
             metadata={"name": name},
@@ -504,8 +504,8 @@ class AdminSQLiteStore:
             return None
         admin_store.record_audit(
             "profile.delete",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="profile",
             target_id=profile_id,
             metadata={"name": record.get("name")},
@@ -541,8 +541,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "credential.create",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="credential",
             target_id=record["id"],
             metadata={"app_id": app_id, "prefix": record["prefix"]},
@@ -584,8 +584,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "admin_key.create",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="credential",
             target_id=credential["id"],
             metadata={
@@ -656,8 +656,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "operator.user_access_defaults.update",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="operator_setting",
             target_id=USER_ACCESS_DEFAULTS_SETTING_KEY,
             metadata={"fields": sorted(data.keys())},
@@ -677,8 +677,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "operator.service_availability.update",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="operator_setting",
             target_id=SERVICE_AVAILABILITY_OVERRIDES_KEY,
             metadata={"override_count": len(value)},
@@ -698,8 +698,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "operator.media_job_admission.update",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="operator_setting",
             target_id=MEDIA_JOB_ADMISSION_OVERRIDES_KEY,
             metadata={"fields": sorted(value.keys())},
@@ -743,7 +743,7 @@ class AdminSQLiteStore:
             expected_generation=expected_generation,
             updated_by=actor.subject,
             audit_action="operator.service_registry.update",
-            audit_actor_kind="admin",
+            audit_actor_kind=actor.actor_kind,
             audit_target_kind="operator_setting",
             audit_target_id=SERVICE_REGISTRY_SETTING_KEY,
             audit_metadata={
@@ -797,7 +797,7 @@ class AdminSQLiteStore:
             expected_generation=expected_generation,
             updated_by=actor.subject,
             audit_action=action,
-            audit_actor_kind="admin",
+            audit_actor_kind=actor.actor_kind,
             audit_target_kind="service",
             audit_target_id=service_id,
             audit_metadata={
@@ -977,8 +977,8 @@ class AdminSQLiteStore:
         package_id = str((review.get("package") or {}).get("id") or "")
         admin_store.record_audit(
             "operator.extension_package.enable",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="extension_package",
             target_id=package_id,
             metadata={
@@ -1018,8 +1018,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "operator.extension_package.remove",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="extension_package",
             target_id=package_id,
             metadata={},
@@ -1087,8 +1087,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "operator.oidc_provider_config.update",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="operator_setting",
             target_id=OIDC_PROVIDER_SETTING_KEY,
             metadata={
@@ -1122,8 +1122,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "runtime_profile_mapping.create",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="runtime_profile_mapping",
             target_id=record["id"],
             metadata={
@@ -1165,8 +1165,8 @@ class AdminSQLiteStore:
         )
         admin_store.record_audit(
             "runtime_profile_mapping.disable",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="runtime_profile_mapping",
             target_id=mapping_id,
             metadata={"profile_id": before.get("profile_id")},
@@ -1184,8 +1184,8 @@ class AdminSQLiteStore:
         record = admin_store.get_credential(credential_id, path=self.path)
         admin_store.record_audit(
             "credential.revoke",
-            actor_kind="admin",
-            actor_id=actor.subject,
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
             target_kind="credential",
             target_id=credential_id,
             metadata={"prefix": before.get("prefix")},
@@ -1194,10 +1194,30 @@ class AdminSQLiteStore:
         return _sanitize_credential(record or before)
 
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
-        return admin_store.list_audit(limit=limit, path=self.path)
+        return [self._present_audit_event(row) for row in admin_store.list_audit(limit=limit, path=self.path)]
 
     def get_audit_event(self, event_id: str) -> dict[str, Any] | None:
-        return admin_store.get_audit_event(event_id, path=self.path)
+        row = admin_store.get_audit_event(event_id, path=self.path)
+        return self._present_audit_event(row) if row is not None else None
+
+    def _present_audit_event(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """Attach a label resolved from the recorded principal kind, never an ID prefix."""
+        out = dict(row)
+        kind = str(out.get("actor_kind") or "")
+        actor_id = str(out.get("actor_id") or "")
+        if kind == "user":
+            principal = admin_store.get_user(actor_id, path=self.path) or {}
+            out["actor_label"] = principal.get("display_name") or principal.get("email") or "Unknown user"
+        elif kind == "service_account":
+            principal = admin_store.get_service_account(actor_id, path=self.path) or {}
+            out["actor_label"] = principal.get("name") or "Unknown service account"
+        elif kind in {"system", "cli"}:
+            out["actor_label"] = "System"
+        else:
+            # Legacy rows can retain their historical kind but are not
+            # reclassified from their ID; this keeps the boundary truthful.
+            out["actor_label"] = "Unknown principal"
+        return out
 
     def list_audit_page(
         self,
@@ -1234,7 +1254,10 @@ class AdminSQLiteStore:
         if has_more and page:
             last = page[-1]
             next_cursor = f"{last['created_at']}:{last['id']}"
-        return {"records": page, "next_cursor": next_cursor}
+        return {
+            "records": [self._present_audit_event(row) for row in page],
+            "next_cursor": next_cursor,
+        }
 
     def profile_for_id(self, profile_id: str):
         record = admin_store.get_profile(profile_id, path=self.path)
@@ -1325,6 +1348,9 @@ class AdminAuthenticator:
                         return AdminContext(
                             subject=session.subject,
                             email=session.email,
+                            actor_kind=subject_kind,
+                            actor_label=self._principal_label(subject_kind, subject_id, session.email),
+                            actor_id=subject_id,
                             roles=role_names,
                             auth_method="session",
                             csrf_token=csrf_token_for_session(
@@ -1370,9 +1396,22 @@ class AdminAuthenticator:
             )
         return AdminContext(
             subject=str(credential["subject_id"]),
+            actor_kind=str(credential["subject_kind"]),
+            actor_label=self._principal_label(
+                str(credential["subject_kind"]), str(credential["subject_id"]), None
+            ),
             roles=role_names,
             auth_method="bearer",
         )
+
+    def _principal_label(self, kind: str, subject_id: str, email: str | None) -> str | None:
+        if kind == "user":
+            user = admin_store.get_user(subject_id, path=self.store.path) or {}
+            return str(user.get("display_name") or user.get("email") or email or "").strip() or None
+        if kind == "service_account":
+            service_account = admin_store.get_service_account(subject_id, path=self.store.path) or {}
+            return str(service_account.get("name") or "").strip() or None
+        return None
 
 
 def _bearer_token(request: Request) -> str:
