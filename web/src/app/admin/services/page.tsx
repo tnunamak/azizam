@@ -187,10 +187,17 @@ function healthByServiceId(status: StatusPayload | undefined) {
 }
 
 function serviceLiveTone(
+  service: Service,
   health:
     | NonNullable<StatusPayload["current_health"]>["services"][number]
     | undefined,
 ): { tone: "ok" | "warn" | "bad" | "neutral"; label: string } {
+  if (!service.enabled) {
+    return {
+      tone: "neutral",
+      label: service.role === "standby" ? "standby, disabled" : "disabled",
+    };
+  }
   if (!health) {
     return { tone: "neutral" as const, label: "live status unavailable" };
   }
@@ -198,6 +205,26 @@ function serviceLiveTone(
     health.tone === "ok" || health.tone === "warn" || health.tone === "bad"
       ? health.tone
       : "neutral";
+  if (health.observation === "standby_stopped") {
+    return { tone, label: "standby, stopped" };
+  }
+  if (health.observation === "unavailable") {
+    return { tone, label: "live status unavailable" };
+  }
+  if (health.observation === "down") {
+    return {
+      tone,
+      label:
+        service.role === "required"
+          ? "required service down"
+          : service.role === "optional"
+            ? "optional service down"
+            : "standby service unavailable",
+    };
+  }
+  if (health.observation === "degraded") {
+    return { tone, label: "service degraded" };
+  }
   return { tone, label: health.observation.replace(/_/g, " ") };
 }
 
@@ -706,8 +733,12 @@ export default function AdminServicesPage() {
       updateRegistry(newRegistry);
       showRestartBanner();
     },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.serviceRegistry,
+      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.status });
+    },
   });
 
   // Remove mutation
@@ -718,14 +749,19 @@ export default function AdminServicesPage() {
       toast.success("Service removed");
       showRestartBanner();
       setRemoveTarget(null);
+      setPanelService(null);
     },
     onError: (err) => {
       toast.error("Couldn't remove service", {
         description: errorMessage(err),
       });
     },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.serviceRegistry }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.serviceRegistry,
+      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.status });
+    },
   });
 
   const filteredServices = useMemo(() => {
@@ -1234,6 +1270,7 @@ export default function AdminServicesPage() {
                     {filteredServices.map((svc) => {
                       const backend = liveBackends.get(svc.id);
                       const { tone, label } = serviceLiveTone(
+                        svc,
                         currentHealthByService.get(svc.id),
                       );
                       const metrics = serviceLiveMetrics(backend);
@@ -1292,6 +1329,7 @@ export default function AdminServicesPage() {
                           }
                           status={(() => {
                             const { tone, label } = serviceLiveTone(
+                              panelService,
                               currentHealthByService.get(panelService.id),
                             );
                             return (
@@ -1323,6 +1361,7 @@ export default function AdminServicesPage() {
                     }
                     status={(() => {
                       const { tone, label } = serviceLiveTone(
+                        panelService,
                         currentHealthByService.get(panelService.id),
                       );
                       return (
@@ -1364,6 +1403,7 @@ export default function AdminServicesPage() {
           void queryClient.invalidateQueries({
             queryKey: queryKeys.serviceRegistry,
           });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.status });
           setAddOpen(false);
           showRestartBanner();
           toast.success("Service added");
@@ -1380,6 +1420,7 @@ export default function AdminServicesPage() {
           void queryClient.invalidateQueries({
             queryKey: queryKeys.serviceRegistry,
           });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.status });
           setEditTarget(null);
           showRestartBanner();
           toast.success("Service updated");
@@ -1400,6 +1441,7 @@ export default function AdminServicesPage() {
           void queryClient.invalidateQueries({
             queryKey: queryKeys.serviceRegistry,
           });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.status });
           showRestartBanner();
         }}
       />
@@ -1415,6 +1457,10 @@ export default function AdminServicesPage() {
         service={detectTarget}
         onOpenChange={(open) => {
           if (!open) setDetectTarget(null);
+        }}
+        onOpenModels={(service) => {
+          setDetectTarget(null);
+          setModelsTarget(service);
         }}
       />
 
@@ -1471,6 +1517,7 @@ interface ServiceFormProps {
   onChange: (value: ServiceFormState) => void;
   disabled?: boolean;
   error?: string | null;
+  fieldErrors?: Partial<Record<"name" | "base_url" | "preset", string>>;
   showAdvanced?: boolean;
   onToggleAdvanced?: () => void;
   probeResult?: TestProbe | null;
@@ -1484,6 +1531,7 @@ function ServiceForm({
   onChange,
   disabled,
   error,
+  fieldErrors,
   showAdvanced,
   onToggleAdvanced,
   probeResult,
@@ -1507,6 +1555,7 @@ function ServiceForm({
       <Field
         label="Provider"
         help="Choose an API-supplied preset to pre-fill its declared defaults."
+        error={fieldErrors?.preset}
       >
         <Select
           value={value.preset}
@@ -1525,7 +1574,7 @@ function ServiceForm({
         </Select>
       </Field>
 
-      <Field label="Name" required>
+      <Field label="Name" required error={fieldErrors?.name}>
         <Input
           value={value.name}
           onChange={set("name")}
@@ -1539,6 +1588,7 @@ function ServiceForm({
         label="Base URL"
         required
         help="Full URL including scheme, host, port, and path."
+        error={fieldErrors?.base_url}
       >
         <Input
           value={value.base_url}
@@ -1681,6 +1731,9 @@ function AddServiceDialogContent({
 
   const [form, setForm] = useState<ServiceFormState>(emptyFormState);
   const [formError, setFormError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<
+    Partial<Record<"name" | "base_url" | "preset", string>>
+  >({});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [probe, setProbe] = useState<TestProbe | null>(null);
   const [testing, setTesting] = useState(false);
@@ -1694,16 +1747,19 @@ function AddServiceDialogContent({
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setFormError(null);
-    if (!form.name.trim()) {
-      setFormError("Service name is required.");
-      return;
-    }
+    const nextFieldErrors: Partial<
+      Record<"name" | "base_url" | "preset", string>
+    > = {};
+    if (!form.name.trim()) nextFieldErrors.name = "Enter a service name.";
     if (!form.base_url.trim()) {
-      setFormError("Base URL is required.");
-      return;
+      nextFieldErrors.base_url = "Enter a base URL including its scheme.";
     }
     if (!presets.some((preset) => preset.id === form.preset)) {
-      setFormError("Select an available preset before adding a service.");
+      nextFieldErrors.preset = "Select an available provider preset.";
+    }
+    setFieldErrors(nextFieldErrors);
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFormError("Fix the highlighted fields before adding the service.");
       return;
     }
     save.mutate();
@@ -1802,6 +1858,7 @@ function AddServiceDialogContent({
             onChange={setForm}
             disabled={save.isPending}
             error={formError}
+            fieldErrors={fieldErrors}
             showAdvanced={showAdvanced}
             onToggleAdvanced={() => setShowAdvanced((v) => !v)}
             probeResult={probe}
@@ -2864,7 +2921,8 @@ function TestConnectionDialogContent({
       <DialogHeader>
         <DialogTitle>Test connection — {service.name}</DialogTitle>
         <DialogDescription>
-          Sends a lightweight probe to the upstream to check reachability.
+          Sends a lightweight probe to the upstream to check reachability. A
+          successful probe does not prove that a model is routable.
         </DialogDescription>
       </DialogHeader>
       <DialogBody>
@@ -2902,9 +2960,11 @@ function TestConnectionDialogContent({
 function DetectModelsDialog({
   service,
   onOpenChange,
+  onOpenModels,
 }: {
   service: Service | null;
   onOpenChange: (open: boolean) => void;
+  onOpenModels: (service: Service) => void;
 }) {
   return (
     <Dialog open={service !== null} onOpenChange={onOpenChange}>
@@ -2912,6 +2972,7 @@ function DetectModelsDialog({
         <DetectModelsDialogContent
           service={service}
           onOpenChange={onOpenChange}
+          onOpenModels={onOpenModels}
         />
       )}
     </Dialog>
@@ -2921,9 +2982,11 @@ function DetectModelsDialog({
 function DetectModelsDialogContent({
   service,
   onOpenChange,
+  onOpenModels,
 }: {
   service: Service;
   onOpenChange: (open: boolean) => void;
+  onOpenModels: (service: Service) => void;
 }) {
   const [result, setResult] = useState<{
     ok: boolean;
@@ -2955,7 +3018,8 @@ function DetectModelsDialogContent({
       <DialogHeader>
         <DialogTitle>Detect models — {service.name}</DialogTitle>
         <DialogDescription>
-          Queries the upstream for the list of available models.
+          Queries the upstream for observed model names. Detection does not
+          create routable mappings.
         </DialogDescription>
       </DialogHeader>
       <DialogBody>
@@ -3010,6 +3074,17 @@ function DetectModelsDialogContent({
         <Button variant="primary" loading={loading} onClick={() => void run()}>
           {result ? "Re-detect" : "Detect models"}
         </Button>
+        {result?.ok && (
+          <Button
+            variant="secondary"
+            onClick={() => {
+              onOpenChange(false);
+              onOpenModels(service);
+            }}
+          >
+            Configure mappings
+          </Button>
+        )}
       </DialogFooter>
     </DialogContent>
   );
