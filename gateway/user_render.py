@@ -152,7 +152,7 @@ _PAGE_CSS = """
     align-items: center;
     background: var(--vf-surface-1);
   }
-  .base-card > div, .shell-main > section, .vf-section-head > div {
+  .base-card > div, .shell-main > section, .shell-main > section > *, .vf-section-head > div {
     min-width: 0;
   }
   .base-card h2 {
@@ -310,6 +310,7 @@ _PAGE_CSS = """
   .apps-list {
     display: grid;
     gap: var(--space-4);
+    min-width: 0;
   }
   /* The apps + recent sections use the brand .vf-section / .vf-section-head /
      .vf-section-title pattern (kicker over an uppercase title, optional action);
