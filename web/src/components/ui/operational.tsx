@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
@@ -1098,11 +1098,18 @@ export function RightContextPanel({
   sections,
   className,
 }: RightContextPanelProps) {
+  const titleId = useId();
   return (
-    <aside className={cn("vf-context-panel", className)}>
+    <aside
+      className={cn("vf-context-panel", className)}
+      aria-labelledby={titleId}
+    >
       <div className="vf-context-panel-head">
         <div className="min-w-0 flex-1">
-          <h2 className="text-vf-body text-vf-text truncate font-semibold">
+          <h2
+            id={titleId}
+            className="text-vf-body text-vf-text truncate font-semibold"
+          >
             {title}
           </h2>
           {subtitle && (

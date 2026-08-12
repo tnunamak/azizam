@@ -536,10 +536,7 @@ function StatusContents() {
             </div>
           )}
         </section>
-        <aside
-          className="hidden min-w-0 min-[980px]:block"
-          aria-label="Service diagnosis"
-        >
+        <div className="hidden min-w-0 min-[980px]:block">
           {selectedService ? (
             <ServiceDetail
               service={selectedService}
@@ -563,7 +560,7 @@ function StatusContents() {
               ]}
             />
           )}
-        </aside>
+        </div>
       </div>
 
       <Sheet

@@ -310,6 +310,23 @@ describe("admin Status", () => {
     expect(screen.getByText("1 current advisory")).toBeVisible();
   });
 
+  it("exposes exactly one top-level complementary landmark for the context rail", async () => {
+    statusState.load = async () => ({ current_health: health() });
+    renderStatus();
+    await screen.findByText("All configured services are available");
+
+    const asides = document.querySelectorAll("aside");
+    expect(asides).toHaveLength(1);
+    expect(asides[0]).toHaveClass("vf-context-panel");
+    const complementaryLandmarks = screen.getAllByRole("complementary");
+    expect(complementaryLandmarks).toHaveLength(1);
+    expect(
+      complementaryLandmarks[0].parentElement?.closest(
+        "aside, [role='complementary']",
+      ),
+    ).toBeNull();
+  });
+
   it("shows an old generated timestamp without claiming it is current", async () => {
     const twoYearsAgo = Math.floor(Date.now() / 1000) - 2 * 365 * 24 * 60 * 60;
     statusState.load = async () => ({
