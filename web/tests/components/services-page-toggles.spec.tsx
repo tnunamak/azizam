@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -39,6 +39,11 @@ vi.mock("@/lib/api", () => ({
 
 import AdminServicesPage from "@/app/admin/services/page";
 
+afterEach(() => {
+  cleanup();
+  toggleEnabled.mockReset();
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -58,7 +63,7 @@ function Fixture() {
 }
 
 describe("Services concurrent toggles", () => {
-  it("keeps each in-flight row disabled and rolls back only the rejected 412", async () => {
+  it("keeps another pending intent after a 412 settles", async () => {
     const first = deferred<unknown>();
     const second = deferred<unknown>();
     toggleEnabled.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
@@ -75,6 +80,14 @@ describe("Services concurrent toggles", () => {
     });
 
     first.reject(new (await import("@/lib/api")).ApiError("generation_mismatch", "changed", 412));
+
+    await waitFor(() => {
+      expect(firstToggle).toBeChecked();
+      expect(firstToggle).not.toBeDisabled();
+      expect(secondToggle).not.toBeChecked();
+      expect(secondToggle).toBeDisabled();
+    });
+
     second.resolve({
       services: {
         first: { id: "first", name: "First", enabled: true, capabilities: [], config: {}, editable: true },
@@ -87,5 +100,38 @@ describe("Services concurrent toggles", () => {
       expect(secondToggle).not.toBeDisabled();
       expect(toggleEnabled).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("keeps another pending intent after a successful response settles", async () => {
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    toggleEnabled.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    render(<Fixture />);
+
+    const firstToggle = await screen.findByRole("switch", { name: "Toggle First" });
+    const secondToggle = screen.getByRole("switch", { name: "Toggle Second" });
+    fireEvent.click(firstToggle);
+    fireEvent.click(secondToggle);
+
+    first.resolve({
+      services: {
+        first: { id: "first", name: "First", enabled: false, capabilities: [], config: {}, editable: true },
+        second: { id: "second", name: "Second", enabled: true, capabilities: [], config: {}, editable: true },
+      },
+    });
+
+    await waitFor(() => {
+      expect(firstToggle).not.toBeDisabled();
+      expect(secondToggle).not.toBeChecked();
+      expect(secondToggle).toBeDisabled();
+    });
+
+    second.resolve({
+      services: {
+        first: { id: "first", name: "First", enabled: false, capabilities: [], config: {}, editable: true },
+        second: { id: "second", name: "Second", enabled: false, capabilities: [], config: {}, editable: true },
+      },
+    });
+    await waitFor(() => expect(secondToggle).not.toBeDisabled());
   });
 });

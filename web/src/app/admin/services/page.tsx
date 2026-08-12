@@ -26,7 +26,6 @@ import {
   type BackendHistory,
   type Service,
   type ServiceRegistry,
-  type ProviderPreset,
   type StatusPayload,
   type StatusSeriesPoint,
 } from "@/lib/api";
@@ -153,6 +152,25 @@ function servicesFromRegistry(registry: ServiceRegistry): Service[] {
   return Object.values(registry.services ?? {}).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
+}
+
+/** Keep local toggle choices visible until their own requests settle. */
+function withPendingToggleIntents(
+  registry: ServiceRegistry | undefined,
+  intents: ReadonlyMap<string, boolean>,
+): ServiceRegistry | undefined {
+  if (!registry || intents.size === 0) return registry;
+  return {
+    ...registry,
+    services: Object.fromEntries(
+      Object.entries(registry.services).map(([serviceId, service]) => [
+        serviceId,
+        intents.has(serviceId)
+          ? { ...service, enabled: intents.get(serviceId)! }
+          : service,
+      ]),
+    ),
+  };
 }
 
 function RouteServiceTargetSync({
@@ -672,10 +690,6 @@ export default function AdminServicesPage() {
     staleTime: 10_000,
   });
 
-  const services = useMemo(
-    () => (registry ? servicesFromRegistry(registry) : []),
-    [registry],
-  );
   const liveBackends = useMemo(
     () => backendByServiceId(statusData),
     [statusData],
@@ -684,12 +698,6 @@ export default function AdminServicesPage() {
     () => healthByServiceId(statusData),
     [statusData],
   );
-  const enabledCount = services.filter((svc) => svc.enabled).length;
-  const modelMappingCount = services.reduce(
-    (count, svc) => count + (svc.config.models?.length ?? 0),
-    0,
-  );
-
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Service | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Service | null>(null);
@@ -701,10 +709,28 @@ export default function AdminServicesPage() {
   const consumedServiceTargetRef = useRef<string | null>(null);
   /** Banner shown after any write confirming live apply. */
   const [restartBanner, setRestartBanner] = useState(false);
-  const [pendingToggleServiceIds, setPendingToggleServiceIds] = useState<
-    ReadonlySet<string>
-  >(new Set());
+  const [pendingToggleIntents, setPendingToggleIntents] = useState<
+    ReadonlyMap<string, boolean>
+  >(new Map());
   const isDesktopServiceContext = useDesktopServiceContext();
+
+  const displayedRegistry = useMemo(
+    () => withPendingToggleIntents(registry, pendingToggleIntents),
+    [registry, pendingToggleIntents],
+  );
+  const services = useMemo(
+    () => (displayedRegistry ? servicesFromRegistry(displayedRegistry) : []),
+    [displayedRegistry],
+  );
+  const pendingToggleServiceIds = useMemo(
+    () => new Set(pendingToggleIntents.keys()),
+    [pendingToggleIntents],
+  );
+  const enabledCount = services.filter((svc) => svc.enabled).length;
+  const modelMappingCount = services.reduce(
+    (count, svc) => count + (svc.config.models?.length ?? 0),
+    0,
+  );
 
   function showRestartBanner() {
     setRestartBanner(true);
@@ -712,6 +738,15 @@ export default function AdminServicesPage() {
 
   function updateRegistry(newRegistry: ServiceRegistry) {
     queryClient.setQueryData(queryKeys.serviceRegistry, newRegistry);
+  }
+
+  function setPendingToggleIntent(serviceId: string, enabled: boolean | null) {
+    setPendingToggleIntents((current) => {
+      const next = new Map(current);
+      if (enabled === null) next.delete(serviceId);
+      else next.set(serviceId, enabled);
+      return next;
+    });
   }
 
   // Toggle enabled — optimistic update
@@ -724,7 +759,7 @@ export default function AdminServicesPage() {
       enabled: boolean;
     }) => api.services.toggleEnabled(serviceId, enabled),
     onMutate: async ({ serviceId, enabled }) => {
-      setPendingToggleServiceIds((pending) => new Set(pending).add(serviceId));
+      setPendingToggleIntent(serviceId, enabled);
       await queryClient.cancelQueries({ queryKey: queryKeys.serviceRegistry });
       const previous = queryClient.getQueryData<ServiceRegistry>(
         queryKeys.serviceRegistry,
@@ -774,11 +809,7 @@ export default function AdminServicesPage() {
       showRestartBanner();
     },
     onSettled: (_data, _error, variables) => {
-      setPendingToggleServiceIds((pending) => {
-        const next = new Set(pending);
-        next.delete(variables.serviceId);
-        return next;
-      });
+      setPendingToggleIntent(variables.serviceId, null);
       void queryClient.invalidateQueries({
         queryKey: queryKeys.serviceRegistry,
       });
@@ -1549,164 +1580,6 @@ export default function AdminServicesPage() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Service form state — shared by Add and Edit
-
-interface ServiceFormState {
-  name: string;
-  preset: string;
-  base_url: string;
-  api_key_env: string;
-}
-
-interface ServiceFormProps {
-  value: ServiceFormState;
-  onChange: (value: ServiceFormState) => void;
-  disabled?: boolean;
-  error?: string | null;
-  errorSummaryRef?: React.RefObject<HTMLParagraphElement | null>;
-  fieldErrors?: Partial<Record<"name" | "base_url" | "preset", string>>;
-  showAdvanced?: boolean;
-  onToggleAdvanced?: () => void;
-  probeResult?: TestProbe | null;
-  onTest?: () => void;
-  testing?: boolean;
-  presets: ProviderPreset[];
-}
-
-function ServiceForm({
-  value,
-  onChange,
-  disabled,
-  error,
-  errorSummaryRef,
-  fieldErrors,
-  showAdvanced,
-  onToggleAdvanced,
-  probeResult,
-  onTest,
-  testing,
-  presets,
-}: ServiceFormProps) {
-  const set =
-    (key: keyof ServiceFormState) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-      onChange({ ...value, [key]: e.target.value });
-
-  return (
-    <div className="flex flex-col gap-4">
-      {error && (
-        <p
-          ref={errorSummaryRef}
-          role="alert"
-          tabIndex={-1}
-          className="text-vf-small text-vf-bad"
-        >
-          {error}
-        </p>
-      )}
-
-      <Field
-        label="Provider"
-        required
-        help="Choose an API-supplied preset to pre-fill its declared defaults."
-        error={fieldErrors?.preset}
-      >
-        <Select
-          value={value.preset}
-          onChange={set("preset")}
-          disabled={disabled}
-          required
-        >
-          <option value="" disabled>
-            Select a preset
-          </option>
-          {presets.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </Select>
-      </Field>
-
-      <Field label="Name" required error={fieldErrors?.name}>
-        <Input
-          value={value.name}
-          onChange={set("name")}
-          placeholder="e.g. my-service"
-          disabled={disabled}
-          autoFocus
-        />
-      </Field>
-
-      <Field
-        label="Base URL"
-        required
-        help="Full URL including scheme, host, port, and path."
-        error={fieldErrors?.base_url}
-      >
-        <Input
-          value={value.base_url}
-          onChange={set("base_url")}
-          placeholder="http://127.0.0.1:8000/v1"
-          disabled={disabled}
-        />
-      </Field>
-
-      <Field
-        label="API key env var"
-        help="Name of an environment variable on the gateway host — never the key itself."
-      >
-        <Input
-          value={value.api_key_env}
-          onChange={set("api_key_env")}
-          placeholder="e.g. SERVICE_API_KEY"
-          disabled={disabled}
-        />
-      </Field>
-
-      {/* Advanced disclosure */}
-      {onToggleAdvanced && (
-        <div>
-          <button
-            type="button"
-            className="text-vf-small text-vf-muted hover:text-vf-text flex items-center gap-1.5 transition-colors"
-            onClick={onToggleAdvanced}
-            aria-expanded={showAdvanced}
-          >
-            <span
-              className={`inline-block transition-transform ${showAdvanced ? "rotate-90" : ""}`}
-              aria-hidden
-            >
-              ▶
-            </span>
-            Advanced
-          </button>
-        </div>
-      )}
-
-      {/* Inline test connection */}
-      {onTest && (
-        <div className="flex flex-col gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            loading={testing}
-            disabled={!value.base_url}
-            onClick={onTest}
-          >
-            Test connection
-          </Button>
-          {probeResult !== null && probeResult !== undefined && (
-            <ProbeResultRow probe={probeResult} />
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ProbeResultRow({ probe }: { probe: TestProbe }) {
   return (
     <div
@@ -1723,229 +1596,6 @@ function ProbeResultRow({ probe }: { probe: TestProbe }) {
           : probe.error || "Connection failed"}
       </span>
     </div>
-  );
-}
-
-function emptyFormState(): ServiceFormState {
-  return { name: "", preset: "", base_url: "", api_key_env: "" };
-}
-
-function formToApiBody(state: ServiceFormState): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    name: state.name.trim(),
-    preset: state.preset,
-    base_url: state.base_url.trim(),
-  };
-  if (state.api_key_env.trim()) {
-    body.api_key_env = state.api_key_env.trim();
-  }
-  return body;
-}
-
-// ---------------------------------------------------------------------------
-// Add service dialog — presets fetched from the API
-
-// The production dialog now lives in components/admin/add-service-dialog.tsx.
-// Keep this old implementation temporarily unreachable only until the shared
-// edit form is extracted; it is intentionally not a Next page export.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function LegacyAddServiceDialog({
-  open,
-  onOpenChange,
-  onSaved,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSaved: (registry: ServiceRegistry) => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      {open && (
-        <LegacyAddServiceDialogContent
-          onOpenChange={onOpenChange}
-          onSaved={onSaved}
-        />
-      )}
-    </Dialog>
-  );
-}
-
-function LegacyAddServiceDialogContent({
-  onOpenChange,
-  onSaved,
-}: {
-  onOpenChange: (open: boolean) => void;
-  onSaved: (registry: ServiceRegistry) => void;
-}) {
-  const {
-    data: presetsData,
-    error: presetsError,
-    isPending: presetsLoading,
-    refetch: refetchPresets,
-  } = useQuery({
-    queryKey: queryKeys.servicePresets,
-    queryFn: api.services.presets,
-  });
-  const presets = presetsData?.presets ?? [];
-
-  const [form, setForm] = useState<ServiceFormState>(emptyFormState);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<
-    Partial<Record<"name" | "base_url" | "preset", string>>
-  >({});
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [probe, setProbe] = useState<TestProbe | null>(null);
-  const [testing, setTesting] = useState(false);
-  const formErrorRef = useRef<HTMLParagraphElement>(null);
-
-  useEffect(() => {
-    if (formError) formErrorRef.current?.focus();
-  }, [formError]);
-
-  const save = useMutation({
-    mutationFn: () => api.services.add(formToApiBody(form)),
-    onSuccess: onSaved,
-    onError: (err) => setFormError(errorMessage(err)),
-  });
-
-  function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    setFormError(null);
-    const nextFieldErrors: Partial<
-      Record<"name" | "base_url" | "preset", string>
-    > = {};
-    if (!form.name.trim()) nextFieldErrors.name = "Enter a service name.";
-    if (!form.base_url.trim()) {
-      nextFieldErrors.base_url = "Enter a base URL including its scheme.";
-    }
-    if (!presets.some((preset) => preset.id === form.preset)) {
-      nextFieldErrors.preset = "Select an available provider preset.";
-    }
-    setFieldErrors(nextFieldErrors);
-    if (Object.keys(nextFieldErrors).length > 0) {
-      setFormError("Fix the highlighted fields before adding the service.");
-      return;
-    }
-    save.mutate();
-  }
-
-  async function handleTest() {
-    setTesting(true);
-    setProbe(null);
-    try {
-      const result = await api.services.testConnection({
-        base_url: form.base_url.trim(),
-      });
-      setProbe(result);
-    } catch (err) {
-      toast.error("Test failed", { description: errorMessage(err) });
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  if (presetsLoading) {
-    return (
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Add service</DialogTitle>
-        </DialogHeader>
-        <DialogBody>
-          <div className="flex flex-col gap-3" aria-busy="true">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
-        </DialogBody>
-      </DialogContent>
-    );
-  }
-
-  if (presetsError) {
-    return (
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Add service</DialogTitle>
-          <DialogDescription>
-            Service presets could not be loaded. No preset has been selected.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogBody>
-          <IncidentBanner
-            tone="bad"
-            title="Could not load service presets"
-            detail={errorMessage(presetsError)}
-            actions={
-              <Button size="sm" onClick={() => void refetchPresets()}>
-                Retry
-              </Button>
-            }
-          />
-        </DialogBody>
-      </DialogContent>
-    );
-  }
-
-  if (presets.length === 0) {
-    return (
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Add service</DialogTitle>
-          <DialogDescription>
-            The gateway has not supplied a service preset to select.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogBody>
-          <EmptyOperationalState
-            title="No service presets available"
-            detail="Add or restore a preset through the gateway configuration, then try again."
-          />
-        </DialogBody>
-      </DialogContent>
-    );
-  }
-
-  return (
-    <DialogContent>
-      <DialogForm onSubmit={handleSubmit}>
-        <DialogHeader>
-          <DialogTitle>Add service</DialogTitle>
-          <DialogDescription>
-            Register an upstream service. Select one API-supplied preset before
-            entering its connection details. Changes apply live — no restart
-            needed.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogBody>
-          <ServiceForm
-            value={form}
-            onChange={setForm}
-            disabled={save.isPending}
-            error={formError}
-            errorSummaryRef={formErrorRef}
-            fieldErrors={fieldErrors}
-            showAdvanced={showAdvanced}
-            onToggleAdvanced={() => setShowAdvanced((v) => !v)}
-            probeResult={probe}
-            onTest={() => void handleTest()}
-            testing={testing}
-            presets={presets}
-          />
-        </DialogBody>
-        <DialogFooter>
-          <Button
-            variant="ghost"
-            onClick={() => onOpenChange(false)}
-            disabled={save.isPending}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" loading={save.isPending}>
-            Add service
-          </Button>
-        </DialogFooter>
-      </DialogForm>
-    </DialogContent>
   );
 }
 

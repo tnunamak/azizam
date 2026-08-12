@@ -3,9 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const page = new URL("../../src/app/admin/services/page.tsx", import.meta.url);
+const addServiceDialog = new URL("../../src/components/admin/add-service-dialog.tsx", import.meta.url);
 
 async function source() {
   return readFile(page, "utf8");
+}
+
+async function addServiceDialogSource() {
+  return readFile(addServiceDialog, "utf8");
 }
 
 test("Services keeps registry identity and live observation as separate facts", async () => {
@@ -74,12 +79,13 @@ test("Services keeps responsive context and live removal honest", async () => {
 
 test("Services retains editable managed metadata and accessible validation", async () => {
   const contents = await source();
+  const dialogContents = await addServiceDialogSource();
 
   assert.match(contents, /const \[managedNote, setManagedNote\]/);
   assert.match(contents, /note: managedNote/);
   assert.match(contents, /<Field label="Note">/);
-  assert.match(contents, /label="Provider"\s+required/);
-  assert.match(contents, /errorSummaryRef/);
-  assert.match(contents, /formErrorRef\.current\?\.focus\(\)/);
+  assert.match(dialogContents, /label="Provider"\s+required/);
+  assert.match(dialogContents, /errorSummaryRef/);
+  assert.match(dialogContents, /errorSummaryRef\.current\?\.focus\(\)/);
   assert.match(contents, /Advanced — managed in config/);
 });
