@@ -157,7 +157,7 @@ test("mobile shell and card controls meet the 44px target baseline", async ({
   await page.goto("/ui/admin/status/p1v-fixture/");
   const closedControls = [
     page.getByRole("link", { name: /vivid\.fish console/i }),
-    page.getByRole("link", { name: /checking live status/i }),
+    page.getByRole("banner").locator('a[href="/ui/admin/status/"]'),
     page.getByRole("button", { name: "Open navigation" }),
     page.getByRole("button", { name: "Open Actionable card" }),
     page.getByRole("button", { name: "Nested action: Actionable card" }),
