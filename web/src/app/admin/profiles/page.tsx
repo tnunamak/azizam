@@ -126,9 +126,7 @@ function accessSummary(profile: Profile): string {
   const intents: string[] = [];
 
   // The allow block lives in the policy document
-  const allow = profile.profile?.allow as
-    | { intents?: string[] }
-    | undefined;
+  const allow = profile.profile?.allow as { intents?: string[] } | undefined;
 
   if (allow?.intents && allow.intents.length > 0) {
     for (const intent of allow.intents) {
@@ -175,9 +173,7 @@ interface ProfileFacets {
 }
 
 function profileFacets(profile: Profile): ProfileFacets {
-  const allow = profile.profile?.allow as
-    | { intents?: string[] }
-    | undefined;
+  const allow = profile.profile?.allow as { intents?: string[] } | undefined;
 
   const capabilities: string[] = [];
   if (allow?.intents && allow.intents.length > 0) {
@@ -229,7 +225,10 @@ export default function AdminProfilesPage() {
     data: editor,
     isError: editorIsError,
     isPending: editorPending,
-  } = useQuery({ queryKey: queryKeys.policyEditor, queryFn: api.policyEditor.get });
+  } = useQuery({
+    queryKey: queryKeys.policyEditor,
+    queryFn: api.policyEditor.get,
+  });
 
   const {
     data: appsData,
@@ -358,7 +357,9 @@ export default function AdminProfilesPage() {
         <SectionActionHeader
           kicker="access"
           title="Profiles"
-          count={profiles.length > 0 ? profiles.length : undefined}
+          count={
+            profilesData && profiles.length > 0 ? profiles.length : undefined
+          }
           description="A profile defines what a caller is allowed to reach — which models, protocols, and capabilities."
           action={
             <div className="flex gap-2">
@@ -380,10 +381,18 @@ export default function AdminProfilesPage() {
           items={[
             {
               label: "profiles",
-              value: String(profiles.length),
-              detail: "access policies",
+              value: profilesData
+                ? String(profiles.length)
+                : profilesIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: profilesData ? "access policies" : "profile data",
               tone: "info",
-              badge: "live",
+              badge: profilesData
+                ? "live"
+                : profilesIsError
+                  ? "degraded"
+                  : "loading",
             },
             {
               label: "assigned apps",
@@ -398,17 +407,36 @@ export default function AdminProfilesPage() {
             },
             {
               label: "protocols",
-              value: String(protocolCount),
-              detail: "represented",
+              value: profilesData
+                ? String(protocolCount)
+                : profilesIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: profilesData ? "represented" : "profile data",
               tone: "neutral",
-              badge: "scope",
+              badge: profilesData
+                ? "scope"
+                : profilesIsError
+                  ? "degraded"
+                  : "loading",
             },
             {
               label: "unrestricted",
-              value: String(unrestrictedProfiles),
-              detail: "broad access",
-              tone: unrestrictedProfiles > 0 ? "warn" : "ok",
-              badge: unrestrictedProfiles > 0 ? "review" : "none",
+              value: profilesData
+                ? String(unrestrictedProfiles)
+                : profilesIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: profilesData ? "broad access" : "profile data",
+              tone:
+                profilesData && unrestrictedProfiles > 0 ? "warn" : "neutral",
+              badge: profilesData
+                ? unrestrictedProfiles > 0
+                  ? "review"
+                  : "none"
+                : profilesIsError
+                  ? "degraded"
+                  : "loading",
             },
           ]}
         />
@@ -677,7 +705,10 @@ interface ProfileFormState {
   statusVisibility: string;
 }
 
-function defaultFormState(editor: PolicyEditorContract | undefined, profile?: Profile): ProfileFormState {
+function defaultFormState(
+  editor: PolicyEditorContract | undefined,
+  profile?: Profile,
+): ProfileFormState {
   const document = profile?.profile ?? editor?.profile.create.profile;
   return {
     name: profile?.name ?? "",
@@ -692,7 +723,12 @@ function defaultFormState(editor: PolicyEditorContract | undefined, profile?: Pr
 }
 
 function profileFormSummary(form: ProfileFormState): string {
-  const protocols = form.protocols === undefined ? "all protocols" : form.protocols.length ? form.protocols.join(", ") : "no protocols";
+  const protocols =
+    form.protocols === undefined
+      ? "all protocols"
+      : form.protocols.length
+        ? form.protocols.join(", ")
+        : "no protocols";
   const modelCount = form.models?.length ?? 0;
   const models =
     form.models === undefined
@@ -772,17 +808,28 @@ function ProfileDialogContent({
     const source = profile?.profile ?? editor?.profile.create.profile ?? {};
     const document = structuredClone(source);
     const allow = { ...(document.allow ?? {}) };
-    for (const [field, value] of Object.entries({ protocols: form.protocols, workflows: form.workflows, models: form.models }) as Array<["protocols" | "workflows" | "models", string[] | undefined]>) {
+    for (const [field, value] of Object.entries({
+      protocols: form.protocols,
+      workflows: form.workflows,
+      models: form.models,
+    }) as Array<["protocols" | "workflows" | "models", string[] | undefined]>) {
       if (value === undefined) delete document[field];
       else document[field] = value;
     }
-    for (const [field, value] of Object.entries({ intents: form.intents, tags: form.tags }) as Array<["intents" | "tags", string[] | undefined]>) {
+    for (const [field, value] of Object.entries({
+      intents: form.intents,
+      tags: form.tags,
+    }) as Array<["intents" | "tags", string[] | undefined]>) {
       if (value === undefined) delete allow[field];
       else allow[field] = value;
     }
     if (Object.keys(allow).length) document.allow = allow;
     else delete document.allow;
-    if (form.statusVisibility) document.status_visibility = { ...document.status_visibility, level: form.statusVisibility };
+    if (form.statusVisibility)
+      document.status_visibility = {
+        ...document.status_visibility,
+        level: form.statusVisibility,
+      };
     return document;
   }
 
@@ -886,16 +933,76 @@ function ProfileDialogContent({
 
             {advancedOpen && (
               <div className="border-vf-border flex flex-col gap-4 border-t px-4 py-4">
-                {editorUnavailable ? <NoticeBanner tone="warn">Unavailable — policy choices could not be read. Saved values remain visible, but discovery controls are disabled.</NoticeBanner> : editorStale ? <NoticeBanner tone="warn">Stale — showing prior choices. You may remove retained values, but cannot add a stale choice.</NoticeBanner> : null}
-                <PolicySetField label="API protocols" choices={editor?.profile.choices.protocols ?? []} value={form.protocols} onChange={(value) => setField("protocols", value)} disabled={save.isPending || editorUnavailable} stale={editorStale} />
-                <PolicySetField label="Capabilities" choices={editor?.profile.choices.intents ?? []} value={form.intents} onChange={(value) => setField("intents", value)} disabled={save.isPending || editorUnavailable} stale={editorStale} />
-                <PolicySetField label="Workflows" choices={editor?.profile.choices.workflows ?? []} value={form.workflows} onChange={(value) => setField("workflows", value)} disabled={save.isPending || editorUnavailable} stale={editorStale} />
-                <PolicySetField label="Allowed models" choices={editor?.profile.choices.models ?? []} value={form.models} onChange={(value) => setField("models", value)} disabled={save.isPending || editorUnavailable} stale={editorStale} />
-                <PolicySetField label="Tags" choices={editor?.profile.choices.tags ?? []} value={form.tags} onChange={(value) => setField("tags", value)} disabled={save.isPending || editorUnavailable} stale={editorStale} />
-                <Field label="Status visibility" help="How much queue/status info callers can see.">
-                  <Select value={form.statusVisibility} onChange={(e) => setField("statusVisibility", e.target.value)} disabled={save.isPending || editorUnavailable}>
+                {editorUnavailable ? (
+                  <NoticeBanner tone="warn">
+                    Unavailable — policy choices could not be read. Saved values
+                    remain visible, but discovery controls are disabled.
+                  </NoticeBanner>
+                ) : editorStale ? (
+                  <NoticeBanner tone="warn">
+                    Stale — showing prior choices. You may remove retained
+                    values, but cannot add a stale choice.
+                  </NoticeBanner>
+                ) : null}
+                <PolicySetField
+                  label="API protocols"
+                  choices={editor?.profile.choices.protocols ?? []}
+                  value={form.protocols}
+                  onChange={(value) => setField("protocols", value)}
+                  disabled={save.isPending || editorUnavailable}
+                  stale={editorStale}
+                />
+                <PolicySetField
+                  label="Capabilities"
+                  choices={editor?.profile.choices.intents ?? []}
+                  value={form.intents}
+                  onChange={(value) => setField("intents", value)}
+                  disabled={save.isPending || editorUnavailable}
+                  stale={editorStale}
+                />
+                <PolicySetField
+                  label="Workflows"
+                  choices={editor?.profile.choices.workflows ?? []}
+                  value={form.workflows}
+                  onChange={(value) => setField("workflows", value)}
+                  disabled={save.isPending || editorUnavailable}
+                  stale={editorStale}
+                />
+                <PolicySetField
+                  label="Allowed models"
+                  choices={editor?.profile.choices.models ?? []}
+                  value={form.models}
+                  onChange={(value) => setField("models", value)}
+                  disabled={save.isPending || editorUnavailable}
+                  stale={editorStale}
+                />
+                <PolicySetField
+                  label="Tags"
+                  choices={editor?.profile.choices.tags ?? []}
+                  value={form.tags}
+                  onChange={(value) => setField("tags", value)}
+                  disabled={save.isPending || editorUnavailable}
+                  stale={editorStale}
+                />
+                <Field
+                  label="Status visibility"
+                  help="How much queue/status info callers can see."
+                >
+                  <Select
+                    value={form.statusVisibility}
+                    onChange={(e) =>
+                      setField("statusVisibility", e.target.value)
+                    }
+                    disabled={save.isPending || editorUnavailable}
+                  >
                     <option value="">Select status visibility…</option>
-                    {(editor?.profile.choices.status_visibility ?? []).map((choice) => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
+                    {(editor?.profile.choices.status_visibility ?? []).map(
+                      (choice) => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.label}
+                        </option>
+                      ),
+                    )}
                   </Select>
                 </Field>
               </div>
@@ -938,23 +1045,70 @@ function PolicySetField({
 }) {
   const selected = value ?? [];
   const advertised = new Map(choices.map((choice) => [choice.id, choice]));
-  const visible = [...choices, ...selected.filter((id) => !advertised.has(id)).map((id) => ({ id, label: `${id} — Not currently advertised`, description: "Retaining this value retains the grant if it becomes active again.", available: false }))];
-  const changeMode = (mode: "unrestricted" | "deny") => onChange(mode === "unrestricted" ? undefined : []);
-  const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id]);
+  const visible = [
+    ...choices,
+    ...selected
+      .filter((id) => !advertised.has(id))
+      .map((id) => ({
+        id,
+        label: `${id} — Not currently advertised`,
+        description:
+          "Retaining this value retains the grant if it becomes active again.",
+        available: false,
+      })),
+  ];
+  const changeMode = (mode: "unrestricted" | "deny") =>
+    onChange(mode === "unrestricted" ? undefined : []);
+  const toggle = (id: string) =>
+    onChange(
+      selected.includes(id)
+        ? selected.filter((item) => item !== id)
+        : [...selected, id],
+    );
   return (
-    <Field label={label} help="No restriction omits this field. Deny all stores an explicit empty set.">
+    <Field
+      label={label}
+      help="No restriction omits this field. Deny all stores an explicit empty set."
+    >
       <div className="flex flex-col gap-2">
-        <div className="flex gap-3 text-vf-small">
-          <label><input type="radio" checked={value === undefined} onChange={() => changeMode("unrestricted")} disabled={disabled} /> No restriction</label>
-          <label><input type="radio" checked={value !== undefined} onChange={() => changeMode("deny")} disabled={disabled} /> Restrict</label>
+        <div className="text-vf-small flex gap-3">
+          <label>
+            <input
+              type="radio"
+              checked={value === undefined}
+              onChange={() => changeMode("unrestricted")}
+              disabled={disabled}
+            />{" "}
+            No restriction
+          </label>
+          <label>
+            <input
+              type="radio"
+              checked={value !== undefined}
+              onChange={() => changeMode("deny")}
+              disabled={disabled}
+            />{" "}
+            Restrict
+          </label>
         </div>
-        {value !== undefined && <div className="flex flex-wrap gap-3">
-          {visible.map((choice) => {
-            const checked = selected.includes(choice.id);
-            const mayAdd = !stale && choice.available !== false;
-            return <Checkbox key={choice.id} checked={checked} onCheckedChange={() => toggle(choice.id)} disabled={disabled || (!checked && !mayAdd)}>{choice.label}</Checkbox>;
-          })}
-        </div>}
+        {value !== undefined && (
+          <div className="flex flex-wrap gap-3">
+            {visible.map((choice) => {
+              const checked = selected.includes(choice.id);
+              const mayAdd = !stale && choice.available !== false;
+              return (
+                <Checkbox
+                  key={choice.id}
+                  checked={checked}
+                  onCheckedChange={() => toggle(choice.id)}
+                  disabled={disabled || (!checked && !mayAdd)}
+                >
+                  {choice.label}
+                </Checkbox>
+              );
+            })}
+          </div>
+        )}
       </div>
     </Field>
   );
@@ -1115,6 +1269,8 @@ function TestAccessDialog(
     profileList.find((profile) => profile.id === visibleSelectedProfileId) ??
     null;
   const activeProfileId = activeProfile?.id ?? "";
+  const activeProfileIdRef = useRef(activeProfileId);
+  activeProfileIdRef.current = activeProfileId;
 
   const [intent, setIntent] = useState<string>("");
   const [protocol, setProtocol] = useState<string>("");
@@ -1125,14 +1281,25 @@ function TestAccessDialog(
   const [simErrorProfileId, setSimErrorProfileId] = useState<string | null>(
     null,
   );
+  const [simErrorAttempt, setSimErrorAttempt] = useState(0);
   const [expanded, setExpanded] = useState(false);
 
+  const clearSimulation = () => {
+    setResult(null);
+    setResultProfileId(null);
+    setSimError(null);
+    setSimErrorProfileId(null);
+    setSimErrorAttempt(0);
+  };
+
+  useEffect(() => {
+    clearSimulation();
+  }, [activeProfileId]);
+
   const simulate = useMutation({
-    mutationFn: () => {
-      if (!activeProfileId)
-        return Promise.reject(new Error("No profile selected"));
+    mutationFn: (submittedProfileId: string) => {
       return api.policy.simulate({
-        profile: activeProfileId,
+        profile: submittedProfileId,
         request: {
           protocol: protocol || null,
           intent: intent || null,
@@ -1142,15 +1309,18 @@ function TestAccessDialog(
         },
       });
     },
-    onSuccess: (data) => {
+    onSuccess: (data, submittedProfileId) => {
+      if (submittedProfileId !== activeProfileIdRef.current) return;
       setResult(data);
-      setResultProfileId(activeProfileId);
+      setResultProfileId(submittedProfileId);
       setSimError(null);
       setSimErrorProfileId(null);
     },
-    onError: (error) => {
+    onError: (error, submittedProfileId) => {
+      if (submittedProfileId !== activeProfileIdRef.current) return;
       setSimError(errorMessage(error));
-      setSimErrorProfileId(activeProfileId);
+      setSimErrorProfileId(submittedProfileId);
+      setSimErrorAttempt((attempt) => attempt + 1);
       setResult(null);
       setResultProfileId(null);
     },
@@ -1175,6 +1345,7 @@ function TestAccessDialog(
               <Select
                 value={visibleSelectedProfileId}
                 onChange={(e) => {
+                  clearSimulation();
                   setSelectedProfileId(e.target.value);
                 }}
                 disabled={simulate.isPending}
@@ -1237,7 +1408,7 @@ function TestAccessDialog(
           )}
 
           {simError && simErrorProfileId === activeProfileId && (
-            <FormErrorSummary message={simError} />
+            <FormErrorSummary key={simErrorAttempt} message={simError} />
           )}
         </DialogBody>
         <DialogFooter>
@@ -1252,7 +1423,7 @@ function TestAccessDialog(
             variant="primary"
             loading={simulate.isPending}
             disabled={!activeProfileId}
-            onClick={() => simulate.mutate()}
+            onClick={() => activeProfileId && simulate.mutate(activeProfileId)}
           >
             Run test
           </Button>

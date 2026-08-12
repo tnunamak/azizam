@@ -274,7 +274,11 @@ export default function AdminAppsPage() {
     queryKey: queryKeys.credentials,
     queryFn: api.credentials.list,
   });
-  const { data: profilesData, refetch: refetchProfiles } = useQuery({
+  const {
+    data: profilesData,
+    isError: profilesIsError,
+    refetch: refetchProfiles,
+  } = useQuery({
     queryKey: queryKeys.profiles,
     queryFn: api.profiles.list,
   });
@@ -311,6 +315,12 @@ export default function AdminAppsPage() {
     : credentialsIsError
       ? "unavailable"
       : "pending";
+  const profilesJoinState: JoinState = profilesData
+    ? "available"
+    : profilesIsError
+      ? "unavailable"
+      : "pending";
+  const profilesStale = profilesIsError && Boolean(profilesData);
   const adminKeys = useMemo(
     () =>
       sortKeys(
@@ -669,9 +679,22 @@ export default function AdminAppsPage() {
       sections.push({
         title: "Scope",
         content: (
-          <span className="text-vf-micro text-vf-muted">
-            Loading profile capabilities…
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-vf-micro text-vf-muted">
+              {profilesJoinState === "unavailable"
+                ? "Profile capabilities unavailable."
+                : "Loading profile capabilities…"}
+            </span>
+            {profilesJoinState === "unavailable" && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void refetchProfiles()}
+              >
+                Retry
+              </Button>
+            )}
+          </div>
         ),
       });
     }
@@ -848,6 +871,8 @@ export default function AdminAppsPage() {
     appTelemetryByAppId,
     profilesById,
     credentialsJoinState,
+    profilesJoinState,
+    refetchProfiles,
   ]);
 
   const loading = appsPending;
@@ -871,7 +896,7 @@ export default function AdminAppsPage() {
           kicker="access"
           title="Apps & keys"
           description="Apps connect callers to the gateway; every key belongs to an app."
-          count={apps.length}
+          count={appsData ? apps.length : undefined}
           action={
             <Button variant="primary" onClick={() => setCreateOpen(true)}>
               Create app
@@ -883,11 +908,21 @@ export default function AdminAppsPage() {
           items={[
             {
               label: "Active",
-              value: apps.filter((a) => a.disabled_at === null).length,
+              value: appsData
+                ? apps.filter((a) => a.disabled_at === null).length
+                : appsIsError
+                  ? "Unavailable"
+                  : "…",
+              badge: appsData ? "live" : appsIsError ? "degraded" : "loading",
             },
             {
               label: "Disabled",
-              value: apps.filter((a) => a.disabled_at !== null).length,
+              value: appsData
+                ? apps.filter((a) => a.disabled_at !== null).length
+                : appsIsError
+                  ? "Unavailable"
+                  : "…",
+              badge: appsData ? "live" : appsIsError ? "degraded" : "loading",
             },
             {
               label: "Active keys",
@@ -1446,6 +1481,9 @@ export default function AdminAppsPage() {
         onOpenChange={setCreateOpen}
         users={usersData ?? []}
         profiles={profilesData ?? []}
+        profilesJoinState={profilesJoinState}
+        profilesStale={profilesStale}
+        onRetryProfiles={() => void refetchProfiles()}
       />
       <ChangeProfileDialog
         app={profileTarget}
@@ -1453,6 +1491,9 @@ export default function AdminAppsPage() {
           if (!open) setProfileTarget(null);
         }}
         profiles={profilesData ?? []}
+        profilesJoinState={profilesJoinState}
+        profilesStale={profilesStale}
+        onRetryProfiles={() => void refetchProfiles()}
       />
       <MintKeyDialog
         app={mintTarget}
@@ -1690,11 +1731,17 @@ function CreateAppDialog({
   onOpenChange,
   users,
   profiles,
+  profilesJoinState,
+  profilesStale,
+  onRetryProfiles,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   users: User[];
   profiles: Profile[];
+  profilesJoinState: JoinState;
+  profilesStale: boolean;
+  onRetryProfiles: () => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1704,6 +1751,9 @@ function CreateAppDialog({
           onOpenChange={onOpenChange}
           users={users}
           profiles={profiles}
+          profilesJoinState={profilesJoinState}
+          profilesStale={profilesStale}
+          onRetryProfiles={onRetryProfiles}
         />
       )}
     </Dialog>
@@ -1714,10 +1764,16 @@ function CreateAppDialogContent({
   onOpenChange,
   users,
   profiles,
+  profilesJoinState,
+  profilesStale,
+  onRetryProfiles,
 }: {
   onOpenChange: (open: boolean) => void;
   users: User[];
   profiles: Profile[];
+  profilesJoinState: JoinState;
+  profilesStale: boolean;
+  onRetryProfiles: () => void;
 }) {
   const queryClient = useQueryClient();
   const [kind, setKind] = useState<AppKind>("service");
@@ -1816,17 +1872,51 @@ function CreateAppDialogContent({
             label="Profile"
             help="Controls what the app can reach. You can change it later."
           >
+            {profilesJoinState !== "available" && (
+              <div className="text-vf-small text-vf-muted mb-2 flex items-center gap-2">
+                <span>
+                  {profilesJoinState === "unavailable"
+                    ? "Profiles are unavailable; retry before choosing one."
+                    : "Loading profiles before you choose one."}
+                </span>
+                {profilesJoinState === "unavailable" && (
+                  <Button type="button" size="sm" onClick={onRetryProfiles}>
+                    Retry
+                  </Button>
+                )}
+              </div>
+            )}
+            {profilesStale && (
+              <div className="text-vf-small text-vf-muted mb-2 flex items-center gap-2">
+                <span>
+                  Showing retained profile facts; refresh them before saving.
+                </span>
+                <Button type="button" size="sm" onClick={onRetryProfiles}>
+                  Retry
+                </Button>
+              </div>
+            )}
             <Select
               value={profileId}
               onChange={(event) => setProfileId(event.target.value)}
-              disabled={create.isPending}
+              disabled={
+                create.isPending ||
+                profilesJoinState !== "available" ||
+                profilesStale
+              }
             >
-              <option value="">Use gateway default</option>
-              {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name}
-                </option>
-              ))}
+              {profilesJoinState === "available" && !profilesStale ? (
+                <>
+                  <option value="">Use gateway default</option>
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </>
+              ) : (
+                <option value="">Profiles are not ready</option>
+              )}
             </Select>
           </Field>
           {formError && <FormErrorSummary message={formError} />}
@@ -1839,7 +1929,12 @@ function CreateAppDialogContent({
           >
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={create.isPending}>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={create.isPending}
+            disabled={profilesJoinState !== "available" || profilesStale}
+          >
             Create app
           </Button>
         </DialogFooter>
@@ -1855,10 +1950,16 @@ function ChangeProfileDialog({
   app,
   onOpenChange,
   profiles,
+  profilesJoinState,
+  profilesStale,
+  onRetryProfiles,
 }: {
   app: App | null;
   onOpenChange: (open: boolean) => void;
   profiles: Profile[];
+  profilesJoinState: JoinState;
+  profilesStale: boolean;
+  onRetryProfiles: () => void;
 }) {
   return (
     <Dialog open={app !== null} onOpenChange={onOpenChange}>
@@ -1867,6 +1968,9 @@ function ChangeProfileDialog({
           app={app}
           onOpenChange={onOpenChange}
           profiles={profiles}
+          profilesJoinState={profilesJoinState}
+          profilesStale={profilesStale}
+          onRetryProfiles={onRetryProfiles}
         />
       )}
     </Dialog>
@@ -1877,10 +1981,16 @@ function ChangeProfileDialogContent({
   app,
   onOpenChange,
   profiles,
+  profilesJoinState,
+  profilesStale,
+  onRetryProfiles,
 }: {
   app: App;
   onOpenChange: (open: boolean) => void;
   profiles: Profile[];
+  profilesJoinState: JoinState;
+  profilesStale: boolean;
+  onRetryProfiles: () => void;
 }) {
   const queryClient = useQueryClient();
   const [profileId, setProfileId] = useState(app.default_profile_id ?? "");
@@ -1917,18 +2027,52 @@ function ChangeProfileDialogContent({
         </DialogHeader>
         <DialogBody>
           <Field label="Profile">
+            {profilesJoinState !== "available" && (
+              <div className="text-vf-small text-vf-muted mb-2 flex items-center gap-2">
+                <span>
+                  {profilesJoinState === "unavailable"
+                    ? "Profiles are unavailable; retry before changing this app."
+                    : "Loading profiles before you change this app."}
+                </span>
+                {profilesJoinState === "unavailable" && (
+                  <Button type="button" size="sm" onClick={onRetryProfiles}>
+                    Retry
+                  </Button>
+                )}
+              </div>
+            )}
+            {profilesStale && (
+              <div className="text-vf-small text-vf-muted mb-2 flex items-center gap-2">
+                <span>
+                  Showing retained profile facts; refresh them before saving.
+                </span>
+                <Button type="button" size="sm" onClick={onRetryProfiles}>
+                  Retry
+                </Button>
+              </div>
+            )}
             <Select
               value={profileId}
               onChange={(event) => setProfileId(event.target.value)}
               autoFocus
-              disabled={update.isPending}
+              disabled={
+                update.isPending ||
+                profilesJoinState !== "available" ||
+                profilesStale
+              }
             >
-              <option value="">Use gateway default</option>
-              {profiles.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name}
-                </option>
-              ))}
+              {profilesJoinState === "available" && !profilesStale ? (
+                <>
+                  <option value="">Use gateway default</option>
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </>
+              ) : (
+                <option value="">Profiles are not ready</option>
+              )}
             </Select>
           </Field>
           {formError && <FormErrorSummary message={formError} />}
@@ -1941,7 +2085,12 @@ function ChangeProfileDialogContent({
           >
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={update.isPending}>
+          <Button
+            type="submit"
+            variant="primary"
+            loading={update.isPending}
+            disabled={profilesJoinState !== "available" || profilesStale}
+          >
             Save
           </Button>
         </DialogFooter>

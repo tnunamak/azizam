@@ -780,14 +780,7 @@ def access_model_summary() -> dict[str, Any]:
             "relationship": "keys authenticate apps or admin automation without exposing raw secrets",
         },
         "runtime_mappings": {
-            "source_kinds": [
-                "oidc_group",
-                "oidc_role",
-                "email",
-                "domain",
-                "gateway_role",
-                "all_users",
-            ],
+            "source_kinds": list(admin_store.RUNTIME_PROFILE_MAPPING_SOURCE_KINDS),
             "relationship": (
                 "OIDC groups, OIDC roles, emails, domains, gateway roles, "
                 "and all signed-in users can map identities to runtime profiles"

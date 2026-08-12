@@ -88,18 +88,31 @@ function roleBadgeTone(
   return "neutral";
 }
 
-function sourceDescriptor(editor: PolicyEditorContract | undefined, sourceKind: string) {
-  return editor?.runtime_mappings.source_kinds.find((source) => source.id === sourceKind);
+function sourceDescriptor(
+  editor: PolicyEditorContract | undefined,
+  sourceKind: string,
+) {
+  return editor?.runtime_mappings.source_kinds.find(
+    (source) => source.id === sourceKind,
+  );
 }
 
-function mappingLabel(mapping: RuntimeProfileMapping, editor?: PolicyEditorContract): string {
+function mappingLabel(
+  mapping: RuntimeProfileMapping,
+  editor?: PolicyEditorContract,
+): string {
   const source = sourceDescriptor(editor, mapping.source_kind);
-  if (!source) return `${mapping.source_kind} — Not currently advertised: ${mapping.source_value}`;
+  if (!source)
+    return `${mapping.source_kind} — Not currently advertised: ${mapping.source_value}`;
   if (source.value_mode === "fixed") return source.label;
   return `${source.label}: ${mapping.source_value}`;
 }
 
-function profileName(profileId: string, profiles: Profile[], editor?: PolicyEditorContract): string {
+function profileName(
+  profileId: string,
+  profiles: Profile[],
+  editor?: PolicyEditorContract,
+): string {
   return (
     profiles.find((p) => p.id === profileId)?.name ??
     (editor?.runtime_mappings.fallback_profile.id === profileId
@@ -165,7 +178,11 @@ export default function AdminUsersPage() {
     queryKey: queryKeys.profiles,
     queryFn: api.profiles.list,
   });
-  const { data: editor, isError: editorIsError, isPending: editorPending } = useQuery({
+  const {
+    data: editor,
+    isError: editorIsError,
+    isPending: editorPending,
+  } = useQuery({
     queryKey: queryKeys.policyEditor,
     queryFn: api.policyEditor.get,
   });
@@ -312,7 +329,7 @@ export default function AdminUsersPage() {
         <SectionActionHeader
           kicker="people"
           title="Users"
-          count={users.length > 0 ? users.length : undefined}
+          count={usersData && users.length > 0 ? users.length : undefined}
           description="Signed-in people, their gateway roles, and the default access new users receive."
         />
 
@@ -320,17 +337,31 @@ export default function AdminUsersPage() {
           items={[
             {
               label: "users",
-              value: String(users.length),
-              detail: "signed in",
+              value: usersData
+                ? String(users.length)
+                : usersIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: usersData ? "signed in" : "user data",
               tone: "info",
-              badge: "live",
+              badge: usersData ? "live" : usersIsError ? "degraded" : "loading",
             },
             {
               label: "admins",
-              value: String(adminCount),
-              detail: "owner or admin",
-              tone: adminCount > 0 ? "accent" : "warn",
-              badge: adminCount > 0 ? "set" : "review",
+              value: usersData
+                ? String(adminCount)
+                : usersIsError
+                  ? "Unavailable"
+                  : "…",
+              detail: usersData ? "owner or admin" : "user data",
+              tone: usersData && adminCount > 0 ? "accent" : "neutral",
+              badge: usersData
+                ? adminCount > 0
+                  ? "set"
+                  : "review"
+                : usersIsError
+                  ? "degraded"
+                  : "loading",
             },
             {
               label: "mappings",
@@ -437,7 +468,11 @@ export default function AdminUsersPage() {
             count={mappings.length > 0 ? mappings.length : undefined}
             description="Map a sign-in attribute — OIDC group, email, domain — to a profile. New users matching a rule get that profile automatically."
             action={
-              <Button size="sm" onClick={() => setCreateMappingOpen(true)} disabled={!editor && !editorPending}>
+              <Button
+                size="sm"
+                onClick={() => setCreateMappingOpen(true)}
+                disabled={!editor && !editorPending}
+              >
                 Add mapping
               </Button>
             }
@@ -692,7 +727,8 @@ function MappingsTable({
             {mappingLabel(mapping, editor)}
           </span>
           <span className="text-vf-micro text-vf-subtle font-mono">
-            {sourceDescriptor(editor, mapping.source_kind)?.label ?? "Not currently advertised"}
+            {sourceDescriptor(editor, mapping.source_kind)?.label ??
+              "Not currently advertised"}
           </span>
         </span>
       ),
@@ -745,7 +781,9 @@ function MappingsTable({
         />
       }
       rowMenu={({ mapping }) => (
-        <OverflowMenu label={`Actions for mapping ${mappingLabel(mapping, editor)}`}>
+        <OverflowMenu
+          label={`Actions for mapping ${mappingLabel(mapping, editor)}`}
+        >
           <OverflowMenuItem danger onSelect={() => onDisable(mapping)}>
             Disable mapping…
           </OverflowMenuItem>
@@ -805,7 +843,11 @@ function CreateMappingDialogContent({
   const [sourceKind, setSourceKind] = useState("");
   const [sourceValue, setSourceValue] = useState("");
   const [profileId, setProfileId] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<{ source_kind?: string; source_value?: string; profile_id?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<{
+    source_kind?: string;
+    source_value?: string;
+    profile_id?: string;
+  }>({});
   const [formError, setFormError] = useState<string | null>(null);
 
   const source = sourceDescriptor(editor, sourceKind);
@@ -815,7 +857,10 @@ function CreateMappingDialogContent({
     mutationFn: () =>
       api.runtimeProfileMappings.create({
         source_kind: sourceKind,
-        source_value: source?.value_mode === "fixed" ? (source.fixed_value ?? "") : sourceValue.trim(),
+        source_value:
+          source?.value_mode === "fixed"
+            ? (source.fixed_value ?? "")
+            : sourceValue.trim(),
         profile_id: profileId,
       }),
     onSuccess: async () => {
@@ -828,7 +873,11 @@ function CreateMappingDialogContent({
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    const errors: { source_kind?: string; source_value?: string; profile_id?: string } = {};
+    const errors: {
+      source_kind?: string;
+      source_value?: string;
+      profile_id?: string;
+    } = {};
     if (!source) errors.source_kind = "Choose a source to match.";
     if (sourceValueRequired && !sourceValue.trim()) {
       errors.source_value = "Enter a value to match against.";
@@ -851,7 +900,11 @@ function CreateMappingDialogContent({
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
-          <Field label="Match on" help="The sign-in attribute to inspect." error={fieldErrors.source_kind}>
+          <Field
+            label="Match on"
+            help="The sign-in attribute to inspect."
+            error={fieldErrors.source_kind}
+          >
             <Select
               value={sourceKind}
               onChange={(event) => setSourceKind(event.target.value)}
@@ -871,9 +924,7 @@ function CreateMappingDialogContent({
               label="Value"
               required
               error={fieldErrors.source_value}
-              help={
-                source?.description ?? "Value to match"
-              }
+              help={source?.description ?? "Value to match"}
             >
               <Input
                 value={sourceValue}
@@ -896,7 +947,11 @@ function CreateMappingDialogContent({
               disabled={create.isPending || editorUnavailable}
             >
               <option value="">Select a profile…</option>
-              {editor?.runtime_mappings.fallback_profile.assignable && <option value={editor.runtime_mappings.fallback_profile.id}>{editor.runtime_mappings.fallback_profile.label}</option>}
+              {editor?.runtime_mappings.fallback_profile.assignable && (
+                <option value={editor.runtime_mappings.fallback_profile.id}>
+                  {editor.runtime_mappings.fallback_profile.label}
+                </option>
+              )}
               {profiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
                   {profile.name}
