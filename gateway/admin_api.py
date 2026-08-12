@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import hmac
+import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
 
@@ -273,9 +274,9 @@ _AUDIT_ACTOR_KINDS = frozenset({"user", "service_account", "system", "cli", "adm
 # boundary rather than asking every client to recognize secrets.
 _AUDIT_SAFE_DETAIL_FIELDS = frozenset({
     "app_id", "capability_count", "count", "credential_prefix", "effective_profile_id",
-    "email", "fields", "kind", "name", "override_count", "package_hash", "prefix",
-    "profile_id", "protocol_frontend_count", "role", "secret_changed", "service_account",
-    "service_count", "source_kind", "source_value", "via", "workflow_count",
+    "fields", "kind", "override_count", "package_hash", "prefix", "profile_id",
+    "protocol_frontend_count", "role", "secret_changed", "service_count", "source_kind",
+    "via", "workflow_count",
 })
 _AUDIT_DETAIL_MAX_KEYS = 24
 _AUDIT_DETAIL_MAX_ITEMS = 24
@@ -307,24 +308,36 @@ def _attention_app_profile_id(record: Mapping[str, Any]) -> str:
     return str(profile_id) if profile_id else "default-local"
 
 
-def _safe_audit_detail(value: Any, *, depth: int = 0) -> Any:
-    """Return a bounded JSON value from the explicit audit-detail vocabulary."""
-    if depth > 2:
-        return None
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    if isinstance(value, str):
-        return value[:_AUDIT_DETAIL_MAX_STRING]
-    if isinstance(value, (list, tuple)):
-        return [
-            item for item in (
-                _safe_audit_detail(item, depth=depth + 1)
-                for item in value[:_AUDIT_DETAIL_MAX_ITEMS]
-            ) if item is not None
-        ]
-    # Metadata producers do not emit nested objects.  Dropping them means an
-    # unknown nested "authorization" or an innocently named secret cannot
-    # cross the API boundary.
+_AUDIT_ID_RE = re.compile(r"^(?:app|prof|svc|cred)_[a-f0-9]{8,64}$")
+_AUDIT_PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_AUDIT_HASH_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+_AUDIT_ENUMS = {
+    "kind": frozenset({"personal", "service"}),
+    "role": frozenset({"owner", "admin", "superadmin"}),
+    "source_kind": frozenset({"email", "domain", "oidc_group", "oidc_role", "gateway_role", "all_users"}),
+    "via": frozenset({"admin", "setup", "cli", "system"}),
+}
+_AUDIT_COUNT_FIELDS = frozenset({"capability_count", "count", "override_count", "protocol_frontend_count", "service_count", "workflow_count"})
+_AUDIT_ID_FIELDS = frozenset({"app_id", "effective_profile_id", "profile_id"})
+
+
+def _safe_audit_detail(key: str, value: Any) -> Any:
+    """Parse one known metadata field into its closed public grammar."""
+    if key in _AUDIT_COUNT_FIELDS:
+        return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 1_000_000 else None
+    if key == "secret_changed":
+        return value if isinstance(value, bool) else None
+    if key in _AUDIT_ID_FIELDS:
+        return value if isinstance(value, str) and _AUDIT_ID_RE.fullmatch(value) else None
+    if key in {"credential_prefix", "prefix"}:
+        return value if isinstance(value, str) and _AUDIT_PREFIX_RE.fullmatch(value) else None
+    if key == "package_hash":
+        return value if isinstance(value, str) and _AUDIT_HASH_RE.fullmatch(value) else None
+    if key in _AUDIT_ENUMS:
+        return value if isinstance(value, str) and value in _AUDIT_ENUMS[key] else None
+    if key == "fields" and isinstance(value, (list, tuple)):
+        fields = [item for item in value if isinstance(item, str) and item in _OIDC_CONFIG_FIELDS]
+        return fields[:_AUDIT_DETAIL_MAX_ITEMS] or None
     return None
 
 
@@ -345,10 +358,8 @@ def _safe_audit_record(record: Mapping[str, Any]) -> dict[str, Any]:
         out["metadata"] = None
         return out
     detail: dict[str, Any] = {}
-    for key in sorted(metadata)[:_AUDIT_DETAIL_MAX_KEYS]:
-        if key not in _AUDIT_SAFE_DETAIL_FIELDS:
-            continue
-        safe_value = _safe_audit_detail(metadata[key])
+    for key in sorted(key for key in metadata if key in _AUDIT_SAFE_DETAIL_FIELDS)[:_AUDIT_DETAIL_MAX_KEYS]:
+        safe_value = _safe_audit_detail(key, metadata[key])
         if safe_value is not None:
             detail[key] = safe_value
     out["metadata"] = detail or None
@@ -1397,7 +1408,7 @@ def _validate_oidc_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             continue
         value = payload[key]
         if value is None:
-            out[key] = ""
+            out[key] = None
             continue
         if not isinstance(value, str):
             raise _RouteError(
@@ -1405,7 +1416,9 @@ def _validate_oidc_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                 "invalid_oidc_config",
                 f"{key} must be a string",
             )
-        out[key] = value.strip()
+        # Empty is an explicit clear for bootstrap-backed provider fields.
+        # Omission remains the only patch-preserve operation.
+        out[key] = value.strip() or None
     for key in _OIDC_LIST_FIELDS:
         if key not in payload:
             continue
@@ -2848,7 +2861,13 @@ def create_admin_router(
             ).as_response()
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"oidc_config": record},
+            content={
+                "oidc_config": (
+                    effective_oidc_config_provider()
+                    if effective_oidc_config_provider is not None
+                    else record
+                )
+            },
         )
 
     @router.get("/audit")

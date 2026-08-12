@@ -44,7 +44,7 @@ from typing import Any, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(os.environ["AI_GATEWAY_ADMIN_DB"]) if os.environ.get("AI_GATEWAY_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SUBJECT_KINDS = ("user", "service_account", "app")
 APP_KINDS = ("personal", "service")
@@ -201,6 +201,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
   created_at INTEGER NOT NULL,
   actor_kind TEXT,
   actor_id TEXT,
+  actor_label TEXT,
   action TEXT NOT NULL,
   target_kind TEXT,
   target_id TEXT,
@@ -237,9 +238,11 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             f"admin_store schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
     elif int(row[0]) < SCHEMA_VERSION:
-        # All v2 DDL is idempotent and was just applied above.  Keep this
-        # forward-only migration intentionally small: old databases get the
-        # five operation tables, while new databases are born at v2.
+        # SQLite does not add columns through CREATE TABLE IF NOT EXISTS.
+        # Keep the event-time actor label available to upgraded installations.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(audit_events)")}
+        if "actor_label" not in columns:
+            conn.execute("ALTER TABLE audit_events ADD COLUMN actor_label TEXT")
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     # A database created before registry generations existed may already have
     # the document.  Seed its first server-owned value during migration rather
@@ -1436,6 +1439,7 @@ def record_audit(
     *,
     actor_kind: str | None = None,
     actor_id: str | None = None,
+    actor_label: str | None = None,
     target_kind: str | None = None,
     target_id: str | None = None,
     metadata: Mapping[str, Any] | None = None,
@@ -1452,6 +1456,7 @@ def record_audit(
             action,
             actor_kind=actor_kind,
             actor_id=actor_id,
+            actor_label=actor_label,
             target_kind=target_kind,
             target_id=target_id,
             metadata=metadata,
@@ -1470,6 +1475,7 @@ def _record_audit_in_transaction(
     *,
     actor_kind: str | None,
     actor_id: str | None,
+    actor_label: str | None,
     target_kind: str | None,
     target_id: str | None,
     metadata: Mapping[str, Any] | None,
@@ -1485,14 +1491,15 @@ def _record_audit_in_transaction(
         else None
     )
     conn.execute(
-        "INSERT INTO audit_events(id, created_at, actor_kind, actor_id, "
+        "INSERT INTO audit_events(id, created_at, actor_kind, actor_id, actor_label, "
         "action, target_kind, target_id, metadata_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             aud_id,
             now,
             actor_kind,
             actor_id,
+            actor_label.strip()[:256] if isinstance(actor_label, str) else None,
             action,
             target_kind,
             target_id,
@@ -1683,6 +1690,8 @@ def write_service_registry_with_audit(
     updated_by: str | None,
     audit_action: str,
     audit_actor_kind: str | None,
+    audit_actor_id: str | None,
+    audit_actor_label: str | None,
     audit_target_kind: str | None,
     audit_target_id: str | None,
     audit_metadata: Mapping[str, Any] | None = None,
@@ -1712,7 +1721,8 @@ def write_service_registry_with_audit(
                 conn,
                 audit_action,
                 actor_kind=audit_actor_kind,
-                actor_id=updated_by,
+                actor_id=audit_actor_id,
+                actor_label=audit_actor_label,
                 target_kind=audit_target_kind,
                 target_id=audit_target_id,
                 metadata=audit_metadata,

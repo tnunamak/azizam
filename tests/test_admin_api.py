@@ -2107,7 +2107,7 @@ class AdminAuditTests(unittest.TestCase):
             "actor_label": "Release bot",
             "action": "app.create",
             "metadata": {
-                "name": "safe app",
+                "name": "Bearer secret",
                 "context": {"authorization": "Bearer nested-secret"},
                 "innocuous": "also-secret",
             },
@@ -2117,9 +2117,10 @@ class AdminAuditTests(unittest.TestCase):
         record = response.json()["records"][0]
         self.assertEqual(record["actor_kind"], "service_account")
         self.assertEqual(record["actor_label"], "Release bot")
-        self.assertEqual(record["metadata"], {"name": "safe app"})
+        self.assertIsNone(record["metadata"])
         self.assertNotIn("nested-secret", response.text)
         self.assertNotIn("also-secret", response.text)
+        self.assertNotIn("Bearer secret", response.text)
 
     def test_audit_returns_recent_entries(self) -> None:
         client, store = _make_client()

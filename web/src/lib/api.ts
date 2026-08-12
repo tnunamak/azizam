@@ -365,12 +365,25 @@ export interface OidcConfigProvenance {
 /** Effective, redacted OIDC configuration returned by GET /admin/api/oidc-config. */
 export interface EffectiveOidcConfig {
   enabled: boolean;
+  issuer: string;
+  client_id: string;
   client_secret: "<redacted>" | "";
   client_secret_set: boolean;
+  redirect_uri: string;
+  scopes: string[];
+  allowed_email_domains: string[];
+  admin_emails: string[];
+  admin_groups: string[];
+  admin_roles: string[];
+  authorization_endpoint: string;
+  token_endpoint: string;
+  jwks_uri: string;
+  clock_skew_seconds: number;
+  groups_claim: string;
+  updated_at: number | null;
   source: OidcConfigProvenance["summary"];
   apply_mode: "live";
   provenance: OidcConfigProvenance;
-  [field: string]: unknown;
 }
 
 /** Response shape for GET /admin/api/audit (keyset-paginated). */

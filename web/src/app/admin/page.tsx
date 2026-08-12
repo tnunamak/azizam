@@ -195,21 +195,8 @@ function userLabel(user: User): string {
   return user.display_name ?? user.email ?? user.name ?? "Unnamed user";
 }
 
-function auditActorLabel(
-  entry: AuditEntry,
-  usersById: Map<string, User>,
-): string {
-  if (entry.actor_id === "cli" || entry.actor_kind === "cli") return "System";
-  const user = usersById.get(entry.actor_id);
-  if (user) return userLabel(user);
-  if (
-    entry.actor_kind === "service_account" ||
-    entry.actor_id.startsWith("svc_")
-  ) {
-    return "Admin key";
-  }
-  if (entry.actor_kind === "admin") return "Admin";
-  return "Unknown user";
+function auditActorLabel(entry: AuditEntry): string {
+  return entry.actor_label;
 }
 
 // ---------------------------------------------------------------------------
@@ -379,17 +366,11 @@ function AppsSection({
 
 function RecentActivitySection({
   entries,
-  usersById,
-  usersUnavailable,
-  onRetryUsers,
   loading,
   error,
   onRetry,
 }: {
   entries: AuditEntry[] | undefined;
-  usersById: Map<string, User>;
-  usersUnavailable: boolean;
-  onRetryUsers: () => void;
   loading: boolean;
   error: boolean;
   onRetry: () => void;
@@ -432,43 +413,29 @@ function RecentActivitySection({
     );
   }
   return (
-    <div className="flex flex-col gap-3">
-      {usersUnavailable && (
-        <IncidentBanner
-          tone="bad"
-          title="Couldn't load people for activity"
-          detail="Activity remains visible, but user attribution is unavailable."
-          actions={
-            <Button variant="ghost" size="sm" onClick={onRetryUsers}>
-              Retry
-            </Button>
-          }
-        />
-      )}
-      <div className="overflow-hidden rounded-md border border-[var(--vf-border)]">
-        <div className="vf-activity-feed">
-          {entries.map((entry) => {
-            const actor = auditActorLabel(entry, usersById);
-            const targetName =
-              entry.metadata && typeof entry.metadata["name"] === "string"
-                ? entry.metadata["name"]
-                : undefined;
-            return (
-              <ActivityFeedRow
-                key={entry.id}
-                href={
-                  adminTargetHref(entry.target_kind, entry.target_id) ??
-                  adminAuditHref(entry.id)
-                }
-                tone="info"
-                title={actionLabel(entry.action)}
-                detail={targetName ?? undefined}
-                actor={actor !== "Unknown user" ? actor : undefined}
-                time={<RelativeTime ts={entry.created_at} />}
-              />
-            );
-          })}
-        </div>
+    <div className="overflow-hidden rounded-md border border-[var(--vf-border)]">
+      <div className="vf-activity-feed">
+        {entries.map((entry) => {
+          const actor = auditActorLabel(entry);
+          const targetName =
+            entry.metadata && typeof entry.metadata["name"] === "string"
+              ? entry.metadata["name"]
+              : undefined;
+          return (
+            <ActivityFeedRow
+              key={entry.id}
+              href={
+                adminTargetHref(entry.target_kind, entry.target_id) ??
+                adminAuditHref(entry.id)
+              }
+              tone="info"
+              title={actionLabel(entry.action)}
+              detail={targetName ?? undefined}
+              actor={actor !== "Unknown user" ? actor : undefined}
+              time={<RelativeTime ts={entry.created_at} />}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -903,12 +870,9 @@ export default function AdminOverviewPage() {
             <div className="mt-3">
               <RecentActivitySection
                 entries={auditEntries}
-                usersById={usersById}
                 loading={auditPending}
                 error={auditError}
                 onRetry={() => void refetchAudit()}
-                usersUnavailable={usersError && usersData === undefined}
-                onRetryUsers={() => void refetchUsers()}
               />
             </div>
           </section>

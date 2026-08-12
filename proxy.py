@@ -1474,6 +1474,7 @@ ADMIN_STORE = AdminSQLiteStore(ADMIN_DB_PATH)
 # calls reload_runtime_config() so the new backend hosts take effect
 # immediately without a process restart.
 ADMIN_STORE.on_service_registry_changed = reload_runtime_config
+ADMIN_STORE.oidc_config_validator = lambda candidate: _validate_admin_oidc_db_candidate(candidate)
 ADMIN_AUTH = AdminAuthenticator(
     ADMIN_STORE,
     signing_key=ADMIN_SESSION_SIGNING_KEY,
@@ -9809,11 +9810,7 @@ def _effective_admin_oidc_config():
         db_value = None
     if not db_value:
         return ADMIN_OIDC_CONFIG
-    merged = dict(_bootstrap_admin_oidc_cfg())
-    for key, value in db_value.items():
-        if value in (None, "", [], ()):
-            continue
-        merged[key] = value
+    merged = _merged_admin_oidc_config_candidate(db_value)
     if not merged.get("signing_key") and not merged.get("signing_key_env"):
         if ADMIN_SESSION_SIGNING_KEY:
             merged["signing_key"] = ADMIN_SESSION_SIGNING_KEY
@@ -9829,6 +9826,24 @@ def _effective_admin_oidc_config():
         signing_key=ADMIN_SESSION_SIGNING_KEY or cfg.signing_key,
         cookie=ADMIN_OIDC_CONFIG.cookie,
     )
+
+
+def _merged_admin_oidc_config_candidate(db_value: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Merge bootstrap and DB overrides, including explicit null clears."""
+    merged = dict(_bootstrap_admin_oidc_cfg())
+    for key, value in (db_value or {}).items():
+        if value is None:
+            merged[key] = [] if key in {"scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles"} else ""
+        elif value not in ("", [], ()):
+            merged[key] = value
+    if not merged.get("signing_key") and not merged.get("signing_key_env") and ADMIN_SESSION_SIGNING_KEY:
+        merged["signing_key"] = ADMIN_SESSION_SIGNING_KEY
+    return merged
+
+
+def _validate_admin_oidc_db_candidate(db_value: Mapping[str, Any]) -> None:
+    """Reject a write unless the live runtime parser accepts its merge."""
+    load_oidc_config(_merged_admin_oidc_config_candidate(db_value), env=os.environ)
 
 
 async def _admin_oidc_config_with_discovery():
@@ -10601,7 +10616,7 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
     field_sources: dict[str, str] = {}
     for field_name in OIDC_PROVIDER_FIELDS:
         db_value = db_setting.get(field_name)
-        if field_name in db_setting and db_value not in (None, "", [], ()):
+        if field_name in db_setting:
             field_sources[field_name] = "database"
         elif field_name in bootstrap or (
             field_name == "client_secret" and bootstrap.get("client_secret_env")
@@ -10625,6 +10640,7 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
         "redirect_uri": cfg.redirect_uri,
         "scopes": list(cfg.scopes),
         "allowed_email_domains": sorted(cfg.allowed_email_domains),
+        "admin_emails": sorted(cfg.admin_emails),
         "admin_groups": sorted(cfg.admin_groups),
         "admin_roles": sorted(cfg.admin_roles),
         "authorization_endpoint": cfg.authorization_endpoint,

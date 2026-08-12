@@ -25,9 +25,11 @@ from gateway import admin_store, extension_packages, service_registry
 from gateway.admin_api import AdminAuthError, AdminContext, access_model_summary
 from gateway.admin_oidc import (
     CookieConfig,
+    OIDCConfigError,
     SessionError,
     csrf_token_for_session,
     decode_session_cookie,
+    load_oidc_config,
 )
 from gateway.policy import DEFAULT_PROFILE
 from gateway.profiles import ProfileLoadError, load_profile
@@ -239,6 +241,9 @@ class AdminSQLiteStore:
         # from outside (e.g. proxy.py after ADMIN_STORE is created) to trigger
         # an in-process hot reload without a circular import.
         self.on_service_registry_changed: "Callable[[], None] | None" = None
+        # The live host supplies this so a candidate DB override is accepted
+        # only when the same parser used by login accepts its effective merge.
+        self.oidc_config_validator: "Callable[[Mapping[str, Any]], None] | None" = None
 
     def init_db(self) -> None:
         admin_store.init_db(self.path)
@@ -335,6 +340,7 @@ class AdminSQLiteStore:
             "app.create",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="app",
             target_id=record["id"],
             metadata={"name": name, "kind": record.get("kind")},
@@ -372,6 +378,7 @@ class AdminSQLiteStore:
             "app.update",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="app",
             target_id=app_id,
             metadata={"name": name, "default_profile_id": profile_id},
@@ -390,6 +397,7 @@ class AdminSQLiteStore:
             "app.disable",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="app",
             target_id=app_id,
             metadata={"name": before.get("name")},
@@ -408,6 +416,7 @@ class AdminSQLiteStore:
             "app.enable",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="app",
             target_id=app_id,
             metadata={"name": before.get("name")},
@@ -444,6 +453,7 @@ class AdminSQLiteStore:
             "profile.create",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="profile",
             target_id=record["id"],
             metadata={"name": name},
@@ -489,6 +499,7 @@ class AdminSQLiteStore:
             "profile.update",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="profile",
             target_id=profile_id,
             metadata={"name": name},
@@ -506,6 +517,7 @@ class AdminSQLiteStore:
             "profile.delete",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="profile",
             target_id=profile_id,
             metadata={"name": record.get("name")},
@@ -543,6 +555,7 @@ class AdminSQLiteStore:
             "credential.create",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="credential",
             target_id=record["id"],
             metadata={"app_id": app_id, "prefix": record["prefix"]},
@@ -586,6 +599,7 @@ class AdminSQLiteStore:
             "admin_key.create",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="credential",
             target_id=credential["id"],
             metadata={
@@ -658,6 +672,7 @@ class AdminSQLiteStore:
             "operator.user_access_defaults.update",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="operator_setting",
             target_id=USER_ACCESS_DEFAULTS_SETTING_KEY,
             metadata={"fields": sorted(data.keys())},
@@ -679,6 +694,7 @@ class AdminSQLiteStore:
             "operator.service_availability.update",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="operator_setting",
             target_id=SERVICE_AVAILABILITY_OVERRIDES_KEY,
             metadata={"override_count": len(value)},
@@ -700,6 +716,7 @@ class AdminSQLiteStore:
             "operator.media_job_admission.update",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="operator_setting",
             target_id=MEDIA_JOB_ADMISSION_OVERRIDES_KEY,
             metadata={"fields": sorted(value.keys())},
@@ -744,6 +761,8 @@ class AdminSQLiteStore:
             updated_by=actor.subject,
             audit_action="operator.service_registry.update",
             audit_actor_kind=actor.actor_kind,
+            audit_actor_id=actor.audit_actor_id,
+            audit_actor_label=actor.actor_label,
             audit_target_kind="operator_setting",
             audit_target_id=SERVICE_REGISTRY_SETTING_KEY,
             audit_metadata={
@@ -798,6 +817,8 @@ class AdminSQLiteStore:
             updated_by=actor.subject,
             audit_action=action,
             audit_actor_kind=actor.actor_kind,
+            audit_actor_id=actor.audit_actor_id,
+            audit_actor_label=actor.actor_label,
             audit_target_kind="service",
             audit_target_id=service_id,
             audit_metadata={
@@ -979,6 +1000,7 @@ class AdminSQLiteStore:
             "operator.extension_package.enable",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="extension_package",
             target_id=package_id,
             metadata={
@@ -1020,6 +1042,7 @@ class AdminSQLiteStore:
             "operator.extension_package.remove",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="extension_package",
             target_id=package_id,
             metadata={},
@@ -1079,6 +1102,8 @@ class AdminSQLiteStore:
         current_raw = self.get_oidc_config_setting_raw() or {}
         merged = _merge_oidc_setting(current_raw, data)
         _validate_merged_oidc_setting(merged)
+        if self.oidc_config_validator is not None:
+            self.oidc_config_validator(merged)
         record = admin_store.put_operator_setting(
             OIDC_PROVIDER_SETTING_KEY,
             merged,
@@ -1089,6 +1114,7 @@ class AdminSQLiteStore:
             "operator.oidc_provider_config.update",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="operator_setting",
             target_id=OIDC_PROVIDER_SETTING_KEY,
             metadata={
@@ -1124,6 +1150,7 @@ class AdminSQLiteStore:
             "runtime_profile_mapping.create",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="runtime_profile_mapping",
             target_id=record["id"],
             metadata={
@@ -1167,6 +1194,7 @@ class AdminSQLiteStore:
             "runtime_profile_mapping.disable",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="runtime_profile_mapping",
             target_id=mapping_id,
             metadata={"profile_id": before.get("profile_id")},
@@ -1186,6 +1214,7 @@ class AdminSQLiteStore:
             "credential.revoke",
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
             target_kind="credential",
             target_id=credential_id,
             metadata={"prefix": before.get("prefix")},
@@ -1201,8 +1230,12 @@ class AdminSQLiteStore:
         return self._present_audit_event(row) if row is not None else None
 
     def _present_audit_event(self, row: Mapping[str, Any]) -> dict[str, Any]:
-        """Attach a label resolved from the recorded principal kind, never an ID prefix."""
+        """Return the event-time actor label, with a legacy-row fallback."""
         out = dict(row)
+        recorded_label = out.get("actor_label")
+        if isinstance(recorded_label, str) and recorded_label.strip():
+            out["actor_label"] = recorded_label.strip()[:256]
+            return out
         kind = str(out.get("actor_kind") or "")
         actor_id = str(out.get("actor_id") or "")
         if kind == "user":

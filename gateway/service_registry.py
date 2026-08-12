@@ -84,6 +84,8 @@ def ensure_service_registry(
                 updated_by=actor,
                 audit_action=action,
                 audit_actor_kind="admin",
+                audit_actor_id=actor,
+                audit_actor_label="System",
                 audit_target_kind="operator_setting",
                 audit_target_id=SERVICE_REGISTRY_SETTING_KEY,
                 audit_metadata={

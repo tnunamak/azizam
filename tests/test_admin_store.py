@@ -180,6 +180,8 @@ class TestOperatorSettings(AdminStoreTestBase):
                     updated_by="writer",
                     audit_action="operator.service_registry.update",
                     audit_actor_kind="admin",
+                    audit_actor_id="writer",
+                    audit_actor_label="Writer",
                     audit_target_kind="operator_setting",
                     audit_target_id="service_registry",
                     now=2,

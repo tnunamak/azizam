@@ -924,6 +924,11 @@ Accepted fields: `enabled`, `issuer`, `client_id`, `client_secret`,
 `admin_groups`, `admin_roles`, `authorization_endpoint`, `token_endpoint`,
 `jwks_uri`, `clock_skew_seconds`, `groups_claim`.
 
+For non-secret string fields, `null` or `""` explicitly clears a bootstrap
+value; for list fields, `[]` explicitly clears it. Omit a field to preserve
+the database override. `client_secret` remains write-only: blank, null, and
+`"<redacted>"` preserve its stored value.
+
 `200` → `{ "oidc_config": { …same scrubbed shape… } }`
 
 The existing write-only secret behavior is preserved. An empty, omitted, or

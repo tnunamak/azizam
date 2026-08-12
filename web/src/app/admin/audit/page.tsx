@@ -159,18 +159,8 @@ function userLabel(user: User | undefined): string {
   return user?.display_name ?? user?.email ?? "Unknown user";
 }
 
-function actorDisplayLabel(
-  entry: AuditEntry,
-  usersById: Map<string, User>,
-): string {
-  if (entry.actor_id === "cli" || entry.actor_kind === "cli") return "System";
-  const user = usersById.get(entry.actor_id);
-  if (user) return userLabel(user);
-  if (entry.actor_kind === "service_account" || entry.actor_id.startsWith("svc_")) {
-    return "Admin key";
-  }
-  if (entry.actor_kind === "admin") return "Admin";
-  return "Unknown user";
+function actorDisplayLabel(entry: AuditEntry): string {
+  return entry.actor_label;
 }
 
 function RouteEventTargetSync({
@@ -289,7 +279,7 @@ export default function AdminAuditPage() {
     const seen = new Map<string, string>(); // actor_id → display label
     for (const entry of allEntries) {
       if (seen.has(entry.actor_id)) continue;
-      const label = actorDisplayLabel(entry, usersById);
+      const label = actorDisplayLabel(entry);
       if (label === "Unknown user") continue;
       seen.set(entry.actor_id, label);
     }
@@ -473,7 +463,7 @@ export default function AdminAuditPage() {
             <div className="vf-activity-feed">
               {allEntries.map((entry) => {
                 const { phrase } = actionMeta(entry.action);
-                const actor = actorDisplayLabel(entry, usersById);
+                const actor = actorDisplayLabel(entry);
                 const target = entry.target_id
                   ? (entry.metadata &&
                       typeof entry.metadata["name"] === "string"
