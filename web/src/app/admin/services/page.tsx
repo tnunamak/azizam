@@ -14,7 +14,14 @@
  * no window.confirm, destructive actions in OverflowMenu + ConfirmDialog,
  * loading skeleton + designed empty + error states. */
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { FormEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -656,22 +663,40 @@ function ErrorBanner({
   );
 }
 
-/** Keep the compact modal and desktop context rail mutually exclusive. */
+const DESKTOP_SERVICE_CONTEXT_QUERY = "(min-width: 980px)";
+
+/** Keep the compact modal and desktop context rail mutually exclusive.
+ *
+ * Reads via useSyncExternalStore (not a lazy useState initializer) so the
+ * server-rendered/prerendered markup and the client's first render agree:
+ * the static export has no window, so the server snapshot is always
+ * "mobile" (false); the client subscribes to the real matchMedia state only
+ * after mount, exactly like relative-time.tsx's shared clock. A useState
+ * initializer that reads window.matchMedia directly returns the *real*
+ * client-side value on first client render, which can disagree with the
+ * server's "false" render and throw a React hydration mismatch (#418) here
+ * specifically -- this hook is what differs between /admin/services (which
+ * has this pattern) and other admin routes (which don't). */
+function subscribeDesktopServiceContext(onChange: () => void): () => void {
+  const media = window.matchMedia(DESKTOP_SERVICE_CONTEXT_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+function getDesktopServiceContextSnapshot(): boolean {
+  return window.matchMedia(DESKTOP_SERVICE_CONTEXT_QUERY).matches;
+}
+
+function getDesktopServiceContextServerSnapshot(): boolean {
+  return false;
+}
+
 function useDesktopServiceContext() {
-  const query = "(min-width: 980px)";
-  const [isDesktop, setIsDesktop] = useState(
-    () => typeof window !== "undefined" && window.matchMedia(query).matches,
+  return useSyncExternalStore(
+    subscribeDesktopServiceContext,
+    getDesktopServiceContextSnapshot,
+    getDesktopServiceContextServerSnapshot,
   );
-
-  useEffect(() => {
-    const media = window.matchMedia(query);
-    const update = () => setIsDesktop(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
-
-  return isDesktop;
 }
 
 // ---------------------------------------------------------------------------

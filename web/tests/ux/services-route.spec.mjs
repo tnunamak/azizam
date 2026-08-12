@@ -77,6 +77,23 @@ test("Services keeps responsive context and live removal honest", async () => {
   assert.doesNotMatch(contents, /only used when explicitly requested/);
 });
 
+test("Services desktop-context detection is SSR-hydration-safe", async () => {
+  const contents = await source();
+
+  // useState(() => typeof window !== "undefined" && window.matchMedia(...))
+  // returns the *real* client value on first client render while the
+  // prerendered/static-exported HTML was built with no window (effectively
+  // "false") -- a text/DOM mismatch that throws React error #418 on this
+  // route specifically. useSyncExternalStore with an explicit false server
+  // snapshot is the SSR-safe replacement (see relative-time.tsx for the
+  // same pattern already used elsewhere in this codebase).
+  assert.match(contents, /useSyncExternalStore/);
+  assert.doesNotMatch(
+    contents,
+    /useState\(\s*\(\)\s*=>\s*typeof window/,
+  );
+});
+
 test("Services retains editable managed metadata and accessible validation", async () => {
   const contents = await source();
   const dialogContents = await addServiceDialogSource();
