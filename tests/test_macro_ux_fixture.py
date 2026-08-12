@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import socket
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -31,6 +32,8 @@ class TestMacroUxFixture(unittest.TestCase):
             self.assertIn(tone, {"ok", "warn", "bad"})
             by_id = {row["key"]: row["status"] for row in observed["backends"]}
             for service_id, (observation, _service_tone) in services.items():
+                if observation == "disabled":
+                    continue
                 expected = "down" if observation == "standby_stopped" else observation
                 self.assertEqual(by_id[service_id], expected)
 
@@ -45,10 +48,21 @@ class TestMacroUxFixture(unittest.TestCase):
     def test_fixture_child_environment_and_owned_paths_are_explicit(self) -> None:
         source = HARNESS_PATH.read_text(encoding="utf-8")
         self.assertIn("env -i PATH=\"$PATH\" HOME=\"$HOME\"", source)
-        for name in ("AI_GATEWAY_ADMIN_DB", "AI_GATEWAY_METRICS_DB", "AI_GATEWAY_RESPONSES_DB", "AI_GATEWAY_RECEIPTS_DB", "AI_GATEWAY_MEDIA_JOBS_DB", "AI_GATEWAY_CONFIG_PATH"):
+        for name in ("AI_GATEWAY_ADMIN_DB", "AI_GATEWAY_METRICS_DB", "AI_GATEWAY_RESPONSES_DB", "AI_GATEWAY_RECEIPTS_DB", "AI_GATEWAY_MEDIA_JOBS_DB", "AI_GATEWAY_CONFIG_PATH", "OPENAI_PROXY_KEY_ACTIVITY_LOG", "PYTHONPYCACHEPREFIX"):
             self.assertIn(f'{name}=\"$TMPDIR_ROOT/', source)
+        self.assertIn('TMPDIR="$TMPDIR_ROOT"', source)
+        self.assertIn('strace -f -qq -o "$TMPDIR_ROOT/file-trace.log" -e trace=%file', source)
+        self.assertIn('--assert-file-trace "$TMPDIR_ROOT/file-trace.log" --state-root "$TMPDIR_ROOT"', source)
         self.assertIn('rm -rf "$TMPDIR_ROOT"', source)
         self.assertIn('kill -TERM -- "-$pgid"', source)
+
+    def test_file_trace_rejects_write_outside_fixture_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trace = root / "trace.log"
+            trace.write_text('openat(AT_FDCWD, "/outside/cache.jsonl", O_WRONLY|O_CREAT, 0666) = 3\n', encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "outside its state root"):
+                fixture.assert_file_writes_are_rooted(trace, root)
 
 
 if __name__ == "__main__":

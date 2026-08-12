@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import socket
 import sqlite3
 import stat
@@ -25,12 +26,13 @@ ROOT = Path(__file__).resolve().parents[3]
 FIXTURE = ROOT / "tests/fixtures/macro_ux_fixture.json"
 PRIVATE_MODE = 0o600
 SCENARIOS = frozenset({"all_clear", "required_down", "degraded", "status_unavailable", "standby_stopped"})
+_DISABLED_FIXTURE_SERVICES = {"comfyui": ("disabled", "neutral"), "stt": ("disabled", "neutral"), "tts": ("disabled", "neutral")}
 SCENARIO_EXPECTATIONS = {
-    "all_clear": ("ok", "ok", True, {"fixture-required": ("up", "ok"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok")}, False),
-    "required_down": ("bad", "bad", True, {"fixture-required": ("down", "bad"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok")}, True),
-    "degraded": ("warn", "warn", True, {"fixture-required": ("degraded", "warn"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok")}, True),
-    "status_unavailable": ("unavailable", "neutral", False, {"fixture-required": ("unavailable", "neutral"), "fixture-standby": ("unavailable", "neutral"), "litellm": ("unavailable", "neutral")}, False),
-    "standby_stopped": ("ok", "ok", True, {"fixture-required": ("up", "ok"), "fixture-standby": ("standby_stopped", "neutral"), "litellm": ("up", "ok")}, False),
+    "all_clear": ("ok", "ok", True, {"fixture-required": ("up", "ok"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, False),
+    "required_down": ("bad", "bad", True, {"fixture-required": ("down", "bad"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, True),
+    "degraded": ("warn", "warn", True, {"fixture-required": ("degraded", "warn"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, True),
+    "status_unavailable": ("unavailable", "neutral", False, {"fixture-required": ("unavailable", "neutral"), "fixture-standby": ("unavailable", "neutral"), "litellm": ("unavailable", "neutral"), **_DISABLED_FIXTURE_SERVICES}, False),
+    "standby_stopped": ("ok", "ok", True, {"fixture-required": ("up", "ok"), "fixture-standby": ("standby_stopped", "neutral"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, False),
 }
 
 
@@ -41,6 +43,23 @@ def _private_json(path: Path, value: Mapping[str, Any]) -> None:
         out.write("\n")
     if stat.S_IMODE(path.stat().st_mode) != PRIVATE_MODE:
         raise RuntimeError("fixture credential artifact is not mode 0600")
+
+
+def assert_file_writes_are_rooted(trace_path: Path, state_root: Path) -> None:
+    """Reject write-capable file syscalls whose resolved path escapes fixture state."""
+    root_path = str(state_root.resolve())
+    root = root_path + "/"
+    write_flags = re.compile(r"O_(?:WRONLY|RDWR|CREAT|TRUNC|APPEND)")
+    mutation_calls = re.compile(r"\b(?:rename|unlink|mkdir|rmdir|chmod|chown|truncate|utime|symlink|link)\(")
+    escaped: list[str] = []
+    for line in trace_path.read_text(encoding="utf-8").splitlines():
+        if not (write_flags.search(line) or mutation_calls.search(line)):
+            continue
+        paths = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', line)
+        if any(path not in {root_path, "/dev/null"} and not path.startswith(root) for path in paths):
+            escaped.append(line)
+    if escaped:
+        raise RuntimeError("fixture wrote outside its state root:\n" + "\n".join(escaped))
 
 
 def _status(scenario: str):
@@ -76,17 +95,18 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
         people[row["label"]] = admin_store.upsert_oidc_user(
             "fixture", row["subject"], email=row["email"], display_name=row["display_name"], now=now, path=db)
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=people["admin"]["id"], granted_by="fixture", now=now, path=db)
-    principal = admin_store.ensure_service_account("Fixture automation", description="P1B only", now=now, path=db)
-    profile = admin_store.create_profile("Fixture profile", {"id": "fixture-profile", "protocols": ["openai.chat"]}, path=db)
+    principal = admin_store.ensure_service_account(fixture["principal_name"], description="P1B only", now=now, path=db)
+    profile = admin_store.create_profile(fixture["profile_name"], {"id": "fixture-profile", "protocols": ["openai.chat"]}, path=db)
     app_a = admin_store.ensure_personal_app_for_user(people["user_a"]["id"], name=fixture["long_value"], default_profile_id=profile["id"], now=now, path=db)
     app_b = admin_store.ensure_personal_app_for_user(people["user_b"]["id"], name="User B fixture app", default_profile_id=profile["id"], now=now, path=db)
     for index in range(fixture["pagination_apps"]):
         admin_store.create_app(f"Fixture page {index:02d}", kind="personal", owner_user_id=people["user_a"]["id"], default_profile_id=profile["id"], now=now, path=db)
     for app, label in ((app_a, "User A key"), (app_b, "User B key")):
         admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hashlib.sha256(app["id"].encode()).hexdigest(), prefix="opk_fixture", display_name=label, profile_id=profile["id"], path=db)
-    admin_store.record_audit("fixture.seed", actor_kind="user", actor_id=people["admin"]["id"], target_kind="app", target_id=app_a["id"], metadata={"fixture": True}, path=db)
+    principal_credential = admin_store.create_credential_hash(subject_kind="service_account", subject_id=principal["id"], hash=hashlib.sha256(principal["id"].encode()).hexdigest(), prefix="oak_fixture", display_name=fixture["credential_name"], path=db)
+    audit_id = admin_store.record_audit(fixture["audit_action"], actor_kind="user", actor_id=people["admin"]["id"], target_kind="app", target_id=app_a["id"], metadata={"fixture": True}, path=db)
     receipt_store.init_db(state_root / "receipts.db")
-    receipt_a = receipt_store.record(RouteReceipt(protocol="openai.chat", intent="chat.generate", app_id=app_a["id"], status="200"), path=state_root / "receipts.db")
+    receipt_a = receipt_store.record(RouteReceipt(request_id="fixture-safe-receipt", protocol="openai.chat", path="/v1/chat/completions", intent="chat.generate", app_id=app_a["id"], requested_model="fixture-model", resolved_model="fixture-model", status="200"), path=state_root / "receipts.db")
     receipt_store.record(RouteReceipt(protocol="openai.chat", intent="chat.generate", app_id=app_b["id"], status="200"), path=state_root / "receipts.db")
     metrics_store.init_db(state_root / "metrics.db")
     with metrics_store.open_writer(state_root / "metrics.db") as conn:
@@ -94,7 +114,8 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
             metrics_store.record_sample(conn, now - index, "fixture.requests", index + 1, {"fixture": "p1b"})
         for index in range(2):
             metrics_store.record_sample(conn, now - index, "fixture.two", index + 1, {"shape": "two"})
-        metrics_store.record_sample(conn, now - 86400, "fixture.daily", 1, {"shape": "daily"})
+        for index in range(3):
+            metrics_store.record_sample(conn, now - index * 86400, "fixture.daily", index + 1, {"shape": "daily"})
         metrics_store.record_sample(conn, now, "fixture.scalar", 7, {})
         conn.commit()
     compat_key, _, _ = create_admin_service_account_key("P1B compatibility", path=db)
@@ -107,7 +128,7 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
         "base_url": f"http://127.0.0.1:{port}", "cookie_name": proxy.ADMIN_OIDC_CONFIG.cookie.name,
         "sessions": sessions, "compatibility_key": compat_key, "scenario": os.environ.get("P1B_FIXTURE_SCENARIO", "all_clear"),
         "fixture": fixture,
-        "resolved_ids": {"users.admin": people["admin"]["id"], "users.user_a": people["user_a"]["id"], "users.user_b": people["user_b"]["id"], "profiles.fixture": profile["id"], "apps.user_a": app_a["id"], "apps.user_b": app_b["id"], "receipts.user_a": receipt_a, "service_principals.fixture_automation": principal["id"]},
+        "resolved_ids": {"users.admin": people["admin"]["id"], "users.user_a": people["user_a"]["id"], "users.user_b": people["user_b"]["id"], "profiles.fixture": profile["id"], "apps.user_a": app_a["id"], "apps.user_b": app_b["id"], "receipts.user_a": receipt_a, "service_principals.fixture_automation": principal["id"], "credentials.fixture_automation": principal_credential["id"], "audit.fixture_seed": audit_id["id"]},
     })
 
 
@@ -124,11 +145,28 @@ async def serve(args: argparse.Namespace) -> None:
     import proxy
     import uvicorn
     _seed(proxy, state_root, port)
-    # Authorized P1B-only seam: proxy's router calls this module attribute lazily.
+    # Authorized P1B-only seams: keep fixture lifespan maintenance inert and
+    # make every unexpected outbound operator probe fail before it reaches a socket.
     proxy.status_endpoint.get_cached_status = lambda _config: _status(args.scenario)()
-    async def _fixture_drift_task(stop_event: asyncio.Event) -> None:
+    async def _fixture_wait(stop_event: asyncio.Event) -> None:
         await stop_event.wait()
-    proxy._workflow_drift_loop = _fixture_drift_task
+    async def _fixture_maintenance() -> None:
+        await asyncio.Event().wait()
+    proxy.maintenance_loop = _fixture_maintenance
+    proxy.evict_image_cache_loop = _fixture_wait
+    proxy._workflow_drift_loop = _fixture_wait
+    proxy._responses_prune_loop = _fixture_wait
+    proxy.metrics_sampler.sampler_loop = lambda: _fixture_maintenance()
+    attempts = state_root / "blocked-operator-connects.jsonl"
+    connect = socket.socket.connect
+    def _block_operator_connect(sock: socket.socket, address: Any) -> Any:
+        host, port = address[:2] if isinstance(address, tuple) and len(address) >= 2 else ("", 0)
+        if (host, port) != ("127.0.0.1", 9):
+            with attempts.open("a", encoding="utf-8") as out:
+                out.write(json.dumps({"host": host, "port": port}, sort_keys=True) + "\n")
+            raise OSError("P1B fixture blocks outbound operator connections")
+        return connect(sock, address)
+    socket.socket.connect = _block_operator_connect
     _private_json(state_root / "fixture-ready.json", {"port": port, "scenario": args.scenario, "bootstrap": str(state_root / "bootstrap-private.json")})
     await uvicorn.Server(uvicorn.Config(proxy.app, log_level="warning", access_log=False)).serve(sockets=[listener])
 
@@ -155,8 +193,15 @@ def verify(path: Path) -> None:
     bootstrap = json.loads(path.read_text(encoding="utf-8"))
     with sqlite3.connect(path.parent / "metrics.db") as conn:
         telemetry = {metric: conn.execute("SELECT COUNT(*) FROM samples WHERE metric = ?", (metric,)).fetchone()[0] for metric in bootstrap["fixture"]["telemetry"].values()}
-    if telemetry != {"fixture.absent": 0, "fixture.two": 2, "fixture.requests": 3, "fixture.daily": 1, "fixture.scalar": 1}:
+    if telemetry != {"fixture.absent": 0, "fixture.two": 2, "fixture.requests": 3, "fixture.daily": 3, "fixture.scalar": 1}:
         raise RuntimeError(f"fixture telemetry shapes failed: {telemetry}")
+    with sqlite3.connect(path.parent / "metrics.db") as conn:
+        daily = conn.execute("SELECT value FROM samples WHERE metric = 'fixture.daily' ORDER BY ts ASC").fetchall()
+    if daily != [(3.0,), (2.0,), (1.0,)]:
+        raise RuntimeError(f"fixture daily series failed: {daily}")
+    attempts = path.parent / "blocked-operator-connects.jsonl"
+    if attempts.exists() and attempts.read_text(encoding="utf-8").strip():
+        raise RuntimeError(f"fixture attempted operator traffic: {attempts.read_text(encoding='utf-8')}")
     for identity in ("admin", "user_a", "user_b"):
         status, _ = _request(bootstrap, identity, "GET", "/admin/api/session" if identity == "admin" else "/me/api/session")
         if status != 200:
@@ -167,20 +212,32 @@ def verify(path: Path) -> None:
     services = {row.get("service_id"): row for row in projection.get("services", [])}
     if (status, projection.get("state"), projection.get("tone"), projection.get("observation_available")) != (200, expected_state, expected_tone, expected_available):
         raise RuntimeError(f"fixture health projection failed: {status} {projection}")
+    if set(services) != set(expected_services):
+        raise RuntimeError(f"fixture service set failed: {set(services)}")
     for service_id, (observation, tone) in expected_services.items():
         if (services.get(service_id, {}).get("observation"), services.get(service_id, {}).get("tone")) != (observation, tone):
             raise RuntimeError(f"fixture service projection failed: {service_id} {services.get(service_id)}")
     status, overview = _request(bootstrap, "admin", "GET", "/admin/api/overview")
     service_attention = [item for item in overview.get("attention", []) if item.get("kind") == "service"]
-    if status != 200 or bool(service_attention) != expect_attention:
+    expected_attention = {"fixture-required"} if expect_attention else set()
+    if status != 200 or {item.get("target_id") for item in service_attention} != expected_attention:
         raise RuntimeError(f"fixture attention projection failed: {status} {service_attention}")
-    if expect_attention and service_attention[0].get("target_id") != "fixture-required":
-        raise RuntimeError(f"fixture attention target failed: {service_attention}")
-    if not expect_attention and any(item.get("target_id") for item in service_attention):
-        raise RuntimeError(f"fixture no-target attention failed: {service_attention}")
     status, users = _request(bootstrap, "admin", "GET", "/admin/api/users")
     if status != 200 or len(users.get("users", [])) != 3:
         raise RuntimeError(f"fixture human-user projection failed: {status} {users}")
+    status, profiles = _request(bootstrap, "admin", "GET", "/admin/api/profiles")
+    profile_id = bootstrap["resolved_ids"]["profiles.fixture"]
+    if status != 200 or {(row.get("id"), row.get("name")) for row in profiles.get("profiles", []) if row.get("id") == profile_id} != {(profile_id, bootstrap["fixture"]["profile_name"])}:
+        raise RuntimeError(f"fixture profile projection failed: {status} {profiles}")
+    status, credentials = _request(bootstrap, "admin", "GET", "/admin/api/credentials")
+    credential_id = bootstrap["resolved_ids"]["credentials.fixture_automation"]
+    fixture_credential = next((row for row in credentials.get("credentials", []) if row.get("id") == credential_id), None)
+    if status != 200 or fixture_credential is None or fixture_credential.get("display_name") != bootstrap["fixture"]["credential_name"] or fixture_credential.get("subject_id") != bootstrap["resolved_ids"]["service_principals.fixture_automation"] or {"hash", "api_key", "key", "secret"} & set(fixture_credential):
+        raise RuntimeError(f"fixture principal credential projection failed: {status} {fixture_credential}")
+    status, audit = _request(bootstrap, "admin", "GET", "/admin/api/audit")
+    audit_id = bootstrap["resolved_ids"]["audit.fixture_seed"]
+    if status != 200 or {(row.get("id"), row.get("action")) for row in audit.get("records", []) if row.get("id") == audit_id} != {(audit_id, bootstrap["fixture"]["audit_action"])}:
+        raise RuntimeError(f"fixture audit projection failed: {status} {audit}")
     status, apps = _request(bootstrap, "admin", "GET", "/admin/api/apps")
     if status != 200 or len(apps.get("apps", [])) < bootstrap["fixture"]["pagination_apps"] + 2 or bootstrap["fixture"]["long_value"] not in {app.get("name") for app in apps.get("apps", [])}:
         raise RuntimeError(f"fixture long/pagination rows failed: {status} {apps}")
@@ -205,6 +262,10 @@ def verify(path: Path) -> None:
     status, activity = _request(bootstrap, "user_a", "GET", "/me/api/activity?limit=2")
     if status != 200 or not any(row.get("request_id") == receipt_a for row in activity.get("receipts", [])):
         raise RuntimeError(f"User A receipt visibility failed: {status} {activity}")
+    status, receipt = _request(bootstrap, "user_a", "GET", f"/me/api/receipts/{receipt_a}")
+    expected_receipt = {"request_id": receipt_a, "protocol": "openai.chat", "path": "/v1/chat/completions", "intent": "chat.generate", "requested_model": "fixture-model", "resolved_model": "fixture-model", "status": "200"}
+    if status != 200 or {key: receipt.get(key) for key in expected_receipt} != expected_receipt or {"app_id", "api_key_name", "metadata", "policy_decision", "policy_reasons", "policy_sources"} & set(receipt):
+        raise RuntimeError(f"fixture safe receipt failed: {status} {receipt}")
     status, _ = _request(bootstrap, "user_b", "GET", f"/me/api/receipts/{receipt_a}")
     if status != 404:
         raise RuntimeError(f"User B receipt denial failed: {status}")
@@ -214,8 +275,15 @@ def verify(path: Path) -> None:
     status, _ = _request(bootstrap, "user_b", "POST", f"/me/api/apps/{app_a}/keys", {"label": "Denied"})
     if status != 404:
         raise RuntimeError(f"User B key denial failed: {status}")
+    status, setting = _request(bootstrap, "admin", "PUT", "/admin/api/oidc-config", {"enabled": False, "client_secret": bootstrap["fixture"]["redacted_setting"]})
+    if status != 200 or setting.get("oidc_config", {}).get("client_secret") != "<redacted>" or bootstrap["fixture"]["redacted_setting"] in json.dumps(setting):
+        raise RuntimeError(f"fixture redacted setting write failed: {status} {setting}")
+    status, setting = _request(bootstrap, "admin", "GET", "/admin/api/oidc-config")
+    if status != 200 or setting.get("oidc_config", {}).get("client_secret") != "<redacted>" or bootstrap["fixture"]["redacted_setting"] in json.dumps(setting):
+        raise RuntimeError(f"fixture redacted setting projection failed: {status} {setting}")
     status, policy = _request(bootstrap, "admin", "POST", "/admin/api/policy/simulate", {"profile": bootstrap["resolved_ids"]["profiles.fixture"], "request": bootstrap["fixture"]["policy_request"]})
-    if status != 200 or "decision" not in policy:
+    expected_policy = bootstrap["fixture"]["policy_result"]
+    if status != 200 or {key: policy.get("decision", {}).get(key) for key in expected_policy} != expected_policy:
         raise RuntimeError(f"fixture policy input failed: {status} {policy}")
 
 
@@ -226,9 +294,15 @@ def main() -> None:
     parser.add_argument("--state-root")
     parser.add_argument("--scenario", default="all_clear")
     parser.add_argument("--verify")
+    parser.add_argument("--assert-file-trace")
     args = parser.parse_args()
     if args.verify:
         verify(Path(args.verify))
+        return
+    if args.assert_file_trace:
+        if not args.state_root:
+            parser.error("--assert-file-trace requires --state-root")
+        assert_file_writes_are_rooted(Path(args.assert_file_trace), Path(args.state_root))
         return
     if not args.serve or not args.state_root:
         parser.error("--serve and --state-root are required")

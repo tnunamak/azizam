@@ -252,9 +252,12 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
   export AGW_IMAGE_CACHE_DIR="$TMPDIR_ROOT/images"
   export AGW_VRAM_ESTIMATES_PATH="$TMPDIR_ROOT/vram_estimates.json"
   export AGW_DRIFT_REPORT_PATH="$TMPDIR_ROOT/drift_status.json"
+  export OPENAI_PROXY_KEY_ACTIVITY_LOG="$TMPDIR_ROOT/key_activity.jsonl"
+  export PYTHONPYCACHEPREFIX="$TMPDIR_ROOT/pycache"
+  export TMPDIR="$TMPDIR_ROOT"
   echo "[harness] Launching authenticated fixture ($FIXTURE_SCENARIO)..."
-  setsid env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" PYTHONPATH="$REPO_ROOT" PYTHONUNBUFFERED=1 \
-    AI_GATEWAY_ADMIN_DB="$AI_GATEWAY_ADMIN_DB" AI_GATEWAY_METRICS_DB="$AI_GATEWAY_METRICS_DB" AI_GATEWAY_RESPONSES_DB="$AI_GATEWAY_RESPONSES_DB" AI_GATEWAY_RECEIPTS_DB="$AI_GATEWAY_RECEIPTS_DB" AI_GATEWAY_MEDIA_JOBS_DB="$AI_GATEWAY_MEDIA_JOBS_DB" AI_GATEWAY_CONFIG_PATH="$AI_GATEWAY_CONFIG_PATH" AI_GATEWAY_ADMIN_SESSION_KEY="$AI_GATEWAY_ADMIN_SESSION_KEY" AI_GATEWAY_LITELLM_BASE_URL=http://127.0.0.1:9 AI_GATEWAY_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AGW_IMAGE_CACHE_DIR="$AGW_IMAGE_CACHE_DIR" AGW_VRAM_ESTIMATES_PATH="$AGW_VRAM_ESTIMATES_PATH" AGW_DRIFT_REPORT_PATH="$AGW_DRIFT_REPORT_PATH" \
+  setsid strace -f -qq -o "$TMPDIR_ROOT/file-trace.log" -e trace=%file env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" PYTHONPATH="$REPO_ROOT" PYTHONUNBUFFERED=1 PYTHONPYCACHEPREFIX="$PYTHONPYCACHEPREFIX" \
+    AI_GATEWAY_ADMIN_DB="$AI_GATEWAY_ADMIN_DB" AI_GATEWAY_METRICS_DB="$AI_GATEWAY_METRICS_DB" AI_GATEWAY_RESPONSES_DB="$AI_GATEWAY_RESPONSES_DB" AI_GATEWAY_RECEIPTS_DB="$AI_GATEWAY_RECEIPTS_DB" AI_GATEWAY_MEDIA_JOBS_DB="$AI_GATEWAY_MEDIA_JOBS_DB" AI_GATEWAY_CONFIG_PATH="$AI_GATEWAY_CONFIG_PATH" AI_GATEWAY_ADMIN_SESSION_KEY="$AI_GATEWAY_ADMIN_SESSION_KEY" AI_GATEWAY_LITELLM_BASE_URL=http://127.0.0.1:9 AI_GATEWAY_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AGW_IMAGE_CACHE_DIR="$AGW_IMAGE_CACHE_DIR" AGW_VRAM_ESTIMATES_PATH="$AGW_VRAM_ESTIMATES_PATH" AGW_DRIFT_REPORT_PATH="$AGW_DRIFT_REPORT_PATH" OPENAI_PROXY_KEY_ACTIVITY_LOG="$OPENAI_PROXY_KEY_ACTIVITY_LOG" \
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --serve --state-root "$TMPDIR_ROOT" --scenario "$FIXTURE_SCENARIO" >"$STARTUP_LOG" 2>&1 &
   PROXY_PID=$!
   for _ in $(seq 1 200); do [[ -f "$TMPDIR_ROOT/fixture-ready.json" ]] && break; kill -0 "$PROXY_PID" 2>/dev/null || break; sleep 0.1; done
@@ -263,6 +266,7 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
   if [[ "$HARNESS_PORT" == 5000 || "$HARNESS_PORT" == 15000 ]]; then echo "ERROR: fixture selected protected port" >&2; exit 1; fi
   for _ in $(seq 1 100); do curl -sf "http://127.0.0.1:$HARNESS_PORT/health" >/dev/null && break; sleep 0.1; done
   curl -sf "http://127.0.0.1:$HARNESS_PORT/health" >/dev/null || { cat "$STARTUP_LOG" >&2; exit 1; }
+  sleep 11
   echo "[harness] Fixture ready: http://127.0.0.1:$HARNESS_PORT"
   echo "[harness] Bootstrap: $TMPDIR_ROOT/bootstrap-private.json"
   "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --verify "$TMPDIR_ROOT/bootstrap-private.json"
@@ -270,6 +274,7 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
     (cd "$REPO_ROOT/web" && P1B_BOOTSTRAP_PATH="$TMPDIR_ROOT/bootstrap-private.json" npm run test:e2e -- tests/playwright/p1b/authenticated-gateway.spec.ts)
   fi
   (cd "$TMPDIR_ROOT" && PYTHONPATH="$REPO_ROOT" OPENAI_PROXY_BASE_URL="http://127.0.0.1:$HARNESS_PORT" OPENAI_PROXY_ADMIN_KEY="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["compatibility_key"])' "$TMPDIR_ROOT/bootstrap-private.json")" "$PYTHON" -m unittest tests.compat.python.probe_fresh_instance_journey -v) || exit 1
+  "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --assert-file-trace "$TMPDIR_ROOT/file-trace.log" --state-root "$TMPDIR_ROOT"
   exit 0
 fi
 
