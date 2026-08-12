@@ -19,7 +19,7 @@
 #   Env: AI_GATEWAY_ADMIN_SESSION_KEY -- fixed test-only secret
 #
 # USAGE
-#   ./scripts/fresh_instance_harness.sh [--smoke] [--port PORT]
+#   ./scripts/fresh_instance_harness.sh [--smoke] [--fixture] [--browser] [--scenario NAME] [--port PORT]
 #
 #   --smoke   Run smoke checks (health + admin endpoints) then shut down.
 #   --port N  Use port N instead of 15000.
@@ -30,15 +30,37 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HARNESS_PORT="${HARNESS_PORT:-15000}"
 SMOKE_MODE=0
+FIXTURE_MODE=0
+FIXTURE_SCENARIO="all_clear"
+FIXTURE_BROWSER=0
 
 # Parse args
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --smoke) SMOKE_MODE=1; shift ;;
+    --fixture) FIXTURE_MODE=1; shift ;;
+    --browser) FIXTURE_BROWSER=1; shift ;;
+    --scenario) FIXTURE_SCENARIO="$2"; shift 2 ;;
     --port)  HARNESS_PORT="$2"; shift 2 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+if [[ "$FIXTURE_MODE" == 1 ]]; then
+  case "$FIXTURE_SCENARIO" in
+    all_clear|required_down|degraded|status_unavailable|standby_stopped) ;;
+    *) echo "ERROR: unsupported fixture scenario: $FIXTURE_SCENARIO" >&2; exit 1 ;;
+  esac
+  if [[ "$HARNESS_PORT" != 15000 && "$HARNESS_PORT" != 0 ]]; then
+    echo "ERROR: fixture mode uses its retained loopback ephemeral listener; pass --port 0" >&2
+    exit 1
+  fi
+  HARNESS_PORT=0
+fi
+if [[ "$FIXTURE_BROWSER" == 1 && "$FIXTURE_MODE" != 1 ]]; then
+  echo "ERROR: --browser requires --fixture" >&2
+  exit 1
+fi
 
 # -- Safety guard --------------------------------------------------------------
 LIVE_DB="$REPO_ROOT/data/admin.db"
@@ -56,8 +78,31 @@ if [[ "${OPENAI_PROXY_PORT:-}" == "5000" || "${HARNESS_PORT}" == "5000" ]]; then
 fi
 
 # -- Temp workspace -------------------------------------------------------------
-TMPDIR_ROOT=$(mktemp -d /tmp/agw-fresh-XXXXXX)
-trap 'echo "[harness] Cleaning up $TMPDIR_ROOT"; rm -rf "$TMPDIR_ROOT"' EXIT
+if [[ "$FIXTURE_MODE" == 1 ]]; then
+  mkdir -p "$HOME/.tmp"
+  TMPDIR_ROOT=$(mktemp -d "$HOME/.tmp/gw-ux-p1b-XXXXXX")
+else
+  TMPDIR_ROOT=$(mktemp -d /tmp/agw-fresh-XXXXXX)
+fi
+
+cleanup_fixture() {
+  if [[ "$FIXTURE_MODE" == 1 && -n "${PROXY_PID:-}" ]]; then
+    local pgid
+    pgid=$(ps -o pgid= -p "$PROXY_PID" 2>/dev/null | tr -d ' ' || true)
+    if [[ -n "$pgid" ]]; then
+      kill -TERM -- "-$pgid" 2>/dev/null || true
+      for _ in $(seq 1 20); do kill -0 -- "-$pgid" 2>/dev/null || break; sleep 0.1; done
+      kill -KILL -- "-$pgid" 2>/dev/null || true
+      wait "$PROXY_PID" 2>/dev/null || true
+      if kill -0 -- "-$pgid" 2>/dev/null; then echo "ERROR: fixture process group survived cleanup" >&2; return; fi
+    fi
+  fi
+  if [[ "$TMPDIR_ROOT" == "$HOME/.tmp/gw-ux-p1b-"* || "$TMPDIR_ROOT" == /tmp/agw-fresh-* ]]; then
+    echo "[harness] Cleaning up $TMPDIR_ROOT"
+    rm -rf "$TMPDIR_ROOT"
+  fi
+}
+trap cleanup_fixture EXIT
 
 echo "[harness] Temp workspace: $TMPDIR_ROOT"
 echo "[harness] Port:           $HARNESS_PORT"
@@ -124,6 +169,53 @@ roles:
     backend: example-llm
 YAML
 
+if [[ "$FIXTURE_MODE" == 1 ]]; then
+cat > "$TMPDIR_ROOT/proxy_config.yml" <<YAML
+proxy:
+  host: 127.0.0.1
+  port: 0
+auth:
+  enabled: true
+admin:
+  session_signing_key_env: AI_GATEWAY_ADMIN_SESSION_KEY
+  oidc:
+    enabled: false
+    cookie:
+      secure: false
+  user_defaults:
+    self_service_apps: true
+    auto_create_personal_app: false
+backends:
+  fixture-required:
+    name: Fixture required service
+    host: 127.0.0.1
+    port: 9
+    role: required
+    managed: false
+    native_passthrough: true
+    capabilities: [chat]
+  fixture-standby:
+    name: Fixture standby service
+    host: 127.0.0.1
+    port: 9
+    role: standby
+    managed: false
+    native_passthrough: true
+    capabilities: [chat]
+routing:
+  default_backend: fixture-required
+roles:
+  default:
+    backend: fixture-required
+images:
+  cache_dir: $TMPDIR_ROOT/images
+  vram_estimates_file: $TMPDIR_ROOT/vram_estimates.json
+  media_jobs:
+    payload_dir: $TMPDIR_ROOT/media_payloads
+    resume_on_start: false
+YAML
+fi
+
 # -- Python / venv ------------------------------------------------------------
 # The worktree shares the parent repo's venv (worktrees don't have their own).
 REPO_ORIGIN="$(cd "$REPO_ROOT" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | xargs dirname 2>/dev/null || echo "$REPO_ROOT")"
@@ -135,6 +227,39 @@ else
   PYTHON="$(which python3)"
 fi
 echo "[harness] Python: $PYTHON"
+
+if [[ "$FIXTURE_MODE" == 1 ]]; then
+  STARTUP_LOG="$TMPDIR_ROOT/startup.log"
+  export AI_GATEWAY_ADMIN_DB="$TMPDIR_ROOT/admin.db"
+  export AI_GATEWAY_METRICS_DB="$TMPDIR_ROOT/metrics.db"
+  export AI_GATEWAY_RESPONSES_DB="$TMPDIR_ROOT/responses.db"
+  export AI_GATEWAY_RECEIPTS_DB="$TMPDIR_ROOT/receipts.db"
+  export AI_GATEWAY_MEDIA_JOBS_DB="$TMPDIR_ROOT/media_jobs.db"
+  export AI_GATEWAY_CONFIG_PATH="$TMPDIR_ROOT/proxy_config.yml"
+  export AI_GATEWAY_ADMIN_SESSION_KEY="p1b-only-session-signing-key-32-bytes-minimum"
+  export AGW_IMAGE_CACHE_DIR="$TMPDIR_ROOT/images"
+  export AGW_VRAM_ESTIMATES_PATH="$TMPDIR_ROOT/vram_estimates.json"
+  export AGW_DRIFT_REPORT_PATH="$TMPDIR_ROOT/drift_status.json"
+  echo "[harness] Launching authenticated fixture ($FIXTURE_SCENARIO)..."
+  setsid env -i PATH="$PATH" HOME="$HOME" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" PYTHONPATH="$REPO_ROOT" PYTHONUNBUFFERED=1 \
+    AI_GATEWAY_ADMIN_DB="$AI_GATEWAY_ADMIN_DB" AI_GATEWAY_METRICS_DB="$AI_GATEWAY_METRICS_DB" AI_GATEWAY_RESPONSES_DB="$AI_GATEWAY_RESPONSES_DB" AI_GATEWAY_RECEIPTS_DB="$AI_GATEWAY_RECEIPTS_DB" AI_GATEWAY_MEDIA_JOBS_DB="$AI_GATEWAY_MEDIA_JOBS_DB" AI_GATEWAY_CONFIG_PATH="$AI_GATEWAY_CONFIG_PATH" AI_GATEWAY_ADMIN_SESSION_KEY="$AI_GATEWAY_ADMIN_SESSION_KEY" AI_GATEWAY_LITELLM_BASE_URL=http://127.0.0.1:9 AI_GATEWAY_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false AGW_IMAGE_CACHE_DIR="$AGW_IMAGE_CACHE_DIR" AGW_VRAM_ESTIMATES_PATH="$AGW_VRAM_ESTIMATES_PATH" AGW_DRIFT_REPORT_PATH="$AGW_DRIFT_REPORT_PATH" \
+    "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --serve --state-root "$TMPDIR_ROOT" --scenario "$FIXTURE_SCENARIO" >"$STARTUP_LOG" 2>&1 &
+  PROXY_PID=$!
+  for _ in $(seq 1 200); do [[ -f "$TMPDIR_ROOT/fixture-ready.json" ]] && break; kill -0 "$PROXY_PID" 2>/dev/null || break; sleep 0.1; done
+  if [[ ! -f "$TMPDIR_ROOT/fixture-ready.json" ]]; then cat "$STARTUP_LOG" >&2; exit 1; fi
+  HARNESS_PORT=$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["port"])' "$TMPDIR_ROOT/fixture-ready.json")
+  if [[ "$HARNESS_PORT" == 5000 || "$HARNESS_PORT" == 15000 ]]; then echo "ERROR: fixture selected protected port" >&2; exit 1; fi
+  for _ in $(seq 1 100); do curl -sf "http://127.0.0.1:$HARNESS_PORT/health" >/dev/null && break; sleep 0.1; done
+  curl -sf "http://127.0.0.1:$HARNESS_PORT/health" >/dev/null || { cat "$STARTUP_LOG" >&2; exit 1; }
+  echo "[harness] Fixture ready: http://127.0.0.1:$HARNESS_PORT"
+  echo "[harness] Bootstrap: $TMPDIR_ROOT/bootstrap-private.json"
+  "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --verify "$TMPDIR_ROOT/bootstrap-private.json"
+  if [[ "$FIXTURE_BROWSER" == 1 ]]; then
+    (cd "$REPO_ROOT/web" && P1B_BOOTSTRAP_PATH="$TMPDIR_ROOT/bootstrap-private.json" npm run test:e2e -- tests/playwright/p1b/authenticated-gateway.spec.ts)
+  fi
+  (cd "$TMPDIR_ROOT" && PYTHONPATH="$REPO_ROOT" OPENAI_PROXY_BASE_URL="http://127.0.0.1:$HARNESS_PORT" OPENAI_PROXY_ADMIN_KEY="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["compatibility_key"])' "$TMPDIR_ROOT/bootstrap-private.json")" "$PYTHON" -m unittest tests.compat.python.probe_fresh_instance_journey -v) || exit 1
+  exit 0
+fi
 
 # -- Launch --------------------------------------------------------------------
 export AI_GATEWAY_ADMIN_DB="$TMPDIR_ROOT/admin.db"

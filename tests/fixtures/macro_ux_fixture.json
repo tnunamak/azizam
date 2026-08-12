@@ -1,0 +1,8 @@
+{
+  "users": [
+    {"label": "admin", "subject": "admin", "email": "admin@example.test", "display_name": "Fixture Admin", "role": "owner"},
+    {"label": "user_a", "subject": "user-a", "email": "user-a@example.test", "display_name": "User A", "role": "none"},
+    {"label": "user_b", "subject": "user-b", "email": "user-b@example.test", "display_name": "User B", "role": "none"}
+  ],
+  "health_cases": ["all_clear", "required_down", "degraded", "status_unavailable", "standby_stopped"]
+}
