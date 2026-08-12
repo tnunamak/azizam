@@ -75,6 +75,27 @@ class TestMacroUxFixture(unittest.TestCase):
                              'bind(4, {sa_family=AF_INET, sin_port=htons(48123), sin_addr=inet_addr("127.0.0.1")}, 16) = 0\n', encoding="utf-8")
             fixture.assert_network_trace_is_fixture_only(trace, 48123)
 
+    def test_network_trace_rejects_unparsed_and_non_ipv4_records_from_child_processes(self) -> None:
+        records = (
+            'connect(3, {sa_family=AF_INET6, sin6_port=htons(5000), inet_pton(AF_INET6, "::1", &sin6_addr)}, 28) = -1 ECONNREFUSED',
+            'connect(3, {sa_family=AF_UNIX, sun_path="/run/production.sock"}, 110) = -1 ENOENT',
+            'connect(3, {sa_family=AF_INET, sin_addr=inet_addr("127.0.0.1"), sin_port=htons(9)}, 16) = -1 ECONNREFUSED',
+            'connect(3, {sa_family=AF_INET, sin_port=htons(9), ...',
+            '4242 connect(3, {sa_family=AF_INET, sin_port=htons(5000), sin_addr=inet_addr("127.0.0.1")}, 16) = -1 ECONNREFUSED',
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            trace = Path(tmp) / "trace.log"
+            for record in records:
+                trace.write_text(record + "\n", encoding="utf-8")
+                with self.subTest(record=record), self.assertRaisesRegex(RuntimeError, "non-fixture endpoint"):
+                    fixture.assert_network_trace_is_fixture_only(trace, 48123)
+
+    def test_network_trace_parses_allowed_child_process_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            trace = Path(tmp) / "trace.log"
+            trace.write_text('4242 connect(3, {sa_family=AF_INET, sin_port=htons(9), sin_addr=inet_addr("127.0.0.1")}, 16) = -1 ECONNREFUSED\n', encoding="utf-8")
+            fixture.assert_network_trace_is_fixture_only(trace, 48123)
+
 
 if __name__ == "__main__":
     unittest.main()

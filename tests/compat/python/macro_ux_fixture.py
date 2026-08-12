@@ -34,6 +34,7 @@ SAFE_RECEIPT_FIELDS = frozenset({
     "protocol", "rejected_inputs", "request_id", "requested_model", "requested_workflow",
     "resolved_model", "resolved_workflow", "status", "stream", "updated_at_ms", "warnings",
 })
+CREDENTIAL_FIELDS = ("id", "subject_kind", "subject_id", "app_id", "profile_id", "prefix", "display_name", "scopes", "expires_at")
 SCENARIO_EXPECTATIONS = {
     "all_clear": ("ok", "ok", True, {"fixture-required": ("up", "ok"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, False),
     "required_down": ("bad", "bad", True, {"fixture-required": ("down", "bad"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, True),
@@ -53,20 +54,26 @@ def _private_json(path: Path, value: Mapping[str, Any]) -> None:
 
 
 def assert_network_trace_is_fixture_only(trace_path: Path, fixture_port: int) -> None:
-    """Accept only the fixture listener and declared unreachable loopback peer."""
+    """Fail closed unless every traced connect/bind is an approved IPv4 endpoint."""
     import re
 
-    endpoint = re.compile(r'sin_port=htons\((\d+)\), sin_addr=inet_addr\("([^"]+)"\)')
+    network_call = re.compile(r"\b(?:connect|bind)\b")
+    ipv4_call = re.compile(
+        r'^\s*(?:(?:\[pid\s+\d+\]|\d+)\s+)?(connect|bind)\(\d+, '
+        r'\{sa_family=AF_INET, sin_port=htons\((\d+)\), '
+        r'sin_addr=inet_addr\("([^"]+)"\)\}, \d+\) = .+$'
+    )
     violations: list[str] = []
     for line in trace_path.read_text(encoding="utf-8").splitlines():
-        if "connect(" not in line and "bind(" not in line:
+        if network_call.search(line) is None:
             continue
-        match = endpoint.search(line)
+        match = ipv4_call.fullmatch(line)
         if match is None:
+            violations.append(line)
             continue
-        port, host = int(match.group(1)), match.group(2)
-        allowed_ports = {9, fixture_port}
-        if "bind(" in line:
+        operation, port, host = match.group(1), int(match.group(2)), match.group(3)
+        allowed_ports = {fixture_port} if operation == "bind" else {9, fixture_port}
+        if operation == "bind":
             allowed_ports.add(0)
         if host != "127.0.0.1" or port not in allowed_ports:
             violations.append(line)
@@ -146,8 +153,9 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
     app_b = admin_store.ensure_personal_app_for_user(people["user_b"]["id"], name="User B fixture app", default_profile_id=profile["id"], now=now, path=db)
     for index in range(fixture["pagination_apps"]):
         admin_store.create_app(f"Fixture page {index:02d}", kind="personal", owner_user_id=people["user_a"]["id"], default_profile_id=profile["id"], now=now, path=db)
+    app_credentials = []
     for app, label in ((app_a, "User A key"), (app_b, "User B key")):
-        admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hashlib.sha256(app["id"].encode()).hexdigest(), prefix="opk_fixture", display_name=label, profile_id=profile["id"], path=db)
+        app_credentials.append(admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hashlib.sha256(app["id"].encode()).hexdigest(), prefix="opk_fixture", display_name=label, profile_id=profile["id"], path=db))
     principal_credential = admin_store.create_credential_hash(subject_kind="service_account", subject_id=principal["id"], hash=hashlib.sha256(principal["id"].encode()).hexdigest(), prefix="oak_fixture", display_name=fixture["credential_name"], path=db)
     audit_id = admin_store.record_audit(fixture["audit_action"], actor_kind="user", actor_id=people["admin"]["id"], target_kind="app", target_id=app_a["id"], metadata={"fixture": True}, path=db)
     receipt_store.init_db(state_root / "receipts.db")
@@ -163,12 +171,14 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
             metrics_store.record_sample(conn, now - index * 86400, "fixture.daily", index + 1, {"shape": "daily"})
         metrics_store.record_sample(conn, now, "fixture.scalar", 7, {})
         conn.commit()
-    compat_key, _, _ = create_admin_service_account_key("P1B compatibility", path=db)
-    credential_fields = ("id", "subject_kind", "subject_id", "app_id", "profile_id", "prefix", "display_name", "scopes", "expires_at")
-    expected_credentials = [
-        {key: row.get(key) for key in credential_fields}
-        for row in admin_store.list_credentials(path=db)
-    ]
+    compat_key, compat_credential, _ = create_admin_service_account_key("P1B compatibility", path=db)
+    expected_credentials = sorted([
+        {"id": record["id"], "subject_kind": "app", "subject_id": app["id"], "app_id": app["id"], "profile_id": profile["id"], "prefix": "opk_fixture", "display_name": label, "scopes": [], "expires_at": None}
+        for record, app, label in zip(app_credentials, (app_a, app_b), ("User A key", "User B key"), strict=True)
+    ] + [
+        {"id": principal_credential["id"], "subject_kind": "service_account", "subject_id": principal["id"], "app_id": None, "profile_id": None, "prefix": "oak_fixture", "display_name": fixture["credential_name"], "scopes": [], "expires_at": None},
+        {"id": compat_credential["id"], "subject_kind": "service_account", "subject_id": compat_credential["subject_id"], "app_id": None, "profile_id": None, "prefix": compat_key[:18], "display_name": "P1B compatibility admin key", "scopes": [], "expires_at": None},
+    ], key=lambda row: str(row["id"]))
     sessions: dict[str, dict[str, str]] = {}
     for label, user in people.items():
         role = "owner" if label == "admin" else "none"
@@ -274,8 +284,8 @@ def verify(path: Path) -> None:
     if status != 200 or {item.get("target_id") for item in service_attention} != expected_attention:
         raise RuntimeError(f"fixture attention projection failed: {status} {service_attention}")
     status, users = _request(bootstrap, "admin", "GET", "/admin/api/users")
-    expected_users = [{key: row.get(key) for key in ("id", "issuer", "subject", "email", "display_name")} for row in bootstrap["fixture"]["users"] for row in [dict(row, id=bootstrap["resolved_ids"][f"users.{row['label']}"])] ]
-    observed_users = [{key: row.get(key) for key in ("id", "issuer", "subject", "email", "display_name")} for row in users.get("users", [])]
+    expected_users = [{key: row.get(key) for key in ("id", "issuer", "subject", "email", "display_name")} | {"roles": [row["role"]] if row["role"] != "none" else []} for row in bootstrap["fixture"]["users"] for row in [dict(row, id=bootstrap["resolved_ids"][f"users.{row['label']}"])]]
+    observed_users = [{key: row.get(key) for key in ("id", "issuer", "subject", "email", "display_name")} | {"roles": sorted(row.get("roles", []))} for row in users.get("users", [])]
     for row in expected_users:
         row["issuer"] = "fixture"
     if status != 200 or observed_users != expected_users:
@@ -288,8 +298,7 @@ def verify(path: Path) -> None:
         raise RuntimeError(f"fixture profile projection failed: {status} {profiles}")
     status, credentials = _request(bootstrap, "admin", "GET", "/admin/api/credentials")
     credential_id = bootstrap["resolved_ids"]["credentials.fixture_automation"]
-    credential_fields = ("id", "subject_kind", "subject_id", "app_id", "profile_id", "prefix", "display_name", "scopes", "expires_at")
-    observed_credentials = [{key: row.get(key) for key in credential_fields} for row in credentials.get("credentials", [])]
+    observed_credentials = sorted([{key: row.get(key) for key in CREDENTIAL_FIELDS} for row in credentials.get("credentials", [])], key=lambda row: str(row["id"]))
     if status != 200 or observed_credentials != bootstrap["expected_credentials"] or any({"hash", "api_key", "key", "secret"} & set(row) for row in credentials.get("credentials", [])):
         raise RuntimeError(f"fixture principal credential projection failed: {status} {credentials}")
     with sqlite3.connect(path.parent / "admin.db") as conn:
