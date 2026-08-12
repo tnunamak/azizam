@@ -20,7 +20,13 @@ import { useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { adminFetch, adminRegistryMutation, ApiError } from "@/lib/api";
+import {
+  adminFetch,
+  adminRegistryMutation,
+  ApiError,
+  type EffectiveOidcConfig,
+  type OidcConfigUpdate,
+} from "@/lib/api";
 import {
   Badge,
   Button,
@@ -51,32 +57,6 @@ import {
 
 // ---------------------------------------------------------------------------
 // Contract types for this surface
-
-interface OidcConfig {
-  enabled: boolean;
-  issuer: string;
-  client_id: string;
-  /** Always "<redacted>" in read responses; never render. */
-  client_secret: string;
-  /** True when a client_secret has been saved. */
-  client_secret_set: boolean;
-  redirect_uri: string;
-  scopes: string[];
-  allowed_email_domains: string[];
-  admin_emails: string[];
-  admin_groups: string[];
-  admin_roles: string[];
-  authorization_endpoint: string;
-  token_endpoint: string;
-  jwks_uri: string;
-  clock_skew_seconds: number;
-  /** The ID-token claim that carries the user's group memberships. Default
-   * "groups". The gateway reads this claim for admin-role evaluation (via
-   * admin_groups) and for profile mappings (Users → runtime-profile-mappings
-   * with source_kind "oidc_group"). */
-  groups_claim: string;
-  updated_at: number | null;
-}
 
 interface ExtensionPackage {
   id: string;
@@ -129,15 +109,17 @@ const settingsQueryKeys = {
 // ---------------------------------------------------------------------------
 // API calls
 
-async function fetchOidcConfig(): Promise<OidcConfig | null> {
-  const data = await adminFetch<{ oidc_config: OidcConfig | null }>(
+async function fetchOidcConfig(): Promise<EffectiveOidcConfig | null> {
+  const data = await adminFetch<{ oidc_config: EffectiveOidcConfig | null }>(
     "/admin/api/oidc-config",
   );
   return data.oidc_config;
 }
 
-async function saveOidcConfig(input: Partial<OidcConfig>): Promise<OidcConfig> {
-  const data = await adminFetch<{ oidc_config: OidcConfig }>(
+async function saveOidcConfig(
+  input: OidcConfigUpdate,
+): Promise<EffectiveOidcConfig> {
+  const data = await adminFetch<{ oidc_config: EffectiveOidcConfig }>(
     "/admin/api/oidc-config",
     { method: "PUT", body: input },
   );
@@ -296,7 +278,7 @@ function SignInCard() {
     queryFn: fetchOidcConfig,
   });
 
-  function handleSaved(updated: OidcConfig) {
+  function handleSaved(updated: EffectiveOidcConfig) {
     queryClient.setQueryData(settingsQueryKeys.oidcConfig, updated);
     setEditOpen(false);
   }
@@ -331,8 +313,8 @@ function SignInCard() {
         />
       ) : !isConfigured ? (
         <p className="text-vf-small text-vf-muted">
-          No dashboard OIDC override is saved. Effective sign-in configuration
-          and its source will be shown when the typed API contract is available.
+          OIDC sign-in is not configured. No bootstrap or saved values are in
+          effect.
         </p>
       ) : (
         <OidcStatusLine config={oidcConfig} />
@@ -350,7 +332,19 @@ function SignInCard() {
   );
 }
 
-function OidcStatusLine({ config }: { config: OidcConfig }) {
+const OIDC_SOURCE_LABEL: Record<EffectiveOidcConfig["source"], string> = {
+  bootstrap: "Bootstrap config",
+  database: "Saved in dashboard",
+  merged: "Bootstrap + dashboard (merged)",
+  runtime_default: "Runtime default",
+};
+
+const OIDC_APPLY_MODE_LABEL: Record<EffectiveOidcConfig["apply_mode"], string> =
+  {
+    live: "Applied live — no restart required",
+  };
+
+function OidcStatusLine({ config }: { config: EffectiveOidcConfig }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
@@ -364,6 +358,14 @@ function OidcStatusLine({ config }: { config: OidcConfig }) {
             Updated <RelativeTime ts={config.updated_at} />
           </span>
         )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge sm tone="neutral">
+          {OIDC_SOURCE_LABEL[config.source]}
+        </Badge>
+        <span className="text-vf-micro text-vf-subtle">
+          {OIDC_APPLY_MODE_LABEL[config.apply_mode]}
+        </span>
       </div>
       {config.issuer && (
         <CopyField label="Issuer" value={config.issuer} monospace />
@@ -406,7 +408,7 @@ interface OidcFormState {
   groups_claim: string;
 }
 
-function oidcFormDefaults(existing: OidcConfig | null): OidcFormState {
+function oidcFormDefaults(existing: EffectiveOidcConfig | null): OidcFormState {
   if (!existing) {
     return {
       enabled: true,
@@ -454,8 +456,8 @@ function OidcEditDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  existing: OidcConfig | null;
-  onSaved: (updated: OidcConfig) => void;
+  existing: EffectiveOidcConfig | null;
+  onSaved: (updated: EffectiveOidcConfig) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -475,9 +477,9 @@ function OidcEditDialogContent({
   onOpenChange,
   onSaved,
 }: {
-  existing: OidcConfig | null;
+  existing: EffectiveOidcConfig | null;
   onOpenChange: (open: boolean) => void;
-  onSaved: (updated: OidcConfig) => void;
+  onSaved: (updated: EffectiveOidcConfig) => void;
 }) {
   const [form, setForm] = useState<OidcFormState>(() =>
     oidcFormDefaults(existing),
@@ -492,7 +494,7 @@ function OidcEditDialogContent({
 
   const save = useMutation({
     mutationFn: () => {
-      const payload: Partial<OidcConfig> = {
+      const payload: OidcConfigUpdate = {
         enabled: form.enabled,
         issuer: form.issuer.trim(),
         client_id: form.client_id.trim(),
@@ -571,8 +573,7 @@ function OidcEditDialogContent({
           </DialogTitle>
           <DialogDescription>
             The client secret is write-only — leave it blank to keep the current
-            value. Apply timing and recovery guidance will be shown when the
-            typed API contract is available.
+            value. Saved changes apply live; no restart is required.
           </DialogDescription>
         </DialogHeader>
 

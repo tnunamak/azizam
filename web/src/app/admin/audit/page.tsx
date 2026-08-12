@@ -30,13 +30,7 @@ import type { ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
-import {
-  api,
-  ApiError,
-  queryKeys,
-  type AuditEntry,
-  type User,
-} from "@/lib/api";
+import { api, ApiError, queryKeys, type AuditEntry } from "@/lib/api";
 import {
   ActivityFeedRow,
   Button,
@@ -161,31 +155,10 @@ function errorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-function userLabel(user: User | undefined): string {
-  return user?.display_name ?? user?.email ?? "Unknown user";
-}
-
-function actorDisplayLabel(
-  entry: AuditEntry,
-  usersById: Map<string, User>,
-): string {
-  if (entry.actor_id === "cli" || entry.actor_kind === "cli") return "System";
-  const user = usersById.get(entry.actor_id);
-  if (user) return userLabel(user);
-  if (entry.actor_kind === "service_account") return "Service principal";
-  if (entry.actor_kind === "admin") return "Admin";
-  return "Unattributed actor";
-}
-
 function auditDetails(entry: AuditEntry): Record<string, unknown> {
-  // Audit-detail redaction is a server trust-boundary contract. Until that
-  // typed projection lands, do not pretend client-side key matching is safe.
   return {
     action: actionMeta(entry.action).phrase,
-    actor:
-      entry.actor_kind === "cli" || entry.actor_id === "cli"
-        ? "System"
-        : (entry.actor_kind ?? "Unattributed actor"),
+    actor: entry.actor_label,
     target: entry.target_kind ?? undefined,
   };
 }
@@ -317,16 +290,6 @@ function AdminAuditContents() {
     consumedEventTargetRef.current = routeEventTarget;
   }, [detailEntry?.id, routeEvent, routeEventTarget]);
 
-  const { data: usersData, isPending: usersPending } = useQuery({
-    queryKey: ["users"] as const,
-    queryFn: api.users.list,
-  });
-
-  const usersById = useMemo(
-    () => new Map((usersData ?? []).map((user) => [user.id, user])),
-    [usersData],
-  );
-
   useEffect(() => {
     if (!firstPageData || firstPageData.generation !== generationRef.current)
       return;
@@ -335,14 +298,11 @@ function AdminAuditContents() {
     setNextCursor(result.next_cursor);
     setLoadMoreError(null);
     for (const entry of result.records) {
-      actorOptionsRef.current.set(
-        entry.actor_id,
-        actorDisplayLabel(entry, usersById),
-      );
+      actorOptionsRef.current.set(entry.actor_id, entry.actor_label);
       familyOptionsRef.current.add(actionMeta(entry.action).family ?? "other");
     }
     setOptionVersion((version) => version + 1);
-  }, [firstPageData, usersById]);
+  }, [firstPageData]);
 
   // Keep the currently selected values present even for empty filtered pages.
   const actorOptions = (() => {
@@ -461,7 +421,7 @@ function AdminAuditContents() {
     }
   }
 
-  const loading = firstPagePending || usersPending;
+  const loading = firstPagePending;
   const hasFilter = Boolean(actorFilter ?? familyFilter);
   // Exhausted = last page returned null cursor (and we've seen at least one page)
   const exhausted = nextCursor === null && !firstPagePending;
@@ -616,7 +576,7 @@ function AdminAuditContents() {
               <div className="vf-activity-feed">
                 {allEntries.map((entry) => {
                   const { phrase } = actionMeta(entry.action);
-                  const actor = actorDisplayLabel(entry, usersById);
+                  const actor = entry.actor_label;
                   const target = entry.target_id
                     ? entry.metadata &&
                       typeof entry.metadata["name"] === "string"
@@ -791,13 +751,7 @@ function AuditDetailPanel({
           </DetailRow>
         )}
         <DetailRow label="Actor">
-          <span>
-            {entry.actor_kind === "cli" || entry.actor_id === "cli"
-              ? "System"
-              : entry.actor_kind === "service_account"
-                ? "Service principal"
-                : (entry.actor_kind ?? "Unattributed actor")}
-          </span>
+          <span>{entry.actor_label}</span>
         </DetailRow>
       </dl>
 

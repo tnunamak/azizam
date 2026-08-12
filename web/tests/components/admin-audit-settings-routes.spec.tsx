@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -77,12 +78,19 @@ function renderAudit() {
   return { ...view, rerenderAudit: () => view.rerender(page()) };
 }
 
-function event(id: string, action: string, actorId = "usr_1") {
+function event(
+  id: string,
+  action: string,
+  actorId = "usr_1",
+  actorKind: "admin" | "cli" | "service_account" | "system" | "user" = "admin",
+  actorLabel = "Admin",
+) {
   return {
     id,
     created_at: 1_770_000_000,
     actor_id: actorId,
-    actor_kind: "admin",
+    actor_kind: actorKind,
+    actor_label: actorLabel,
     action,
     target_kind: "app",
     target_id: "app_1",
@@ -294,6 +302,65 @@ describe("Admin Audit mounted behavior", () => {
       "/admin/apps?app=app_1&return=%2Fadmin%2Faudit%3Factor%3Dusr_1%26category%3Dapp%26event%3Dapp",
     );
   });
+
+  it("renders the server-authoritative actor_label for human, service-account, and system events, unaffected by the users list", async () => {
+    const humanEntry = event(
+      "human",
+      "app.create",
+      "usr_1",
+      "user",
+      "Priya Shah",
+    );
+    const serviceEntry = event(
+      "service",
+      "operator.service.updated",
+      "svc_backup",
+      "service_account",
+      "Backup automation",
+    );
+    const systemEntry = event("system", "app.disable", "cli", "cli", "System");
+    auditList.mockResolvedValue(
+      page([humanEntry, serviceEntry, systemEntry]),
+    );
+    // The users list is deliberately wrong/stale/absent for these actor IDs —
+    // actor_label must not be derived from it.
+    usersList.mockResolvedValue([
+      { id: "usr_1", display_name: "Someone Else", email: "other@example.com" },
+    ]);
+    renderAudit();
+
+    await screen.findByText("Created app");
+    const feed = document.querySelector<HTMLElement>(".vf-activity-feed")!;
+    expect(within(feed).getByText("Priya Shah")).toBeVisible();
+    expect(within(feed).getByText("Backup automation")).toBeVisible();
+    expect(within(feed).getByText("System")).toBeVisible();
+  });
+
+  it("keeps rendering actor_label after the current-user identity changes", async () => {
+    const entry = event("evt", "app.create", "usr_1", "user", "Priya Shah");
+    auditList.mockResolvedValue(page([entry]));
+    usersList.mockResolvedValue([]);
+    const view = renderAudit();
+
+    await screen.findByText("Created app");
+    let feed = document.querySelector<HTMLElement>(".vf-activity-feed")!;
+    expect(within(feed).getByText("Priya Shah")).toBeVisible();
+
+    // Simulate a current-user/session identity change and a refetch of the
+    // same event — the label must still come from the event's own
+    // actor_label, not from whichever user is currently signed in.
+    usersList.mockResolvedValue([
+      { id: "usr_1", display_name: "New Session User" },
+    ]);
+    auditList.mockResolvedValue(page([entry]));
+    view.rerenderAudit();
+
+    await waitFor(() => {
+      feed = document.querySelector<HTMLElement>(".vf-activity-feed")!;
+      expect(within(feed).getByText("Priya Shah")).toBeVisible();
+    });
+    expect(within(feed).queryByText("New Session User")).not.toBeInTheDocument();
+  });
 });
 
 describe("Admin Settings mounted behavior", () => {
@@ -343,4 +410,75 @@ describe("Admin Settings mounted behavior", () => {
       "true",
     );
   });
+
+  function effectiveOidcConfig(
+    overrides: Partial<{
+      source: "bootstrap" | "database" | "merged" | "runtime_default";
+    }> = {},
+  ) {
+    return {
+      enabled: true,
+      issuer: "https://accounts.example.com",
+      client_id: "client-123",
+      client_secret: "<redacted>",
+      client_secret_set: true,
+      redirect_uri: "https://gateway.example.com/auth/callback",
+      scopes: ["openid", "email", "profile"],
+      allowed_email_domains: [],
+      admin_emails: [],
+      admin_groups: [],
+      admin_roles: [],
+      authorization_endpoint: "",
+      token_endpoint: "",
+      jwks_uri: "",
+      clock_skew_seconds: 60,
+      groups_claim: "groups",
+      updated_at: 1_770_000_000,
+      apply_mode: "live" as const,
+      provenance: { summary: overrides.source ?? "bootstrap", fields: {} },
+      source: overrides.source ?? "bootstrap",
+    };
+  }
+
+  function mockSettingsFetch(oidcConfig: unknown) {
+    adminFetch.mockImplementation(async (path: string) => {
+      if (path === "/admin/api/oidc-config") return { oidc_config: oidcConfig };
+      if (path === "/admin/api/extensions")
+        return { extension_packages: { packages: {} } };
+      if (path === "/admin/api/operator/overrides")
+        return { overrides: { media_job_admission: null } };
+      throw new Error(`unexpected request: ${path}`);
+    });
+  }
+
+  it("shows an honest unavailable state when no OIDC configuration is in effect", async () => {
+    mockSettingsFetch(null);
+    renderSettings();
+
+    expect(
+      await screen.findByText(
+        "OIDC sign-in is not configured. No bootstrap or saved values are in effect.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/will be shown when the typed API contract/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["bootstrap", "Bootstrap config"],
+    ["database", "Saved in dashboard"],
+    ["merged", "Bootstrap + dashboard (merged)"],
+  ] as const)(
+    "renders the %s provenance and live apply mode truthfully",
+    async (source, label) => {
+      mockSettingsFetch(effectiveOidcConfig({ source }));
+      renderSettings();
+
+      expect(await screen.findByText(label)).toBeVisible();
+      expect(
+        screen.getByText("Applied live — no restart required"),
+      ).toBeVisible();
+    },
+  );
 });
