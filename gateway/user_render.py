@@ -607,6 +607,19 @@ _PAGE_CSS = """
     margin-bottom: var(--space-4);
   }
   .key-reveal-head h2 { margin: 0; font-size: 1.15rem; }
+  .confirm-description { margin: 0; color: var(--muted); line-height: 1.5; }
+  .confirm-status { min-height: 1.5rem; margin: var(--space-3) 0 0; color: var(--muted); }
+  .confirm-status.bad { color: var(--bad); }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-4);
+  }
+  @media (max-width: 720px) {
+    .confirm-actions > button { flex: 1 1 10rem; }
+  }
   .secret { display: grid; gap: var(--space-3); }
   .reveal-warning {
     margin: 0;
@@ -1231,6 +1244,7 @@ def _signed_in_account(account: Mapping[str, Any]) -> str:
         + '<div id="account-toast" class="toast" role="status" aria-live="polite"></div>'
         + _key_reveal_sheet()
         + _key_detail_sheet()
+        + _destructive_confirmation_sheet()
         + _receipt_detail_sheet()
         + connect_block
         + apps_html
@@ -1287,6 +1301,40 @@ def _key_detail_sheet() -> str:
         'data-close-key-detail>Done</button>'
         "</div>"
         '<div id="key-detail-body"></div>'
+        "</div>"
+        "</div>"
+    )
+
+
+def _destructive_confirmation_sheet() -> str:
+    """Shared confirmation sheet for irreversible account actions.
+
+    The portal already uses the ``vf-sheet`` grammar for focused details and
+    one-time key reveal. Destructive actions use the same contained sheet so
+    they can state the impact, wait for the server result, and return focus to
+    the invoking control when cancelled or when the request fails.
+    """
+    return (
+        '<div id="destructive-confirm-sheet" class="vf-sheet-backdrop" hidden>'
+        '<div class="vf-sheet" role="dialog" aria-modal="true" '
+        'aria-labelledby="destructive-confirm-title" '
+        'aria-describedby="destructive-confirm-description">'
+        '<span class="vf-sheet-grip" aria-hidden="true"></span>'
+        '<div class="key-reveal-head">'
+        '<div>'
+        '<p class="vf-section-label">confirm action</p>'
+        '<h2 id="destructive-confirm-title"></h2>'
+        "</div>"
+        "</div>"
+        '<p id="destructive-confirm-description" class="confirm-description"></p>'
+        '<p id="destructive-confirm-status" class="confirm-status" '
+        'role="status" aria-live="polite"></p>'
+        '<div class="confirm-actions">'
+        '<button type="button" class="vf-button vf-button-secondary" '
+        'data-cancel-destructive-confirm>Cancel</button>'
+        '<button type="button" class="vf-button vf-button-danger" '
+        'data-confirm-destructive-action></button>'
+        "</div>"
         "</div>"
         "</div>"
     )
@@ -1850,6 +1898,82 @@ def render_user_portal(
     return data;
   }}
 
+  let destructiveConfirmation = null;
+
+  function closeDestructiveConfirmation({{ restoreFocus = true }} = {{}}) {{
+    const sheet = $("destructive-confirm-sheet");
+    if (sheet) sheet.hidden = true;
+    const trigger = destructiveConfirmation && destructiveConfirmation.trigger;
+    destructiveConfirmation = null;
+    if (restoreFocus && trigger && trigger.isConnected) trigger.focus();
+  }}
+
+  function openDestructiveConfirmation({{ title, description, confirmLabel, trigger, action }}) {{
+    const sheet = $("destructive-confirm-sheet");
+    const heading = $("destructive-confirm-title");
+    const detail = $("destructive-confirm-description");
+    const status = $("destructive-confirm-status");
+    const confirm = sheet && sheet.querySelector("[data-confirm-destructive-action]");
+    if (!sheet || !heading || !detail || !status || !(confirm instanceof HTMLButtonElement)) return;
+    destructiveConfirmation = {{ trigger, action, pending: false }};
+    heading.textContent = title;
+    detail.textContent = description;
+    status.className = "confirm-status";
+    status.textContent = "";
+    confirm.textContent = confirmLabel;
+    confirm.disabled = false;
+    sheet.hidden = false;
+    confirm.focus();
+  }}
+
+  async function submitDestructiveConfirmation() {{
+    const state = destructiveConfirmation;
+    const sheet = $("destructive-confirm-sheet");
+    const status = $("destructive-confirm-status");
+    const confirm = sheet && sheet.querySelector("[data-confirm-destructive-action]");
+    const cancel = sheet && sheet.querySelector("[data-cancel-destructive-confirm]");
+    if (!state || state.pending || !(confirm instanceof HTMLButtonElement)) return;
+    state.pending = true;
+    confirm.disabled = true;
+    if (cancel instanceof HTMLButtonElement) cancel.disabled = true;
+    if (status) {{
+      status.className = "confirm-status";
+      status.textContent = "Working…";
+    }}
+    try {{
+      await state.action();
+      closeDestructiveConfirmation({{ restoreFocus: false }});
+    }} catch (error) {{
+      state.pending = false;
+      confirm.disabled = false;
+      if (cancel instanceof HTMLButtonElement) cancel.disabled = false;
+      if (status) {{
+        status.className = "confirm-status bad";
+        status.textContent = (error && error.message) || "Could not complete that action. Try again.";
+      }}
+    }}
+  }}
+
+  document.addEventListener("click", (event) => {{
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const sheet = $("destructive-confirm-sheet");
+    if (!sheet || sheet.hidden || (destructiveConfirmation && destructiveConfirmation.pending)) return;
+    if (target.closest("[data-cancel-destructive-confirm]") || target === sheet) {{
+      closeDestructiveConfirmation();
+      return;
+    }}
+    if (target.closest("[data-confirm-destructive-action]")) submitDestructiveConfirmation();
+  }});
+  document.addEventListener("keydown", (event) => {{
+    const sheet = $("destructive-confirm-sheet");
+    if (event.key === "Escape" && sheet && !sheet.hidden &&
+        !(destructiveConfirmation && destructiveConfirmation.pending)) {{
+      event.preventDefault();
+      closeDestructiveConfirmation();
+    }}
+  }});
+
   function badge(text, cls = "") {{
     const span = document.createElement("span");
     span.className = "badge" + (cls ? " " + cls : "");
@@ -2343,17 +2467,20 @@ def render_user_portal(
       revoke.className = "vf-button vf-button-danger vf-button-full";
       revoke.textContent = "Revoke this key";
       revoke.addEventListener("click", async () => {{
-        if (!confirm("Revoke this API key? Apps using it lose access immediately.")) return;
-        try {{
+        openDestructiveConfirmation({{
+          title: "Revoke this API key?",
+          description: "Apps using it lose access immediately.",
+          confirmLabel: "Revoke key",
+          trigger: revoke,
+          action: async () => {{
           await accountJson(
             "/me/api/credentials/" + encodeURIComponent(credentialId), {{ method: "DELETE" }}
           );
           closeKeyDetailSheet();
           await refreshAccount();
           setAccountMessage("Key revoked.", "good");
-        }} catch (error) {{
-          setAccountMessage(error.message || "Revoke failed.", "bad");
-        }}
+          }}
+        }});
       }});
       body.append(revoke);
     }} catch (error) {{
@@ -2707,18 +2834,20 @@ def render_user_portal(
     if (deleteApp) {{
       const appId = deleteApp.dataset.deleteOwnedApp;
       const appName = deleteApp.dataset.appName || "this App";
-      if (!confirm("Delete " + appName + "? Its API keys will stop working immediately.")) return;
-      setAccountMessage("Deleting App...");
-      try {{
-        await accountJson(
-          "/me/api/apps/" + encodeURIComponent(appId),
-          {{ method: "DELETE" }}
-        );
-        await refreshAccount();
-        setAccountMessage("App deleted.", "good");
-      }} catch (error) {{
-        setAccountMessage(error.message || "App deletion failed.", "bad");
-      }}
+      openDestructiveConfirmation({{
+        title: "Delete " + appName + "?",
+        description: "Its API keys will stop working immediately.",
+        confirmLabel: "Delete App",
+        trigger: deleteApp,
+        action: async () => {{
+          await accountJson(
+            "/me/api/apps/" + encodeURIComponent(appId),
+            {{ method: "DELETE" }}
+          );
+          await refreshAccount();
+          setAccountMessage("App deleted.", "good");
+        }}
+      }});
     }}
   }});
 }})();

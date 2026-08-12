@@ -371,6 +371,38 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("shown once and cannot be retrieved", html)
         self.assertIn("Authorization: Bearer", html)
 
+    def test_destructive_actions_use_the_shared_confirmation_sheet(self) -> None:
+        html = render_user_portal(
+            account={
+                "authenticated": True,
+                "user": {"email": "user@example.com", "role": "none"},
+                "apps": [],
+            },
+        )
+        # Native browser confirms block without offering the portal's sheet
+        # semantics, so both destructive flows use one accessible sheet.
+        self.assertNotIn("con" + "firm(", html)
+        self.assertIn('id="destructive-confirm-sheet"', html)
+        self.assertIn('class="vf-sheet-backdrop"', html)
+        self.assertIn('role="dialog" aria-modal="true"', html)
+        self.assertIn('aria-describedby="destructive-confirm-description"', html)
+        self.assertIn("data-cancel-destructive-confirm", html)
+        self.assertIn("data-confirm-destructive-action", html)
+        self.assertIn("function openDestructiveConfirmation", html)
+        self.assertIn("function closeDestructiveConfirmation", html)
+        self.assertIn("trigger.isConnected) trigger.focus()", html)
+        self.assertIn('event.key === "Escape"', html)
+        self.assertIn("target === sheet", html)
+        self.assertIn('status.textContent = "Working…"', html)
+        self.assertIn('status.className = "confirm-status bad"', html)
+        self.assertIn('confirmLabel: "Revoke key"', html)
+        self.assertIn('confirmLabel: "Delete App"', html)
+        # The page only refreshes after the DELETE resolves; it never removes an
+        # App or key optimistically before a successful server response.
+        self.assertIn("await accountJson(", html)
+        self.assertIn("await refreshAccount();", html)
+        self.assertIn(".confirm-actions > button { flex: 1 1 10rem; }", html)
+
     def test_sign_in_door_is_a_warm_two_option_landing(self) -> None:
         # OIDC on + wordmark: invite pill, an "or" divider between the two
         # options, full-width actions, and the brand wordmark in copy.

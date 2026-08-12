@@ -24,6 +24,7 @@ from gateway.admin_oidc import (  # noqa: E402
     session_from_claims,
 )
 from gateway.admin_runtime import create_admin_service_account_key  # noqa: E402
+from gateway.runtime_auth import hash_api_key  # noqa: E402
 
 
 async def _test_status_projection(_config):
@@ -976,6 +977,197 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             self.assertFalse(anon.json()["authenticated"])
             self.assertEqual(anon.json()["receipts"], [])
         finally:
+            receipt_store.DB_PATH = old_receipts_path
+
+    def test_user_portal_cross_owner_mutations_and_detail_are_404_and_isolated(self) -> None:
+        """User B cannot discover or mutate any User A portal resource."""
+        from gateway import receipt_store
+        from gateway.receipts import RouteReceipt
+
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset({"example.com"}),
+            admin_emails=frozenset(),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+        profile = admin_store.create_profile(
+            "portal matrix",
+            {"id": "portal-matrix", "protocols": ["openai.chat"]},
+            path=self.db,
+        )
+        user_a = admin_store.upsert_oidc_user(
+            cfg.issuer, "user-a", email="a@example.com", path=self.db
+        )
+        user_b = admin_store.upsert_oidc_user(
+            cfg.issuer, "user-b", email="b@example.com", path=self.db
+        )
+        app_a = admin_store.create_app(
+            "User A App",
+            kind="personal",
+            owner_user_id=user_a["id"],
+            default_profile_id=profile["id"],
+            path=self.db,
+        )
+        app_b = admin_store.create_app(
+            "User B App",
+            kind="personal",
+            owner_user_id=user_b["id"],
+            default_profile_id=profile["id"],
+            path=self.db,
+        )
+        credential_a = admin_store.create_credential_hash(
+            subject_kind="app",
+            subject_id=app_a["id"],
+            hash=hash_api_key("user-a-test-secret"),
+            prefix="opk_user_a",
+            display_name="User A key",
+            path=self.db,
+        )
+        credential_b = admin_store.create_credential_hash(
+            subject_kind="app",
+            subject_id=app_b["id"],
+            hash=hash_api_key("user-b-test-secret"),
+            prefix="opk_user_b",
+            display_name="User B key",
+            path=self.db,
+        )
+        receipts_db = Path(self.tmp.name) / "portal-matrix-receipts.db"
+        old_receipts_path = receipt_store.DB_PATH
+        receipt_store.DB_PATH = receipts_db
+        try:
+            receipt_store.init_db(receipts_db)
+            receipt_a = receipt_store.record(
+                RouteReceipt(
+                    protocol="openai.chat",
+                    intent="chat.completions",
+                    app_id=app_a["id"],
+                    status="200",
+                ),
+                path=receipts_db,
+            )
+            receipt_b = receipt_store.record(
+                RouteReceipt(
+                    protocol="openai.chat",
+                    intent="chat.completions",
+                    app_id=app_b["id"],
+                    status="200",
+                ),
+                path=receipts_db,
+            )
+
+            def sign_in(user: dict[str, object], email: str):
+                session = session_from_claims(
+                    {"sub": user["id"], "email": email},
+                    role="none",
+                    cookie=cfg.cookie,
+                )
+                self.client.cookies.set(
+                    cfg.cookie.name,
+                    encode_session_cookie(session, signing_key=cfg.signing_key),
+                )
+                return {
+                    "x-ai-gateway-user-action": "1",
+                    "x-ai-gateway-csrf": csrf_token_for_session(
+                        session, signing_key=cfg.signing_key
+                    ),
+                }
+
+            headers_b = sign_in(user_b, "b@example.com")
+            denied = {
+                "app delete": self.client.delete(
+                    f"/me/api/apps/{app_a['id']}", headers=headers_b
+                ),
+                "key mint": self.client.post(
+                    f"/me/api/apps/{app_a['id']}/keys",
+                    json={"label": "must not mint"},
+                    headers=headers_b,
+                ),
+                "key access": self.client.get(
+                    f"/me/api/credentials/{credential_a['id']}/access"
+                ),
+                "key revoke": self.client.delete(
+                    f"/me/api/credentials/{credential_a['id']}", headers=headers_b
+                ),
+                "receipt detail": self.client.get(f"/me/api/receipts/{receipt_a}"),
+            }
+            for operation, response in denied.items():
+                with self.subTest(operation=operation):
+                    self.assertEqual(response.status_code, 404, response.text)
+                    self.assertNotIn(app_a["id"], response.text)
+                    self.assertNotIn(credential_a["id"], response.text)
+                    self.assertNotIn("User A", response.text)
+
+            # Every denied route is non-disclosing and leaves User A untouched.
+            self.assertIsNone(admin_store.get_app(app_a["id"], path=self.db)["disabled_at"])
+            self.assertIsNone(
+                admin_store.get_credential(credential_a["id"], path=self.db)["revoked_at"]
+            )
+            user_b_snapshot = self.client.get("/me/api/session")
+            user_b_activity = self.client.get("/me/api/activity")
+            self.assertEqual(user_b_snapshot.status_code, 200, user_b_snapshot.text)
+            self.assertEqual(user_b_activity.status_code, 200, user_b_activity.text)
+            self.assertEqual(
+                [app["id"] for app in user_b_snapshot.json()["apps"]], [app_b["id"]]
+            )
+            self.assertEqual(
+                [receipt["request_id"] for receipt in user_b_activity.json()["receipts"]],
+                [receipt_b],
+            )
+            user_b_payloads = repr((user_b_snapshot.json(), user_b_activity.json()))
+            for private_a_value in (app_a["id"], credential_a["id"], receipt_a, "User A"):
+                self.assertNotIn(private_a_value, user_b_payloads)
+
+            # User A retains the same capabilities and can complete each action.
+            headers_a = sign_in(user_a, "a@example.com")
+            self.assertEqual(
+                self.client.get(
+                    f"/me/api/credentials/{credential_a['id']}/access"
+                ).status_code,
+                200,
+            )
+            self.assertEqual(
+                self.client.get(f"/me/api/receipts/{receipt_a}").status_code,
+                200,
+            )
+            minted = self.client.post(
+                f"/me/api/apps/{app_a['id']}/keys",
+                json={"label": "User A new key"},
+                headers=headers_a,
+            )
+            self.assertEqual(minted.status_code, 201, minted.text)
+            self.assertTrue(minted.json()["credential"]["api_key"].startswith("opk_"))
+            self.assertEqual(
+                self.client.delete(
+                    f"/me/api/credentials/{credential_a['id']}", headers=headers_a
+                ).status_code,
+                200,
+            )
+            deleted = self.client.delete(
+                f"/me/api/apps/{app_a['id']}", headers=headers_a
+            )
+            self.assertEqual(deleted.status_code, 200, deleted.text)
+            self.assertIsNotNone(admin_store.get_app(app_a["id"], path=self.db)["disabled_at"])
+            self.assertIsNone(admin_store.get_app(app_b["id"], path=self.db)["disabled_at"])
+            self.assertIsNotNone(
+                admin_store.get_credential(credential_a["id"], path=self.db)["revoked_at"]
+            )
+            self.assertIsNone(
+                admin_store.get_credential(credential_b["id"], path=self.db)["revoked_at"]
+            )
+        finally:
+            self.client.cookies.clear()
             receipt_store.DB_PATH = old_receipts_path
 
     def test_receipt_deep_link_route_and_detail_for_owner(self) -> None:
