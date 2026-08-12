@@ -239,9 +239,7 @@ export interface CapabilityChoice {
 
 export interface PresetsResponse {
   presets: ProviderPreset[];
-  /** Canonical capability choices from the server — use these instead of a
-   * client-side static list. Present since the capabilities-dedup update;
-   * fall back to the static list if absent (older server). */
+  /** Canonical capability choices supplied by the server. */
   capabilities?: CapabilityChoice[];
 }
 

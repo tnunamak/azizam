@@ -148,11 +148,12 @@ function StatusContents() {
                             ? service.role
                             : "disabled"}
                       </span>
-                      {service.routable === false && (
-                        <span className="text-vf-micro text-vf-warn">
-                          not routable
-                        </span>
-                      )}
+                      {service.routable === null &&
+                        service.observation === "up" && (
+                          <span className="text-vf-micro text-vf-warn">
+                            route coverage unknown
+                          </span>
+                        )}
                       {service.last_error && (
                         <span className="text-vf-micro text-vf-muted">
                           {service.last_error}

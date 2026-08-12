@@ -141,7 +141,7 @@ registry-only count or make a second all-clear calculation in the client.
         "configured": true,
         "enabled": true,
         "role": "required" | "optional" | "standby",
-        "routable": true | false | null,
+        "routable": true | null,
         "observation": "up" | "degraded" | "down" | "standby_stopped" | "disabled" | "unavailable",
         "tone": "ok" | "warn" | "bad" | "neutral",
         "last_error": null
@@ -161,9 +161,14 @@ different questions and remain separate fields. A stopped standby service and
 a disabled service are not represented as a required-service failure.
 `signals` preserves independent producer facts (for example API or host
 health) as structured data. Legacy raw aggregate banners do not override the
-more-specific service reduction and are never parsed for source meaning. An
-absent `config.models` routing declaration yields `routable: null` and an
-incomplete projection, never a green routing claim.
+more-specific service reduction and are never parsed for source meaning.
+`routable: true` currently means only that the registry has a non-empty model
+mapping, which declares a mapped model route. `routable: null` means the
+projection has no global routing fact. Empty and absent `config.models` are
+both `null`; a capability list or `native_passthrough` flag is also `null`
+until a producer supplies a comprehensive route-family fact with all dispatch
+prerequisites. The projection does not emit `false` until a producer supplies
+a comprehensive fact covering every supported route family.
 
 ## Surface 2 — Overview
 

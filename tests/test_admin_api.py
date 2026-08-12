@@ -292,14 +292,15 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                 "observation": "unavailable",
             },
             {
-                "name": "required service is reachable but unroutable",
+                "name": "empty model mappings leave global routing unknown",
                 "registry": {"services": {"required": {"config": {"models": []}}}},
                 "payload": {"backends": [{"key": "required", "status": "up"}]},
                 "available": True,
-                "state": "bad",
-                "tone": "bad",
+                "state": "unavailable",
+                "tone": "neutral",
+                "label": "Live status incomplete",
                 "observation": "up",
-                "routable": False,
+                "routable": None,
             },
             {
                 "name": "live service without a routing declaration is incomplete",
@@ -313,7 +314,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                 "routable": None,
             },
             {
-                "name": "real model mapping is routable",
+                "name": "model mapping supplies a positive route declaration",
                 "registry": {
                     "services": {
                         "required": {
@@ -329,6 +330,44 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                 "tone": "ok",
                 "observation": "up",
                 "routable": True,
+            },
+            {
+                "name": "empty model audio capability remains globally unknown",
+                "registry": {
+                    "services": {
+                        "audio": {
+                            "capabilities": ["audio.transcriptions"],
+                            "config": {"models": []},
+                        },
+                    },
+                },
+                "payload": {"backends": [{"key": "audio", "status": "up"}]},
+                "available": True,
+                "state": "unavailable",
+                "tone": "neutral",
+                "label": "Live status incomplete",
+                "observation": "up",
+                "routable": None,
+            },
+            {
+                "name": "empty model native pass-through remains globally unknown",
+                "registry": {
+                    "services": {
+                        "provider": {
+                            "config": {
+                                "models": [],
+                                "native_passthrough": True,
+                            },
+                        },
+                    },
+                },
+                "payload": {"backends": [{"key": "provider", "status": "up"}]},
+                "available": True,
+                "state": "unavailable",
+                "tone": "neutral",
+                "label": "Live status incomplete",
+                "observation": "up",
+                "routable": None,
             },
         )
 

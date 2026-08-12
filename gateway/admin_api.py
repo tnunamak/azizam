@@ -400,16 +400,16 @@ def derive_admin_health_projection(
         role = str(raw_service.get("role") or "required")
         backend = observations.get(service_id)
         config = raw_service.get("config") if isinstance(raw_service.get("config"), Mapping) else {}
-        # ``config.models`` is the registry's generic routing declaration and
-        # the same data shape consumed by the derived routing configuration.
-        # Do not trust synthetic top-level values, and do not guess routing
-        # semantics from protocol or engine details. An omitted declaration is
-        # unknown rather than a green claim.
+        # A non-empty model mapping is the one currently available positive
+        # routing fact: it declares a mapped model route. Empty and absent
+        # mappings do not prove a service has no route, because other route
+        # families have separate prerequisites. Do not turn lane attributes
+        # into global routing facts until a producer projects them completely.
         model_mappings = config.get("models")
         if isinstance(model_mappings, Mapping):
-            routable: bool | None = bool(model_mappings)
+            routable: bool | None = True if model_mappings else None
         elif isinstance(model_mappings, (list, tuple)):
-            routable = bool(model_mappings)
+            routable = True if model_mappings else None
         else:
             routable = None
         observed = str(
@@ -433,15 +433,10 @@ def derive_admin_health_projection(
         else:
             observation = "down"
             tone = "warn" if role == "optional" else "bad"
-        if observation == "up" and routable is False:
-            tone = "warn" if role == "optional" else "bad"
         if rank.get(tone, 0) > rank.get(worst, 0):
             worst = tone
         if tone in {"warn", "bad"}:
-            if routable is False and observation == "up":
-                reasons.append(f"{name} is reachable but not routable")
-            else:
-                reasons.append(f"{name} is {observation.replace('_', ' ')}")
+            reasons.append(f"{name} is {observation.replace('_', ' ')}")
         rows.append({
             "service_id": service_id,
             "name": name,
@@ -573,17 +568,17 @@ def derive_admin_health_projection(
             "services": rows,
         })
 
-    unroutable = [
+    routing_unknown = [
         row["name"]
         for row in active_rows
         if row["observation"] == "up" and row["routable"] is None
     ]
-    if unroutable:
+    if routing_unknown:
         return _with_source_signals({
             "state": "unavailable",
             "tone": "neutral",
             "label": "Live status incomplete",
-            "detail": f"No routing declaration for {', '.join(unroutable[:3])}.",
+            "detail": f"No route declaration for {', '.join(routing_unknown[:3])}.",
             "observation_available": True,
             "services": rows,
         })
@@ -734,11 +729,10 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
         last_error = " ".join(str(svc.get("last_error") or "").split())
         error_detail = last_error[:180] if last_error else ""
         tone = str(svc.get("tone") or "").lower()
-        state_label = "not routable" if svc.get("routable") is False and state == "up" else state
         if tone == "bad":
             items.append(_attention_item(
                 kind="service", severity="problem",
-                title=f"{label} is {state_label}",
+                title=f"{label} is {state}",
                 detail=error_detail or "Requests that need it will fail until it is available.",
                 target_kind=target_kind, target_id=target_id if target_kind else None,
                 target_name=label if target_kind else None,
@@ -746,7 +740,7 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
         elif tone == "warn":
             items.append(_attention_item(
                 kind="service", severity="attention",
-                title=f"{label} is {state_label}",
+                title=f"{label} is {state}",
                 detail=error_detail or "It needs attention before it can serve requests reliably.",
                 target_kind=target_kind, target_id=target_id if target_kind else None,
                 target_name=label if target_kind else None,

@@ -312,11 +312,13 @@ function MobileTopBar() {
               className="max-w-40"
             />
           </Link>
-          <SheetTrigger asChild>
-            <IconButton aria-label="Open navigation" variant="ghost">
-              <MenuIcon className="size-5" />
-            </IconButton>
-          </SheetTrigger>
+          <MobileNavigationSheet
+            trigger={
+              <IconButton aria-label="Open navigation" variant="ghost">
+                <MenuIcon className="size-5" />
+              </IconButton>
+            }
+          />
         </div>
       }
     />
@@ -327,7 +329,6 @@ function MobileTopBar() {
 // Layout shell
 
 function AdminShell({ children }: { children: React.ReactNode }) {
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const pathname = usePathname();
   const mobileTabs: MobileNavItem[] = NAV_ITEMS.slice(0, 4).map((item) => ({
     label: item.label === "Apps & keys" ? "Apps" : item.label,
@@ -339,37 +340,46 @@ function AdminShell({ children }: { children: React.ReactNode }) {
     label: "More",
     href: "#more",
     icon: <MenuIcon />,
-    onClick: () => undefined,
     active: moreItems.some((item) => pathname.startsWith(item.href)),
-    trigger: (tab) => <SheetTrigger asChild>{tab}</SheetTrigger>,
+    trigger: (tab) => <MobileNavigationSheet trigger={tab} />,
   });
 
   return (
-    <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-      <div className="vf-app vf-console-shell relative overflow-x-hidden">
-        <AmbientBackdrop />
+    <div className="vf-app vf-console-shell relative overflow-x-hidden">
+      <AmbientBackdrop />
 
-        {/* Desktop rail */}
-        <aside className="vf-console-rail">
-          <SidebarNav />
-        </aside>
+      {/* Desktop rail */}
+      <aside className="vf-console-rail">
+        <SidebarNav />
+      </aside>
 
-        <div className="vf-console-stage">
-          {/* Mobile: top bar */}
-          <MobileTopBar />
+      <div className="vf-console-stage">
+        {/* Mobile: top bar */}
+        <MobileTopBar />
 
-          {/* Mobile nav sheet — overflow routes and account actions. */}
-          <MobileNavSheet onNavigate={() => setMobileNavOpen(false)} />
-
-          {/* Content column */}
-          <TopBar />
-          <main className="vf-console-main">
-            <div className="vf-console-inner">{children}</div>
-          </main>
-        </div>
-
-        <MobileTabBar items={mobileTabs} />
+        {/* Content column */}
+        <TopBar />
+        <main className="vf-console-main">
+          <div className="vf-console-inner">{children}</div>
+        </main>
       </div>
+
+      <MobileTabBar items={mobileTabs} />
+    </div>
+  );
+}
+
+// Each invocation owns a Radix Sheet root. Radix restores focus through the
+// root's trigger ref, so this preserves the actual invoker for both the top
+// rail button and the bottom More button while retaining the native modal,
+// overlay, focus trap, Escape, and outside-pointer behavior.
+function MobileNavigationSheet({ trigger }: { trigger: React.ReactElement }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>{trigger}</SheetTrigger>
+      <MobileNavSheet onNavigate={() => setOpen(false)} />
     </Sheet>
   );
 }
@@ -380,7 +390,7 @@ function MobileNavSheet({ onNavigate }: { onNavigate: () => void }) {
   return (
     <SheetContent
       aria-describedby={undefined}
-      className="max-md:inset-y-0 max-md:left-0 max-md:right-auto max-md:max-h-none max-md:w-72 max-md:rounded-none max-md:border-r"
+      className="max-md:inset-y-0 max-md:right-auto max-md:left-0 max-md:max-h-none max-md:w-72 max-md:rounded-none max-md:border-r"
     >
       <SheetHeader>
         <SheetTitle>Navigation</SheetTitle>
