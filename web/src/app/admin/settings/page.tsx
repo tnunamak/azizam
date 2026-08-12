@@ -16,12 +16,11 @@
  * - Every group has loading skeleton + empty + error states
  * - Independent groups: no global save button */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { adminFetch, adminRegistryMutation, ApiError } from "@/lib/api";
-import type { EffectiveOidcConfig, OidcConfigUpdate } from "@/lib/api";
 import {
   Badge,
   Button,
@@ -51,6 +50,32 @@ import {
 
 // ---------------------------------------------------------------------------
 // Contract types for this surface
+
+interface OidcConfig {
+  enabled: boolean;
+  issuer: string;
+  client_id: string;
+  /** Always "<redacted>" in read responses; never render. */
+  client_secret: string;
+  /** True when a client_secret has been saved. */
+  client_secret_set: boolean;
+  redirect_uri: string;
+  scopes: string[];
+  allowed_email_domains: string[];
+  admin_emails: string[];
+  admin_groups: string[];
+  admin_roles: string[];
+  authorization_endpoint: string;
+  token_endpoint: string;
+  jwks_uri: string;
+  clock_skew_seconds: number;
+  /** The ID-token claim that carries the user's group memberships. Default
+   * "groups". The gateway reads this claim for admin-role evaluation (via
+   * admin_groups) and for profile mappings (Users → runtime-profile-mappings
+   * with source_kind "oidc_group"). */
+  groups_claim: string;
+  updated_at: number | null;
+}
 
 interface ExtensionPackage {
   id: string;
@@ -103,17 +128,15 @@ const settingsQueryKeys = {
 // ---------------------------------------------------------------------------
 // API calls
 
-async function fetchOidcConfig(): Promise<EffectiveOidcConfig | null> {
-  const data = await adminFetch<{ oidc_config: EffectiveOidcConfig | null }>(
+async function fetchOidcConfig(): Promise<OidcConfig | null> {
+  const data = await adminFetch<{ oidc_config: OidcConfig | null }>(
     "/admin/api/oidc-config",
   );
   return data.oidc_config;
 }
 
-async function saveOidcConfig(
-  input: OidcConfigUpdate,
-): Promise<EffectiveOidcConfig> {
-  const data = await adminFetch<{ oidc_config: EffectiveOidcConfig }>(
+async function saveOidcConfig(input: Partial<OidcConfig>): Promise<OidcConfig> {
+  const data = await adminFetch<{ oidc_config: OidcConfig }>(
     "/admin/api/oidc-config",
     { method: "PUT", body: input },
   );
@@ -222,12 +245,15 @@ function ErrorBanner({
 }
 
 // ---------------------------------------------------------------------------
+// OIDC save banner — most settings apply immediately; signing key / cookie
+// name are captured at boot and require a restart to take effect.
+
 function RestartBanner({ onDismiss }: { onDismiss: () => void }) {
   return (
     <IncidentBanner
       tone="info"
-      title="Saved — sign-in settings apply live."
-      detail="If sign-in access is lost, use an existing admin session or generate an admin key on the host and claim it at /setup/claim."
+      title="Saved — restart required to apply sign-in changes."
+      detail="OIDC is bootstrap authentication configuration. Use the existing local admin account or configured recovery method until the gateway has restarted."
       onDismiss={onDismiss}
     />
   );
@@ -284,7 +310,7 @@ function SignInCard() {
     queryFn: fetchOidcConfig,
   });
 
-  function handleSaved(updated: EffectiveOidcConfig) {
+  function handleSaved(updated: OidcConfig) {
     queryClient.setQueryData(settingsQueryKeys.oidcConfig, updated);
     setEditOpen(false);
     setShowRestartBanner(true);
@@ -342,11 +368,7 @@ function SignInCard() {
   );
 }
 
-function OidcStatusLine({ config }: { config: EffectiveOidcConfig }) {
-  const provenance = Object.entries(config.provenance.fields)
-    .filter(([, source]) => source !== "runtime_default")
-    .map(([field, source]) => `${field}: ${source}`)
-    .join(", ");
+function OidcStatusLine({ config }: { config: OidcConfig }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
@@ -375,26 +397,6 @@ function OidcStatusLine({ config }: { config: EffectiveOidcConfig }) {
           <span className="text-vf-subtle">Not set</span>
         )}
       </div>
-      <div className="text-vf-small text-vf-muted">
-        Source:{" "}
-        <span className="text-vf-text">{config.source} configuration</span> ·
-        applies {config.apply_mode}
-      </div>
-      {config.admin_emails.length > 0 && (
-        <div className="text-vf-small text-vf-muted">
-          Admin emails:{" "}
-          <span className="text-vf-text">{config.admin_emails.join(", ")}</span>
-        </div>
-      )}
-      {provenance && (
-        <div className="text-vf-micro text-vf-subtle">
-          Field sources: {provenance}
-        </div>
-      )}
-      <div className="text-vf-small text-vf-muted">
-        Recovery: use an existing admin session, or generate an admin key on the
-        host and claim it at <code>/setup/claim</code>.
-      </div>
     </div>
   );
 }
@@ -422,7 +424,7 @@ interface OidcFormState {
   groups_claim: string;
 }
 
-function oidcFormDefaults(existing: EffectiveOidcConfig | null): OidcFormState {
+function oidcFormDefaults(existing: OidcConfig | null): OidcFormState {
   if (!existing) {
     return {
       enabled: true,
@@ -470,8 +472,8 @@ function OidcEditDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  existing: EffectiveOidcConfig | null;
-  onSaved: (updated: EffectiveOidcConfig) => void;
+  existing: OidcConfig | null;
+  onSaved: (updated: OidcConfig) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -491,14 +493,15 @@ function OidcEditDialogContent({
   onOpenChange,
   onSaved,
 }: {
-  existing: EffectiveOidcConfig | null;
+  existing: OidcConfig | null;
   onOpenChange: (open: boolean) => void;
-  onSaved: (updated: EffectiveOidcConfig) => void;
+  onSaved: (updated: OidcConfig) => void;
 }) {
   const [form, setForm] = useState<OidcFormState>(() =>
     oidcFormDefaults(existing),
   );
   const [formError, setFormError] = useState<string | null>(null);
+  const errorSummaryRef = useRef<HTMLParagraphElement>(null);
 
   function set<K extends keyof OidcFormState>(key: K, value: OidcFormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -506,7 +509,7 @@ function OidcEditDialogContent({
 
   const save = useMutation({
     mutationFn: () => {
-      const payload: OidcConfigUpdate = {
+      const payload: Partial<OidcConfig> = {
         enabled: form.enabled,
         issuer: form.issuer.trim(),
         client_id: form.client_id.trim(),
@@ -519,7 +522,7 @@ function OidcEditDialogContent({
         authorization_endpoint: form.authorization_endpoint.trim(),
         token_endpoint: form.token_endpoint.trim(),
         jwks_uri: form.jwks_uri.trim(),
-        clock_skew_seconds: Number(form.clock_skew_seconds) || 60,
+        clock_skew_seconds: Number(form.clock_skew_seconds),
         groups_claim: form.groups_claim.trim() || "groups",
       };
       // Only include client_secret when the user typed something new.
@@ -534,12 +537,28 @@ function OidcEditDialogContent({
       toast.success("Sign-in settings saved");
       onSaved(updated);
     },
-    onError: (error) => setFormError(errorMessage(error)),
+    onError: (error) => {
+      setFormError(errorMessage(error));
+      requestAnimationFrame(() => errorSummaryRef.current?.focus());
+    },
   });
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setFormError(null);
+    if (!form.issuer.trim() || !form.client_id.trim()) {
+      setFormError("Issuer URL and Client ID are required.");
+      requestAnimationFrame(() => errorSummaryRef.current?.focus());
+      return;
+    }
+    if (
+      !Number.isFinite(Number(form.clock_skew_seconds)) ||
+      Number(form.clock_skew_seconds) < 0
+    ) {
+      setFormError("Clock skew must be zero or a positive number.");
+      requestAnimationFrame(() => errorSummaryRef.current?.focus());
+      return;
+    }
     save.mutate();
   }
 
@@ -551,10 +570,10 @@ function OidcEditDialogContent({
             {existing ? "Edit sign-in settings" : "Configure sign-in"}
           </DialogTitle>
           <DialogDescription>
-            Most settings apply immediately. The signing key and cookie name are
-            captured at startup — changing them requires a gateway restart to
-            take effect. The client secret is write-only — leave blank to keep
-            the current value.
+            These OIDC settings take effect after a gateway restart. Keep a
+            local admin account or your existing recovery method available until
+            you verify the new sign-in path. The client secret is write-only —
+            leave it blank to keep the current value.
           </DialogDescription>
         </DialogHeader>
 
@@ -763,7 +782,12 @@ function OidcEditDialogContent({
           </details>
 
           {formError && (
-            <p role="alert" className="text-vf-small text-vf-bad">
+            <p
+              ref={errorSummaryRef}
+              role="alert"
+              tabIndex={-1}
+              className="text-vf-small text-vf-bad"
+            >
               {formError}
             </p>
           )}
@@ -935,6 +959,7 @@ function AddExtensionDialogContent({
   const [gitRef, setGitRef] = useState("");
   const [review, setReview] = useState<ExtensionReview | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const errorSummaryRef = useRef<HTMLParagraphElement>(null);
 
   const validate = useMutation({
     mutationFn: () => {
@@ -953,7 +978,10 @@ function AddExtensionDialogContent({
       setStep("review");
       setFormError(null);
     },
-    onError: (error) => setFormError(errorMessage(error)),
+    onError: (error) => {
+      setFormError(errorMessage(error));
+      requestAnimationFrame(() => errorSummaryRef.current?.focus());
+    },
   });
 
   const enable = useMutation({
@@ -970,7 +998,10 @@ function AddExtensionDialogContent({
       return enableExtension(source, review);
     },
     onSuccess: () => onEnabled(),
-    onError: (error) => setFormError(errorMessage(error)),
+    onError: (error) => {
+      setFormError(errorMessage(error));
+      requestAnimationFrame(() => errorSummaryRef.current?.focus());
+    },
   });
 
   function handleValidate(event: FormEvent) {
@@ -1058,7 +1089,12 @@ function AddExtensionDialogContent({
             )}
 
             {formError && (
-              <p role="alert" className="text-vf-small text-vf-bad">
+              <p
+                ref={errorSummaryRef}
+                role="alert"
+                tabIndex={-1}
+                className="text-vf-small text-vf-bad"
+              >
                 {formError}
               </p>
             )}
@@ -1152,7 +1188,12 @@ function AddExtensionDialogContent({
           )}
 
           {formError && (
-            <p role="alert" className="text-vf-small text-vf-bad">
+            <p
+              ref={errorSummaryRef}
+              role="alert"
+              tabIndex={-1}
+              className="text-vf-small text-vf-bad"
+            >
               {formError}
             </p>
           )}
@@ -1358,6 +1399,7 @@ function MediaAdmissionEditDialogContent({
       : "",
   );
   const [formError, setFormError] = useState<string | null>(null);
+  const errorSummaryRef = useRef<HTMLParagraphElement>(null);
 
   const save = useMutation({
     mutationFn: () => {
@@ -1377,12 +1419,32 @@ function MediaAdmissionEditDialogContent({
       setFormError(null);
       onSaved(updated);
     },
-    onError: (error) => setFormError(errorMessage(error)),
+    onError: (error) => {
+      setFormError(errorMessage(error));
+      requestAnimationFrame(() => errorSummaryRef.current?.focus());
+    },
   });
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setFormError(null);
+    const numericValues = [maxQueueDepth, retryAfterSeconds].filter(
+      (value) => value.trim() !== "",
+    );
+    if (
+      numericValues.some(
+        (value) =>
+          !Number.isFinite(Number(value)) ||
+          Number(value) < 0 ||
+          !Number.isInteger(Number(value)),
+      )
+    ) {
+      setFormError(
+        "Queue depth and retry delay must be whole numbers zero or greater.",
+      );
+      requestAnimationFrame(() => errorSummaryRef.current?.focus());
+      return;
+    }
     save.mutate();
   }
 
@@ -1461,7 +1523,12 @@ function MediaAdmissionEditDialogContent({
           </div>
 
           {formError && (
-            <p role="alert" className="text-vf-small text-vf-bad">
+            <p
+              ref={errorSummaryRef}
+              role="alert"
+              tabIndex={-1}
+              className="text-vf-small text-vf-bad"
+            >
               {formError}
             </p>
           )}

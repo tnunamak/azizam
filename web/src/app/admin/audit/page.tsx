@@ -30,7 +30,13 @@ import type { ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
-import { api, ApiError, queryKeys, type AuditEntry } from "@/lib/api";
+import {
+  api,
+  ApiError,
+  queryKeys,
+  type AuditEntry,
+  type User,
+} from "@/lib/api";
 import {
   ActivityFeedRow,
   Button,
@@ -156,8 +162,49 @@ function errorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-function actorDisplayLabel(entry: AuditEntry): string {
-  return entry.actor_label;
+function userLabel(user: User | undefined): string {
+  return user?.display_name ?? user?.email ?? "Unknown user";
+}
+
+function actorDisplayLabel(
+  entry: AuditEntry,
+  usersById: Map<string, User>,
+): string {
+  if (entry.actor_id === "cli" || entry.actor_kind === "cli") return "System";
+  const user = usersById.get(entry.actor_id);
+  if (user) return userLabel(user);
+  if (
+    entry.actor_kind === "service_account" ||
+    entry.actor_id.startsWith("svc_")
+  ) {
+    const name = entry.metadata?.["actor_name"];
+    return typeof name === "string" && name.trim()
+      ? `Service principal: ${name}`
+      : "Service principal";
+  }
+  if (entry.actor_kind === "admin") return "Admin";
+  return "Unattributed actor";
+}
+
+function safeAuditDetails(entry: AuditEntry): Record<string, unknown> {
+  const metadata = Object.fromEntries(
+    Object.entries(entry.metadata ?? {}).filter(
+      ([key]) =>
+        !/(secret|token|credential|authorization|api[_-]?key|password)/i.test(
+          key,
+        ),
+    ),
+  );
+
+  return {
+    action: actionMeta(entry.action).phrase,
+    actor:
+      entry.actor_kind === "cli" || entry.actor_id === "cli"
+        ? "System"
+        : (entry.actor_kind ?? "Unattributed actor"),
+    target: entry.target_kind ?? undefined,
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+  };
 }
 
 function RouteEventTargetSync({
@@ -191,6 +238,7 @@ export default function AdminAuditPage() {
   const [allEntries, setAllEntries] = useState<AuditEntry[]>([]);
   // Whether we're fetching an additional page (beyond the first)
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
   const [detailEntry, setDetailEntry] = useState<AuditEntry | null>(null);
   const [routeEventTarget, setRouteEventTarget] = useState<string | null>(null);
@@ -261,17 +309,26 @@ export default function AdminAuditPage() {
     consumedEventTargetRef.current = routeEventTarget;
   }, [detailEntry?.id, routeEvent, routeEventTarget]);
 
+  const { data: usersData, isPending: usersPending } = useQuery({
+    queryKey: ["users"] as const,
+    queryFn: api.users.list,
+  });
+
+  const usersById = useMemo(
+    () => new Map((usersData ?? []).map((user) => [user.id, user])),
+    [usersData],
+  );
+
   // Unique actors for filter chips (computed from all loaded entries).
   const actorOptions = useMemo(() => {
     const seen = new Map<string, string>(); // actor_id → display label
     for (const entry of allEntries) {
       if (seen.has(entry.actor_id)) continue;
-      const label = actorDisplayLabel(entry);
-      if (label === "Unknown user") continue;
+      const label = actorDisplayLabel(entry, usersById);
       seen.set(entry.actor_id, label);
     }
     return Array.from(seen.entries()).map(([id, label]) => ({ id, label }));
-  }, [allEntries]);
+  }, [allEntries, usersById]);
 
   const actionFamilies = useMemo(
     () => deriveActionFamilies(allEntries),
@@ -297,6 +354,7 @@ export default function AdminAuditPage() {
   async function loadMore() {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
+    setLoadMoreError(null);
     try {
       const result = await api.audit.list({
         limit: PAGE_SIZE,
@@ -307,14 +365,14 @@ export default function AdminAuditPage() {
       setAllEntries((prev) => [...prev, ...result.records]);
       setNextCursor(result.next_cursor);
       setCursors((prev) => [...prev, nextCursor]);
-    } catch {
-      // Silently — the user can retry via the "Load more" button
+    } catch (error) {
+      setLoadMoreError(errorMessage(error));
     } finally {
       setLoadingMore(false);
     }
   }
 
-  const loading = firstPagePending;
+  const loading = firstPagePending || usersPending;
   const hasFilter = Boolean(actorFilter ?? familyFilter);
   // Exhausted = last page returned null cursor (and we've seen at least one page)
   const exhausted = nextCursor === null && !firstPagePending;
@@ -348,6 +406,18 @@ export default function AdminAuditPage() {
         />
       ) : (
         <>
+          {firstPageIsError && allEntries.length > 0 && (
+            <IncidentBanner
+              tone="bad"
+              title="Audit events may be stale."
+              detail={errorMessage(firstPageError)}
+              actions={
+                <Button size="sm" onClick={() => void refetchFirst()}>
+                  Retry
+                </Button>
+              }
+            />
+          )}
           {missingRouteEvent && (
             <IncidentBanner
               tone="warn"
@@ -454,7 +524,7 @@ export default function AdminAuditPage() {
             <div className="vf-activity-feed">
               {allEntries.map((entry) => {
                 const { phrase } = actionMeta(entry.action);
-                const actor = actorDisplayLabel(entry);
+                const actor = actorDisplayLabel(entry, usersById);
                 const target = entry.target_id
                   ? entry.metadata && typeof entry.metadata["name"] === "string"
                     ? entry.metadata["name"]
@@ -490,7 +560,14 @@ export default function AdminAuditPage() {
 
           {/* Load more / End of log — honest end state per the honesty law */}
           {!loading && allEntries.length > 0 && (
-            <div className="flex justify-center pt-2">
+            <div className="flex flex-col items-center gap-2 pt-2">
+              {loadMoreError && (
+                <IncidentBanner
+                  tone="bad"
+                  title="Couldn't load more audit events."
+                  detail={loadMoreError}
+                />
+              )}
               {exhausted ? (
                 <p className="text-vf-small text-vf-subtle">
                   {hasFilter ? "No more matching events" : "End of audit log"}
@@ -522,7 +599,8 @@ export default function AdminAuditPage() {
             <SheetHeader>
               <SheetTitle>{actionMeta(detailEntry.action).phrase}</SheetTitle>
               <SheetDescription>
-                Full event record — <RelativeTime ts={detailEntry.created_at} />
+                Safe event details —{" "}
+                <RelativeTime ts={detailEntry.created_at} />
               </SheetDescription>
             </SheetHeader>
             <AuditDetailPanel entry={detailEntry} />
@@ -561,13 +639,14 @@ function FilterChip({
 // Audit detail sheet panel — mono JSON of the full record + a CopyButton.
 
 function AuditDetailPanel({ entry }: { entry: AuditEntry }) {
-  const json = JSON.stringify(entry, null, 2);
+  const details = safeAuditDetails(entry);
+  const json = JSON.stringify(details, null, 2);
   const targetHref = adminTargetHref(entry.target_kind, entry.target_id);
   const targetName =
     (entry.metadata &&
       typeof entry.metadata["name"] === "string" &&
       entry.metadata["name"]) ||
-    entry.target_id ||
+    entry.target_kind?.replace(/_/g, " ") ||
     "target";
 
   return (
@@ -582,30 +661,30 @@ function AuditDetailPanel({ entry }: { entry: AuditEntry }) {
         </DetailRow>
         {entry.target_id && (
           <DetailRow label="Target">
-            {targetHref ? (
-              <a
-                href={targetHref}
-                className="text-vf-accent hover:text-vf-text no-underline"
-              >
-                <EntityRef name={targetName} id={entry.target_id} />
-              </a>
-            ) : (
-              <EntityRef name={targetName} id={entry.target_id} />
-            )}
+            <EntityRef
+              name={targetName}
+              id={entry.target_id}
+              href={targetHref ?? undefined}
+              idVisibility="hover"
+            />
           </DetailRow>
         )}
-        {entry.actor_id && (
-          <DetailRow label="Actor ID">
-            <span className="text-vf-micro font-mono">{entry.actor_id}</span>
-          </DetailRow>
-        )}
+        <DetailRow label="Actor">
+          <span>
+            {entry.actor_kind === "cli" || entry.actor_id === "cli"
+              ? "System"
+              : entry.actor_kind === "service_account"
+                ? "Service principal"
+                : (entry.actor_kind ?? "Unattributed actor")}
+          </span>
+        </DetailRow>
       </dl>
 
       {/* Full raw record */}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between gap-2">
           <span className="text-vf-micro text-vf-subtle font-mono uppercase">
-            Full record
+            Safe event details
           </span>
           <CopyButton value={json} aria-label="Copy event JSON" />
         </div>

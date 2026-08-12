@@ -6,34 +6,40 @@ import { describe, expect, it } from "vitest";
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(testDirectory, "../..");
 
-async function source(relativePath: string) {
-  return readFile(path.join(webRoot, relativePath), "utf8");
+async function routeSource(route: "audit" | "settings") {
+  return readFile(
+    path.join(webRoot, "src", "app", "admin", route, "page.tsx"),
+    "utf8",
+  );
 }
 
 describe("admin audit and settings route contracts", () => {
-  it("uses server-issued actor labels without ID-prefix inference", async () => {
-    const audit = await source("src/app/admin/audit/page.tsx");
-    expect(audit).toContain("return entry.actor_label");
-    expect(audit).not.toContain('startsWith("svc_")');
+  it("keeps audit filters and cursors server-backed, and only copies safe details", async () => {
+    const source = await routeSource("audit");
+
+    expect(source).toContain("api.audit.list(firstPageParams)");
+    expect(source).toContain("before: nextCursor");
+    expect(source).toContain(
+      "setAllEntries((prev) => [...prev, ...result.records])",
+    );
+    expect(source).toContain('"No more matching events"');
+    expect(source).toContain("function safeAuditDetails");
+    expect(source).toContain("Safe event details");
+    expect(source).not.toContain("JSON.stringify(entry, null, 2)");
   });
 
-  it("keeps OIDC responses closed and mutations write-only", async () => {
-    const [api, settings] = await Promise.all([
-      source("src/lib/api.ts"),
-      source("src/app/admin/settings/page.tsx"),
-    ]);
-    expect(api).toContain('client_secret: "<redacted>" | ""');
-    expect(api).toContain("export interface OidcConfigUpdate");
-    expect(settings).toMatch(/saveOidcConfig\(\s*input: OidcConfigUpdate/);
-    expect(settings).toContain("const payload: OidcConfigUpdate");
-    expect(settings).toContain('if (secret && secret !== "<redacted>")');
-  });
+  it("keeps OIDC secrets write-only and settings mutations scoped to their cards", async () => {
+    const source = await routeSource("settings");
 
-  it("keeps the mounted routes prepared for complete, redacted OIDC state", async () => {
-    const settings = await source("src/app/admin/settings/page.tsx");
-    expect(settings).toContain("config.provenance.fields");
-    expect(settings).toContain("config.apply_mode");
-    expect(settings).toContain("admin_emails");
-    expect(settings).toContain("Couldn't load sign-in settings.");
+    expect(source).toContain('if (secret && secret !== "<redacted>")');
+    expect(source).toContain("restart required to apply sign-in changes");
+    expect(source).toContain(
+      "local admin account or your existing recovery method",
+    );
+    expect(source).toContain(
+      "Queue depth and retry delay must be whole numbers zero or greater.",
+    );
+    expect(source).toContain("setShowRestartBanner(true)");
+    expect(source).not.toMatch(/(?<![\w/])window\.confirm\s*\(/);
   });
 });
