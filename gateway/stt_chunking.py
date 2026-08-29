@@ -731,7 +731,6 @@ async def probe_audio(
     )
     try:
         payload = json.loads(stdout.decode("utf-8"))
-        duration = float((payload.get("format") or {}).get("duration"))
         audio_streams = [
             stream for stream in (payload.get("streams") or [])
             if isinstance(stream, Mapping) and stream.get("codec_type") == "audio"
@@ -739,9 +738,28 @@ async def probe_audio(
         stream = audio_streams[0]
         sample_rate = int(stream.get("sample_rate"))
         channels = int(stream.get("channels"))
+        duration = _finite_positive_or_none(
+            (payload.get("format") or {}).get("duration")
+        )
     except (IndexError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise SttSetupFailure("STT media probe returned invalid audio metadata") from error
-    if not math.isfinite(duration) or duration <= 0 or sample_rate <= 0 or channels <= 0:
+    if duration is None:
+        # Some containers (notably a Chrome MediaRecorder webm whose recording
+        # session ended without a clean stop) carry audio/video sample data but
+        # never get a trailing Cues/duration element written. ffprobe's cheap
+        # format-level read then reports no duration at all even though the
+        # stream decodes fine. Recover the true length from packet timestamps
+        # instead of assuming the file is unusable: this is what lets duration
+        # gate the chunking decision below instead of forcing every such file
+        # through a single unbounded passthrough request.
+        duration = await _probe_duration_from_packets(
+            source_path,
+            config=config,
+            cancellation_waiters=cancellation_waiters,
+            deadline_at=deadline_at,
+            on_cancel=on_cancel,
+        )
+    if duration is None or sample_rate <= 0 or channels <= 0:
         raise SttSetupFailure("STT media probe returned invalid audio metadata")
     probed = ProbedAudio(duration, sample_rate, channels)
     if duration > config.max_duration_seconds:
@@ -751,6 +769,69 @@ async def probe_audio(
     if probed.decoded_bytes > config.max_decoded_bytes:
         raise SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
     return probed
+
+
+def _finite_positive_or_none(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed <= 0:
+        return None
+    return parsed
+
+
+async def _probe_duration_from_packets(
+    source_path: Path,
+    *,
+    config: SttExecutionConfig,
+    cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
+    deadline_at: float,
+    on_cancel: Callable[[], None] | None,
+) -> float | None:
+    """Recover duration from the last audio packet's timestamp plus its length.
+
+    Cheaper than a full decode (``-count_frames``): ffprobe only needs to
+    demux packet headers, not decode every frame. Malformed trailing packets
+    (a truncated final Opus frame from an interrupted recording) print a
+    decoder warning on stderr but do not stop packet enumeration, so this
+    still recovers a usable duration for files with minor trailing damage.
+    """
+    try:
+        stdout, _ = await run_media_command(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "packet=pts_time,duration_time",
+                "-of",
+                "csv=p=0",
+                os.fspath(source_path),
+            ],
+            timeout_seconds=min(60.0, config.timeout_seconds),
+            cancellation_waiters=cancellation_waiters,
+            deadline_at=deadline_at,
+            on_cancel=on_cancel,
+            max_output_bytes=config.max_media_output_bytes,
+        )
+    except SttSetupFailure:
+        return None
+    last_end: float | None = None
+    for line in stdout.decode("utf-8", errors="replace").splitlines():
+        parts = line.strip().split(",")
+        if len(parts) != 2:
+            continue
+        pts = _finite_positive_or_none(parts[0])
+        packet_duration = _finite_positive_or_none(parts[1])
+        if pts is None:
+            continue
+        end = pts + packet_duration if packet_duration is not None else pts
+        if last_end is None or end > last_end:
+            last_end = end
+    return last_end
 
 
 async def detect_silences(
