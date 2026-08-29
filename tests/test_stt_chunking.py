@@ -535,6 +535,128 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                                 on_cancel=None,
                             )
 
+    async def test_probe_falls_back_to_packet_timestamps_when_format_duration_is_missing(self) -> None:
+        """Regression test: a Chrome MediaRecorder webm with no trailing Cues
+        element reports no format-level duration at all (not merely an
+        unparsable one). Without a fallback, probe_audio() raised
+        SttSetupFailure for every such recording, which — under the
+        operator's setup_failure_policy: passthrough default — sent the
+        whole file to the STT backend in one request instead of letting
+        threshold/silence-aware chunking engage."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.webm"
+            source.write_bytes(b"not examined by the fake probe")
+            config = _config(root, max_duration_seconds=1000)
+            format_probe_payload = json.dumps({
+                "format": {},
+                "streams": [{
+                    "codec_type": "audio",
+                    "sample_rate": "48000",
+                    "channels": 2,
+                }],
+            }).encode()
+            packet_probe_stdout = (
+                b"0.020000,0.020000\n"
+                b"683.100000,0.060000\n"
+                b"683.164000,0.060000\n"
+            )
+            with patch.object(
+                stt_chunking,
+                "run_media_command",
+                new=AsyncMock(
+                    side_effect=[(format_probe_payload, b""), (packet_probe_stdout, b"")]
+                ),
+            ) as mock_run:
+                probed = await stt_chunking.probe_audio(
+                    source,
+                    config=config,
+                    cancellation_waiters=(),
+                    deadline_at=asyncio.get_running_loop().time() + 1,
+                    on_cancel=None,
+                )
+            self.assertAlmostEqual(probed.duration_seconds, 683.224, places=3)
+            self.assertEqual(probed.sample_rate, 48000)
+            self.assertEqual(probed.channels, 2)
+            self.assertEqual(mock_run.await_count, 2)
+            fallback_command = mock_run.await_args_list[1].args[0]
+            self.assertIn("-select_streams", fallback_command)
+
+    async def test_probe_raises_setup_failure_when_packet_fallback_also_finds_no_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.webm"
+            source.write_bytes(b"not examined by the fake probe")
+            config = _config(root)
+            format_probe_payload = json.dumps({
+                "format": {},
+                "streams": [{
+                    "codec_type": "audio",
+                    "sample_rate": "48000",
+                    "channels": 1,
+                }],
+            }).encode()
+            with patch.object(
+                stt_chunking,
+                "run_media_command",
+                new=AsyncMock(side_effect=[(format_probe_payload, b""), (b"", b"")]),
+            ):
+                with self.assertRaises(stt_chunking.SttSetupFailure):
+                    await stt_chunking.probe_audio(
+                        source,
+                        config=config,
+                        cancellation_waiters=(),
+                        deadline_at=asyncio.get_running_loop().time() + 1,
+                        on_cancel=None,
+                    )
+
+    async def test_real_offline_ffmpeg_duration_less_webm_recovers_true_duration(self) -> None:
+        """End-to-end with real ffmpeg/ffprobe: encoding audio to webm on a
+        pipe (rather than a seekable file) reproduces the exact container
+        shape a Chrome MediaRecorder session leaves behind when a recording
+        ends without a clean stop — no trailing Cues/duration element. This
+        proves the fallback recovers a real, correct duration from the same
+        binary this module shells out to, not just from a mocked payload."""
+        if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+            self.skipTest("ffmpeg and ffprobe are required for the local media fixture")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.webm"
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=5",
+                "-c:a", "libopus", "-f", "webm", "pipe:1",
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _stderr = await proc.communicate()
+            await proc.wait()
+            self.assertEqual(proc.returncode, 0)
+            source.write_bytes(stdout)
+
+            # Confirm the fixture actually reproduces the bug precondition:
+            # ffprobe's format-level duration read must come back empty.
+            direct_probe = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "json", os.fspath(source),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            probe_stdout, _ = await direct_probe.communicate()
+            self.assertNotIn(b"duration", probe_stdout)
+
+            config = _config(root, max_duration_seconds=60)
+            probed = await stt_chunking.probe_audio(
+                source,
+                config=config,
+                cancellation_waiters=(),
+                deadline_at=asyncio.get_running_loop().time() + 30,
+                on_cancel=None,
+            )
+            self.assertGreater(probed.duration_seconds, 4.5)
+            self.assertLess(probed.duration_seconds, 5.5)
+            self.assertEqual(probed.channels, 1)
+
     async def test_segment_limit_and_deadline_are_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
