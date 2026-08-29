@@ -552,7 +552,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                 "format": {},
                 "streams": [{
                     "codec_type": "audio",
-                    "sample_rate": "48000",
+                    "sample_rate": "16000",
                     "channels": 2,
                 }],
             }).encode()
@@ -576,7 +576,7 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
                     on_cancel=None,
                 )
             self.assertAlmostEqual(probed.duration_seconds, 683.224, places=3)
-            self.assertEqual(probed.sample_rate, 48000)
+            self.assertEqual(probed.sample_rate, 16000)
             self.assertEqual(probed.channels, 2)
             self.assertEqual(mock_run.await_count, 2)
             fallback_command = mock_run.await_args_list[1].args[0]
@@ -624,8 +624,8 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             source = root / "source.webm"
             proc = await asyncio.create_subprocess_exec(
                 "ffmpeg", "-nostdin", "-y", "-loglevel", "error",
-                "-f", "lavfi", "-i", "sine=frequency=440:duration=5",
-                "-c:a", "libopus", "-f", "webm", "pipe:1",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=5:sample_rate=16000",
+                "-ac", "1", "-c:a", "libopus", "-f", "webm", "pipe:1",
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -645,7 +645,9 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             probe_stdout, _ = await direct_probe.communicate()
             self.assertNotIn(b"duration", probe_stdout)
 
-            config = _config(root, max_duration_seconds=60)
+            # libopus always reports a 48 kHz stream regardless of the
+            # requested encode rate (Opus operates internally at 48 kHz).
+            config = _config(root, max_duration_seconds=60, max_sample_rate=48_000)
             probed = await stt_chunking.probe_audio(
                 source,
                 config=config,
