@@ -224,8 +224,18 @@ backends:
     # operator-provisioned filesystem; it is intentionally never /tmp.
     chunking:
       enabled: true
-      threshold_seconds: 720
-      target_seconds: 480
+      # Measured 2026-08-29: an ~11 min recording (683s) that stayed under
+      # the previous threshold_seconds (720s, whole-file passthrough) took
+      # 86s solo, but 148-210s+ under concurrent transcription load on this
+      # host (multiple STT jobs regularly overlap here). That's too close to
+      # backend_timeout_seconds for a single unbounded request. Lowering the
+      # threshold to 180s forces genuine chunking for any recording over 3
+      # minutes, bounding every individual backend request's own audio span
+      # regardless of total recording length or host contention -- each
+      # ~150s target chunk finished in 25-56s even under heavy (97% CPU)
+      # concurrent load in the same test.
+      threshold_seconds: 180
+      target_seconds: 150
       silence_noise_db: -30dB
       silence_min_seconds: 0.5
       silence_search_seconds: 120
@@ -246,8 +256,12 @@ backends:
       # process. Multiple workers multiply this limit and its reserved-disk
       # budget; use one worker until a durable cross-process coordinator exists.
       global_concurrency: 2
-      backend_timeout_seconds: 120
-      deadline_seconds: 300
+      # 180s keeps a real margin over the largest chunk this config now ever
+      # sends in one request (~150s of audio, see threshold_seconds/
+      # target_seconds above) without masking a genuinely stuck backend for
+      # long. deadline_seconds stays proportionally above it.
+      backend_timeout_seconds: 180
+      deadline_seconds: 360
       setup_failure_policy: passthrough
     role: required
     capabilities:
