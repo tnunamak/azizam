@@ -547,7 +547,11 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temp_dir)
             source = root / "source.webm"
             source.write_bytes(b"not examined by the fake probe")
-            config = _config(root, max_duration_seconds=1000)
+            config = _config(
+                root,
+                max_duration_seconds=1000,
+                max_decoded_bytes=64 * 1024 * 1024,
+            )
             format_probe_payload = json.dumps({
                 "format": {},
                 "streams": [{
