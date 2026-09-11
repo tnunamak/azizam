@@ -538,6 +538,11 @@ videos:
       # Multi-chunk granularity. Drift typically <0.21s; surfaced via
       # X-Duration-Adjusted header.
   aliases:
+    # `default` is substituted only when `model` is OMITTED from the request
+    # body, so a client sending the literal string "default" -- which works for
+    # chat and images -- was rejected with "Unknown video model/workflow".
+    # Register it explicitly so all three surfaces behave the same.
+    default: video-ltx-2.3-distilled
     ltx-2.3: video-ltx-2.3-distilled
     ltx-2.3-distilled: video-ltx-2.3-distilled
     ltx-2.3-fast: video-ltx-2.3-pure-distilled

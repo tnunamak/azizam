@@ -3876,11 +3876,34 @@ def _stt_receipt(
 def _stt_response_from_upstream(response: stt_chunking.UpstreamResponse) -> Response:
     """Return an upstream STT response without dropping safe response metadata."""
     headers = stt_chunking.filtered_response_headers(response.headers)
+    body = response.body
+    content_type = response.headers.get("content-type", "application/json")
+
+    # Silence/very short audio legitimately transcribes to "". OpenAI returns
+    # {"text": ""} and so do we -- but a falsy-truthiness client treats that as a
+    # failed request. LibreChat v0.8.8-rc2 does exactly this in
+    # api/server/services/Files/Audio/STTService.js:331
+    #   if (!response.data || !response.data.text) throw new Error('Missing data ...')
+    # which surfaces to the user as the misleading red banner "An error occurred
+    # while processing the audio, maybe the audio was too short". Every brief mic
+    # tap hits it. Substitute a single space: still falsy-safe for such clients,
+    # renders as nothing, and keeps the 200/JSON shape byte-compatible otherwise.
+    # Only applies to a successful JSON body whose "text" is exactly empty.
+    if response.status_code == 200 and "json" in content_type.lower():
+        try:
+            parsed = json.loads(body)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("text") == "":
+            parsed["text"] = " "
+            body = json.dumps(parsed).encode("utf-8")
+            headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}
+
     return Response(
-        content=response.body,
+        content=body,
         status_code=response.status_code,
         headers=headers,
-        media_type=response.headers.get("content-type", "application/json"),
+        media_type=content_type,
     )
 
 
