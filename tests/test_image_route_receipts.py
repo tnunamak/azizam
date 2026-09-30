@@ -1956,6 +1956,32 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(receipt.requested_model, "flux2-klein-4b-inpaint")
 
+    async def test_openai_model_alias_routes_to_configured_default(self) -> None:
+        """A real OpenAI client's `model=dall-e-2` (the historical -- and for
+        many SDK versions, default -- variations model) must resolve to the
+        configured variations workflow, not a literal (nonexistent)
+        `dall-e-2-edit` local workflow."""
+        receipt, response, _ = await self._run(
+            fields=[
+                ("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255)))),
+                ("model", "dall-e-2"),
+            ],
+            manifest=self._edit_manifest(with_denoise=False),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(receipt.requested_model, proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW)
+
+    async def test_concrete_local_workflow_name_is_honored_literally(self) -> None:
+        receipt, response, _ = await self._run(
+            fields=[
+                ("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255)))),
+                ("model", "flux2-klein-4b"),
+            ],
+            manifest=self._edit_manifest(with_denoise=False),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(receipt.requested_model, "flux2-klein-4b-edit")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

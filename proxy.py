@@ -7450,12 +7450,26 @@ async def proxy_comfy_variations_request(
         )
     _record_image_input(receipt, "image")
 
-    requested_model = str(form.get("model") or IMAGE_VARIATIONS_DEFAULT_WORKFLOW)
-    model = requested_model
+    requested_model_raw = form.get("model")
+    requested_model = str(requested_model_raw) if requested_model_raw else ""
+    if requested_model:
+        # An OpenAI-named model (dall-e-2, dall-e-3, gpt-image-1, ...) is a
+        # request for "whatever the gateway's variations default is", same as
+        # omitting `model` entirely -- these public names carry no local
+        # workflow identity of their own. A name that doesn't resolve as an
+        # OpenAI alias is a concrete local workflow id and is honored as-is.
+        try:
+            model_resolution = resolve_model_for_operation("image_edits", requested_model)
+        except ModelCompatibilityError as e:
+            _record_image_input(receipt, "model", rejected_reason="model_incompatible")
+            return model_compatibility_error(str(e))
+        model = IMAGE_VARIATIONS_DEFAULT_WORKFLOW if model_resolution.is_openai_alias else requested_model
+    else:
+        model = IMAGE_VARIATIONS_DEFAULT_WORKFLOW
     if not (model.endswith("-edit") or model.endswith("-inpaint")):
         model = f"{model}-edit"
     if receipt is not None:
-        receipt.requested_model = requested_model
+        receipt.requested_model = requested_model or None
     _record_image_input(receipt, "model")
 
     overlay: dict[str, str] = {
