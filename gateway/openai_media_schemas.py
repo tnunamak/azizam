@@ -336,16 +336,16 @@ IMAGES_VARIATIONS_OPENAPI: JsonObjectSchema = {
         }
     ),
     "responses": {
-        # Variations are explicitly unsupported on this gateway and return an
-        # OpenAI-shaped error. Documenting that here matches reality.
-        "400": _json_error_response(
-            "Image variations are not configured or supported by this gateway."
-        ),
-        **{
-            code: payload
-            for code, payload in _common_error_responses().items()
-            if code != "400"
+        # Routed through a configurable edit-capable workflow (no local
+        # model dedicated to "variations" exists) with a fixed generic
+        # prompt -- see proxy_comfy_variations_request in proxy.py.
+        "200": {
+            "description": "OpenAI-shaped image variation result.",
+            "content": {
+                "application/json": {"schema": _images_response_schema()}
+            },
         },
+        **_common_error_responses(),
     },
 }
 

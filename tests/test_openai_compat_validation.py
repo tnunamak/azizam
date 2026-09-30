@@ -164,8 +164,24 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"]["code"], "unsupported_audio_translation")
 
-    def test_image_variations_returns_precise_unsupported_error_without_backend_call(self) -> None:
+    def test_image_variations_routes_through_edit_backend_not_generation_backend(self) -> None:
+        """/v1/images/variations is now implemented (routes through an
+        edit-capable workflow with a fixed generic prompt) -- it must still
+        never forward to the generation backend, but it now DOES reach the
+        edit backend, unlike the old always-unsupported stub."""
         for path in ("/v1/images/variations", "/openai/v1/images/variations"):
+            captured: dict[str, object] = {}
+
+            async def fake_edit_request(request, auth_context, receipt=None):
+                form = await request.form()
+                captured["prompt"] = form.get("prompt")
+                captured["model"] = form.get("model")
+                return proxy.Response(
+                    content=json.dumps({"created": 1, "data": []}),
+                    status_code=200,
+                    media_type="application/json",
+                )
+
             with self.subTest(path=path), patch.object(
                 proxy,
                 "proxy_comfy_request",
@@ -173,7 +189,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
             ), patch.object(
                 proxy,
                 "proxy_comfy_edit_request",
-                side_effect=AssertionError("image variation must not forward to edit backend"),
+                fake_edit_request,
             ):
                 resp = self.client.post(
                     path,
@@ -181,11 +197,36 @@ class OpenAICompatValidationTests(unittest.TestCase):
                     data={"model": "dall-e-2"},
                 )
 
-            self.assertEqual(resp.status_code, 400)
-            body = resp.json()
-            self.assertEqual(body["error"]["type"], "invalid_request_error")
-            self.assertEqual(body["error"]["code"], "unsupported_image_variations")
-            self.assertIn("not configured or supported", body["error"]["message"])
+            self.assertEqual(resp.status_code, 200)
+            # dall-e-2 (an OpenAI public model name, not a local workflow id)
+            # resolves to the configured variations default, not a literal
+            # (nonexistent) "dall-e-2-edit" workflow.
+            self.assertEqual(captured["model"], proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW)
+            self.assertEqual(captured["prompt"], proxy.IMAGE_VARIATIONS_PROMPT)
+
+    def test_image_variations_unsupported_field_still_rejected_before_backend_call(self) -> None:
+        """OpenAI's variations request has no `prompt` field; sending one must
+        still be rejected the same way OpenAI itself would, without reaching
+        either backend function."""
+        with patch.object(
+            proxy,
+            "proxy_comfy_request",
+            side_effect=AssertionError("image variation must not forward to generation backend"),
+        ), patch.object(
+            proxy,
+            "proxy_comfy_edit_request",
+            side_effect=AssertionError("image variation must not forward to edit backend"),
+        ):
+            resp = self.client.post(
+                "/v1/images/variations",
+                files={"image": ("source.png", b"not-used", "image/png")},
+                data={"prompt": "not a real variations field"},
+            )
+
+        self.assertEqual(resp.status_code, 400)
+        body = resp.json()
+        self.assertEqual(body["error"]["code"], "unknown_parameter")
+        self.assertEqual(body["error"]["param"], "prompt")
 
     def test_image_variations_missing_auth_returns_auth_error(self) -> None:
         with patch.object(proxy, "AUTH_ENABLED", True):

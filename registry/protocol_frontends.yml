@@ -150,7 +150,7 @@ records:
         - /v1/videos
       limits:
         - audio translations are registered but return an OpenAI-shaped unsupported_audio_translation error unless the local STT backend declares translation support
-        - images variations are registered but return an OpenAI-shaped unsupported_image_variations error
+        - images variations route through a configurable edit-capable workflow (images.variations.default_workflow) with a fixed generic prompt, since there is no local model dedicated to variations
         - assistants, files, batches, fine-tuning, and realtime routes are registered but return OpenAI-shaped unsupported_operation errors
   - id: anthropic
     name: Anthropic Messages-compatible

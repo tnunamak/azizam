@@ -112,7 +112,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertNotIn("/openai/v1/audio/generate", protocols["openai"]["endpoints"])
         self.assertNotIn("/v1/audio/generate", protocols["openai"]["endpoints"])
         self.assertIn("unsupported_audio_translation", " ".join(protocols["openai"]["limits"]))
-        self.assertIn("unsupported_image_variations", " ".join(protocols["openai"]["limits"]))
+        self.assertIn("images.variations.default_workflow", " ".join(protocols["openai"]["limits"]))
         self.assertIn("unsupported_operation", " ".join(protocols["openai"]["limits"]))
         self.assertEqual(protocols["anthropic"]["canonical_base_path"], "/anthropic/v1")
         self.assertEqual(protocols["anthropic"]["base_url_recipe"], "{base_url}/anthropic")

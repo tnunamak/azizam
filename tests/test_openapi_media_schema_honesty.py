@@ -141,14 +141,18 @@ class OpenApiMediaSchemaHonestyTests(unittest.TestCase):
                 ok = self._ok_response(op)
                 self.assertIn("application/json", self._media_types(ok))
 
-    def test_images_variations_documents_unsupported_400(self) -> None:
+    def test_images_variations_documents_image_result_and_errors(self) -> None:
         for path in ("/v1/images/variations", "/openai/v1/images/variations"):
             with self.subTest(path=path):
                 op = self._op(path)
                 self.assertMultipartRequestBody(op)
-                # Endpoint always returns OpenAI-shaped 400 today; the 200
-                # entry FastAPI auto-inserts should not be the only documented
-                # response.
+                schema = op["requestBody"]["content"]["multipart/form-data"]["schema"]
+                self.assertIn("image", schema["properties"])
+                # No `prompt` field -- OpenAI's variations request has none,
+                # unlike edits.
+                self.assertNotIn("prompt", schema["properties"])
+                ok = self._ok_response(op)
+                self.assertIn("application/json", self._media_types(ok))
                 self.assertIn("400", op["responses"])
                 self.assertOpenAIErrorEnvelope(op)
 
