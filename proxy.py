@@ -220,6 +220,14 @@ from gateway.image_extensions import (
     detect_unknown_top_level_fields,
     record_image_extension_binding,
 )
+from gateway.image_output import (
+    background_format_conflict,
+    encode_image_bytes,
+    parse_output_compression,
+    parse_output_format,
+    parse_quality,
+    quality_steps_from_manifest,
+)
 from gateway.litellm_substrate import litellm_known_model_names, write_litellm_config_artifact
 from gateway.manifests import (
     ManifestError,
@@ -5104,6 +5112,80 @@ def parse_image_background(value: Any) -> tuple[Optional[str], Optional[str]]:
     return None, "background must be one of 'transparent', 'opaque', or 'auto'"
 
 
+def _parse_image_output_shape(
+    receipt: RouteReceipt | None,
+    *,
+    output_format_raw: Any,
+    output_compression_raw: Any,
+    quality_raw: Any,
+    background: str,
+) -> tuple[str, Optional[int], str, Optional[Response]]:
+    """Parse+validate output_format/output_compression/quality together.
+
+    Returns ``(output_format, output_compression, quality, error_response)``.
+    When ``error_response`` is not None the caller must return it immediately;
+    the other three values are unused placeholders in that case.
+    """
+    output_format, fmt_err = parse_output_format(output_format_raw)
+    if fmt_err:
+        _record_image_input(receipt, "output_format", rejected_reason=fmt_err)
+        return output_format, None, "auto", openai_error_response(
+            fmt_err, param="output_format", code="invalid_value",
+        )
+    if output_format_raw not in (None, ""):
+        _record_image_input(receipt, "output_format")
+
+    conflict = background_format_conflict(background, output_format)
+    if conflict:
+        _record_image_input(receipt, "background", rejected_reason="conflicts_with_output_format")
+        return output_format, None, "auto", openai_error_response(
+            conflict, param="background", code="invalid_value",
+        )
+
+    output_compression, comp_err = parse_output_compression(output_compression_raw, output_format)
+    if comp_err:
+        _record_image_input(receipt, "output_compression", rejected_reason=comp_err)
+        return output_format, None, "auto", openai_error_response(
+            comp_err, param="output_compression", code="invalid_value",
+        )
+    if output_compression_raw not in (None, ""):
+        _record_image_input(receipt, "output_compression")
+
+    quality, quality_err = parse_quality(quality_raw)
+    if quality_err:
+        _record_image_input(receipt, "quality", rejected_reason=quality_err)
+        return output_format, output_compression, quality, openai_error_response(
+            quality_err, param="quality", code="invalid_value",
+        )
+    if quality_raw not in (None, ""):
+        _record_image_input(receipt, "quality")
+
+    return output_format, output_compression, quality, None
+
+
+def _apply_quality_steps(
+    manifest: Mapping[str, Any] | None,
+    workflow: dict[str, Any],
+    quality: str,
+    receipt: RouteReceipt | None,
+) -> dict[str, Any]:
+    """Map `quality` to a per-workflow sampler-step count when the manifest
+    declares a `quality_steps` table; otherwise record-only (no silent lie:
+    the receipt shows quality was accepted but not applied to this workflow).
+    """
+    if quality == "auto":
+        return workflow
+    steps = quality_steps_from_manifest(manifest, quality)
+    if steps is None:
+        if receipt is not None:
+            receipt.ignore_input(
+                "quality",
+                "resolved workflow has no quality_steps mapping; accepted but not applied",
+            )
+        return workflow
+    return _apply_manifest_route_inputs(manifest, workflow, {"steps": steps})
+
+
 def _ideogram4_is_grounded_json(prompt: str) -> bool:
     """True only if ``prompt`` is an Ideogram-4 caption with real grounding boxes.
 
@@ -5593,12 +5675,12 @@ def store_asset_bytes(
     return asset_id
 
 
-def store_image_bytes(content: bytes, *, owner_key_hash: str | None = None) -> str:
+def store_image_bytes(content: bytes, *, owner_key_hash: str | None = None, suffix: str = ".png") -> str:
     """Write `content` to the content-addressed cache. Returns the image_id."""
     return store_asset_bytes(
         content,
         kind="img",
-        suffix=".png",
+        suffix=suffix,
         owner_key_hash=owner_key_hash,
     )
 
@@ -5939,30 +6021,54 @@ def _build_image_response_payload(
     response_format: str,
     warning_headers: dict,
     auth_context: AuthContext | None = None,
+    *,
+    output_format: str = "png",
+    output_compression: Optional[int] = None,
+    background: Optional[str] = None,
+    quality: Optional[str] = None,
+    size: Optional[str] = None,
 ) -> Response:
-    """Shape `data[]` for either b64_json or url, honoring the client's choice."""
+    """Shape `data[]` for either b64_json or url, honoring the client's choice.
+
+    `output_format`/`output_compression` drive a real Pillow re-encode (not
+    just an echoed label): every image in `images` is ComfyUI's native PNG
+    bytes until this point. `background`/`quality`/`size` are echoed at the
+    top level to match the gpt-image-1 response shape; pass the *resolved*
+    background ("transparent"/"opaque", never "auto") since that is what
+    OpenAI itself echoes back.
+    """
     data: list[dict] = []
     owner_key_hash = _asset_owner_key(auth_context)
+    suffix = f".{output_format}" if output_format != "jpeg" else ".jpg"
     for raw in images:
-        image_id = store_image_bytes(raw, owner_key_hash=owner_key_hash)
+        encoded, mime_type = encode_image_bytes(raw, output_format, output_compression)
+        image_id = store_image_bytes(encoded, owner_key_hash=owner_key_hash, suffix=suffix)
         item: dict[str, Any] = {
             "asset_id": image_id,
             "asset_url": build_signed_asset_url(request, image_id),
-            "media_type": "image/png",
+            "media_type": mime_type,
         }
         if response_format == "url":
             item["url"] = build_signed_image_url(request, image_id)
         else:
-            b64 = base64.b64encode(raw).decode("utf-8")
+            b64 = base64.b64encode(encoded).decode("utf-8")
             item["b64_json"] = b64
         data.append(item)
     headers = {"content-type": "application/json"}
     headers.update(warning_headers)
+    payload: dict[str, Any] = {
+        "created": int(time.time()),
+        "data": data,
+        "output_format": output_format,
+    }
+    if background is not None:
+        payload["background"] = background
+    if quality is not None:
+        payload["quality"] = quality
+    if size is not None:
+        payload["size"] = size
     return Response(
-        content=json.dumps({
-            "created": int(time.time()),
-            "data": data,
-        }),
+        content=json.dumps(payload),
         status_code=200,
         media_type="application/json",
         headers=headers,
@@ -5996,6 +6102,11 @@ async def _generate_images_with_adaptive_batching(
     image_response_headers: Optional[dict[str, str]] = None,
     fixed_seed: Optional[int] = None,
     auth_context: AuthContext | None = None,
+    output_format: str = "png",
+    output_compression: Optional[int] = None,
+    output_background: Optional[str] = None,
+    output_quality: Optional[str] = None,
+    output_size: Optional[str] = None,
 ) -> Response:
     """Submit `ceil(n / max_batch)` rounds and aggregate `n_requested` images.
 
@@ -6139,6 +6250,11 @@ async def _generate_images_with_adaptive_batching(
                     image_response_headers=image_response_headers,
                     fixed_seed=fixed_seed,
                     auth_context=auth_context,
+                    output_format=output_format,
+                    output_compression=output_compression,
+                    output_background=output_background,
+                    output_quality=output_quality,
+                    output_size=output_size,
                 )
             return err
 
@@ -6300,6 +6416,11 @@ async def _generate_images_with_adaptive_batching(
         response_format,
         response_headers,
         auth_context=auth_context,
+        output_format=output_format,
+        output_compression=output_compression,
+        background=output_background,
+        quality=output_quality,
+        size=output_size,
     )
 
 
@@ -6376,6 +6497,15 @@ async def proxy_comfy_request(
         )
     if "background" in body:
         _record_image_input(receipt, "background")
+    output_format, output_compression, quality, output_shape_error = _parse_image_output_shape(
+        receipt,
+        output_format_raw=body.get("output_format"),
+        output_compression_raw=body.get("output_compression"),
+        quality_raw=body.get("quality"),
+        background=background or "auto",
+    )
+    if output_shape_error is not None:
+        return output_shape_error
     try:
         n = int(body.get("n", 1))
     except (TypeError, ValueError):
@@ -6460,6 +6590,9 @@ async def proxy_comfy_request(
             n=n,
             response_format=response_format,
             headers=headers,
+            output_format=output_format,
+            output_compression=output_compression,
+            quality=quality,
         )
 
     workflow = load_comfy_workflow(model)
@@ -6534,6 +6667,7 @@ async def proxy_comfy_request(
         workflow,
         {"prompt": prompt, "width": width, "height": height},
     )
+    workflow = _apply_quality_steps(manifest, workflow, quality, receipt)
 
     workflow, extension_response = await _apply_workflow_extensions_to_image_request(
         request_body=body,
@@ -6603,6 +6737,11 @@ async def proxy_comfy_request(
                 fallback_workflow_name=workflow_name,
                 fixed_seed=fixed_seed,
                 auth_context=auth_context,
+                output_format=output_format,
+                output_compression=output_compression,
+                output_background="transparent" if background_decision.remove_background else "opaque",
+                output_quality=quality,
+                output_size=f"{width}x{height}",
             )
     except httpx.TimeoutException:
         return Response(
@@ -6756,6 +6895,15 @@ async def proxy_comfy_edit_request(
         )
     if form.get("background") is not None:
         _record_image_input(receipt, "background")
+    output_format, output_compression, quality, output_shape_error = _parse_image_output_shape(
+        receipt,
+        output_format_raw=form.get("output_format"),
+        output_compression_raw=form.get("output_compression"),
+        quality_raw=form.get("quality"),
+        background=background or "auto",
+    )
+    if output_shape_error is not None:
+        return output_shape_error
     try:
         n = int(form.get("n", 1))
     except (TypeError, ValueError):
@@ -7051,6 +7199,7 @@ async def proxy_comfy_edit_request(
                 workflow,
                 {"width": img_width, "height": img_height},
             )
+            workflow = _apply_quality_steps(manifest, workflow, quality, receipt)
 
             workflow, extension_response = await _apply_workflow_extensions_to_image_request(
                 request_body=form_dict,
@@ -7141,6 +7290,11 @@ async def proxy_comfy_edit_request(
                 image_transform=image_transform,
                 image_response_headers=image_response_headers,
                 auth_context=auth_context,
+                output_format=output_format,
+                output_compression=output_compression,
+                output_background="transparent" if background_decision.remove_background else "opaque",
+                output_quality=quality,
+                output_size=f"{img_width}x{img_height}",
             )
 
     except httpx.TimeoutException:
@@ -13304,6 +13458,9 @@ async def _proxy_offset_inpaint_tile_request(
     n: int,
     response_format: str,
     headers: Mapping[str, str],
+    output_format: str = "png",
+    output_compression: Optional[int] = None,
+    quality: str = "auto",
 ) -> Response:
     if manifest is None:
         return Response(
@@ -13553,6 +13710,11 @@ async def _proxy_offset_inpaint_tile_request(
         response_format,
         response_headers,
         auth_context=auth_context,
+        output_format=output_format,
+        output_compression=output_compression,
+        background="opaque",  # transparent is rejected earlier for this composed workflow
+        quality=quality,
+        size=str(size),
     )
 
 

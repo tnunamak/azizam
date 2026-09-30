@@ -5,6 +5,7 @@ These exercise pure helpers only — no FastAPI client, no ComfyUI, no IO.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import copy
@@ -141,6 +142,48 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(url_item["asset_id"], b64_item["asset_id"])
         self.assertIn("/v1/images/", url_item["url"])
         self.assertIn("/v1/assets/", url_item["asset_url"])
+
+    def test_response_echoes_output_format_background_quality_size(self) -> None:
+        raw = _png_bytes((1, 2, 3, 255))
+        request = _StubUrlRequest()
+
+        response = proxy._build_image_response_payload(
+            request,  # type: ignore[arg-type]
+            [raw],
+            "b64_json",
+            {},
+            output_format="png",
+            background="opaque",
+            quality="high",
+            size="1024x1024",
+        )
+        body = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(body["output_format"], "png")
+        self.assertEqual(body["background"], "opaque")
+        self.assertEqual(body["quality"], "high")
+        self.assertEqual(body["size"], "1024x1024")
+
+    def test_output_format_jpeg_reencodes_bytes_and_media_type(self) -> None:
+        from PIL import Image
+
+        raw = _png_bytes((1, 2, 3, 255))
+        request = _StubUrlRequest()
+
+        response = proxy._build_image_response_payload(
+            request,  # type: ignore[arg-type]
+            [raw],
+            "b64_json",
+            {},
+            output_format="jpeg",
+            output_compression=80,
+        )
+        body = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(body["output_format"], "jpeg")
+        item = body["data"][0]
+        self.assertEqual(item["media_type"], "image/jpeg")
+        decoded = base64.b64decode(item["b64_json"])
+        image = Image.open(io.BytesIO(decoded))
+        self.assertEqual(image.format, "JPEG")
 
     async def test_image_edit_accepts_openai_image_array_multipart_field(self) -> None:
         receipt = proxy.start_image_route_receipt(
@@ -844,6 +887,61 @@ class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
             receipt.fallback_reasons,
         )
 
+    async def test_bad_output_format_records_rejection(self) -> None:
+        receipt, response = await self._run_with_json_body(
+            {"prompt": "x", "output_format": "bmp"}
+        )
+        self.assertEqual(response.status_code, 400)
+        body = json.loads(response.body)
+        self.assertEqual(body["error"]["param"], "output_format")
+        self.assertIsNotNone(receipt.rejected_inputs.get("output_format"))
+
+    async def test_bad_output_compression_records_rejection(self) -> None:
+        receipt, response = await self._run_with_json_body(
+            {"prompt": "x", "output_format": "jpeg", "output_compression": 150}
+        )
+        self.assertEqual(response.status_code, 400)
+        body = json.loads(response.body)
+        self.assertEqual(body["error"]["param"], "output_compression")
+
+    async def test_bad_quality_records_rejection(self) -> None:
+        receipt, response = await self._run_with_json_body(
+            {"prompt": "x", "quality": "ultra"}
+        )
+        self.assertEqual(response.status_code, 400)
+        body = json.loads(response.body)
+        self.assertEqual(body["error"]["param"], "quality")
+
+    async def test_transparent_background_with_jpeg_output_is_rejected(self) -> None:
+        receipt, response = await self._run_with_json_body(
+            {"prompt": "x", "background": "transparent", "output_format": "jpeg"}
+        )
+        self.assertEqual(response.status_code, 400)
+        body = json.loads(response.body)
+        self.assertEqual(body["error"]["param"], "background")
+        self.assertEqual(
+            receipt.rejected_inputs.get("background"), "conflicts_with_output_format"
+        )
+
+    async def test_transparent_background_with_webp_output_is_accepted(self) -> None:
+        """Only jpeg conflicts with transparent; webp must pass this check
+        (it may still fail later for unrelated reasons, e.g. unknown model)."""
+        receipt, response = await self._run_with_json_body(
+            {
+                "prompt": "x",
+                "background": "transparent",
+                "output_format": "webp",
+                "model": "no-such-model-anywhere",
+            }
+        )
+        # Falls through to the (expected) unknown-model 400, not a background/
+        # output_format conflict -- proves the combo itself was accepted.
+        self.assertNotEqual(receipt.rejected_inputs.get("background"), "conflicts_with_output_format")
+        self.assertTrue(
+            any("unknown_model" in r for r in receipt.fallback_reasons),
+            receipt.fallback_reasons,
+        )
+
 
 class _MultipartUpload:
     def __init__(self, filename: str, content: bytes) -> None:
@@ -1538,6 +1636,163 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(_FakeAsyncClient.uploads, 1)
         self.assertEqual(captured["base_workflow"]["10"]["inputs"]["image"], "uploaded-1.png")
+
+
+class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
+    """`quality` -> sampler steps, only when a manifest declares `quality_steps`."""
+
+    def _workflow(self) -> dict[str, Any]:
+        return {
+            "_meta": {"name": "quality-fixture", "prompt_node": "6", "image_node": "10"},
+            "6": {"inputs": {"text": ""}},
+            "10": {"inputs": {"image": ""}},
+            "50": {"inputs": {"steps": 4}},
+        }
+
+    def _manifest(self, *, quality_steps: dict[str, int] | None) -> dict[str, Any]:
+        manifest: dict[str, Any] = {
+            "schema_version": 1,
+            "id": "image.edit.quality-fixture",
+            "intent": "image.edit",
+            "inputs": {
+                "prompt": {"type": "string", "required": True},
+                "source_image": {"type": "asset", "required": True},
+                "steps": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+            "outputs": {"image": {"media_type": "image/png"}},
+            "bindings": {
+                "comfyui": {
+                    "workflow": "workflows/images/quality-fixture.json",
+                    "map": {
+                        "prompt": [{"node": "6", "input": "text"}],
+                        "source_image": [{"node": "10", "input": "image"}],
+                        "steps": [{"node": "50", "input": "steps"}],
+                    },
+                }
+            },
+        }
+        if quality_steps is not None:
+            manifest["quality_steps"] = quality_steps
+        return manifest
+
+    async def _run(
+        self, *, quality: str, manifest: dict[str, Any]
+    ) -> tuple[RouteReceipt, Response, dict[str, Any]]:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest(
+            [
+                ("prompt", "sharpen the details"),
+                ("model", "flux2-klein-4b-edit"),
+                ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
+                ("quality", quality),
+            ]
+        )
+        workflow = self._workflow()
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "load_comfy_workflow",
+            lambda _model: copy.deepcopy(workflow),
+        ), patch.object(
+            proxy,
+            "_find_image_manifest",
+            lambda _intent, _model: manifest,
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+        return receipt, response, captured
+
+    async def test_quality_maps_to_steps_when_manifest_declares_table(self) -> None:
+        manifest = self._manifest(quality_steps={"low": 2, "medium": 4, "high": 12})
+        receipt, response, captured = await self._run(quality="high", manifest=manifest)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured["base_workflow"]["50"]["inputs"]["steps"], 12)
+
+    async def test_quality_auto_leaves_steps_untouched(self) -> None:
+        manifest = self._manifest(quality_steps={"low": 2, "medium": 4, "high": 12})
+        receipt, response, captured = await self._run(quality="auto", manifest=manifest)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured["base_workflow"]["50"]["inputs"]["steps"], 4)
+
+    async def test_quality_without_manifest_table_is_recorded_not_applied(self) -> None:
+        manifest = self._manifest(quality_steps=None)
+        receipt, response, captured = await self._run(quality="high", manifest=manifest)
+        self.assertEqual(response.status_code, 200)
+        # No silent lie: quality is accepted (no 400) but the workflow's steps
+        # value is untouched, and the receipt records *why* via ignore_input.
+        self.assertEqual(captured["base_workflow"]["50"]["inputs"]["steps"], 4)
+        self.assertIn("quality", receipt.ignored_inputs)
+
+
+class TestProxyComfyEditRequestOutputShape(unittest.IsolatedAsyncioTestCase):
+    """output_format/output_compression/quality validation on /v1/images/edits.
+
+    These all fail before any ComfyUI upload, so no COMFY_ENABLED patch or
+    workflow fixture is needed beyond enabling the route.
+    """
+
+    async def _run(self, extra_fields: list[tuple[str, Any]]) -> tuple[RouteReceipt, Response]:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest([("model", "flux2-klein-4b-edit"), *extra_fields])
+        with patch.object(proxy, "COMFY_ENABLED", True):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+        return receipt, response
+
+    async def test_bad_output_format_rejected(self) -> None:
+        receipt, response = await self._run([("output_format", "bmp")])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(json.loads(response.body)["error"]["param"], "output_format")
+
+    async def test_bad_output_compression_rejected(self) -> None:
+        receipt, response = await self._run(
+            [("output_format", "webp"), ("output_compression", "300")]
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(json.loads(response.body)["error"]["param"], "output_compression")
+
+    async def test_bad_quality_rejected(self) -> None:
+        receipt, response = await self._run([("quality", "ultra")])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(json.loads(response.body)["error"]["param"], "quality")
+
+    async def test_transparent_background_with_jpeg_rejected(self) -> None:
+        receipt, response = await self._run(
+            [("background", "transparent"), ("output_format", "jpeg")]
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(json.loads(response.body)["error"]["param"], "background")
 
 
 if __name__ == "__main__":
