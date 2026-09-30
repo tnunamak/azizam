@@ -46,6 +46,7 @@ import yaml
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import FormData
 from starlette.requests import ClientDisconnect
 
 # Local: status dashboard backend.
@@ -215,6 +216,7 @@ from gateway.extensions import ExtensionError
 from gateway.image_extensions import (
     STANDARD_IMAGE_EDIT_FIELDS,
     STANDARD_IMAGE_GENERATE_FIELDS,
+    STANDARD_IMAGE_VARIATIONS_FIELDS,
     WORKFLOW_EXTENSION_NAMESPACE,
     bind_workflow_extensions,
     detect_unknown_top_level_fields,
@@ -757,6 +759,16 @@ IMAGE_BACKGROUND_REMOVAL_CFG = images_cfg.get("background_removal", {}) or {}
 IMAGE_BACKGROUND_REMOVAL_ENABLED = bool_from_config(IMAGE_BACKGROUND_REMOVAL_CFG.get("enabled"), True)
 IMAGE_BACKGROUND_REMOVAL_TIMEOUT = float(IMAGE_BACKGROUND_REMOVAL_CFG.get("decision_timeout", 45))
 IMAGE_MEDIA_JOBS_CFG = images_cfg.get("media_jobs", {}) or {}
+IMAGE_VARIATIONS_CFG = images_cfg.get("variations", {}) or {}
+# Routes /v1/images/variations through an edit-capable workflow with a fixed
+# generic prompt (variations has no prompt of its own). Default mirrors the
+# edit route's own hardcoded default edit model.
+IMAGE_VARIATIONS_DEFAULT_WORKFLOW = str(
+    IMAGE_VARIATIONS_CFG.get("default_workflow", "flux2-klein-4b-edit")
+)
+# Partial-denoise strength applied only when the resolved workflow's manifest
+# declares a `denoise` input -- otherwise the workflow's own default stands.
+IMAGE_VARIATIONS_DENOISE = float(IMAGE_VARIATIONS_CFG.get("denoise", 0.75))
 GATEWAY_CFG = config.get("gateway", {}) or {}
 RESOURCE_ADMISSION_CFG = GATEWAY_CFG.get("resource_admission", {}) or {}
 MEDIA_JOB_ADMISSION_CFG = RESOURCE_ADMISSION_CFG.get("media_jobs", {}) or {}
@@ -7315,6 +7327,156 @@ async def proxy_comfy_edit_request(
             status_code=502,
             media_type="application/json"
         )
+
+
+# OpenAI's variations request has no prompt (unlike edits); there is no local
+# "true" variations model, so the gateway routes through an edit-capable
+# workflow with this fixed generic prompt instead of asking the client for one
+# it isn't allowed to send.
+IMAGE_VARIATIONS_PROMPT = (
+    "Create a creative variation of this image: keep the same subject, "
+    "composition, and overall style, but vary fine detail and texture."
+)
+
+
+class _OverlayFormRequest:
+    """Request-shim that overrides/injects specific multipart fields.
+
+    Delegates every attribute except ``form()`` to the real request (so
+    ``request.url``/``request.headers`` used downstream for signed URLs keep
+    working), and returns a ``FormData`` with ``overlay`` fields added/
+    replaced over the already-parsed base form. Used to route
+    ``/v1/images/variations`` through the edit route's upload/inject pipeline
+    without duplicating it: a variations request has no ``prompt``, so this
+    injects the fixed prompt above (and the configured workflow as `model`)
+    on top of the client's real ``image`` upload(s).
+    """
+
+    def __init__(self, request: Request, base_form: FormData, overlay: Mapping[str, str]) -> None:
+        self._request = request
+        items = [(k, v) for k, v in base_form.multi_items() if k not in overlay]
+        items.extend(overlay.items())
+        self._form = FormData(items)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._request, name)
+
+    async def form(self) -> FormData:
+        return self._form
+
+
+async def proxy_comfy_variations_request(
+    request: Request,
+    auth_context: AuthContext,
+    receipt: RouteReceipt | None = None,
+) -> Response:
+    """Handle OpenAI-compatible /v1/images/variations.
+
+    There is no local model dedicated to "variations" (an unprompted
+    creative re-render). Instead this validates the narrower variations
+    field set, then delegates to `proxy_comfy_edit_request` via
+    `_OverlayFormRequest` with a fixed generic prompt and the configured
+    edit-capable workflow (`images.variations.default_workflow`,
+    `proxy_config.yml`), reusing its entire upload/inject/adaptive-batching
+    pipeline rather than duplicating it.
+    """
+    if not COMFY_ENABLED:
+        if receipt is not None:
+            receipt.add_fallback_reason("comfy_disabled")
+        return Response(
+            content=json.dumps({"error": {"message": "Image generation not enabled", "type": "service_unavailable"}}),
+            status_code=503,
+            media_type="application/json"
+        )
+    service_response = _service_availability_response(
+        "comfyui",
+        service_label="ComfyUI",
+    )
+    if service_response is not None:
+        if receipt is not None:
+            receipt.add_fallback_reason("comfy_operator_mode")
+        return service_response
+
+    try:
+        form = await request.form()
+    except Exception as e:
+        _record_image_input(receipt, "body", rejected_reason="invalid_form")
+        return Response(
+            content=json.dumps({"error": {"message": f"Invalid form data: {e}", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
+
+    form_dict: dict[str, Any] = {}
+    for key, value in form.multi_items():
+        if key in form_dict:
+            continue
+        form_dict[str(key)] = value
+    unknown_response = _record_unknown_image_fields(
+        receipt,
+        form_dict,
+        STANDARD_IMAGE_VARIATIONS_FIELDS,
+    )
+    if unknown_response is not None:
+        return unknown_response
+
+    image_files = _collect_edit_image_uploads(form)
+    if not image_files:
+        _record_image_input(receipt, "image", rejected_reason="missing")
+        return Response(
+            content=json.dumps({"error": {"message": "image is required", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
+    if len(image_files) > 1:
+        # OpenAI's variations endpoint takes exactly one input image. Reject
+        # clearly rather than silently using only the first (the same
+        # silent-drop bug class this media-refresh fixes for edits).
+        _record_image_input(receipt, "image", rejected_reason="too_many_images")
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": (
+                        f"/v1/images/variations accepts exactly one input image; "
+                        f"{len(image_files)} were provided"
+                    ),
+                    "type": "invalid_request_error",
+                    "param": "image",
+                    "code": "too_many_images",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+    _record_image_input(receipt, "image")
+
+    requested_model = str(form.get("model") or IMAGE_VARIATIONS_DEFAULT_WORKFLOW)
+    model = requested_model
+    if not (model.endswith("-edit") or model.endswith("-inpaint")):
+        model = f"{model}-edit"
+    if receipt is not None:
+        receipt.requested_model = requested_model
+    _record_image_input(receipt, "model")
+
+    overlay: dict[str, str] = {
+        "prompt": IMAGE_VARIATIONS_PROMPT,
+        "model": model,
+    }
+    manifest = _find_image_manifest("image.edit", model)
+    if manifest is not None and "denoise" in (manifest.get("inputs") or {}):
+        # Only inject the denoise extension when the resolved workflow's
+        # manifest actually declares it -- an unsupported extension input
+        # would otherwise be rejected with a 400 by the edit route itself.
+        overlay["extensions"] = json.dumps({
+            WORKFLOW_EXTENSION_NAMESPACE: {"denoise": IMAGE_VARIATIONS_DENOISE}
+        })
+
+    overlay_request = _OverlayFormRequest(request, form, overlay)
+    return await proxy_comfy_edit_request(
+        overlay_request,  # type: ignore[arg-type]
+        auth_context,
+        receipt=receipt,
+    )
 
 
 # =============================================================================
@@ -16405,7 +16567,12 @@ async def images_generations(request: Request):
 @app.post("/openai/v1/images/variations", openapi_extra=IMAGES_VARIATIONS_OPENAPI)
 @app.post("/v1/images/variations", openapi_extra=IMAGES_VARIATIONS_OPENAPI)
 async def images_variations(request: Request):
-    """OpenAI-compatible image variations endpoint - explicitly unsupported."""
+    """OpenAI-compatible image variations endpoint.
+
+    Routed through an edit-capable workflow (images.variations.default_workflow
+    in proxy_config.yml) with a fixed generic prompt -- see
+    proxy_comfy_variations_request for why.
+    """
     auth_context = authenticate_request(request, "/v1/images/variations")
     if isinstance(auth_context, Response):
         return auth_context
@@ -16415,10 +16582,7 @@ async def images_variations(request: Request):
         response = _policy_denied_response(decision)
         finish_image_route_receipt(receipt, response)
         return response
-    response = openai_error_response(
-        "Local image variation is not configured or supported.",
-        code="unsupported_image_variations",
-    )
+    response = await proxy_comfy_variations_request(request, auth_context, receipt=receipt)
     finish_image_route_receipt(receipt, response)
     return response
 

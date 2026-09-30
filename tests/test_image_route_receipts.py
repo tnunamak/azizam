@@ -1795,5 +1795,167 @@ class TestProxyComfyEditRequestOutputShape(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(response.body)["error"]["param"], "background")
 
 
+class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
+    """`/v1/images/variations` -- routed through an edit-capable workflow with
+    a fixed generic prompt, since OpenAI's variations request has no prompt."""
+
+    def _edit_workflow(self) -> dict[str, Any]:
+        return {
+            "_meta": {
+                "name": "flux2-klein-4b-edit",
+                "prompt_node": "6",
+                "image_node": "10",
+            },
+            "6": {"inputs": {"text": ""}},
+            "10": {"inputs": {"image": ""}},
+            "49": {"inputs": {"denoise": 1.0}},
+        }
+
+    def _edit_manifest(self, *, with_denoise: bool) -> dict[str, Any]:
+        inputs: dict[str, Any] = {
+            "prompt": {"type": "string", "required": True},
+            "source_image": {"type": "asset", "required": True},
+        }
+        mapping: dict[str, Any] = {
+            "prompt": [{"node": "6", "input": "text"}],
+            "source_image": [{"node": "10", "input": "image"}],
+        }
+        if with_denoise:
+            inputs["denoise"] = {"type": "number", "minimum": 0, "maximum": 1}
+            mapping["denoise"] = [{"node": "49", "input": "denoise"}]
+        return {
+            "schema_version": 1,
+            "id": "image.edit.flux2-klein-4b",
+            "intent": "image.edit",
+            "inputs": inputs,
+            "outputs": {"image": {"media_type": "image/png"}},
+            "bindings": {"comfyui": {"workflow": "workflows/images/flux2-klein-4b-edit.json", "map": mapping}},
+        }
+
+    async def _run(
+        self,
+        *,
+        fields: list[tuple[str, Any]],
+        manifest: dict[str, Any] | None,
+    ) -> tuple[RouteReceipt, Response, dict[str, Any]]:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/variations", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest(fields)
+        workflow = self._edit_workflow()
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "load_comfy_workflow",
+            lambda _model: copy.deepcopy(workflow),
+        ), patch.object(
+            proxy,
+            "_find_image_manifest",
+            lambda _intent, _model: manifest,
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_variations_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+        return receipt, response, captured
+
+    async def test_unknown_field_is_rejected(self) -> None:
+        # `prompt` is a valid /v1/images/edits field but not a valid
+        # /v1/images/variations field -- OpenAI itself rejects it there.
+        receipt, response, _ = await self._run(
+            fields=[
+                ("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255)))),
+                ("prompt", "please do X"),
+            ],
+            manifest=self._edit_manifest(with_denoise=True),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(json.loads(response.body)["error"]["param"], "prompt")
+
+    async def test_missing_image_is_rejected(self) -> None:
+        receipt, response, _ = await self._run(
+            fields=[], manifest=self._edit_manifest(with_denoise=True)
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(receipt.rejected_inputs.get("image"), "missing")
+
+    async def test_multiple_images_rejected_with_clear_error(self) -> None:
+        receipt, response, _ = await self._run(
+            fields=[
+                ("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255)))),
+                ("image", _MultipartUpload("b.png", _png_bytes((4, 5, 6, 255)))),
+            ],
+            manifest=self._edit_manifest(with_denoise=True),
+        )
+        self.assertEqual(response.status_code, 400)
+        body = json.loads(response.body)
+        self.assertEqual(body["error"]["code"], "too_many_images")
+        self.assertEqual(receipt.rejected_inputs.get("image"), "too_many_images")
+
+    async def test_success_injects_fixed_prompt_and_default_workflow(self) -> None:
+        receipt, response, captured = await self._run(
+            fields=[("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255))))],
+            manifest=self._edit_manifest(with_denoise=False),
+        )
+        self.assertEqual(response.status_code, 200)
+        workflow_payload = captured["base_workflow"]
+        self.assertEqual(
+            workflow_payload["6"]["inputs"]["text"], proxy.IMAGE_VARIATIONS_PROMPT
+        )
+        self.assertEqual(workflow_payload["10"]["inputs"]["image"], "uploaded-1.png")
+        self.assertEqual(receipt.requested_model, proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW)
+
+    async def test_denoise_applied_only_when_manifest_declares_it(self) -> None:
+        receipt, response, captured = await self._run(
+            fields=[("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255))))],
+            manifest=self._edit_manifest(with_denoise=True),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            captured["base_workflow"]["49"]["inputs"]["denoise"],
+            proxy.IMAGE_VARIATIONS_DENOISE,
+        )
+
+    async def test_denoise_not_injected_when_manifest_lacks_it(self) -> None:
+        receipt, response, captured = await self._run(
+            fields=[("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255))))],
+            manifest=self._edit_manifest(with_denoise=False),
+        )
+        self.assertEqual(response.status_code, 200)
+        # Workflow's own default (1.0) stands -- no unsupported-extension 400.
+        self.assertEqual(captured["base_workflow"]["49"]["inputs"]["denoise"], 1.0)
+
+    async def test_configured_default_workflow_is_honored(self) -> None:
+        with patch.object(proxy, "IMAGE_VARIATIONS_DEFAULT_WORKFLOW", "flux2-klein-4b-inpaint"):
+            receipt, response, _ = await self._run(
+                fields=[("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255))))],
+                manifest=self._edit_manifest(with_denoise=False),
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(receipt.requested_model, "flux2-klein-4b-inpaint")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

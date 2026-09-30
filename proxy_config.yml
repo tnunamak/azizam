@@ -334,6 +334,17 @@ images:
   background_removal:
     enabled: true
     decision_timeout: 45
+  # /v1/images/variations has no local "true" variations model: there is no
+  # prompt in the OpenAI variations request, so the gateway routes it through
+  # an edit-capable workflow with a fixed generic prompt instead. Any workflow
+  # id here gets "-edit"/"-inpaint" suffixed the same way the edit route does
+  # if it isn't already suffixed.
+  variations:
+    default_workflow: flux2-klein-4b-edit
+    # Partial-denoise strength applied only when the resolved workflow's
+    # manifest declares a `denoise` input (e.g. flux2-klein-4b-edit,
+    # flux2-klein-4b-inpaint) -- otherwise the workflow's own default stands.
+    denoise: 0.75
 model_routing:
   model_dir: /media/windows/AI Models/LLMs
   gguf_dir: /media/windows/AI Models/LLMs/GGUF

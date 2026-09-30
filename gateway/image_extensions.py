@@ -97,6 +97,26 @@ STANDARD_IMAGE_EDIT_FIELDS: frozenset[str] = frozenset(
     }
 )
 
+# OpenAI's /v1/images/variations is the narrowest of the three image routes:
+# no prompt, no mask, none of the gpt-image-1-only fields (background,
+# output_format, output_compression, quality). Deliberately not a superset of
+# STANDARD_IMAGE_EDIT_FIELDS even though the gateway routes variations through
+# an edit-capable workflow internally — a client sending `prompt` or
+# `background` to /v1/images/variations should get "unknown parameter", the
+# same as it would from OpenAI itself.
+STANDARD_IMAGE_VARIATIONS_FIELDS: frozenset[str] = frozenset(
+    {
+        "model",
+        "n",
+        "size",
+        "response_format",
+        "user",
+        "image",
+        "image[]",
+        "images",
+    }
+)
+
 
 @dataclass
 class ImageExtensionBinding:
