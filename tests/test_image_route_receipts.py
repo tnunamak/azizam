@@ -1340,5 +1340,205 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
+    """Multi-reference-image edit handling (proxy.py's `image[]` fix).
+
+    Covers the bug described in the media architecture brief: the edit route
+    used to read only the first multipart value per key (`form.get(...)`),
+    silently dropping every additional `image[]` part. These tests exercise
+    the fixed path via `form.multi_items()` collection plus the new
+    `_meta.image_nodes` capacity declaration.
+    """
+
+    def _single_image_workflow(self) -> dict[str, Any]:
+        return {
+            "_meta": {
+                "name": "single-image-fixture",
+                "prompt_node": "6",
+                "image_node": "10",
+            },
+            "6": {"inputs": {"text": ""}},
+            "10": {"inputs": {"image": ""}},
+        }
+
+    def _multi_image_workflow(self) -> dict[str, Any]:
+        return {
+            "_meta": {
+                "name": "multi-image-fixture",
+                "prompt_node": "6",
+                "image_nodes": ["10", "42"],
+            },
+            "6": {"inputs": {"text": ""}},
+            "10": {"inputs": {"image": ""}},
+            "42": {"inputs": {"image": ""}},
+        }
+
+    async def test_second_image_reaches_comfy_upload_not_dropped(self) -> None:
+        """Regression: a second `image[]` part must actually be read.
+
+        Before the fix, `form.get("image[]")` silently returned only the
+        first upload and the second file was never even `.read()`. Asserting
+        two uploads (not one) against a multi-slot workflow proves the second
+        file is no longer dropped.
+        """
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest(
+            [
+                ("prompt", "combine these two references"),
+                ("model", "flux2-klein-4b-edit"),
+                ("image[]", _MultipartUpload("a.png", _png_bytes((255, 0, 0, 255)))),
+                ("image[]", _MultipartUpload("b.png", _png_bytes((0, 255, 0, 255)))),
+            ]
+        )
+        workflow = self._multi_image_workflow()
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "load_comfy_workflow",
+            lambda _model: copy.deepcopy(workflow),
+        ), patch.object(
+            proxy,
+            "_find_image_manifest",
+            lambda _intent, _model: None,
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        # One upload per reference image (mask/extension uploads excluded here).
+        self.assertEqual(_FakeAsyncClient.uploads, 2)
+        bound_workflow = captured["base_workflow"]
+        self.assertEqual(bound_workflow["10"]["inputs"]["image"], "uploaded-1.png")
+        self.assertEqual(bound_workflow["42"]["inputs"]["image"], "uploaded-2.png")
+
+    async def test_extra_images_rejected_with_clear_400_when_workflow_supports_one(
+        self,
+    ) -> None:
+        """A workflow declaring only `image_node` (capacity 1) must reject,
+        not silently drop, a second reference image."""
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest(
+            [
+                ("prompt", "combine these two references"),
+                ("model", "flux2-klein-4b-edit"),
+                ("image[]", _MultipartUpload("a.png", _png_bytes((255, 0, 0, 255)))),
+                ("image[]", _MultipartUpload("b.png", _png_bytes((0, 255, 0, 255)))),
+            ]
+        )
+        workflow = self._single_image_workflow()
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "load_comfy_workflow",
+            lambda _model: copy.deepcopy(workflow),
+        ), patch.object(
+            proxy,
+            "_find_image_manifest",
+            lambda _intent, _model: None,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+
+        self.assertEqual(response.status_code, 400)
+        body = json.loads(response.body)
+        self.assertEqual(body["error"]["code"], "too_many_images")
+        self.assertIn("at most 1", body["error"]["message"])
+        self.assertIn("image[]", receipt.rejected_inputs)
+        self.assertEqual(receipt.rejected_inputs["image[]"], "too_many_images")
+
+    async def test_single_image_still_works_without_regression(self) -> None:
+        """A plain single-`image` edit (the common case) is unaffected."""
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest(
+            [
+                ("prompt", "make it blue"),
+                ("model", "flux2-klein-4b-edit"),
+                ("image", _MultipartUpload("a.png", _png_bytes((255, 0, 0, 255)))),
+            ]
+        )
+        workflow = self._single_image_workflow()
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "load_comfy_workflow",
+            lambda _model: copy.deepcopy(workflow),
+        ), patch.object(
+            proxy,
+            "_find_image_manifest",
+            lambda _intent, _model: None,
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(_FakeAsyncClient.uploads, 1)
+        self.assertEqual(captured["base_workflow"]["10"]["inputs"]["image"], "uploaded-1.png")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -6624,6 +6624,47 @@ async def proxy_comfy_request(
         )
 
 
+# Multipart field names OpenAI clients use for edit reference image(s). The
+# gpt-image-1 multi-image edit shape repeats "image[]" once per file (up to
+# 16); legacy dall-e-2 edits send a single "image" part. "images" is kept as
+# a defensive allow-listed alias (not an OpenAI SDK field) so a non-SDK
+# client using the plural, unbracketed name still works instead of being
+# silently ignored.
+_EDIT_IMAGE_FIELD_NAMES = ("image[]", "image", "images")
+
+
+def _collect_edit_image_uploads(form: Any) -> list[Any]:
+    """Return every uploaded file across the edit image field names, in order.
+
+    Starlette's ``FormData`` (and the test stubs mirroring it) expose
+    ``multi_items()`` with every repeated key preserved; ``form.get()`` only
+    ever returns the first. Using ``multi_items()`` here is what actually
+    fixes the multi-reference-image drop bug: every ``image[]`` part a
+    client uploads is now read, not just the first.
+    """
+    uploads: list[Any] = []
+    for key, value in form.multi_items():
+        if key in _EDIT_IMAGE_FIELD_NAMES and hasattr(value, "read"):
+            uploads.append(value)
+    return uploads
+
+
+def _image_edit_node_slots(meta: Mapping[str, Any]) -> list[str]:
+    """Return the ordered ComfyUI node ids that accept an uploaded edit image.
+
+    Workflows declare image capacity via ``_meta.image_nodes`` (a list, for
+    workflows built to accept multiple reference images) or the legacy
+    singular ``_meta.image_node`` (capacity 1 — true of every shipped
+    workflow today). Order determines which uploaded file, in submission
+    order, binds to which node.
+    """
+    nodes = meta.get("image_nodes")
+    if isinstance(nodes, list) and nodes:
+        return [str(n) for n in nodes if n]
+    single = meta.get("image_node")
+    return [str(single)] if single else []
+
+
 async def proxy_comfy_edit_request(
     request: Request,
     auth_context: AuthContext,
@@ -6686,7 +6727,8 @@ async def proxy_comfy_edit_request(
     if unknown_response is not None:
         return unknown_response
 
-    image_file = form.get("image") or form.get("image[]")
+    image_files = _collect_edit_image_uploads(form)
+    image_file = image_files[0] if image_files else None
     mask_file = form.get("mask")
     prompt = form.get("prompt", "")
     requested_model = form.get("model", "flux2-klein-4b-edit")
@@ -6845,6 +6887,24 @@ async def proxy_comfy_edit_request(
             if receipt is not None:
                 receipt.requested_workflow = str(model) if model is not None else None
                 receipt.resolved_workflow = workflow_name
+            image_slots = _image_edit_node_slots(meta)
+            if len(image_files) > len(image_slots):
+                _record_image_input(receipt, "image[]", rejected_reason="too_many_images")
+                return Response(
+                    content=json.dumps({
+                        "error": {
+                            "message": (
+                                f"workflow {workflow_name} accepts at most {len(image_slots)} "
+                                f"input image(s); {len(image_files)} were provided"
+                            ),
+                            "type": "invalid_request_error",
+                            "param": "image[]",
+                            "code": "too_many_images",
+                        }
+                    }),
+                    status_code=400,
+                    media_type="application/json",
+                )
             manifest = _find_image_manifest("image.edit", str(model))
             if manifest is not None:
                 identity = manifest_identity(manifest)
@@ -6909,15 +6969,43 @@ async def proxy_comfy_edit_request(
             )
 
             prompt_node = meta.get("prompt_node")
-            image_node = meta.get("image_node")
             seed_node = meta.get("seed_node")
             size_node = meta.get("size_node")
 
             if prompt_node and prompt_node in workflow:
                 workflow[prompt_node]["inputs"]["text"] = prompt
 
-            if image_node and image_node in workflow:
-                workflow[image_node]["inputs"]["image"] = uploaded_filename
+            # Upload any reference images beyond the first (already uploaded
+            # above as `uploaded_filename`) and bind every uploaded filename,
+            # in submission order, to the workflow's declared image slots.
+            image_filenames = [uploaded_filename]
+            for extra_file in image_files[1:]:
+                extra_content = await extra_file.read()
+                extra_upload_resp = await client.post(
+                    f"{COMFY_HOST}/upload/image",
+                    headers=headers,
+                    files={"image": (extra_file.filename or "input.png", extra_content, "image/png")},
+                )
+                if extra_upload_resp.status_code != 200:
+                    return Response(
+                        content=json.dumps({"error": {"message": f"Image upload failed: {extra_upload_resp.text}", "type": "api_error"}}),
+                        status_code=502,
+                        media_type="application/json"
+                    )
+                extra_upload_result = extra_upload_resp.json()
+                extra_filename = extra_upload_result.get("name")
+                if not extra_filename:
+                    return Response(
+                        content=json.dumps({"error": {"message": "No filename returned from upload", "type": "api_error"}}),
+                        status_code=502,
+                        media_type="application/json"
+                    )
+                print(f"[proxy] Uploaded additional reference image: {extra_filename}", flush=True)
+                image_filenames.append(extra_filename)
+
+            for slot_node, filename in zip(image_slots, image_filenames):
+                if slot_node in workflow:
+                    workflow[slot_node]["inputs"]["image"] = filename
 
             mask_input_name = _manifest_route_managed_mask_input(manifest)
             mask_uses_workflow = False
