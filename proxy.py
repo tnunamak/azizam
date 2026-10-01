@@ -763,15 +763,19 @@ IMAGE_BACKGROUND_REMOVAL_ENABLED = bool_from_config(IMAGE_BACKGROUND_REMOVAL_CFG
 IMAGE_BACKGROUND_REMOVAL_TIMEOUT = float(IMAGE_BACKGROUND_REMOVAL_CFG.get("decision_timeout", 45))
 IMAGE_MEDIA_JOBS_CFG = images_cfg.get("media_jobs", {}) or {}
 IMAGE_VARIATIONS_CFG = images_cfg.get("variations", {}) or {}
+IMAGE_EDITS_CFG = images_cfg.get("edits", {}) or {}
 # Routes /v1/images/variations through an edit-capable workflow with a fixed
-# generic prompt (variations has no prompt of its own). Default mirrors the
-# edit route's own hardcoded default edit model.
+# generic prompt (variations has no prompt of its own). The packaged default
+# mirrors the configured image-edit model.
 IMAGE_VARIATIONS_DEFAULT_WORKFLOW = str(
-    IMAGE_VARIATIONS_CFG.get("default_workflow", "flux2-klein-4b-edit")
+    IMAGE_VARIATIONS_CFG.get("default_workflow", "qwen-image-2.1-edit")
 )
 # Partial-denoise strength applied only when the resolved workflow's manifest
 # declares a `denoise` input -- otherwise the workflow's own default stands.
 IMAGE_VARIATIONS_DENOISE = float(IMAGE_VARIATIONS_CFG.get("denoise", 0.75))
+IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW = str(
+    IMAGE_EDITS_CFG.get("multiref_default_workflow", "qwen-image-2.1-edit-multiref")
+)
 GATEWAY_CFG = config.get("gateway", {}) or {}
 RESOURCE_ADMISSION_CFG = GATEWAY_CFG.get("resource_admission", {}) or {}
 MEDIA_JOB_ADMISSION_CFG = RESOURCE_ADMISSION_CFG.get("media_jobs", {}) or {}
@@ -2596,7 +2600,7 @@ TTS_RESPONSE_MEDIA_TYPES = {
 }
 STT_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("transcriptions") or stt_cfg.get("default_model", "parakeet-tdt-0.6b-v3")
 EMBEDDINGS_MODEL = MODEL_COMPAT_DEFAULTS.get("embeddings") or EMBEDDINGS_BACKEND_MODEL
-IMAGE_EDIT_DEFAULT_MODEL = MODEL_COMPAT_DEFAULTS.get("image_edits", "flux2-klein-4b-edit")
+IMAGE_EDIT_DEFAULT_MODEL = MODEL_COMPAT_DEFAULTS.get("image_edits", "qwen-image-2.1-edit")
 
 # Voice metadata derived from the id. Keep in sync with the voxtral-voices
 # transform map in gateway/transforms.py (the single source of truth).
@@ -6906,7 +6910,7 @@ async def proxy_comfy_edit_request(
     image_file = image_files[0] if image_files else None
     mask_file = form.get("mask")
     prompt = form.get("prompt", "")
-    requested_model = form.get("model", "flux2-klein-4b-edit")
+    requested_model = form.get("model", IMAGE_EDIT_DEFAULT_MODEL)
     model = requested_model
     size = form.get("size", "")
     if receipt is not None:
@@ -6994,10 +6998,11 @@ async def proxy_comfy_edit_request(
         )
     _record_image_input(receipt, "prompt")
 
-    if not (str(model).endswith("-edit") or str(model).endswith("-inpaint")):
-        model = f"{model}-edit"
-    if mask_file:
-        model = _prefer_inpaint_workflow_for_mask(str(model))
+    model = _select_edit_workflow(
+        str(model),
+        image_count=len(image_files),
+        has_mask=bool(mask_file),
+    )
 
     if receipt is not None:
         receipt.resolved_model = str(model) if model is not None else None
@@ -7011,6 +7016,7 @@ async def proxy_comfy_edit_request(
             status_code=400,
             media_type="application/json"
         )
+    manifest = _find_image_manifest("image.edit", str(model))
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
@@ -7026,6 +7032,9 @@ async def proxy_comfy_edit_request(
                     _record_image_input(receipt, "mask", rejected_reason="invalid_mask")
                     return mask_error
                 _record_image_input(receipt, "mask")
+
+            if mask_context is not None and _manifest_uses_source_alpha_mask(manifest):
+                image_content = _apply_edit_mask_as_source_alpha(mask_context)
 
             files = {"image": (image_file.filename or "input.png", image_content, "image/png")}
             upload_resp = await client.post(f"{COMFY_HOST}/upload/image", headers=headers, files=files)
@@ -7089,7 +7098,6 @@ async def proxy_comfy_edit_request(
                     status_code=400,
                     media_type="application/json",
                 )
-            manifest = _find_image_manifest("image.edit", str(model))
             if manifest is not None:
                 identity = manifest_identity(manifest)
                 if receipt is not None:
@@ -13892,6 +13900,19 @@ def _prepare_image_edit_mask_context(
     )
 
 
+def _apply_edit_mask_as_source_alpha(context: ImageEditMaskContext) -> bytes:
+    """Encode the OpenAI edit mask in source alpha for workflows that request it."""
+    from PIL import Image
+    import io
+
+    source = Image.open(io.BytesIO(context.source_image)).convert("RGBA")
+    source.load()
+    edit_mask = Image.open(io.BytesIO(context.edit_mask)).convert("L")
+    edit_mask.load()
+    source.putalpha(edit_mask.point(lambda value: 255 - value))
+    return _image_to_png_bytes(source)
+
+
 def _image_to_png_bytes(image) -> bytes:
     import io
 
@@ -14444,6 +14465,14 @@ async def _proxy_offset_inpaint_tile_request(
     )
 
 
+def _manifest_uses_source_alpha_mask(manifest: Mapping[str, Any] | None) -> bool:
+    if not isinstance(manifest, Mapping):
+        return False
+    bindings = manifest.get("bindings")
+    comfyui = bindings.get("comfyui") if isinstance(bindings, Mapping) else None
+    return bool(comfyui.get("mask_to_source_alpha")) if isinstance(comfyui, Mapping) else False
+
+
 def _manifest_route_managed_mask_input(manifest: Mapping[str, Any] | None) -> str | None:
     if not isinstance(manifest, Mapping):
         return None
@@ -14510,6 +14539,27 @@ def _prefer_inpaint_workflow_for_mask(model: str) -> str:
     base = model.removesuffix("-edit")
     candidate = f"{base}-inpaint"
     return candidate if load_comfy_workflow(candidate) else model
+
+
+def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> str:
+    """Resolve edit defaults while keeping explicit workflow selections intact."""
+    selected = model
+    if selected == IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW:
+        if has_mask:
+            return _prefer_inpaint_workflow_for_mask(IMAGE_EDIT_DEFAULT_MODEL)
+        return selected
+
+    if not (selected.endswith("-edit") or selected.endswith("-inpaint")):
+        selected = f"{selected}-edit"
+
+    # A mask needs the mask-bound variant, which takes precedence over the
+    # reference-pair workflow because the inpaint graph has one source slot.
+    if has_mask:
+        return _prefer_inpaint_workflow_for_mask(selected)
+
+    if image_count > 1 and selected == IMAGE_EDIT_DEFAULT_MODEL:
+        return IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW
+    return selected
 
 
 def _attach_image_manifest_if_available(

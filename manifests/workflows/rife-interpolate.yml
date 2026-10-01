@@ -1,0 +1,45 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: video.edit.rife-interpolate
+intent: video.edit
+display_name: RIFE 2x Frame Interpolation
+description: >-
+  Doubles video frame rate via ComfyUI-Frame-Interpolation's native RIFE VFI node (rife49.pth).
+  Frame count and output fps both double, so real-time duration is unchanged. Audio passes through
+  unchanged. Verified end to end on a 3s/24fps synthetic test clip -> 48fps/143 frames, ~3s duration
+  preserved, 6.4s wall time, ~6.3GB VRAM delta. Published in workflow and capability discovery;
+  the gateway has no execution route for video-edit uploads yet, so this manifest is currently
+  discoverability only.
+source: local
+trusted: true
+inputs:
+  source_video:
+    type: asset
+    required: true
+  multiplier:
+    type: integer
+    enum: [2, 3, 4]
+    default: 2
+    description: Frame-count/fps multiplier. Only 2x is verified; higher values are supported by the RIFE VFI node but untested here.
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/rife-interpolate.json
+    map:
+      source_video:
+        - node: "1"
+          input: file
+      multiplier:
+        - node: "3"
+          input: multiplier
+        - node: "4"
+          input: b
+requires:
+  custom_nodes:
+    - "RIFE VFI"
+  models:
+    - role: other
+      path: custom_nodes/ComfyUI-Frame-Interpolation/ckpts/rife/rife49.pth

@@ -1,0 +1,122 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.edit.qwen-image-2.1-inpaint
+intent: image.edit
+display_name: Qwen-Image 2.1 Inpaint (LanPaint)
+description: >-
+  Mask-bound inpaint combining Qwen-Image 2.1 with LanPaint (scraed/LanPaint; no dedicated Qwen 2.1
+  inpaint checkpoint exists, LanPaint is the community-consensus universal inpainting tool, updated
+  for Qwen 2.1 support Sep 2026). Mask is the source image's own alpha channel (OpenAI edit-API
+  convention: transparent = regenerate). KNOWN LIMITATION, reproduced in our own test and consistent
+  with community reports (research-image.md): a faint horizontal blend seam/haze band can appear at
+  the mask boundary on hard-edged masks. Mask feathering (mask_feather, default 48px) reduces but
+  does not eliminate it -- this is flagged in the community as unresolved ("neither fix is perfect")
+  as of Sep 2026. Prefer masks with generous feather/soft edges over pixel-exact cutouts.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  source_image:
+    type: asset
+    required: true
+    description: RGBA image. Transparent pixels (alpha=0) mark the region to regenerate.
+  negative_prompt:
+    type: string
+    default: ""
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 60
+    default: 25
+  cfg:
+    type: number
+    minimum: 0
+    maximum: 10
+    default: 1.0
+  seed:
+    type: integer
+    minimum: 0
+  mask_expand:
+    type: integer
+    minimum: -256
+    maximum: 256
+    default: 0
+    description: Pixels to grow (positive) or shrink (negative) the edit mask before sampling.
+  mask_feather:
+    type: integer
+    minimum: 0
+    maximum: 256
+    default: 48
+    description: Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge.
+  lanpaint_steps:
+    type: integer
+    minimum: 0
+    maximum: 20
+    default: 5
+    description: LanPaint's internal Langevin refinement steps per sampler step ("turns of thinking"). Higher = better boundary consistency, slower.
+  prompt_mode:
+    type: string
+    enum: ["Image First", "Prompt First"]
+    default: "Image First"
+    description: Image First favors seamless blending; Prompt First favors literal adherence to the edit instruction.
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/qwen-image-2.1-inpaint.json
+    # This workflow derives its edit mask from source-image alpha. Convert the
+    # OpenAI mask upload into alpha on the source image before ComfyUI upload.
+    mask_to_source_alpha: true
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      source_image:
+        - node: "4"
+          input: image
+      negative_prompt:
+        - node: "9"
+          input: negative_prompt
+      steps:
+        - node: "11"
+          input: steps
+      cfg:
+        - node: "11"
+          input: cfg
+      seed:
+        - node: "11"
+          input: seed
+      mask_expand:
+        - node: "14"
+          input: expand
+      mask_feather:
+        - node: "15"
+          input: top
+        - node: "15"
+          input: bottom
+        - node: "15"
+          input: left
+        - node: "15"
+          input: right
+      lanpaint_steps:
+        - node: "11"
+          input: LanPaint_NumSteps
+      prompt_mode:
+        - node: "11"
+          input: LanPaint_PromptMode
+requires:
+  custom_nodes:
+    - LanPaint_KSampler
+    - LanPaint_ImageEncode
+    - LanPaint_ImageDecode
+  models:
+    - role: diffusion_model
+      path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors
+    - role: text_encoder
+      path: text_encoders/qwen3vl_8b_w4a8.safetensors
+    - role: vae
+      path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors

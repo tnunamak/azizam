@@ -301,7 +301,7 @@ backends:
     health_endpoint: /system_stats
     timeout: 300
     workflows_dir: ./workflows/images
-    default_model: flux2-klein-4b
+    default_model: krea2-turbo
     video_workflows_dir: ./workflows
     video_timeout: 1800
     role: required
@@ -340,11 +340,14 @@ images:
   # id here gets "-edit"/"-inpaint" suffixed the same way the edit route does
   # if it isn't already suffixed.
   variations:
-    default_workflow: flux2-klein-4b-edit
-    # Partial-denoise strength applied only when the resolved workflow's
-    # manifest declares a `denoise` input (e.g. flux2-klein-4b-edit,
-    # flux2-klein-4b-inpaint) -- otherwise the workflow's own default stands.
+    default_workflow: qwen-image-2.1-edit
+    # Partial-denoise strength applies only when the resolved workflow's
+    # manifest declares a `denoise` input; otherwise its own default stands.
     denoise: 0.75
+  edits:
+    # Used only for multi-image requests that otherwise resolve to the default
+    # edit workflow. Explicit model choices remain pinned to that workflow.
+    multiref_default_workflow: qwen-image-2.1-edit-multiref
 model_routing:
   model_dir: /media/windows/AI Models/LLMs
   gguf_dir: /media/windows/AI Models/LLMs/GGUF
@@ -611,8 +614,8 @@ model_compatibility:
     speech: mistralai/Voxtral-4B-TTS-2603
     transcriptions: parakeet-tdt-0.6b-v3
     embeddings: nomic-embed-text-v1.5
-    images: flux2-klein-4b
-    image_edits: flux2-klein-4b-edit
+    images: krea2-turbo
+    image_edits: qwen-image-2.1-edit
   aliases:
     nomic-embed-text-v1.5:
       category: embeddings

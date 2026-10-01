@@ -1,0 +1,82 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.edit.qwen-image-2.1-edit
+intent: image.edit
+display_name: Qwen-Image 2.1 Edit
+description: >-
+  Single-image instruction edit via Qwen-Image 2.1 (int8_convrot) + qwen3vl_8b_w4a8 text encoder +
+  madebyollin texture-fix VAE. Community consensus (Sep 2026, r/StableDiffusion) ranks this the best
+  local editor available, ahead of Flux.2 Klein 9B, especially for edits needing world knowledge.
+  Output resolution tracks the input image. License: Qwen research license (disputed scope on
+  Reddit re: output rights) -- flagged for legal review before commercial-use reliance per
+  research-image.md.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  source_image:
+    type: asset
+    required: true
+  negative_prompt:
+    type: string
+    default: ""
+  reference_resolution:
+    type: integer
+    minimum: 256
+    maximum: 2048
+    default: 1024
+    description: Reference image is resized to ~resolution x resolution before encoding. Lower values are the documented fix for Qwen 2.1's reference-resolution speed footgun (10-20x slower with multi-megapixel references).
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 60
+    default: 25
+  cfg:
+    type: number
+    minimum: 0
+    maximum: 10
+    default: 1.0
+    description: Official template default. One Reddit commenter reports CFG 1 can show a warm color-cast ("piss filter") and recommends CFG 3-5 with a negative prompt instead; not reproduced in our test image, but worth trying if output looks off.
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/qwen-image-2.1-edit.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      source_image:
+        - node: "4"
+          input: image
+      negative_prompt:
+        - node: "7"
+          input: negative_prompt
+      reference_resolution:
+        - node: "7"
+          input: resolution
+      steps:
+        - node: "8"
+          input: steps
+      cfg:
+        - node: "8"
+          input: cfg
+      seed:
+        - node: "8"
+          input: seed
+requires:
+  custom_nodes: []
+  models:
+    - role: diffusion_model
+      path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors
+    - role: text_encoder
+      path: text_encoders/qwen3vl_8b_w4a8.safetensors
+    - role: vae
+      path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors

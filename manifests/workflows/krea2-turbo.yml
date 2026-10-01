@@ -1,0 +1,71 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.generate.krea2-turbo
+intent: image.generate
+display_name: Krea 2 Turbo
+description: Local T2I workflow bound to Krea 2 Turbo (int8_convrot), the current (Sep 2026) community-consensus realism/prompt-adherence leader on Reddit r/StableDiffusion, overtaking Z-Image-Turbo. CFG-distilled turbo model (negative conditioning is zeroed, CFG fixed at 1.0).
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  width:
+    type: integer
+    minimum: 64
+    maximum: 2048
+    default: 1024
+  height:
+    type: integer
+    minimum: 64
+    maximum: 2048
+    default: 1024
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 20
+    default: 8
+    description: Turbo model; 8-12 steps is the community sweet spot. Values above ~16 show diminishing returns.
+  seed:
+    type: integer
+    minimum: 0
+  batch_size:
+    type: integer
+    minimum: 1
+    maximum: 8
+    default: 1
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/krea2-turbo.json
+    map:
+      prompt:
+        - node: "4"
+          input: text
+      width:
+        - node: "6"
+          input: width
+      height:
+        - node: "6"
+          input: height
+      steps:
+        - node: "7"
+          input: steps
+      seed:
+        - node: "7"
+          input: seed
+      batch_size:
+        - node: "6"
+          input: batch_size
+requires:
+  custom_nodes: []
+  models:
+    - role: diffusion_model
+      path: diffusion_models/krea2_turbo_int8_convrot.safetensors
+    - role: text_encoder
+      path: text_encoders/qwen3vl_4b_fp8_scaled.safetensors
+    - role: vae
+      path: vae/qwen_image_vae.safetensors

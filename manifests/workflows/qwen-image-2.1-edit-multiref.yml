@@ -1,0 +1,91 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.edit.qwen-image-2.1-edit-multiref
+intent: image.edit
+display_name: Qwen-Image 2.1 Multi-Reference Edit
+description: >-
+  2-image reference composite/edit via Qwen-Image 2.1's native multi-image conditioning
+  (TextEncodeQwenImage21's Autogrow `images` input, tested up to 16 slots upstream; this workflow
+  wires exactly 2 as required inputs). Verified: convincingly composites a subject from one
+  reference onto the scene/lighting of another in a single pass, no separate masking/compositing
+  step needed. Reference prompts should tag each image explicitly, e.g. "<image1> shows X. <image2>
+  shows Y. Combine them by...". A 3-reference variant is not shipped: the gateway's static
+  node-binding model (gateway/manifests.py _apply_mapping, flat node/input writes) cannot make an
+  Autogrow sub-key conditionally present per request, so a 3rd "optional" slot would always inject
+  a placeholder image as a real (if low-signal) reference. A 3-image variant needs gateway support
+  for per-request Autogrow key pruning; this manifest keeps the tested 2-image shape.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+    description: Reference each image explicitly, e.g. "<image1> ... <image2> ...".
+  source_image:
+    type: asset
+    required: true
+  reference_image_2:
+    type: asset
+    required: true
+  negative_prompt:
+    type: string
+    default: ""
+  reference_resolution:
+    type: integer
+    minimum: 256
+    maximum: 2048
+    default: 1024
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 60
+    default: 25
+  cfg:
+    type: number
+    minimum: 0
+    maximum: 10
+    default: 1.0
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/qwen-image-2.1-edit-multiref.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      source_image:
+        - node: "4"
+          input: image
+      reference_image_2:
+        - node: "11"
+          input: image
+      negative_prompt:
+        - node: "7"
+          input: negative_prompt
+      reference_resolution:
+        - node: "7"
+          input: resolution
+      steps:
+        - node: "8"
+          input: steps
+      cfg:
+        - node: "8"
+          input: cfg
+      seed:
+        - node: "8"
+          input: seed
+requires:
+  custom_nodes: []
+  models:
+    - role: diffusion_model
+      path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors
+    - role: text_encoder
+      path: text_encoders/qwen3vl_8b_w4a8.safetensors
+    - role: vae
+      path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors

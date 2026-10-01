@@ -1,0 +1,56 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.edit.seedvr2-upscale
+intent: image.edit
+display_name: SeedVR2 7B Sharp Upscale
+description: >-
+  One-step image upscale/restore via SeedVR2 7B Sharp (int8_convrot, Apache-2.0, ICLR 2026). Verified
+  at 2x (1024->2048) and 4x (1024->4096): both sharp, no grid/halo artifacts, genuinely enhanced
+  fine detail (tested on food photography with fine scallion/noodle texture). steps=1, cfg=1 is the
+  official template default -- SeedVR2 is a one-step flow-matching refine, not a traditional
+  multi-step diffusion upscaler, so this is intentional rather than under-configured.
+source: local
+trusted: true
+inputs:
+  source_image:
+    type: asset
+    required: true
+  scale:
+    type: number
+    enum: [2, 4]
+    default: 2
+  color_correction_method:
+    type: string
+    enum: ["none", "lab", "wavelet", "adain"]
+    default: "none"
+    description: Optional color match back to the original (pre-upscale) image. lab is most faithful, wavelet keeps upscaled high-frequency detail, adain is fastest/roughest, none skips color transfer.
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/seedvr2-upscale.json
+    map:
+      source_image:
+        - node: "1"
+          input: image
+      scale:
+        - node: "2"
+          input: "resize_type.multiplier"
+      color_correction_method:
+        - node: "10"
+          input: color_correction_method
+      seed:
+        - node: "8"
+          input: seed
+requires:
+  custom_nodes: []
+  models:
+    - role: diffusion_model
+      path: diffusion_models/seedvr2_7b_sharp_int8_convrot.safetensors
+    - role: vae
+      path: vae/seedvr2_ema_vae_fp16.safetensors

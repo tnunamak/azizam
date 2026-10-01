@@ -1079,6 +1079,27 @@ class _FakeAsyncClient:
 
 
 class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
+    def test_manifest_source_alpha_mask_uses_openai_edit_region(self) -> None:
+        from PIL import Image
+
+        mask = Image.new("RGBA", (2, 1), (0, 0, 0, 255))
+        mask.putpixel((0, 0), (0, 0, 0, 0))
+        mask_bytes = io.BytesIO()
+        mask.save(mask_bytes, format="PNG")
+        context, error = proxy._prepare_image_edit_mask_context(
+            source_image_content=_png_bytes((200, 100, 50, 255)),
+            mask_content=mask_bytes.getvalue(),
+        )
+        self.assertIsNone(error)
+        assert context is not None
+
+        manifest = proxy._find_image_manifest(
+            "image.edit", "qwen-image-2.1-inpaint"
+        )
+        self.assertTrue(proxy._manifest_uses_source_alpha_mask(manifest))
+        prepared = proxy._apply_edit_mask_as_source_alpha(context)
+        self.assertEqual([p[3] for p in _image_pixels(prepared)], [0, 255])
+
     def _conditioning_manifest(
         self,
         *,
@@ -1510,6 +1531,60 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             [pixel[0] for pixel in normalized_pixels],
             [255, 0],
         )
+
+
+class TestEditWorkflowSelection(unittest.TestCase):
+    def test_configured_image_defaults_and_fallback_workflows(self) -> None:
+        self.assertEqual(proxy.COMFY_DEFAULT_MODEL, "krea2-turbo")
+        self.assertEqual(proxy.IMAGE_EDIT_DEFAULT_MODEL, "qwen-image-2.1-edit")
+        self.assertEqual(
+            proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW, "qwen-image-2.1-edit"
+        )
+        self.assertIsNotNone(proxy.load_comfy_workflow("flux2-klein-4b"))
+        self.assertIsNotNone(proxy.load_comfy_workflow("flux2-klein-4b-edit"))
+
+    def test_default_edit_routes_by_input_shape(self) -> None:
+        with (
+            patch.object(proxy, "IMAGE_EDIT_DEFAULT_MODEL", "qwen-image-2.1-edit"),
+            patch.object(
+                proxy,
+                "IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW",
+                "qwen-image-2.1-edit-multiref",
+            ),
+        ):
+            self.assertEqual(
+                proxy._select_edit_workflow(
+                    "qwen-image-2.1-edit", image_count=1, has_mask=False
+                ),
+                "qwen-image-2.1-edit",
+            )
+            self.assertEqual(
+                proxy._select_edit_workflow(
+                    "qwen-image-2.1-edit", image_count=2, has_mask=False
+                ),
+                "qwen-image-2.1-edit-multiref",
+            )
+            self.assertEqual(
+                proxy._select_edit_workflow(
+                    "qwen-image-2.1-edit-multiref", image_count=2, has_mask=False
+                ),
+                "qwen-image-2.1-edit-multiref",
+            )
+            self.assertEqual(
+                proxy._select_edit_workflow(
+                    "qwen-image-2.1-edit", image_count=1, has_mask=True
+                ),
+                "qwen-image-2.1-inpaint",
+            )
+
+    def test_explicit_fallback_model_stays_selected_for_multi_image(self) -> None:
+        with patch.object(proxy, "IMAGE_EDIT_DEFAULT_MODEL", "qwen-image-2.1-edit"):
+            self.assertEqual(
+                proxy._select_edit_workflow(
+                    "flux2-klein-4b", image_count=2, has_mask=False
+                ),
+                "flux2-klein-4b-edit",
+            )
 
 
 class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
