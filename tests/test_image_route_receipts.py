@@ -259,6 +259,80 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         body = json.loads(response.body)
         self.assertEqual(body["background"], "opaque")
 
+    async def _run_adaptive(self, *, n: int, estimate: int, free_seq, freed: bool):
+        raw = _png_bytes((10, 20, 30, 255))
+        batches: list[int] = []
+
+        async def fake_run_round(_client, workflow, *_a, **_k):
+            batches.append(workflow["b"]["inputs"]["batch_size"])
+            return None, [raw] * batches[-1]
+
+        free_iter = iter(free_seq)
+        last = {"v": free_seq[-1]}
+
+        async def fake_free(_client):
+            last["v"] = next(free_iter, last["v"])
+            return last["v"]
+
+        free_models = AsyncMock(return_value=freed)
+        meta = {"batch_size_node": "b", "batch_size_field": "batch_size"}
+        with patch.object(proxy, "_comfy_run_round", fake_run_round), patch.object(
+            proxy, "get_vram_estimate", lambda *_a, **_k: estimate
+        ), patch.object(proxy, "comfy_free_vram_bytes", fake_free), patch.object(
+            proxy, "_free_comfy_models_if_idle", free_models
+        ), patch.object(proxy, "IMAGE_VRAM_RESERVE_BYTES", 1 << 30), patch.object(
+            proxy, "IMAGE_FREE_VRAM_ON_EXHAUSTION", True
+        ):
+            response = await proxy._generate_images_with_adaptive_batching(
+                request=_StubUrlRequest(),  # type: ignore[arg-type]
+                client=object(),  # type: ignore[arg-type]
+                base_workflow={"b": {"inputs": {"batch_size": 1}}},
+                meta=meta,
+                seed_node=None,
+                seed_field="seed",
+                workflow_name="fixture",
+                width=1024,
+                height=1024,
+                n_requested=n,
+                response_format="b64_json",
+                headers={},
+            )
+        return response, batches, free_models
+
+    async def test_single_image_not_refused_when_free_below_estimate(self) -> None:
+        gib = 1 << 30
+        response, batches, free_models = await self._run_adaptive(
+            n=1, estimate=int(16.05 * gib), free_seq=[int(16.74 * gib)] * 6, freed=False
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(batches, [1])
+        free_models.assert_awaited()  # idle free is still tried first
+
+    async def test_single_image_submits_after_idle_free_still_insufficient(self) -> None:
+        gib = 1 << 30
+        response, batches, _ = await self._run_adaptive(
+            n=1, estimate=16 * gib, free_seq=[2 * gib] * 6, freed=True
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(batches, [1])
+
+    async def test_multi_image_falls_back_to_batch_one_rounds(self) -> None:
+        gib = 1 << 30
+        response, batches, _ = await self._run_adaptive(
+            n=2, estimate=16 * gib, free_seq=[2 * gib] * 8, freed=False
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(batches, [1, 1])
+
+    async def test_estimate_still_sizes_larger_batches(self) -> None:
+        gib = 1 << 30
+        response, batches, free_models = await self._run_adaptive(
+            n=4, estimate=2 * gib, free_seq=[9 * gib] * 4, freed=False
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(batches, [4])
+        free_models.assert_not_awaited()
+
     async def test_image_edit_accepts_openai_image_array_multipart_field(self) -> None:
         receipt = proxy.start_image_route_receipt(
             "/v1/images/edits", proxy.NO_AUTH_CONTEXT
