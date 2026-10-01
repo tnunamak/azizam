@@ -650,7 +650,7 @@ def test_responses_trusted_loopback_prepares_once_and_reaches_one_backend_body(
                 "model": "default",
                 "messages": [{"role": "user", "content": "loopback"}],
                 "max_tokens": max_output_tokens,
-                "temperature": 0.6,
+                "temperature": 1.0,
                 "top_p": 0.95,
                 "top_k": 20,
                 "min_p": 0.0,

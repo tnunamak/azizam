@@ -1090,7 +1090,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(len(activations), 1)
         self.assertTrue(
             activations[0][2]
-            and activations[0][2].endswith("Qwen3.6-27B-mmproj-BF16.gguf")
+            and activations[0][2].endswith("Qwen3.8-27B-mmproj-BF16.gguf")
         )
 
     def test_litellm_substrate_keeps_gateway_anthropic_and_responses_translation(self) -> None:

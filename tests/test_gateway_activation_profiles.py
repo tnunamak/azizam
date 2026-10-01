@@ -14,7 +14,7 @@ from gateway.service_registry import build_service_registry_seed
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_configured_aliases_select_sticky_profiles_and_rp_keeps_abliterated_model() -> None:
+def test_configured_aliases_select_sticky_profiles_and_rp_keeps_uncensored_model() -> None:
     config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
     kobold = config["backends"]["kobold"]
     records = {record["id"]: record for record in kobold["models"]}
@@ -30,10 +30,10 @@ def test_configured_aliases_select_sticky_profiles_and_rp_keeps_abliterated_mode
     assert records["coder-q8"]["upstream_model"] == "coder-q8"
     assert records["rp"]["upstream_model"] == "rp"
     assert records["rp"]["backend_model"] == (
-        "Huihui-Qwen3.6-27B-abliterated-UD-Q4_K_XL-MTP.gguf"
+        "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
     )
     assert records["rp"]["activation_model"].endswith(
-        "Huihui-Qwen3.6-27B-abliterated-UD-Q4_K_XL-MTP.gguf"
+        "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
     )
     assert "activation_model" not in records["current"]
     assert "activation_profile" not in records["current"]
