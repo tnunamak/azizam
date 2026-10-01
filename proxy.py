@@ -2595,10 +2595,14 @@ OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE = bool_from_config(
 MODEL_COMPAT_DEFAULTS = compat_cfg.get("defaults", {})
 MODEL_COMPAT_ALIASES = compat_cfg.get("aliases", {})
 TTS_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("speech") or tts_cfg.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
-SUPPORTED_TTS_RESPONSE_FORMATS = {"wav", "mp3"}
+SUPPORTED_TTS_RESPONSE_FORMATS = {"wav", "mp3", "opus", "aac", "flac", "pcm"}
 TTS_RESPONSE_MEDIA_TYPES = {
     "wav": "audio/wav",
     "mp3": "audio/mpeg",
+    "opus": "audio/ogg",
+    "aac": "audio/aac",
+    "flac": "audio/flac",
+    "pcm": "audio/pcm",
 }
 STT_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("transcriptions") or stt_cfg.get("default_model", "parakeet-tdt-0.6b-v3")
 EMBEDDINGS_MODEL = MODEL_COMPAT_DEFAULTS.get("embeddings") or EMBEDDINGS_BACKEND_MODEL
@@ -3663,6 +3667,32 @@ def convert_wav_to_mp3(wav_content: bytes) -> bytes:
         return Path(mp3_file.name).read_bytes()
 
 
+def convert_wav_to_audio_format(wav_content: bytes, audio_format: str) -> bytes:
+    """Convert WAV bytes to a supported OpenAI speech response encoding."""
+    output_options = {
+        "opus": (".ogg", ["-c:a", "libopus", "-f", "ogg"]),
+        "aac": (".aac", ["-c:a", "aac", "-f", "adts"]),
+        "flac": (".flac", ["-c:a", "flac", "-f", "flac"]),
+        "pcm": (".pcm", ["-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1", "-f", "s16le"]),
+    }
+    if audio_format not in output_options:
+        raise ValueError(f"Unsupported audio format: {audio_format}")
+
+    suffix, options = output_options[audio_format]
+    with tempfile.NamedTemporaryFile(suffix=".wav") as wav_file, tempfile.NamedTemporaryFile(suffix=suffix) as output_file:
+        wav_file.write(wav_content)
+        wav_file.flush()
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", wav_file.name, *options, output_file.name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "ffmpeg failed")
+        return Path(output_file.name).read_bytes()
+
+
 async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Response:
     """Forward TTS request to TTS backend."""
     if not TTS_ENABLED:
@@ -3686,7 +3716,7 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
         response_format = str(body_json.get("response_format", "") or "wav").lower()
         if response_format not in SUPPORTED_TTS_RESPONSE_FORMATS:
             return openai_error_response(
-                "This gateway currently supports response_format='wav' or 'mp3' for speech synthesis.",
+                "response_format must be one of wav, mp3, opus, aac, flac, or pcm.",
                 status_code=400,
                 param="response_format",
                 code="unsupported_response_format",
@@ -3720,7 +3750,21 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
             # TTS returns audio data, stream it back
             content = resp.content
             content_type = resp.headers.get("content-type", TTS_RESPONSE_MEDIA_TYPES["wav"])
-            if 200 <= resp.status_code < 300 and requested_response_format == "mp3":
+            if 200 <= resp.status_code < 300 and requested_response_format not in {"wav", "mp3"}:
+                try:
+                    content = await asyncio.to_thread(
+                        convert_wav_to_audio_format,
+                        resp.content,
+                        requested_response_format,
+                    )
+                    content_type = TTS_RESPONSE_MEDIA_TYPES[requested_response_format]
+                except Exception as e:
+                    return Response(
+                        content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
+                        status_code=502,
+                        media_type="application/json",
+                    )
+            elif 200 <= resp.status_code < 300 and requested_response_format == "mp3":
                 try:
                     content = await asyncio.to_thread(convert_wav_to_mp3, resp.content)
                     content_type = TTS_RESPONSE_MEDIA_TYPES["mp3"]

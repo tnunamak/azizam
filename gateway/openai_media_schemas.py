@@ -76,11 +76,13 @@ def _audio_speech_request_schema() -> JsonObjectSchema:
             "voice": {"type": "string", "description": "OpenAI-compatible voice name."},
             "response_format": {
                 "type": "string",
-                "enum": ["wav", "mp3"],
+                "enum": ["mp3", "opus", "aac", "flac", "wav", "pcm"],
                 "default": "wav",
-                "description": "This gateway accepts 'wav' and 'mp3' only.",
+                "description": "Audio encoding for synthesized speech.",
             },
             "speed": {"type": "number"},
+            "instructions": {"type": "string"},
+            "language": {"type": "string"},
         },
         "additionalProperties": True,
     }
@@ -90,10 +92,14 @@ AUDIO_SPEECH_OPENAPI: JsonObjectSchema = {
     "requestBody": _json_request(_audio_speech_request_schema()),
     "responses": {
         "200": {
-            "description": "Synthesized audio bytes (WAV or MP3 per response_format).",
+            "description": "Synthesized audio bytes in the requested response_format.",
             "content": {
-                "audio/wav": {"schema": {"type": "string", "format": "binary"}},
                 "audio/mpeg": {"schema": {"type": "string", "format": "binary"}},
+                "audio/ogg": {"schema": {"type": "string", "format": "binary"}},
+                "audio/aac": {"schema": {"type": "string", "format": "binary"}},
+                "audio/flac": {"schema": {"type": "string", "format": "binary"}},
+                "audio/wav": {"schema": {"type": "string", "format": "binary"}},
+                "audio/pcm": {"schema": {"type": "string", "format": "binary"}},
             },
         },
         **_common_error_responses(),

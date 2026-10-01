@@ -201,10 +201,10 @@ backends:
         # Precheck type: validate model is an absolute, existing .gguf path.
         precheck: gguf_path
   tts:
-    name: voxtral-int4-tts
+    name: omnivoice-tts
     native_passthrough: true
     host: 127.0.0.1
-    port: 8001
+    port: 8002
     health_endpoint: /health
     timeout: 86400
     role: required
@@ -614,7 +614,7 @@ model_compatibility:
   defaults:
     chat: ""
     completions: ""
-    speech: mistralai/Voxtral-4B-TTS-2603
+    speech: k2-fsa/OmniVoice
     transcriptions: parakeet-tdt-0.6b-v3
     embeddings: nomic-embed-text-v1.5
     images: krea2-turbo

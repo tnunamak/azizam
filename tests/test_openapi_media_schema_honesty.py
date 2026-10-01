@@ -79,8 +79,20 @@ class OpenApiMediaSchemaHonestyTests(unittest.TestCase):
                 op = self._op(path)
                 self.assertJsonRequestBody(op)
                 ok = self._ok_response(op)
-                self.assertIn("audio/wav", self._media_types(ok))
-                self.assertIn("audio/mpeg", self._media_types(ok))
+                for media_type in (
+                    "audio/wav",
+                    "audio/mpeg",
+                    "audio/ogg",
+                    "audio/aac",
+                    "audio/flac",
+                    "audio/pcm",
+                ):
+                    self.assertIn(media_type, self._media_types(ok))
+                request_schema = op["requestBody"]["content"]["application/json"]["schema"]
+                self.assertEqual(
+                    request_schema["properties"]["response_format"]["enum"],
+                    ["mp3", "opus", "aac", "flac", "wav", "pcm"],
+                )
                 self.assertOpenAIErrorEnvelope(op)
 
     def test_audio_transcriptions_documents_multipart_and_json_or_text(self) -> None:

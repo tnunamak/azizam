@@ -338,6 +338,35 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(downstream["response_format"], "wav")
         self.assertEqual(downstream["model"], proxy.TTS_BACKEND_MODEL)
 
+    def test_tts_accepts_additional_openai_audio_formats(self) -> None:
+        formats = {
+            "opus": "audio/ogg",
+            "aac": "audio/aac",
+            "flac": "audio/flac",
+            "pcm": "audio/pcm",
+        }
+        for audio_format, content_type in formats.items():
+            with self.subTest(audio_format=audio_format), patch.object(
+                proxy.httpx, "AsyncClient", _FakeTTSAsyncClient
+            ), patch.object(
+                proxy,
+                "convert_wav_to_audio_format",
+                return_value=b"converted-audio",
+            ):
+                resp = self.client.post(
+                    "/v1/audio/speech",
+                    json={
+                        "model": "tts-1",
+                        "voice": "alloy",
+                        "input": "hello",
+                        "response_format": audio_format,
+                    },
+                )
+
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.headers["content-type"], content_type)
+                self.assertEqual(resp.content, b"converted-audio")
+
     def test_tts_rejects_unsupported_response_format(self) -> None:
         resp = self.client.post(
             "/v1/audio/speech",
@@ -345,7 +374,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
                 "model": "tts-1",
                 "voice": "alloy",
                 "input": "hello",
-                "response_format": "flac",
+                "response_format": "m4a",
             },
         )
 
