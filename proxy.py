@@ -18667,6 +18667,9 @@ def _workflow_model_entry_created(workflow_artifact: str) -> int:
         return int(time.time())
 
 
+_MODEL_LISTED_MEDIA_INTENTS = frozenset({"video.generate", "audio.generate"})
+
+
 def _build_workflow_model_entries(
     registry: WorkflowRegistry = GATEWAY_WORKFLOW_REGISTRY,
 ) -> list[dict]:
@@ -18680,7 +18683,10 @@ def _build_workflow_model_entries(
     """
     entries: list[dict] = []
     for record in registry.records():
-        if not record.intent.startswith("image."):
+        # Image workflows plus the video/audio generators: their `model` ids
+        # (video `videos.workflows` keys, audio `audio.workflows` keys) equal the
+        # workflow file basename, so the id listed here is the id the route accepts.
+        if not (record.intent.startswith("image.") or record.intent in _MODEL_LISTED_MEDIA_INTENTS):
             continue
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, dict):

@@ -43,6 +43,30 @@ class SizeAndLengthRuleTests(unittest.TestCase):
             self.assertEqual((length - 5) % 17, 0, (seconds, length))
 
 
+class ModelDiscoveryTests(unittest.TestCase):
+    def test_new_media_models_are_listed_with_honest_descriptions(self) -> None:
+        by_id = {e["id"]: e for e in proxy._build_workflow_model_entries()}
+        for model_id in (
+            "video-ltx-2.5-t2v", "video-ltx-2.5-i2v", "video-minimax-h3-t2v",
+            "video-minimax-h3-i2v", "yue2-song", "sa3-small-sfx",
+            "video-ltx-2.3-distilled", "tangoflux",
+        ):
+            self.assertIn(model_id, by_id)
+        self.assertIn("US, EU, UK", by_id["video-minimax-h3-t2v"]["description"])
+        self.assertIn("US, EU, UK", by_id["video-minimax-h3-i2v"]["description"])
+        self.assertIn("CC BY-NC", by_id["yue2-song"]["description"])
+        self.assertIn("MAXIMUM", by_id["yue2-song"]["description"])
+        self.assertEqual(by_id["yue2-song"]["vivid_fish_intent"], "audio.generate")
+        self.assertEqual(by_id["video-ltx-2.5-t2v"]["vivid_fish_intent"], "video.generate")
+
+    def test_every_listed_media_id_resolves_on_its_route(self) -> None:
+        for entry in proxy._build_workflow_model_entries():
+            if entry["vivid_fish_intent"] == "video.generate":
+                self.assertIsNotNone(proxy._resolve_video_workflow(entry["id"])[1], entry["id"])
+            elif entry["vivid_fish_intent"] == "audio.generate":
+                self.assertIsNotNone(proxy._resolve_audio_workflow(entry["id"])[1], entry["id"])
+
+
 class _FakeResponse:
     def __init__(self, status_code: int, payload=None) -> None:
         self.status_code = status_code
