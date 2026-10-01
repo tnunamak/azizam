@@ -47,11 +47,19 @@ class _FakeResponse:
 
 class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
     def test_video_output_prefers_downstream_result_over_input_echo(self) -> None:
-        output = proxy._extract_video_output({"outputs": {
-            "1": {"images": [{"filename": "input.mp4", "type": "input"}]},
-            "6": {"images": [{"filename": "rendered.mp4", "type": "output"}]},
-        }})
-        self.assertEqual(output["filename"], "rendered.mp4")
+        for outputs in (
+            {
+                "1": {"images": [{"filename": "input.mp4", "type": "input"}]},
+                "6": {"images": [{"filename": "rendered.mp4", "type": "output"}]},
+            },
+            {
+                "6": {"images": [{"filename": "rendered.mp4", "type": "output"}]},
+                "1": {"images": [{"filename": "input.mp4", "type": "input"}]},
+            },
+        ):
+            with self.subTest(outputs=list(outputs)):
+                output = proxy._extract_video_output({"outputs": outputs})
+                self.assertEqual(output["filename"], "rendered.mp4")
 
     async def test_manifest_video_workflow_runs_against_fake_comfyui(self) -> None:
         requests: list[tuple[str, dict]] = []

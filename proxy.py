@@ -8346,19 +8346,24 @@ def _extract_video_output(job: dict) -> Optional[dict]:
     """
     outputs = (job or {}).get("outputs", {}) or {}
     # ComfyUI's LoadVideo node can echo the uploaded source under ``images``.
-    # Walk outputs in reverse graph order so a downstream SaveVideo result wins.
-    for node_id, node_output in reversed(list(outputs.items())):
+    # Prefer the output directory marker; history object order is not stable.
+    fallback = None
+    for node_id, node_output in outputs.items():
         for key in ("videos", "gifs", "images"):
             entries = node_output.get(key) or []
             for entry in entries:
                 filename = entry.get("filename") or ""
                 if filename.lower().endswith((".mp4", ".webm", ".mov", ".mkv")):
-                    return {
+                    candidate = {
                         "filename": filename,
                         "subfolder": entry.get("subfolder", ""),
                         "type": entry.get("type", "output"),
                     }
-    return None
+                    if candidate["type"] == "output":
+                        return candidate
+                    if fallback is None:
+                        fallback = candidate
+    return fallback
 
 
 class _InputReferenceError(ValueError):
