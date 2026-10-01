@@ -14624,7 +14624,10 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
         return selected
 
     if not (selected.endswith("-edit") or selected.endswith("-inpaint")):
-        selected = f"{selected}-edit"
+        direct_workflow = load_comfy_workflow(selected)
+        direct_meta = direct_workflow.get("_meta", {}) if isinstance(direct_workflow, Mapping) else {}
+        if not isinstance(direct_meta, Mapping) or not (direct_meta.get("image_node") or direct_meta.get("image_nodes")):
+            selected = f"{selected}-edit"
 
     # A mask needs the mask-bound variant, which takes precedence over the
     # reference-pair workflow because the inpaint graph has one source slot.
@@ -17556,6 +17559,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         if validation.rejected:
             raise ValueError(next(iter(validation.rejected.values())))
         workflow_template = json.loads(workflow_path.read_text(encoding="utf-8"))
+        workflow_template.pop("_meta", None)
     except ValueError as exc:
         return Response(
             content=json.dumps({"error": {"message": str(exc), "type": "invalid_request_error"}}),

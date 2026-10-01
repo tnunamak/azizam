@@ -90,6 +90,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.body, b"rendered-video")
         self.assertEqual(response.media_type, "video/mp4")
         graph = requests[0][1]["prompt"]
+        self.assertNotIn("_meta", graph)
         self.assertEqual(graph["1"]["inputs"]["file"], "sample.mp4")
         self.assertEqual(graph["3"]["inputs"]["multiplier"], 2)
         self.assertEqual(graph["4"]["inputs"]["b"], 2)

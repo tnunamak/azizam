@@ -1661,6 +1661,14 @@ class TestEditWorkflowSelection(unittest.TestCase):
                 "flux2-klein-4b-edit",
             )
 
+    def test_explicit_direct_edit_workflow_is_not_given_an_edit_suffix(self) -> None:
+        self.assertEqual(
+            proxy._select_edit_workflow(
+                "seedvr2-upscale", image_count=1, has_mask=False
+            ),
+            "seedvr2-upscale",
+        )
+
     def test_multiref_manifest_declares_required_route_bound_image(self) -> None:
         manifest = proxy._find_image_manifest(
             "image.edit", "qwen-image-2.1-edit-multiref"
