@@ -326,6 +326,9 @@ images:
   cache_eviction_interval: 3600
   # Reserve this many bytes of free VRAM as a safety margin when computing batch size.
   vram_reserve_bytes: 1073741824 # 1 GiB
+  # Unload idle ComfyUI models once when admission or a CUDA OOM indicates
+  # that the current residency blocks the requested workflow.
+  free_vram_on_exhaustion: true
   # Hard ceiling on batch_size per ComfyUI prompt regardless of VRAM headroom.
   max_batch_size: 4
   # Supports OpenAI's background option: transparent, opaque, or auto. The

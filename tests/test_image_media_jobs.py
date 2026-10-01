@@ -47,6 +47,39 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
         self.secret_patch.start()
         self.addCleanup(self.secret_patch.stop)
 
+    def test_comfy_models_are_freed_only_when_queue_is_idle(self) -> None:
+        import asyncio
+        class FakeResponse:
+            status_code = 200
+
+            def __init__(self, payload: Mapping[str, Any]) -> None:
+                self.payload = payload
+
+            def json(self) -> Mapping[str, Any]:
+                return self.payload
+
+        class FakeClient:
+            def __init__(self, running: bool) -> None:
+                self.running = running
+                self.posts: list[tuple[str, Mapping[str, Any]]] = []
+
+            async def get(self, _url: str, **_kwargs: Any) -> FakeResponse:
+                return FakeResponse({"queue_running": [1] if self.running else [], "queue_pending": []})
+
+            async def post(self, url: str, **kwargs: Any) -> FakeResponse:
+                self.posts.append((url, kwargs["json"]))
+                return FakeResponse({})
+
+        idle = FakeClient(False)
+        with patch.object(proxy.asyncio, "sleep", return_value=None):
+            self.assertTrue(asyncio.run(proxy._free_comfy_models_if_idle(idle)))
+        self.assertEqual(len(idle.posts), 1)
+        self.assertEqual(idle.posts[0][1], {"unload_models": True, "free_memory": True})
+
+        busy = FakeClient(True)
+        self.assertFalse(asyncio.run(proxy._free_comfy_models_if_idle(busy)))
+        self.assertEqual(busy.posts, [])
+
     def test_seeded_requests_get_stable_hashed_request_id(self) -> None:
         body = {
             "model": "flux2-klein-4b",

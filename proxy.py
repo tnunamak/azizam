@@ -757,6 +757,7 @@ IMAGE_SIGNED_URL_SECRET_CFG = str(images_cfg.get("signed_url_secret", "") or "")
 IMAGE_CACHE_TTL = int(images_cfg.get("cache_ttl", 86400))
 IMAGE_CACHE_EVICT_INTERVAL = int(images_cfg.get("cache_eviction_interval", 3600))
 IMAGE_VRAM_RESERVE_BYTES = int(images_cfg.get("vram_reserve_bytes", 1 * 1024 * 1024 * 1024))
+IMAGE_FREE_VRAM_ON_EXHAUSTION = bool_from_config(images_cfg.get("free_vram_on_exhaustion"), True)
 IMAGE_MAX_BATCH_SIZE = int(images_cfg.get("max_batch_size", 4))
 IMAGE_BACKGROUND_REMOVAL_CFG = images_cfg.get("background_removal", {}) or {}
 IMAGE_BACKGROUND_REMOVAL_ENABLED = bool_from_config(IMAGE_BACKGROUND_REMOVAL_CFG.get("enabled"), True)
@@ -4725,6 +4726,30 @@ async def comfy_free_vram_bytes(client: httpx.AsyncClient) -> Optional[int]:
     return free
 
 
+async def _free_comfy_models_if_idle(client: httpx.AsyncClient) -> bool:
+    """Unload ComfyUI models only when its queue has no running execution."""
+    try:
+        response = await client.get(f"{COMFY_HOST}/queue", timeout=HEALTH_CHECK_TIMEOUT)
+        if response.status_code != 200:
+            return False
+        queue = response.json()
+        if not isinstance(queue, Mapping) or queue.get("queue_running"):
+            return False
+        response = await client.post(
+            f"{COMFY_HOST}/free",
+            json={"unload_models": True, "free_memory": True},
+            timeout=HEALTH_CHECK_TIMEOUT,
+        )
+        if response.status_code != 200:
+            return False
+        print("[proxy] ComfyUI idle models unloaded after VRAM exhaustion", flush=True)
+        await asyncio.sleep(1.0)
+        return True
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        print(f"[proxy] ComfyUI model unload failed: {type(exc).__name__}", flush=True)
+        return False
+
+
 # Sample cadence for the in-run VRAM probe. Spec floor is 250ms; default 500ms.
 _VRAM_PROBE_INTERVAL_S = 0.5
 _VRAM_PROBE_INTERVAL_MIN_S = 0.25
@@ -6148,6 +6173,7 @@ async def _generate_images_with_adaptive_batching(
     free_before = await comfy_free_vram_bytes(client)
     warnings: list[str] = []
     response_headers: dict[str, str] = {}
+    models_freed = False
 
     images_collected: list[bytes] = []
     images_remaining = n_requested
@@ -6172,6 +6198,11 @@ async def _generate_images_with_adaptive_batching(
             batch_target = 1
         elif estimate is not None:
             cap = compute_max_batch(free_now, estimate)
+            if cap == 0 and IMAGE_FREE_VRAM_ON_EXHAUSTION:
+                models_freed = await _free_comfy_models_if_idle(client)
+                if models_freed:
+                    free_now = await comfy_free_vram_bytes(client)
+                    cap = compute_max_batch(free_now, estimate)
             if cap == 0:
                 msg = (
                     f"Insufficient free VRAM for image generation: "
@@ -6236,6 +6267,26 @@ async def _generate_images_with_adaptive_batching(
             label=f"image round {rounds_run}/{max_rounds} (target={batch_target})",
             vram_probe=probe,
         )
+        if err is not None and not models_freed and IMAGE_FREE_VRAM_ON_EXHAUSTION:
+            try:
+                body = json.loads(err.body.decode("utf-8")) if getattr(err, "body", None) else {}
+                error_text = str(((body.get("error") or {}).get("message") or "")).lower()
+            except Exception:
+                error_text = ""
+            if any(marker in error_text for marker in ("cuda out of memory", "cuda oom", "out of memory", "oom")):
+                models_freed = await _free_comfy_models_if_idle(client)
+                if models_freed:
+                    round_workflow = copy.deepcopy(base_workflow)
+                    if seed_node and seed_node in round_workflow:
+                        inputs = round_workflow[seed_node].get("inputs", {})
+                        inputs[seed_field] = round_seed
+                    apply_batch_size(round_workflow, meta, 1)
+                    err, round_images = await _comfy_run_round(
+                        client, round_workflow, headers,
+                        label=f"image round {rounds_run}/{max_rounds} after model unload",
+                    )
+        if models_freed:
+            response_headers["X-ComfyUI-Models-Freed"] = "true"
         if err is not None:
             if (
                 background_removal_decision is not None
