@@ -47,6 +47,9 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
         requests: list[tuple[str, dict]] = []
 
         class FakeClient:
+            def __init__(self, **_kwargs):
+                pass
+
             async def __aenter__(self):
                 return self
 
