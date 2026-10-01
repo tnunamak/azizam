@@ -629,6 +629,17 @@ class TestFinishImageRouteReceipt(unittest.TestCase):
         self.assertEqual(evt["policy_decision"], "allowed")
         self.assertEqual(evt["request_id"], receipt.request_id)
 
+    def test_receipt_records_when_comfy_models_were_unloaded(self) -> None:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+        )
+        response = Response(status_code=200, headers={"X-ComfyUI-Models-Freed": "true"})
+        with patch.object(proxy.receipt_store, "record", lambda _receipt: None), patch.object(
+            proxy.firehose_metrics, "record_event", lambda *_args, **_kwargs: None
+        ):
+            proxy.finish_image_route_receipt(receipt, response)
+        self.assertIs(receipt.metadata.get("comfyui_models_freed_for_vram"), True)
+
     def test_4xx_response_marks_rejected(self) -> None:
         receipt, events = self._finish(400)
         self.assertEqual(receipt.status, "rejected")

@@ -15154,7 +15154,8 @@ def finish_image_route_receipt(
 ) -> None:
     """Finish the receipt and emit a body-free firehose event."""
     status_code = int(getattr(response, "status_code", 0) or 0)
-    if response.headers.get("X-ComfyUI-Models-Freed") == "true":
+    response_headers = getattr(response, "headers", {})
+    if response_headers.get("X-ComfyUI-Models-Freed") == "true":
         receipt.metadata["comfyui_models_freed_for_vram"] = True
     receipt.finish(_image_receipt_status(status_code))
     try:
