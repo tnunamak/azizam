@@ -100,52 +100,32 @@ def test_empty_response_pipeline_is_noop(label: str, body: dict[str, Any]) -> No
 # Step 1 — voxtral-voices bit-identical proof
 # ---------------------------------------------------------------------------
 
-# Mirror of VOICE_MAP from proxy.py:2438 (the legacy lookup table).
-# This dict is the ground truth we compare against — it must stay in sync with
-# the voxtral-voices registration in gateway/transforms.py.
+# Hard-coded ground truth for the TTS voice map (OpenAI-named canonical voices,
+# legacy aliases, language presets).  Kept independent of gateway/transforms.py
+# so an accidental edit there fails here.  Canonical-voice rules live in
+# tests/test_tts_voice_catalog.py.
 _LEGACY_VOICE_MAP: dict[str, str] = {
-    # OpenAI classic voices
-    "alloy": "neutral_female",
-    "echo": "casual_male",
-    "fable": "cheerful_female",
-    "nova": "casual_female",
-    "onyx": "neutral_male",
-    "shimmer": "cheerful_female",
-    # OpenAI newer voices -> best match
-    "sophia": "neutral_female",
-    "isabella": "cheerful_female",
-    "lily": "casual_female",
-    "evan": "casual_male",
-    "adam": "neutral_male",
-    "ash": "casual_male",
-    "coral": "casual_female",
-    "sage": "neutral_female",
-    "verse": "neutral_male",
-    "ballad": "cheerful_female",
-    "juniper": "casual_female",
-    # Voxtral native voices (pass through)
-    "casual_female": "casual_female",
-    "casual_male": "casual_male",
-    "cheerful_female": "cheerful_female",
-    "neutral_female": "neutral_female",
-    "neutral_male": "neutral_male",
-    "ar_male": "ar_male",
-    "de_female": "de_female",
-    "de_male": "de_male",
-    "es_female": "es_female",
-    "es_male": "es_male",
-    "fr_female": "fr_female",
-    "fr_male": "fr_male",
-    "hi_female": "hi_female",
-    "hi_male": "hi_male",
-    "it_female": "it_female",
-    "it_male": "it_male",
-    "nl_female": "nl_female",
-    "nl_male": "nl_male",
-    "pt_female": "pt_female",
-    "pt_male": "pt_male",
+    # Canonical OpenAI voices
+    **{v: v for v in (
+        "alloy", "ash", "ballad", "cedar", "coral", "echo", "fable",
+        "marin", "nova", "onyx", "sage", "shimmer", "verse",
+    )},
+    # Legacy aliases -> closest canonical voice
+    "neutral_female": "alloy",
+    "casual_female": "coral",
+    "cheerful_female": "shimmer",
+    "neutral_male": "ash",
+    "casual_male": "echo",
+    "sophia": "alloy",
+    "isabella": "shimmer",
+    "lily": "coral",
+    "juniper": "coral",
+    "evan": "echo",
+    "adam": "ash",
+    # Language voice-design presets (pass through)
+    **{f"{lang}_{g}": f"{lang}_{g}" for lang in ("ar", "de", "es", "fr", "hi", "it", "nl", "pt") for g in ("female", "male")},
 }
-_LEGACY_DEFAULT_VOICE = "neutral_female"
+_LEGACY_DEFAULT_VOICE = "alloy"
 
 
 def _legacy_map_voice(requested_voice: str) -> str:
@@ -172,7 +152,7 @@ def test_voxtral_voices_matches_legacy_for_all_known_keys(voice_key: str) -> Non
 
 
 def test_voxtral_voices_unmapped_yields_default() -> None:
-    """An unmapped voice name still yields neutral_female (was DEFAULT_VOICE)."""
+    """An unmapped voice name still yields the default voice (alloy)."""
     unmapped = "completely_unknown_voice"
     legacy = _legacy_map_voice(unmapped)
     new = _transform_map_voice(unmapped)

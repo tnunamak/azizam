@@ -190,6 +190,9 @@ from gateway.transforms import (
     QWEN3_ENABLE_THINKING_KEY as _QWEN3_ENABLE_THINKING_KEY,
     normalize_chat_completion_payload as _normalize_chat_completion_payload,
     ValueMapTransform as _ValueMapTransform,
+    CANONICAL_TTS_VOICES,
+    DEFAULT_TTS_VOICE,
+    LEGACY_TTS_VOICE_ALIASES,
 )
 from gateway.toolcall_detection import (
     detect_unlifted_toolcalls as _detect_unlifted_toolcalls,
@@ -2609,28 +2612,6 @@ STT_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("transcriptions") or stt_cfg.get("
 EMBEDDINGS_MODEL = MODEL_COMPAT_DEFAULTS.get("embeddings") or EMBEDDINGS_BACKEND_MODEL
 IMAGE_EDIT_DEFAULT_MODEL = MODEL_COMPAT_DEFAULTS.get("image_edits", "qwen-image-2.1-edit")
 
-# Voice metadata derived from the id. Keep in sync with the voxtral-voices
-# transform map in gateway/transforms.py (the single source of truth).
-_OPENAI_VOICE_NAMES = {
-    "alloy": ("Alloy", "OpenAI alias"),
-    "echo": ("Echo", "OpenAI alias"),
-    "fable": ("Fable", "OpenAI alias"),
-    "nova": ("Nova", "OpenAI alias"),
-    "onyx": ("Onyx", "OpenAI alias"),
-    "shimmer": ("Shimmer", "OpenAI alias"),
-    "sophia": ("Sophia", "OpenAI alias"),
-    "isabella": ("Isabella", "OpenAI alias"),
-    "lily": ("Lily", "OpenAI alias"),
-    "evan": ("Evan", "OpenAI alias"),
-    "adam": ("Adam", "OpenAI alias"),
-    "ash": ("Ash", "OpenAI alias"),
-    "coral": ("Coral", "OpenAI alias"),
-    "sage": ("Sage", "OpenAI alias"),
-    "verse": ("Verse", "OpenAI alias"),
-    "ballad": ("Ballad", "OpenAI alias"),
-    "juniper": ("Juniper", "OpenAI alias"),
-}
-
 _LANG_NAMES = {
     "ar": "Arabic", "de": "German", "es": "Spanish", "fr": "French",
     "hi": "Hindi", "it": "Italian", "nl": "Dutch", "pt": "Portuguese",
@@ -2638,11 +2619,12 @@ _LANG_NAMES = {
 
 
 def _voxtral_voice_map() -> dict[str, str]:
-    """Return the voice-name → mapped-voice dict from the voxtral-voices transform.
+    """Return the voice-name -> canonical-voice dict from the TTS voice transform.
 
-    Single source of truth lives in the voxtral-voices registry entry in
-    gateway/transforms.py.  This accessor lets the voice listing endpoint
-    read from that same source instead of a duplicate VOICE_MAP constant.
+    Single source of truth lives in the "voxtral-voices" registry entry in
+    gateway/transforms.py (the id is historical; it maps to OpenAI-named
+    canonical voices).  This accessor lets the voice listing endpoint read
+    from that same source instead of a duplicate constant.
     """
     try:
         primitives = _TRANSFORM_REGISTRY.resolve("voxtral-voices")
@@ -2654,35 +2636,32 @@ def _voxtral_voice_map() -> dict[str, str]:
 
 
 def _voice_metadata(voice_id: str, mapped: str) -> dict:
-    """Derive {name, language, gender, description} for a given voice id."""
-    if voice_id in _OPENAI_VOICE_NAMES:
-        display_name, _kind = _OPENAI_VOICE_NAMES[voice_id]
-        # OpenAI alias -> mapped Voxtral voice. Gender from the *mapped* name.
-        gender = "female" if "female" in mapped else ("male" if "male" in mapped else "unknown")
+    """Derive {name, language, gender, description, alias} for a voice id."""
+    if voice_id in CANONICAL_TTS_VOICES:
+        info = CANONICAL_TTS_VOICES[voice_id]
         return {
-            "name": display_name,
+            "name": voice_id.title(),
             "language": "en",
-            "gender": gender,
-            "description": f"OpenAI '{voice_id}' alias (mapped to {mapped})",
+            "gender": info["gender"],
+            "description": info["description"],
+            "alias": False,
         }
-    parts = voice_id.split("_", 1)
-    if len(parts) == 2 and parts[0] in _LANG_NAMES:
-        lang_code, suffix = parts
-        gender = "female" if "female" in suffix else ("male" if "male" in suffix else "unknown")
+    if voice_id in LEGACY_TTS_VOICE_ALIASES:
+        info = CANONICAL_TTS_VOICES[mapped]
         return {
-            "name": f"{_LANG_NAMES[lang_code]} {gender.capitalize()}",
-            "language": lang_code,
-            "gender": gender,
-            "description": "Voxtral native multilingual voice",
+            "name": voice_id.replace("_", " ").title(),
+            "language": "en",
+            "gender": info["gender"],
+            "description": f"Legacy alias of '{mapped}'",
+            "alias": True,
         }
-    # Bare English natives like "casual_male", "neutral_female", etc.
-    gender = "female" if "female" in voice_id else ("male" if "male" in voice_id else "unknown")
-    pretty = voice_id.replace("_", " ").title()
+    lang_code, _, gender = voice_id.partition("_")
     return {
-        "name": pretty,
-        "language": "en",
-        "gender": gender,
-        "description": "Voxtral native English voice",
+        "name": f"{_LANG_NAMES.get(lang_code, lang_code)} {gender.capitalize()}",
+        "language": lang_code,
+        "gender": gender if gender in {"female", "male"} else "unknown",
+        "description": "Multilingual voice-design preset (speaker identity is not fixed)",
+        "alias": False,
     }
 
 OPENAI_STATIC_MODEL_CATEGORIES = {
@@ -13759,8 +13738,11 @@ async def list_voices(request: Request):
             "gender": meta["gender"],
             "description": meta["description"],
             "mapped_to": mapped,
+            "alias": meta["alias"],
         })
-    return {"voices": voices}
+    # Canonical voices first, then aliases and language presets.
+    voices.sort(key=lambda v: (v["voice_id"] not in CANONICAL_TTS_VOICES, v["alias"], v["voice_id"]))
+    return {"default_voice": DEFAULT_TTS_VOICE, "voices": voices}
 
 
 @app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)

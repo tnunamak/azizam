@@ -525,8 +525,8 @@ class TestRegistry:
 
     def test_pipeline_uses_module_registry_by_default(self) -> None:
         # The module-level REGISTRY has voxtral-voices registered
-        result = run_request_pipeline(["voxtral-voices"], {"voice": "alloy"})
-        assert result["voice"] == "neutral_female"
+        result = run_request_pipeline(["voxtral-voices"], {"voice": "cheerful_female"})
+        assert result["voice"] == "shimmer"
 
     def test_unknown_build_primitive_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown transform kind"):

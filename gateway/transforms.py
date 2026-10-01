@@ -218,8 +218,8 @@ class ValueMapTransform(_Primitive):
         voxtral-voices:
           kind: value-map
           param: voice
-          map: { alloy: neutral_female, echo: casual_male }
-          default: neutral_female
+          map: { cheerful_female: shimmer, alloy: alloy }
+          default: alloy
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
@@ -927,57 +927,69 @@ class DropNullParamsTransform(_Primitive):
 
 REGISTRY: TransformRegistry = TransformRegistry()
 
-# ---- voxtral-voices (Step 1 built-in) ------------------------------------
-# Single source of truth for voice mapping (replaces the deleted proxy.py VOICE_MAP).
-# The voice listing endpoint reads from this registry entry via _voxtral_voice_map().
+# ---- TTS voice map (registry id "voxtral-voices", kept for compatibility) ----
+# Single source of truth for TTS voice names.  The id predates the OmniVoice
+# backend; it now maps every accepted voice name to a CANONICAL voice name.
+# Canonical voices are OpenAI's current TTS voices.  Each has one fixed speaker
+# identity (a reference clip + transcript in the shared voice catalog), so the
+# same name sounds the same on every backend/tier that uses the catalog.
+# Backends receive canonical names only; they never map aliases themselves.
+# The voice listing endpoint reads from this entry via _voxtral_voice_map().
+DEFAULT_TTS_VOICE = "alloy"
+
+# name -> metadata for /v1/voices.  Gender is the commonly perceived gender of
+# OpenAI's voice of the same name (OpenAI does not publish one).
+CANONICAL_TTS_VOICES: dict[str, dict[str, str]] = {
+    "alloy": {"gender": "female", "description": "Neutral, balanced, versatile."},
+    "ash": {"gender": "male", "description": "Clear, steady, conversational."},
+    "ballad": {"gender": "male", "description": "Gentle, soft, melodic."},
+    "cedar": {"gender": "male", "description": "Warm, grounded, natural."},
+    "coral": {"gender": "female", "description": "Warm, friendly, upbeat."},
+    "echo": {"gender": "male", "description": "Smooth, calm, even."},
+    "fable": {"gender": "male", "description": "Expressive storyteller."},
+    "marin": {"gender": "female", "description": "Natural, polished, composed."},
+    "nova": {"gender": "female", "description": "Energetic, bright, upbeat."},
+    "onyx": {"gender": "male", "description": "Deep, authoritative."},
+    "sage": {"gender": "female", "description": "Calm, thoughtful, measured."},
+    "shimmer": {"gender": "female", "description": "Bright, cheerful, light."},
+    "verse": {"gender": "male", "description": "Expressive, dynamic."},
+}
+
+# Names used by earlier clients (Voxtral presets, retired OpenAI-style names)
+# -> closest canonical voice.  Aliases point at canonical voices, never at
+# other aliases.
+LEGACY_TTS_VOICE_ALIASES: dict[str, str] = {
+    "neutral_female": "alloy",
+    "casual_female": "coral",
+    "cheerful_female": "shimmer",
+    "neutral_male": "ash",
+    "casual_male": "echo",
+    "sophia": "alloy",
+    "isabella": "shimmer",
+    "lily": "coral",
+    "juniper": "coral",
+    "evan": "echo",
+    "adam": "ash",
+}
+
+# "<lang>_<gender>" voice-design presets (identity not fixed) pass through.
+TTS_LANGUAGE_PRESET_VOICES = tuple(
+    f"{lang}_{gender}"
+    for lang in ("ar", "de", "es", "fr", "hi", "it", "nl", "pt")
+    for gender in ("female", "male")
+)
+
 REGISTRY.register(
     "voxtral-voices",
     {
         "kind": "value-map",
         "param": "voice",
         "map": {
-            # OpenAI classic voices
-            "alloy": "neutral_female",
-            "echo": "casual_male",
-            "fable": "cheerful_female",
-            "nova": "casual_female",
-            "onyx": "neutral_male",
-            "shimmer": "cheerful_female",
-            # OpenAI newer voices → best match
-            "sophia": "neutral_female",
-            "isabella": "cheerful_female",
-            "lily": "casual_female",
-            "evan": "casual_male",
-            "adam": "neutral_male",
-            "ash": "casual_male",
-            "coral": "casual_female",
-            "sage": "neutral_female",
-            "verse": "neutral_male",
-            "ballad": "cheerful_female",
-            "juniper": "casual_female",
-            # Voxtral native voices (pass-through)
-            "casual_female": "casual_female",
-            "casual_male": "casual_male",
-            "cheerful_female": "cheerful_female",
-            "neutral_female": "neutral_female",
-            "neutral_male": "neutral_male",
-            "ar_male": "ar_male",
-            "de_female": "de_female",
-            "de_male": "de_male",
-            "es_female": "es_female",
-            "es_male": "es_male",
-            "fr_female": "fr_female",
-            "fr_male": "fr_male",
-            "hi_female": "hi_female",
-            "hi_male": "hi_male",
-            "it_female": "it_female",
-            "it_male": "it_male",
-            "nl_female": "nl_female",
-            "nl_male": "nl_male",
-            "pt_female": "pt_female",
-            "pt_male": "pt_male",
+            **{name: name for name in CANONICAL_TTS_VOICES},
+            **LEGACY_TTS_VOICE_ALIASES,
+            **{name: name for name in TTS_LANGUAGE_PRESET_VOICES},
         },
-        "default": "neutral_female",
+        "default": DEFAULT_TTS_VOICE,
     },
 )
 
