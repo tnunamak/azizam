@@ -162,14 +162,18 @@ The repository also carries [`autotile-edge-stitch`](skills/autotile-edge-stitch
 | `POST /v1/audio/speech` | Profile-selected TTS provider | OpenAI-compatible TTS, voice-mapped; `response_format` supports `wav` and `mp3` |
 | `POST /v1/audio/transcriptions` | Profile-selected STT provider | Multipart audio → transcript |
 | `POST /v1/audio/translations` | Profile-selected STT provider | OpenAI-compatible route; returns `unsupported_audio_translation` unless the selected STT provider declares translation support |
-| `POST /v1/images/generations` | Profile-selected image provider/workflow | Text-to-image (default seed workflow `flux2-klein-4b`) |
-| `POST /v1/images/edits` | Profile-selected image provider/workflow | Image edit; multipart with input image and optional top-level OpenAI `mask` |
+| `POST /v1/images/generations` | Profile-selected image provider/workflow | Text-to-image (default seed workflow `flux2-klein-4b`). Honors `output_format` (png/jpeg/webp), `output_compression`, `background` (transparent/opaque/auto), `quality` (mapped to sampler steps only when the resolved workflow's manifest declares a `quality_steps` table); response echoes `output_format`/`background`/`quality`/`size`. |
+| `POST /v1/images/edits` | Profile-selected image provider/workflow | Image edit; multipart with input image(s) and optional top-level OpenAI `mask`. Accepts up to as many `image[]` reference images as the resolved workflow declares support for (every shipped workflow today supports exactly 1; more are rejected with a clear 400, not silently dropped). Same `output_format`/`output_compression`/`background`/`quality` handling as generations. |
+| `POST /v1/images/variations` | Profile-selected image provider/workflow | No local model is dedicated to "variations" (no prompt in the request); routes through a configurable edit-capable workflow (`images.variations.default_workflow` in `proxy_config.yml`) with a fixed generic prompt and, when the resolved workflow's manifest declares a `denoise` input, a configurable partial-denoise strength (`images.variations.denoise`). |
 | `GET  /v1/images/{id}/content` | proxy cache | Fetch a cached image referenced by a `response_format: "url"` result. Signed capability URL; no bearer required until expiry. |
 | `POST /gateway/v1/media/jobs` | proxy + selected media provider/workflow | Durable media-job submit. For images, send `{"intent":"image.generate","request":{...}}`. |
 | `GET  /gateway/v1/media/jobs/{id}/content` | proxy cache | Fetch the OpenAI-shaped image payload for a completed durable image job. |
 | `POST /v1/videos` | Profile-selected video provider/workflow | Submit video job (Sora-shaped, async) |
 | `GET  /v1/videos/{id}` | selected video provider/workflow | Poll job status (`queued` → `running` → `succeeded`/`failed`) |
 | `GET  /v1/videos/{id}/content` | selected video provider/workflow | Fetch rendered MP4 once `status=succeeded` |
+| `GET  /v1/videos` | selected video provider/workflow | List video jobs submitted via this route since the gateway process last restarted (`limit`, `after`, `order`; no durable store, see `/v1/videos/{id}`'s own statelessness) |
+| `DELETE /v1/videos/{id}` | selected video provider/workflow | Delete a video job's tracking (and best-effort its ComfyUI history entry) |
+| `POST /v1/videos/{id}/remix` | — | Stub: always a stable `501` (`video_remix_not_configured`, or `video_remix_not_implemented` if `videos.remix_workflow` is set) — no remix backend exists yet |
 | `GET  /gateway/v1/extensions` | proxy | Live extension namespace and route discovery |
 | `GET  /gateway/v1/models/{model}/capabilities` | proxy | Live model-specific capability and workflow-control discovery |
 | `GET  /gateway/v1/providers` | proxy | List provider-native lanes projected through the caller's App profile policy. |

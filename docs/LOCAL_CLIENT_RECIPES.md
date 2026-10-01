@@ -41,21 +41,24 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /openai/v1/responses` | OpenAI Responses | Translator over chat completions; durable store. |
 | `GET /openai/v1/responses/{id}` | OpenAI Responses | Read back. |
 | `DELETE /openai/v1/responses/{id}` | OpenAI Responses | |
-| `POST /openai/v1/images/generations` | OpenAI Images | Synchronous image generation; emits observational gateway receipts. |
-| `POST /openai/v1/images/edits` | OpenAI Images | Emits observational gateway receipts. |
-| `POST /openai/v1/images/variations` | OpenAI Images | Registered compatibility route; returns `unsupported_image_variations`. |
+| `POST /openai/v1/images/generations` | OpenAI Images | Synchronous image generation; emits observational gateway receipts. Honors `output_format`/`output_compression`/`background`/`quality`; see "Image output shape" below. |
+| `POST /openai/v1/images/edits` | OpenAI Images | Emits observational gateway receipts. Accepts up to as many `image[]` reference images as the resolved workflow supports (every shipped workflow today: 1; more get a clear 400, not a silent drop). Same `output_format`/`output_compression`/`background`/`quality` handling as generations. |
+| `POST /openai/v1/images/variations` | OpenAI Images | Routed through a configurable edit-capable workflow (`images.variations.default_workflow` in `proxy_config.yml`) with a fixed generic prompt -- there is no local model dedicated to variations. See "Image variations" below. |
 | `GET /openai/v1/images/{id}/content` | OpenAI Images | Asset retrieval. |
 | `GET /v1/assets/{asset_id}/content` | Native | Signed generated-asset retrieval. |
 | `GET /gateway/v1/assets/{asset_id}` | Gateway native | Generated-asset metadata and fresh signed content URL. |
 | `GET /gateway/v1/assets/{asset_id}/content` | Gateway native | Signed generated-asset retrieval through the native surface. |
-| `POST /gateway/v1/media/jobs` | Gateway media jobs | Durable async image generation when `intent` is `image.generate` and `request` carries the OpenAI image body. Images variations are unsupported unless a route explicitly documents otherwise. |
+| `POST /gateway/v1/media/jobs` | Gateway media jobs | Durable async image generation when `intent` is `image.generate` and `request` carries the OpenAI image body. Variations are not available through this durable-job surface; use `POST /v1/images/variations` directly. |
 | `POST /openai/v1/audio/speech` | OpenAI Audio | TTS. |
 | `POST /openai/v1/audio/transcriptions` | OpenAI Audio | STT. |
 | `POST /openai/v1/audio/translations` | OpenAI Audio | Registered compatibility route; returns `unsupported_audio_translation` unless the local STT backend declares translation support. |
 | `GET /openai/v1/voices`, `GET /openai/v1/audio/voices` | OpenAI Audio | Voice list. |
 | `POST /openai/v1/audio/generate`, `GET /openai/v1/audio/models` | Gateway native | Music/SFX/voice generation; not an OpenAI SDK-compatible audio endpoint. |
 | `GET/POST /openai/v1/assistants`, `/files`, `/batches`, `/fine_tuning/*`, `/realtime/*` | OpenAI compatibility stubs | Registered compatibility routes; return `unsupported_operation`. |
-| `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | |
+| `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | Submit/poll/download. |
+| `GET /openai/v1/videos` | OpenAI-shaped video | List video jobs submitted via this route since the gateway process last restarted (`limit`, `after`, `order`). No durable store -- same statelessness as retrieve/content. |
+| `DELETE /openai/v1/videos/{id}` | OpenAI-shaped video | Delete a video job's tracking (and best-effort its ComfyUI history entry). |
+| `POST /openai/v1/videos/{id}/remix` | OpenAI-shaped video | Stub: always a stable `501` (`video_remix_not_configured`, or `video_remix_not_implemented` if an operator sets `videos.remix_workflow`) -- no remix backend exists on this gateway. |
 | `GET /v1/status` | Admin | Operational status; requires admin auth. |
 | `POST /anthropic/v1/messages` | Anthropic Messages | Translator over chat completions with SSE streaming; `/v1/messages` remains a legacy convenience route. |
 | `GET /ollama/api/tags` | Ollama-compatible | Model list from configured catalog; `/api/tags` remains a convenience route. |
@@ -271,6 +274,91 @@ use white to edit and black to preserve. The current Flux2 edit workflow has no
 native inpaint node, so the proxy preserves unmasked pixels with a documented
 post-composite fallback unless a native mask-bound workflow is selected.
 
+Image edit with multiple reference images (gpt-image-1 shape, repeated
+`image[]`):
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/edits \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -F model=flux2-klein-4b-edit \
+  -F prompt='combine these references' \
+  -F 'image[]=@reference-a.png' \
+  -F 'image[]=@reference-b.png'
+```
+
+Every shipped workflow today declares exactly one image input node, so a
+second `image[]` is rejected with a clear `400` (`too_many_images`), not
+silently dropped — this used to silently collapse to only the first file.
+Multi-reference workflows that declare `image_nodes: ["<node_a>", "<node_b>"]`
+in their raw workflow JSON's `_meta` block will route each uploaded file (in
+submission order) to its own node.
+
+### Image output shape
+
+`output_format` (`png`/`jpeg`/`webp`), `output_compression` (0-100, jpeg/webp
+only), and `quality` (`low`/`medium`/`high`/`auto`) work on both
+`/v1/images/generations` and `/v1/images/edits`:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/generations \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "flux2-klein-4b",
+    "prompt": "a lighthouse at dusk",
+    "size": "1024x1024",
+    "background": "transparent",
+    "output_format": "webp",
+    "output_compression": 80
+  }'
+```
+
+`output_format`/`output_compression` drive a real Pillow re-encode of the
+workflow's native PNG output; the response's `data[].media_type` and (for
+`response_format: "url"`) the signed URL's content type reflect the requested
+format. `background: "transparent"` combined with `output_format: "jpeg"` is
+rejected with a `400` (jpeg has no alpha channel), matching OpenAI itself.
+`quality` maps to a per-workflow sampler-step count only when the resolved
+workflow's manifest declares a `quality_steps` table (none of the shipped
+Flux2 Klein manifests do yet — this distilled model is tuned around a fixed
+step count, and scaling its steps without empirically verifying output
+quality first risked a false "high quality" being worse than the default, so
+this was deliberately left as a data-only hook rather than guessed at). When
+no `quality_steps` table applies, `quality` is still accepted (no error) and
+recorded as accepted-but-not-applied on the request's gateway receipt — never
+silently dropped with no trace. The response always echoes the resolved
+`output_format`/`background`/`quality`/`size` at the top level, matching the
+gpt-image-1 response shape (`background`/`quality` echo the value actually
+applied, never the literal `"auto"` OpenAI itself never returns).
+
+### Image variations
+
+`/v1/images/variations` has no prompt in the request (unlike edits), so there
+is no local "true" variations model to route to — it is routed through a
+configurable edit-capable workflow instead, with a fixed generic prompt:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/variations \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -F image=@input.png \
+  -F n=2 \
+  -F size=1024x1024
+```
+
+The backing workflow is `images.variations.default_workflow` in
+`proxy_config.yml` (default: `flux2-klein-4b-edit`, matching the edit route's
+own default). `model` is accepted: an OpenAI-named model (`dall-e-2`,
+`dall-e-3`, `gpt-image-1`, ...) resolves to the configured default; a
+concrete local workflow id (e.g. `flux2-klein-4b`) is honored literally
+(with `-edit`/`-inpaint` suffixed the same way the edit route does). When the
+resolved workflow's manifest declares a `denoise` input (both shipped
+`flux2-klein-4b-edit` and `flux2-klein-4b-inpaint` do), a configurable
+partial-denoise strength (`images.variations.denoise`, default `0.75`) is
+applied so the output resembles but is not identical to the source image.
+Fields `/v1/images/variations` does *not* accept (because OpenAI's own
+variations request doesn't have them): `prompt`, `mask`, `background`,
+`output_format`, `output_compression`, `quality`.
+
 ACE-Step music generation:
 
 ```bash
@@ -334,6 +422,34 @@ curl -s http://127.0.0.1:5000/v1/videos \
     }
   }'
 ```
+
+List video jobs submitted via this route since the gateway process last
+restarted (no durable store, same statelessness as retrieve/content):
+
+```bash
+curl -s "http://127.0.0.1:5000/v1/videos?limit=10&order=desc" \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+```
+
+Delete a video job's tracking (and best-effort its ComfyUI history entry):
+
+```bash
+curl -s -X DELETE "http://127.0.0.1:5000/v1/videos/$VIDEO_ID" \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+```
+
+Remix is a stub — no backend exists for it on this gateway yet. It always
+returns a stable `501`:
+
+```bash
+curl -s -X POST "http://127.0.0.1:5000/v1/videos/$VIDEO_ID/remix" \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+# {"error": {"message": "...", "type": "invalid_request_error", "code": "video_remix_not_configured"}}
+```
+
+Set `videos.remix_workflow` in `proxy_config.yml` to change the error code to
+`video_remix_not_implemented` — this does not enable remix, it only moves the
+config surface a future implementation would land on.
 
 ControlNet is not ready on the current local system. The audit exists, but
 operators should not advertise or send ControlNet controls until a real
@@ -776,7 +892,8 @@ when one participated, warnings, status, and latency.
 
 At `client` audience, backend identity, raw policy sources, and gateway
 filesystem details are redacted. Today, observational receipts are emitted
-for `/v1/images/generations` and `/v1/images/edits` only; coverage will
+for `/v1/images/generations`, `/v1/images/edits`, and `/v1/images/variations`
+(which reuses the edit route's receipt end-to-end) only; coverage will
 expand as more handlers route through `gateway/receipts.py`.
 
 Agents debugging a "why did this fail?" should:
