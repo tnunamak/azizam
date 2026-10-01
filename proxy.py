@@ -8345,7 +8345,9 @@ def _extract_video_output(job: dict) -> Optional[dict]:
     Some older workflows surface the file under 'gifs' or 'images' (frame sequences) instead.
     """
     outputs = (job or {}).get("outputs", {}) or {}
-    for node_id, node_output in outputs.items():
+    # ComfyUI's LoadVideo node can echo the uploaded source under ``images``.
+    # Walk outputs in reverse graph order so a downstream SaveVideo result wins.
+    for node_id, node_output in reversed(list(outputs.items())):
         for key in ("videos", "gifs", "images"):
             entries = node_output.get(key) or []
             for entry in entries:
