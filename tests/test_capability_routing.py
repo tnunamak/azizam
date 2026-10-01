@@ -245,9 +245,9 @@ class TestHostForCapability(unittest.TestCase):
 
     def test_audio_speech_host_matches_current_tts_host(self) -> None:
         """host_for_capability("audio.speech") == proxy.TTS_HOST for current config."""
-        backends = {"tts": _make_tts(host="127.0.0.1", port=proxy.TTS_PORT)}
+        backends = {"tts": _make_tts(host="127.0.0.1", port=proxy.tts_cfg["port"])}
         result = self._call("audio.speech", backends)
-        self.assertEqual(result, f"http://127.0.0.1:{proxy.TTS_PORT}")
+        self.assertEqual(result, proxy.TTS_HOST)
         self.assertEqual(result, proxy.TTS_HOST)
 
     def test_audio_transcriptions_host_matches_current_stt_host(self) -> None:
