@@ -90,6 +90,28 @@ class TestParseOutputCompression(unittest.TestCase):
         _, err = parse_output_compression(True, "jpeg")
         self.assertIsNotNone(err)
 
+    def test_fractional_float_above_is_rejected(self) -> None:
+        # A JSON body delivers numbers as Python floats. int(100.9) == 100
+        # with no error -- that's silent truncation, not validation.
+        compression, err = parse_output_compression(100.9, "jpeg")
+        self.assertIsNone(compression)
+        self.assertIsNotNone(err)
+
+    def test_fractional_float_below_is_rejected(self) -> None:
+        compression, err = parse_output_compression(-0.9, "jpeg")
+        self.assertIsNone(compression)
+        self.assertIsNotNone(err)
+
+    def test_whole_number_float_is_accepted(self) -> None:
+        # 100.0 is exactly 100 -- not a truncation, nothing to reject.
+        self.assertEqual(parse_output_compression(100.0, "jpeg"), (100, None))
+
+    def test_fractional_string_is_rejected(self) -> None:
+        # Multipart form fields deliver strings; int("100.9") already raises
+        # on its own, but pin the behavior explicitly.
+        _, err = parse_output_compression("100.9", "jpeg")
+        self.assertIsNotNone(err)
+
 
 class TestParseQuality(unittest.TestCase):
     def test_default_is_auto(self) -> None:
@@ -103,6 +125,16 @@ class TestParseQuality(unittest.TestCase):
         quality, err = parse_quality("ultra")
         self.assertEqual(quality, "auto")
         self.assertIsNotNone(err)
+
+    def test_dalle_legacy_standard_maps_to_medium(self) -> None:
+        self.assertEqual(parse_quality("standard"), ("medium", None))
+
+    def test_dalle_legacy_hd_maps_to_high(self) -> None:
+        self.assertEqual(parse_quality("hd"), ("high", None))
+
+    def test_dalle_legacy_values_are_case_insensitive(self) -> None:
+        self.assertEqual(parse_quality("STANDARD"), ("medium", None))
+        self.assertEqual(parse_quality("HD"), ("high", None))
 
 
 class TestBackgroundFormatConflict(unittest.TestCase):

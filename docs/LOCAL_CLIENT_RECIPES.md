@@ -56,8 +56,8 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /openai/v1/audio/generate`, `GET /openai/v1/audio/models` | Gateway native | Music/SFX/voice generation; not an OpenAI SDK-compatible audio endpoint. |
 | `GET/POST /openai/v1/assistants`, `/files`, `/batches`, `/fine_tuning/*`, `/realtime/*` | OpenAI compatibility stubs | Registered compatibility routes; return `unsupported_operation`. |
 | `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | Submit/poll/download. |
-| `GET /openai/v1/videos` | OpenAI-shaped video | List video jobs submitted via this route since the gateway process last restarted (`limit`, `after`, `order`). No durable store -- same statelessness as retrieve/content. |
-| `DELETE /openai/v1/videos/{id}` | OpenAI-shaped video | Delete a video job's tracking (and best-effort its ComfyUI history entry). |
+| `GET /openai/v1/videos` | OpenAI-shaped video | List video jobs *submitted by the calling API key* via this route since the gateway process last restarted (`limit`, `after`, `order`). No durable store -- same statelessness as retrieve/content. |
+| `DELETE /openai/v1/videos/{id}` | OpenAI-shaped video | Cancels a queued/running job (ComfyUI `/api/jobs/{id}/cancel`) before tombstoning it; a `409` means cancellation couldn't be confirmed, not that the job survived. Scoped to the owning API key -- all four of status/content/list/delete are. |
 | `POST /openai/v1/videos/{id}/remix` | OpenAI-shaped video | Stub: always a stable `501` (`video_remix_not_configured`, or `video_remix_not_implemented` if an operator sets `videos.remix_workflow`) -- no remix backend exists on this gateway. |
 | `GET /v1/status` | Admin | Operational status; requires admin auth. |
 | `POST /anthropic/v1/messages` | Anthropic Messages | Translator over chat completions with SSE streaming; `/v1/messages` remains a legacy convenience route. |
@@ -296,8 +296,13 @@ submission order) to its own node.
 ### Image output shape
 
 `output_format` (`png`/`jpeg`/`webp`), `output_compression` (0-100, jpeg/webp
-only), and `quality` (`low`/`medium`/`high`/`auto`) work on both
-`/v1/images/generations` and `/v1/images/edits`:
+only, integers only -- `100.9` is rejected, not silently truncated), and
+`quality` (`low`/`medium`/`high`/`auto`, plus the legacy dall-e-2/dall-e-3
+values `standard`/`hd` mapped onto `medium`/`high`) work on both
+`/v1/images/generations` and `/v1/images/edits`. A jpeg request's
+`background` never resolves to removal even when left at the default
+`"auto"` -- jpeg has no alpha channel, so there is nothing for an "auto"
+decision to remove:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/generations \
@@ -423,15 +428,24 @@ curl -s http://127.0.0.1:5000/v1/videos \
   }'
 ```
 
-List video jobs submitted via this route since the gateway process last
-restarted (no durable store, same statelessness as retrieve/content):
+List video jobs submitted by the calling API key via this route since the
+gateway process last restarted (no durable store, same statelessness as
+retrieve/content -- and the same ownership scoping status/content/delete
+already have: a different API key's jobs never appear here):
 
 ```bash
 curl -s "http://127.0.0.1:5000/v1/videos?limit=10&order=desc" \
   -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
 ```
 
-Delete a video job's tracking (and best-effort its ComfyUI history entry):
+A pagination `after` cursor that no longer resolves (evicted, deleted, or
+belongs to a different key) returns a `400 cursor_not_found` rather than
+silently restarting from page one.
+
+Delete a video job. A still-queued/running job is actively cancelled first
+(ComfyUI's `/api/jobs/{id}/cancel`) before being tombstoned; if the cancel
+can't be confirmed, this returns `409` instead of claiming `deleted: true`
+for a job that may keep rendering:
 
 ```bash
 curl -s -X DELETE "http://127.0.0.1:5000/v1/videos/$VIDEO_ID" \

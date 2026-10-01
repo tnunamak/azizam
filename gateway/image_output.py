@@ -22,6 +22,11 @@ from typing import Any, Mapping
 VALID_OUTPUT_FORMATS: tuple[str, ...] = ("png", "jpeg", "webp")
 VALID_QUALITY: tuple[str, ...] = ("low", "medium", "high", "auto")
 
+# dall-e-2/dall-e-3 quality values. These predate gpt-image-1's low/medium/
+# high/auto enum; a client that hasn't migrated its `quality` value (or one
+# still targeting a dall-e-* alias) must keep working, not regress to a 400.
+_LEGACY_QUALITY_ALIASES: dict[str, str] = {"standard": "medium", "hd": "high"}
+
 _OUTPUT_FORMAT_ERROR = "output_format must be one of 'png', 'jpeg', or 'webp'"
 _OUTPUT_COMPRESSION_ERROR = "output_compression must be an integer between 0 and 100"
 _QUALITY_ERROR = "quality must be one of 'low', 'medium', 'high', or 'auto'"
@@ -64,6 +69,14 @@ def parse_output_compression(value: Any, output_format: str) -> tuple[int | None
         # Reject bool explicitly: `isinstance(True, int)` is True in Python.
         if isinstance(value, bool):
             raise ValueError
+        if isinstance(value, float):
+            # A JSON body delivers `output_compression` as a Python float
+            # (e.g. 100.9, -0.9). int(100.9) == 100 with no error -- silently
+            # truncating a fractional value is not the same as validating an
+            # integer. Multipart string values ("100.9") already raise via
+            # int() below without this check.
+            if not value.is_integer():
+                raise ValueError
         compression = int(value)
     except (TypeError, ValueError):
         return None, _OUTPUT_COMPRESSION_ERROR
@@ -75,12 +88,19 @@ def parse_output_compression(value: Any, output_format: str) -> tuple[int | None
 
 
 def parse_quality(value: Any) -> tuple[str, str | None]:
-    """Parse OpenAI's ``quality`` option. Returns (quality, error)."""
+    """Parse OpenAI's ``quality`` option. Returns (quality, error).
+
+    Accepts both the gpt-image-1 enum (low/medium/high/auto) and the older
+    dall-e-2/dall-e-3 values (standard/hd), mapped onto it
+    (standard->medium, hd->high) so a client/alias that hasn't migrated
+    keeps working.
+    """
     if value is None or value == "":
         return "auto", None
     if not isinstance(value, str):
         return "auto", _QUALITY_ERROR
     normalized = value.strip().lower()
+    normalized = _LEGACY_QUALITY_ALIASES.get(normalized, normalized)
     if normalized in VALID_QUALITY:
         return normalized, None
     return "auto", _QUALITY_ERROR

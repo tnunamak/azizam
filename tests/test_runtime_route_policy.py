@@ -428,6 +428,58 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                         "policy_denied",
                     )
 
+    def test_chat_only_opk_denies_video_list_and_delete(self) -> None:
+        """GET /v1/videos (list) and DELETE /v1/videos/{id} share a
+        canonical path with POST /v1/videos and GET /v1/videos/{video_id}
+        respectively, so this registry can't carry a second, method-specific
+        policy entry for them (see registry/protocol_frontends.yml's comment
+        next to the video routes). They must still be denied in-handler,
+        the same as every other video route -- a valid chat-only credential
+        must not be able to enumerate or delete videos."""
+        chat_only = AppProfile(
+            id="chat-only",
+            protocols=frozenset({"openai.chat"}),
+        )
+        blocked = AssertionError("runtime backend should not be called")
+
+        with authenticated_profile(chat_only), patch.object(
+            proxy, "proxy_comfy_video_list", AsyncMock(side_effect=blocked)
+        ), patch.object(
+            proxy, "proxy_comfy_video_delete", AsyncMock(side_effect=blocked)
+        ):
+            cases = [
+                ("get", "/v1/videos"),
+                ("delete", "/v1/videos/video_does-not-exist"),
+            ]
+            for method, path in cases:
+                with self.subTest(path=path):
+                    response = getattr(self.client, method)(path, headers=AUTH_HEADERS)
+                    self.assertEqual(response.status_code, 403, response.text)
+                    self.assertEqual(
+                        response.json()["error"]["code"],
+                        "policy_denied",
+                    )
+
+    def test_media_profile_allows_video_list_and_delete(self) -> None:
+        media_profile = AppProfile(
+            id="media",
+            protocols=frozenset({"openai.video"}),
+        )
+
+        with authenticated_profile(media_profile), patch.object(
+            proxy, "proxy_comfy_video_list", AsyncMock(return_value=ok_response())
+        ), patch.object(
+            proxy, "proxy_comfy_video_delete", AsyncMock(return_value=ok_response())
+        ):
+            cases = [
+                ("get", "/v1/videos"),
+                ("delete", "/v1/videos/video_does-not-exist"),
+            ]
+            for method, path in cases:
+                with self.subTest(path=path):
+                    response = getattr(self.client, method)(path, headers=AUTH_HEADERS)
+                    self.assertEqual(response.status_code, 200, response.text)
+
     def test_chat_only_opk_denies_media_job_content_before_lookup(self) -> None:
         chat_only = AppProfile(
             id="chat-only",

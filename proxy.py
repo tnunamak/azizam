@@ -5374,10 +5374,11 @@ async def resolve_image_background_decision(
     *,
     auth_context: AuthContext,
     force_bypass: bool = False,
+    force_bypass_reason: str = "edit mask supplied",
 ) -> ImageBackgroundRemovalDecision:
     """Resolve OpenAI's background option into a workflow output selection."""
     if force_bypass:
-        return _background_removal_fallback("forced_bypass", "edit mask supplied")
+        return _background_removal_fallback("forced_bypass", force_bypass_reason)
     if background == "transparent":
         return ImageBackgroundRemovalDecision(
             remove_background=True,
@@ -6083,7 +6084,12 @@ def _build_image_response_payload(
     }
     if background is not None:
         payload["background"] = background
-    if quality is not None:
+    # "auto" is a request-time convenience, never a value OpenAI's own
+    # response schema accepts -- it always echoes back the resolved tier,
+    # or omits the field. We have no way to know which concrete tier an
+    # unspecified/"auto" request would have resolved to, so omit rather
+    # than fabricate one.
+    if quality is not None and quality != "auto":
         payload["quality"] = quality
     if size is not None:
         payload["size"] = size
@@ -6272,7 +6278,12 @@ async def _generate_images_with_adaptive_batching(
                     auth_context=auth_context,
                     output_format=output_format,
                     output_compression=output_compression,
-                    output_background=output_background,
+                    # RMBG failed and we're retrying without it (bypass_decision
+                    # above): the rendered image will be opaque, not
+                    # transparent. Echoing the original (still "transparent")
+                    # output_background here would claim a transparency the
+                    # fallback render never produces.
+                    output_background="opaque",
                     output_quality=output_quality,
                     output_size=output_size,
                 )
@@ -6668,6 +6679,11 @@ async def proxy_comfy_request(
         background or "auto",
         prompt,
         auth_context=auth_context,
+        # jpeg has no alpha channel: "auto" background must never select
+        # removal for a jpeg request, or the response would advertise a
+        # transparency the encoded bytes can't actually carry.
+        force_bypass=(output_format == "jpeg"),
+        force_bypass_reason="output_format=jpeg has no alpha channel",
     )
 
     prompt_node = meta.get("prompt_node")
@@ -7133,7 +7149,14 @@ async def proxy_comfy_edit_request(
                 background or "auto",
                 prompt,
                 auth_context=auth_context,
-                force_bypass=bool(mask_file),
+                # jpeg has no alpha channel: "auto" background must never
+                # select removal for a jpeg request (see the generate route's
+                # identical guard for the full rationale).
+                force_bypass=bool(mask_file) or output_format == "jpeg",
+                force_bypass_reason=(
+                    "edit mask supplied" if mask_file
+                    else "output_format=jpeg has no alpha channel"
+                ),
             )
 
             prompt_node = meta.get("prompt_node")
@@ -7494,11 +7517,23 @@ async def proxy_comfy_variations_request(
         })
 
     overlay_request = _OverlayFormRequest(request, form, overlay)
-    return await proxy_comfy_edit_request(
+    client_requested_model = requested_model or None
+    response = await proxy_comfy_edit_request(
         overlay_request,  # type: ignore[arg-type]
         auth_context,
         receipt=receipt,
     )
+    if receipt is not None:
+        # proxy_comfy_edit_request just overwrote receipt.requested_model with
+        # the *injected* overlay model (what the edit backend was asked to
+        # run) -- from its own point of view that's correct, but here it
+        # clobbers what the client actually sent (e.g. "dall-e-2"). Restore
+        # the client's requested_model and keep the delegated workflow (which
+        # receipt.resolved_model already reflects) as separate, clearly-named
+        # metadata rather than conflating the two.
+        receipt.metadata["variations_delegated_workflow"] = model
+        receipt.requested_model = client_requested_model
+    return response
 
 
 # =============================================================================
@@ -7561,7 +7596,8 @@ def _node_class_from_workflow(workflow: dict | None, node_id: str | None) -> str
 # into phases without re-fetching /history).
 _video_workflows: dict[str, dict] = {}
 
-# prompt_id -> {model, size, seconds, actual_seconds, created_at, completed_at}
+# prompt_id -> {model, size, seconds, actual_seconds, created_at, completed_at,
+#               owner_key_hash, deleted_at}
 # Safe (prompt-free) submit-time metadata the OpenAI list/retrieve shapes need
 # but ComfyUI's own /history doesn't carry (no model/size/seconds/created_at
 # fields, and no concept of "which of these history entries are ours" since
@@ -7569,7 +7605,39 @@ _video_workflows: dict[str, dict] = {}
 # process-lifetime-only statefulness as _video_progress/_video_workflows: a
 # restart loses it, same as the comment at the top of this section documents
 # for /v1/videos/{id} polling.
+#
+# This dict is also the single source of truth for "does this video_id exist
+# and is it mine" across GET (status), GET (content), GET (list), and DELETE:
+# `owner_key_hash` scopes every one of those to the credential that created
+# the job (mirrors `_asset_owner_key`'s existing image/audio asset model; see
+# `_video_job_access_allowed`), and `deleted_at` is the DELETE tombstone --
+# once set, every read route treats the job as not-found, regardless of
+# whether ComfyUI's own /history still has the entry (its retention is
+# independent of ours and outside our control).
 _video_job_records: dict[str, dict] = {}
+
+
+def _video_job_access_allowed(prompt_id: str, auth_context: AuthContext | None) -> bool:
+    """Mirror `_asset_access_allowed`'s ownership semantics for video jobs.
+
+    No owner recorded (e.g. the job predates this field, or auth was
+    disabled at submit time) fails closed for an authenticated caller but
+    keeps the old unscoped behavior for an auth-disabled deployment, exactly
+    like `_asset_access_allowed`.
+    """
+    record = _video_job_records.get(prompt_id)
+    owner = record.get("owner_key_hash") if record is not None else None
+    if not owner:
+        return _asset_owner_key(auth_context) is None
+    return _asset_owner_key(auth_context) == owner
+
+
+def _video_job_visible(prompt_id: str, auth_context: AuthContext | None) -> bool:
+    """True iff the job is known, not deleted, and owned by the caller."""
+    record = _video_job_records.get(prompt_id)
+    if record is None or record.get("deleted_at") is not None:
+        return False
+    return _video_job_access_allowed(prompt_id, auth_context)
 
 
 def _classify_phase(node_class: str) -> str:
@@ -7691,14 +7759,55 @@ async def _record_event(event: dict) -> None:
         entry["updated_at"] = time.time()
 
 
+# How long a tombstoned (DELETE'd) _video_job_records entry is kept around
+# before being forgotten entirely. Matches _VIDEO_RECONCILE_RETAIN (the
+# existing terminal-entry retention window) -- long enough that a client
+# polling right after DELETE reliably sees 404, short enough not to leak.
+_VIDEO_JOB_RECORD_DELETED_RETAIN = 5 * 60
+
+
+def _gc_video_job_records_locked(now: float) -> None:
+    """Reap `_video_job_records` on its OWN retention, independent of
+    `_video_progress`/`_video_workflows`'s sweep.
+
+    This used to piggyback on `_video_progress`'s own GC (reaping whenever
+    THAT dict's entries aged out), which is the root cause of a real bug:
+    `_video_progress`'s terminal-entry sweep runs on a much shorter window
+    (`_VIDEO_RECONCILE_RETAIN`, 5 minutes) than its own full-entry sweep
+    (`_VIDEO_PROGRESS_TTL`, 6 hours) -- so a completed job's list/delete-
+    facing record vanished 5 minutes after completion while status/content
+    (which read ComfyUI's own /history directly, on its own, much longer
+    retention) kept serving it. `_video_job_records` is the one place list,
+    delete, get, and content all agree on for "does this job exist" (see its
+    own docstring), so it needs one independent retention rule, not
+    borrowed side effects of a dict that happens to get cleaned up by
+    unrelated code.
+
+    Caller must hold `_video_progress_lock`.
+    """
+    drop: list[str] = []
+    for pid, rec in _video_job_records.items():
+        deleted_at = rec.get("deleted_at")
+        if deleted_at is not None:
+            if now - deleted_at > _VIDEO_JOB_RECORD_DELETED_RETAIN:
+                drop.append(pid)
+            continue
+        created_at = rec.get("created_at") or 0
+        if now - created_at > _VIDEO_PROGRESS_TTL:
+            drop.append(pid)
+    for pid in drop:
+        _video_job_records.pop(pid, None)
+
+
 async def _gc_video_progress() -> None:
-    cutoff = time.time() - _VIDEO_PROGRESS_TTL
+    now = time.time()
+    cutoff = now - _VIDEO_PROGRESS_TTL
     async with _video_progress_lock:
         stale = [pid for pid, e in _video_progress.items() if e.get("updated_at", 0) < cutoff]
         for pid in stale:
             _video_progress.pop(pid, None)
             _video_workflows.pop(pid, None)
-            _video_job_records.pop(pid, None)
+        _gc_video_job_records_locked(now)
 
 
 # How often the reconciliation loop polls ComfyUI for authoritative state.
@@ -7849,7 +7958,10 @@ def _gc_video_progress_terminal_locked(now: float) -> None:
     for pid in drop:
         _video_progress.pop(pid, None)
         _video_workflows.pop(pid, None)
-        _video_job_records.pop(pid, None)
+    # _video_job_records has its own independent retention -- see
+    # _gc_video_job_records_locked's docstring for why it must not piggyback
+    # on this (much shorter) terminal-entry sweep.
+    _gc_video_job_records_locked(now)
 
 
 async def _reconcile_video_progress_loop(stop_event: asyncio.Event) -> None:
@@ -8906,6 +9018,10 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
                         "actual_seconds": round(actual_seconds, 4),
                         "created_at": now,
                         "completed_at": None,
+                        # Owner scoping for GET/list/DELETE/content -- mirrors
+                        # _asset_owner_key's existing image/audio asset model.
+                        "owner_key_hash": _asset_owner_key(auth_context),
+                        "deleted_at": None,
                     }
             except Exception:
                 pass
@@ -8955,6 +9071,17 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
         return Response(
             content=json.dumps({"error": {"message": "invalid video_id", "type": "invalid_request_error"}}),
             status_code=400,
+            media_type="application/json"
+        )
+    # Ownership + tombstone gate. Only enforced when we actually have a
+    # tracked record for this id -- an id with no record at all (never
+    # tracked, or evicted past _video_job_records' own retention) has no
+    # owner to check against, so it falls through to the legacy ComfyUI-
+    # history lookup below unscoped, same as before this field existed.
+    if prompt_id in _video_job_records and not _video_job_visible(prompt_id, auth_context):
+        return Response(
+            content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
+            status_code=404,
             media_type="application/json"
         )
 
@@ -9050,6 +9177,13 @@ async def proxy_comfy_video_content(video_id: str, auth_context: AuthContext) ->
         return Response(
             content=json.dumps({"error": {"message": "invalid video_id", "type": "invalid_request_error"}}),
             status_code=400,
+            media_type="application/json"
+        )
+    # Same ownership + tombstone gate as proxy_comfy_video_status.
+    if prompt_id in _video_job_records and not _video_job_visible(prompt_id, auth_context):
+        return Response(
+            content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
+            status_code=404,
             media_type="application/json"
         )
 
@@ -9203,15 +9337,38 @@ async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) ->
         )
 
     async with _video_progress_lock:
-        records = [(pid, dict(rec)) for pid, rec in _video_job_records.items()]
+        records = [
+            (pid, dict(rec))
+            for pid, rec in _video_job_records.items()
+            if _video_job_visible(pid, auth_context)
+        ]
     records.sort(key=lambda item: item[1].get("created_at") or 0, reverse=(order == "desc"))
 
     if after_prompt_id is not None:
         ids_in_order = [pid for pid, _ in records]
         if after_prompt_id in ids_in_order:
             records = records[ids_in_order.index(after_prompt_id) + 1:]
-        # An unknown/evicted `after` cursor is not an error -- matches OpenAI's
-        # own list endpoints, which don't 404 on a stale pagination cursor.
+        else:
+            # The cursor doesn't resolve against this caller's current page
+            # set -- it was evicted (past _video_job_records' own retention),
+            # deleted, or never existed for this owner. Silently restarting
+            # from page one here would look like forward progress to a
+            # paginating client while actually re-serving the first page
+            # forever; an explicit error is the honest response when we
+            # cannot determine where in the ordering to resume.
+            return Response(
+                content=json.dumps({"error": {
+                    "message": (
+                        "after cursor does not reference a currently known "
+                        "video job (it may have been deleted or evicted)"
+                    ),
+                    "type": "invalid_request_error",
+                    "param": "after",
+                    "code": "cursor_not_found",
+                }}),
+                status_code=400,
+                media_type="application/json",
+            )
 
     page = records[:limit]
     has_more = len(records) > len(page)
@@ -9277,11 +9434,20 @@ async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) ->
 async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> Response:
     """DELETE /v1/videos/{video_id}.
 
-    Best-effort drops the ComfyUI /history entry (so its mp4 bytes stop being
-    reachable via /view) and always drops this gateway's own in-memory
-    tracking, which is the actual source of truth for "does this video_id
-    exist" (ComfyUI's /history has no entry at all for a still-queued job,
-    which is not the same as "unknown id").
+    A queued/running job is actively cancelled (ComfyUI's
+    `/api/jobs/{id}/cancel` -- interrupts a running prompt, dequeues a
+    pending one, atomically and idempotently) before being tombstoned; a
+    job that's already terminal (succeeded/failed) is tombstoned directly.
+    If cancellation can't be verified (ComfyUI unreachable, or it reports
+    the cancel didn't take), this returns 409 instead of claiming
+    `deleted: true` for a job that may keep rendering to completion.
+
+    The tombstone (`_video_job_records[...]["deleted_at"]`, not an outright
+    pop) is what makes "GET returns 404 and content is no longer served"
+    actually hold: this gateway's own tracking (not ComfyUI's /history,
+    which has no entry at all for a still-queued job -- that is not the
+    same as "unknown id", and whose retention we don't control) is the
+    source of truth for every read route.
     """
     if not COMFY_ENABLED:
         return Response(
@@ -9302,7 +9468,15 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
         )
 
     async with _video_progress_lock:
-        known = prompt_id in _video_job_records or prompt_id in _video_progress
+        if prompt_id in _video_job_records:
+            known = _video_job_visible(prompt_id, auth_context)
+        else:
+            # No ownership metadata exists for a job we're only tracking via
+            # the legacy _video_progress dict (shouldn't happen in practice
+            # since both are written together, but kept as a defensive
+            # fallback) -- nothing to scope against, so fall back to the
+            # pre-ownership "is it known at all" check.
+            known = prompt_id in _video_progress
     if not known:
         return Response(
             content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
@@ -9313,20 +9487,84 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+            job = await _comfy_history(client, prompt_id, headers)
+            if job is not None:
+                current_status, _ = _job_status_from_history(job)
+            else:
+                live = _video_progress_snapshot(prompt_id)
+                if live and live.get("status") in ("queued", "running"):
+                    current_status = "running"
+                else:
+                    queue_status = await _comfy_queue_status(client, prompt_id, headers)
+                    current_status = queue_status if queue_status != "unknown" else "succeeded"
+                    # "unknown" here means ComfyUI has no record of this
+                    # prompt_id at all (not in /history, not in /queue) --
+                    # there is nothing left to cancel, so treat it as already
+                    # terminal rather than attempting (and failing) a cancel.
+
+            if current_status in ("queued", "running"):
+                try:
+                    cancel_resp = await client.post(
+                        f"{COMFY_HOST}/api/jobs/{prompt_id}/cancel",
+                        headers=headers,
+                    )
+                except Exception as e:
+                    return Response(
+                        content=json.dumps({"error": {
+                            "message": f"Could not cancel in-progress video job: {e}",
+                            "type": "api_error",
+                            "code": "video_cancel_failed",
+                        }}),
+                        status_code=409,
+                        media_type="application/json",
+                    )
+                if cancel_resp.status_code != 200:
+                    return Response(
+                        content=json.dumps({"error": {
+                            "message": f"ComfyUI cancel request failed: HTTP {cancel_resp.status_code}",
+                            "type": "api_error",
+                            "code": "video_cancel_failed",
+                        }}),
+                        status_code=409,
+                        media_type="application/json",
+                    )
+                # A {"cancelled": false} body means ComfyUI found nothing to
+                # cancel (e.g. the job finished in the race between our
+                # status check above and this call) -- that's fine, it's
+                # terminal now; fall through to the tombstone below rather
+                # than treating a no-op as a failure.
+
+            # Best-effort: drop the ComfyUI history entry too, so a
+            # succeeded/failed job's mp4 stops being reachable via /view
+            # even if our own tombstone below were somehow bypassed. A job
+            # we just cancelled while still queued has no history entry to
+            # drop; the delete call is simply a no-op for it.
             try:
                 await client.post(f"{COMFY_HOST}/history", headers=headers, json={"delete": [prompt_id]})
             except Exception:
-                # Best-effort only: a still-queued job has no history entry
-                # yet, and ComfyUI being briefly unreachable shouldn't block
-                # dropping our own tracking below.
                 pass
-    except Exception:
-        pass
+    except httpx.ConnectError:
+        return Response(
+            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json"
+        )
+    except Exception as e:
+        return Response(
+            content=json.dumps({"error": {"message": f"Video delete error: {str(e)}", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json"
+        )
 
+    now = int(time.time())
     async with _video_progress_lock:
+        record = _video_job_records.get(prompt_id)
+        if record is not None:
+            record["deleted_at"] = now
+            if record.get("completed_at") is None:
+                record["completed_at"] = now
         _video_progress.pop(prompt_id, None)
         _video_workflows.pop(prompt_id, None)
-        _video_job_records.pop(prompt_id, None)
 
     return Response(
         content=json.dumps({"id": video_id, "object": "video", "deleted": True}),
@@ -9363,7 +9601,10 @@ async def proxy_comfy_video_remix(video_id: str, auth_context: AuthContext) -> R
             media_type="application/json"
         )
     async with _video_progress_lock:
-        known = prompt_id in _video_job_records or prompt_id in _video_progress
+        if prompt_id in _video_job_records:
+            known = _video_job_visible(prompt_id, auth_context)
+        else:
+            known = prompt_id in _video_progress
     if not known:
         return Response(
             content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
@@ -16037,6 +16278,22 @@ def _video_media_job_policy() -> dict[str, Any]:
     return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND["vid"]
 
 
+def _video_route_policy() -> dict[str, Any]:
+    """The same `openai.video`/`video.generate` policy every other
+    `/v1/videos*` route already enforces (registry/protocol_frontends.yml).
+
+    GET /v1/videos (list) and DELETE /v1/videos/{video_id} share a canonical
+    path with POST /v1/videos and GET /v1/videos/{video_id} respectively, and
+    `route_registry.runtime_route_policy()` keys its result by path alone
+    (not path+method) -- a second registry entry at either path would
+    silently overwrite the already-registered one instead of adding a
+    method-specific policy. Enforcing this literal policy dict in-handler
+    (via `_enforce_runtime_route_policy`'s `policy=` override) gets list and
+    delete the same protection without touching that shared dict at all.
+    """
+    return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND["vid"]
+
+
 def _video_generation_body_from_media_job_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, Any] | None:
@@ -17136,10 +17393,14 @@ async def videos_list(request: Request):
     auth_context = authenticate_request(request, "/v1/videos")
     if isinstance(auth_context, Response):
         return auth_context
-    # No runtime_policy entry at this path -- see the comment in
-    # registry/protocol_frontends.yml next to the (absent) GET /v1/videos
-    # policy entry for why: the registry keys by path alone, and this path
-    # already carries POST's video.generate policy.
+    # In-handler policy enforcement, not a registry entry -- see
+    # _video_route_policy's own docstring for why (this path already carries
+    # POST's registry-keyed policy).
+    policy_response = _enforce_runtime_route_policy(
+        auth_context, "/v1/videos", policy=_video_route_policy()
+    )
+    if policy_response is not None:
+        return policy_response
     return await proxy_comfy_video_list(request, auth_context)
 
 
@@ -17150,8 +17411,14 @@ async def videos_delete(video_id: str, request: Request):
     auth_context = authenticate_request(request, "/v1/videos/{video_id}")
     if isinstance(auth_context, Response):
         return auth_context
-    # No runtime_policy entry at this path either -- same reason as the list
-    # route above (this path already carries GET's video.generate policy).
+    # In-handler policy enforcement, not a registry entry -- same reason as
+    # the list route above (this path already carries GET's registry-keyed
+    # policy).
+    policy_response = _enforce_runtime_route_policy(
+        auth_context, "/v1/videos/{video_id}", policy=_video_route_policy()
+    )
+    if policy_response is not None:
+        return policy_response
     return await proxy_comfy_video_delete(video_id, auth_context)
 
 

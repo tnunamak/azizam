@@ -124,9 +124,15 @@ class VideoRegistryTestCase(unittest.IsolatedAsyncioTestCase):
             "actual_seconds": 5.0,
             "created_at": 1000,
             "completed_at": None,
+            "owner_key_hash": None,
+            "deleted_at": None,
         }
         record.update(fields)
         proxy._video_job_records[prompt_id] = record
+
+
+ALICE = proxy.AuthContext(identity=proxy.AuthIdentity(name="alice", key_hash="sha256:alice"))
+BOB = proxy.AuthContext(identity=proxy.AuthIdentity(name="bob", key_hash="sha256:bob"))
 
 
 class TestVideosList(VideoRegistryTestCase):
@@ -272,6 +278,57 @@ class TestVideosList(VideoRegistryTestCase):
         entry = json.loads(response.body)["data"][0]
         self.assertEqual(entry["status"], "running")
 
+    async def test_evicted_after_cursor_errors_instead_of_restarting(self) -> None:
+        """A cursor that no longer resolves (evicted/deleted/unknown) must
+        not silently restart pagination from page one -- that looks like
+        forward progress to a client while actually re-serving page one
+        forever."""
+        self._seed("p1", created_at=1000)
+        self._seed("p2", created_at=2000)
+        client = _FakeVideoAsyncClient(history={
+            "p1": _succeeded_history_entry(),
+            "p2": _succeeded_history_entry(),
+        })
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_list(
+                _StubListRequest({"after": proxy._video_id_from_prompt_id("never-existed")}),
+                proxy.NO_AUTH_CONTEXT,  # type: ignore[arg-type]
+            )
+        self.assertEqual(response.status_code, 400)
+        body = json.loads(response.body)
+        self.assertEqual(body["error"]["code"], "cursor_not_found")
+        self.assertEqual(body["error"]["param"], "after")
+
+    async def test_deleted_job_excluded_from_list(self) -> None:
+        self._seed("p1", created_at=1000)
+        self._seed("p2", created_at=2000, deleted_at=1500)
+        client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_list(
+                _StubListRequest(), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+            )
+        ids = [item["id"] for item in json.loads(response.body)["data"]]
+        self.assertEqual(ids, [proxy._video_id_from_prompt_id("p1")])
+
+    async def test_list_scoped_to_owner(self) -> None:
+        self._seed("p1", created_at=1000, owner_key_hash="sha256:alice")
+        self._seed("p2", created_at=2000, owner_key_hash="sha256:bob")
+        client = _FakeVideoAsyncClient(history={
+            "p1": _succeeded_history_entry(),
+            "p2": _succeeded_history_entry(),
+        })
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            alice_response = await proxy.proxy_comfy_video_list(
+                _StubListRequest(), ALICE  # type: ignore[arg-type]
+            )
+            bob_response = await proxy.proxy_comfy_video_list(
+                _StubListRequest(), BOB  # type: ignore[arg-type]
+            )
+        alice_ids = [item["id"] for item in json.loads(alice_response.body)["data"]]
+        bob_ids = [item["id"] for item in json.loads(bob_response.body)["data"]]
+        self.assertEqual(alice_ids, [proxy._video_id_from_prompt_id("p1")])
+        self.assertEqual(bob_ids, [proxy._video_id_from_prompt_id("p2")])
+
 
 class TestVideosDelete(VideoRegistryTestCase):
     async def test_unknown_id_is_404(self) -> None:
@@ -286,11 +343,14 @@ class TestVideosDelete(VideoRegistryTestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    async def test_known_id_deletes_and_clears_tracking(self) -> None:
+    async def test_known_terminal_job_deletes_without_cancelling(self) -> None:
+        """A job that's already succeeded has nothing to cancel -- only the
+        best-effort ComfyUI history delete should fire, and the local record
+        is tombstoned (kept, deleted_at set), not popped outright."""
         self._seed("p1", created_at=1000)
-        proxy._video_progress["p1"] = {"status": "queued", "updated_at": 1000}
+        proxy._video_progress["p1"] = {"status": "succeeded", "updated_at": 1000}
         proxy._video_workflows["p1"] = {"6": {"inputs": {}}}
-        client = _FakeVideoAsyncClient()
+        client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_delete(
                 proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
@@ -299,11 +359,16 @@ class TestVideosDelete(VideoRegistryTestCase):
         body = json.loads(response.body)
         self.assertEqual(body["object"], "video")
         self.assertTrue(body["deleted"])
-        self.assertNotIn("p1", proxy._video_job_records)
+        # Tombstoned, not popped: the job record stays (so the GC/retention
+        # story is coherent) but is no longer visible.
+        self.assertIn("p1", proxy._video_job_records)
+        self.assertIsNotNone(proxy._video_job_records["p1"]["deleted_at"])
+        self.assertFalse(proxy._video_job_visible("p1", proxy.NO_AUTH_CONTEXT))
         self.assertNotIn("p1", proxy._video_progress)
         self.assertNotIn("p1", proxy._video_workflows)
-        # Best-effort ComfyUI history delete was attempted.
+        # No cancel call for an already-terminal job -- only history delete.
         self.assertEqual(len(client.posts), 1)
+        self.assertEqual(client.posts[0][0], f"{proxy.COMFY_HOST}/history")
         self.assertEqual(client.posts[0][1], {"delete": ["p1"]})
 
     async def test_known_but_not_yet_in_history_still_deletable(self) -> None:
@@ -315,6 +380,148 @@ class TestVideosDelete(VideoRegistryTestCase):
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_delete(
                 proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+        self.assertEqual(response.status_code, 200)
+
+    async def test_queued_job_is_cancelled_before_tombstoning(self) -> None:
+        """Deleting a queued/running job must actively cancel it, not just
+        stop tracking it locally while ComfyUI keeps rendering."""
+        self._seed("p1", created_at=1000)
+        proxy._video_progress["p1"] = {"status": "queued", "updated_at": 1000}
+        client = _FakeVideoAsyncClient()
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_delete(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(json.loads(response.body)["deleted"])
+        self.assertEqual(len(client.posts), 2)
+        self.assertEqual(client.posts[0][0], f"{proxy.COMFY_HOST}/api/jobs/p1/cancel")
+        self.assertEqual(client.posts[1][0], f"{proxy.COMFY_HOST}/history")
+
+    async def test_cancel_failure_returns_409_not_deleted(self) -> None:
+        """If ComfyUI can't confirm the cancel, we must not claim
+        `deleted: true` for a job that may keep rendering to completion."""
+        self._seed("p1", created_at=1000)
+        proxy._video_progress["p1"] = {"status": "running", "updated_at": 1000}
+
+        class _FailingCancelClient(_FakeVideoAsyncClient):
+            async def post(self, url: str, **kwargs: Any) -> Any:
+                if url.endswith("/cancel"):
+                    raise ConnectionError("comfyui unreachable")
+                return await super().post(url, **kwargs)
+
+        client = _FailingCancelClient()
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_delete(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            json.loads(response.body)["error"]["code"], "video_cancel_failed"
+        )
+        # Not tombstoned -- the job is presumed still running.
+        self.assertIsNone(proxy._video_job_records["p1"]["deleted_at"])
+
+    async def test_cancel_reports_false_still_tombstones(self) -> None:
+        """ComfyUI reporting {"cancelled": false} (the job finished in the
+        race between our status check and the cancel call) is not a
+        failure -- it's terminal now, so we proceed to tombstone."""
+        self._seed("p1", created_at=1000)
+        proxy._video_progress["p1"] = {"status": "running", "updated_at": 1000}
+
+        class _NoopCancelClient(_FakeVideoAsyncClient):
+            async def post(self, url: str, **kwargs: Any) -> Any:
+                if url.endswith("/cancel"):
+                    self.posts.append((url, {}))
+                    return _StubHistoryResponse(200, {"cancelled": False})
+                return await super().post(url, **kwargs)
+
+        client = _NoopCancelClient()
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_delete(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(proxy._video_job_records["p1"]["deleted_at"])
+
+    async def test_deleted_job_no_longer_visible_to_status_or_content(self) -> None:
+        """The tombstone, not just dropping live-progress tracking, is what
+        actually makes GET return 404 and content stop being served."""
+        self._seed("p1", created_at=1000)
+        proxy._video_progress["p1"] = {"status": "succeeded", "updated_at": 1000}
+        client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            await proxy.proxy_comfy_video_delete(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+            status_response = await proxy.proxy_comfy_video_status(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+            content_response = await proxy.proxy_comfy_video_content(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+        self.assertEqual(status_response.status_code, 404)
+        self.assertEqual(content_response.status_code, 404)
+
+    async def test_owner_cannot_be_deleted_by_a_different_credential(self) -> None:
+        self._seed("p1", created_at=1000, owner_key_hash="sha256:alice")
+        proxy._video_progress["p1"] = {"status": "succeeded", "updated_at": 1000}
+        response = await proxy.proxy_comfy_video_delete(
+            proxy._video_id_from_prompt_id("p1"), BOB
+        )
+        self.assertEqual(response.status_code, 404)
+        # Not actually deleted -- Bob's 404 must not have side effects.
+        self.assertIsNone(proxy._video_job_records["p1"]["deleted_at"])
+
+    async def test_owner_can_delete_own_job(self) -> None:
+        self._seed("p1", created_at=1000, owner_key_hash="sha256:alice")
+        proxy._video_progress["p1"] = {"status": "succeeded", "updated_at": 1000}
+        client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_delete(
+                proxy._video_id_from_prompt_id("p1"), ALICE
+            )
+        self.assertEqual(response.status_code, 200)
+
+
+class TestVideosOwnership(VideoRegistryTestCase):
+    """Status/content must be scoped to the owning credential too -- not
+    just list/delete (a video-enabled credential B must not be able to poll
+    or download credential A's job, even knowing its id)."""
+
+    async def test_status_hidden_from_non_owner(self) -> None:
+        self._seed("p1", created_at=1000, owner_key_hash="sha256:alice")
+        response = await proxy.proxy_comfy_video_status(
+            proxy._video_id_from_prompt_id("p1"), BOB
+        )
+        self.assertEqual(response.status_code, 404)
+
+    async def test_status_visible_to_owner(self) -> None:
+        self._seed("p1", created_at=1000, owner_key_hash="sha256:alice")
+        client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_status(
+                proxy._video_id_from_prompt_id("p1"), ALICE
+            )
+        self.assertEqual(response.status_code, 200)
+
+    async def test_content_hidden_from_non_owner(self) -> None:
+        self._seed("p1", created_at=1000, owner_key_hash="sha256:alice")
+        response = await proxy.proxy_comfy_video_content(
+            proxy._video_id_from_prompt_id("p1"), BOB
+        )
+        self.assertEqual(response.status_code, 404)
+
+    async def test_untracked_id_still_falls_back_unscoped(self) -> None:
+        """An id with no _video_job_records entry at all (never tracked, or
+        evicted past its own retention) has no owner to check -- it must
+        fall through to the legacy unscoped lookup rather than 404ing
+        everyone, which would regress already-shipped behavior."""
+        client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_status(
+                proxy._video_id_from_prompt_id("p1"), BOB
             )
         self.assertEqual(response.status_code, 200)
 
@@ -347,6 +554,57 @@ class TestVideosRemix(VideoRegistryTestCase):
         self.assertEqual(
             json.loads(response.body)["error"]["code"], "video_remix_not_implemented"
         )
+
+    async def test_non_owner_gets_404_not_remix_error(self) -> None:
+        self._seed("p1", owner_key_hash="sha256:alice")
+        response = await proxy.proxy_comfy_video_remix(
+            proxy._video_id_from_prompt_id("p1"), BOB
+        )
+        self.assertEqual(response.status_code, 404)
+
+
+class TestVideoJobRecordGC(VideoRegistryTestCase):
+    """_video_job_records must have its own retention, independent of
+    _video_progress's much-shorter terminal-entry sweep -- that mismatch was
+    the actual root cause of list/delete "forgetting" a job 5 minutes after
+    completion while status/content (reading ComfyUI's own, separately
+    retained /history) kept serving it."""
+
+    def test_completed_job_outlives_the_old_five_minute_terminal_window(self) -> None:
+        self._seed("p1", created_at=1000, completed_at=1000)
+        # 10 minutes later -- well past the old 5-minute terminal retention,
+        # well within the 6-hour full retention this now uses instead.
+        now = 1000 + 600
+        proxy._gc_video_job_records_locked(now)
+        self.assertIn("p1", proxy._video_job_records)
+
+    def test_completed_job_is_reaped_after_the_full_ttl(self) -> None:
+        self._seed("p1", created_at=1000, completed_at=1000)
+        now = 1000 + proxy._VIDEO_PROGRESS_TTL + 1
+        proxy._gc_video_job_records_locked(now)
+        self.assertNotIn("p1", proxy._video_job_records)
+
+    def test_tombstone_is_retained_briefly_then_reaped(self) -> None:
+        self._seed("p1", created_at=1000, completed_at=1000, deleted_at=1000)
+        proxy._gc_video_job_records_locked(1000 + 60)
+        self.assertIn("p1", proxy._video_job_records)
+        proxy._gc_video_job_records_locked(1000 + proxy._VIDEO_JOB_RECORD_DELETED_RETAIN + 1)
+        self.assertNotIn("p1", proxy._video_job_records)
+
+    def test_terminal_progress_gc_no_longer_touches_job_records(self) -> None:
+        """Regression guard for the actual bug: the 5-minute terminal-entry
+        sweep (_gc_video_progress_terminal_locked) must not reap
+        _video_job_records at all anymore -- only the independent,
+        longer-lived _gc_video_job_records_locked does."""
+        self._seed("p1", created_at=1000, completed_at=1000)
+        proxy._video_progress["p1"] = {
+            "status": "succeeded",
+            "ended_at": 1000,
+            "updated_at": 1000,
+        }
+        proxy._gc_video_progress_terminal_locked(1000 + 600)  # 10 min later
+        self.assertNotIn("p1", proxy._video_progress)  # the short sweep did its own job
+        self.assertIn("p1", proxy._video_job_records)  # but left the record alone
 
 
 if __name__ == "__main__":

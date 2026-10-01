@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import Response
 from fastapi.testclient import TestClient
@@ -163,6 +163,23 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["quality"], "high")
         self.assertEqual(body["size"], "1024x1024")
 
+    def test_response_never_echoes_auto_quality(self) -> None:
+        """OpenAI's own response schema only accepts a resolved quality
+        tier -- "auto" is a request-time convenience it never echoes back.
+        A strict SDK client rejects a response containing it."""
+        raw = _png_bytes((1, 2, 3, 255))
+        request = _StubUrlRequest()
+
+        response = proxy._build_image_response_payload(
+            request,  # type: ignore[arg-type]
+            [raw],
+            "b64_json",
+            {},
+            quality="auto",
+        )
+        body = json.loads(response.body.decode("utf-8"))
+        self.assertNotIn("quality", body)
+
     def test_output_format_jpeg_reencodes_bytes_and_media_type(self) -> None:
         from PIL import Image
 
@@ -184,6 +201,63 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         decoded = base64.b64decode(item["b64_json"])
         image = Image.open(io.BytesIO(decoded))
         self.assertEqual(image.format, "JPEG")
+
+    async def test_background_removal_failure_fallback_echoes_opaque(self) -> None:
+        """When RMBG fails mid-round, the retry renders without background
+        removal (opaque) -- the response must say so, not keep claiming the
+        originally-requested "transparent"."""
+        raw = _png_bytes((10, 20, 30, 255))
+        workflow = {"6": {"inputs": {"text": ""}}}
+        fallback_workflow = copy.deepcopy(workflow)
+        error_response = Response(
+            content=json.dumps({"error": {"message": "RMBG node crashed"}}),
+            status_code=500,
+            media_type="application/json",
+        )
+        calls = {"n": 0}
+
+        async def fake_run_round(*_args, **_kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return error_response, []
+            return None, [raw]
+
+        request = _StubUrlRequest()
+        decision = proxy.ImageBackgroundRemovalDecision(
+            remove_background=True,
+            confidence=1.0,
+            reason="client requested transparent background",
+            source="request",
+        )
+        with patch.object(
+            proxy, "_comfy_run_round", fake_run_round
+        ), patch.object(
+            proxy, "get_vram_estimate", lambda *_a, **_k: 1024
+        ), patch.object(
+            proxy, "comfy_free_vram_bytes", AsyncMock(return_value=10**10)
+        ):
+            response = await proxy._generate_images_with_adaptive_batching(
+                request=request,  # type: ignore[arg-type]
+                client=object(),  # type: ignore[arg-type]
+                base_workflow=workflow,
+                meta={},
+                seed_node=None,
+                seed_field="seed",
+                workflow_name="fixture",
+                width=512,
+                height=512,
+                n_requested=1,
+                response_format="b64_json",
+                headers={},
+                background_removal_decision=decision,
+                fallback_workflow=fallback_workflow,
+                fallback_workflow_name="fixture",
+                output_format="png",
+                output_background="transparent",
+            )
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.body)
+        self.assertEqual(body["background"], "opaque")
 
     async def test_image_edit_accepts_openai_image_array_multipart_field(self) -> None:
         receipt = proxy.start_image_route_receipt(
@@ -1638,6 +1712,78 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["base_workflow"]["10"]["inputs"]["image"], "uploaded-1.png")
 
 
+class TestJpegBackgroundAutoBypass(unittest.IsolatedAsyncioTestCase):
+    """jpeg has no alpha channel: an "auto"/omitted background must never be
+    resolved to removal for a jpeg request, or the response would advertise
+    a transparency the encoded bytes can't carry."""
+
+    def _workflow(self) -> dict[str, Any]:
+        return {
+            "_meta": {
+                "name": "fixture",
+                "prompt_node": "6",
+                "size_node": "27",
+                "background_removal": {
+                    "save_node": "9",
+                    "plain_image": ["8", 0],
+                    "transparent_image": ["90", 0],
+                    "rmbg_node": "90",
+                },
+            },
+            "6": {"inputs": {"text": ""}},
+            "27": {"inputs": {"width": 512, "height": 512}},
+            "8": {"inputs": {}},
+            "9": {"inputs": {"images": ["8", 0], "filename_prefix": ""}, "class_type": "SaveImage"},
+            "90": {"inputs": {"image": ["8", 0]}},
+        }
+
+    async def test_jpeg_never_triggers_auto_background_removal(self) -> None:
+        workflow = self._workflow()
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": []}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        class _StubRequest:
+            async def json(self_inner) -> Any:
+                return {"prompt": "a cat", "output_format": "jpeg"}
+
+        decide_mock = AsyncMock(
+            return_value=proxy.ImageBackgroundRemovalDecision(
+                remove_background=True,
+                confidence=0.9,
+                reason="llm said remove",
+                source="llm",
+            )
+        )
+
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy, "configured_downstream_headers", lambda _a, _b: {}
+        ), patch.object(
+            proxy, "load_comfy_workflow", lambda _m: copy.deepcopy(workflow)
+        ), patch.object(
+            proxy, "_find_image_manifest", lambda _i, _m: None
+        ), patch.object(
+            proxy, "_generate_images_with_adaptive_batching", fake_generate
+        ), patch.object(
+            proxy, "decide_image_background_removal", decide_mock
+        ):
+            response = await proxy.proxy_comfy_request(
+                _StubRequest(), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(response.status_code, 200)
+        # The LLM-backed "auto" decision path must never even be consulted --
+        # force_bypass short-circuits before it, for jpeg.
+        decide_mock.assert_not_called()
+        self.assertEqual(captured["output_background"], "opaque")
+
+
 class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
     """`quality` -> sampler steps, only when a manifest declares `quality_steps`."""
 
@@ -1925,7 +2071,12 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
             workflow_payload["6"]["inputs"]["text"], proxy.IMAGE_VARIATIONS_PROMPT
         )
         self.assertEqual(workflow_payload["10"]["inputs"]["image"], "uploaded-1.png")
-        self.assertEqual(receipt.requested_model, proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW)
+        # No model sent by the client -- nothing to preserve as "requested".
+        self.assertIsNone(receipt.requested_model)
+        self.assertEqual(
+            receipt.metadata["variations_delegated_workflow"],
+            proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW,
+        )
 
     async def test_denoise_applied_only_when_manifest_declares_it(self) -> None:
         receipt, response, captured = await self._run(
@@ -1954,13 +2105,18 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
                 manifest=self._edit_manifest(with_denoise=False),
             )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(receipt.requested_model, "flux2-klein-4b-inpaint")
+        self.assertIsNone(receipt.requested_model)
+        self.assertEqual(
+            receipt.metadata["variations_delegated_workflow"], "flux2-klein-4b-inpaint"
+        )
 
     async def test_openai_model_alias_routes_to_configured_default(self) -> None:
         """A real OpenAI client's `model=dall-e-2` (the historical -- and for
         many SDK versions, default -- variations model) must resolve to the
         configured variations workflow, not a literal (nonexistent)
-        `dall-e-2-edit` local workflow."""
+        `dall-e-2-edit` local workflow. The receipt must keep recording what
+        the client actually asked for (`dall-e-2`), not silently relabel it
+        as a request for the internal delegated workflow."""
         receipt, response, _ = await self._run(
             fields=[
                 ("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255)))),
@@ -1969,7 +2125,11 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
             manifest=self._edit_manifest(with_denoise=False),
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(receipt.requested_model, proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW)
+        self.assertEqual(receipt.requested_model, "dall-e-2")
+        self.assertEqual(
+            receipt.metadata["variations_delegated_workflow"],
+            proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW,
+        )
 
     async def test_concrete_local_workflow_name_is_honored_literally(self) -> None:
         receipt, response, _ = await self._run(
@@ -1980,7 +2140,13 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
             manifest=self._edit_manifest(with_denoise=False),
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(receipt.requested_model, "flux2-klein-4b-edit")
+        # The client's own model string is preserved as requested_model...
+        self.assertEqual(receipt.requested_model, "flux2-klein-4b")
+        # ...while the actually-delegated (suffixed) workflow is recorded
+        # separately, not conflated with what the client asked for.
+        self.assertEqual(
+            receipt.metadata["variations_delegated_workflow"], "flux2-klein-4b-edit"
+        )
 
 
 if __name__ == "__main__":

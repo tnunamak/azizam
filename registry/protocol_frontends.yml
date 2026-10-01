@@ -84,9 +84,13 @@ records:
       # registered "/v1/videos" (POST, video.generate) or
       # "/v1/videos/{video_id}" (GET, video.generate) path would silently
       # overwrite the existing entry instead of adding a method-specific one.
-      # They fall back to "no policy registered" (always allowed), same as
-      # every other unregistered path. Fixing the registry to key on
-      # path+method is a separate, riskier change outside this task's scope.
+      # They are NOT unguarded, though: proxy.py's videos_list/videos_delete
+      # route handlers enforce the identical openai.video/video.generate
+      # policy in-handler via _video_route_policy() + _enforce_runtime_route_
+      # policy's policy= override, bypassing this path-keyed registry dict
+      # entirely for those two routes. Fixing the registry itself to key on
+      # path+method (so this override wouldn't be needed) is a separate,
+      # riskier change outside this task's scope.
       - methods: [POST]
         canonical: /v1/videos/{video_id}/remix
         alias: /openai/v1/videos/{video_id}/remix
