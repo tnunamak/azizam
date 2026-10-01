@@ -1,146 +1,176 @@
 {
-  "_meta": {
-    "name": "seedvr2-upscale",
-    "description": "SeedVR2 7B Sharp (int8_convrot) one-step image upscale/restore (ICLR 2026, Apache-2.0). Pre-scales by `scale` with lanczos, then runs a single-step flow-matching refine pass (steps=1, cfg=1 by design -- this is the official template default, not a bug) that both sharpens and removes compression artifacts. `scale` and `color_correction_method` are gateway-native manifest inputs, not OpenAI-standard fields.",
-    "image_node": "1",
-    "seed_node": "8"
-  },
-  "1": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "input.png"
+    "_meta": {
+        "name": "seedvr2-upscale",
+        "description": "SeedVR2 7B Sharp (int8_convrot) one-step image upscale/restore (ICLR 2026, Apache-2.0). Pre-scales by `scale` with lanczos, then runs a single-step flow-matching refine pass (steps=1, cfg=1 by design -- this is the official template default, not a bug) that both sharpens and removes compression artifacts. `scale` and `color_correction_method` are gateway-native manifest inputs, not OpenAI-standard fields.",
+        "image_node": "1",
+        "seed_node": "8",
+        "background_removal": {
+            "save_node": "11",
+            "plain_image": [
+                "10",
+                0
+            ],
+            "transparent_image": [
+                "99",
+                0
+            ],
+            "rmbg_node": "99"
+        }
+    },
+    "1": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "input.png"
+        }
+    },
+    "2": {
+        "class_type": "ResizeImageMaskNode",
+        "inputs": {
+            "input": [
+                "1",
+                0
+            ],
+            "resize_type": "scale by multiplier",
+            "scale_method": "lanczos",
+            "resize_type.multiplier": 2.0
+        }
+    },
+    "3": {
+        "class_type": "SeedVR2Preprocess",
+        "inputs": {
+            "resized_images": [
+                "2",
+                0
+            ]
+        }
+    },
+    "4": {
+        "class_type": "VAELoader",
+        "inputs": {
+            "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+        }
+    },
+    "5": {
+        "class_type": "UNETLoader",
+        "inputs": {
+            "unet_name": "seedvr2_7b_sharp_int8_convrot.safetensors",
+            "weight_dtype": "default"
+        }
+    },
+    "6": {
+        "class_type": "VAEEncodeTiled",
+        "inputs": {
+            "pixels": [
+                "3",
+                0
+            ],
+            "vae": [
+                "4",
+                0
+            ],
+            "tile_size": 512,
+            "overlap": 128,
+            "temporal_size": 4096,
+            "temporal_overlap": 8
+        }
+    },
+    "7": {
+        "class_type": "SeedVR2Conditioning",
+        "inputs": {
+            "model": [
+                "5",
+                0
+            ],
+            "vae_conditioning": [
+                "6",
+                0
+            ]
+        }
+    },
+    "8": {
+        "class_type": "KSampler",
+        "inputs": {
+            "model": [
+                "5",
+                0
+            ],
+            "seed": 0,
+            "steps": 1,
+            "cfg": 1.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "positive": [
+                "7",
+                0
+            ],
+            "negative": [
+                "7",
+                1
+            ],
+            "latent_image": [
+                "6",
+                0
+            ],
+            "denoise": 1.0
+        }
+    },
+    "9": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+            "samples": [
+                "8",
+                0
+            ],
+            "vae": [
+                "4",
+                0
+            ],
+            "tile_size": 512,
+            "overlap": 128,
+            "temporal_size": 4096,
+            "temporal_overlap": 8
+        }
+    },
+    "10": {
+        "class_type": "SeedVR2PostProcessing",
+        "inputs": {
+            "images": [
+                "9",
+                0
+            ],
+            "original_resized_images": [
+                "2",
+                0
+            ],
+            "color_correction_method": "none"
+        }
+    },
+    "11": {
+        "class_type": "SaveImage",
+        "inputs": {
+            "images": [
+                "10",
+                0
+            ],
+            "filename_prefix": "seedvr2-upscale"
+        }
+    },
+    "99": {
+        "class_type": "RMBG",
+        "inputs": {
+            "image": [
+                "10",
+                0
+            ],
+            "model": "RMBG-2.0",
+            "sensitivity": 1.0,
+            "process_res": 1024,
+            "mask_blur": 2,
+            "mask_offset": 0,
+            "invert_output": false,
+            "refine_foreground": true,
+            "background": "Alpha",
+            "background_color": "#00000000"
+        }
     }
-  },
-  "2": {
-    "class_type": "ResizeImageMaskNode",
-    "inputs": {
-      "input": [
-        "1",
-        0
-      ],
-      "resize_type": "scale by multiplier",
-      "scale_method": "lanczos",
-      "resize_type.multiplier": 2.0
-    }
-  },
-  "3": {
-    "class_type": "SeedVR2Preprocess",
-    "inputs": {
-      "resized_images": [
-        "2",
-        0
-      ]
-    }
-  },
-  "4": {
-    "class_type": "VAELoader",
-    "inputs": {
-      "vae_name": "seedvr2_ema_vae_fp16.safetensors"
-    }
-  },
-  "5": {
-    "class_type": "UNETLoader",
-    "inputs": {
-      "unet_name": "seedvr2_7b_sharp_int8_convrot.safetensors",
-      "weight_dtype": "default"
-    }
-  },
-  "6": {
-    "class_type": "VAEEncodeTiled",
-    "inputs": {
-      "pixels": [
-        "3",
-        0
-      ],
-      "vae": [
-        "4",
-        0
-      ],
-      "tile_size": 512,
-      "overlap": 128,
-      "temporal_size": 4096,
-      "temporal_overlap": 8
-    }
-  },
-  "7": {
-    "class_type": "SeedVR2Conditioning",
-    "inputs": {
-      "model": [
-        "5",
-        0
-      ],
-      "vae_conditioning": [
-        "6",
-        0
-      ]
-    }
-  },
-  "8": {
-    "class_type": "KSampler",
-    "inputs": {
-      "model": [
-        "5",
-        0
-      ],
-      "seed": 0,
-      "steps": 1,
-      "cfg": 1.0,
-      "sampler_name": "euler",
-      "scheduler": "simple",
-      "positive": [
-        "7",
-        0
-      ],
-      "negative": [
-        "7",
-        1
-      ],
-      "latent_image": [
-        "6",
-        0
-      ],
-      "denoise": 1.0
-    }
-  },
-  "9": {
-    "class_type": "VAEDecodeTiled",
-    "inputs": {
-      "samples": [
-        "8",
-        0
-      ],
-      "vae": [
-        "4",
-        0
-      ],
-      "tile_size": 512,
-      "overlap": 128,
-      "temporal_size": 4096,
-      "temporal_overlap": 8
-    }
-  },
-  "10": {
-    "class_type": "SeedVR2PostProcessing",
-    "inputs": {
-      "images": [
-        "9",
-        0
-      ],
-      "original_resized_images": [
-        "2",
-        0
-      ],
-      "color_correction_method": "none"
-    }
-  },
-  "11": {
-    "class_type": "SaveImage",
-    "inputs": {
-      "images": [
-        "10",
-        0
-      ],
-      "filename_prefix": "seedvr2-upscale"
-    }
-  }
 }

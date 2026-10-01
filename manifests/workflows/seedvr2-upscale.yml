@@ -48,7 +48,8 @@ bindings:
         - node: "8"
           input: seed
 requires:
-  custom_nodes: []
+  custom_nodes:
+    - RMBG
   models:
     - role: diffusion_model
       path: diffusion_models/seedvr2_7b_sharp_int8_convrot.safetensors

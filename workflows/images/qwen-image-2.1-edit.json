@@ -1,92 +1,158 @@
 {
-  "_meta": {
-    "name": "qwen-image-2.1-edit",
-    "description": "Single-image instruction edit via Qwen-Image 2.1 (int8_convrot) + qwen3vl_8b_w4a8 encoder + madebyollin texture-fix VAE (fixes the known grid/dot artifact in the stock VAE). Output resolution tracks the input reference image (native edit behavior) rather than a separate size control. Node 6 (JWString) is a one-node bridge so the gateway's hardcoded `_meta.prompt_node -> inputs.text` convention can drive TextEncodeQwenImage21's `prompt` field, which is named differently from the classic CLIPTextEncode `text` field.",
-    "prompt_node": "6",
-    "image_node": "4",
-    "seed_node": "8"
-  },
-  "1": {
-    "class_type": "UNETLoader",
-    "inputs": {
-      "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
-      "weight_dtype": "default"
+    "_meta": {
+        "name": "qwen-image-2.1-edit",
+        "description": "Single-image instruction edit via Qwen-Image 2.1 (int8_convrot) + qwen3vl_8b_w4a8 encoder + madebyollin texture-fix VAE (fixes the known grid/dot artifact in the stock VAE). Output resolution tracks the input reference image (native edit behavior) rather than a separate size control. Node 6 (JWString) is a one-node bridge so the gateway's hardcoded `_meta.prompt_node -> inputs.text` convention can drive TextEncodeQwenImage21's `prompt` field, which is named differently from the classic CLIPTextEncode `text` field.",
+        "prompt_node": "6",
+        "image_node": "4",
+        "seed_node": "8",
+        "background_removal": {
+            "save_node": "10",
+            "plain_image": [
+                "9",
+                0
+            ],
+            "transparent_image": [
+                "11",
+                0
+            ],
+            "rmbg_node": "11"
+        }
+    },
+    "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+            "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+            "weight_dtype": "default"
+        }
+    },
+    "2": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+            "clip_name": "qwen3vl_8b_w4a8.safetensors",
+            "type": "qwen_image",
+            "device": "default"
+        }
+    },
+    "3": {
+        "class_type": "VAELoader",
+        "inputs": {
+            "vae_name": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+        }
+    },
+    "4": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "input.png"
+        }
+    },
+    "5": {
+        "class_type": "QwenImage21Cache",
+        "inputs": {
+            "model": [
+                "1",
+                0
+            ],
+            "device": "auto",
+            "dtype": "default"
+        }
+    },
+    "6": {
+        "class_type": "JWString",
+        "inputs": {
+            "text": "edit the image"
+        }
+    },
+    "7": {
+        "class_type": "TextEncodeQwenImage21",
+        "inputs": {
+            "clip": [
+                "2",
+                0
+            ],
+            "prompt": [
+                "6",
+                0
+            ],
+            "negative_prompt": "",
+            "resolution": 1024,
+            "images": {
+                "image_1": [
+                    "4",
+                    0
+                ]
+            },
+            "vae": [
+                "3",
+                0
+            ]
+        }
+    },
+    "8": {
+        "class_type": "KSampler",
+        "inputs": {
+            "model": [
+                "5",
+                0
+            ],
+            "seed": 0,
+            "steps": 25,
+            "cfg": 1.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "positive": [
+                "7",
+                0
+            ],
+            "negative": [
+                "7",
+                1
+            ],
+            "latent_image": [
+                "7",
+                2
+            ],
+            "denoise": 1.0
+        }
+    },
+    "9": {
+        "class_type": "VAEDecode",
+        "inputs": {
+            "samples": [
+                "8",
+                0
+            ],
+            "vae": [
+                "3",
+                0
+            ]
+        }
+    },
+    "10": {
+        "class_type": "SaveImage",
+        "inputs": {
+            "images": [
+                "9",
+                0
+            ],
+            "filename_prefix": "qwen-image-2.1-edit"
+        }
+    },
+    "11": {
+        "class_type": "RMBG",
+        "inputs": {
+            "image": [
+                "9",
+                0
+            ],
+            "model": "RMBG-2.0",
+            "sensitivity": 1.0,
+            "process_res": 1024,
+            "mask_blur": 2,
+            "mask_offset": 0,
+            "invert_output": false,
+            "refine_foreground": true,
+            "background": "Alpha",
+            "background_color": "#00000000"
+        }
     }
-  },
-  "2": {
-    "class_type": "CLIPLoader",
-    "inputs": {
-      "clip_name": "qwen3vl_8b_w4a8.safetensors",
-      "type": "qwen_image",
-      "device": "default"
-    }
-  },
-  "3": {
-    "class_type": "VAELoader",
-    "inputs": {
-      "vae_name": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
-    }
-  },
-  "4": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "input.png"
-    }
-  },
-  "5": {
-    "class_type": "QwenImage21Cache",
-    "inputs": {
-      "model": ["1", 0],
-      "device": "auto",
-      "dtype": "default"
-    }
-  },
-  "6": {
-    "class_type": "JWString",
-    "inputs": {
-      "text": "edit the image"
-    }
-  },
-  "7": {
-    "class_type": "TextEncodeQwenImage21",
-    "inputs": {
-      "clip": ["2", 0],
-      "prompt": ["6", 0],
-      "negative_prompt": "",
-      "resolution": 1024,
-      "images": {
-        "image_1": ["4", 0]
-      },
-      "vae": ["3", 0]
-    }
-  },
-  "8": {
-    "class_type": "KSampler",
-    "inputs": {
-      "model": ["5", 0],
-      "seed": 0,
-      "steps": 25,
-      "cfg": 1.0,
-      "sampler_name": "euler",
-      "scheduler": "simple",
-      "positive": ["7", 0],
-      "negative": ["7", 1],
-      "latent_image": ["7", 2],
-      "denoise": 1.0
-    }
-  },
-  "9": {
-    "class_type": "VAEDecode",
-    "inputs": {
-      "samples": ["8", 0],
-      "vae": ["3", 0]
-    }
-  },
-  "10": {
-    "class_type": "SaveImage",
-    "inputs": {
-      "images": ["9", 0],
-      "filename_prefix": "qwen-image-2.1-edit"
-    }
-  }
 }

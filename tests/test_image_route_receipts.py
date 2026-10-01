@@ -1100,6 +1100,60 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         prepared = proxy._apply_edit_mask_as_source_alpha(context)
         self.assertEqual([p[3] for p in _image_pixels(prepared)], [0, 255])
 
+    async def test_default_qwen_inpaint_route_uploads_alpha_masked_source(self) -> None:
+        from PIL import Image
+
+        mask = Image.new("RGBA", (2, 1), (0, 0, 0, 255))
+        mask.putpixel((0, 0), (0, 0, 0, 0))
+        mask_bytes = io.BytesIO()
+        mask.save(mask_bytes, format="PNG")
+        request = _MultipartRequest(
+            [
+                ("prompt", "replace the left pixel"),
+                ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
+                ("mask", _MultipartUpload("mask.png", mask_bytes.getvalue())),
+            ]
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "resolve_image_background_decision",
+            AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False)),
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(_FakeAsyncClient.uploads, 1)
+        uploaded_source = _FakeAsyncClient.upload_files[0]["image"][1]
+        self.assertEqual([p[3] for p in _image_pixels(uploaded_source)], [0, 255])
+        self.assertIsNone(captured["image_transform"])
+        self.assertEqual(captured["image_response_headers"]["X-Image-Mask"], "workflow")
+        self.assertNotIn("mask_mode:post_composite", captured.get("warnings", []))
+
     def _conditioning_manifest(
         self,
         *,
@@ -1542,6 +1596,16 @@ class TestEditWorkflowSelection(unittest.TestCase):
         )
         self.assertIsNotNone(proxy.load_comfy_workflow("flux2-klein-4b"))
         self.assertIsNotNone(proxy.load_comfy_workflow("flux2-klein-4b-edit"))
+        workflow = proxy.load_comfy_workflow("krea2-turbo")
+        assert workflow is not None
+        meta = workflow.pop("_meta")
+        self.assertTrue(proxy.set_workflow_background_removal(workflow, meta, True))
+        self.assertEqual(workflow["9"]["inputs"]["images"], ["10", 0])
+        workflow = proxy.load_comfy_workflow("krea2-turbo")
+        assert workflow is not None
+        meta = workflow.pop("_meta")
+        self.assertTrue(proxy.set_workflow_background_removal(workflow, meta, True))
+        self.assertEqual(workflow["9"]["inputs"]["images"], ["10", 0])
 
     def test_default_edit_routes_by_input_shape(self) -> None:
         with (
@@ -1683,6 +1747,57 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
         bound_workflow = captured["base_workflow"]
         self.assertEqual(bound_workflow["10"]["inputs"]["image"], "uploaded-1.png")
         self.assertEqual(bound_workflow["42"]["inputs"]["image"], "uploaded-2.png")
+
+    async def test_default_two_image_route_binds_real_multiref_manifest(self) -> None:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest(
+            [
+                ("prompt", "combine these two references"),
+                ("image[]", _MultipartUpload("a.png", _png_bytes((255, 0, 0, 255)))),
+                ("image[]", _MultipartUpload("b.png", _png_bytes((0, 255, 0, 255)))),
+            ]
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "resolve_image_background_decision",
+            AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False)),
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(receipt.resolved_model, "qwen-image-2.1-edit-multiref")
+        self.assertEqual(_FakeAsyncClient.uploads, 2)
+        workflow = captured["base_workflow"]
+        self.assertEqual(workflow["4"]["inputs"]["image"], "uploaded-1.png")
+        self.assertEqual(workflow["11"]["inputs"]["image"], "uploaded-2.png")
 
     async def test_extra_images_rejected_with_clear_400_when_workflow_supports_one(
         self,

@@ -113,6 +113,7 @@ requires:
     - LanPaint_KSampler
     - LanPaint_ImageEncode
     - LanPaint_ImageDecode
+    - RMBG
   models:
     - role: diffusion_model
       path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors

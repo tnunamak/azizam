@@ -71,8 +71,6 @@ bindings:
       seed:
         - node: "8"
           input: seed
-requires:
-  custom_nodes: []
   models:
     - role: diffusion_model
       path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors

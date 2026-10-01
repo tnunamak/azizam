@@ -7,7 +7,19 @@
         "image_nodes": [
             "4",
             "11"
-        ]
+        ],
+        "background_removal": {
+            "save_node": "10",
+            "plain_image": [
+                "9",
+                0
+            ],
+            "transparent_image": [
+                "99",
+                0
+            ],
+            "rmbg_node": "99"
+        }
     },
     "1": {
         "class_type": "UNETLoader",
@@ -136,6 +148,24 @@
                 0
             ],
             "filename_prefix": "qwen-image-2.1-edit-multiref"
+        }
+    },
+    "99": {
+        "class_type": "RMBG",
+        "inputs": {
+            "image": [
+                "9",
+                0
+            ],
+            "model": "RMBG-2.0",
+            "sensitivity": 1.0,
+            "process_res": 1024,
+            "mask_blur": 2,
+            "mask_offset": 0,
+            "invert_output": false,
+            "refine_foreground": true,
+            "background": "Alpha",
+            "background_color": "#00000000"
         }
     }
 }

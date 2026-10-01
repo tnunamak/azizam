@@ -76,12 +76,19 @@ class TestBackgroundRemoval(unittest.TestCase):
             with self.subTest(path=path.name):
                 workflow = json.loads(path.read_text(encoding="utf-8"))
                 meta = workflow.pop("_meta", {})
-                self.assertIn("background_removal", meta)
+                config = meta.get("background_removal")
+                self.assertIsInstance(config, dict)
                 self.assertTrue(proxy.set_workflow_background_removal(workflow, meta, True))
-                selected = workflow["9"]["inputs"]["images"]
+                save = workflow[config["save_node"]]
+                selected = save["inputs"]["images"]
+                self.assertEqual(selected, config["transparent_image"])
                 self.assertEqual(workflow[selected[0]]["class_type"], "RMBG")
+                self.assertEqual(
+                    workflow[selected[0]]["inputs"]["image"],
+                    config["plain_image"],
+                )
                 self.assertTrue(proxy.set_workflow_background_removal(workflow, meta, False))
-                self.assertEqual(workflow["9"]["inputs"]["images"], ["8", 0])
+                self.assertEqual(save["inputs"]["images"], config["plain_image"])
 
 
 if __name__ == "__main__":

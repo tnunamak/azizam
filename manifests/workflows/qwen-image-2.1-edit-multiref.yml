@@ -55,6 +55,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/images/qwen-image-2.1-edit-multiref.json
+    # The edit route supplies this asset from the second multipart image part.
+    route_bound_inputs: [reference_image_2]
     map:
       prompt:
         - node: "6"
@@ -81,7 +83,8 @@ bindings:
         - node: "8"
           input: seed
 requires:
-  custom_nodes: []
+  custom_nodes:
+    - RMBG
   models:
     - role: diffusion_model
       path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors

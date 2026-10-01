@@ -61,7 +61,8 @@ bindings:
         - node: "6"
           input: batch_size
 requires:
-  custom_nodes: []
+  custom_nodes:
+    - RMBG
   models:
     - role: diffusion_model
       path: diffusion_models/krea2_turbo_int8_convrot.safetensors

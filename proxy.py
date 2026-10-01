@@ -7207,7 +7207,10 @@ async def proxy_comfy_edit_request(
                     workflow[slot_node]["inputs"]["image"] = filename
 
             mask_input_name = _manifest_route_managed_mask_input(manifest)
-            mask_uses_workflow = False
+            mask_uses_workflow = bool(
+                mask_context is not None
+                and _manifest_uses_source_alpha_mask(manifest)
+            )
             if mask_context is not None and mask_input_name and mask_content is not None:
                 mask_files = {"image": ("normalized-mask.png", mask_context.edit_mask, "image/png")}
                 mask_upload_resp = await client.post(
@@ -14763,6 +14766,11 @@ def _workflow_extension_supported_names(manifest: Mapping[str, Any], backend: st
         "height",
         *_MASK_ROUTE_MANAGED_MANIFEST_INPUTS,
     }
+    route_bound = binding.get("route_bound_inputs")
+    if isinstance(route_bound, list | tuple | set):
+        standard_portable_names.update(
+            str(name) for name in route_bound if isinstance(name, str) and name
+        )
     return tuple(name for name in mapping.keys() if name not in standard_portable_names)
 
 

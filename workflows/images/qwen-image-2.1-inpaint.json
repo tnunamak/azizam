@@ -1,182 +1,212 @@
 {
-  "_meta": {
-    "name": "qwen-image-2.1-inpaint",
-    "description": "Mask-bound Qwen-Image 2.1 inpaint via LanPaint (scraed/LanPaint), the community-consensus universal inpainting tool (no dedicated inpaint checkpoint for Qwen 2.1 exists; LanPaint adds Qwen 2.1 support Sep 2026). Mask comes from the source image's own alpha channel via LoadImage's native MASK output, which ComfyUI's core LoadImage already computes as `1.0 - alpha` -- i.e. transparent pixels (alpha=0) become mask=1 (regenerate). That is simultaneously the OpenAI edit-API convention (transparent = edit region) AND LanPaint's own convention (1=regenerate), so no extra ImageToMask/InvertMask nodes are needed. The same source image is also fed into TextEncodeQwenImage21 as a full-image reference (node 9) so the model sees the untouched-region content/style, same as the plain edit workflow.",
-    "prompt_node": "6",
-    "image_node": "4",
-    "seed_node": "11"
-  },
-  "1": {
-    "class_type": "UNETLoader",
-    "inputs": {
-      "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
-      "weight_dtype": "default"
+    "_meta": {
+        "name": "qwen-image-2.1-inpaint",
+        "description": "Mask-bound Qwen-Image 2.1 inpaint via LanPaint (scraed/LanPaint), the community-consensus universal inpainting tool (no dedicated inpaint checkpoint for Qwen 2.1 exists; LanPaint adds Qwen 2.1 support Sep 2026). Mask comes from the source image's own alpha channel via LoadImage's native MASK output, which ComfyUI's core LoadImage already computes as `1.0 - alpha` -- i.e. transparent pixels (alpha=0) become mask=1 (regenerate). That is simultaneously the OpenAI edit-API convention (transparent = edit region) AND LanPaint's own convention (1=regenerate), so no extra ImageToMask/InvertMask nodes are needed. The same source image is also fed into TextEncodeQwenImage21 as a full-image reference (node 9) so the model sees the untouched-region content/style, same as the plain edit workflow.",
+        "prompt_node": "6",
+        "image_node": "4",
+        "seed_node": "11",
+        "background_removal": {
+            "save_node": "13",
+            "plain_image": [
+                "12",
+                0
+            ],
+            "transparent_image": [
+                "99",
+                0
+            ],
+            "rmbg_node": "99"
+        }
+    },
+    "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+            "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+            "weight_dtype": "default"
+        }
+    },
+    "2": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+            "clip_name": "qwen3vl_8b_w4a8.safetensors",
+            "type": "qwen_image",
+            "device": "default"
+        }
+    },
+    "3": {
+        "class_type": "VAELoader",
+        "inputs": {
+            "vae_name": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+        }
+    },
+    "4": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "input.png"
+        }
+    },
+    "5": {
+        "class_type": "QwenImage21Cache",
+        "inputs": {
+            "model": [
+                "1",
+                0
+            ],
+            "device": "auto",
+            "dtype": "default"
+        }
+    },
+    "6": {
+        "class_type": "JWString",
+        "inputs": {
+            "text": "fill in the masked area"
+        }
+    },
+    "9": {
+        "class_type": "TextEncodeQwenImage21",
+        "inputs": {
+            "clip": [
+                "2",
+                0
+            ],
+            "prompt": [
+                "6",
+                0
+            ],
+            "negative_prompt": "",
+            "resolution": 1024,
+            "images": {
+                "image_1": [
+                    "4",
+                    0
+                ]
+            },
+            "vae": [
+                "3",
+                0
+            ]
+        }
+    },
+    "10": {
+        "class_type": "LanPaint_ImageEncode",
+        "inputs": {
+            "image": [
+                "4",
+                0
+            ],
+            "vae": [
+                "3",
+                0
+            ],
+            "mask": [
+                "15",
+                0
+            ]
+        }
+    },
+    "11": {
+        "class_type": "LanPaint_KSampler",
+        "inputs": {
+            "model": [
+                "5",
+                0
+            ],
+            "seed": 0,
+            "steps": 25,
+            "cfg": 1.0,
+            "sampler_name": "euler",
+            "scheduler": "karras",
+            "positive": [
+                "9",
+                0
+            ],
+            "negative": [
+                "9",
+                1
+            ],
+            "latent_image": [
+                "10",
+                0
+            ],
+            "denoise": 1.0,
+            "LanPaint_NumSteps": 5,
+            "LanPaint_PromptMode": "Image First",
+            "LanPaint_Info": "LanPaint KSampler.",
+            "Inpainting_mode": "🖼️ Image Inpainting"
+        }
+    },
+    "12": {
+        "class_type": "LanPaint_ImageDecode",
+        "inputs": {
+            "samples": [
+                "11",
+                0
+            ],
+            "vae": [
+                "3",
+                0
+            ],
+            "image": [
+                "4",
+                0
+            ],
+            "mask": [
+                "15",
+                0
+            ],
+            "blend_overlap": 9
+        }
+    },
+    "13": {
+        "class_type": "SaveImage",
+        "inputs": {
+            "images": [
+                "12",
+                0
+            ],
+            "filename_prefix": "qwen-image-2.1-inpaint"
+        }
+    },
+    "14": {
+        "class_type": "GrowMask",
+        "inputs": {
+            "mask": [
+                "4",
+                1
+            ],
+            "expand": 0,
+            "tapered_corners": true
+        }
+    },
+    "15": {
+        "class_type": "FeatherMask",
+        "inputs": {
+            "mask": [
+                "14",
+                0
+            ],
+            "left": 0,
+            "top": 48,
+            "right": 0,
+            "bottom": 48
+        }
+    },
+    "99": {
+        "class_type": "RMBG",
+        "inputs": {
+            "image": [
+                "12",
+                0
+            ],
+            "model": "RMBG-2.0",
+            "sensitivity": 1.0,
+            "process_res": 1024,
+            "mask_blur": 2,
+            "mask_offset": 0,
+            "invert_output": false,
+            "refine_foreground": true,
+            "background": "Alpha",
+            "background_color": "#00000000"
+        }
     }
-  },
-  "2": {
-    "class_type": "CLIPLoader",
-    "inputs": {
-      "clip_name": "qwen3vl_8b_w4a8.safetensors",
-      "type": "qwen_image",
-      "device": "default"
-    }
-  },
-  "3": {
-    "class_type": "VAELoader",
-    "inputs": {
-      "vae_name": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
-    }
-  },
-  "4": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "input.png"
-    }
-  },
-  "5": {
-    "class_type": "QwenImage21Cache",
-    "inputs": {
-      "model": [
-        "1",
-        0
-      ],
-      "device": "auto",
-      "dtype": "default"
-    }
-  },
-  "6": {
-    "class_type": "JWString",
-    "inputs": {
-      "text": "fill in the masked area"
-    }
-  },
-  "9": {
-    "class_type": "TextEncodeQwenImage21",
-    "inputs": {
-      "clip": [
-        "2",
-        0
-      ],
-      "prompt": [
-        "6",
-        0
-      ],
-      "negative_prompt": "",
-      "resolution": 1024,
-      "images": {
-        "image_1": [
-          "4",
-          0
-        ]
-      },
-      "vae": [
-        "3",
-        0
-      ]
-    }
-  },
-  "10": {
-    "class_type": "LanPaint_ImageEncode",
-    "inputs": {
-      "image": [
-        "4",
-        0
-      ],
-      "vae": [
-        "3",
-        0
-      ],
-      "mask": [
-        "15",
-        0
-      ]
-    }
-  },
-  "11": {
-    "class_type": "LanPaint_KSampler",
-    "inputs": {
-      "model": [
-        "5",
-        0
-      ],
-      "seed": 0,
-      "steps": 25,
-      "cfg": 1.0,
-      "sampler_name": "euler",
-      "scheduler": "karras",
-      "positive": [
-        "9",
-        0
-      ],
-      "negative": [
-        "9",
-        1
-      ],
-      "latent_image": [
-        "10",
-        0
-      ],
-      "denoise": 1.0,
-      "LanPaint_NumSteps": 5,
-      "LanPaint_PromptMode": "Image First",
-      "LanPaint_Info": "LanPaint KSampler.",
-      "Inpainting_mode": "\ud83d\uddbc\ufe0f Image Inpainting"
-    }
-  },
-  "12": {
-    "class_type": "LanPaint_ImageDecode",
-    "inputs": {
-      "samples": [
-        "11",
-        0
-      ],
-      "vae": [
-        "3",
-        0
-      ],
-      "image": [
-        "4",
-        0
-      ],
-      "mask": [
-        "15",
-        0
-      ],
-      "blend_overlap": 9
-    }
-  },
-  "13": {
-    "class_type": "SaveImage",
-    "inputs": {
-      "images": [
-        "12",
-        0
-      ],
-      "filename_prefix": "qwen-image-2.1-inpaint"
-    }
-  },
-  "14": {
-    "class_type": "GrowMask",
-    "inputs": {
-      "mask": [
-        "4",
-        1
-      ],
-      "expand": 0,
-      "tapered_corners": true
-    }
-  },
-  "15": {
-    "class_type": "FeatherMask",
-    "inputs": {
-      "mask": [
-        "14",
-        0
-      ],
-      "left": 0,
-      "top": 48,
-      "right": 0,
-      "bottom": 48
-    }
-  }
 }
