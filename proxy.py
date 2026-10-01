@@ -253,6 +253,9 @@ from gateway.openai_media_schemas import (
     SIGNED_IMAGE_CONTENT_OPENAPI,
     VIDEOS_CONTENT_OPENAPI,
     VIDEOS_CREATE_OPENAPI,
+    VIDEOS_DELETE_OPENAPI,
+    VIDEOS_LIST_OPENAPI,
+    VIDEOS_REMIX_OPENAPI,
     VIDEOS_STATUS_OPENAPI,
     VOICES_LIST_OPENAPI,
 )
@@ -796,6 +799,11 @@ VIDEO_ALIASES = {
     str(k).strip().lower(): str(v).strip()
     for k, v in (videos_cfg.get("aliases", {}) or {}).items()
 }
+# POST /v1/videos/{id}/remix has no backend implementation yet (see
+# proxy_comfy_video_remix). This key exists so an operator/implementer has a
+# stable config surface to wire one into without another route-shape change;
+# unset (the default) means remix always returns a clear 501.
+VIDEO_REMIX_WORKFLOW = videos_cfg.get("remix_workflow") or None
 
 # Routing
 routing_cfg = config.get("routing", {})
@@ -7553,6 +7561,16 @@ def _node_class_from_workflow(workflow: dict | None, node_id: str | None) -> str
 # into phases without re-fetching /history).
 _video_workflows: dict[str, dict] = {}
 
+# prompt_id -> {model, size, seconds, actual_seconds, created_at, completed_at}
+# Safe (prompt-free) submit-time metadata the OpenAI list/retrieve shapes need
+# but ComfyUI's own /history doesn't carry (no model/size/seconds/created_at
+# fields, and no concept of "which of these history entries are ours" since
+# /history is shared across every image/video/audio job type). Same
+# process-lifetime-only statefulness as _video_progress/_video_workflows: a
+# restart loses it, same as the comment at the top of this section documents
+# for /v1/videos/{id} polling.
+_video_job_records: dict[str, dict] = {}
+
 
 def _classify_phase(node_class: str) -> str:
     nc = (node_class or "").lower()
@@ -7680,6 +7698,7 @@ async def _gc_video_progress() -> None:
         for pid in stale:
             _video_progress.pop(pid, None)
             _video_workflows.pop(pid, None)
+            _video_job_records.pop(pid, None)
 
 
 # How often the reconciliation loop polls ComfyUI for authoritative state.
@@ -7830,6 +7849,7 @@ def _gc_video_progress_terminal_locked(now: float) -> None:
     for pid in drop:
         _video_progress.pop(pid, None)
         _video_workflows.pop(pid, None)
+        _video_job_records.pop(pid, None)
 
 
 async def _reconcile_video_progress_loop(stop_event: asyncio.Event) -> None:
@@ -8874,6 +8894,21 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             # Sending a string keeps the SDK's loose-construct parser happy
             # across SDK versions; the precise float lives in `actual_seconds`.
             seconds_str = str(int(seconds_val)) if float(seconds_val).is_integer() else str(seconds_val)
+            # Submit-time metadata for GET /v1/videos (list) and DELETE
+            # /v1/videos/{id} -- see _video_job_records' own docstring for why
+            # this can't just be read back from ComfyUI's /history.
+            try:
+                async with _video_progress_lock:
+                    _video_job_records[prompt_id] = {
+                        "model": workflow_name,
+                        "size": f"{width}x{height}",
+                        "seconds": seconds_str,
+                        "actual_seconds": round(actual_seconds, 4),
+                        "created_at": now,
+                        "completed_at": None,
+                    }
+            except Exception:
+                pass
             payload = {
                 "id": video_id,
                 "object": "video",
@@ -8965,6 +9000,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                 )
 
             sora_status, progress = _job_status_from_history(job)
+            await _record_video_job_terminal_timestamp(prompt_id, sora_status)
             # Enrich with last-known live progress if available (e.g. step/total
             # captured during the run). For terminal states, the history wins.
             live = _video_progress_snapshot(prompt_id) or {}
@@ -9087,6 +9123,279 @@ async def proxy_comfy_video_content(video_id: str, auth_context: AuthContext) ->
             status_code=502,
             media_type="application/json"
         )
+
+
+async def _record_video_job_terminal_timestamp(prompt_id: str, status: str) -> None:
+    """Stamp `completed_at` on a tracked video job the first time any route
+    observes a terminal status for it. Called from both the list endpoint and
+    the single-job status endpoint, so whichever one notices the transition
+    first records it -- a client that never calls GET /v1/videos (list) still
+    gets a correct completed_at if one later does, and vice versa."""
+    if status not in ("succeeded", "failed"):
+        return
+    async with _video_progress_lock:
+        record = _video_job_records.get(prompt_id)
+        if record is not None and record.get("completed_at") is None:
+            record["completed_at"] = int(time.time())
+
+
+_VIDEO_LIST_DEFAULT_LIMIT = 20
+_VIDEO_LIST_MAX_LIMIT = 100
+
+
+async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) -> Response:
+    """GET /v1/videos — list video jobs submitted via this route.
+
+    Scope, matching the rest of /v1/videos' existing stateless design (see
+    this file's own comment at the top of the video section): this lists
+    jobs known to *this process* since its last restart, tracked in
+    `_video_job_records`. It does not reach into ComfyUI's full history (which
+    is shared across every image/video/audio job type, with no way to tell
+    which entries came from this route) and it does not see jobs created
+    through the separate `/gateway/v1/media/jobs` durable job store.
+    """
+    if not COMFY_ENABLED:
+        return Response(
+            content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
+            status_code=503,
+            media_type="application/json"
+        )
+    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    if service_response is not None:
+        return service_response
+
+    query = request.query_params
+    limit_raw = query.get("limit", str(_VIDEO_LIST_DEFAULT_LIMIT))
+    try:
+        limit = int(limit_raw)
+    except (TypeError, ValueError):
+        return Response(
+            content=json.dumps({"error": {"message": "limit must be an integer", "type": "invalid_request_error", "param": "limit"}}),
+            status_code=400,
+            media_type="application/json",
+        )
+    if limit < 1 or limit > _VIDEO_LIST_MAX_LIMIT:
+        return Response(
+            content=json.dumps({"error": {
+                "message": f"limit must be between 1 and {_VIDEO_LIST_MAX_LIMIT}",
+                "type": "invalid_request_error",
+                "param": "limit",
+            }}),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    order = query.get("order", "desc")
+    if order not in ("asc", "desc"):
+        return Response(
+            content=json.dumps({"error": {"message": "order must be 'asc' or 'desc'", "type": "invalid_request_error", "param": "order"}}),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    after = query.get("after")
+    after_prompt_id = _prompt_id_from_video_id(after) if after else None
+    if after and after_prompt_id is None:
+        return Response(
+            content=json.dumps({"error": {"message": "invalid after cursor", "type": "invalid_request_error", "param": "after"}}),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    async with _video_progress_lock:
+        records = [(pid, dict(rec)) for pid, rec in _video_job_records.items()]
+    records.sort(key=lambda item: item[1].get("created_at") or 0, reverse=(order == "desc"))
+
+    if after_prompt_id is not None:
+        ids_in_order = [pid for pid, _ in records]
+        if after_prompt_id in ids_in_order:
+            records = records[ids_in_order.index(after_prompt_id) + 1:]
+        # An unknown/evicted `after` cursor is not an error -- matches OpenAI's
+        # own list endpoints, which don't 404 on a stale pagination cursor.
+
+    page = records[:limit]
+    has_more = len(records) > len(page)
+
+    headers = configured_downstream_headers(auth_context, "comfyui")
+    data: list[dict[str, Any]] = []
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+            for prompt_id, record in page:
+                video_id = _video_id_from_prompt_id(prompt_id)
+                job = await _comfy_history(client, prompt_id, headers)
+                entry: dict[str, Any] = {
+                    "id": video_id,
+                    "object": "video",
+                    "model": record.get("model"),
+                    "size": record.get("size"),
+                    "seconds": record.get("seconds"),
+                    "created_at": record.get("created_at"),
+                    "completed_at": record.get("completed_at"),
+                }
+                if job is not None:
+                    status, progress = _job_status_from_history(job)
+                    await _record_video_job_terminal_timestamp(prompt_id, status)
+                    if status in ("succeeded", "failed"):
+                        async with _video_progress_lock:
+                            fresh = _video_job_records.get(prompt_id)
+                            if fresh is not None:
+                                entry["completed_at"] = fresh.get("completed_at")
+                    if status == "failed":
+                        entry["error"] = _comfy_execution_error_message(job) or "ComfyUI execution_error"
+                else:
+                    live = _video_progress_snapshot(prompt_id)
+                    if live and live.get("status") in ("queued", "running"):
+                        status = "running" if live.get("percent", 0) > 0 or live.get("node") else live.get("status", "running")
+                        progress = int(live.get("percent") or 0)
+                    else:
+                        queue_status = await _comfy_queue_status(client, prompt_id, headers)
+                        status = queue_status if queue_status != "unknown" else "queued"
+                        progress = 25 if status == "running" else 0
+                entry["status"] = status
+                entry["progress"] = progress
+                data.append(entry)
+    except httpx.ConnectError:
+        return Response(
+            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json"
+        )
+
+    return Response(
+        content=json.dumps({
+            "object": "list",
+            "data": data,
+            "first_id": data[0]["id"] if data else None,
+            "last_id": data[-1]["id"] if data else None,
+            "has_more": has_more,
+        }),
+        status_code=200,
+        media_type="application/json",
+    )
+
+
+async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> Response:
+    """DELETE /v1/videos/{video_id}.
+
+    Best-effort drops the ComfyUI /history entry (so its mp4 bytes stop being
+    reachable via /view) and always drops this gateway's own in-memory
+    tracking, which is the actual source of truth for "does this video_id
+    exist" (ComfyUI's /history has no entry at all for a still-queued job,
+    which is not the same as "unknown id").
+    """
+    if not COMFY_ENABLED:
+        return Response(
+            content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
+            status_code=503,
+            media_type="application/json"
+        )
+    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    if service_response is not None:
+        return service_response
+
+    prompt_id = _prompt_id_from_video_id(video_id)
+    if not prompt_id:
+        return Response(
+            content=json.dumps({"error": {"message": "invalid video_id", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
+
+    async with _video_progress_lock:
+        known = prompt_id in _video_job_records or prompt_id in _video_progress
+    if not known:
+        return Response(
+            content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
+            status_code=404,
+            media_type="application/json"
+        )
+
+    headers = configured_downstream_headers(auth_context, "comfyui")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+            try:
+                await client.post(f"{COMFY_HOST}/history", headers=headers, json={"delete": [prompt_id]})
+            except Exception:
+                # Best-effort only: a still-queued job has no history entry
+                # yet, and ComfyUI being briefly unreachable shouldn't block
+                # dropping our own tracking below.
+                pass
+    except Exception:
+        pass
+
+    async with _video_progress_lock:
+        _video_progress.pop(prompt_id, None)
+        _video_workflows.pop(prompt_id, None)
+        _video_job_records.pop(prompt_id, None)
+
+    return Response(
+        content=json.dumps({"id": video_id, "object": "video", "deleted": True}),
+        status_code=200,
+        media_type="application/json",
+    )
+
+
+async def proxy_comfy_video_remix(video_id: str, auth_context: AuthContext) -> Response:
+    """POST /v1/videos/{video_id}/remix — stub.
+
+    No ComfyUI workflow on this gateway supports video-conditioned remixing
+    today. Returns a clear, stable 501 unless an operator has configured
+    `videos.remix_workflow` in proxy_config.yml -- and even then, there is no
+    backend implementation behind it yet (see VIDEO_REMIX_WORKFLOW's own
+    comment). The config key exists so a future implementation has a stable
+    place to land without another route-shape change.
+    """
+    if not COMFY_ENABLED:
+        return Response(
+            content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
+            status_code=503,
+            media_type="application/json"
+        )
+    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    if service_response is not None:
+        return service_response
+
+    prompt_id = _prompt_id_from_video_id(video_id)
+    if not prompt_id:
+        return Response(
+            content=json.dumps({"error": {"message": "invalid video_id", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
+    async with _video_progress_lock:
+        known = prompt_id in _video_job_records or prompt_id in _video_progress
+    if not known:
+        return Response(
+            content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
+            status_code=404,
+            media_type="application/json"
+        )
+
+    if not VIDEO_REMIX_WORKFLOW:
+        return Response(
+            content=json.dumps({"error": {
+                "message": (
+                    "Video remix is not configured on this gateway. Set "
+                    "videos.remix_workflow in proxy_config.yml to enable it."
+                ),
+                "type": "invalid_request_error",
+                "code": "video_remix_not_configured",
+            }}),
+            status_code=501,
+            media_type="application/json",
+        )
+    return Response(
+        content=json.dumps({"error": {
+            "message": (
+                f"Video remix workflow '{VIDEO_REMIX_WORKFLOW}' is configured "
+                "but this gateway has no remix backend implementation yet."
+            ),
+            "type": "invalid_request_error",
+            "code": "video_remix_not_implemented",
+        }}),
+        status_code=501,
+        media_type="application/json",
+    )
 
 
 # =============================================================================
@@ -16818,6 +17127,47 @@ async def videos_content(video_id: str, request: Request):
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_content(video_id, auth_context)
+
+
+@app.get("/openai/v1/videos", openapi_extra=VIDEOS_LIST_OPENAPI)
+@app.get("/v1/videos", openapi_extra=VIDEOS_LIST_OPENAPI)
+async def videos_list(request: Request):
+    """List video jobs submitted via this route (limit/after/order)."""
+    auth_context = authenticate_request(request, "/v1/videos")
+    if isinstance(auth_context, Response):
+        return auth_context
+    # No runtime_policy entry at this path -- see the comment in
+    # registry/protocol_frontends.yml next to the (absent) GET /v1/videos
+    # policy entry for why: the registry keys by path alone, and this path
+    # already carries POST's video.generate policy.
+    return await proxy_comfy_video_list(request, auth_context)
+
+
+@app.delete("/openai/v1/videos/{video_id}", openapi_extra=VIDEOS_DELETE_OPENAPI)
+@app.delete("/v1/videos/{video_id}", openapi_extra=VIDEOS_DELETE_OPENAPI)
+async def videos_delete(video_id: str, request: Request):
+    """Delete a previously-submitted video job."""
+    auth_context = authenticate_request(request, "/v1/videos/{video_id}")
+    if isinstance(auth_context, Response):
+        return auth_context
+    # No runtime_policy entry at this path either -- same reason as the list
+    # route above (this path already carries GET's video.generate policy).
+    return await proxy_comfy_video_delete(video_id, auth_context)
+
+
+@app.post("/openai/v1/videos/{video_id}/remix", openapi_extra=VIDEOS_REMIX_OPENAPI)
+@app.post("/v1/videos/{video_id}/remix", openapi_extra=VIDEOS_REMIX_OPENAPI)
+async def videos_remix(video_id: str, request: Request):
+    """Stub: always a clear 501 unless videos.remix_workflow is configured."""
+    auth_context = authenticate_request(request, "/v1/videos/{video_id}/remix")
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_response = _enforce_runtime_route_policy(
+        auth_context, "/v1/videos/{video_id}/remix"
+    )
+    if policy_response is not None:
+        return policy_response
+    return await proxy_comfy_video_remix(video_id, auth_context)
 
 
 # =============================================================================

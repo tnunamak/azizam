@@ -508,6 +508,14 @@ models:
     description: "Qwen3.6-35B-A3B UD-IQ4_XS (MoE, text-only)"
 videos:
   default_workflow: video-ltx-2.3-distilled
+  # POST /v1/videos/{id}/remix has no backend implementation on this gateway
+  # yet (no ComfyUI workflow currently supports video-conditioned remixing).
+  # Unset (the default) means remix always returns a clear 501
+  # video_remix_not_configured. Setting this to a workflow id changes the
+  # error to video_remix_not_implemented -- it does NOT enable remix; this
+  # key only exists so a future implementation has a config surface to land
+  # on without another route-shape change.
+  # remix_workflow: some-future-video-remix-workflow
   workflows:
     video-ltx-2.3-distilled:
       file: workflows/video-ltx-2.3-distilled.json

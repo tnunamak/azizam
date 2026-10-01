@@ -555,3 +555,75 @@ VIDEOS_CONTENT_OPENAPI: JsonObjectSchema = {
         **_common_error_responses(),
     }
 }
+
+
+def _video_list_response_schema() -> JsonObjectSchema:
+    return {
+        "type": "object",
+        "required": ["object", "data"],
+        "properties": {
+            "object": {"type": "string", "enum": ["list"]},
+            "data": {"type": "array", "items": _video_status_schema()},
+            "first_id": {"type": ["string", "null"]},
+            "last_id": {"type": ["string", "null"]},
+            "has_more": {"type": "boolean"},
+        },
+        "additionalProperties": True,
+    }
+
+
+VIDEOS_LIST_OPENAPI: JsonObjectSchema = {
+    "parameters": [
+        {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100}},
+        {"name": "after", "in": "query", "schema": {"type": "string"}},
+        {"name": "order", "in": "query", "schema": {"type": "string", "enum": ["asc", "desc"]}},
+    ],
+    "responses": {
+        "200": {
+            "description": "Video jobs submitted via this route since the gateway process last restarted.",
+            "content": {"application/json": {"schema": _video_list_response_schema()}},
+        },
+        **_common_error_responses(),
+    },
+}
+
+
+VIDEOS_DELETE_OPENAPI: JsonObjectSchema = {
+    "responses": {
+        "200": {
+            "description": "Deletion confirmation.",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["id", "object", "deleted"],
+                        "properties": {
+                            "id": {"type": "string"},
+                            "object": {"type": "string", "enum": ["video"]},
+                            "deleted": {"type": "boolean"},
+                        },
+                    }
+                }
+            },
+        },
+        **_common_error_responses(),
+    },
+}
+
+
+VIDEOS_REMIX_OPENAPI: JsonObjectSchema = {
+    "responses": {
+        # No remix backend exists on this gateway -- always a stable 501
+        # unless videos.remix_workflow is configured in proxy_config.yml, and
+        # even then there is no implementation behind it yet. Documenting the
+        # real (always-error) behavior here, not an aspirational 200.
+        "501": _json_error_response(
+            "Video remix is not configured or implemented on this gateway."
+        ),
+        **{
+            code: payload
+            for code, payload in _common_error_responses().items()
+            if code != "501"
+        },
+    },
+}

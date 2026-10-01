@@ -77,6 +77,20 @@ records:
         canonical: /v1/videos/{video_id}/content
         alias: /openai/v1/videos/{video_id}/content
         runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
+      # GET /v1/videos (list) and DELETE /v1/videos/{video_id} deliberately have
+      # no runtime_policy entry here: this registry's runtime_route_policy()
+      # keys _RUNTIME_ROUTE_POLICY by canonical path alone (not path+method,
+      # see gateway/route_registry.py), so a second entry at the already-
+      # registered "/v1/videos" (POST, video.generate) or
+      # "/v1/videos/{video_id}" (GET, video.generate) path would silently
+      # overwrite the existing entry instead of adding a method-specific one.
+      # They fall back to "no policy registered" (always allowed), same as
+      # every other unregistered path. Fixing the registry to key on
+      # path+method is a separate, riskier change outside this task's scope.
+      - methods: [POST]
+        canonical: /v1/videos/{video_id}/remix
+        alias: /openai/v1/videos/{video_id}/remix
+        runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [POST]
         canonical: /v1/responses
         alias: /openai/v1/responses
