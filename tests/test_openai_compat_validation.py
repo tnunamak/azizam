@@ -398,6 +398,30 @@ class OpenAICompatValidationTests(unittest.TestCase):
 
         self.assertTrue(mp3.startswith(b"ID3") or mp3.startswith(b"\xff"))
 
+    def test_wav_to_openai_audio_formats_uses_local_ffmpeg(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".wav") as wav_path:
+            with wave.open(wav_path.name, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(24000)
+                wav_file.writeframes(struct.pack("<" + "h" * 800, *([0] * 800)))
+
+            wav_path.flush()
+            wav_path.seek(0)
+            wav_content = wav_path.read()
+
+        signatures = {
+            "opus": b"OggS",
+            "aac": b"\xff",
+            "flac": b"fLaC",
+        }
+        for audio_format, signature in signatures.items():
+            with self.subTest(audio_format=audio_format):
+                converted = proxy.convert_wav_to_audio_format(wav_content, audio_format)
+                self.assertTrue(converted.startswith(signature))
+        pcm = proxy.convert_wav_to_audio_format(wav_content, "pcm")
+        self.assertEqual(len(pcm), 800 * 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -236,7 +236,7 @@ class TestGatewayContractHTTP(unittest.TestCase):
             f"expected tools[...] param pointer, got {param!r}",
         )
 
-    def test_audio_speech_unsupported_response_format_is_openai_shaped(self) -> None:
+    def test_audio_speech_rejects_unknown_response_format(self) -> None:
         """TTS must reject unsupported response_format values with an OpenAI
         envelope (regression for the audit finding that `response_format`
         was silently ignored)."""
@@ -246,7 +246,7 @@ class TestGatewayContractHTTP(unittest.TestCase):
                 "model": "default",
                 "voice": "alloy",
                 "input": "compatibility probe",
-                "response_format": "opus",
+                "response_format": "m4a",
             },
         )
         if res.status == 503:

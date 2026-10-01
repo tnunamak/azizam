@@ -190,6 +190,8 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         self.assertEqual(speech[0].output_modalities, ("audio",))
         self.assertIn("response_format:wav", speech[0].tags)
         self.assertIn("response_format:mp3", speech[0].tags)
+        for audio_format in ("opus", "aac", "flac", "pcm"):
+            self.assertIn(f"response_format:{audio_format}", speech[0].tags)
 
     def test_stt_capability(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)

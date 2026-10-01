@@ -254,7 +254,14 @@ def _build_tts_capabilities(
                     output_modalities=("audio",),
                     execution="sync",
                     streaming=True,
-                    tags=("response_format:wav", "response_format:mp3"),
+                    tags=(
+                        "response_format:wav",
+                        "response_format:mp3",
+                        "response_format:opus",
+                        "response_format:aac",
+                        "response_format:flac",
+                        "response_format:pcm",
+                    ),
                     resources=ResourceEstimate(gpu_required=True),
                 )
             )
