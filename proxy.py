@@ -4734,7 +4734,11 @@ async def _free_comfy_models_if_idle(client: httpx.AsyncClient) -> bool:
         if response.status_code != 200:
             return False
         queue = response.json()
-        if not isinstance(queue, Mapping) or queue.get("queue_running"):
+        if not isinstance(queue, Mapping):
+            return False
+        running = queue.get("queue_running")
+        pending = queue.get("queue_pending")
+        if not isinstance(running, list) or not isinstance(pending, list) or running or pending:
             return False
         response = await client.post(
             f"{COMFY_HOST}/free",

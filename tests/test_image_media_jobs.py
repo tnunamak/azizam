@@ -80,6 +80,22 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
         self.assertFalse(asyncio.run(proxy._free_comfy_models_if_idle(busy)))
         self.assertEqual(busy.posts, [])
 
+        class PendingClient(FakeClient):
+            async def get(self, _url: str, **_kwargs: Any) -> FakeResponse:
+                return FakeResponse({"queue_running": [], "queue_pending": [1]})
+
+        pending = PendingClient(False)
+        self.assertFalse(asyncio.run(proxy._free_comfy_models_if_idle(pending)))
+        self.assertEqual(pending.posts, [])
+
+        class UnknownQueueClient(FakeClient):
+            async def get(self, _url: str, **_kwargs: Any) -> FakeResponse:
+                return FakeResponse({"queue_running": []})
+
+        unknown = UnknownQueueClient(False)
+        self.assertFalse(asyncio.run(proxy._free_comfy_models_if_idle(unknown)))
+        self.assertEqual(unknown.posts, [])
+
     def test_seeded_requests_get_stable_hashed_request_id(self) -> None:
         body = {
             "model": "flux2-klein-4b",
