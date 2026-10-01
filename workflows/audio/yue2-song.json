@@ -1,7 +1,7 @@
 {
  "_meta": {
   "name": "audio-yue2-song",
-  "description": "YuE2-3B (int8_convrot) text-to-song with vocals: style prompt + lyrics -> optional ABC melody/chord plan -> 48 kHz stereo song. Duration is a cap (model decides actual length). License CC BY-NC.",
+  "description": "YuE2-3B (int8_convrot) text-to-song with vocals: style prompt + lyrics -> optional ABC melody/chord plan -> 48 kHz stereo song. Duration is a cap (model decides actual length). License CC BY-NC. Without lyrics the request runs with '[instrumental]' (the old sample lyrics are no longer the default).",
   "model_file": "yue2_3b_int8_convrot.safetensors",
   "prompt_node": [
    {
@@ -50,7 +50,7 @@
  "3": {
   "class_type": "PrimitiveStringMultiline",
   "inputs": {
-   "value": "[Verse 1]\nMorning light on the window sill\nCoffee's warm and the world is still\nI packed my dreams in a paper bag\nLeft the old town with a one-way tag\n\n[Chorus]\nRun with me into the sunlight\nLeave the shadows far behind\nWe don't need to know tomorrow\nTonight the road is ours to find\n\n[Verse 2]\nDusty highways and a radio song\nEvery mile feels like we belong\nStars come out over open fields\nSilver promises the night revealed\n\n[Chorus]\nRun with me into the sunlight\nLeave the shadows far behind\nWe don't need to know tomorrow\nTonight the road is ours to find\n\n[Outro]\nOh, the road is ours to find\n"
+   "value": "[instrumental]"
   }
  },
  "30": {

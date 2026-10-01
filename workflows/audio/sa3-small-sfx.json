@@ -1,7 +1,7 @@
 {
  "_meta": {
   "name": "sfx-stable-audio-3-small",
-  "description": "Stable Audio 3 small-sfx text-to-sound-effect (stereo 44.1k). License stable-audio-community.",
+  "description": "Stable Audio 3 small-sfx text-to-sound-effect (stereo 44.1k). License stable-audio-community. Uses non-tiled VAEDecodeAudio: VAEDecodeAudioTiled fails with a tensor size mismatch on short durations (4 s).",
   "model_file": "stable_audio_3_small_sfx.safetensors",
   "prompt_node": "3",
   "duration_node": [
@@ -82,7 +82,7 @@
   }
  },
  "7": {
-  "class_type": "VAEDecodeAudioTiled",
+  "class_type": "VAEDecodeAudio",
   "inputs": {
    "samples": [
     "6",
@@ -91,9 +91,7 @@
    "vae": [
     "1",
     2
-   ],
-   "tile_size": 512,
-   "overlap": 64
+   ]
   }
  },
  "8": {

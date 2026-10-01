@@ -149,6 +149,19 @@ class AudioGenerateGraphTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("duration", graph[node]["inputs"])
         self.assertEqual(response.body, b"RAW")  # mp3: no normalization configured
 
+    async def test_yue2_without_lyrics_is_instrumental_not_sample_lyrics(self) -> None:
+        _response, graph = await self._generate(
+            {"model": "yue2-song", "tags": "ambient piano"}, content_type="audio/mpeg"
+        )
+        self.assertEqual(graph["3"]["inputs"]["value"], "[instrumental]")
+
+    def test_sa3_workflow_uses_untiled_decode(self) -> None:
+        # VAEDecodeAudioTiled raised a tensor size mismatch for a 4 s request.
+        graph = json.loads((ROOT / "workflows/audio/sa3-small-sfx.json").read_text())
+        classes = {n["class_type"] for k, n in graph.items() if k != "_meta"}
+        self.assertIn("VAEDecodeAudio", classes)
+        self.assertNotIn("VAEDecodeAudioTiled", classes)
+
     async def test_yue2_default_duration_is_120_not_30(self) -> None:
         _response, graph = await self._generate(
             {"model": "yue2-song", "tags": "folk", "lyrics": "x"}, content_type="audio/mpeg"
