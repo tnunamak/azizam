@@ -951,6 +951,42 @@ are the only forms that should appear in shared docs and commit history.
 
 ## Operational Notes
 
+### SeedVR2 image upscale
+
+The image edit route executes the `seedvr2-upscale` workflow. It uses a
+multipart upload and returns the usual image JSON response:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/edits \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -F 'model=seedvr2-upscale' \
+  -F 'prompt=Upscale and restore this image faithfully' \
+  -F 'image=@input.png' \
+  -F 'extensions={"com.vividfish.workflow":{"scale":2,"color_correction_method":"lab"}}'
+```
+
+`scale` accepts `2` or `4`; `color_correction_method` accepts `none`, `lab`,
+`wavelet`, or `adain`. The prompt is required by the shared image-edit route
+but is not consumed by this graph.
+
+### RIFE video interpolation
+
+Upload-driven video-edit manifests run synchronously through the gateway's
+manifest executor. `workflow_id` can be `rife-interpolate` or the full
+manifest id `video.edit.rife-interpolate`. The response body is the rendered
+video file:
+
+```bash
+curl -sS http://127.0.0.1:5000/gateway/v1/workflows/rife-interpolate/run \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -F 'source_video=@input.mp4;type=video/mp4' \
+  -F 'multiplier=2' \
+  -o interpolated.mp4
+```
+
+The workflow manifest validates the multiplier. `2` is the verified setting;
+the RIFE node also declares `3` and `4` as supported values.
+
 - `/health` is the only unauthenticated endpoint. Use it for liveness in
   Docker/systemd; do not use authenticated endpoints for health checks.
 - Dashboard Apps, Profiles, and keys live in `admin.db` and apply live through

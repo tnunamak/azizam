@@ -17513,24 +17513,48 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
     workflow_path = Path(__file__).parent / artifact
     try:
         form = await request.form()
-        video_upload = form.get("source_video")
-        if video_upload is None or not hasattr(video_upload, "read"):
-            raise ValueError("source_video file is required")
-        video_bytes = await video_upload.read()
-        if not video_bytes:
-            raise ValueError("source_video file is empty")
-        multiplier_value = form.get("multiplier", 2)
-        try:
-            multiplier = int(multiplier_value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("multiplier must be an integer") from exc
-        validation = validate_inputs(record.manifest, {"source_video": "upload", "multiplier": multiplier})
+        input_specs = record.manifest.get("inputs") or {}
+        unknown_fields = set(form.keys()) - set(input_specs)
+        if unknown_fields:
+            raise ValueError(f"unknown workflow input: {sorted(unknown_fields)[0]}")
+        supplied: dict[str, Any] = {}
+        asset_uploads: dict[str, tuple[str, bytes, str]] = {}
+        for name, spec in input_specs.items():
+            raw = form.get(name)
+            if spec.get("type") == "asset":
+                if raw is None or not hasattr(raw, "read"):
+                    continue
+                raw_bytes = await raw.read()
+                if not raw_bytes:
+                    raise ValueError(f"{name} file is empty")
+                asset_uploads[name] = (
+                    Path(getattr(raw, "filename", name) or name).name,
+                    raw_bytes,
+                    getattr(raw, "content_type", None) or "application/octet-stream",
+                )
+                supplied[name] = "upload"
+                continue
+            if raw is None:
+                continue
+            try:
+                input_type = spec.get("type", "string")
+                if input_type == "integer":
+                    supplied[name] = int(raw)
+                elif input_type == "number":
+                    supplied[name] = float(raw)
+                elif input_type == "boolean":
+                    lowered = str(raw).lower()
+                    if lowered not in {"true", "false"}:
+                        raise ValueError(f"{name} must be true or false")
+                    supplied[name] = lowered == "true"
+                else:
+                    supplied[name] = str(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"invalid value for {name}") from exc
+        validation = validate_inputs(record.manifest, supplied)
         if validation.rejected:
             raise ValueError(next(iter(validation.rejected.values())))
         workflow_template = json.loads(workflow_path.read_text(encoding="utf-8"))
-        workflow = bind_backend_request(
-            record.manifest, "comfyui", workflow_template, validation.accepted
-        ).request
     except ValueError as exc:
         return Response(
             content=json.dumps({"error": {"message": str(exc), "type": "invalid_request_error"}}),
@@ -17543,24 +17567,22 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         )
 
     headers = configured_downstream_headers(auth_context, "comfyui")
-    filename = Path(getattr(video_upload, "filename", "input.mp4") or "input.mp4").name
     async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
-        upload = await client.post(
-            f"{COMFY_HOST}/upload/image", headers=headers,
-            files={"image": (filename, video_bytes, getattr(video_upload, "content_type", None) or "video/mp4")},
-        )
-        if upload.status_code != 200 or not upload.json().get("name"):
-            return Response(
-                content=json.dumps({"error": {"message": "ComfyUI video upload failed", "type": "api_error"}}),
-                status_code=502, media_type="application/json",
+        for input_name, (filename, raw_bytes, content_type) in asset_uploads.items():
+            upload = await client.post(
+                f"{COMFY_HOST}/upload/image", headers=headers,
+                files={"image": (filename, raw_bytes, content_type)},
             )
-        video_node = next(
-            (str(mapping["node"]) for mapping in ((binding.get("map") or {}).get("source_video") or [])
-             if isinstance(mapping, Mapping) and mapping.get("node") and mapping.get("input") == "file"),
-            None,
-        )
-        if video_node and video_node in workflow:
-            workflow[video_node]["inputs"]["file"] = upload.json()["name"]
+            uploaded_name = upload.json().get("name") if upload.status_code == 200 else None
+            if not uploaded_name:
+                return Response(
+                    content=json.dumps({"error": {"message": f"ComfyUI upload failed for {input_name}", "type": "api_error"}}),
+                    status_code=502, media_type="application/json",
+                )
+            validation.accepted[input_name] = uploaded_name
+        workflow = bind_backend_request(
+            record.manifest, "comfyui", workflow_template, validation.accepted
+        ).request
 
         async def submit_and_collect() -> tuple[dict[str, Any] | None, Response | None]:
             submitted = await client.post(

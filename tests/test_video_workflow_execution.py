@@ -22,6 +22,9 @@ class _Upload:
 
 
 class _Form:
+    def keys(self):
+        return ("source_video", "multiplier")
+
     def get(self, name: str, default=None):
         return {"source_video": _Upload(), "multiplier": "2"}.get(name, default)
 

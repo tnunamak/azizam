@@ -183,7 +183,9 @@ The repository also carries [`autotile-edge-stitch`](skills/autotile-edge-stitch
 | `GET  /gateway/v1/assets/{asset_id}/content` | proxy | Signed generated-asset content URL; no bearer required until expiry. |
 | `* /<any other>` | proxy | Unknown routes return 404 instead of falling through to a backend. There is no legacy root Tabby shim or root catch-all backend passthrough. |
 
-Image generation defaults to `krea2-turbo`; image edits default to `qwen-image-2.1-edit`. A mask selects the matching inpaint workflow. `flux2-klein-4b*` stays available by explicit model ID as the fast Apache-licensed fallback. `seedvr2-upscale` and `rife-interpolate` are published through workflow manifests and `/gateway/v1/capabilities`; they are discoverable, but the OpenAI-compatible API has no image-upscale or video-edit upload route to execute them yet.
+Image generation defaults to `krea2-turbo`; image edits default to `qwen-image-2.1-edit`. A mask selects the matching inpaint workflow. `flux2-klein-4b*` stays available by explicit model ID as the fast Apache-licensed fallback. `seedvr2-upscale` and `rife-interpolate` are published through workflow manifests and `/gateway/v1/capabilities`.
+
+The SeedVR2 image workflow runs through `POST /v1/images/edits` with `model=seedvr2-upscale`, one `image` upload, a non-empty `prompt`, and optional workflow controls under `extensions.com.vividfish.workflow` (for example `scale: 2`). Upload-driven video-edit manifests run through `POST /gateway/v1/workflows/{workflow_id}/run`; this route currently returns the rendered video bytes synchronously. See [`docs/LOCAL_CLIENT_RECIPES.md`](docs/LOCAL_CLIENT_RECIPES.md) for complete examples.
 
 Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [`MODEL_COMPATIBILITY.md`](MODEL_COMPATIBILITY.md), and [`OPENCLAW_SETUP.md`](OPENCLAW_SETUP.md):
 
