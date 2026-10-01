@@ -22,7 +22,7 @@ def test_configured_aliases_select_sticky_profiles_and_rp_keeps_abliterated_mode
     assert kobold["lifecycle"]["driver_config"]["dropin"] == "95-activation.conf"
     for model_id in ("default", "coder", "default-fast", "coder-q5"):
         assert records[model_id]["activation_profile"] == "kv-q5-q4"
-        assert records[model_id]["context_window"] == 205824
+        assert records[model_id]["context_window"] == 202752
     assert records["rp"]["activation_profile"] == "kv-q5-q4-rp"
     assert records["rp"]["context_window"] == 217088
     assert records["coder-q8"]["activation_profile"] == "kv-q8"
@@ -41,7 +41,7 @@ def test_configured_aliases_select_sticky_profiles_and_rp_keeps_abliterated_mode
     profiles = kobold["lifecycle"]["driver_config"]["activation_profiles"]
     assert profiles["kv-q5-q4"]["LLAMA_BEE_DRAFT_CTK"] == "q5_0"
     assert profiles["kv-q5-q4"]["LLAMA_BEE_DRAFT_CTV"] == "q4_1"
-    assert profiles["kv-q5-q4"]["LLAMA_BEE_CTX"] == 205824
+    assert profiles["kv-q5-q4"]["LLAMA_BEE_CTX"] == 202752
     assert profiles["kv-q5-q4-rp"]["LLAMA_BEE_CTX"] == 217088
     assert profiles["kv-q8"]["LLAMA_BEE_CTX"] == 145408
 
@@ -69,7 +69,7 @@ def test_q8_alias_resolves_profile_as_part_of_outer_activation_identity() -> Non
 def test_context_catalog_uses_each_profile_limit_without_live_probe() -> None:
     config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
     with patch.object(proxy, "config", config):
-        assert asyncio.run(proxy._context_window_for_model_id("coder-q5")) == 205824
+        assert asyncio.run(proxy._context_window_for_model_id("coder-q5")) == 202752
         assert asyncio.run(proxy._context_window_for_model_id("coder-q8")) == 145408
         assert asyncio.run(proxy._context_window_for_model_id("rp")) == 217088
 

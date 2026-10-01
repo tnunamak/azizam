@@ -76,7 +76,7 @@ backends:
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
         activation_profile: kv-q5-q4
-        context_window: 205824
+        context_window: 202752
         # Aggregate completion guard for the selected default model only.
         # This is canonical after protocol normalization; an explicit caller
         # max_tokens (or equivalent frontend field) wins by setdefault.
@@ -93,7 +93,7 @@ backends:
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
         activation_profile: kv-q5-q4
-        context_window: 205824
+        context_window: 202752
       - id: coder-q5
         model_group: coder-q5
         base_model_id: coder
@@ -104,7 +104,7 @@ backends:
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
         activation_profile: kv-q5-q4
-        context_window: 205824
+        context_window: 202752
       - id: coder-q8
         model_group: coder-q8
         base_model_id: coder
@@ -121,7 +121,7 @@ backends:
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q5-q4
-        context_window: 205824
+        context_window: 202752
       # Public aliases inherit the logical base policy by stable id. Physical
       # paths remain routing data; only this overlay distinguishes fast.
       - id: default-fast
@@ -131,7 +131,7 @@ backends:
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
         activation_profile: kv-q5-q4
-        context_window: 205824
+        context_window: 202752
         policy_overlay:
           - kind: default-params
             set: {reasoning_effort: none}
@@ -174,7 +174,7 @@ backends:
         dropin: 95-activation.conf
         swap_strategy: dropin-env-restart
         health_endpoint: /v1/models
-        health_timeout_s: 60
+        health_timeout_s: 180
         # LLAMA_BEE_* is the retained compatibility API for the local service.
         # Engine selection is operator-owned and intentionally absent here:
         # Daisy/model activation may change models and KV profiles, never engines.
@@ -194,6 +194,8 @@ backends:
             LLAMA_BEE_CTK: q5_0
             LLAMA_BEE_CTV: q4_1
             LLAMA_BEE_CTX: 217088
+            LLAMA_BEE_DRAFT_CTK: q5_0
+            LLAMA_BEE_DRAFT_CTV: q4_1
           kv-q8:
             LLAMA_BEE_CTK: q8_0
             LLAMA_BEE_CTV: q8_0
@@ -390,7 +392,7 @@ roles:
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
     activation_profile: kv-q5-q4
-    context_window: 205824
+    context_window: 202752
     description: Default LLM (Qwen3.8-27B UD-Q4_K_XL via local llama.cpp on :5051)
     # Qwen3.8 thinking mode — from official Qwen team recommendations. Qwen3.6's
     # card had a separate lower-temperature override for precise coding tasks;
@@ -409,7 +411,7 @@ roles:
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
     activation_profile: kv-q5-q4
-    context_window: 205824
+    context_window: 202752
     description: Default LLM, reasoning off (low-latency)
     sampling:
       temperature: 1.0
@@ -441,7 +443,7 @@ roles:
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
     activation_profile: kv-q5-q4
-    context_window: 205824
+    context_window: 202752
     description: Coding LLM (Qwen3.8-27B UD-Q4_K_XL via local llama.cpp)
     # Qwen3.8 thinking mode — from official Qwen team recommendations. Qwen3.6's
     # card had a separate lower-temperature override for precise coding tasks;
@@ -458,7 +460,7 @@ roles:
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
     activation_profile: kv-q5-q4
-    context_window: 205824
+    context_window: 202752
     description: Coding LLM with balanced Q5_0 K / Q4_1 V cache
     sampling:
       temperature: 1.0
@@ -486,7 +488,7 @@ roles:
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
     activation_profile: kv-q5-q4
-    context_window: 205824
+    context_window: 202752
     description: Coding LLM - abliterated (JonathanColetti Qwen3.8-27B-Uncensored Q4_K_M, MTP-verified)
     # Qwen3.8 thinking mode — from official Qwen team recommendations (no
     # abliterated-specific override published for this build).
