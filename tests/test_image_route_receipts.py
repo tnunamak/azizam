@@ -1650,6 +1650,15 @@ class TestEditWorkflowSelection(unittest.TestCase):
                 "flux2-klein-4b-edit",
             )
 
+    def test_multiref_manifest_declares_required_route_bound_image(self) -> None:
+        manifest = proxy._find_image_manifest(
+            "image.edit", "qwen-image-2.1-edit-multiref"
+        )
+        self.assertEqual(
+            proxy._manifest_required_route_bound_inputs(manifest, "comfyui"),
+            ("reference_image_2",),
+        )
+
 
 class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
     """Multi-reference-image edit handling (proxy.py's `image[]` fix).

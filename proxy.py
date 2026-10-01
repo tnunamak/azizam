@@ -7017,6 +7017,25 @@ async def proxy_comfy_edit_request(
             media_type="application/json"
         )
     manifest = _find_image_manifest("image.edit", str(model))
+    required_route_bound_inputs = _manifest_required_route_bound_inputs(manifest, "comfyui")
+    minimum_image_count = 1 + len(required_route_bound_inputs)
+    if len(image_files) < minimum_image_count:
+        _record_image_input(receipt, "image[]", rejected_reason="missing_required_image")
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": (
+                        f"workflow {model} requires at least {minimum_image_count} "
+                        f"input image(s); {len(image_files)} were provided"
+                    ),
+                    "type": "invalid_request_error",
+                    "param": "image[]",
+                    "code": "missing_required_image",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
@@ -14772,6 +14791,21 @@ def _workflow_extension_supported_names(manifest: Mapping[str, Any], backend: st
             str(name) for name in route_bound if isinstance(name, str) and name
         )
     return tuple(name for name in mapping.keys() if name not in standard_portable_names)
+
+
+def _manifest_required_route_bound_inputs(
+    manifest: Mapping[str, Any] | None, backend: str
+) -> tuple[str, ...]:
+    if not isinstance(manifest, Mapping):
+        return ()
+    bindings = manifest.get("bindings")
+    binding = bindings.get(backend) if isinstance(bindings, Mapping) else None
+    if not isinstance(binding, Mapping):
+        return ()
+    names = binding.get("route_bound_inputs")
+    if not isinstance(names, list | tuple | set):
+        return ()
+    return tuple(name for name in names if isinstance(name, str) and name)
 
 
 def _workflow_extensions_present(body: Mapping[str, Any]) -> bool:
