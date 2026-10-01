@@ -22,6 +22,7 @@ import json
 import math
 import os
 import random
+import re
 import signal
 import sys
 import subprocess
@@ -17909,6 +17910,58 @@ def _load_audio_workflow_file(workflow_cfg: dict):
     return workflow
 
 
+_AUDIO_SUFFIX_BY_CONTENT_TYPE = {
+    "audio/flac": ".flac",
+    "audio/x-flac": ".flac",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/wave": ".wav",
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/ogg": ".ogg",
+}
+
+
+def _peak_normalize_audio(data: bytes, content_type: str, target_db: float = -1.0) -> bytes:
+    """Scale audio so its peak sits at `target_db` dBFS; return the input on any problem.
+
+    Stable Audio 3 output is quiet (peaks around -20 dBFS), so workflows opt in with
+    `audio.workflows.<id>.normalize_peak_db`. This is a pure gain change, no
+    compression, in the same container. Silent audio, audio already within 0.5 dB
+    of the target, and any ffmpeg failure return the original bytes.
+    """
+    suffix = _AUDIO_SUFFIX_BY_CONTENT_TYPE.get((content_type or "").split(";")[0].strip().lower())
+    if not suffix:
+        return data
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / f"in{suffix}"
+            dst = Path(tmp) / f"out{suffix}"
+            src.write_bytes(data)
+            detect = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-nostats", "-i", str(src), "-af", "volumedetect", "-f", "null", "-"],
+                capture_output=True, text=True, timeout=60,
+            )
+            match = re.search(r"max_volume:\s*(-?[0-9.]+) dB", detect.stderr or "")
+            if detect.returncode != 0 or not match:
+                return data
+            peak_db = float(match.group(1))
+            gain_db = target_db - peak_db
+            if peak_db < -70.0 or abs(gain_db) < 0.5 or gain_db > 50.0:
+                return data
+            result = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
+                 "-af", f"volume={gain_db:.2f}dB", str(dst)],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0 or not dst.exists():
+                return data
+            return dst.read_bytes()
+    except Exception as exc:
+        print(f"[proxy] audio normalize skipped: {exc}", flush=True)
+        return data
+
+
 def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         if not record.intent.startswith(("audio.", "music.", "sfx.")):
@@ -18016,7 +18069,7 @@ async def proxy_audio_generate(request: Request, auth_context):
     tags = text_fields.get("tags")
     lyrics = text_fields.get("lyrics")
     model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
-    duration = body.get("duration", 30)
+    duration = body.get("duration")
     seed = body.get("seed")
     audio_type = body.get("type", "music")  # music | sfx | ambient
 
@@ -18039,6 +18092,8 @@ async def proxy_audio_generate(request: Request, auth_context):
             status_code=400,
             media_type="application/json"
         )
+    if duration is None:
+        duration = workflow_cfg.get("default_duration", 30)
     try:
         if isinstance(duration, bool):
             raise ValueError
@@ -18222,8 +18277,14 @@ async def proxy_audio_generate(request: Request, auth_context):
                         audio_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
                         if audio_resp.status_code == 200:
                             content_type = audio_resp.headers.get("content-type", "audio/wav")
+                            audio_bytes = audio_resp.content
+                            peak_db = workflow_cfg.get("normalize_peak_db")
+                            if peak_db is not None:
+                                audio_bytes = await asyncio.to_thread(
+                                    _peak_normalize_audio, audio_bytes, content_type, float(peak_db)
+                                )
                             return Response(
-                                content=audio_resp.content,
+                                content=audio_bytes,
                                 status_code=200,
                                 media_type=content_type,
                                 headers={"X-Audio-Model": workflow_name, "X-Audio-Type": audio_type}

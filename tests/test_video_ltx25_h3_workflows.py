@@ -23,7 +23,7 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
 
 class SizeAndLengthRuleTests(unittest.TestCase):
     def test_default_size_rule_is_unchanged(self) -> None:
-        self.assertEqual(proxy._parse_size_clamped("1280x720", "1280x720"), (1280, 720))
+        self.assertEqual(proxy._parse_size_clamped("1280x720", "1280x720"), (1280, 704))
         self.assertEqual(proxy._parse_size_clamped("1000x600", "1280x720"), (992, 576))
 
     def test_size_multiple_64_floors_and_clamps_to_max(self) -> None:

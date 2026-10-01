@@ -647,6 +647,21 @@ audio:
       file: workflows/audio/tangoflux.json
       max_seconds: 30
       min_seconds: 1
+    # Stable Audio 3 small-sfx: default SFX model (aliases sfx, ambient). Output
+    # is quiet, so the gateway peak-normalizes it to -1 dBFS.
+    sa3-small-sfx:
+      file: workflows/audio/sa3-small-sfx.json
+      max_seconds: 120
+      min_seconds: 1
+      default_duration: 10
+      normalize_peak_db: -1.0
+    # YuE2-3B song with vocals (license CC BY-NC). `duration` is a MAXIMUM (becomes
+    # the model's max_duration); the model picks the real length, usually shorter.
+    yue2-song:
+      file: workflows/audio/yue2-song.json
+      max_seconds: 240
+      min_seconds: 10
+      default_duration: 120
   aliases:
     ace-step: ace-step-1.5-xl-turbo
     ace-step-1.5: ace-step-1.5-xl-turbo
@@ -654,8 +669,14 @@ audio:
     ace-step-2b: ace-step-1.5-2b-base
     music: ace-step-1.5-xl-turbo
     tangoflux-sfx: tangoflux
-    sfx: tangoflux
-    ambient: tangoflux
+    sfx: sa3-small-sfx
+    ambient: sa3-small-sfx
+    sa3: sa3-small-sfx
+    sa3-sfx: sa3-small-sfx
+    stable-audio-3-sfx: sa3-small-sfx
+    yue2: yue2-song
+    yue: yue2-song
+    song: yue2-song
 model_compatibility:
   enabled: true
   generated_aliases_file: openai_model_aliases.generated.yml
