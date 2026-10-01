@@ -5147,10 +5147,9 @@ class _VramProbe:
 def compute_max_batch(free_vram: Optional[int], per_image: Optional[int]) -> int:
     """Adaptive batch sizing under a free-VRAM budget.
 
-    Conservative floor of 1: a request that can't even fit one image returns 503
-    upstream rather than triggering an OOM. The caller decides between
-    "submit one anyway because we have no estimate" and "503"; this helper just
-    returns the safe ceiling given the inputs.
+    Returns 0 when the estimate says not even one image fits. That is advisory:
+    the caller still submits batch=1 (after trying an idle-model free) and lets
+    ComfyUI manage memory; only a real execution OOM fails the request.
     """
     if not isinstance(per_image, int) or per_image <= 0:
         # No estimate yet — be cautious: probe with batch_size=1.
@@ -6247,32 +6246,19 @@ async def _generate_images_with_adaptive_batching(
             batch_target = 1
         elif estimate is not None:
             cap = compute_max_batch(free_now, estimate)
-            if cap == 0 and IMAGE_FREE_VRAM_ON_EXHAUSTION:
+            if cap == 0 and IMAGE_FREE_VRAM_ON_EXHAUSTION and not models_freed:
                 models_freed = await _free_comfy_models_if_idle(client)
                 if models_freed:
                     free_now = await comfy_free_vram_bytes(client)
                     cap = compute_max_batch(free_now, estimate)
-            if cap == 0:
-                msg = (
-                    f"Insufficient free VRAM for image generation: "
-                    f"need ~{estimate / (1024**3):.2f} GiB per image plus "
-                    f"{IMAGE_VRAM_RESERVE_BYTES / (1024**3):.2f} GiB reserve, "
-                    f"have {(free_now or 0) / (1024**3):.2f} GiB. "
-                    f"Retry after model unloads or another job completes."
-                )
-                return Response(
-                    content=json.dumps({
-                        "error": {
-                            "message": msg,
-                            "type": "service_unavailable",
-                            "code": "vram_exhausted",
-                        }
-                    }),
-                    status_code=503,
-                    media_type="application/json",
-                    headers={"Retry-After": "30"},
-                )
-            batch_target = min(cap, images_remaining)
+            # The estimate sizes batches > 1 only. It is measured as the
+            # marginal ComfyUI VRAM of a probe run (cold model loads
+            # included), so it over-states what one more image needs and
+            # ComfyUI offloads within --reserve-vram anyway. A single image is
+            # therefore never refused on the estimate: after the idle-model
+            # free above, submit batch=1 and let a real execution OOM (one
+            # unload + retry below) be the only failure.
+            batch_target = min(max(cap, 1), images_remaining)
         else:
             # No estimate, but we already proved on round 1 that the model fits
             # and can produce images. Trust the configured ceiling — any
