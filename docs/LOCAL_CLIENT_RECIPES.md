@@ -407,7 +407,74 @@ curl -s http://127.0.0.1:5000/v1/audio/generate \
   }'
 ```
 
-LTX video generation:
+YuE2 song generation (songs with vocals; license CC BY-NC, non-commercial):
+
+```bash
+curl -s http://127.0.0.1:5000/v1/audio/generate \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "yue2-song",
+    "tags": "indie folk pop, warm female vocals, fingerpicked acoustic guitar",
+    "lyrics": "[Verse 1]\nMorning light on the window sill\n\n[Chorus]\nRun with me into the sunlight",
+    "duration": 120,
+    "seed": 42
+  }' -o song.mp3
+```
+
+`tags` is the style prompt (`prompt` also works). `lyrics` uses `[Verse]`/`[Chorus]` section
+markers. `duration` is a MAXIMUM in seconds (10-240, default 120), not an exact length: the
+model decides the real length and it is usually shorter. Output is MP3. A 2-minute song takes
+about 1 minute. Aliases: `yue2`, `song`.
+
+Stable Audio 3 small-sfx (default for `model: "sfx"` and `"ambient"`):
+
+```bash
+curl -s http://127.0.0.1:5000/v1/audio/generate \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "sa3-small-sfx", "prompt": "glass bottle breaking on concrete", "duration": 4}' \
+  -o sfx.flac
+```
+
+`duration` is 1-120 s (default 10); output is stereo 44.1 kHz FLAC, about 1 s per clip when warm.
+The gateway peak-normalizes it to -1 dBFS (the raw model output is quiet; set
+`audio.workflows.<id>.normalize_peak_db` to do the same for another workflow). Use
+`"model": "tangoflux"` for the previous SFX model.
+
+Video generation. The default model is LTX-2.5 (`ltx-2.5`, also `sora-2`, `sora-2-pro`,
+and any request without `model`). MiniMax H3 is `minimax-h3`. LTX-2.3 stays callable as
+`ltx-2.3`.
+
+```bash
+# Text to video (LTX-2.5, default)
+curl -s http://127.0.0.1:5000/v1/videos \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "a lighthouse at dusk, waves crashing", "seconds": 5, "size": "960x512"}'
+# Image to video: add input_reference (path, URL, data URI, base64, or multipart file).
+# The gateway picks the i2v graph (video-ltx-2.5-i2v / video-minimax-h3-i2v) itself.
+```
+
+Request fields map as follows: `prompt` to the text encoder; `seconds` to frame count at 24 fps;
+`size` to width x height; `input_reference` to the first frame; `seed` and `negative_prompt`
+(LTX only); `image_strength` (LTX i2v, 0-1, default 0.7). `GET /v1/videos/{id}` polls and
+`GET /v1/videos/{id}/content` returns the MP4 (with audio). The create response reports the
+`size` and `actual_seconds` that were really used.
+
+| Model | seconds | size | Frames | Measured (3090) |
+|---|---|---|---|---|
+| `ltx-2.5` / `-i2v` | 1-10 | multiples of 64, max 1280x704, default 960x512 | 8k+1 | 960x512 5 s: 45 s warm, 107 s cold; 1280x704 5 s: 140 s; i2v 85 s |
+| `minimax-h3` / `-i2v` | 2-10 | multiples of 32, max 1344x768, default 960x544 | 17k+5 | 960x544 5 s: 120-250 s; i2v 185 s |
+
+LTX-2.5 needs width and height to be multiples of 64, so the gateway floors any other size
+(for example `1280x720` becomes `1280x704`, `1000x600` becomes `960x576`) instead of rejecting it.
+Seconds snap to the nearest valid frame count; `X-Duration-Adjusted` appears when the change is over
+0.05 s. MiniMax H3 reads sound cues from an `Audio:` paragraph in the prompt. H3 license: the
+MiniMax H3 Community License excludes use in the US, EU, UK and South Korea. LTX-2.x Community
+License applies to LTX. An `*-i2v` model ID without `input_reference` returns 400.
+
+LTX-2.3 video generation with workflow controls:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/videos \

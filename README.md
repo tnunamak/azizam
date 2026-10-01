@@ -183,7 +183,7 @@ The repository also carries [`autotile-edge-stitch`](skills/autotile-edge-stitch
 | `GET  /gateway/v1/assets/{asset_id}/content` | proxy | Signed generated-asset content URL; no bearer required until expiry. |
 | `* /<any other>` | proxy | Unknown routes return 404 instead of falling through to a backend. There is no legacy root Tabby shim or root catch-all backend passthrough. |
 
-Image generation defaults to `krea2-turbo`; image edits and variations default to `qwen-image-2.1-edit`, with masks routed to `qwen-image-2.1-inpaint` and two-image edits to `qwen-image-2.1-edit-multiref`. `flux2-klein-4b` stays available by explicit model ID as the fast Apache-licensed fallback. `seedvr2-upscale` and `rife-interpolate` are published through workflow manifests and `/gateway/v1/capabilities`. Video creation defaults to `video-ltx-2.3-distilled`; LTX-2.5 is not enabled because its Hugging Face license gate has not been accepted. TTS defaults to OmniVoice through the `omnivoice-tts` service on port 8002.
+Image generation defaults to `krea2-turbo`; image edits and variations default to `qwen-image-2.1-edit`, with masks routed to `qwen-image-2.1-inpaint` and two-image edits to `qwen-image-2.1-edit-multiref`. `flux2-klein-4b` stays available by explicit model ID as the fast Apache-licensed fallback. `seedvr2-upscale` and `rife-interpolate` are published through workflow manifests and `/gateway/v1/capabilities`. Video creation defaults to LTX-2.5 (`video-ltx-2.5-t2v`; a request with `input_reference` routes to `video-ltx-2.5-i2v`); MiniMax H3 (`minimax-h3`, license excludes US/EU/UK/KR) and LTX-2.3 stay callable by model ID. `POST /v1/audio/generate` has `yue2-song` (songs with vocals, CC BY-NC; `duration` is a maximum) and `sa3-small-sfx` (default `sfx`/`ambient`; output is peak-normalized); `tangoflux` and ACE-Step stay callable. TTS defaults to OmniVoice through the `omnivoice-tts` service on port 8002.
 
 The SeedVR2 image workflow runs through `POST /v1/images/edits` with `model=seedvr2-upscale`, one `image` upload, a non-empty `prompt`, and optional workflow controls under `extensions.com.vividfish.workflow` (for example `scale: 2`). Upload-driven video-edit manifests run through `POST /gateway/v1/workflows/{workflow_id}/run`; this route currently returns the rendered video bytes synchronously. See [`docs/LOCAL_CLIENT_RECIPES.md`](docs/LOCAL_CLIENT_RECIPES.md) for complete examples.
 
@@ -194,7 +194,7 @@ Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [
 - **Durable image jobs** — long/batch image work can use `POST /gateway/v1/media/jobs` with `intent: "image.generate"` and an OpenAI image request under `request`. The proxy queues the work server-side, retries transient VRAM/ComfyUI/tile-composition failures, persists redacted job state, and returns reusable asset handles via polling/content endpoints. The private request payload is kept on disk only while the job is pending/running so the proxy can recover from client disconnects and restarts.
 - **Generated asset handles** — generated image/audio/video outputs can be inspected at `GET /gateway/v1/assets/{asset_id}` with the minting API key and fetched through signed bearerless content URLs until expiry. Asset handles and input reuse remain scoped to the API key that minted them.
 - **Signed image URLs** — `response_format: "url"` returns hostname-aware, HMAC-signed URLs into a content-addressed cache. URLs are bearerless until expiry (default 1 h), and the cache evicts older entries (default 24 h).
-- **Async video generation** — Sora-2-shaped submit/poll/fetch flow with multiple model aliases (`ltx-2.3`, `ltx-2.3-detail`, `ltx-2.3-long`, `wan-2.2`, etc.). Generated MP4s and PNGs embed the full UI-format ComfyUI workflow in metadata, so dropping an output back into ComfyUI's frontend rebuilds the editable graph.
+- **Async video generation** — Sora-2-shaped submit/poll/fetch flow with multiple model aliases (`ltx-2.5` default, `minimax-h3`, `ltx-2.3`, `ltx-2.3-detail`, `ltx-2.3-long`, `wan-2.2`, etc.). Generated MP4s and PNGs embed the full UI-format ComfyUI workflow in metadata, so dropping an output back into ComfyUI's frontend rebuilds the editable graph.
 
 ## Control-plane nouns
 
@@ -308,6 +308,7 @@ test_e2e.sh                    # End-to-end smoke tests against a running proxy
 workflows/                     # ComfyUI workflows (committed; canonical alongside proxy code)
   images/                      #   Flux + Flux2-Klein image gen / edit graphs
   video-*.json                 #   LTX-2.3 / Wan 2.2 video graphs (paired with .ui.json twins)
+  videos/video-*.json          #   LTX-2.5 and MiniMax H3 t2v/i2v graphs
   video-*.ui.json              #   UI-format twins (regeneratable but expensive — committed for reproducibility)
 scripts/
   doctor.py                    # Operator/agent smoke checks for health, auth, manifests, and workflow bindings
