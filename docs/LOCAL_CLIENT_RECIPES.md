@@ -270,9 +270,10 @@ curl -s http://127.0.0.1:5000/v1/images/edits \
 
 `mask` is the standard OpenAI multipart field, not a workflow extension. Alpha
 masks use OpenAI polarity: transparent edits, opaque preserves. Grayscale masks
-use white to edit and black to preserve. The current Flux2 edit workflow has no
-native inpaint node, so the proxy preserves unmasked pixels with a documented
-post-composite fallback unless a native mask-bound workflow is selected.
+use white to edit and black to preserve. The default Qwen editor routes masked
+requests to `qwen-image-2.1-inpaint`, which binds the mask through source-image
+alpha. Explicit Flux2 edit workflows keep their documented post-composite
+fallback because they have no native inpaint node.
 
 Image edit with multiple reference images (gpt-image-1 shape, repeated
 `image[]`):
@@ -286,12 +287,12 @@ curl -s http://127.0.0.1:5000/v1/images/edits \
   -F 'image[]=@reference-b.png'
 ```
 
-Every shipped workflow today declares exactly one image input node, so a
-second `image[]` is rejected with a clear `400` (`too_many_images`), not
-silently dropped — this used to silently collapse to only the first file.
-Multi-reference workflows that declare `image_nodes: ["<node_a>", "<node_b>"]`
-in their raw workflow JSON's `_meta` block will route each uploaded file (in
-submission order) to its own node.
+The default Qwen edit route selects `qwen-image-2.1-edit-multiref` for two or
+more uploaded images. That workflow accepts exactly two references. Other
+single-image workflows reject extra uploads with a clear `400` rather than
+silently dropping them. Workflows declare image capacity with
+`image_nodes: ["<node_a>", "<node_b>"]` in their raw workflow JSON's `_meta`
+block; uploads route to those nodes in submission order.
 
 ### Image output shape
 
@@ -351,7 +352,7 @@ curl -s http://127.0.0.1:5000/v1/images/variations \
 ```
 
 The backing workflow is `images.variations.default_workflow` in
-`proxy_config.yml` (default: `flux2-klein-4b-edit`, matching the edit route's
+`proxy_config.yml` (default: `qwen-image-2.1-edit`, matching the edit route's
 own default). `model` is accepted: an OpenAI-named model (`dall-e-2`,
 `dall-e-3`, `gpt-image-1`, ...) resolves to the configured default; a
 concrete local workflow id (e.g. `flux2-klein-4b`) is honored literally
