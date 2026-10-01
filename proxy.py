@@ -236,6 +236,7 @@ from gateway.manifests import (
     bind_backend_request,
     load_workflow_manifest,
     manifest_identity,
+    validate_inputs,
 )
 from gateway.video_extensions import (
     STANDARD_VIDEO_CREATE_FIELDS,
@@ -15153,6 +15154,8 @@ def finish_image_route_receipt(
 ) -> None:
     """Finish the receipt and emit a body-free firehose event."""
     status_code = int(getattr(response, "status_code", 0) or 0)
+    if response.headers.get("X-ComfyUI-Models-Freed") == "true":
+        receipt.metadata["comfyui_models_freed_for_vram"] = True
     receipt.finish(_image_receipt_status(status_code))
     try:
         receipt_store.record(receipt)
@@ -17484,6 +17487,158 @@ def _signed_asset_content_response(
             "cache-control": "private, max-age=3600",
         },
     )
+
+
+async def _execute_video_manifest_workflow(request: Request, workflow_id: str, auth_context: AuthContext) -> Response:
+    """Run an upload-driven video-edit manifest and return its rendered asset."""
+    record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
+    if record is None or record.intent != "video.edit":
+        record = next(
+            (item for item in GATEWAY_WORKFLOW_REGISTRY.records()
+             if item.intent == "video.edit" and item.id.rsplit(".", 1)[-1] == workflow_id),
+            None,
+        )
+    if record is None:
+        return Response(
+            content=json.dumps({"error": {"message": "Unknown video-edit workflow", "type": "invalid_request_error"}}),
+            status_code=404, media_type="application/json",
+        )
+    binding = (record.manifest.get("bindings") or {}).get("comfyui")
+    artifact = binding.get("workflow") if isinstance(binding, Mapping) else None
+    if not isinstance(artifact, str):
+        return Response(
+            content=json.dumps({"error": {"message": "Workflow has no ComfyUI binding", "type": "api_error"}}),
+            status_code=501, media_type="application/json",
+        )
+    workflow_path = Path(__file__).parent / artifact
+    try:
+        form = await request.form()
+        video_upload = form.get("source_video")
+        if video_upload is None or not hasattr(video_upload, "read"):
+            raise ValueError("source_video file is required")
+        video_bytes = await video_upload.read()
+        if not video_bytes:
+            raise ValueError("source_video file is empty")
+        multiplier_value = form.get("multiplier", 2)
+        try:
+            multiplier = int(multiplier_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("multiplier must be an integer") from exc
+        validation = validate_inputs(record.manifest, {"source_video": "upload", "multiplier": multiplier})
+        if validation.rejected:
+            raise ValueError(next(iter(validation.rejected.values())))
+        workflow_template = json.loads(workflow_path.read_text(encoding="utf-8"))
+        workflow = bind_backend_request(
+            record.manifest, "comfyui", workflow_template, validation.accepted
+        ).request
+    except ValueError as exc:
+        return Response(
+            content=json.dumps({"error": {"message": str(exc), "type": "invalid_request_error"}}),
+            status_code=400, media_type="application/json",
+        )
+    except (OSError, json.JSONDecodeError, ManifestError) as exc:
+        return Response(
+            content=json.dumps({"error": {"message": f"Could not load workflow: {type(exc).__name__}", "type": "api_error"}}),
+            status_code=500, media_type="application/json",
+        )
+
+    headers = configured_downstream_headers(auth_context, "comfyui")
+    filename = Path(getattr(video_upload, "filename", "input.mp4") or "input.mp4").name
+    async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+        upload = await client.post(
+            f"{COMFY_HOST}/upload/image", headers=headers,
+            files={"image": (filename, video_bytes, getattr(video_upload, "content_type", None) or "video/mp4")},
+        )
+        if upload.status_code != 200 or not upload.json().get("name"):
+            return Response(
+                content=json.dumps({"error": {"message": "ComfyUI video upload failed", "type": "api_error"}}),
+                status_code=502, media_type="application/json",
+            )
+        video_node = next(
+            (str(mapping["node"]) for mapping in ((binding.get("map") or {}).get("source_video") or [])
+             if isinstance(mapping, Mapping) and mapping.get("node") and mapping.get("input") == "file"),
+            None,
+        )
+        if video_node and video_node in workflow:
+            workflow[video_node]["inputs"]["file"] = upload.json()["name"]
+
+        async def submit_and_collect() -> tuple[dict[str, Any] | None, Response | None]:
+            submitted = await client.post(
+                f"{COMFY_HOST}/prompt", headers=headers,
+                json=_build_comfy_submit_payload(workflow),
+            )
+            if submitted.status_code != 200:
+                return None, Response(
+                    content=json.dumps({"error": {"message": submitted.text[:500], "type": "api_error"}}),
+                    status_code=502, media_type="application/json",
+                )
+            prompt_id = submitted.json().get("prompt_id")
+            if not prompt_id:
+                return None, Response(
+                    content=json.dumps({"error": {"message": "ComfyUI returned no prompt_id", "type": "api_error"}}),
+                    status_code=502, media_type="application/json",
+                )
+            for _ in range(COMFY_TIMEOUT * 2):
+                await asyncio.sleep(0.5)
+                history = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
+                job = history.json().get(prompt_id) if history.status_code == 200 else None
+                if not isinstance(job, Mapping):
+                    continue
+                error_message = _comfy_execution_error_message(job)
+                if error_message:
+                    return dict(job), Response(
+                        content=json.dumps({"error": {"message": error_message, "type": "api_error"}}),
+                        status_code=502, media_type="application/json",
+                    )
+                if job.get("status", {}).get("completed"):
+                    return dict(job), None
+            return None, Response(
+                content=json.dumps({"error": {"message": "Video workflow timed out", "type": "api_error"}}),
+                status_code=504, media_type="application/json",
+            )
+
+        job, error = await submit_and_collect()
+        if error is not None and IMAGE_FREE_VRAM_ON_EXHAUSTION:
+            message = str((json.loads(error.body.decode("utf-8")).get("error") or {}).get("message", "")).lower()
+            if any(marker in message for marker in ("cuda out of memory", "out of memory", "cuda oom")):
+                if await _free_comfy_models_if_idle(client):
+                    job, error = await submit_and_collect()
+        if error is not None:
+            return error
+        file_info = _extract_video_output(job or {})
+        if not file_info:
+            return Response(
+                content=json.dumps({"error": {"message": "Workflow returned no video output", "type": "api_error"}}),
+                status_code=502, media_type="application/json",
+            )
+        params = {"filename": file_info["filename"], "type": file_info["type"]}
+        if file_info.get("subfolder"):
+            params["subfolder"] = file_info["subfolder"]
+        rendered = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
+        if rendered.status_code != 200:
+            return Response(
+                content=json.dumps({"error": {"message": "ComfyUI could not read the rendered video", "type": "api_error"}}),
+                status_code=502, media_type="application/json",
+            )
+        suffix = Path(file_info["filename"]).suffix.lower()
+        media_type = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska"}.get(suffix, "application/octet-stream")
+        return Response(
+            content=rendered.content, status_code=200, media_type=media_type,
+            headers={"Content-Disposition": f'inline; filename="{Path(file_info["filename"]).name}"', "X-Workflow-ID": record.id},
+        )
+
+
+@app.post("/gateway/v1/workflows/{workflow_id}/run")
+async def run_video_manifest_workflow(workflow_id: str, request: Request):
+    auth_context = _gateway_auth_context(request, "/gateway/v1/workflows/{workflow_id}/run")
+    if isinstance(auth_context, Response):
+        return auth_context
+    if not COMFY_ENABLED:
+        return Response(status_code=503, content=json.dumps({"error": {"message": "ComfyUI media backend is disabled", "type": "service_unavailable"}}), media_type="application/json")
+    policy_response = _enforce_runtime_route_policy(auth_context, "/gateway/v1/workflows/{workflow_id}/run")
+    if policy_response is not None:
+        return policy_response
+    return await _execute_video_manifest_workflow(request, workflow_id, auth_context)
 
 
 @app.post("/openai/v1/videos", openapi_extra=VIDEOS_CREATE_OPENAPI)
