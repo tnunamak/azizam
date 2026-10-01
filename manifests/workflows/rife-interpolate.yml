@@ -8,9 +8,8 @@ description: >-
   Doubles video frame rate via ComfyUI-Frame-Interpolation's native RIFE VFI node (rife49.pth).
   Frame count and output fps both double, so real-time duration is unchanged. Audio passes through
   unchanged. Verified end to end on a 3s/24fps synthetic test clip -> 48fps/143 frames, ~3s duration
-  preserved, 6.4s wall time, ~6.3GB VRAM delta. Published in workflow and capability discovery;
-  the gateway has no execution route for video-edit uploads yet, so this manifest is currently
-  discoverability only.
+  preserved, 6.4s wall time, ~6.3GB VRAM delta. Published in workflow and capability discovery and
+  executable through the manifest-driven /gateway/v1/workflows/{workflow_id}/run route.
 source: local
 trusted: true
 inputs:

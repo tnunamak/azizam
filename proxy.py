@@ -17667,6 +17667,23 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
     policy_response = _enforce_runtime_route_policy(auth_context, "/gateway/v1/workflows/{workflow_id}/run")
     if policy_response is not None:
         return policy_response
+    record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
+    if record is None:
+        record = next(
+            (item for item in GATEWAY_WORKFLOW_REGISTRY.records()
+             if item.intent == "video.edit" and item.id.rsplit(".", 1)[-1] == workflow_id),
+            None,
+        )
+    if record is not None:
+        target_decision = _workflow_target_policy_decision(
+            auth_context,
+            requested=workflow_id,
+            resolved=record.id,
+            manifest=record.manifest,
+            extra_ids=(record.id,),
+        )
+        if target_decision is not None and target_decision.denied:
+            return _policy_denied_response(target_decision)
     return await _execute_video_manifest_workflow(request, workflow_id, auth_context)
 
 
