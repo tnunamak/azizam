@@ -511,7 +511,7 @@ models:
     mmproj: null # 24B Cydonia is text-only — no companion mmproj on disk
     description: "TheDrummer Cydonia 24B v4.3 (Q6_K, text-only)"
 videos:
-  default_workflow: video-ltx-2.3-distilled
+  default_workflow: video-ltx-2.5-t2v
   # POST /v1/videos/{id}/remix has no backend implementation on this gateway
   # yet (no ComfyUI workflow currently supports video-conditioned remixing).
   # Unset (the default) means remix always returns a clear 501
@@ -521,6 +521,51 @@ videos:
   # on without another route-shape change.
   # remix_workflow: some-future-video-remix-workflow
   workflows:
+    # LTX-2.5 (default). Separate t2v/i2v graphs: a request with input_reference
+    # is routed to `i2v_workflow`. Width/height are floored to multiples of 64
+    # (stage 1 runs at half size). Frames are 8k+1. Measured on a 3090: 960x512
+    # 5 s = 45 s warm / 107 s cold; 1280x704 = 139 s; i2v 85 s. Gateway video
+    # timeout (comfyui.video_timeout, 1800 s) is far above this.
+    video-ltx-2.5-t2v:
+      file: workflows/videos/video-ltx-2.5-t2v.json
+      i2v_workflow: video-ltx-2.5-i2v
+      min_seconds: 1
+      max_seconds: 10
+      max_size: 1280x704
+      default_size: 960x512
+      size_multiple: 64
+      frame_rate: 24
+    video-ltx-2.5-i2v:
+      file: workflows/videos/video-ltx-2.5-i2v.json
+      requires_input_reference: true
+      min_seconds: 1
+      max_seconds: 10
+      max_size: 1280x704
+      default_size: 960x512
+      size_multiple: 64
+      frame_rate: 24
+    # MiniMax H3 (license excludes US/EU/UK/KR). Frames are 17k+5. Measured:
+    # 960x544 5 s = 120-250 s (t2v), 185 s (i2v), well under video_timeout.
+    video-minimax-h3-t2v:
+      file: workflows/videos/video-minimax-h3-t2v.json
+      i2v_workflow: video-minimax-h3-i2v
+      min_seconds: 2
+      max_seconds: 10
+      max_size: 1344x768
+      default_size: 960x544
+      frame_rate: 24
+      length_step: 17
+      length_offset: 5
+    video-minimax-h3-i2v:
+      file: workflows/videos/video-minimax-h3-i2v.json
+      requires_input_reference: true
+      min_seconds: 2
+      max_seconds: 10
+      max_size: 1344x768
+      default_size: 960x544
+      frame_rate: 24
+      length_step: 17
+      length_offset: 5
     video-ltx-2.3-distilled:
       file: workflows/video-ltx-2.3-distilled.json
       min_seconds: 1
@@ -565,7 +610,14 @@ videos:
     # body, so a client sending the literal string "default" -- which works for
     # chat and images -- was rejected with "Unknown video model/workflow".
     # Register it explicitly so all three surfaces behave the same.
-    default: video-ltx-2.3-distilled
+    default: video-ltx-2.5-t2v
+    ltx-2.5: video-ltx-2.5-t2v
+    ltx-2.5-t2v: video-ltx-2.5-t2v
+    ltx-2.5-i2v: video-ltx-2.5-i2v
+    minimax-h3: video-minimax-h3-t2v
+    minimax-h3-t2v: video-minimax-h3-t2v
+    minimax-h3-i2v: video-minimax-h3-i2v
+    h3: video-minimax-h3-t2v
     ltx-2.3: video-ltx-2.3-distilled
     ltx-2.3-distilled: video-ltx-2.3-distilled
     ltx-2.3-fast: video-ltx-2.3-pure-distilled
@@ -577,8 +629,8 @@ videos:
     ltx-2.3-long-form: video-ltx-2.3-long
     wan-2.2: video-wan-2.2-ti2v-5b-q8
     wan-2.2-ti2v-5b: video-wan-2.2-ti2v-5b-q8
-    sora-2: video-ltx-2.3-distilled
-    sora-2-pro: video-ltx-2.3-distilled
+    sora-2: video-ltx-2.5-t2v
+    sora-2-pro: video-ltx-2.5-t2v
 audio:
   default_workflow: ace-step-1.5-xl-turbo
   workflows_dir: ./workflows/audio

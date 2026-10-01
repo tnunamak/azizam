@@ -1,0 +1,75 @@
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: video.generate.ltx-2.5-i2v
+intent: video.generate
+display_name: LTX 2.5 Distilled I2V
+description: 'LTX-2.5 22B distilled image-to-video with synchronized audio. Selected automatically when
+  /v1/videos gets input_reference with model ltx-2.5, or by model id. Same size and length rules as ltx-2.5
+  (multiples of 64, max 1280x704, 1-10 s). About 85 s for 5 s at 960x512. image_strength default 0.7.
+  License: LTX-2.x Community License.'
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  negative_prompt:
+    type: string
+  frame_rate:
+    type: number
+    minimum: 1
+    maximum: 50
+    default: 24
+  seed:
+    type: integer
+    minimum: 0
+  image:
+    type: asset
+    required: true
+  image_strength:
+    type: number
+    minimum: 0
+    maximum: 1
+    default: 0.7
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/video-ltx-2.5-i2v.json
+    map:
+      prompt:
+      - node: '5'
+        input: text
+      negative_prompt:
+      - node: '6'
+        input: text
+      frame_rate:
+      - node: '23'
+        input: value
+      - node: '24'
+        input: value
+      seed:
+      - node: '30'
+        input: noise_seed
+      - node: '31'
+        input: noise_seed
+      image:
+      - node: '70'
+        input: image
+      image_strength:
+      - node: '79'
+        input: value
+requires:
+  models:
+  - role: diffusion_model
+    path: diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors
+  - role: text_encoder
+    path: text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors
+  - role: vae
+    path: vae/ltx-2.5-video-vae-bf16.safetensors
+  - role: vae
+    path: vae/ltx-2.5-audio-vae-bf16.safetensors
+  - role: upscale_model
+    path: latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors

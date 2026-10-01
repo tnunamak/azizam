@@ -1,0 +1,61 @@
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: video.generate.ltx-2.5-t2v
+intent: video.generate
+display_name: LTX 2.5 Distilled T2V
+description: 'LTX-2.5 22B distilled two-stage text-to-video with synchronized audio (int8_convrot). Default
+  video model. Request via POST /v1/videos: size is floored to multiples of 64 (max 1280x704; default
+  960x512), seconds 1-10 at 24 fps (frames are 8k+1). About 45 s warm for 5 s at 960x512; 1280x704 about
+  140 s. License: LTX-2.x Community License.'
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  negative_prompt:
+    type: string
+  frame_rate:
+    type: number
+    minimum: 1
+    maximum: 50
+    default: 24
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/video-ltx-2.5-t2v.json
+    map:
+      prompt:
+      - node: '5'
+        input: text
+      negative_prompt:
+      - node: '6'
+        input: text
+      frame_rate:
+      - node: '23'
+        input: value
+      - node: '24'
+        input: value
+      seed:
+      - node: '30'
+        input: noise_seed
+      - node: '31'
+        input: noise_seed
+requires:
+  models:
+  - role: diffusion_model
+    path: diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors
+  - role: text_encoder
+    path: text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors
+  - role: vae
+    path: vae/ltx-2.5-video-vae-bf16.safetensors
+  - role: vae
+    path: vae/ltx-2.5-audio-vae-bf16.safetensors
+  - role: upscale_model
+    path: latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors

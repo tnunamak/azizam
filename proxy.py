@@ -8236,8 +8236,14 @@ def _find_video_manifest(workflow_name: str, workflow_cfg: dict) -> Optional[dic
     return None
 
 
-def _parse_size_clamped(size_str: str, max_size_str: str) -> tuple[int, int]:
-    """Parse 'WxH' and clamp to per-workflow max_size."""
+def _parse_size_clamped(size_str: str, max_size_str: str, multiple: int = 32) -> tuple[int, int]:
+    """Parse 'WxH', clamp to per-workflow max_size, floor to a multiple.
+
+    `multiple` is 32 for LTX-2.3 and most workflows; LTX-2.5 needs 64 (its first
+    stage runs at half size, which must itself be a multiple of 32). Sizes are
+    floored (not rejected) so any OpenAI-style size string stays usable; the
+    created job reports the size actually used.
+    """
     width, height = parse_size(size_str or "1280x720")
     if max_size_str:
         try:
@@ -8247,14 +8253,16 @@ def _parse_size_clamped(size_str: str, max_size_str: str) -> tuple[int, int]:
                 height = min(height, mh)
         except Exception:
             pass
-    # LTX requires multiples of 32 for width/height.
-    width = max(64, (width // 32) * 32)
-    height = max(64, (height // 32) * 32)
+    multiple = max(1, int(multiple))
+    width = max(64, (width // multiple) * multiple)
+    height = max(64, (height // multiple) * multiple)
     return width, height
 
 
-def _seconds_to_length(seconds: float, frame_rate: float) -> int:
-    """Translate request `seconds` to LTX latent `length` (must be 8k+1).
+def _seconds_to_length(seconds: float, frame_rate: float, *, step: int = 8, offset: int = 1) -> int:
+    """Translate request `seconds` to a latent `length` of the form step*k+offset.
+
+    Defaults are the LTX rule (8k+1). MiniMax H3 uses step=17, offset=5.
 
     Rounds to the *nearest* representable 8k+1 length (vs flooring). For
     fps=24 this gives ~0.333s granularity, so a request like seconds=3
@@ -8266,11 +8274,8 @@ def _seconds_to_length(seconds: float, frame_rate: float) -> int:
     frames = max(1, int(round(seconds * frame_rate)))
     # LTX latent length convention: lengths of form 8k+1 (1, 9, 17, ...)
     # Round to nearest k, not floor.
-    k = max(1, int(round((frames - 1) / 8.0)))
-    length = k * 8 + 1
-    if length < 9:
-        length = 9
-    return length
+    k = max(1, int(round((frames - offset) / float(step))))
+    return k * step + offset
 
 
 def _long_form_chunks(seconds: float, frame_rate: float,
@@ -8625,7 +8630,6 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
     prompt = (body.get("prompt") or "").strip()
     requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
     size_from_body = body.get("size")
-    size = size_from_body or "1280x720"
     seconds = body.get("seconds")
     seed = body.get("seed")
     input_reference = body.get("input_reference")  # optional path / URL / data-URI / raw b64 (I2V)
@@ -8656,6 +8660,24 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             content=json.dumps({"error": {"message": f"Unknown video model/workflow: {requested_model}", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json"
+        )
+    # Some models ship separate text-to-video and image-to-video graphs (LTX-2.5,
+    # MiniMax H3). `i2v_workflow` on the t2v entry names the image variant; it
+    # is selected when the request carries input_reference.
+    i2v_workflow_name = workflow_cfg.get("i2v_workflow")
+    if input_reference and i2v_workflow_name:
+        i2v_cfg = VIDEO_WORKFLOWS.get(i2v_workflow_name)
+        if i2v_cfg:
+            workflow_name, workflow_cfg = i2v_workflow_name, i2v_cfg
+    if workflow_cfg.get("requires_input_reference") and not input_reference:
+        return Response(
+            content=json.dumps({"error": {
+                "message": f"Model {workflow_name} is image-to-video and requires input_reference",
+                "type": "invalid_request_error",
+                "param": "input_reference",
+            }}),
+            status_code=400,
+            media_type="application/json",
         )
     policy_decision = evaluate_and_apply(
         auth_context.identity,
@@ -8714,9 +8736,21 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             media_type="application/json"
         )
 
-    width, height = _parse_size_clamped(size, workflow_cfg.get("max_size", "1280x720"))
+    size = size_from_body or workflow_cfg.get("default_size") or "1280x720"
+    width, height = _parse_size_clamped(
+        size,
+        workflow_cfg.get("max_size", "1280x720"),
+        int(workflow_cfg.get("size_multiple", 32)),
+    )
     frame_rate = float(workflow_cfg.get("frame_rate", 25))
-    length = _seconds_to_length(seconds_val, frame_rate)
+    # Frame count must be step*k+offset (LTX: 8k+1; MiniMax H3: 17k+5).
+    length_step = int(workflow_cfg.get("length_step", 8))
+    length = _seconds_to_length(
+        seconds_val,
+        frame_rate,
+        step=length_step,
+        offset=int(workflow_cfg.get("length_offset", 1)),
+    )
     # `actual_seconds` is what the rendered mp4 will actually contain (within
     # codec/container rounding). It starts as the LTX 8N+1-snapped duration for
     # short workflows; long-form overrides this further down.
@@ -8740,7 +8774,9 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
     fr_node = meta.get("frame_rate_node")
 
     if prompt_node and prompt_node in workflow:
-        workflow[prompt_node]["inputs"]["text"] = prompt
+        # `prompt_field` names the text input when it is not CLIPTextEncode's `text`
+        # (MiniMax H3's conditioning node takes `prompt`).
+        workflow[prompt_node]["inputs"][meta.get("prompt_field", "text")] = prompt
 
     # negative prompt left at template default unless body overrides
     negative_prompt = body.get("negative_prompt")
@@ -8796,7 +8832,9 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
         _set_field(nid, ["length", "value", "frames_number"], length)
     if length_targets and abs(actual_seconds - seconds_val) > 0.05:
         # 8N+1 LTX latent stride => ~0.333s granularity at fps=24. Surface it.
-        duration_adjustment_reason = "ltx_latent_8np1_stride"
+        duration_adjustment_reason = (
+            "ltx_latent_8np1_stride" if length_step == 8 else "frame_count_stride"
+        )
 
     fr_targets = _as_list(meta.get("frame_rate_nodes")) or _as_list(fr_node)
     for nid in fr_targets:
@@ -8872,15 +8910,15 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
     # harmless because the LTX inplace node operates at strength=0 (mask=1.0,
     # full noise) and the Wan LoadImage is orphaned (executor skips it).
     if input_reference:
-        if not meta.get("image_node") or not (
-            meta.get("image_strength_node") or meta.get("image_target_node")
-        ):
+        # image_node alone is enough: first-frame-only workflows (MiniMax H3) wire the
+        # LoadImage output in the graph and have no strength knob.
+        if not meta.get("image_node"):
             return Response(
                 content=json.dumps({
                     "error": {
                         "message": (
                             f"Workflow {workflow_name} does not support I2V "
-                            "(missing _meta.image_node or image_strength_node/image_target_node)."
+                            "(missing _meta.image_node)."
                         ),
                         "type": "invalid_request_error",
                     }
@@ -8962,7 +9000,9 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
 
         # Strength: clamp to [0,1]. Default 1.0 when an image is provided.
         try:
-            strength_val = float(image_strength) if image_strength is not None else 1.0
+            strength_val = float(
+                image_strength if image_strength is not None else meta.get("image_strength_default", 1.0)
+            )
         except (TypeError, ValueError):
             strength_val = 1.0
         strength_val = max(0.0, min(1.0, strength_val))

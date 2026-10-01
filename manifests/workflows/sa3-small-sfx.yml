@@ -1,0 +1,45 @@
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: audio.generate.sa3-small-sfx
+intent: audio.generate
+display_name: Stable Audio 3 Small SFX
+description: 'Stable Audio 3 small-sfx text-to-sound-effect, stereo 44.1 kHz FLAC. Default sfx model.
+  About 1 s warm for 10 s of audio. Output is peak-normalized by the gateway (raw model output is quiet).
+  License: Stable Audio community license.'
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+    required: true
+  duration:
+    type: number
+    minimum: 1
+    maximum: 120
+    default: 10
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  audio:
+    media_type: audio/flac
+bindings:
+  comfyui:
+    workflow: workflows/audio/sa3-small-sfx.json
+    map:
+      prompt:
+      - node: '3'
+        input: text
+      duration:
+      - node: '5'
+        input: seconds
+      seed:
+      - node: '6'
+        input: seed
+requires:
+  models:
+  - role: checkpoint
+    path: checkpoints/stable_audio_3_small_sfx.safetensors
+  - role: text_encoder
+    path: text_encoders/t5gemma_b_b_ul2.safetensors

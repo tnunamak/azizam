@@ -1,0 +1,49 @@
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: audio.generate.yue2-song
+intent: audio.generate
+display_name: YuE2 Song
+description: 'Full song with vocals from a style prompt (tags) and lyrics (YuE2-3B int8_convrot). POST
+  /v1/audio/generate with tags, lyrics, duration. duration is a MAXIMUM in seconds, not an exact length:
+  the model decides the real length, usually shorter. About 50-60 s for a 2-minute song. Output is MP3.
+  LICENSE: CC BY-NC (non-commercial).'
+source: local
+trusted: true
+inputs:
+  tags:
+    type: string
+    required: true
+  lyrics:
+    type: string
+  duration:
+    type: number
+    minimum: 10
+    maximum: 360
+    default: 180
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  audio:
+    media_type: audio/mpeg
+bindings:
+  comfyui:
+    workflow: workflows/audio/yue2-song.json
+    map:
+      tags:
+      - node: '2'
+        input: value
+      lyrics:
+      - node: '3'
+        input: value
+      duration:
+      - node: '5'
+        input: max_duration
+      seed:
+      - node: '30'
+        input: value
+requires:
+  models:
+  - role: checkpoint
+    path: checkpoints/yue2_3b_int8_convrot.safetensors

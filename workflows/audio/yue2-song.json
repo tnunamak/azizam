@@ -1,0 +1,195 @@
+{
+ "_meta": {
+  "name": "audio-yue2-song",
+  "description": "YuE2-3B (int8_convrot) text-to-song with vocals: style prompt + lyrics -> optional ABC melody/chord plan -> 48 kHz stereo song. Duration is a cap (model decides actual length). License CC BY-NC.",
+  "model_file": "yue2_3b_int8_convrot.safetensors",
+  "prompt_node": [
+   {
+    "node": "2",
+    "key": "value"
+   }
+  ],
+  "lyrics_node": [
+   {
+    "node": "3",
+    "key": "value"
+   }
+  ],
+  "duration_node": [
+   {
+    "node": "5",
+    "key": "max_duration"
+   }
+  ],
+  "seed_node": [
+   {
+    "node": "30",
+    "key": "value"
+   }
+  ],
+  "save_node": "10",
+  "tags_node": [
+   {
+    "node": "2",
+    "key": "value"
+   }
+  ]
+ },
+ "1": {
+  "class_type": "CheckpointLoaderSimple",
+  "inputs": {
+   "ckpt_name": "yue2_3b_int8_convrot.safetensors"
+  }
+ },
+ "2": {
+  "class_type": "PrimitiveStringMultiline",
+  "inputs": {
+   "value": "Indie folk pop, warm female vocals, fingerpicked acoustic guitar, soft drums, upright bass, gentle strings, nostalgic and uplifting, mid-tempo"
+  }
+ },
+ "3": {
+  "class_type": "PrimitiveStringMultiline",
+  "inputs": {
+   "value": "[Verse 1]\nMorning light on the window sill\nCoffee's warm and the world is still\nI packed my dreams in a paper bag\nLeft the old town with a one-way tag\n\n[Chorus]\nRun with me into the sunlight\nLeave the shadows far behind\nWe don't need to know tomorrow\nTonight the road is ours to find\n\n[Verse 2]\nDusty highways and a radio song\nEvery mile feels like we belong\nStars come out over open fields\nSilver promises the night revealed\n\n[Chorus]\nRun with me into the sunlight\nLeave the shadows far behind\nWe don't need to know tomorrow\nTonight the road is ours to find\n\n[Outro]\nOh, the road is ours to find\n"
+  }
+ },
+ "30": {
+  "class_type": "PrimitiveInt",
+  "inputs": {
+   "value": 42
+  }
+ },
+ "4": {
+  "class_type": "YuE2GenerateABC",
+  "inputs": {
+   "clip": [
+    "1",
+    1
+   ],
+   "style": [
+    "2",
+    0
+   ],
+   "lyrics": [
+    "3",
+    0
+   ],
+   "seed": [
+    "30",
+    0
+   ],
+   "mode": "full",
+   "max_abc_tokens": 8192,
+   "temperature": 0.7,
+   "top_p": 0.9,
+   "top_k": 30,
+   "repetition_penalty": 1.005,
+   "penalty_window": 100
+  }
+ },
+ "5": {
+  "class_type": "YuE2GenerateMusic",
+  "inputs": {
+   "clip": [
+    "1",
+    1
+   ],
+   "style": [
+    "2",
+    0
+   ],
+   "lyrics": [
+    "3",
+    0
+   ],
+   "abc": [
+    "4",
+    0
+   ],
+   "seed": [
+    "30",
+    0
+   ],
+   "mode": "full",
+   "max_duration": 180.0,
+   "temperature": 1.0,
+   "top_p": 0.95,
+   "top_k": 100,
+   "repetition_penalty": 1.2,
+   "cfg_scale": 1.0
+  }
+ },
+ "6": {
+  "class_type": "EmptyYuE2LatentAudio",
+  "inputs": {
+   "seconds": [
+    "5",
+    1
+   ],
+   "batch_size": 1
+  }
+ },
+ "7": {
+  "class_type": "ConditioningZeroOut",
+  "inputs": {
+   "conditioning": [
+    "5",
+    0
+   ]
+  }
+ },
+ "8": {
+  "class_type": "KSampler",
+  "inputs": {
+   "model": [
+    "1",
+    0
+   ],
+   "seed": [
+    "30",
+    0
+   ],
+   "steps": 8,
+   "cfg": 1.0,
+   "sampler_name": "dpmpp_2m",
+   "scheduler": "sgm_uniform",
+   "positive": [
+    "5",
+    0
+   ],
+   "negative": [
+    "7",
+    0
+   ],
+   "latent_image": [
+    "6",
+    0
+   ],
+   "denoise": 1.0
+  }
+ },
+ "9": {
+  "class_type": "VAEDecodeAudio",
+  "inputs": {
+   "samples": [
+    "8",
+    0
+   ],
+   "vae": [
+    "1",
+    2
+   ]
+  }
+ },
+ "10": {
+  "class_type": "SaveAudioMP3",
+  "inputs": {
+   "audio": [
+    "9",
+    0
+   ],
+   "filename_prefix": "audio/yue2-song",
+   "quality": "320k"
+  }
+ }
+}
