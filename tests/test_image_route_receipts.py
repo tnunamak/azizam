@@ -318,11 +318,13 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
 
     async def test_multi_image_falls_back_to_batch_one_rounds(self) -> None:
         gib = 1 << 30
-        response, batches, _ = await self._run_adaptive(
-            n=2, estimate=16 * gib, free_seq=[2 * gib] * 8, freed=False
+        response, batches, free_models = await self._run_adaptive(
+            n=2, estimate=16 * gib, free_seq=[2 * gib] * 8, freed=True
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(batches, [1, 1])
+        # Idle models are freed at most once per request, not before every round.
+        self.assertEqual(free_models.await_count, 1)
 
     async def test_estimate_still_sizes_larger_batches(self) -> None:
         gib = 1 << 30
