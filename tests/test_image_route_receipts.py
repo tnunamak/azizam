@@ -1468,8 +1468,9 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
         async def fake_generate(**kwargs: Any) -> Response:
             captured.update(kwargs)
+            generated_png = base64.b64encode(_png_bytes((1, 2, 3, 255))).decode("ascii")
             return Response(
-                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                content=json.dumps({"created": 1, "data": [{"b64_json": generated_png}]}),
                 status_code=200,
                 media_type="application/json",
             )
