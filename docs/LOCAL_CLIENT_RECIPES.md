@@ -443,8 +443,9 @@ The gateway peak-normalizes it to -1 dBFS (the raw model output is quiet; set
 `"model": "tangoflux"` for the previous SFX model.
 
 Video generation. The default model is LTX-2.5 (`ltx-2.5`, also `sora-2`, `sora-2-pro`,
-and any request without `model`). MiniMax H3 is `minimax-h3`. LTX-2.3 stays callable as
-`ltx-2.3`.
+and any request without `model`). MiniMax H3 is `minimax-h3`. Clips of 2-50 s use
+`ltx-2.5-long` (`video-long`). LTX-2.3 is retired: every `ltx-2.3*` name still works and
+points at the LTX-2.5 workflow for its role (see the table below).
 
 ```bash
 # Text to video (LTX-2.5, default)
@@ -474,27 +475,20 @@ Seconds snap to the nearest valid frame count; `X-Duration-Adjusted` appears whe
 MiniMax H3 Community License excludes use in the US, EU, UK and South Korea. LTX-2.x Community
 License applies to LTX. An `*-i2v` model ID without `input_reference` returns 400.
 
-LTX-2.3 video generation with workflow controls:
+Retired LTX-2.3 names (kept so old clients work):
 
-```bash
-curl -s http://127.0.0.1:5000/v1/videos \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "ltx-2.3",
-    "prompt": "slow dolly shot across a workbench",
-    "size": "1280x720",
-    "seconds": 5,
-    "seed": 1234,
-    "extensions": {
-      "com.vividfish.workflow": {
-        "steps": 20,
-        "stage1_cfg": 1.0,
-        "stage2_cfg": 1.0
-      }
-    }
-  }'
-```
+| Old name | Now runs | Notes |
+|---|---|---|
+| `ltx-2.3`, `ltx-2.3-distilled`, `ltx-2.3-22b`, `video-ltx-2.3-distilled` | `video-ltx-2.5-t2v` | `input_reference` still switches to image-to-video |
+| `ltx-2.3-fast`, `ltx-2.3-distilled-fast`, `ltx-2.3-pure-distilled`, `video-ltx-2.3-pure-distilled` | `video-ltx-2.5-t2v` | `video-fast` is the stable name |
+| `ltx-2.3-detail`, `video-ltx-2.3-detail` | `video-ltx-2.5-t2v` | request `size: 1280x704` for the highest detail |
+| `ltx-2.3-long`, `ltx-2.3-long-form`, `video-ltx-2.3-long` | `video-ltx-2.5-long` | 2-50 s, chunked; `video-long` is the stable name |
+
+Differences from LTX-2.3: width and height snap to multiples of 64 (`ltx-2.5-long`: 32);
+the LTX-2.3 `steps`, `stage1_cfg`, and `stage2_cfg` workflow controls no longer exist (the
+LTX-2.5 distilled model has a fixed 8-step schedule at CFG 1), so sending them returns
+400 `invalid_workflow_extension`. `ltx-2.5-long` output size follows the 16:9 placeholder
+frame (default about 960x512) and is single-stage, with no x2 upscale.
 
 List video jobs submitted by the calling API key via this route since the
 gateway process last restarted (no durable store, same statelessness as
@@ -948,8 +942,8 @@ an exact model or settings. Unknown names pass through unchanged.
 | Image edit / variations | `image-edit` (also `image`) | `qwen-image-2.1-edit`; masks and 2+ images switch to inpaint / multiref automatically | `gpt-image-*`, `dall-e-*` |
 | | `image-edit-fast` (also `image-fast`) | `flux2-klein-4b-edit` | |
 | Video | `video` | `video-ltx-2.5-t2v`; `input_reference` switches to image-to-video | `sora-2`, `sora-2-pro`, `sora*` |
-| | `video-fast` | `video-ltx-2.3-pure-distilled` | |
-| | `video-long` | `video-ltx-2.3-long` | |
+| | `video-fast` | `video-ltx-2.5-t2v` (same graph as `video`) | |
+| | `video-long` | `video-ltx-2.5-long` (2-50 s) | |
 | TTS | `tts` | OmniVoice (OpenAI voice names are fixed cloned identities) | `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
 | | `tts-realtime` | OmniVoice today; Supertonic once deployed | `tts-1` |
 | | `tts-quality` | OmniVoice today; Kokoro once deployed | `tts-1-hd` |

@@ -195,7 +195,7 @@ Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [
 - **Generated asset handles** — generated image/audio/video outputs can be inspected at `GET /gateway/v1/assets/{asset_id}` with the minting API key and fetched through signed bearerless content URLs until expiry. Asset handles and input reuse remain scoped to the API key that minted them.
 - **Signed image URLs** — `response_format: "url"` returns hostname-aware, HMAC-signed URLs into a content-addressed cache. URLs are bearerless until expiry (default 1 h), and the cache evicts older entries (default 24 h).
 - **Stable model aliases** — one `model_aliases:` section in `proxy_config.yml` maps OpenAI names (`gpt-4o`, `gpt-4o-mini`, `text-embedding-3-small`, `gpt-image-1`, `sora-2`, `tts-1`, `whisper-1`, ...) and our own stable names (`default`, `fast`, `coder`, `embed`, `image`, `image-edit`, `video`, `tts`, `tts-realtime`, `tts-quality`, `stt`, `stt-realtime`, `stt-quality`, `music`, `song`, `sfx`) to the current local model for each use, and TTS/STT tiers to one of several engines. Concrete model names keep working. See "Model aliases" in [`docs/LOCAL_CLIENT_RECIPES.md`](docs/LOCAL_CLIENT_RECIPES.md); inspect with `GET /gateway/v1/aliases` and `GET /gateway/v1/aliases/resolve?operation=chat&model=gpt-4o`.
-- **Async video generation** — Sora-2-shaped submit/poll/fetch flow with multiple model aliases (`ltx-2.5` default, `minimax-h3`, `ltx-2.3`, `ltx-2.3-detail`, `ltx-2.3-long`, `wan-2.2`, etc.). Generated MP4s and PNGs embed the full UI-format ComfyUI workflow in metadata, so dropping an output back into ComfyUI's frontend rebuilds the editable graph.
+- **Async video generation** — Sora-2-shaped submit/poll/fetch flow with multiple model aliases (`ltx-2.5` default, `ltx-2.5-long` for 2-50 s clips, `minimax-h3`, `wan-2.2`, etc.; the retired `ltx-2.3*` names still work and point at LTX-2.5). Generated MP4s and PNGs embed the full UI-format ComfyUI workflow in metadata, so dropping an output back into ComfyUI's frontend rebuilds the editable graph.
 
 ## Control-plane nouns
 
@@ -308,8 +308,8 @@ openai-proxy.service           # Reference systemd unit
 test_e2e.sh                    # End-to-end smoke tests against a running proxy
 workflows/                     # ComfyUI workflows (committed; canonical alongside proxy code)
   images/                      #   Flux + Flux2-Klein image gen / edit graphs
-  video-*.json                 #   LTX-2.3 / Wan 2.2 video graphs (paired with .ui.json twins)
-  videos/video-*.json          #   LTX-2.5 and MiniMax H3 t2v/i2v graphs
+  video-*.json                 #   Wan 2.2 video graphs (paired with .ui.json twins)
+  videos/video-*.json          #   LTX-2.5 (t2v, i2v, long) and MiniMax H3 t2v/i2v graphs
   video-*.ui.json              #   UI-format twins (regeneratable but expensive — committed for reproducibility)
 scripts/
   doctor.py                    # Operator/agent smoke checks for health, auth, manifests, and workflow bindings

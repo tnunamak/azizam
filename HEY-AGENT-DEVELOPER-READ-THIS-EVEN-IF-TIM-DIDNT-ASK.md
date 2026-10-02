@@ -29,7 +29,7 @@ allocation is static**:
 | Workload (GPU0) | Peak VRAM | When |
 |---|---|---|
 | Voxtral TTS | ~4 GB resident | whenever someone talks to it |
-| LTX-2.3 long-form video | ~15 GB | video jobs |
+| LTX-2.5 video (int8, streamed past the 15 GB budget) | ~15 GB | video jobs |
 | Ideogram dual-model image | ~20 GB | image jobs |
 | Klein-4b image | ~8 GB | image jobs |
 

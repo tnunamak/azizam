@@ -60,7 +60,7 @@ _KEY_ACTIVITY: dict[str, dict[str, Any]] = defaultdict(lambda: {
 _RECENT_EVENTS: deque[dict[str, Any]] = deque(maxlen=200)
 
 # Per-video metadata captured at submit time so the status page can show
-# "ltx-2.3-long · 1280x720 · 8s · submitted by simon" alongside live progress.
+# "ltx-2.5-long · 960x512 · 8s · submitted by simon" alongside live progress.
 _VIDEO_META: dict[str, dict[str, Any]] = {}
 
 # Append-only persistence path (overridden by env in tests).

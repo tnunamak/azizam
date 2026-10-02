@@ -2641,12 +2641,12 @@ def _render_quick_test() -> str:
          'curl -s https://ai.vivid.fish/openai/v1/videos \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
-         '  -d \'{"model":"ltx-2.3-distilled","prompt":"a calico cat playing chess","seconds":5}\''),
+         '  -d \'{"model":"ltx-2.5","prompt":"a calico cat playing chess","seconds":5}\''),
         ("Video — image-to-video",
          'curl -s https://ai.vivid.fish/openai/v1/videos \\\n'
          '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
-         '  -d \'{"model":"ltx-2.3-distilled","prompt":"camera dolly in","input_image_url":"…"}\''),
+         '  -d \'{"model":"ltx-2.5","prompt":"camera dolly in","input_image_url":"…"}\''),
     ]
     parts: list[str] = ['<div class="muted small" style="margin-bottom:6px;">'
                         'Set <code>VIVID_OPENAI_API_KEY</code> in your shell '

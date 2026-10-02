@@ -74,7 +74,7 @@ Current examples:
 - Future ControlNet/conditioning controls are manifest-backed workflow controls, not OpenAI top-level fields. If discovery shows an asset input such as `control_image`, multipart edits can upload it as an extra form field and reference it from the extension value: `{"control_image":{"multipart_field":"control_image"},"controlnet_strength":0.75}`.
 - Asset-valued workflow controls may also use `{"asset_id":"img_<sha256>"}` when the same App API key minted that prior image response and discovery shows the selected workflow supports the asset input.
 - `/v1/audio/generate` with ACE-Step accepts top-level `tags` and `lyrics`; `prompt` maps to ACE-Step tags when `tags` is absent. With `model: tangoflux`, use `prompt` for the description; `steps`, `guidance`, and `batch_size` are namespaced workflow controls. Keep `duration`, `seed`, `tags`, and `lyrics` top-level.
-- `/v1/videos` with `model: video-ltx-2.3-distilled` supports `steps`, `stage1_cfg`, and `stage2_cfg` as namespaced workflow controls. Keep `size`, `seconds`, `seed`, prompt, and image-reference fields top-level.
+- `/v1/videos` LTX-2.5 workflows (`ltx-2.5`, `ltx-2.5-long`) take no namespaced workflow controls: the distilled model has a fixed 8-step schedule at CFG 1. The retired LTX-2.3 `steps`, `stage1_cfg`, and `stage2_cfg` controls return 400 `invalid_workflow_extension`. Keep `size`, `seconds`, `seed`, prompt, and image-reference fields top-level. `ltx-2.5-long` (2-50 s) is selected by `model: video-long`.
 
 ## Chaining And Variants
 
