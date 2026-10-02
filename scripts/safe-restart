@@ -1,0 +1,519 @@
+#!/usr/bin/env python3
+"""Restart the AI gateway (or llama-bee) without killing in-flight requests.
+
+    scripts/safe-restart                 drain the gateway, wait, restart it
+    scripts/safe-restart --llama         drain chat, wait, restart llama-bee
+    scripts/safe-restart --dry-run       only show what is in flight
+    scripts/safe-restart --force         skip the wait (kills in-flight work)
+
+Restart the gateway ONLY with this script. A plain `systemctl --user restart
+openai-proxy` cuts every streaming reply and sync media call that is running.
+
+The script asks the gateway to drain (new work gets 503 + Retry-After), waits
+until nothing is in flight or the deadline passes, restarts the unit, waits
+for health, and leaves draining off. It needs the loopback admin endpoint
+GET/POST /admin/api/drain and an admin bearer key from the environment
+(AI_GATEWAY_ADMIN_KEY, VIVID_ADMIN_API_KEY or OPENAI_PROXY_ADMIN_KEY) or a
+key file (AI_GATEWAY_ADMIN_KEY_FILE, default ~/.config/openai-proxy/admin-key).
+The key is never printed.
+
+Exit codes:
+  0  restarted and healthy (or --dry-run and idle)
+  1  restarted, but health or the drain flag could not be confirmed
+  2  usage error
+  3  work still in flight at the deadline; NOT restarted (--dry-run: busy)
+  4  drain endpoint unreachable or refused; NOT restarted (use --force)
+  5  systemctl restart failed
+  6  another safe-restart is already running
+  130 interrupted (drain is switched off again)
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from urllib.parse import urlparse
+from typing import Any, Callable, Mapping, Sequence
+
+EXIT_OK = 0
+EXIT_UNCONFIRMED = 1
+EXIT_USAGE = 2
+EXIT_BUSY = 3
+EXIT_REFUSED = 4
+EXIT_SYSTEMCTL = 5
+EXIT_LOCKED = 6
+EXIT_INTERRUPTED = 130
+
+DEFAULT_GATEWAY_URL = "http://127.0.0.1:5000"
+DEFAULT_LLAMA_URL = "http://127.0.0.1:5051"
+DEFAULT_TIMEOUT_S = 900.0
+TOKEN_ENV_NAMES = ("AI_GATEWAY_ADMIN_KEY", "VIVID_ADMIN_API_KEY", "OPENAI_PROXY_ADMIN_KEY")
+MAX_TTL_S = 7200.0
+
+
+class DrainUnavailable(Exception):
+    """The drain endpoint cannot be used (down, missing, or auth refused)."""
+
+
+class Unreachable(Exception):
+    """A plain HTTP probe failed (connection refused, timeout, ...)."""
+
+
+def http_request(
+    method: str,
+    url: str,
+    *,
+    token: str | None = None,
+    body: Mapping[str, Any] | None = None,
+    timeout: float = 10.0,
+) -> tuple[int, Any]:
+    """Return (status, parsed-json-or-None). Raises Unreachable on transport errors."""
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(url, data=data, method=method)
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    if data is not None:
+        request.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status, raw = response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        status, raw = exc.code, exc.read()
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        raise Unreachable(str(getattr(exc, "reason", exc))) from None
+    try:
+        return status, json.loads(raw) if raw else None
+    except ValueError:
+        return status, None
+
+
+def run_command(cmd: Sequence[str], timeout: float) -> int:
+    try:
+        return subprocess.run(list(cmd), timeout=timeout, check=False).returncode
+    except subprocess.TimeoutExpired:
+        return 124
+    except FileNotFoundError:
+        return 127
+
+
+def resolve_token(env: Mapping[str, str]) -> str | None:
+    for name in TOKEN_ENV_NAMES:
+        value = env.get(name, "").strip()
+        if value:
+            return value
+    key_file = env.get("AI_GATEWAY_ADMIN_KEY_FILE") or str(
+        Path(env.get("HOME", "~")).expanduser() / ".config" / "openai-proxy" / "admin-key"
+    )
+    try:
+        value = Path(key_file).read_text().strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def describe_inflight(snapshot: Mapping[str, Any], *, limit: int = 8) -> list[str]:
+    lines: list[str] = []
+    for entry in (snapshot.get("inflight") or [])[:limit]:
+        kind = "stream" if entry.get("stream") else "request"
+        lines.append(
+            f"  {entry.get('method', '?')} {entry.get('path', '?')} ({kind}, {entry.get('age_s', 0):.0f}s)"
+        )
+    shown = len(lines)
+    total = (snapshot.get("active") or {}).get("requests", shown)
+    if total > shown:
+        lines.append(f"  ... and {total - shown} more")
+    jobs = (snapshot.get("active") or {}).get("async_media_jobs") or {}
+    for name, count in sorted(jobs.items()):
+        if count:
+            lines.append(f"  {count} async {name} media job(s) (a restart re-runs them from the start)")
+    return lines
+
+
+class Restarter:
+    """All side effects are injected so the logic is testable without a host."""
+
+    def __init__(
+        self,
+        args: argparse.Namespace,
+        *,
+        token: str | None,
+        http: Callable[..., tuple[int, Any]] = http_request,
+        run: Callable[[Sequence[str], float], int] = run_command,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+        out: Callable[[str], None] | None = None,
+    ) -> None:
+        self.args = args
+        self.token = token
+        self.http = http
+        self.run = run
+        self.sleep = sleep
+        self.clock = clock
+        self._out = out or (lambda text: print(text, flush=True))
+        self.drain_set_by_us = False
+
+    # -- output -------------------------------------------------------------
+
+    def say(self, text: str) -> None:
+        self._out(text)
+
+    def warn(self, text: str) -> None:
+        self._out(f"WARNING: {text}")
+
+    # -- gateway drain API --------------------------------------------------
+
+    def _drain_url(self) -> str:
+        return self.args.url.rstrip("/") + "/admin/api/drain"
+
+    def get_drain(self) -> dict[str, Any]:
+        if not self.token:
+            raise DrainUnavailable(
+                "no admin key found. Set one of "
+                + ", ".join(TOKEN_ENV_NAMES)
+                + " or AI_GATEWAY_ADMIN_KEY_FILE"
+            )
+        try:
+            status, payload = self.http("GET", self._drain_url(), token=self.token)
+        except Unreachable as exc:
+            raise DrainUnavailable(f"gateway unreachable at {self.args.url}: {exc}") from None
+        return self._drain_payload(status, payload)
+
+    def set_drain(self, on: bool) -> dict[str, Any]:
+        if not self.token:
+            raise DrainUnavailable("no admin key found")
+        ttl = min(self.args.timeout + 600.0, MAX_TTL_S)
+        body: dict[str, Any] = {"draining": on}
+        if on:
+            body.update(ttl_s=ttl, reason="safe-restart")
+        try:
+            status, payload = self.http("POST", self._drain_url(), token=self.token, body=body)
+        except Unreachable as exc:
+            raise DrainUnavailable(f"gateway unreachable at {self.args.url}: {exc}") from None
+        return self._drain_payload(status, payload)
+
+    @staticmethod
+    def _drain_payload(status: int, payload: Any) -> dict[str, Any]:
+        if status == 200 and isinstance(payload, dict) and "draining" in payload:
+            return payload
+        detail = ""
+        if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+            detail = f" ({payload['error'].get('code')})"
+        if status == 404:
+            raise DrainUnavailable(
+                "the running gateway has no drain endpoint (404). It predates the drain code"
+            )
+        raise DrainUnavailable(f"drain endpoint answered HTTP {status}{detail}")
+
+    # -- waiting ------------------------------------------------------------
+
+    def _busy_count(self, snapshot: Mapping[str, Any]) -> int:
+        active = snapshot.get("active") or {}
+        if self.args.llama:
+            return int(active.get("chat", 0))
+        count = int(active.get("requests", 0))
+        if not self.args.ignore_async_jobs:
+            count += int(active.get("async_media_jobs_total", 0))
+        return count
+
+    def llama_busy_slots(self) -> int | None:
+        """Slots llama-server is generating on right now, or None if unknown."""
+        try:
+            status, payload = self.http("GET", self.args.llama_url.rstrip("/") + "/slots")
+        except Unreachable:
+            return None
+        if status != 200 or not isinstance(payload, list):
+            return None
+        return sum(1 for slot in payload if isinstance(slot, dict) and slot.get("is_processing"))
+
+    def wait_idle(self, snapshot: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+        deadline = self.clock() + self.args.timeout
+        last_report = -1e9
+        last_count: tuple[int, int | None] | None = None
+        warned_slots = False
+        while True:
+            busy = self._busy_count(snapshot)
+            slots = self.llama_busy_slots() if self.args.llama else 0
+            if self.args.llama and slots is None and not warned_slots:
+                self.warn("llama /slots is unavailable; relying on the gateway's chat count only")
+                warned_slots = True
+            if busy == 0 and not slots:
+                return True, snapshot
+            now = self.clock()
+            if now >= deadline:
+                return False, snapshot
+            if (busy, slots) != last_count or now - last_report >= 30:
+                left = max(0, deadline - now)
+                extra = f", llama busy slots: {slots}" if self.args.llama and slots else ""
+                self.say(f"waiting: {busy} in flight{extra} ({left:.0f}s until deadline)")
+                last_count = (busy, slots)
+                last_report = now
+            self.sleep(self.args.poll)
+            try:
+                snapshot = self.get_drain()
+            except DrainUnavailable as exc:
+                # Gateway went away mid-wait. Nothing to wait for any more.
+                self.warn(f"lost the drain endpoint while waiting: {exc}")
+                return True, snapshot
+
+    # -- health -------------------------------------------------------------
+
+    def wait_health(self, url: str, timeout: float, *, name: str) -> bool:
+        deadline = self.clock() + timeout
+        while True:
+            try:
+                status, _ = self.http("GET", url)
+                if status == 200:
+                    return True
+            except Unreachable:
+                pass
+            if self.clock() >= deadline:
+                return False
+            self.sleep(min(self.args.poll, 2.0))
+
+    # -- main flow ----------------------------------------------------------
+
+    def _unit(self) -> str:
+        return self.args.llama_unit if self.args.llama else self.args.unit
+
+    def _health_url(self) -> str:
+        base = self.args.llama_url if self.args.llama else self.args.url
+        return base.rstrip("/") + "/health"
+
+    def _health_timeout(self) -> float:
+        if self.args.health_timeout is not None:
+            return self.args.health_timeout
+        return 600.0 if self.args.llama else 120.0
+
+    def _undrain_quietly(self) -> None:
+        if not self.drain_set_by_us:
+            return
+        try:
+            self.set_drain(False)
+            self.say("drain switched off")
+        except DrainUnavailable as exc:
+            self.warn(f"could not switch drain off ({exc}); it expires on its own after the TTL")
+        self.drain_set_by_us = False
+
+    def execute(self) -> int:
+        args = self.args
+        target = self._unit()
+        snapshot: dict[str, Any] | None = None
+        try:
+            snapshot = self.get_drain()
+        except DrainUnavailable as exc:
+            if args.dry_run:
+                self.say(f"cannot inspect in-flight work: {exc}")
+                return EXIT_REFUSED
+            if not args.force:
+                self.say(f"REFUSING to restart {target}: {exc}.")
+                self.say("Without the drain endpoint, in-flight requests would be killed.")
+                self.say("Use --force only after you confirmed the gateway is idle.")
+                return EXIT_REFUSED
+            self.warn(f"--force: drain unavailable ({exc}); restarting {target} WITHOUT draining")
+            self.warn("in-flight streaming replies and media calls will be cut")
+            return self._restart_and_verify(drained=False)
+
+        if args.dry_run:
+            return self._dry_run(snapshot)
+
+        busy = self._busy_count(snapshot)
+        self.say(
+            f"requesting drain; {busy} in flight"
+            + (" (chat only)" if args.llama else "")
+        )
+        try:
+            self.set_drain(True)
+        except DrainUnavailable as exc:
+            if not args.force:
+                self.say(f"REFUSING to restart {target}: could not start the drain: {exc}")
+                return EXIT_REFUSED
+            self.warn(f"--force: could not start the drain ({exc}); continuing")
+        else:
+            self.drain_set_by_us = True
+
+        try:
+            if args.force:
+                self._report_force(snapshot)
+            else:
+                ok, snapshot = self.wait_idle(self.get_drain_or(snapshot))
+                if not ok:
+                    self.say(f"deadline of {args.timeout:.0f}s passed; still running:")
+                    for line in describe_inflight(snapshot) or ["  (nothing listed)"]:
+                        self.say(line)
+                    self.say(f"NOT restarting {target}. Drain is being switched off.")
+                    self._undrain_quietly()
+                    return EXIT_BUSY
+            return self._restart_and_verify(drained=True)
+        except KeyboardInterrupt:
+            self.say("interrupted")
+            self._undrain_quietly()
+            return EXIT_INTERRUPTED
+
+    def get_drain_or(self, fallback: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return self.get_drain()
+        except DrainUnavailable:
+            return fallback
+
+    def _dry_run(self, snapshot: Mapping[str, Any]) -> int:
+        active = snapshot.get("active") or {}
+        busy = self._busy_count(snapshot)
+        self.say(f"draining now: {snapshot.get('draining')}")
+        self.say(
+            f"in flight: {active.get('requests', 0)} request(s), {active.get('streams', 0)} stream(s), "
+            f"{active.get('chat', 0)} chat, {active.get('async_media_jobs_total', 0)} async media job(s)"
+        )
+        for line in describe_inflight(snapshot):
+            self.say(line)
+        if self.args.llama:
+            slots = self.llama_busy_slots()
+            self.say(f"llama busy slots: {'unknown' if slots is None else slots}")
+            if slots:
+                busy += slots
+        if busy:
+            self.say(f"dry run: a restart now would wait for {busy} item(s)")
+            return EXIT_BUSY
+        self.say("dry run: idle, a restart would proceed immediately")
+        return EXIT_OK
+
+    def _report_force(self, snapshot: Mapping[str, Any]) -> None:
+        busy = self._busy_count(snapshot)
+        if busy:
+            self.warn(f"--force: restarting now, cutting {busy} in-flight item(s):")
+            for line in describe_inflight(snapshot):
+                self.say(line)
+        else:
+            self.say("--force: nothing was in flight")
+
+    def _restart_and_verify(self, *, drained: bool) -> int:
+        args = self.args
+        target = self._unit()
+        self.say(f"restarting {target}")
+        code = self.run(["systemctl", "--user", "restart", target], args.systemctl_timeout)
+        if code != 0:
+            self.say(f"systemctl restart {target} failed (exit {code})")
+            self._undrain_quietly()
+            return EXIT_SYSTEMCTL
+        health_url = self._health_url()
+        self.say(f"waiting for health at {health_url}")
+        healthy = self.wait_health(health_url, self._health_timeout(), name=target)
+        status = EXIT_OK
+        if not healthy:
+            self.say(f"{target} did not become healthy within {self._health_timeout():.0f}s")
+            status = EXIT_UNCONFIRMED
+        else:
+            self.say(f"{target} is healthy")
+
+        if args.llama:
+            # The gateway kept running through a llama restart, so its drain flag
+            # is still on. Always switch it off.
+            if drained:
+                self._undrain_quietly()
+            return status
+
+        # A restarted gateway starts with draining off. Confirm it.
+        try:
+            snapshot = self.get_drain()
+        except DrainUnavailable as exc:
+            self.warn(f"could not confirm the drain flag after restart: {exc}")
+            self.drain_set_by_us = False
+            return status
+        if snapshot.get("draining"):
+            self.warn("drain flag is still on after restart; switching it off")
+            self.drain_set_by_us = True
+            self._undrain_quietly()
+        else:
+            self.say("draining is off")
+            self.drain_set_by_us = False
+        return status
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="safe-restart",
+        description="Restart the AI gateway without killing in-flight requests.",
+    )
+    parser.add_argument("--llama", action="store_true", help="drain chat, then restart llama-bee instead of the gateway")
+    parser.add_argument("--dry-run", action="store_true", help="only show what is in flight; change nothing")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="restart without waiting (or without a drain endpoint). KILLS in-flight requests",
+    )
+    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="seconds to wait for in-flight work (default 900)")
+    parser.add_argument("--ignore-async-jobs", action="store_true", help="do not wait for async media jobs (they resume from the start)")
+    parser.add_argument("--health-timeout", type=float, default=None, help="seconds to wait for health after restart (default 120; 600 with --llama)")
+    parser.add_argument("--url", default=os.environ.get("AI_GATEWAY_URL", DEFAULT_GATEWAY_URL), help="gateway base URL (loopback)")
+    parser.add_argument("--llama-url", default=DEFAULT_LLAMA_URL)
+    parser.add_argument("--unit", default="openai-proxy")
+    parser.add_argument("--llama-unit", default="llama-bee")
+    parser.add_argument("--poll", type=float, default=2.0, help=argparse.SUPPRESS)
+    parser.add_argument("--systemctl-timeout", type=float, default=300.0, help=argparse.SUPPRESS)
+    parser.add_argument("--lock-file", default=str(Path.home() / ".tmp" / "safe-restart.lock"), help=argparse.SUPPRESS)
+    return parser
+
+
+def validate(args: argparse.Namespace) -> str | None:
+    if args.timeout <= 0:
+        return "--timeout must be positive"
+    if args.poll <= 0:
+        return "--poll must be positive"
+    host = urlparse(args.url).hostname
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        return "--url must be a loopback address; the drain control is local-only"
+    return None
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+    restarter_factory: Callable[..., Restarter] = Restarter,
+) -> int:
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return EXIT_USAGE if exc.code not in (0, None) else EXIT_OK
+    problem = validate(args)
+    if problem:
+        print(f"error: {problem}", file=sys.stderr)
+        return EXIT_USAGE
+
+    env = os.environ if env is None else env
+    token = resolve_token(env)
+
+    lock_path = Path(args.lock_file)
+    lock_handle = None
+    if not args.dry_run:
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock_handle = open(lock_path, "w")  # noqa: SIM115 - held for the process lifetime
+            fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("another safe-restart is already running", file=sys.stderr)
+            return EXIT_LOCKED
+        except OSError as exc:
+            print(f"warning: could not take the lock {lock_path}: {exc}", file=sys.stderr)
+
+    restarter = restarter_factory(args, token=token)
+    try:
+        return restarter.execute()
+    except KeyboardInterrupt:
+        restarter._undrain_quietly()
+        return EXIT_INTERRUPTED
+    finally:
+        if lock_handle is not None:
+            lock_handle.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
