@@ -15,10 +15,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway import identity_scene as ids  # noqa: E402
-from gateway.identity_scene import IdentityDeps, IdentityError, PersonSpec, SceneRequest  # noqa: E402
+from gateway.identity_scene import IdentityDeps, IdentityError, PersonSpec, RefSource, SceneRequest  # noqa: E402
 
 TEMPLATE = json.loads((ROOT / "workflows/identity/qwen-image-2.1-identity.json").read_text())
-NODES = [f"L{i}" for i in range(1, 7)]
+NODES = [f"L{i}" for i in range(1, 11)]
 
 
 def png(color: tuple[int, int, int], size: tuple[int, int] = (1280, 960)) -> bytes:
@@ -45,6 +45,13 @@ OUTPUTS = {  # attempt output bytes -> faces found in it
 OUT_LIST = list(OUTPUTS)
 
 
+FACES: dict = {}
+GOOD_PASTE = png((5, 5, 5), (64, 64))
+HURTS_OTHER_PASTE = png((6, 6, 6), (64, 64))
+OUTPUTS[GOOD_PASTE] = [face(100, 70, vec(0)), face(400, 1, vec(1))]          # baby fixed, grandma intact
+OUTPUTS[HURTS_OTHER_PASTE] = [face(100, 70, vec(7)), face(400, 1, vec(1))]    # baby fixed, grandma ruined
+
+
 class Fakes:
     def __init__(self, outputs: list[bytes]) -> None:
         self.outputs = outputs
@@ -54,7 +61,7 @@ class Fakes:
     async def analyze(self, image: bytes, model: str) -> list[dict]:
         if image == PHOTO:
             return [face(100, 70, vec(0)), face(400, 1, vec(1))]
-        return OUTPUTS[image]
+        return FACES.get(image) or OUTPUTS[image]
 
     async def run_workflow(self, graph: dict, uploads: dict) -> bytes:
         self.graphs.append(graph)
@@ -66,10 +73,10 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def scene(fakes: Fakes, req: SceneRequest):
+def scene(fakes: Fakes, req: SceneRequest, nodes=None):
     deps = IdentityDeps(analyze=fakes.analyze, run_workflow=fakes.run_workflow, models=("buffalo_l",))
     return run(ids.run_identity_scene(
-        req, deps, template=TEMPLATE, image_nodes=NODES, prompt_node="7", seed_node="8"
+        req, deps, template=TEMPLATE, image_nodes=nodes or NODES, prompt_node="7", seed_node="8"
     ))
 
 
@@ -100,7 +107,7 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(graph["8"]["inputs"]["seed"], 9)
         self.assertEqual(graph["7"]["inputs"]["resolution"], 1280)
         self.assertNotIn("_meta", graph)
-        self.assertIn("images.image_6", TEMPLATE["7"]["inputs"])  # the template itself is not mutated
+        self.assertIn("images.image_10", TEMPLATE["7"]["inputs"])  # the template itself is not mutated
 
     def test_pick_face(self) -> None:
         faces = [{"bbox": [0, 0, 50, 50]}, {"bbox": [200, 0, 320, 120]}]
@@ -112,7 +119,7 @@ class HelperTests(unittest.TestCase):
 class PipelineTests(unittest.TestCase):
     def test_auto_people_prompt_tags_and_early_stop(self) -> None:
         fakes = Fakes([OUT_LIST[1]])
-        result = scene(fakes, SceneRequest(photos=[PHOTO], prompt="They look into each other's eyes.", attempts=4))
+        result = scene(fakes, SceneRequest(refine="off", photos=[PHOTO], prompt="They look into each other's eyes.", attempts=4))
         self.assertEqual(len(fakes.graphs), 1)  # first attempt passed
         prompt = fakes.graphs[0]["7"]["inputs"]["prompt"]
         for tag in ("<image1>", "<image2>", "<image3>"):
@@ -126,7 +133,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_best_of_n_picks_the_matching_seed(self) -> None:
         fakes = Fakes([OUT_LIST[0], OUT_LIST[1], OUT_LIST[0]])
-        result = scene(fakes, SceneRequest(photos=[PHOTO], prompt="x", attempts=3, seed=40, stop_when_pass=False))
+        result = scene(fakes, SceneRequest(refine="off", photos=[PHOTO], prompt="x", attempts=3, seed=40, stop_when_pass=False))
         self.assertEqual(len(fakes.graphs), 3)
         self.assertEqual(result.image, OUT_LIST[1])
         self.assertEqual([a["seed"] for a in result.attempts], [40, 41, 42])
@@ -134,7 +141,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_all_attempts_fail_still_returns_best_with_fail_status(self) -> None:
         fakes = Fakes([OUT_LIST[0], OUT_LIST[0]])
-        result = scene(fakes, SceneRequest(photos=[PHOTO], prompt="x", attempts=2))
+        result = scene(fakes, SceneRequest(refine="off", photos=[PHOTO], prompt="x", attempts=2))
         self.assertEqual(result.report["overall"]["status"], "fail")
         self.assertEqual(len(result.attempts), 2)
 
@@ -144,7 +151,7 @@ class PipelineTests(unittest.TestCase):
             PersonSpec(label="grandma", box=(0, 0, 300, 400)),
             PersonSpec(label="baby", box=(350, 0, 600, 400)),
         ]
-        result = scene(fakes, SceneRequest(photos=[PHOTO], prompt="x", people=people, photo_as_canvas=False))
+        result = scene(fakes, SceneRequest(refine="off", photos=[PHOTO], prompt="x", people=people, photo_as_canvas=False))
         prompt = fakes.graphs[0]["7"]["inputs"]["prompt"]
         self.assertIn("<image1> is the identity reference for grandma", prompt)
         self.assertEqual([p["label"] for p in result.people], ["grandma", "baby"])
@@ -152,26 +159,167 @@ class PipelineTests(unittest.TestCase):
 
     def test_facing_requirement_keeps_trying_when_pose_is_unknown(self) -> None:
         fakes = Fakes([OUT_LIST[1], OUT_LIST[1], OUT_LIST[1]])
-        result = scene(fakes, SceneRequest(photos=[PHOTO], prompt="x", attempts=3, facing_each_other=True))
+        result = scene(fakes, SceneRequest(refine="off", photos=[PHOTO], prompt="x", attempts=3, facing_each_other=True))
         self.assertEqual(len(fakes.graphs), 3)  # faces carry no landmarks, so facing is never confirmed
         self.assertIsNone(result.attempts[0]["facing_each_other"])
 
     def test_box_without_a_face_is_an_error(self) -> None:
         fakes = Fakes([])
         with self.assertRaises(IdentityError) as ctx:
-            scene(fakes, SceneRequest(photos=[PHOTO], prompt="x", people=[PersonSpec(box=(900, 900, 1000, 1000))]))
+            scene(fakes, SceneRequest(refine="off", photos=[PHOTO], prompt="x", people=[PersonSpec(box=(900, 900, 1000, 1000))]))
         self.assertEqual(ctx.exception.code, "no_face")
 
     def test_validation(self) -> None:
         fakes = Fakes([])
         for req in (
-            SceneRequest(photos=[PHOTO], prompt=" "),
-            SceneRequest(photos=[PHOTO], prompt="x", attempts=99),
-            SceneRequest(photos=[], prompt="x"),
-            SceneRequest(photos=[PHOTO], prompt="x", people=[PersonSpec(label="a"), PersonSpec(label="a")]),
+            SceneRequest(refine="off", photos=[PHOTO], prompt=" "),
+            SceneRequest(refine="off", photos=[PHOTO], prompt="x", attempts=99),
+            SceneRequest(refine="off", photos=[], prompt="x"),
+            SceneRequest(refine="off", photos=[PHOTO], prompt="x", people=[PersonSpec(label="a"), PersonSpec(label="a")]),
         ):
             with self.assertRaises(IdentityError):
                 scene(fakes, req)
+
+
+class SteeringTests(unittest.TestCase):
+    def test_profile_and_forehead_phrases_are_rewritten_with_a_warning(self) -> None:
+        text = "Two subjects in profile facing each other, foreheads nearly touching, golden light."
+        out, warnings = ids.steer_prompt(text, "likeness")
+        self.assertNotIn("profile", out.split(ids.STEERING_SENTENCE)[0].lower())
+        self.assertNotIn("foreheads", out.lower())
+        self.assertIn("three-quarter", out)
+        self.assertEqual(warnings[0]["code"], "pose_rewritten")
+
+    def test_as_written_keeps_the_prompt_and_warns_about_risk(self) -> None:
+        out, warnings = ids.steer_prompt("a side view portrait", "as_written")
+        self.assertEqual(out, "a side view portrait")
+        self.assertEqual(warnings[0]["code"], "pose_risks_likeness")
+
+    def test_plain_prompt_gets_the_steering_sentence_and_no_warning(self) -> None:
+        out, warnings = ids.steer_prompt("They hug in a garden.", "likeness")
+        self.assertTrue(out.endswith(ids.STEERING_SENTENCE))
+        self.assertEqual(warnings, [])
+
+    def test_auto_resolution_shrinks_with_more_references(self) -> None:
+        self.assertGreater(ids.auto_resolution(3), ids.auto_resolution(5))
+        self.assertGreater(ids.auto_resolution(5), ids.auto_resolution(8))
+
+
+class MultiReferenceTests(unittest.TestCase):
+    def test_several_photos_per_person_are_used_for_generation_and_scoring(self) -> None:
+        second = png((90, 90, 90))
+        FACES[second] = [face(60, 70, vec(0))]
+        fakes = Fakes([OUT_LIST[1]])
+        people = [
+            PersonSpec(label="grandma", box=(0, 0, 300, 400), more=[RefSource(image=1)]),
+            PersonSpec(label="baby", box=(350, 0, 600, 400)),
+        ]
+        result = scene(fakes, SceneRequest(refine="off", photos=[PHOTO, second], prompt="x", people=people, photo_as_canvas=False))
+        prompt = fakes.graphs[0]["7"]["inputs"]["prompt"]
+        self.assertIn("are 2 photos of the same person, grandma", prompt)
+        self.assertEqual(len(fakes.uploads[0]), 3)  # two grandma heads + one baby head
+        self.assertEqual([p["reference_photos"] for p in result.people], [2, 1])
+        grandma = next(p for p in result.report["people"] if p["label"] == "grandma")
+        self.assertEqual(len(grandma["match"]["per_reference"]), 2)
+
+    def test_extra_photo_without_a_box_picks_the_face_that_looks_like_the_person(self) -> None:
+        group = png((7, 7, 7))
+        FACES[group] = [face(50, 40, vec(5)), face(250, 70, vec(0)), face(450, 3, vec(1))]  # stranger, grandma, baby
+        fakes = Fakes([OUT_LIST[1]])
+        people = [PersonSpec(label="grandma", box=(0, 0, 300, 400), more=[RefSource(image=1)]),
+                  PersonSpec(label="baby", box=(350, 0, 600, 400), more=[RefSource(image=1)])]
+        result = scene(fakes, SceneRequest(refine="off", photos=[PHOTO, group], prompt="x", people=people, photo_as_canvas=False))
+        self.assertEqual([sorted(p["reference_photo_indices"]) for p in result.people], [[0, 1], [0, 1]])
+        self.assertEqual([w for w in result.warnings if w["code"] == "reference_skipped"], [])
+
+    def test_photo_with_nobody_who_matches_is_skipped_with_a_warning(self) -> None:
+        stranger_only = png((8, 8, 8))
+        FACES[stranger_only] = [face(100, 40, vec(5))]
+        fakes = Fakes([OUT_LIST[1]])
+        people = [PersonSpec(label="grandma", box=(0, 0, 300, 400), more=[RefSource(image=1)]),
+                  PersonSpec(label="baby", box=(350, 0, 600, 400))]
+        result = scene(fakes, SceneRequest(refine="off", photos=[PHOTO, stranger_only], prompt="x", people=people, photo_as_canvas=False))
+        self.assertEqual(result.people[0]["reference_photos"], 1)
+        self.assertEqual([w["code"] for w in result.warnings if w["code"] == "reference_skipped"], ["reference_skipped"])
+        self.assertIn("grandma", result.warnings[0]["param"])
+
+    def test_the_best_references_are_sent_first_and_capped(self) -> None:
+        shots = []
+        for i, (width, yaw_dx) in enumerate([(60, 0), (200, 0), (200, 30), (150, 0)], start=1):
+            shot = png((20 + i, 0, 0))
+            kps = ((30, 50.0), (90, 50.0), (60 + yaw_dx, 80.0), (35, 110.0), (85, 110.0))
+            FACES[shot] = [{"bbox": [100, 100, 100 + width, 100 + width], "det_score": 0.9, "age": 70, "gender": "female",
+                            "embedding": vec(0), "kps": [list(k) for k in kps]}]
+            shots.append(shot)
+        people = [PersonSpec(label="a", image=0, box=(0, 0, 300, 400), more=[RefSource(image=i) for i in (1, 2, 3, 4)])]
+        fakes = Fakes([OUT_LIST[1]])
+        result = scene(fakes, SceneRequest(refine="off", photos=[PHOTO, *shots], prompt="x", people=people,
+                                           photo_as_canvas=False, max_refs_per_person=3, attempts=1))
+        self.assertEqual(result.people[0]["reference_heads_sent"], 3)
+        self.assertEqual(result.people[0]["reference_photos"], 5)
+        self.assertEqual(result.people[0]["reference_photo_indices"][0], 2)  # large and frontal first
+        self.assertNotIn(1, result.people[0]["reference_photo_indices"])      # the 60 px face is dropped
+
+    def test_too_many_reference_images_is_an_error(self) -> None:
+        many = [PersonSpec(label=f"p{i}", box=(0, 0, 300, 400)) for i in range(2)]
+        deps_nodes = ids.MAX_IMAGE_SLOTS
+        self.assertEqual(deps_nodes, 10)
+        with self.assertRaises(IdentityError):
+            scene(Fakes([OUT_LIST[1]]), SceneRequest(refine="off", photos=[PHOTO], prompt="x", people=many, max_refs_per_person=1,
+                  photo_as_canvas=False), nodes=["L1"])
+
+
+class RefinementTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._paste = ids.paste_back
+        self.addCleanup(lambda: setattr(ids, "paste_back", self._paste))
+
+    def refine_scene(self, outputs, pasted):
+        ids.paste_back = lambda base, edited_png, box: Image.open(io.BytesIO(pasted))
+        # first composition: grandma right, baby wrong
+        half = png((3, 3, 3), (64, 64))
+        FACES[half] = [face(100, 70, vec(0)), face(400, 1, vec(6))]
+        fakes = Fakes([half] + outputs)
+        result = scene(fakes, SceneRequest(refine="auto", refine_attempts=1, photos=[PHOTO], prompt="x", attempts=1))
+        return fakes, result
+
+    def test_a_helpful_pass_is_kept(self) -> None:
+        fakes, result = self.refine_scene([png((4, 4, 4), (64, 64))], GOOD_PASTE)
+        self.assertEqual(len(fakes.graphs), 2)  # one compose, one refine
+        self.assertEqual(len(fakes.uploads[1]), 2)  # crop + the baby's head only
+        self.assertTrue(result.refinements[0]["accepted"])
+        self.assertEqual(result.refinements[0]["person"], "person 2")
+        baby = next(p for p in result.report["people"] if p["label"] == "person 2")
+        self.assertGreater(baby["match"]["score"], 0.9)
+
+    def test_a_pass_that_hurts_the_other_person_is_rejected(self) -> None:
+        fakes, result = self.refine_scene([png((4, 4, 4), (64, 64))], HURTS_OTHER_PASTE)
+        self.assertFalse(result.refinements[0]["accepted"])
+        grandma = next(p for p in result.report["people"] if p["label"] == "person 1")
+        self.assertGreater(grandma["match"]["score"], 0.9)
+
+    def test_refine_off_runs_no_extra_pass(self) -> None:
+        fakes = Fakes([OUT_LIST[0]])
+        scene(fakes, SceneRequest(refine="off", photos=[PHOTO], prompt="x", attempts=1))
+        self.assertEqual(len(fakes.graphs), 1)
+
+    def test_improvement_rule(self) -> None:
+        before = {"people": [{"label": "a", "match": {"score": 0.2}}, {"label": "b", "match": {"score": 0.7}}], "overall": {"extra_faces": 0}}
+        better = {"people": [{"label": "a", "match": {"score": 0.5}}, {"label": "b", "match": {"score": 0.69}}], "overall": {"extra_faces": 0}}
+        worse_b = {"people": [{"label": "a", "match": {"score": 0.5}}, {"label": "b", "match": {"score": 0.6}}], "overall": {"extra_faces": 0}}
+        extra = {"people": better["people"], "overall": {"extra_faces": 1}}
+        self.assertTrue(ids.refinement_improves(before, better, "a"))
+        self.assertFalse(ids.refinement_improves(before, worse_b, "a"))
+        self.assertFalse(ids.refinement_improves(before, extra, "a"))
+        self.assertFalse(ids.refinement_improves(before, before, "a"))
+
+    def test_paste_back_blends_only_inside_the_box(self) -> None:
+        base = Image.new("RGB", (100, 100), (0, 0, 0))
+        edited = io.BytesIO()
+        Image.new("RGB", (50, 50), (255, 255, 255)).save(edited, format="PNG")
+        out = ids.paste_back(base, edited.getvalue(), (25, 25, 75, 75))
+        self.assertEqual(out.getpixel((2, 2)), (0, 0, 0))
+        self.assertGreater(out.getpixel((50, 50))[0], 200)
 
 
 if __name__ == "__main__":

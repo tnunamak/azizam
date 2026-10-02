@@ -12,6 +12,9 @@ tagged multi-reference edit alone reaches 0.6 similarity for the adult and about
 0.5 for the infant. A head-swap LoRA pass after it lowered both scores, so this
 pipeline has no swap pass.
 
+Version 2 adds several reference photos per person, per-person head refinement,
+prompt steering away from profile poses and progress callbacks for async jobs.
+
 The module is pure apart from Pillow image handling. The face sidecar and the
 ComfyUI call arrive through :class:`IdentityDeps`, so it is tested with fakes.
 """
@@ -20,17 +23,23 @@ from __future__ import annotations
 
 import copy
 import io
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from gateway import likeness
 from gateway.likeness import FaceRecord, LikenessError, Person
 
 MAX_ATTEMPTS = 8
-MAX_PEOPLE = 5            # the workflow template has six image slots: photo + five heads
+MAX_PEOPLE = 5
+MAX_IMAGE_SLOTS = 10      # Qwen-Image 2.1 takes up to 10 reference images; the template has 10 slots
+MAX_REFS_PER_PERSON = 5
+DEFAULT_REFS_PER_PERSON = 3
+REF_MATCH_MIN = 0.25          # a face in an extra photo must look this much like the anchor face to be used
+REF_MATCH_MIN_INFANT = 0.15   # ArcFace is weaker on infants, so accept a looser match there
 HEAD_LONG_SIDE = 896      # reference heads are scaled to this long side (never smaller)
 HEAD_BOX_SCALE = 2.6      # head crop side as a multiple of the detected face width
 HEAD_RISE = 0.12          # shift the crop up by this share of the face height to keep the hair
@@ -47,12 +56,27 @@ class IdentityError(ValueError):
 
 
 @dataclass
+class RefSource:
+    """One reference photo of a person: the photo index and, optionally, where the face is."""
+
+    image: int = 0
+    box: tuple[float, float, float, float] | None = None
+
+
+@dataclass
 class PersonSpec:
     label: str | None = None
     image: int = 0                                   # index into the reference photos
     box: tuple[float, float, float, float] | None = None  # x1,y1,x2,y2 in that photo's pixels
     description: str | None = None
     infant: bool | None = None
+    more: list[RefSource] = field(default_factory=list)  # further photos of the same person
+
+    def sources(self) -> list[RefSource]:
+        return [RefSource(self.image, self.box), *self.more]
+
+
+ProgressFn = Callable[[str, float, dict[str, Any]], None]
 
 
 @dataclass
@@ -62,14 +86,20 @@ class SceneRequest:
     people: list[PersonSpec] = field(default_factory=list)
     attempts: int = 3
     seed: int = 0
-    resolution: int = 1536
+    resolution: int | None = None                    # None: chosen from the number of reference images
     steps: int = 25
     cfg: float = 1.0
     only_listed_people: bool = True
     photo_as_canvas: bool = True
     stop_when_pass: bool = True
     facing_each_other: bool = False   # require both heads turned toward each other (two people)
+    pooling: str = "best"             # how several reference photos of one person are scored
+    max_refs_per_person: int = DEFAULT_REFS_PER_PERSON  # reference heads sent to the generator per person
+    refine: str = "auto"              # off | auto (people below the match threshold) | all
+    refine_attempts: int = 2          # seeds tried per person in the refinement pass
+    pose_policy: str = "likeness"     # likeness: steer away from profile; as_written: leave the prompt alone
     thresholds: Mapping[str, float] | None = None
+    on_progress: ProgressFn | None = None
 
 
 @dataclass
@@ -84,10 +114,15 @@ class ResolvedPerson:
     label: str
     spec: PersonSpec
     person: Person
-    head_png: bytes
+    heads: list[bytes]                 # roomy reference heads, best first
     face_bbox: tuple[float, float, float, float]
     age: int | None
     gender: str | None
+    sources_used: list[tuple[FaceRecord, int]] = field(default_factory=list)   # (face, photo) behind the heads
+
+    @property
+    def head_png(self) -> bytes:
+        return self.heads[0] if self.heads else b""
 
 
 @dataclass
@@ -97,6 +132,9 @@ class SceneResult:
     attempts: list[dict[str, Any]]
     people: list[dict[str, Any]]
     seconds: float
+    refinements: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[dict[str, str]] = field(default_factory=list)
+    prompt_used: str = ""
 
 
 # ----------------------------------------------------------------- pure helpers
@@ -143,6 +181,94 @@ def describe(age: int | None, gender: str | None) -> str:
     return f"a {noun}"
 
 
+def reference_quality(face: FaceRecord) -> float:
+    """How useful a face is as a generation reference: big, confidently detected, facing the camera."""
+    size = min(face.width, 400.0) / 400.0
+    yaw = face.yaw
+    frontal = 1.0 if yaw is None else max(0.0, 1.0 - abs(yaw) / 0.6)
+    return size * face.det_score * (0.4 + 0.6 * frontal)
+
+
+def best_match_face(
+    faces: Sequence[FaceRecord], anchors: Sequence[FaceRecord], minimum: float
+) -> tuple[FaceRecord | None, float]:
+    """The face in a photo that looks most like any anchor face, and its similarity."""
+    best: FaceRecord | None = None
+    best_sim = -1.0
+    for face in faces:
+        if face.width < MIN_REF_FACE_PX:
+            continue
+        for anchor in anchors:
+            shared = [m for m in face.embeddings if m in anchor.embeddings]
+            if not shared:
+                continue
+            sim = sum(likeness.cosine(face.embeddings[m], anchor.embeddings[m]) for m in shared) / len(shared)
+            if sim > best_sim:
+                best, best_sim = face, sim
+    return (best, best_sim) if best is not None and best_sim >= minimum else (None, best_sim)
+
+
+# Phrases that force a profile or an occluded face. Profile views and foreheads touching
+# remove the features ArcFace needs; a three-quarter view keeps them.
+_PROFILE_RULES: tuple[tuple[re.Pattern[str], str | None], ...] = (
+    (re.compile(r"\b(?:strict |full |pure )?profile(?: view| shot| portrait)?\b", re.I), "three-quarter view"),
+    (re.compile(r"\bside[- ](?:view|on|profile)\b", re.I), "three-quarter view"),
+    (re.compile(r"\bin silhouette\b", re.I), "in three-quarter view"),
+    (re.compile(r"\bfore?heads?\s+(?:nearly |almost |gently |softly )?(?:touching|together|pressed|to\s+forehead)\b", re.I), "heads close together"),
+    (re.compile(r"\bnose[- ]to[- ]nose\b|\beskimo kiss\b", re.I), "heads close together"),
+    (re.compile(r"\bcheek[- ]to[- ]cheek\b", re.I), "heads close together"),
+)
+STEERING_SENTENCE = (
+    "Keep each person's whole face clearly visible, near-frontal or in three-quarter view with both eyes visible, "
+    "not in profile and not hidden behind the other person."
+)
+
+
+def steer_prompt(prompt: str, policy: str) -> tuple[str, list[dict[str, str]]]:
+    """Move a pose request toward what keeps likeness. Returns (prompt, warnings).
+
+    Under ``likeness`` a profile or forehead-touching phrase is rewritten and a warning says so;
+    under ``as_written`` the prompt is untouched and the warning only states the risk.
+    """
+    warnings: list[dict[str, str]] = []
+    out = prompt
+    hit = False
+    for pattern, replacement in _PROFILE_RULES:
+        if pattern.search(out):
+            hit = True
+            if policy == "likeness" and replacement:
+                out = pattern.sub(replacement, out)
+    if hit:
+        if policy == "likeness":
+            warnings.append({
+                "code": "pose_rewritten",
+                "param": "prompt",
+                "message": (
+                    "The prompt asked for a profile or touching foreheads. Profile views and overlapping faces destroy "
+                    "likeness, so the pose was changed to a three-quarter view with the heads close together. "
+                    "Send pose_policy=as_written to keep your wording, at the cost of likeness."
+                ),
+            })
+        else:
+            warnings.append({
+                "code": "pose_risks_likeness",
+                "param": "prompt",
+                "message": "The prompt asks for a profile or touching foreheads; expect low likeness scores.",
+            })
+    if policy == "likeness":
+        out = f"{out.strip()} {STEERING_SENTENCE}"
+    return out, warnings
+
+
+def auto_resolution(image_count: int) -> int:
+    """Per-reference pixel budget: fewer pixels per image as the number of references grows."""
+    if image_count <= 3:
+        return 1536
+    if image_count <= 5:
+        return 1280
+    return 1024
+
+
 def build_prompt(
     user_prompt: str,
     people: Sequence[ResolvedPerson],
@@ -161,11 +287,19 @@ def build_prompt(
         slot += 1
     for rp in people:
         desc = rp.spec.description or describe(rp.age, rp.gender)
-        parts.append(
-            f"<image{slot}> is the identity reference for {rp.label} ({desc}): "
-            "copy this exact face, hair colour and style, eye colour and any glasses."
-        )
-        slot += 1
+        tags = [f"<image{slot + k}>" for k in range(len(rp.heads))]
+        slot += len(rp.heads)
+        if len(tags) == 1:
+            parts.append(
+                f"{tags[0]} is the identity reference for {rp.label} ({desc}): "
+                "copy this exact face, hair colour and style, eye colour and any glasses."
+            )
+        else:
+            joined = ", ".join(tags[:-1]) + f" and {tags[-1]}"
+            parts.append(
+                f"{joined} are {len(tags)} photos of the same person, {rp.label} ({desc}): "
+                "combine them into one consistent face, with this exact hair colour and style, eye colour and any glasses."
+            )
     parts.append(user_prompt.strip())
     if only_listed_people:
         names = ", ".join(rp.label for rp in people)
@@ -237,17 +371,25 @@ def pick_face(
 # ---------------------------------------------------------------- orchestration
 
 
+def _emit(req: SceneRequest, phase: str, fraction: float, **detail: Any) -> None:
+    if req.on_progress is not None:
+        try:
+            req.on_progress(phase, max(0.0, min(1.0, fraction)), detail)
+        except Exception:  # noqa: BLE001  progress must never break the run
+            pass
+
+
 async def _faces(deps: IdentityDeps, image: bytes) -> list[FaceRecord]:
     per_model = {model: await deps.analyze(image, model) for model in deps.models}
     return likeness.merge_models(per_model)
 
 
-def _slim(face: FaceRecord) -> dict[str, Any]:
-    return {"bbox": [round(v, 1) for v in face.bbox], "age": face.age, "det_score": round(face.det_score, 3)}
-
-
 async def resolve_people(
-    req: SceneRequest, deps: IdentityDeps, *, with_heads: bool = True
+    req: SceneRequest,
+    deps: IdentityDeps,
+    *,
+    with_heads: bool = True,
+    warnings: list[dict[str, str]] | None = None,
 ) -> list[ResolvedPerson]:
     if not req.photos:
         raise IdentityError("at least one reference photo is required", param="image")
@@ -273,37 +415,203 @@ async def resolve_people(
 
     resolved: list[ResolvedPerson] = []
     for number, spec in enumerate(specs, start=1):
-        faces = await faces_of(spec.image)
-        chosen = pick_face([{"bbox": f.bbox, "face": f} for f in faces], spec.box)
         label = spec.label or f"person {number}"
-        if chosen is None:
-            raise IdentityError(
-                f"no face was found for {label}" + (" inside the given box" if spec.box else ""),
-                param="people",
-                code="no_face",
-            )
-        face: FaceRecord = chosen["face"]
-        if face.width < MIN_REF_FACE_PX:
-            raise IdentityError(
-                f"the face of {label} is only {face.width:.0f}px wide; use a photo with a larger face",
-                param="people",
-                code="face_too_small",
-            )
+        found: list[tuple[FaceRecord, int]] = []   # (face, photo index)
+        for position, source in enumerate(spec.sources()):
+            faces = await faces_of(source.image)
+            if position == 0 or source.box is not None:
+                # The anchor photo, or a photo where the caller says where the face is.
+                chosen_face = (pick_face([{"bbox": f.bbox, "face": f} for f in faces], source.box) or {}).get("face")
+                if chosen_face is None:
+                    raise IdentityError(
+                        f"no face was found for {label} in photo {source.image}"
+                        + (" inside the given box" if source.box else ""),
+                        param="people",
+                        code="no_face",
+                    )
+            else:
+                # An extra photo without a box may hold several people: take the face that looks like this person.
+                minimum = REF_MATCH_MIN_INFANT if likeness.Person(label, tuple(f for f, _ in found), spec.infant).is_infant() else REF_MATCH_MIN
+                chosen_face, similarity = best_match_face(faces, [f for f, _ in found], minimum)
+                if chosen_face is None:
+                    if warnings is not None:
+                        warnings.append({
+                            "code": "reference_skipped",
+                            "param": label,
+                            "message": (
+                                f"photo {source.image} was not used for {label}: no face in it looks like them "
+                                f"(best match {max(similarity, 0):.2f}). Give a box to force it."
+                            ),
+                        })
+                    continue
+            face: FaceRecord = chosen_face
+            if face.width < MIN_REF_FACE_PX:
+                if position == 0:
+                    raise IdentityError(
+                        f"the face of {label} in photo {source.image} is only {face.width:.0f}px wide; "
+                        "use a photo with a larger face",
+                        param="people",
+                        code="face_too_small",
+                    )
+                continue
+            found.append((face, source.image))
+        # Best reference first: a larger, sharper face gives the generator more to copy.
+        ranked = sorted(found, key=lambda fp: reference_quality(fp[0]), reverse=True)
+        keep = ranked[: max(1, min(req.max_refs_per_person, MAX_REFS_PER_PERSON))]
+        primary = ranked[0][0]
         resolved.append(
             ResolvedPerson(
                 label=label,
                 spec=spec,
-                person=Person(label=label, faces=(face,), infant=spec.infant),
-                head_png=head_reference_png(req.photos[spec.image], face.bbox) if with_heads else b"",
-                face_bbox=face.bbox,
-                age=face.age,
-                gender=face.gender,
+                person=Person(label=label, faces=tuple(f for f, _ in found), infant=spec.infant),
+                heads=[head_reference_png(req.photos[i], f.bbox) for f, i in keep] if with_heads else [],
+                face_bbox=primary.bbox,
+                age=primary.age,
+                gender=primary.gender,
+                sources_used=keep,
             )
         )
     labels = [r.label for r in resolved]
     if len(set(labels)) != len(labels):
         raise IdentityError("people labels must be unique", param="people")
     return resolved
+
+
+# -------------------------------------------------------------------- refinement
+
+REFINE_LONG_SIDE = 1024
+REFINE_MIN_GAIN = 0.03        # a refinement must raise the person's score by this much
+REFINE_MAX_OTHER_DROP = 0.03  # and must not lower anybody else's by more than this
+REFINE_PROMPT = (
+    "Edit <image1>: replace the face and head of the person in <image1> with the face and head of {who} "
+    "from {refs}. Keep the head angle, expression, lighting, clothing and background of <image1>. "
+    "The result must be clearly the same person as the reference, with the same hair colour, eye colour, "
+    "face shape and glasses."
+)
+
+
+def refine_crop(image: Image.Image, face_bbox: Sequence[float]) -> tuple[bytes, tuple[int, int, int, int]]:
+    """A roomy square crop around one face of the composed image, scaled to REFINE_LONG_SIDE."""
+    box = head_crop_box(face_bbox, image.size)
+    crop = image.crop(box).resize((REFINE_LONG_SIDE, REFINE_LONG_SIDE), Image.LANCZOS)
+    out = io.BytesIO()
+    crop.save(out, format="PNG")
+    return out.getvalue(), box
+
+
+def paste_back(
+    base: Image.Image, edited_png: bytes, box: tuple[int, int, int, int]
+) -> Image.Image:
+    """Blend the edited crop into ``base`` through a soft ellipse so no seam shows."""
+    x1, y1, x2, y2 = box
+    width, height = x2 - x1, y2 - y1
+    with Image.open(io.BytesIO(edited_png)) as opened:
+        edited = opened.convert("RGB").resize((width, height), Image.LANCZOS)
+    mask = Image.new("L", (width, height), 0)
+    pad = int(width * 0.08)
+    ImageDraw.Draw(mask).ellipse((pad, pad, width - pad, height - pad), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(width * 0.10))
+    out = base.copy()
+    out.paste(edited, (x1, y1), mask)
+    return out
+
+
+def _png(image: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _score_of(report: Mapping[str, Any], label: str) -> float:
+    for entry in report["people"]:
+        if entry["label"] == label:
+            return entry["match"]["score"] if entry.get("match") else -1.0
+    return -1.0
+
+
+def refinement_improves(before: Mapping[str, Any], after: Mapping[str, Any], label: str) -> bool:
+    """Keep a pass only if the person gained and nobody else lost (and no new face appeared)."""
+    if _score_of(after, label) < _score_of(before, label) + REFINE_MIN_GAIN:
+        return False
+    for entry in before["people"]:
+        if entry["label"] != label and _score_of(after, entry["label"]) < _score_of(before, entry["label"]) - REFINE_MAX_OTHER_DROP:
+            return False
+    return after["overall"]["extra_faces"] <= before["overall"]["extra_faces"]
+
+
+async def refine_people(
+    req: SceneRequest,
+    deps: IdentityDeps,
+    people: Sequence[ResolvedPerson],
+    image: bytes,
+    report: dict[str, Any],
+    *,
+    template: Mapping[str, Any],
+    image_nodes: Sequence[str],
+    prompt_node: str,
+    seed_node: str,
+    progress_range: tuple[float, float] = (0.6, 0.95),
+) -> tuple[bytes, dict[str, Any], list[dict[str, Any]]]:
+    """Refine each person's head in its own pass: crop, edit with only that person's references, paste back.
+
+    People are handled worst score first. A pass is kept only when it helps that person and hurts nobody.
+    """
+    log: list[dict[str, Any]] = []
+    if req.refine == "off" or not people:
+        return image, report, log
+    by_label = {rp.label: rp for rp in people}
+    order = sorted(by_label, key=lambda label: _score_of(report, label))
+    todo = [
+        label for label in order
+        if req.refine == "all" or not next(e for e in report["people"] if e["label"] == label).get("meets_threshold")
+    ]
+    total_passes = max(1, len(todo) * req.refine_attempts)
+    done = 0
+    for label in todo:
+        rp = by_label[label]
+        for attempt in range(req.refine_attempts):
+            entry = next(e for e in report["people"] if e["label"] == label)
+            if not entry.get("match"):
+                break
+            if req.refine == "auto" and entry.get("meets_threshold"):
+                break
+            _emit(req, "refine", progress_range[0] + (progress_range[1] - progress_range[0]) * done / total_passes,
+                  person=label, attempt=attempt + 1)
+            base = Image.open(io.BytesIO(image)).convert("RGB")
+            crop_png, box = refine_crop(base, entry["match"]["bbox"])
+            uploads = {image_nodes[0]: crop_png}
+            for k, head in enumerate(rp.heads, start=1):
+                uploads[image_nodes[k]] = head
+            tags = [f"<image{k + 1}>" for k in range(1, len(uploads))]
+            refs = tags[0] if len(tags) == 1 else ", ".join(tags[:-1]) + f" and {tags[-1]} (photos of the same person)"
+            who = rp.spec.description or describe(rp.age, rp.gender)
+            graph = prepare_workflow(
+                template, image_nodes=image_nodes, used_images=len(uploads),
+                prompt_node=prompt_node, seed_node=seed_node,
+                prompt=REFINE_PROMPT.format(who=who, refs=refs),
+                seed=req.seed + 1000 + 17 * attempt + len(log), resolution=REFINE_LONG_SIDE,
+                steps=req.steps, cfg=req.cfg,
+            )
+            edited = await deps.run_workflow(graph, uploads)
+            candidate = _png(paste_back(base, edited, box))
+            cand_report = likeness.check_likeness(
+                [p.person for p in people], await _faces(deps, candidate), models=deps.models,
+                thresholds=req.thresholds, allow_extra_faces=not req.only_listed_people, pooling=req.pooling,
+            )
+            accepted = refinement_improves(report, cand_report, label)
+            log.append({
+                "person": label,
+                "pass": attempt + 1,
+                "score_before": round(_score_of(report, label), 4),
+                "score_after": round(_score_of(cand_report, label), 4),
+                "others_before": {e["label"]: round(_score_of(report, e["label"]), 4) for e in report["people"] if e["label"] != label},
+                "others_after": {e["label"]: round(_score_of(cand_report, e["label"]), 4) for e in cand_report["people"] if e["label"] != label},
+                "accepted": accepted,
+            })
+            done += 1
+            if accepted:
+                image, report = candidate, cand_report
+    return image, report, log
 
 
 async def run_identity_scene(
@@ -320,9 +628,19 @@ async def run_identity_scene(
         raise IdentityError("prompt is required", param="prompt")
     if not 1 <= req.attempts <= MAX_ATTEMPTS:
         raise IdentityError(f"attempts must be between 1 and {MAX_ATTEMPTS}", param="attempts")
-    people = await resolve_people(req, deps)
+    if req.pooling not in likeness.POOLINGS:
+        raise IdentityError(f"pooling must be one of {', '.join(likeness.POOLINGS)}", param="pooling")
+    if req.refine not in ("off", "auto", "all"):
+        raise IdentityError("refine must be off, auto or all", param="refine")
+    if req.pose_policy not in ("likeness", "as_written"):
+        raise IdentityError("pose_policy must be likeness or as_written", param="pose_policy")
+    _emit(req, "resolve", 0.0)
+    warnings: list[dict[str, str]] = []
+    people = await resolve_people(req, deps, warnings=warnings)
+    steered, pose_warnings = steer_prompt(req.prompt, req.pose_policy)
+    warnings.extend(pose_warnings)
     prompt = build_prompt(
-        req.prompt, people, photo_as_canvas=req.photo_as_canvas, only_listed_people=req.only_listed_people
+        steered, people, photo_as_canvas=req.photo_as_canvas, only_listed_people=req.only_listed_people
     )
 
     uploads: dict[str, bytes] = {}
@@ -331,12 +649,22 @@ async def run_identity_scene(
         uploads[image_nodes[slot]] = req.photos[0]
         slot += 1
     for rp in people:
-        uploads[image_nodes[slot]] = rp.head_png
-        slot += 1
+        for head in rp.heads:
+            if slot >= min(len(image_nodes), MAX_IMAGE_SLOTS):
+                raise IdentityError(
+                    f"too many reference images ({slot + 1}+); lower max_refs_per_person or the number of people",
+                    param="people",
+                )
+            uploads[image_nodes[slot]] = head
+            slot += 1
+    resolution = req.resolution if req.resolution is not None else auto_resolution(slot)
+    _emit(req, "resolve", 0.05, people=len(people), images=slot)
 
-    best: tuple[tuple[float, float], bytes, dict[str, Any], int] | None = None
+    best: tuple[tuple[float, ...], bytes, dict[str, Any], int] | None = None
     attempts: list[dict[str, Any]] = []
+    compose_end = 0.6 if req.refine != "off" else 0.95
     for index in range(req.attempts):
+        _emit(req, "compose", 0.05 + (compose_end - 0.05) * index / req.attempts, attempt=index + 1)
         seed = req.seed + index
         graph = prepare_workflow(
             template,
@@ -346,7 +674,7 @@ async def run_identity_scene(
             seed_node=seed_node,
             prompt=prompt,
             seed=seed,
-            resolution=req.resolution,
+            resolution=resolution,
             steps=req.steps,
             cfg=req.cfg,
         )
@@ -354,7 +682,7 @@ async def run_identity_scene(
         candidate = await _faces(deps, image)
         report = likeness.check_likeness(
             [rp.person for rp in people], candidate, models=deps.models, thresholds=req.thresholds,
-            allow_extra_faces=not req.only_listed_people,
+            allow_extra_faces=not req.only_listed_people, pooling=req.pooling,
         )
         key = likeness.rank_key(
             report, penalise_extra_faces=req.only_listed_people, want_facing=req.facing_each_other
@@ -378,9 +706,25 @@ async def run_identity_scene(
     assert best is not None
     for number, item in enumerate(attempts):
         item["selected"] = number == best[3]
+    final_image, final_report = best[1], best[2]
+
+    final_image, final_report, refinements = await refine_people(
+        req, deps, people, final_image, final_report,
+        template=template, image_nodes=image_nodes, prompt_node=prompt_node, seed_node=seed_node,
+        progress_range=(compose_end, 0.97),
+    )
+    for entry in final_report["people"]:
+        pose = (entry.get("match") or {}).get("yaw")
+        if pose is not None and abs(pose) > likeness.PROFILE_YAW:
+            warnings.append({
+                "code": "profile_result",
+                "param": entry["label"],
+                "message": f"{entry['label']} is in near-profile in the result; likeness is less reliable there.",
+            })
+    _emit(req, "done", 1.0)
     return SceneResult(
-        image=best[1],
-        report=best[2],
+        image=final_image,
+        report=final_report,
         attempts=attempts,
         people=[
             {
@@ -388,9 +732,15 @@ async def run_identity_scene(
                 "photo": rp.spec.image,
                 "face_bbox": [round(v, 1) for v in rp.face_bbox],
                 "age_estimate": rp.age,
-                "reference_head_px": list(Image.open(io.BytesIO(rp.head_png)).size),
+                "reference_photos": len(rp.person.faces),
+                "reference_photo_indices": [i for _, i in rp.sources_used],
+                "reference_heads_sent": len(rp.heads),
+                "reference_head_px": [list(Image.open(io.BytesIO(h)).size) for h in rp.heads],
             }
             for rp in people
         ],
         seconds=round(time.monotonic() - started, 1),
+        refinements=refinements,
+        warnings=warnings,
+        prompt_used=prompt,
     )

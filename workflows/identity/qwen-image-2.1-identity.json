@@ -1,7 +1,7 @@
 {
     "_meta": {
         "name": "qwen-image-2.1-identity",
-        "description": "Gateway-composed identity scene: Qwen-Image 2.1 multi-reference edit with up to six tagged reference images (image 1 is the canvas/style photo, the rest are per-person head references). Reference images use the dotted Autogrow keys images.image_N; unused slots are pruned by the composer. Node 7 prompt, node 8 seed.",
+        "description": "Gateway-composed identity scene: Qwen-Image 2.1 multi-reference edit with up to ten tagged reference images (image 1 is the canvas/style photo, the rest are per-person head references). Reference images use the dotted Autogrow keys images.image_N; unused slots are pruned by the composer. Node 7 prompt, node 8 seed.",
         "prompt_node": "7",
         "seed_node": "8"
     },
@@ -73,6 +73,30 @@
             "image": "slot6.png"
         }
     },
+    "L7": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "slot7.png"
+        }
+    },
+    "L8": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "slot8.png"
+        }
+    },
+    "L9": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "slot9.png"
+        }
+    },
+    "L10": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "slot10.png"
+        }
+    },
     "7": {
         "class_type": "TextEncodeQwenImage21",
         "inputs": {
@@ -109,6 +133,22 @@
             ],
             "images.image_6": [
                 "L6",
+                0
+            ],
+            "images.image_7": [
+                "L7",
+                0
+            ],
+            "images.image_8": [
+                "L8",
+                0
+            ],
+            "images.image_9": [
+                "L9",
+                0
+            ],
+            "images.image_10": [
+                "L10",
                 0
             ]
         }

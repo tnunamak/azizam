@@ -9,14 +9,14 @@ description: >-
   of N seeds with objective likeness scores. The gateway crops a roomy head per person from the ORIGINAL
   photo (never a tiny face tile), tags every input <imageN> for Qwen-Image 2.1 multi-reference edit, runs
   up to `attempts` seeds, scores each result with ArcFace (buffalo_l + antelopev2, CPU) against the real
-  faces, and keeps the best. Served at POST /gateway/v1/images/identity (typed, JSON response with
+  faces, and keeps the best. Served at POST /gateway/v1/images/identity (typed; async media job by default, sync with mode=sync, JSON with
   `likeness`) and at POST /v1/images/edits with model=image-identity (options in
   extensions["com.vividfish.workflow"]). Infant faces are scored but flagged reliability=low: the score
   only ranks candidates, so verify a baby by eye. Measured on a family photo: 0.60 adult, 0.48 infant
   (docs/IDENTITY_LIKENESS.md).
 source: local
 trusted: true
-typical_seconds: 120
+typical_seconds: 300
 inputs:
   prompt:
     type: string
@@ -28,7 +28,7 @@ inputs:
     description: Reference photo at full resolution. Send more photos as extra image parts.
   people:
     type: string
-    description: JSON array of {label, image, box [x1,y1,x2,y2], description, infant}. Omit to auto-detect.
+    description: JSON array of {label, image | images[], box [x1,y1,x2,y2], description, infant}. Several photos of one person go in images[]. Omit to auto-detect.
   attempts:
     type: integer
     minimum: 1
@@ -41,7 +41,7 @@ inputs:
     type: integer
     minimum: 512
     maximum: 2048
-    default: 1536
+    description: Per-reference pixel budget. Default 1536 for up to 3 images, 1280 up to 5, 1024 beyond.
   steps:
     type: integer
     minimum: 1
@@ -65,6 +65,37 @@ inputs:
     type: boolean
     default: false
     description: Two people only. Prefer and stop early on results where both heads are turned toward each other (head turn from landmarks, not gaze).
+  pooling:
+    type: string
+    enum: ["best", "mean"]
+    default: best
+    description: How several reference photos of one person are scored.
+  max_refs_per_person:
+    type: integer
+    minimum: 1
+    maximum: 5
+    default: 3
+    description: Reference heads sent to the generator per person. Every photo is used for scoring.
+  refine:
+    type: string
+    enum: ["off", "auto", "all"]
+    default: auto
+    description: Per-person head refinement after composing. A pass is kept only if it helps that person and hurts nobody.
+  refine_attempts:
+    type: integer
+    minimum: 1
+    maximum: 4
+    default: 2
+  pose_policy:
+    type: string
+    enum: ["likeness", "as_written"]
+    default: likeness
+    description: likeness rewrites profile or forehead-touching requests to a three-quarter view and reports it in warnings.
+  mode:
+    type: string
+    enum: ["auto", "sync", "async"]
+    default: auto
+    description: async returns a media job (poll_url, content_url). auto is async unless attempts=1 and refine=off.
   thresholds:
     type: string
     description: JSON object overriding match, uncertain and min_margin.
@@ -77,7 +108,7 @@ bindings:
     compose: identity_scene
     route: /gateway/v1/images/identity
     workflow: workflows/identity/qwen-image-2.1-identity.json
-    image_nodes: ["L1", "L2", "L3", "L4", "L5", "L6"]
+    image_nodes: ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10"]
     prompt_node: "7"
     seed_node: "8"
 requires:
