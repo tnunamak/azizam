@@ -308,6 +308,9 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
             content = self.client.get(f"/v1/videos/{video_id}/content")
             self.assertEqual(content.status_code, 404)
             self.assertEqual(content.json()["error"]["code"], "video_not_ready")
+        # A second sampler stage restarts its own bar; the reported progress must not drop.
+        proxy._video_progress[rr.NEW_PROMPT_ID].update(status="running", percent=7, node="19")
+        self.assertGreaterEqual(poll()["progress"], 85)
         self.comfy.history[rr.NEW_PROMPT_ID] = rr_fake.succeeded_history("remix_00001_.mp4")
         self.comfy.view_bytes["remix_00001_.mp4"] = b"rendered-mp4"
         done = poll()

@@ -8331,6 +8331,25 @@ def _tracked_video_fields(prompt_id: str) -> dict[str, Any]:
     return fields
 
 
+def _hold_video_progress(prompt_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Never report lower progress than an earlier poll did for the same job.
+
+    Multi-stage graphs (LTX upscale, Bernini high+low) restart the sampler bar
+    in each stage, and a queue-only poll reports a flat 25. OpenAI's `progress`
+    only moves forward, so keep a high-water mark per job. Terminal states
+    report 100 and are left alone.
+    """
+    if payload.get("vivid_status") not in ("queued", "running"):
+        return payload
+    entry = _video_progress.get(prompt_id)
+    if entry is None:
+        return payload
+    high = max(int(entry.get("reported_progress", 0)), int(payload.get("progress") or 0))
+    entry["reported_progress"] = high
+    payload["progress"] = high
+    return payload
+
+
 def _openai_video_payload(
     *,
     video_id: str,
@@ -10203,6 +10222,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                         node=live.get("node"),
                         phase=live.get("phase"),
                     )
+                    _hold_video_progress(prompt_id, payload)
                     return Response(
                         content=json.dumps(payload),
                         status_code=200,
@@ -10216,13 +10236,13 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                         media_type="application/json"
                     )
                 return Response(
-                    content=json.dumps(_openai_video_payload(
+                    content=json.dumps(_hold_video_progress(prompt_id, _openai_video_payload(
                         video_id=video_id,
                         prompt_id=prompt_id,
                         status=queue_status,
                         progress=25 if queue_status == "running" else 0,
                         updated_at=int(time.time()),
-                    )),
+                    ))),
                     status_code=200,
                     media_type="application/json"
                 )
@@ -10248,6 +10268,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                 payload["total"] = int(live.get("total") or 0)
                 payload["node"] = live.get("node")
                 payload["phase"] = live.get("phase")
+            _hold_video_progress(prompt_id, payload)
             if sora_status == "failed":
                 payload["error"] = {
                     "code": "video_generation_failed",
