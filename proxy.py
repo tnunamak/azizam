@@ -822,6 +822,13 @@ VIDEO_ALIASES = {
 # stable config surface to wire one into without another route-shape change;
 # unset (the default) means remix always returns a clear 501.
 VIDEO_REMIX_WORKFLOW = videos_cfg.get("remix_workflow") or None
+_OPENAI_VIDEO_STATUS_BY_INTERNAL = {
+    "queued": "queued",
+    "running": "in_progress",
+    "succeeded": "completed",
+    "failed": "failed",
+    "canceled": "failed",
+}
 
 # Routing
 routing_cfg = config.get("routing", {})
@@ -4547,6 +4554,33 @@ def parse_size(size_str: str) -> tuple[int, int]:
         return 1024, 1024
 
 
+def _image_size_adjustment_header(requested: Any, effective: str) -> str | None:
+    requested_size = str(requested or "").strip()
+    if not requested_size:
+        return None
+    if requested_size == effective:
+        return None
+    return f"{requested_size}->{effective}"
+
+
+def _record_image_size_adjustment(
+    receipt: RouteReceipt | None,
+    *,
+    requested: Any,
+    effective: str,
+) -> dict[str, str]:
+    adjustment = _image_size_adjustment_header(requested, effective)
+    if adjustment is None:
+        return {}
+    if receipt is not None:
+        receipt.metadata["image_size_adjustment"] = {
+            "requested": str(requested),
+            "effective": effective,
+        }
+        receipt.add_warning(f"size_adjusted:{adjustment}")
+    return {"X-Vivid-Size-Adjusted": adjustment}
+
+
 # =============================================================================
 # Image cache, signed URLs, and adaptive batching (Fix 1 + Fix 2)
 # =============================================================================
@@ -6657,7 +6691,8 @@ async def proxy_comfy_request(
     prompt = body.get("prompt", "")
     requested_model = body.get("model", COMFY_DEFAULT_MODEL)
     model = requested_model
-    size = body.get("size", "1024x1024")
+    requested_size = body.get("size")
+    size = requested_size or "1024x1024"
     if str(model).startswith("ideogram4") and prompt:
         # Only skip conversion when the prompt is ALREADY a grounded Ideogram-4
         # caption (has real obj/text elements). JSON that merely wraps a prose
@@ -6853,6 +6888,7 @@ async def proxy_comfy_request(
         workflow[prompt_node]["inputs"]["text"] = prompt
 
     width, height = parse_size(size)
+    effective_size = f"{width}x{height}"
     for _sn in ([size_node] if isinstance(size_node, str) else (size_node or [])):
         if _sn and _sn in workflow:
             workflow[_sn]["inputs"]["width"] = width
@@ -6927,6 +6963,11 @@ async def proxy_comfy_request(
                 n_requested=n,
                 response_format=response_format,
                 headers=headers,
+                image_response_headers=_record_image_size_adjustment(
+                    receipt,
+                    requested=requested_size,
+                    effective=effective_size,
+                ),
                 background_removal_decision=background_decision,
                 fallback_workflow=fallback_workflow,
                 fallback_workflow_name=workflow_name,
@@ -6936,7 +6977,7 @@ async def proxy_comfy_request(
                 output_compression=output_compression,
                 output_background="transparent" if background_decision.remove_background else "opaque",
                 output_quality=quality,
-                output_size=f"{width}x{height}",
+                output_size=effective_size,
             )
     except httpx.TimeoutException:
         return Response(
@@ -7035,11 +7076,20 @@ async def proxy_comfy_edit_request(
     for key, value in form.multi_items():
         if key in form_dict:
             continue
+        if _merge_multipart_extension_bracket_field(form_dict, str(key), value):
+            continue
         form_dict[str(key)] = value
     extensions_raw = form.get("extensions")
     if isinstance(extensions_raw, str):
         try:
-            form_dict["extensions"] = json.loads(extensions_raw)
+            parsed_extensions = json.loads(extensions_raw)
+            if "extensions" in form_dict and isinstance(form_dict["extensions"], dict) and isinstance(parsed_extensions, dict):
+                form_dict["extensions"] = {
+                    **parsed_extensions,
+                    **form_dict["extensions"],
+                }
+            else:
+                form_dict["extensions"] = parsed_extensions
         except json.JSONDecodeError:
             _record_image_input(receipt, "extensions", rejected_reason="invalid_json")
             return Response(
@@ -7067,7 +7117,8 @@ async def proxy_comfy_edit_request(
     prompt = form.get("prompt", "")
     requested_model = form.get("model", IMAGE_EDIT_DEFAULT_MODEL)
     model = requested_model
-    size = form.get("size", "")
+    requested_size = form.get("size")
+    size = requested_size or ""
     if receipt is not None:
         receipt.requested_model = str(requested_model) if requested_model is not None else None
     _record_image_input(receipt, "model")
@@ -7144,15 +7195,6 @@ async def proxy_comfy_edit_request(
         )
     _record_image_input(receipt, "image[]" if form.get("image[]") else "image")
 
-    if not prompt:
-        _record_image_input(receipt, "prompt", rejected_reason="missing")
-        return Response(
-            content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
-        )
-    _record_image_input(receipt, "prompt")
-
     model = _select_edit_workflow(
         str(model),
         image_count=len(image_files),
@@ -7172,6 +7214,22 @@ async def proxy_comfy_edit_request(
             media_type="application/json"
         )
     manifest = _find_image_manifest("image.edit", str(model))
+    prompt_ignored_by_workflow = _manifest_ignores_prompt(manifest)
+    if not prompt and not prompt_ignored_by_workflow:
+        _record_image_input(receipt, "prompt", rejected_reason="missing")
+        return Response(
+            content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
+    if prompt:
+        _record_image_input(receipt, "prompt")
+    elif prompt_ignored_by_workflow:
+        _record_image_input(
+            receipt,
+            "prompt",
+            ignored_reason="workflow does not use prompt",
+        )
     required_route_bound_inputs = _manifest_required_route_bound_inputs(manifest, "comfyui")
     minimum_image_count = 1 + len(required_route_bound_inputs)
     if len(image_files) < minimum_image_count:
@@ -7247,6 +7305,7 @@ async def proxy_comfy_edit_request(
                     img_width, img_height = int(w), int(h)
                 except:
                     pass
+            effective_size = f"{img_width}x{img_height}"
 
             workflow = copy.deepcopy(workflow)
             meta = workflow.pop("_meta", {})
@@ -7445,7 +7504,11 @@ async def proxy_comfy_edit_request(
                 return extension_response
 
             image_transform: Optional[Callable[[bytes], bytes]] = None
-            image_response_headers: dict[str, str] = {}
+            image_response_headers: dict[str, str] = _record_image_size_adjustment(
+                receipt,
+                requested=requested_size,
+                effective=effective_size,
+            )
             if mask_context is not None:
                 if mask_uses_workflow:
                     image_response_headers["X-Image-Mask"] = "workflow"
@@ -7522,7 +7585,7 @@ async def proxy_comfy_edit_request(
                 output_compression=output_compression,
                 output_background="transparent" if background_decision.remove_background else "opaque",
                 output_quality=quality,
-                output_size=f"{img_width}x{img_height}",
+                output_size=effective_size,
             )
 
     except httpx.TimeoutException:
@@ -7848,6 +7911,54 @@ def _phase_percent(phase: str, sampler_frac: float) -> int:
     if phase == "decoding":
         return 92
     return 5
+
+
+def _openai_video_status(status: str) -> str:
+    return _OPENAI_VIDEO_STATUS_BY_INTERNAL.get(str(status), str(status))
+
+
+def _video_progress_percent(value: Any, *, floor: int = 0, ceiling: int = 100) -> int:
+    try:
+        progress = int(value)
+    except (TypeError, ValueError):
+        progress = floor
+    return max(floor, min(progress, ceiling))
+
+
+def _tracked_video_fields(prompt_id: str) -> dict[str, Any]:
+    record = _video_job_records.get(prompt_id) or {}
+    return {
+        key: record.get(key)
+        for key in ("model", "size", "seconds", "actual_seconds", "created_at", "completed_at")
+        if record.get(key) is not None
+    }
+
+
+def _openai_video_payload(
+    *,
+    video_id: str,
+    prompt_id: str,
+    status: str,
+    progress: int,
+    updated_at: int | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    tracked = _tracked_video_fields(prompt_id)
+    payload: dict[str, Any] = {
+        "id": video_id,
+        "object": "video",
+        "vivid_object": "video.generation",
+        "status": _openai_video_status(status),
+        "vivid_status": status,
+        "progress": _video_progress_percent(progress),
+    }
+    payload.update(tracked)
+    if updated_at is not None:
+        payload["updated_at"] = updated_at
+    if status == "succeeded" and payload.get("completed_at") is None:
+        payload["completed_at"] = updated_at or int(time.time())
+    payload.update({key: value for key, value in extra.items() if value is not None})
+    return payload
 
 
 async def _record_event(event: dict) -> None:
@@ -8703,6 +8814,7 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
 
     prompt = (body.get("prompt") or "").strip()
     requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    public_model = str(requested_model)
     size_from_body = body.get("size")
     seconds = body.get("seconds")
     seed = body.get("seed")
@@ -9238,7 +9350,7 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             try:
                 async with _video_progress_lock:
                     _video_job_records[prompt_id] = {
-                        "model": workflow_name,
+                        "model": public_model,
                         "size": f"{width}x{height}",
                         "seconds": seconds_str,
                         "actual_seconds": round(actual_seconds, 4),
@@ -9254,7 +9366,7 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             payload = {
                 "id": video_id,
                 "object": "video",
-                "model": workflow_name,
+                "model": public_model,
                 "status": "queued",
                 "progress": 0,
                 "created_at": now,
@@ -9319,16 +9431,18 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                 # Not in history yet — prefer live ws state, fall back to /queue.
                 live = _video_progress_snapshot(prompt_id)
                 if live and live.get("status") in ("queued", "running"):
-                    payload = {
-                        "id": video_id,
-                        "object": "video.generation",
-                        "status": "running" if live.get("percent", 0) > 0 or live.get("node") else live.get("status", "running"),
-                        "progress": int(live.get("percent") or 0),
-                        "step": int(live.get("step") or 0),
-                        "total": int(live.get("total") or 0),
-                        "node": live.get("node"),
-                        "phase": live.get("phase"),
-                    }
+                    internal_status = "running" if live.get("percent", 0) > 0 or live.get("node") else live.get("status", "running")
+                    payload = _openai_video_payload(
+                        video_id=video_id,
+                        prompt_id=prompt_id,
+                        status=internal_status,
+                        progress=_video_progress_percent(live.get("percent"), ceiling=99),
+                        updated_at=int(live.get("updated_at") or time.time()),
+                        step=int(live.get("step") or 0),
+                        total=int(live.get("total") or 0),
+                        node=live.get("node"),
+                        phase=live.get("phase"),
+                    )
                     return Response(
                         content=json.dumps(payload),
                         status_code=200,
@@ -9342,12 +9456,13 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                         media_type="application/json"
                     )
                 return Response(
-                    content=json.dumps({
-                        "id": video_id,
-                        "object": "video.generation",
-                        "status": queue_status,
-                        "progress": 25 if queue_status == "running" else 0,
-                    }),
+                    content=json.dumps(_openai_video_payload(
+                        video_id=video_id,
+                        prompt_id=prompt_id,
+                        status=queue_status,
+                        progress=25 if queue_status == "running" else 0,
+                        updated_at=int(time.time()),
+                    )),
                     status_code=200,
                     media_type="application/json"
                 )
@@ -9357,14 +9472,18 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
             # Enrich with last-known live progress if available (e.g. step/total
             # captured during the run). For terminal states, the history wins.
             live = _video_progress_snapshot(prompt_id) or {}
-            payload = {
-                "id": video_id,
-                "object": "video.generation",
-                "status": sora_status,
-                "progress": progress,
-            }
+            payload = _openai_video_payload(
+                video_id=video_id,
+                prompt_id=prompt_id,
+                status=sora_status,
+                progress=progress,
+                updated_at=int(time.time()),
+            )
             if sora_status == "running" and live:
-                payload["progress"] = int(live.get("percent") or progress)
+                payload["progress"] = max(
+                    _video_progress_percent(progress, ceiling=99),
+                    _video_progress_percent(live.get("percent"), ceiling=99),
+                )
                 payload["step"] = int(live.get("step") or 0)
                 payload["total"] = int(live.get("total") or 0)
                 payload["node"] = live.get("node")
@@ -9418,6 +9537,28 @@ async def proxy_comfy_video_content(video_id: str, auth_context: AuthContext) ->
         async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10)) as client:
             job = await _comfy_history(client, prompt_id, headers)
             if job is None:
+                live = _video_progress_snapshot(prompt_id)
+                queue_status = await _comfy_queue_status(client, prompt_id, headers)
+                if live or queue_status in {"queued", "running"}:
+                    internal_status = (
+                        str(live.get("status"))
+                        if live and live.get("status") in {"queued", "running"}
+                        else queue_status
+                    )
+                    return Response(
+                        content=json.dumps({
+                            "error": {
+                                "message": (
+                                    f"Video content is not ready yet "
+                                    f"(status={_openai_video_status(internal_status)})"
+                                ),
+                                "type": "invalid_request_error",
+                                "code": "video_not_ready",
+                            }
+                        }),
+                        status_code=409,
+                        media_type="application/json",
+                    )
                 return Response(
                     content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
                     status_code=404,
@@ -9428,8 +9569,9 @@ async def proxy_comfy_video_content(video_id: str, auth_context: AuthContext) ->
                 return Response(
                     content=json.dumps({
                         "error": {
-                            "message": f"video not ready (status={sora_status})",
+                            "message": f"Video content is not ready yet (status={_openai_video_status(sora_status)})",
                             "type": "invalid_request_error",
+                            "code": "video_not_ready",
                         }
                     }),
                     status_code=409,
@@ -14911,6 +15053,69 @@ def _record_unknown_image_fields(
     )
 
 
+def _coerce_multipart_extension_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if stripped == "":
+        return value
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return value
+
+
+def _multipart_bracket_parts(key: str) -> list[str] | None:
+    if "[" not in key or not key.endswith("]"):
+        return None
+    root, rest = key.split("[", 1)
+    if not root:
+        return None
+    parts = [root]
+    cursor = rest
+    while cursor:
+        if "]" not in cursor:
+            return None
+        part, cursor = cursor.split("]", 1)
+        if not part:
+            return None
+        parts.append(part)
+        if cursor == "":
+            break
+        if not cursor.startswith("["):
+            return None
+        cursor = cursor[1:]
+    return parts
+
+
+def _merge_multipart_extension_bracket_field(
+    body: dict[str, Any],
+    key: str,
+    value: Any,
+) -> bool:
+    parts = _multipart_bracket_parts(key)
+    if not parts or parts[0] != "extensions" or len(parts) < 3:
+        return False
+    container = body.setdefault("extensions", {})
+    if not isinstance(container, dict):
+        return False
+    cursor: dict[str, Any] = container
+    for part in parts[1:-1]:
+        existing = cursor.setdefault(part, {})
+        if not isinstance(existing, dict):
+            return False
+        cursor = existing
+    cursor[parts[-1]] = _coerce_multipart_extension_value(value)
+    return True
+
+
+def _manifest_ignores_prompt(manifest: Mapping[str, Any] | None) -> bool:
+    if not isinstance(manifest, Mapping):
+        return False
+    inputs = manifest.get("inputs")
+    return isinstance(inputs, Mapping) and "prompt" not in inputs
+
+
 def _extension_asset_field_references(body: Mapping[str, Any]) -> dict[str, str]:
     """Return ``{extension_input: multipart_field}`` references from a body."""
     extensions = body.get("extensions")
@@ -16780,6 +16985,10 @@ def _mark_video_media_job_failed(
 def _video_response_status(response: Response) -> tuple[str | None, int]:
     parsed = _image_response_json(response)
     status_value = parsed.get("status")
+    if status_value == "in_progress":
+        status_value = media_jobs.STATUS_RUNNING
+    elif status_value == "completed":
+        status_value = media_jobs.STATUS_SUCCEEDED
     progress = parsed.get("progress", 0)
     try:
         progress_value = max(0, min(int(progress), 100))

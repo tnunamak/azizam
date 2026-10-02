@@ -163,6 +163,24 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["quality"], "high")
         self.assertEqual(body["size"], "1024x1024")
 
+    def test_size_adjustment_helper_sets_header_and_receipt_metadata(self) -> None:
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+        )
+
+        headers = proxy._record_image_size_adjustment(
+            receipt,
+            requested="1000x600",
+            effective="1024x1024",
+        )
+
+        self.assertEqual(headers["X-Vivid-Size-Adjusted"], "1000x600->1024x1024")
+        self.assertEqual(
+            receipt.metadata["image_size_adjustment"],
+            {"requested": "1000x600", "effective": "1024x1024"},
+        )
+        self.assertIn("size_adjusted:1000x600->1024x1024", receipt.warnings)
+
     def test_response_never_echoes_auto_quality(self) -> None:
         """OpenAI's own response schema only accepts a resolved quality
         tier -- "auto" is a request-time convenience it never echoes back.
@@ -1380,6 +1398,114 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "com.vividfish.workflow.controlnet_strength",
             receipt.accepted_inputs,
+        )
+
+    async def test_sdk_multipart_bracket_extensions_are_bound(self) -> None:
+        receipt, response, captured = await self._run_edit_with_manifest(
+            extension_block={},
+            extra_parts=[
+                ("extensions[com.vividfish.workflow][controlnet_strength]", "0.75"),
+            ],
+            manifest=self._conditioning_manifest(
+                inputs={
+                    "prompt": {"type": "string", "required": True},
+                    "source_image": {"type": "asset", "required": True},
+                    "controlnet_strength": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                },
+                mapping={
+                    "prompt": [{"node": "6", "input": "text"}],
+                    "source_image": [{"node": "10", "input": "image"}],
+                    "controlnet_strength": [{"node": "44", "input": "strength"}],
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            captured["base_workflow"]["44"]["inputs"]["strength"],
+            0.75,
+        )
+        self.assertIn(
+            "com.vividfish.workflow.controlnet_strength",
+            receipt.accepted_inputs,
+        )
+
+    async def test_promptless_workflow_accepts_missing_prompt(self) -> None:
+        manifest = {
+            "schema_version": 1,
+            "id": "image.edit.promptless",
+            "intent": "image.edit",
+            "version": "0.1.0",
+            "inputs": {
+                "source_image": {"type": "asset", "required": True},
+                "scale": {"type": "number", "enum": [2, 4], "default": 2},
+            },
+            "bindings": {
+                "comfyui": {
+                    "workflow": "workflows/images/promptless.json",
+                    "map": {
+                        "source_image": [{"node": "10", "input": "image"}],
+                        "scale": [{"node": "44", "input": "strength"}],
+                    },
+                }
+            },
+        }
+        receipt = proxy.start_image_route_receipt(
+            "/v1/images/edits", proxy.NO_AUTH_CONTEXT
+        )
+        request = _MultipartRequest(
+            [
+                ("model", "promptless"),
+                ("image", _MultipartUpload("source.png", _png_bytes((255, 0, 0, 255)))),
+            ]
+        )
+        workflow = self._conditioning_workflow()
+        captured: dict[str, Any] = {}
+
+        async def fake_generate(**kwargs: Any) -> Response:
+            captured.update(kwargs)
+            return Response(
+                content=json.dumps({"created": 1, "data": [{"b64_json": ""}]}),
+                status_code=200,
+                media_type="application/json",
+            )
+
+        _FakeAsyncClient.uploads = 0
+        _FakeAsyncClient.upload_files = []
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy.httpx, "AsyncClient", _FakeAsyncClient
+        ), patch.object(
+            proxy,
+            "configured_downstream_headers",
+            lambda _auth_context, _service: {},
+        ), patch.object(
+            proxy,
+            "load_comfy_workflow",
+            lambda _model: copy.deepcopy(workflow),
+        ), patch.object(
+            proxy,
+            "_find_image_manifest",
+            lambda _intent, _model: manifest,
+        ), patch.object(
+            proxy,
+            "_generate_images_with_adaptive_batching",
+            fake_generate,
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request,  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+                receipt=receipt,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured["base_workflow"]["6"]["inputs"]["text"], "")
+        self.assertEqual(
+            receipt.ignored_inputs.get("prompt"),
+            "workflow does not use prompt",
         )
 
     async def test_workflow_extension_asset_id_uploads_and_binds(self) -> None:
