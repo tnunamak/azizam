@@ -29,8 +29,8 @@ PY_TYPES = {"INT": (int,), "FLOAT": (int, float), "STRING": (str,), "BOOLEAN": (
 
 
 def _type_matches(output_type: str, input_type: str) -> bool:
-    if "*" in (output_type, input_type):
-        return True
+    if "*" in (output_type, input_type) or output_type.startswith("COMFY_") or input_type.startswith("COMFY_"):
+        return True  # wildcard and "match type" generics resolve at run time
     return bool(set(output_type.split(",")) & set(input_type.split(",")))
 
 
@@ -44,7 +44,7 @@ def check_graph(graph: dict) -> list[str]:
         required, optional = sig["input"]["required"], sig["input"]["optional"]
         known = {**required, **optional}
         for name in required:
-            if name not in node["inputs"]:
+            if name not in node["inputs"] and not any(k.startswith(name + ".") for k in node["inputs"]):
                 problems.append(f"{node_id} {node['class_type']}: missing required input {name}")
         for name, value in node["inputs"].items():
             spec = known.get(name)
