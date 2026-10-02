@@ -1057,8 +1057,22 @@ class TestGatewayRouterMounting(unittest.TestCase):
                 },
             }
 
+        # Self-contained: give the default model a sentinel mmproj so the test
+        # proves the configured file reaches activation, whatever the shipped
+        # config points at.
+        sentinel_mmproj = "/models/test-sentinel-mmproj.gguf"
+        test_config = copy.deepcopy(proxy.config)
+        default_record = next(
+            record
+            for record in test_config["backends"]["kobold"]["models"]
+            if record["id"] == "default"
+        )
+        default_record["activation_mmproj"] = sentinel_mmproj
+
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with patch.object(proxy, "config", test_config), patch.object(
+            proxy, "AUTH_ENABLED", False
+        ), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "ensure_target", fake_ensure_target
@@ -1088,10 +1102,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(len(activations), 1)
-        self.assertTrue(
-            activations[0][2]
-            and activations[0][2].endswith("Qwen3.8-27B-mmproj-BF16.gguf")
-        )
+        self.assertEqual(activations[0][2], sentinel_mmproj)
 
     def test_litellm_substrate_keeps_gateway_anthropic_and_responses_translation(self) -> None:
         chat_calls: list[dict[str, Any]] = []

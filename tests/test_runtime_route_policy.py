@@ -64,6 +64,18 @@ def _migrated_model_policy_config() -> dict:
     return config
 
 
+# The shipped config serves every chat role from one GGUF, so policy tests
+# that need a role backed by a different model define one here.
+OTHER_ROLE = "other-model"
+OTHER_MODEL_PATH = "/models/other-model-not-loaded.gguf"
+
+
+def _roles_with_other_model() -> dict:
+    roles = copy.deepcopy(proxy.ROLES)
+    roles[OTHER_ROLE] = {"backend": "kobold", "model": OTHER_MODEL_PATH}
+    return roles
+
+
 class _FakeHTTPResponse:
     status_code = 200
 
@@ -720,10 +732,16 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             protocols=frozenset({"openai"}),
             model_access=ModelAccessPolicy(mode="current_loaded"),
         )
+        self.assertNotEqual(
+            loaded_path, OTHER_MODEL_PATH, "fixture role must use a different model"
+        )
+
         async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
-            return _CaptureForwardClient(), _ForwardModelsResponse(["default", "rp"])
+            return _CaptureForwardClient(), _ForwardModelsResponse(["default", OTHER_ROLE])
 
         with authenticated_profile(current_loaded), patch.object(
+            proxy, "ROLES", _roles_with_other_model()
+        ), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", litellm_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
@@ -739,12 +757,14 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         ids = {item["id"] for item in response.json()["data"]}
         self.assertIn("default", ids)
-        self.assertNotIn("rp", ids)
+        self.assertNotIn(OTHER_ROLE, ids)
         self.assertEqual(response.json()["vivid_fish_target_visibility"], "available")
         self.assertEqual(response.json()["vivid_fish_target_activation"], "existing_only")
         self.assertEqual(response.json()["vivid_fish_model_access"], "current_loaded")
 
         with authenticated_profile(current_loaded), patch.object(
+            proxy, "ROLES", _roles_with_other_model()
+        ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
             proxy, "currently_loaded_kobold_model", lambda: loaded_path
@@ -753,7 +773,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                 "/v1/chat/completions",
                 headers=AUTH_HEADERS,
                 json={
-                    "model": "rp",
+                    "model": OTHER_ROLE,
                     "messages": [{"role": "user", "content": "hello"}],
                 },
             )
@@ -831,10 +851,16 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             ),
         )
 
+        self.assertNotEqual(
+            loaded_path, OTHER_MODEL_PATH, "fixture role must use a different model"
+        )
+
         async def forbidden_send(*_args, **_kwargs):
             raise AssertionError("spoofed existing-only request must not forward")
 
         with authenticated_profile(current_loaded), patch.object(
+            proxy, "ROLES", _roles_with_other_model()
+        ), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", litellm_registry
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
@@ -847,7 +873,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                 "/v1/chat/completions",
                 headers=AUTH_HEADERS,
                 json={
-                    "model": "rp",
+                    "model": OTHER_ROLE,
                     "_vf_requested_model": "default",
                     "messages": [{"role": "user", "content": "hello"}],
                 },
