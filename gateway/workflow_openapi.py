@@ -40,6 +40,7 @@ from gateway.audio_extensions import ROUTE_MANAGED_AUDIO_INPUTS
 from gateway.discovery import WorkflowRecord
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
 from gateway.video_extensions import ROUTE_MANAGED_VIDEO_INPUTS
+from gateway.video_limits import limits_for_workflow
 
 # Component names use only letters, digits and underscores: a dot in a name
 # makes code generators (datamodel-code-generator) treat it as a module path.
@@ -400,9 +401,15 @@ def _typical_seconds(record: WorkflowRecord) -> float | None:
 
 
 def workflow_catalog(
-    records: Iterable[WorkflowRecord], aliases: Mapping[str, Any] | None = None
+    records: Iterable[WorkflowRecord],
+    aliases: Mapping[str, Any] | None = None,
+    limits: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """The ``x-vividfish-workflows`` list."""
+    """The ``x-vividfish-workflows`` list.
+
+    ``limits`` maps a workflow id to its published limits (see ``video_limits``); a workflow
+    with limits gets them as ``limits``.
+    """
     records = sorted(records, key=lambda r: r.id)
     alias_map = aliases_by_workflow(records, aliases)
     catalog = []
@@ -425,6 +432,9 @@ def workflow_catalog(
             "route_inputs": route_inputs(record),
             "execution": _execution(record, typical),
         })
+        published = limits_for_workflow(limits or {}, record.id)
+        if published:
+            catalog[-1]["limits"] = dict(published)
     return catalog
 
 
@@ -557,6 +567,7 @@ def augment_openapi(
     spec: dict[str, Any],
     records: Iterable[WorkflowRecord],
     aliases: Mapping[str, Any] | None = None,
+    video_limits: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Add the typed native surface to a FastAPI OpenAPI document, in place."""
     records = sorted(records, key=lambda r: r.id)
@@ -734,7 +745,7 @@ def augment_openapi(
             },
         }}
 
-    spec[ROOT_EXTENSION] = workflow_catalog(records, aliases)
+    spec[ROOT_EXTENSION] = workflow_catalog(records, aliases, video_limits)
     return spec
 
 

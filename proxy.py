@@ -217,6 +217,7 @@ from gateway.toolcall_detection import (
     ToolcallStreamDetector as _ToolcallStreamDetector,
 )
 from gateway.discovery import WorkflowRegistry
+from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
@@ -12987,6 +12988,14 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
             capabilities.extend(service_registry.capabilities_from_registry(admin_registry))
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Registry capabilities unavailable: {e}", flush=True)
+
+    published_video_limits = video_limits(config.get("videos"))
+    capabilities = [
+        replace(capability, limits=tuple(limits_for_workflow(published_video_limits, capability.workflow).items()))
+        if capability.intent == INTENT_VIDEO_GENERATE and limits_for_workflow(published_video_limits, capability.workflow)
+        else capability
+        for capability in capabilities
+    ]
 
     return [
         _capability_for_profile(capability, auth_context)
@@ -26191,6 +26200,7 @@ def _gateway_openapi() -> dict[str, Any]:
         schema,
         GATEWAY_WORKFLOW_REGISTRY.records(),
         aliases=_gateway_aliases_provider(),
+        video_limits=video_limits(config.get("videos")),
     )
     app.openapi_schema = schema
     return schema

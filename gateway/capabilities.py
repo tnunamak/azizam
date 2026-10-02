@@ -117,6 +117,9 @@ class Capability:
     caveats: tuple[str, ...] = ()
     policy_sources: tuple[str, ...] = ()
     policy_reasons: tuple[str, ...] = ()
+    # Published numeric/string limits as (name, value) pairs (kept a tuple so the record stays
+    # hashable). Video capabilities carry ``max_total_seconds`` and ``segment_seconds`` here.
+    limits: tuple[tuple[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         if self.execution not in EXECUTION_MODES:
@@ -225,6 +228,8 @@ def summarize_capability(capability: Capability, audience: str) -> dict[str, Any
         summary["model"] = capability.model
     if capability.workflow is not None:
         summary["workflow"] = capability.workflow
+    if capability.limits:
+        summary["limits"] = dict(capability.limits)
 
     if audience == "client":
         return summary
