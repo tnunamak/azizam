@@ -9310,6 +9310,17 @@ async def _resolve_video_workflow_assets(
             f"{source_input} is required for this model: pass a video id, URL or data URI",
             param=f"{ext_param}.{source_input}",
         )
+    for name, spec in specs.items():
+        if (
+            isinstance(spec, Mapping)
+            and spec.get("type") == "asset"
+            and spec.get("required")
+            and name in binding_map
+            and name not in block
+        ):
+            raise _VideoAssetError(
+                f"{name} is required for this model", param=f"{ext_param}.{name}"
+            )
     assets: dict[str, tuple[bytes, str, str]] = {}
     for name, value in block.items():
         spec = specs.get(name)
