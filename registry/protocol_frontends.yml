@@ -118,6 +118,10 @@ records:
         alias: /openai/v1/videos/edits
         runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [POST]
+        canonical: /v1/videos/extensions
+        alias: /openai/v1/videos/extensions
+        runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
+      - methods: [POST]
         canonical: /v1/responses
         alias: /openai/v1/responses
       - methods: [GET]

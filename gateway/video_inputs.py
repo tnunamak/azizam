@@ -38,6 +38,7 @@ class VideoProbe:
     frames: int
     width: int
     height: int
+    has_audio: bool = False
 
 
 def suffix_for_video(filename: str | None, content_type: str | None = None) -> str:
@@ -82,6 +83,12 @@ def probe_video(data: bytes, suffix: str = ".mp4", *, workdir: Path | None = Non
                 ],
                 capture_output=True, timeout=30, check=False,
             )
+            audio = subprocess.run(
+                [ffprobe, "-v", "error", "-select_streams", "a:0", "-show_entries",
+                 "stream=codec_type", "-of", "csv=p=0", str(path)],
+                capture_output=True, timeout=30, check=False,
+            )
+            has_audio = audio.returncode == 0 and b"audio" in (audio.stdout or b"")
         except (OSError, subprocess.TimeoutExpired):
             return None
     if proc.returncode != 0:
@@ -118,6 +125,7 @@ def probe_video(data: bytes, suffix: str = ".mp4", *, workdir: Path | None = Non
         frames=frames,
         width=int(stream.get("width") or 0),
         height=int(stream.get("height") or 0),
+        has_audio=has_audio,
     )
 
 

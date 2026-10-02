@@ -71,6 +71,7 @@ from gateway import (
     video_media_job_http,
     video_media_jobs,
 )
+from gateway import video_extend
 from gateway import video_job_records
 from gateway import stable_aliases
 from gateway import speech_stream
@@ -256,6 +257,7 @@ from gateway.manifests import (
 from gateway.video_extensions import (
     merge_workflow_inputs,
     STANDARD_VIDEO_CREATE_FIELDS,
+    STANDARD_VIDEO_EXTEND_FIELDS,
     bind_video_workflow_extensions,
 )
 from gateway.openai_media_schemas import (
@@ -273,6 +275,7 @@ from gateway.openai_media_schemas import (
     VIDEOS_DELETE_OPENAPI,
     VIDEOS_LIST_OPENAPI,
     VIDEOS_EDIT_OPENAPI,
+    VIDEOS_EXTEND_OPENAPI,
     VIDEOS_REMIX_OPENAPI,
     VIDEOS_STATUS_OPENAPI,
     VOICES_LIST_OPENAPI,
@@ -832,6 +835,13 @@ VIDEO_ALIASES = {
 # Unset means both routes return a clear 501 (video_remix_not_configured). Keep
 # the `video-remix` stable alias pointing at the same workflow.
 VIDEO_REMIX_WORKFLOW = videos_cfg.get("remix_workflow") or None
+# Long video (extensions, `shots`, `seconds` past a model's native length).
+# `extend_workflow` names the chain workflow POST /v1/videos/extensions runs;
+# unset returns 501. `max_total_seconds` caps the stitched length: each added
+# segment loses some fidelity, so a hard cap beats silent degradation.
+VIDEO_EXTEND_WORKFLOW = videos_cfg.get("extend_workflow") or None
+VIDEO_MAX_TOTAL_SECONDS = float(videos_cfg.get("max_total_seconds", 40))
+VIDEO_CHAIN_SEGMENT_SECONDS = float(videos_cfg.get("chain_segment_seconds", 8))
 _OPENAI_VIDEO_STATUS_BY_INTERNAL = {
     "queued": "queued",
     "running": "in_progress",
@@ -8493,6 +8503,9 @@ def _node_class_from_workflow(workflow: dict | None, node_id: str | None) -> str
 # prompt_id -> workflow dict (kept alongside progress state to classify nodes
 # into phases without re-fetching /history).
 _video_workflows: dict[str, dict] = {}
+# Long-video chains: prompt_id -> per-segment [{"sample": node_id, "decode": node_id}].
+# Lets progress span all segments instead of restarting at each sampler.
+_video_chain_units: dict[str, list[dict[str, str]]] = {}
 
 # prompt_id -> {model, size, seconds, actual_seconds, created_at, completed_at,
 #               owner_key_hash, deleted_at}
@@ -8615,6 +8628,17 @@ def _phase_percent(phase: str, sampler_frac: float) -> int:
     return 5
 
 
+def _video_percent(prompt_id: str, node_id: str | None, phase: str, frac: float) -> int:
+    """Overall percent for a node event. A chain job spreads 5..92 over its segments."""
+    units = _video_chain_units.get(prompt_id)
+    index = video_extend.segment_of_node(units, str(node_id or "")) if units else None
+    if index is None:
+        return _phase_percent(phase, frac)
+    frac = max(0.0, min(1.0, frac))
+    done = index + (frac if phase == "sampling" else 0.97 if phase == "decoding" else 0.0)
+    return int(round(5 + 87 * done / len(units)))
+
+
 def _openai_video_status(status: str) -> str:
     return _OPENAI_VIDEO_STATUS_BY_INTERNAL.get(str(status), str(status))
 
@@ -8731,7 +8755,7 @@ async def _record_event(event: dict) -> None:
                 if phase != "sampling":
                     entry["step"] = 0
                     entry["total"] = 0
-                    entry["percent"] = max(entry["percent"], _phase_percent(phase, 0.0))
+                    entry["percent"] = max(entry["percent"], _video_percent(prompt_id, node_id, phase, 0.0))
         elif etype == "progress":
             value = int(data.get("value") or 0)
             maxv = int(data.get("max") or 0)
@@ -8744,7 +8768,7 @@ async def _record_event(event: dict) -> None:
             entry["step"] = value
             entry["total"] = maxv
             frac = (value / maxv) if maxv > 0 else 0.0
-            entry["percent"] = _phase_percent(phase, frac)
+            entry["percent"] = _video_percent(prompt_id, node_id, phase, frac)
         elif etype == "progress_state":
             # Modern ComfyUI per-node progress map. Pick the running node with
             # the highest fractional progress as the representative step/total.
@@ -8772,7 +8796,7 @@ async def _record_event(event: dict) -> None:
                 entry["step"] = v_i
                 entry["total"] = m_i
                 frac = (v_i / m_i) if m_i > 0 else 0.0
-                entry["percent"] = _phase_percent(phase, frac)
+                entry["percent"] = _video_percent(prompt_id, node_id, phase, frac)
         elif etype == "execution_success":
             entry["status"] = "succeeded"
             entry["percent"] = 100
@@ -8836,6 +8860,7 @@ async def _gc_video_progress() -> None:
         for pid in stale:
             _video_progress.pop(pid, None)
             _video_workflows.pop(pid, None)
+            _video_chain_units.pop(pid, None)
         _gc_video_job_records_locked(now)
 
 
@@ -8987,6 +9012,7 @@ def _gc_video_progress_terminal_locked(now: float) -> None:
     for pid in drop:
         _video_progress.pop(pid, None)
         _video_workflows.pop(pid, None)
+        _video_chain_units.pop(pid, None)
     # _video_job_records has its own independent retention -- see
     # _gc_video_job_records_locked's docstring for why it must not piggyback
     # on this (much shorter) terminal-entry sweep.
@@ -9189,54 +9215,6 @@ def _seconds_to_length(seconds: float, frame_rate: float, *, step: int = 8, offs
     # Round to nearest k, not floor.
     k = max(1, int(round((frames - offset) / float(step))))
     return k * step + offset
-
-
-def _long_form_chunks(seconds: float, frame_rate: float,
-                      max_length_sec: int = 10, max_loops: int = 50) -> tuple[int, int, float]:
-    """For video-ltx-2.5-long: search for (LENGTH_seconds, LOOPS) closest to `seconds`.
-
-    The workflow renders one chunk outside the loop (chunk 0), then an Easy-Use
-    ``forLoopStart``/``forLoopEnd`` body that runs ``max(LOOPS, 1)`` times (the
-    loop continues while ``index + 1 < total``, so it always runs at least
-    once). Each junction between chunks drops one frame. So:
-
-      chunk_frames  = ((round(LENGTH * fps - 1) / 8) * 8) + 1      # 8N+1 stride
-      chunks        = max(LOOPS, 1) + 1
-      total_frames  = (chunk_frames - 1) * chunks + 1
-      total_seconds = total_frames / fps
-
-    Measured on LTX-2.5 (2026-10-01): LENGTH=2, LOOPS=0 -> 97 frames (2 chunks);
-    LENGTH=8, LOOPS=2 -> 577 frames (3 chunks), not the 4 chunks the older
-    ``LOOPS + 2`` formula predicted. LOOPS=1 gives the same 2 chunks as
-    LOOPS=0, so the search never returns it.
-
-    LENGTH is an INTConstant (integer seconds) so granularity in `total_seconds`
-    is determined by which (LENGTH, LOOPS) pairs we can hit. We pick the (L, N)
-    minimizing |total_seconds - seconds|; ties broken by smaller N (faster,
-    closer to single-shot quality), then smaller L.
-
-    Returns: (LENGTH_seconds, LOOPS, actual_seconds)
-    """
-    def chunk_frames(L_sec: int) -> int:
-        a = L_sec * frame_rate
-        k = max(1, int(round((a - 1) / 8.0)))
-        return k * 8 + 1
-
-    best = None  # (key, L, n, total)
-    for L in range(1, max_length_sec + 1):
-        cf = chunk_frames(L)
-        for n in range(0, max_loops + 1):
-            if n == 1:
-                continue  # identical to n == 0 (loop body always runs once)
-            chunks = max(n, 1) + 1
-            total_frames = (cf - 1) * chunks + 1
-            total = total_frames / frame_rate
-            err = abs(total - seconds)
-            key = (round(err, 6), n, L)
-            if best is None or key < best[0]:
-                best = (key, L, n, total)
-    _, L, n, total = best
-    return L, n, total
 
 
 def _video_id_from_prompt_id(prompt_id: str) -> str:
@@ -9722,6 +9700,201 @@ async def _upload_video_workflow_assets(
     return updated, None
 
 
+async def _submit_video_graph(
+    *,
+    workflow: dict[str, Any],
+    auth_context: AuthContext,
+    workflow_name: str,
+    requested_model: Any,
+    public_model: str,
+    prompt: str,
+    width: int,
+    height: int,
+    length: int,
+    seed_val: int,
+    seconds_val: float,
+    actual_seconds: float,
+    remixed_from_video_id: str | None,
+    duration_adjustment_reason: str | None,
+    record_extra: Mapping[str, Any] | None = None,
+    payload_extra: Mapping[str, Any] | None = None,
+    progress_units: list[dict[str, str]] | None = None,
+) -> Response:
+    """Queue `workflow` on ComfyUI, record the job, and return the video resource.
+
+    Shared by POST /v1/videos (template workflows) and the long-video chain
+    (extensions, storyboards, long `seconds`). `record_extra` and `payload_extra`
+    add fields to the stored record and to the response. `progress_units` names
+    the per-segment sampler/decode nodes so progress spans the whole chain.
+    """
+    headers = configured_downstream_headers(auth_context, "comfyui")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+            # client_id routes ws events for this submission to our listener.
+            resp = await client.post(
+                f"{COMFY_HOST}/prompt",
+                headers=headers,
+                json=_build_comfy_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
+            )
+            if resp.status_code != 200:
+                # Do NOT record _video_progress here: no prompt_id means there
+                # is nothing to reconcile against, and a partial entry would
+                # leak as a stale "running" job. Surface the error instead.
+                return Response(
+                    content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text[:500]}", "type": "api_error"}}),
+                    status_code=502,
+                    media_type="application/json"
+                )
+            try:
+                result = resp.json()
+            except Exception:
+                result = {}
+            prompt_id = result.get("prompt_id") if isinstance(result, dict) else None
+            if not prompt_id or not isinstance(prompt_id, str):
+                # Same rationale: never seed _video_progress without a valid
+                # prompt_id from ComfyUI, otherwise the entry can never be
+                # reconciled and will show forever as a phantom job.
+                return Response(
+                    content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
+                    status_code=502,
+                    media_type="application/json"
+                )
+
+            # Seed progress state so /v1/videos/{id} can phase-classify nodes
+            # by class type before any ws events arrive.
+            try:
+                async with _video_progress_lock:
+                    _video_workflows[prompt_id] = workflow
+                    if progress_units:
+                        _video_chain_units[prompt_id] = progress_units
+                    _video_progress.setdefault(prompt_id, {
+                        "status": "queued",
+                        "percent": 0,
+                        "step": 0,
+                        "total": 0,
+                        "node": None,
+                        "node_class": None,
+                        "phase": "encoding",
+                        "error": None,
+                        "updated_at": time.time(),
+                    })
+            except Exception:
+                pass
+
+            video_id = _video_id_from_prompt_id(prompt_id)
+            print(
+                f"[proxy] Video job submitted: workflow={workflow_name} id={video_id} "
+                f"size={width}x{height} length={length} seed={seed_val}",
+                flush=True,
+            )
+
+            # Firehose: capture submit metadata (alias, size, seconds, key) for
+            # the live-video-job panel and the activity timeline.
+            try:
+                key_name_for_event = (
+                    auth_context.identity.name
+                    if auth_context and getattr(auth_context, "identity", None)
+                    else None
+                )
+                firehose_metrics.capture_video_submit(
+                    prompt_id,
+                    alias=requested_model,
+                    workflow=workflow_name,
+                    size=f"{width}x{height}",
+                    seconds=seconds_val,
+                    key_name=key_name_for_event,
+                    prompt_text=prompt,
+                )
+                firehose_metrics.record_event(
+                    "video_submit",
+                    f"{requested_model} · {width}x{height} · {seconds_val:g}s",
+                    prompt_id=prompt_id,
+                    alias=requested_model,
+                    workflow=workflow_name,
+                    size=f"{width}x{height}",
+                    seconds=seconds_val,
+                    key=key_name_for_event,
+                )
+            except Exception:
+                pass
+
+            now = int(time.time())
+            response_headers = {}
+            if duration_adjustment_reason is not None:
+                response_headers["X-Duration-Adjusted"] = (
+                    f"requested={seconds_val:g} actual={actual_seconds:.4f} "
+                    f"reason={duration_adjustment_reason}"
+                )
+            # `object` and `seconds` are typed against the OpenAI Python SDK's
+            # `Video` model (object: Literal["video"], seconds: Union[str, ...]).
+            # Sending a string keeps the SDK's loose-construct parser happy
+            # across SDK versions; the precise float lives in `actual_seconds`.
+            seconds_str = str(int(seconds_val)) if float(seconds_val).is_integer() else str(seconds_val)
+            # Submit-time metadata for GET /v1/videos (list) and DELETE
+            # /v1/videos/{id} -- see _video_job_records' own docstring for why
+            # this can't just be read back from ComfyUI's /history.
+            try:
+                async with _video_progress_lock:
+                    _video_job_records[prompt_id] = {
+                        "model": public_model,
+                        "resolved_model": workflow_name,
+                        "size": f"{width}x{height}",
+                        "seconds": seconds_str,
+                        "actual_seconds": round(actual_seconds, 4),
+                        "created_at": now,
+                        "completed_at": None,
+                        "expires_at": now + 86400,
+                        "prompt": prompt,
+                        "error": None,
+                        "remixed_from_video_id": remixed_from_video_id,
+                        **(record_extra or {}),
+                        # Owner scoping for GET/list/DELETE/content -- mirrors
+                        # _asset_owner_key's existing image/audio asset model.
+                        "owner_key_hash": _asset_owner_key(auth_context),
+                        "deleted_at": None,
+                    }
+                _persist_video_record(prompt_id)
+            except Exception:
+                pass
+            payload = {
+                "id": video_id,
+                "object": "video",
+                "model": public_model,
+                "vivid_fish_resolved_model": workflow_name,
+                "status": "queued",
+                "progress": 0,
+                "created_at": now,
+                "completed_at": None,
+                "expires_at": now + 86400,
+                "prompt": prompt,
+                "remixed_from_video_id": remixed_from_video_id,
+                "error": None,
+                "size": f"{width}x{height}",
+                "seconds": seconds_str,
+                "actual_seconds": round(actual_seconds, 4),
+                **(payload_extra or {}),
+            }
+            return Response(
+                content=json.dumps(payload),
+                status_code=200,
+                media_type="application/json",
+                headers=response_headers,
+            )
+
+    except httpx.ConnectError:
+        return Response(
+            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json"
+        )
+    except Exception as e:
+        return Response(
+            content=json.dumps({"error": {"message": f"Video submit error: {str(e)}", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json"
+        )
+
+
 async def proxy_comfy_video_create(
     request: Request,
     auth_context: AuthContext,
@@ -9800,7 +9973,7 @@ async def proxy_comfy_video_create(
     input_reference = body.get("input_reference")  # optional path / URL / data-URI / raw b64 (I2V)
     image_strength = body.get("image_strength")  # optional float 0..1, default 1.0 when input_reference present
 
-    if not prompt:
+    if not prompt and body.get("shots") is None:
         return Response(
             content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
             status_code=400,
@@ -9844,6 +10017,28 @@ async def proxy_comfy_video_create(
             status_code=400,
             media_type="application/json",
         )
+    # Long video: `shots`, or `seconds` past the model's native length when the
+    # model names a chain workflow, or a chain workflow itself (video-long).
+    chain_name = chain_cfg = None
+    if workflow_cfg.get("builder") == "ltx25_chain":
+        chain_name, chain_cfg = workflow_name, workflow_cfg
+    else:
+        try:
+            beyond_native = seconds is not None and float(seconds) > float(workflow_cfg.get("max_seconds", 8))
+        except (TypeError, ValueError):
+            beyond_native = False
+        if body.get("shots") is not None or (beyond_native and workflow_cfg.get("chain_workflow")):
+            chain_name, chain_cfg = _chain_workflow_for(requested_model)
+            if chain_cfg is None:
+                return _json_error(
+                    400, f"Model {workflow_name} cannot render shots or clips longer than "
+                    f"{workflow_cfg.get('max_seconds', 8):g} s; use video-long or ltx-2.5-long",
+                    param="shots" if body.get("shots") is not None else "seconds",
+                    code="long_video_not_supported")
+    if chain_cfg is not None:
+        return await _submit_video_chain(
+            request, auth_context, body=body, workflow_name=str(chain_name),
+            requested_model=requested_model, public_model=public_model)
     policy_decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -10110,37 +10305,10 @@ async def proxy_comfy_video_create(
     seed_targets = _as_list(meta.get("seed_nodes")) or _as_list(seed_node)
     for nid in seed_targets:
         # `value` covers INTConstant nodes used as a shared seed source that
-        # downstream RandomNoise/Math nodes derive from (e.g. ltx-2.5-long's
-        # node 1527 → 1322 RandomNoise + 1715:1664 ComfyMathExpression →
-        # 1715:1551 per-chunk RandomNoise). Without `value` the seed silently
+        # downstream RandomNoise/Math nodes derive from. Without `value` the seed silently
         # never reaches the graph and ComfyUI's full-graph cache returns
         # byte-identical mp4s for repeat prompts.
         _set_field(nid, ["noise_seed", "seed", "value"], seed_val)
-
-    # Long-form chunked-loop workflows (RuneXX single-pass loop). The duration is
-    # driven by two integers: `LENGTH` seconds per chunk (snapped to LTX 8N+1
-    # frames internally by the workflow's SimpleCalculatorKJ) and `LOOPS` (the
-    # easy-forLoop `total`). See _long_form_chunks for the measured frame
-    # arithmetic: chunks = max(LOOPS, 1) + 1, and each junction drops one frame.
-    #
-    # We search the (LENGTH, LOOPS) integer grid for the closest total_seconds
-    # to the request and write both.
-    chunk_count_node = meta.get("chunk_count_node")
-    chunk_length_node = meta.get("chunk_length_node")
-    if chunk_count_node:
-        max_length_sec = int(meta.get("chunk_max_seconds", 10))
-        length_sec, loops_needed, total_seconds = _long_form_chunks(
-            seconds_val, frame_rate, max_length_sec=max_length_sec
-        )
-        _set_field(chunk_count_node, ["value"], loops_needed)
-        if chunk_length_node:
-            _set_field(chunk_length_node, ["value"], length_sec)
-        actual_seconds = total_seconds
-        # Long-form chunks give granularity ~max_length_sec/(8N+1) seconds, so
-        # the adjustment is usually within 0.05s for ≤chunk_max but can be up
-        # to ~0.13s for multi-chunk requests. The header surfaces it always.
-        if abs(actual_seconds - seconds_val) > 0.05:
-            duration_adjustment_reason = "long_form_chunk_quantization"
 
     # I2V: when input_reference is supplied, resolve to bytes, upload to ComfyUI,
     # and wire it into the workflow via the keys exposed in _meta.
@@ -10324,168 +10492,391 @@ async def proxy_comfy_video_create(
             )
         workflow = extension_binding.request
 
+    return await _submit_video_graph(
+        workflow=workflow,
+        auth_context=auth_context,
+        workflow_name=workflow_name,
+        requested_model=requested_model,
+        public_model=public_model,
+        prompt=prompt,
+        width=width,
+        height=height,
+        length=length,
+        seed_val=seed_val,
+        seconds_val=seconds_val,
+        actual_seconds=actual_seconds,
+        remixed_from_video_id=remixed_from_video_id,
+        duration_adjustment_reason=duration_adjustment_reason,
+    )
+
+
+
+# =============================================================================
+# Long video: extensions, storyboards, long `seconds`
+# =============================================================================
+#
+# One request makes one ComfyUI prompt (gateway/video_extend.py builds it). The
+# video id is that prompt's id, so status, content, list, delete, ownership and
+# the persisted record work as for any other video. A failure fails the whole
+# job; the error names the segment that failed and how many were finished.
+
+_CHAIN_EXTENSION_KEYS = ("state_ledger", "context_seconds", "context_strength")
+_CHAIN_MAX_SHOTS = 12
+_CHAIN_MAX_TEXT = 8000
+
+
+def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
+    """Return (name, cfg) of the chain workflow a model name leads to, if any.
+
+    A chain workflow has `builder: ltx25_chain`. A template workflow can name
+    one with `chain_workflow` (LTX-2.5 t2v/i2v do: past their native length
+    they become a chain).
+    """
+    name, cfg = _resolve_video_workflow(str(requested_model or ""))
+    if not cfg:
+        return None, None
+    if cfg.get("builder") == "ltx25_chain":
+        return name, cfg
+    target = cfg.get("chain_workflow")
+    if target and target in VIDEO_WORKFLOWS and VIDEO_WORKFLOWS[target].get("builder") == "ltx25_chain":
+        return str(target), VIDEO_WORKFLOWS[target]
+    return None, None
+
+
+def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workflow_name: str) -> Response | None:
+    decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="openai.video",
+            intent=INTENT_VIDEO_GENERATE,
+            model=str(requested_model) if requested_model is not None else None,
+            workflow=f"video.generate.{workflow_name}",
+            backend="comfyui",
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="expensive",
+        ),
+    )
+    if decision.denied:
+        return _policy_denied_response(decision)
+    target = _workflow_target_policy_decision(
+        auth_context,
+        requested=str(requested_model) if requested_model is not None else None,
+        resolved=str(workflow_name),
+        extra_ids=(f"video.generate.{workflow_name}",),
+    )
+    if target is not None and target.denied:
+        return _policy_denied_response(target)
+    return None
+
+
+def _chain_number(value: Any, *, param: str, minimum: float, maximum: float | None = None) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise video_extend.PlanError(f"{param} must be a number", code="invalid_value", param=param) from None
+    if number != number or number < minimum or (maximum is not None and number > maximum):
+        bound = f"between {minimum:g} and {maximum:g}" if maximum is not None else f"at least {minimum:g}"
+        raise video_extend.PlanError(f"{param} must be {bound}", code="invalid_value", param=param)
+    return number
+
+
+def _parse_chain_options(body: Mapping[str, Any]) -> dict[str, Any]:
+    """Read the gateway options: ledger text, context window and strength."""
+    merged = merge_workflow_inputs(body)
+    block = (merged.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
+    if not isinstance(block, Mapping):
+        raise video_extend.PlanError("extensions must be a mapping", code="invalid_workflow_extension", param="extensions")
+    unknown = [k for k in block if k not in _CHAIN_EXTENSION_KEYS]
+    if unknown:
+        raise video_extend.PlanError(
+            f"unsupported long-video option {unknown[0]!r}; supported: {', '.join(_CHAIN_EXTENSION_KEYS)}",
+            code="invalid_workflow_extension",
+            param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{unknown[0]}",
+        )
+    options: dict[str, Any] = {}
+    ledger = block.get("state_ledger")
+    if ledger is not None:
+        if not isinstance(ledger, str) or len(ledger) > _CHAIN_MAX_TEXT:
+            raise video_extend.PlanError(
+                f"state_ledger must be text of at most {_CHAIN_MAX_TEXT} characters",
+                code="invalid_value", param="state_ledger",
+            )
+        options["state_ledger"] = ledger
+    context = body.get("context_seconds", block.get("context_seconds"))
+    if context is not None:
+        options["context_seconds"] = _chain_number(context, param="context_seconds", minimum=0.34, maximum=4.0)
+    strength = block.get("context_strength")
+    if strength is not None:
+        options["context_strength"] = _chain_number(strength, param="context_strength", minimum=0.0, maximum=1.0)
+    return options
+
+
+def _parse_chain_shots(body: Mapping[str, Any], *, default_seconds: float) -> list[tuple[str, float]]:
+    """Return [(prompt, seconds)] from `shots`, or from `prompt` + `seconds`."""
+    shots = body.get("shots")
+    if shots is None:
+        prompt = body.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise video_extend.PlanError("prompt is required", code="invalid_value", param="prompt")
+        seconds = body.get("seconds")
+        value = default_seconds if seconds is None else _chain_number(
+            seconds, param="seconds", minimum=video_extend.MIN_SHOT_SECONDS)
+        return [(prompt.strip(), value)]
+    if not isinstance(shots, list) or not shots or len(shots) > _CHAIN_MAX_SHOTS:
+        raise video_extend.PlanError(
+            f"shots must be a list of 1 to {_CHAIN_MAX_SHOTS} {{prompt, seconds}} objects",
+            code="invalid_shots", param="shots")
+    out: list[tuple[str, float]] = []
+    for index, shot in enumerate(shots):
+        label = f"shots[{index}]"
+        if not isinstance(shot, Mapping):
+            raise video_extend.PlanError(f"{label} must be an object", code="invalid_shots", param=label)
+        prompt = shot.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise video_extend.PlanError(f"{label}.prompt is required", code="invalid_shots", param=f"{label}.prompt")
+        seconds = _chain_number(
+            shot.get("seconds"), param=f"{label}.seconds", minimum=video_extend.MIN_SHOT_SECONDS)
+        out.append((prompt.strip(), seconds))
+    given = body.get("seconds")
+    if given is not None:
+        total = sum(s for _, s in out)
+        if abs(_chain_number(given, param="seconds", minimum=0.0) - total) > 0.5:
+            raise video_extend.PlanError(
+                f"seconds ({given}) does not match the sum of shots[].seconds ({total:g}); "
+                "omit seconds when you send shots",
+                code="shots_seconds_mismatch", param="seconds")
+    return out
+
+
+async def _upload_comfy_input(data: bytes, filename: str, mime: str, auth_context: AuthContext) -> str:
+    """Upload bytes to ComfyUI's input dir. Return the stored file name."""
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
-            # client_id routes ws events for this submission to our listener.
-            resp = await client.post(
-                f"{COMFY_HOST}/prompt",
-                headers=headers,
-                json=_build_comfy_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
-            )
-            if resp.status_code != 200:
-                # Do NOT record _video_progress here: no prompt_id means there
-                # is nothing to reconcile against, and a partial entry would
-                # leak as a stale "running" job. Surface the error instead.
-                return Response(
-                    content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text[:500]}", "type": "api_error"}}),
-                    status_code=502,
-                    media_type="application/json"
-                )
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+            resp = await client.post(f"{COMFY_HOST}/upload/image", headers=headers,
+                                     files={"image": (filename, data, mime)})
+    except httpx.HTTPError as exc:
+        raise _VideoAssetError(f"ComfyUI upload failed: {exc}", status=502) from exc
+    name = resp.json().get("name") if resp.status_code == 200 else None
+    if not name:
+        raise _VideoAssetError(f"ComfyUI upload failed: {resp.text[:200]}", status=502)
+    return str(name)
+
+
+async def _submit_video_chain(
+    request: Request,
+    auth_context: AuthContext,
+    *,
+    body: Mapping[str, Any],
+    workflow_name: str,
+    requested_model: Any,
+    public_model: str,
+    source: Any = None,
+    source_video_id: str | None = None,
+) -> Response:
+    """Plan, build and queue a long-video chain (create with shots or long
+    seconds, or an extension of `source`)."""
+    extending = source is not None
+    try:
+        options = _parse_chain_options(body)
+        shots = _parse_chain_shots(body, default_seconds=8.0)
+        if body.get("inputs"):
+            raise video_extend.PlanError(
+                "inputs is not supported for long video; use extensions.com.vividfish.workflow",
+                code="invalid_workflow_extension", param="inputs")
+    except video_extend.PlanError as exc:
+        return _json_error(400, str(exc), code=exc.code, param=exc.param)
+    if extending and body.get("input_reference"):
+        return _json_error(400, "input_reference is not supported on extensions; the source video is the context",
+                           param="input_reference", code="unsupported_parameter")
+
+    denial = _chain_policy_denial(auth_context, requested_model, workflow_name)
+    if denial is not None:
+        return denial
+
+    # Source video: resolve, probe, then upload to ComfyUI only after validation.
+    probe = None
+    source_bytes = None
+    source_name = None
+    if extending:
+        try:
+            source_bytes, source_name, _mime = await _resolve_video_workflow_asset(
+                source, kind="video", param="video", auth_context=auth_context)
+        except _VideoAssetError as exc:
+            return _video_asset_error_response(exc)
+        if not source_bytes or len(source_bytes) > video_inputs.MAX_SOURCE_VIDEO_BYTES:
+            return _json_error(400, "video is empty or larger than the size limit", param="video")
+        probe = await asyncio.to_thread(
+            video_inputs.probe_video, source_bytes, video_inputs.suffix_for_video(source_name, _mime),
+            workdir=Path(__file__).parent / "cache" / "video_inputs")
+        if probe is None:
+            return _json_error(400, "video is not a readable video", param="video")
+
+    workflow_cfg = VIDEO_WORKFLOWS.get(workflow_name) or {}
+    fps = float(probe.fps) if probe is not None else float(workflow_cfg.get("frame_rate", 24))
+    context_seconds = options.get("context_seconds", video_extend.DEFAULT_CONTEXT_SECONDS)
+    context_latents = video_extend.context_latents(context_seconds, fps)
+    tail_frames = video_extend.FRAME_STEP * context_latents + 1
+    if probe is not None and probe.frames < tail_frames:
+        return _json_error(
+            400, f"the source video has {probe.frames} frames; extending needs at least {tail_frames} "
+            f"for context_seconds={context_seconds:g}", param="video", code="video_too_short")
+
+    try:
+        segments = video_extend.plan_segments(
+            shots, fps=fps, has_source=extending,
+            max_segment_seconds=VIDEO_CHAIN_SEGMENT_SECONDS,
+            state_ledger=options.get("state_ledger"))
+    except video_extend.PlanError as exc:
+        return _json_error(400, str(exc), code=exc.code, param=exc.param)
+    source_frames = probe.frames if probe is not None else 0
+    total_seconds = video_extend.total_seconds(segments, fps, source_frames)
+    if total_seconds > VIDEO_MAX_TOTAL_SECONDS + 0.05:
+        return _json_error(
+            400,
+            f"total video length would be {total_seconds:.1f} s"
+            + (f" ({source_frames / fps:.1f} s source + {total_seconds - source_frames / fps:.1f} s new)" if extending else "")
+            + f", over the {VIDEO_MAX_TOTAL_SECONDS:g} s limit (videos.max_total_seconds). "
+            "Quality drops with each added segment; finish this video or start a new one.",
+            code="video_total_length_exceeded", param="seconds")
+
+    # Size: requested, else the source's, else the workflow default.
+    size = body.get("size")
+    if not size and probe is not None:
+        size = f"{probe.width}x{probe.height}"
+    width, height = _parse_size_clamped(
+        str(size or workflow_cfg.get("default_size") or "960x512"),
+        workflow_cfg.get("max_size", "1280x720"), int(workflow_cfg.get("size_multiple", 32)))
+
+    try:
+        seed_val = int(body["seed"]) if body.get("seed") is not None else random.randint(0, 2**32 - 1)
+    except (TypeError, ValueError):
+        return _json_error(400, "seed must be an integer", param="seed")
+
+    first_frame_image = None
+    first_frame_strength = 1.0
+    try:
+        if source_bytes is not None:
+            uploaded = await _upload_comfy_input(
+                source_bytes, source_name or "source.mp4", "video/mp4", auth_context)
+        if body.get("input_reference"):
             try:
-                result = resp.json()
-            except Exception:
-                result = {}
-            prompt_id = result.get("prompt_id") if isinstance(result, dict) else None
-            if not prompt_id or not isinstance(prompt_id, str):
-                # Same rationale: never seed _video_progress without a valid
-                # prompt_id from ComfyUI, otherwise the entry can never be
-                # reconciled and will show forever as a phantom job.
-                return Response(
-                    content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
-                    status_code=502,
-                    media_type="application/json"
-                )
+                image_bytes, image_name = await _resolve_input_reference(body["input_reference"], auth_context)
+            except _InputReferenceError as exc:
+                return _json_error(400, str(exc), param="input_reference")
+            first_frame_image = await _upload_comfy_input(image_bytes, image_name, "image/png", auth_context)
+            if body.get("image_strength") is not None:
+                try:
+                    first_frame_strength = max(0.0, min(1.0, float(body["image_strength"])))
+                except (TypeError, ValueError):
+                    return _json_error(400, "image_strength must be a number", param="image_strength")
+    except _VideoAssetError as exc:
+        return _video_asset_error_response(exc)
 
-            # Seed progress state so /v1/videos/{id} can phase-classify nodes
-            # by class type before any ws events arrive.
-            try:
-                async with _video_progress_lock:
-                    _video_workflows[prompt_id] = workflow
-                    _video_progress.setdefault(prompt_id, {
-                        "status": "queued",
-                        "percent": 0,
-                        "step": 0,
-                        "total": 0,
-                        "node": None,
-                        "node_class": None,
-                        "phase": "encoding",
-                        "error": None,
-                        "updated_at": time.time(),
-                    })
-            except Exception:
-                pass
+    spec = video_extend.ChainSpec(
+        segments=segments, width=width, height=height, fps=fps, seed=seed_val,
+        negative=str(body.get("negative_prompt") or video_extend.NEGATIVE_DEFAULT),
+        context_frames_latents=context_latents,
+        context_strength=options.get("context_strength", video_extend.DEFAULT_CONTEXT_STRENGTH),
+        source=(video_extend.SourceVideo(uploaded, probe.frames, fps, probe.width, probe.height, probe.has_audio)
+                if probe is not None else None),
+        first_frame_image=first_frame_image, first_frame_strength=first_frame_strength)
+    built = video_extend.build_chain_graph(spec)
+    total_seconds = built.total_frames / fps
 
-            video_id = _video_id_from_prompt_id(prompt_id)
-            print(
-                f"[proxy] Video job submitted: workflow={workflow_name} id={video_id} "
-                f"size={width}x{height} length={length} seed={seed_val}",
-                flush=True,
-            )
+    prompt_text = "\n".join(p for p, _ in shots)
+    chain_info = {
+        "segments": len(segments),
+        "segment_frames": [s.frames for s in segments],
+        "shots": len(shots),
+        "units": built.units,
+        "total_frames": built.total_frames,
+        "fps": fps,
+        "context_seconds": context_seconds,
+        "source_frames": source_frames,
+    }
+    seconds_requested = sum(s for _, s in shots) + source_frames / fps
+    reason = "ltx_latent_8np1_stride" if abs(total_seconds - seconds_requested) > 0.05 else None
+    return await _submit_video_graph(
+        workflow=built.graph,
+        auth_context=auth_context,
+        workflow_name=workflow_name,
+        requested_model=requested_model,
+        public_model=public_model,
+        prompt=prompt_text,
+        width=width,
+        height=height,
+        length=built.total_frames,
+        seed_val=seed_val,
+        seconds_val=seconds_requested,
+        actual_seconds=total_seconds,
+        remixed_from_video_id=source_video_id,
+        duration_adjustment_reason=reason,
+        record_extra={"chain": chain_info, "extended_from_video_id": source_video_id,
+                      "seconds": _seconds_text(total_seconds), "total_seconds": round(total_seconds, 3)},
+        payload_extra={"extended_from_video_id": source_video_id, "total_seconds": round(total_seconds, 3),
+                       "segments": len(segments), "seconds": _seconds_text(total_seconds)},
+        progress_units=built.units,
+    )
 
-            # Firehose: capture submit metadata (alias, size, seconds, key) for
-            # the live-video-job panel and the activity timeline.
-            try:
-                key_name_for_event = (
-                    auth_context.identity.name
-                    if auth_context and getattr(auth_context, "identity", None)
-                    else None
-                )
-                firehose_metrics.capture_video_submit(
-                    prompt_id,
-                    alias=requested_model,
-                    workflow=workflow_name,
-                    size=f"{width}x{height}",
-                    seconds=seconds_val,
-                    key_name=key_name_for_event,
-                    prompt_text=prompt,
-                )
-                firehose_metrics.record_event(
-                    "video_submit",
-                    f"{requested_model} · {width}x{height} · {seconds_val:g}s",
-                    prompt_id=prompt_id,
-                    alias=requested_model,
-                    workflow=workflow_name,
-                    size=f"{width}x{height}",
-                    seconds=seconds_val,
-                    key=key_name_for_event,
-                )
-            except Exception:
-                pass
 
-            now = int(time.time())
-            response_headers = {}
-            if duration_adjustment_reason is not None:
-                response_headers["X-Duration-Adjusted"] = (
-                    f"requested={seconds_val:g} actual={actual_seconds:.4f} "
-                    f"reason={duration_adjustment_reason}"
-                )
-            # `object` and `seconds` are typed against the OpenAI Python SDK's
-            # `Video` model (object: Literal["video"], seconds: Union[str, ...]).
-            # Sending a string keeps the SDK's loose-construct parser happy
-            # across SDK versions; the precise float lives in `actual_seconds`.
-            seconds_str = str(int(seconds_val)) if float(seconds_val).is_integer() else str(seconds_val)
-            # Submit-time metadata for GET /v1/videos (list) and DELETE
-            # /v1/videos/{id} -- see _video_job_records' own docstring for why
-            # this can't just be read back from ComfyUI's /history.
-            try:
-                async with _video_progress_lock:
-                    _video_job_records[prompt_id] = {
-                        "model": public_model,
-                        "resolved_model": workflow_name,
-                        "size": f"{width}x{height}",
-                        "seconds": seconds_str,
-                        "actual_seconds": round(actual_seconds, 4),
-                        "created_at": now,
-                        "completed_at": None,
-                        "expires_at": now + 86400,
-                        "prompt": prompt,
-                        "error": None,
-                        "remixed_from_video_id": remixed_from_video_id,
-                        # Owner scoping for GET/list/DELETE/content -- mirrors
-                        # _asset_owner_key's existing image/audio asset model.
-                        "owner_key_hash": _asset_owner_key(auth_context),
-                        "deleted_at": None,
-                    }
-                _persist_video_record(prompt_id)
-            except Exception:
-                pass
-            payload = {
-                "id": video_id,
-                "object": "video",
-                "model": public_model,
-                "vivid_fish_resolved_model": workflow_name,
-                "status": "queued",
-                "progress": 0,
-                "created_at": now,
-                "completed_at": None,
-                "expires_at": now + 86400,
-                "prompt": prompt,
-                "remixed_from_video_id": remixed_from_video_id,
-                "error": None,
-                "size": f"{width}x{height}",
-                "seconds": seconds_str,
-                "actual_seconds": round(actual_seconds, 4),
-            }
-            return Response(
-                content=json.dumps(payload),
-                status_code=200,
-                media_type="application/json",
-                headers=response_headers,
-            )
+def _seconds_text(value: float) -> str:
+    return str(int(value)) if float(value).is_integer() else f"{value:.3f}".rstrip("0").rstrip(".")
 
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
-    except Exception as e:
-        return Response(
-            content=json.dumps({"error": {"message": f"Video submit error: {str(e)}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+
+async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) -> Response:
+    """POST /v1/videos/extensions -- Sora's extend shape: `{"video": {"id"}, "prompt", "seconds"}`.
+
+    The result is a new video: the source followed by `seconds` of new footage.
+    `seconds` on the result is the stitched total. Gateway fields: `context_seconds`
+    (overlap window, default 1), `model`, `seed`, `size`, `negative_prompt`, and
+    `extensions.com.vividfish.workflow.{state_ledger,context_strength}`.
+    """
+    if not COMFY_ENABLED:
+        return _json_error(503, "Video generation not enabled", kind="service_unavailable")
+    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    if service_response is not None:
+        return service_response
+    if not VIDEO_EXTEND_WORKFLOW:
+        return _json_error(
+            501, "Video extension is not configured on this gateway. Set videos.extend_workflow "
+            "in proxy_config.yml to enable it.", code="video_extend_not_configured")
+    try:
+        body = await _read_video_request_body(request)
+    except _VideoFormParseError as exc:
+        return _json_error(400, str(exc))
+    video = body.pop("video", None)
+    if video is None:
+        return _json_error(400, "video is required: pass {\"id\": \"video_...\"} or upload a file", param="video")
+    unknown = detect_unknown_top_level_fields(body, STANDARD_VIDEO_EXTEND_FIELDS)
+    if unknown:
+        name, reason = next(iter(unknown.items()))
+        return _json_error(400, reason, param=name, code="unknown_parameter")
+    if body.get("shots") is not None:
+        return _json_error(400, "shots is not supported on extensions; call extensions once per shot, "
+                           "or send shots to POST /v1/videos", param="shots", code="unsupported_parameter")
+    source_id = _asset_reference_video_id(video)
+    if source_id:
+        prompt_id = _prompt_id_from_video_id(source_id)
+        if not prompt_id:
+            return _json_error(400, "invalid video id", param="video")
+        async with _video_progress_lock:
+            if _video_job_blocked(prompt_id, auth_context):
+                return _json_error(404, "video_id not found", kind="not_found")
+    requested = body.get("model") or VIDEO_EXTEND_WORKFLOW
+    workflow_name, cfg = _chain_workflow_for(requested)
+    if not cfg:
+        return _json_error(400, f"model {requested!r} cannot extend videos; use video-long or ltx-2.5-long",
+                           param="model", code="video_extend_not_supported")
+    public_model = str(body.get("model") or (
+        (_video_job_records.get(_prompt_id_from_video_id(source_id) or "") or {}).get("model")
+        if source_id else None) or "video-long")
+    return await _submit_video_chain(
+        request, auth_context, body=body, workflow_name=workflow_name,
+        requested_model=requested, public_model=public_model,
+        source=video, source_video_id=source_id)
+
 
 
 async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> Response:
@@ -11033,6 +11424,7 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
             _persist_video_record(prompt_id)
         _video_progress.pop(prompt_id, None)
         _video_workflows.pop(prompt_id, None)
+        _video_chain_units.pop(prompt_id, None)
 
     return Response(
         content=json.dumps({"id": video_id, "object": "video", "deleted": True}),
@@ -19595,6 +19987,19 @@ async def videos_edit(request: Request):
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_edit(request, auth_context)
+
+
+@app.post("/openai/v1/videos/extensions", openapi_extra=VIDEOS_EXTEND_OPENAPI)
+@app.post("/v1/videos/extensions", openapi_extra=VIDEOS_EXTEND_OPENAPI)
+async def videos_extend(request: Request):
+    """Sora-shaped video extension: source video + prompt -> source plus new footage."""
+    auth_context = authenticate_request(request, "/v1/videos/extensions")
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/videos/extensions")
+    if policy_response is not None:
+        return policy_response
+    return await proxy_comfy_video_extend(request, auth_context)
 
 
 # =============================================================================

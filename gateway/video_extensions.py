@@ -32,6 +32,29 @@ STANDARD_VIDEO_CREATE_FIELDS: frozenset[str] = frozenset(
         "user",
         "extensions",
         "inputs",
+        # Long video (gateway extensions): storyboard and overlap window.
+        "shots",
+        "context_seconds",
+    }
+)
+
+# POST /v1/videos/extensions: Sora's extend shape plus gateway fields. `video`
+# is read separately.
+STANDARD_VIDEO_EXTEND_FIELDS: frozenset[str] = frozenset(
+    {
+        "prompt",
+        "model",
+        "size",
+        "seconds",
+        "seed",
+        "negative_prompt",
+        "context_seconds",
+        "shots",
+        "input_reference",
+        "response_format",
+        "user",
+        "extensions",
+        "inputs",
     }
 )
 

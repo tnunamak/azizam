@@ -36,22 +36,6 @@ class SizeAndLengthRuleTests(unittest.TestCase):
     def test_length_rule_ltx_is_8k_plus_1(self) -> None:
         self.assertEqual(proxy._seconds_to_length(5, 24), 121)
 
-    def test_long_form_chunk_arithmetic_matches_measured_ltx25_renders(self) -> None:
-        # Measured on the real workflow: LENGTH=2/LOOPS=0 -> 97 frames (2 chunks);
-        # LENGTH=8/LOOPS=2 -> 577 frames (3 chunks). One frame is lost per junction.
-        def frames(length_sec: int, loops: int) -> int:
-            chunk = round((length_sec * 24 - 1) / 8) * 8 + 1
-            return (chunk - 1) * (max(loops, 1) + 1) + 1
-
-        self.assertEqual(frames(2, 0), 97)
-        self.assertEqual(frames(8, 2), 577)
-        for seconds in (2, 4, 12, 30, 32, 50):
-            length_sec, loops, total = proxy._long_form_chunks(seconds, 24)
-            self.assertNotEqual(loops, 1)
-            self.assertAlmostEqual(frames(length_sec, loops) / 24, total, places=6)
-            self.assertLess(abs(total - seconds), 0.25, seconds)
-        self.assertEqual(proxy._long_form_chunks(32, 24)[:2], (8, 3))
-
     def test_length_rule_h3_is_17k_plus_5(self) -> None:
         self.assertEqual(proxy._seconds_to_length(5, 24, step=17, offset=5), 124)
         for seconds in (2, 3, 4, 6, 8, 10):
@@ -171,22 +155,11 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         workflows = proxy.config["videos"]["workflows"]
         self.assertEqual([w for w in workflows if "ltx-2.3" in w], [])
 
-    def test_long_workflow_graph_is_self_consistent(self) -> None:
-        graph = json.loads((ROOT / "workflows/videos/video-ltx-2.5-long.json").read_text())
-        meta = graph.pop("_meta")
-        for node_id, node in graph.items():
-            for value in node["inputs"].values():
-                if isinstance(value, list) and len(value) == 2 and isinstance(value[0], str):
-                    self.assertIn(value[0], graph, (node_id, value))
-        for key in ("prompt_node", "negative_prompt_node", "image_node", "image_strength_node",
-                    "save_node", "chunk_count_node", "chunk_length_node"):
-            self.assertIn(meta[key], graph, key)
-        for node_id in [*meta["size_node"], *meta["frame_rate_nodes"], *meta["seed_nodes"]]:
-            self.assertIn(node_id, graph, node_id)
-        files = {v for n in graph.values() for v in n["inputs"].values()
-                 if isinstance(v, str) and v.endswith(".safetensors")}
-        self.assertTrue(files)
-        self.assertTrue(all("ltx-2.5" in f for f in files), files)
+    def test_long_workflow_is_built_in_code_and_has_no_template_file(self) -> None:
+        cfg = proxy.config["videos"]["workflows"]["video-ltx-2.5-long"]
+        self.assertEqual(cfg["builder"], "ltx25_chain")
+        self.assertNotIn("file", cfg)
+        self.assertFalse((ROOT / "workflows/videos/video-ltx-2.5-long.json").exists())
 
     async def test_default_model_t2v_sets_64_multiple_size_and_frames(self) -> None:
         status, payload, graph = await self._create(
@@ -277,20 +250,22 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-i2v")
         self.assertEqual(graph["70"]["inputs"]["image"], "uploaded-ref.png")
 
-    async def test_long_workflow_sets_chunks_seed_and_first_frame(self) -> None:
+    async def test_long_workflow_builds_a_segment_chain(self) -> None:
         status, payload, graph = await self._create(
             {"model": "video-long", "prompt": "a long walk", "seconds": 32, "seed": 5}
         )
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["model"], "video-long")
         self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-long")
-        self.assertEqual(graph["1621"]["inputs"]["text"], "a long walk")
-        self.assertEqual(graph["1527"]["inputs"]["value"], 5)
-        length_sec, loops, total = proxy._long_form_chunks(32, 24)
-        self.assertEqual(graph["1583"]["inputs"]["value"], length_sec)
-        self.assertEqual(graph["1611"]["inputs"]["value"], loops)
-        self.assertAlmostEqual(total, 32, delta=0.5)
-        self.assertEqual(graph["1722"]["inputs"]["value"], 0)
+        self.assertEqual(graph["s0_text"]["inputs"]["text"], "a long walk")
+        self.assertEqual(graph["s0_noise"]["inputs"]["noise_seed"], 5)
+        self.assertEqual(graph["s1_noise"]["inputs"]["noise_seed"], 6)
+        # 32 s = a first 8 s segment and three added segments.
+        self.assertIn("s3_sample", graph)
+        self.assertNotIn("s4_sample", graph)
+        self.assertEqual(payload["segments"], 4)
+        self.assertAlmostEqual(payload["total_seconds"], 32, delta=0.4)
+        self.assertNotIn("s0_i2v", graph)
 
     async def test_long_workflow_i2v_pins_first_frame(self) -> None:
         status, payload, graph = await self._create(
@@ -300,8 +275,8 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["model"], "ltx-2.3-long")
         self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-long")
-        self.assertEqual(graph["444"]["inputs"]["image"], "uploaded-ref.png")
-        self.assertEqual(graph["1722"]["inputs"]["value"], 1.0)
+        self.assertEqual(graph["s0_image"]["inputs"]["image"], "uploaded-ref.png")
+        self.assertEqual(graph["s0_i2v"]["inputs"]["strength"], 1.0)
 
 
 if __name__ == "__main__":

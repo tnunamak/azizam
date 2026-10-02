@@ -732,6 +732,13 @@ videos:
   # `video-remix` alias below (and in model_aliases.videos.stable) pointing at
   # the same workflow.
   remix_workflow: video-bernini-r-remix
+  # Long video. POST /v1/videos/extensions runs this chain workflow (unset: 501
+  # video_extend_not_configured). `max_total_seconds` caps the stitched length of
+  # any chain, source included; beyond it requests get 400
+  # video_total_length_exceeded. Segments are at most `chain_segment_seconds`.
+  extend_workflow: video-ltx-2.5-long
+  max_total_seconds: 40
+  chain_segment_seconds: 8
   workflows:
     # LTX-2.5 (default). Separate t2v/i2v graphs: a request with input_reference
     # is routed to `i2v_workflow`. Width/height are floored to multiples of 64
@@ -741,6 +748,7 @@ videos:
     video-ltx-2.5-t2v:
       file: workflows/videos/video-ltx-2.5-t2v.json
       i2v_workflow: video-ltx-2.5-i2v
+      chain_workflow: video-ltx-2.5-long  # seconds > max_seconds, or `shots`, runs the chain
       min_seconds: 1
       max_seconds: 10
       max_size: 1280x704
@@ -749,6 +757,7 @@ videos:
       frame_rate: 24
     video-ltx-2.5-i2v:
       file: workflows/videos/video-ltx-2.5-i2v.json
+      chain_workflow: video-ltx-2.5-long
       requires_input_reference: true
       min_seconds: 1
       max_seconds: 10
@@ -814,21 +823,19 @@ videos:
       length_step: 4
       length_offset: 1
       max_length: 81
-    # LTX-2.5 long form (30-50 s). Same chunked single-pass loop the retired
-    # LTX-2.3 long workflow used: chunk 0 plus max(LOOPS, 1) loop chunks, each
-    # chained to the previous one with guide frames and an audio mask. Chunks
-    # are single-stage (no x2 upscale), so output is ~960x512 by default. The
-    # size follows the aspect ratio of the placeholder first frame, floored to
-    # a multiple of 32. Minimum is ~2.08 s; use ltx-2.5 for shorter clips.
+    # LTX-2.5 long video. Built in code (gateway/video_extend.py), not from a
+    # template file: a first segment (or a source video) followed by added
+    # segments, each conditioned on the last ~1 s (a latent guide), with its own
+    # prompt. Single stage (no x2 upscale), 960x512 by default. Serves
+    # `video-long` / `ltx-2.5-long`, `shots`, `seconds` past 10 s on ltx-2.5, and
+    # POST /v1/videos/extensions. Total length is capped by videos.max_total_seconds.
     video-ltx-2.5-long:
-      file: workflows/videos/video-ltx-2.5-long.json
-      min_seconds: 2
-      max_seconds: 50
+      builder: ltx25_chain
+      min_seconds: 1
+      max_seconds: 40
       max_size: 1280x720
-      default_size: 960x544
+      default_size: 960x512
       frame_rate: 24
-      # Multi-chunk granularity. Drift typically <0.21s; surfaced via
-      # X-Duration-Adjusted header.
     video-wan-2.2-ti2v-5b-q8:
       file: workflows/video-wan-2.2-ti2v-5b-q8.json
       min_seconds: 1

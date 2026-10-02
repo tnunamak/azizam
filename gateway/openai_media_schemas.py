@@ -726,3 +726,47 @@ VIDEOS_EDIT_OPENAPI: JsonObjectSchema = {
         **_common_error_responses(),
     },
 }
+
+
+VIDEOS_EXTEND_OPENAPI: JsonObjectSchema = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["prompt", "video"],
+                    "properties": {
+                        "prompt": {"type": "string", "description": "What happens in the new footage."},
+                        "video": {
+                            "type": "object",
+                            "required": ["id"],
+                            "properties": {"id": {"type": "string"}},
+                        },
+                        "seconds": {"type": ["string", "number"], "description": "Seconds to add."},
+                        "context_seconds": {"type": "number", "description": "Overlap window taken from the source end (default 1)."},
+                    },
+                    "additionalProperties": True,
+                }
+            },
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "required": ["prompt", "video"],
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "video": {"type": "string", "format": "binary"},
+                    },
+                    "additionalProperties": True,
+                }
+            },
+        },
+    },
+    "responses": {
+        "200": {
+            "description": "New video job: the source followed by the new footage. `seconds` is the stitched total.",
+            "content": {"application/json": {"schema": _video_status_schema()}},
+        },
+        **_common_error_responses(),
+    },
+}
