@@ -116,6 +116,11 @@ class DrainState:
         self._drain_until: float | None = None  # monotonic deadline
         self._drain_since_wall: float | None = None
         self._reason = ""
+        # Quiet-window bookkeeping for multi-step agent turns: the gap between
+        # two chat calls of one turn is a tool step, not idleness.
+        self._chat_last_start: float | None = None  # monotonic
+        self._chat_last_end: float | None = None  # monotonic
+        self._chat_last_activity_wall: float | None = None
         # name -> callable returning the live count of in-process async jobs.
         self._job_counters: dict[str, Callable[[], int]] = {}
 
@@ -139,7 +144,11 @@ class DrainState:
         with self._lock:
             self._next_id += 1
             token = self._next_id
-            self._active[token] = _Entry(method, path, classify(path), self._clock())
+            entry = _Entry(method, path, classify(path), self._clock())
+            self._active[token] = entry
+            if entry.kind == "chat":
+                self._chat_last_start = entry.started
+                self._chat_last_activity_wall = self._wall()
             return token
 
     def mark_stream(self, token: int) -> None:
@@ -150,7 +159,10 @@ class DrainState:
 
     def end(self, token: int) -> None:
         with self._lock:
-            self._active.pop(token, None)
+            entry = self._active.pop(token, None)
+            if entry is not None and entry.kind == "chat":
+                self._chat_last_end = self._clock()
+                self._chat_last_activity_wall = self._wall()
 
     # -- drain flag ---------------------------------------------------------
 
@@ -212,6 +224,15 @@ class DrainState:
                 if draining and self._drain_until is not None
                 else None
             )
+            chat_active_now = chat > 0
+            if chat_active_now:
+                quiet_for: float | None = 0.0
+            else:
+                marks = [m for m in (self._chat_last_start, self._chat_last_end) if m is not None]
+                quiet_for = round(max(0.0, now - max(marks)), 1) if marks else None
+            last_chat_wall = self._chat_last_activity_wall
+            if chat_active_now:
+                last_chat_wall = self._wall()
             since = self._drain_since_wall if draining else None
             reason = self._reason if draining else ""
         async_jobs = sum(jobs.values())
@@ -221,6 +242,10 @@ class DrainState:
             "expires_in_s": expires_in,
             "reason": reason,
             "retry_after_s": _retry_after_s(),
+            # Wall-clock time of the last chat start or finish (now, while a
+            # chat is running); None if no chat ran since this process started.
+            "last_chat_activity_at": last_chat_wall,
+            "seconds_since_chat_activity": quiet_for,
             "active": {
                 "requests": requests,
                 "streams": streams,

@@ -46,6 +46,42 @@ class DrainStateTests(unittest.TestCase):
         state.end(b)  # ending twice is harmless
         self.assertTrue(state.snapshot()["idle"])
 
+    def test_chat_quiet_window_tracking(self) -> None:
+        clock = FakeClock()
+        wall = FakeClock()
+        wall.now = 5000.0
+        state = drain.DrainState(clock=clock, wall_clock=wall)
+        snap = state.snapshot()
+        self.assertIsNone(snap["last_chat_activity_at"])
+        self.assertIsNone(snap["seconds_since_chat_activity"])
+
+        media = state.begin("POST", "/v1/images/generations")  # media is not chat activity
+        clock.now += 5
+        self.assertIsNone(state.snapshot()["seconds_since_chat_activity"])
+        state.end(media)
+
+        token = state.begin("POST", "/v1/chat/completions")
+        clock.now += 40  # a long stream: still "active", never quiet
+        wall.now += 40
+        snap = state.snapshot()
+        self.assertEqual(snap["seconds_since_chat_activity"], 0.0)
+        self.assertEqual(snap["last_chat_activity_at"], 5040.0)
+        state.end(token)
+        clock.now += 7
+        wall.now += 7
+        snap = state.snapshot()
+        self.assertEqual(snap["seconds_since_chat_activity"], 7.0)
+        self.assertEqual(snap["last_chat_activity_at"], 5040.0)
+        # The next step of the agent turn resets the window.
+        state.begin("POST", "/v1/chat/completions")
+        clock.now += 1
+        self.assertEqual(state.snapshot()["seconds_since_chat_activity"], 0.0)
+
+    def test_reads_do_not_count_as_chat_activity(self) -> None:
+        state = drain.DrainState()
+        state.end(state.begin("GET", "/v1/models"))
+        self.assertIsNone(state.snapshot()["seconds_since_chat_activity"])
+
     def test_async_job_counters_count_as_in_flight(self) -> None:
         state = drain.DrainState()
         state.register_job_counter("video", lambda: 2)

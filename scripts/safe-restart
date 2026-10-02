@@ -4,14 +4,19 @@
     scripts/safe-restart                 drain the gateway, wait, restart it
     scripts/safe-restart --llama         drain chat, wait, restart llama-bee
     scripts/safe-restart --dry-run       only show what is in flight
+    scripts/safe-restart --quiet-seconds 0   skip the agent quiet-window wait
     scripts/safe-restart --force         skip the wait (kills in-flight work)
 
 Restart the gateway ONLY with this script. A plain `systemctl --user restart
 openai-proxy` cuts every streaming reply and sync media call that is running.
 
-The script asks the gateway to drain (new work gets 503 + Retry-After), waits
-until nothing is in flight or the deadline passes, restarts the unit, waits
-for health, and leaves draining off. It needs the loopback admin endpoint
+The script first waits, while the gateway still ACCEPTS work, until nothing is
+in flight and no chat request started or finished for --quiet-seconds (default
+20). An agent turn is a chain of chat calls with tool steps between them, so
+"nothing in flight" is not enough. Then it asks the gateway to drain (new work
+gets 503 + Retry-After), waits for any request that slipped in, restarts the
+unit, waits for health, and leaves draining off. The deadline covers both
+waits. It needs the loopback admin endpoint
 GET/POST /admin/api/drain and an admin bearer key from the environment
 (AI_GATEWAY_ADMIN_KEY, VIVID_ADMIN_API_KEY or OPENAI_PROXY_ADMIN_KEY) or a
 key file (AI_GATEWAY_ADMIN_KEY_FILE, default ~/.config/openai-proxy/admin-key).
@@ -55,6 +60,7 @@ EXIT_INTERRUPTED = 130
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:5000"
 DEFAULT_LLAMA_URL = "http://127.0.0.1:5051"
 DEFAULT_TIMEOUT_S = 900.0
+DEFAULT_QUIET_S = 20.0
 TOKEN_ENV_NAMES = ("AI_GATEWAY_ADMIN_KEY", "VIVID_ADMIN_API_KEY", "OPENAI_PROXY_ADMIN_KEY")
 MAX_TTL_S = 7200.0
 
@@ -233,28 +239,56 @@ class Restarter:
             return None
         return sum(1 for slot in payload if isinstance(slot, dict) and slot.get("is_processing"))
 
-    def wait_idle(self, snapshot: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
-        deadline = self.clock() + self.args.timeout
+    @staticmethod
+    def _quiet_gap(snapshot: Mapping[str, Any], quiet: float) -> tuple[float, bool]:
+        """Seconds of quiet still needed, and whether the gateway reports it at all."""
+        seen = snapshot.get("seconds_since_chat_activity", "missing")
+        if seen == "missing":
+            return 0.0, False  # an older gateway: no field
+        if seen is None:
+            return 0.0, True  # no chat since the process started
+        return max(0.0, quiet - float(seen)), True
+
+    def wait_idle(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        timeout: float | None = None,
+        quiet: float = 0.0,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Wait until nothing is in flight and (if ``quiet`` > 0) no chat ran for ``quiet`` s."""
+        deadline = self.clock() + (self.args.timeout if timeout is None else timeout)
         last_report = -1e9
-        last_count: tuple[int, int | None] | None = None
+        last_state: tuple[int, int | None, bool] | None = None
         warned_slots = False
+        warned_quiet = False
         while True:
             busy = self._busy_count(snapshot)
             slots = self.llama_busy_slots() if self.args.llama else 0
             if self.args.llama and slots is None and not warned_slots:
                 self.warn("llama /slots is unavailable; relying on the gateway's chat count only")
                 warned_slots = True
-            if busy == 0 and not slots:
+            gap, reported = self._quiet_gap(snapshot, quiet) if quiet > 0 else (0.0, True)
+            if quiet > 0 and not reported and not warned_quiet:
+                self.warn("the running gateway does not report chat activity; skipping the quiet-window check")
+                warned_quiet = True
+            if busy == 0 and not slots and gap <= 0:
                 return True, snapshot
             now = self.clock()
             if now >= deadline:
                 return False, snapshot
-            if (busy, slots) != last_count or now - last_report >= 30:
+            state = (busy, slots, gap > 0)
+            if state != last_state or now - last_report >= 30:
                 left = max(0, deadline - now)
                 extra = f", llama busy slots: {slots}" if self.args.llama and slots else ""
-                self.say(f"waiting: {busy} in flight{extra} ({left:.0f}s until deadline)")
-                last_count = (busy, slots)
+                parts = []
+                if busy or slots:
+                    parts.append(f"{busy} in flight{extra}")
+                if gap > 0:
+                    parts.append(f"waiting for {quiet:.0f}s without chat activity ({gap:.0f}s more)")
+                self.say("waiting: " + "; ".join(parts) + f" ({left:.0f}s until deadline)")
                 last_report = now
+            last_state = state
             self.sleep(self.args.poll)
             try:
                 snapshot = self.get_drain()
@@ -324,6 +358,27 @@ class Restarter:
         if args.dry_run:
             return self._dry_run(snapshot)
 
+        quiet = 0.0 if args.force else args.quiet_seconds
+        start = self.clock()
+        if quiet > 0:
+            # Phase 1: keep ACCEPTING work. An agent turn is a chain of chat
+            # calls with tool steps in between; refusing the next call would
+            # break the turn. Wait for a gap, then drain and restart at once.
+            self.say(
+                f"waiting for the gateway to be idle and quiet (no chat activity for {quiet:.0f}s); "
+                "new requests are still accepted"
+            )
+            try:
+                ok, snapshot = self.wait_idle(self.get_drain_or(snapshot), quiet=quiet)
+            except KeyboardInterrupt:
+                self.say("interrupted")
+                return EXIT_INTERRUPTED
+            if not ok:
+                self._report_deadline(snapshot, target)
+                self.say(f"NOT restarting {target}. Nothing was drained.")
+                return EXIT_BUSY
+            self.say("idle and quiet")
+
         busy = self._busy_count(snapshot)
         self.say(
             f"requesting drain; {busy} in flight"
@@ -343,11 +398,12 @@ class Restarter:
             if args.force:
                 self._report_force(snapshot)
             else:
-                ok, snapshot = self.wait_idle(self.get_drain_or(snapshot))
+                # Phase 2: a request may have slipped in before the flag was set.
+                # Give it the rest of the deadline (at least 30 s) to finish.
+                remaining = max(30.0, args.timeout - (self.clock() - start))
+                ok, snapshot = self.wait_idle(self.get_drain_or(snapshot), timeout=remaining)
                 if not ok:
-                    self.say(f"deadline of {args.timeout:.0f}s passed; still running:")
-                    for line in describe_inflight(snapshot) or ["  (nothing listed)"]:
-                        self.say(line)
+                    self._report_deadline(snapshot, target)
                     self.say(f"NOT restarting {target}. Drain is being switched off.")
                     self._undrain_quietly()
                     return EXIT_BUSY
@@ -356,6 +412,14 @@ class Restarter:
             self.say("interrupted")
             self._undrain_quietly()
             return EXIT_INTERRUPTED
+
+    def _report_deadline(self, snapshot: Mapping[str, Any], target: str) -> None:
+        self.say(f"deadline of {self.args.timeout:.0f}s passed; still running:")
+        for line in describe_inflight(snapshot) or ["  (nothing listed)"]:
+            self.say(line)
+        seen = snapshot.get("seconds_since_chat_activity")
+        if seen is not None and self.args.quiet_seconds > 0 and seen < self.args.quiet_seconds:
+            self.say(f"  last chat activity {float(seen):.0f}s ago (quiet window is {self.args.quiet_seconds:.0f}s)")
 
     def get_drain_or(self, fallback: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -449,6 +513,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="restart without waiting (or without a drain endpoint). KILLS in-flight requests",
     )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="seconds to wait for in-flight work (default 900)")
+    parser.add_argument(
+        "--quiet-seconds",
+        type=float,
+        default=DEFAULT_QUIET_S,
+        help="also wait until no chat request started or finished for this long, "
+        "so a multi-step agent turn is not cut between tool calls (default 20; 0 disables)",
+    )
     parser.add_argument("--ignore-async-jobs", action="store_true", help="do not wait for async media jobs (they resume from the start)")
     parser.add_argument("--health-timeout", type=float, default=None, help="seconds to wait for health after restart (default 120; 600 with --llama)")
     parser.add_argument("--url", default=os.environ.get("AI_GATEWAY_URL", DEFAULT_GATEWAY_URL), help="gateway base URL (loopback)")
@@ -464,6 +535,8 @@ def build_parser() -> argparse.ArgumentParser:
 def validate(args: argparse.Namespace) -> str | None:
     if args.timeout <= 0:
         return "--timeout must be positive"
+    if args.quiet_seconds < 0:
+        return "--quiet-seconds must be zero or positive"
     if args.poll <= 0:
         return "--poll must be positive"
     host = urlparse(args.url).hostname

@@ -17,9 +17,11 @@ _loader.exec_module(sr)
 TOKEN = "test-admin-token-123"
 
 
-def snap(*, draining=False, requests=0, streams=0, chat=0, jobs=None, inflight=None):
+def snap(*, draining=False, requests=0, streams=0, chat=0, jobs=None, inflight=None, quiet="unset"):
     jobs = jobs or {}
+    extra = {} if quiet == "unset" else {"seconds_since_chat_activity": quiet}
     return {
+        **extra,
         "draining": draining,
         "active": {
             "requests": requests,
@@ -146,7 +148,7 @@ class SafeRestartTests(unittest.TestCase):
         busy = snap(requests=1, streams=1, chat=1, inflight=[
             {"method": "POST", "path": "/v1/chat/completions", "kind": "chat", "stream": True, "age_s": 700}])
         world = World([busy])
-        code = world.invoke("--timeout", "5")
+        code = world.invoke("--timeout", "5", "--quiet-seconds", "0")
         self.assertEqual(code, sr.EXIT_BUSY)
         self.assertEqual(world.commands, [])
         self.assertIn("/v1/chat/completions", world.text)
@@ -273,10 +275,89 @@ class SafeRestartTests(unittest.TestCase):
             raise KeyboardInterrupt
 
         world.sleep = boom
-        code = world.invoke()
+        code = world.invoke("--quiet-seconds", "0")
         self.assertEqual(code, sr.EXIT_INTERRUPTED)
         self.assertEqual(world.commands, [])
         self.assertEqual(world.posts()[-1]["draining"], False)
+
+    def test_keyboard_interrupt_during_quiet_wait_never_drained(self) -> None:
+        world = World([snap(requests=1, chat=1)])
+
+        def boom(seconds):
+            raise KeyboardInterrupt
+
+        world.sleep = boom
+        code = world.invoke()
+        self.assertEqual(code, sr.EXIT_INTERRUPTED)
+        self.assertEqual(world.commands, [])
+        self.assertEqual(world.posts(), [])
+
+
+class QuietWindowTests(unittest.TestCase):
+    def test_waits_for_quiet_before_draining(self) -> None:
+        # Idle, but the last chat call was 3 s ago: an agent may be between tool steps.
+        world = World([snap(quiet=3.0), snap(quiet=8.0), snap(quiet=21.0)])
+        code = world.invoke("--quiet-seconds", "20")
+        self.assertEqual(code, sr.EXIT_OK, world.text)
+        self.assertIn("without chat activity", world.text)
+        self.assertIn("idle and quiet", world.text)
+        # No drain request may precede the quiet confirmation.
+        first_post = next(i for i, c in enumerate(world.calls) if c[0] == "POST")
+        gets_before = [c for c in world.calls[:first_post] if c[0] == "GET" and c[1].endswith("/admin/api/drain")]
+        self.assertGreaterEqual(len(gets_before), 3)
+        self.assertEqual(world.posts()[0]["draining"], True)
+        self.assertEqual(len(world.commands), 1)
+
+    def test_new_chat_during_quiet_wait_restarts_the_clock(self) -> None:
+        world = World([snap(quiet=15.0), snap(requests=1, chat=1, quiet=0.0), snap(quiet=2.0), snap(quiet=25.0)])
+        code = world.invoke("--quiet-seconds", "20")
+        self.assertEqual(code, sr.EXIT_OK, world.text)
+        self.assertIn("1 in flight", world.text)
+        self.assertEqual(world.posts()[0]["draining"], True)
+        self.assertEqual(len(world.commands), 1)
+
+    def test_deadline_in_quiet_wait_leaves_gateway_undrained(self) -> None:
+        world = World([snap(quiet=1.0)])
+        code = world.invoke("--quiet-seconds", "20", "--timeout", "10")
+        self.assertEqual(code, sr.EXIT_BUSY, world.text)
+        self.assertEqual(world.commands, [])
+        self.assertEqual(world.posts(), [])  # never drained: agents were never refused
+        self.assertIn("last chat activity", world.text)
+        self.assertIn("Nothing was drained", world.text)
+
+    def test_zero_disables_the_quiet_check(self) -> None:
+        world = World([snap(quiet=0.5)])
+        code = world.invoke("--quiet-seconds", "0")
+        self.assertEqual(code, sr.EXIT_OK, world.text)
+        self.assertEqual(world.sleeps, 0)
+
+    def test_force_skips_the_quiet_check(self) -> None:
+        world = World([snap(quiet=0.5)])
+        self.assertEqual(world.invoke("--force"), sr.EXIT_OK, world.text)
+        self.assertEqual(world.sleeps, 0)
+
+    def test_older_gateway_without_the_field_warns_and_proceeds(self) -> None:
+        world = World([snap()])
+        code = world.invoke()
+        self.assertEqual(code, sr.EXIT_OK, world.text)
+        self.assertIn("does not report chat activity", world.text)
+
+    def test_never_chatted_counts_as_quiet(self) -> None:
+        world = World([snap(quiet=None)])
+        self.assertEqual(world.invoke(), sr.EXIT_OK, world.text)
+        self.assertEqual(world.sleeps, 0)
+
+    def test_request_slipping_in_after_quiet_is_waited_for_after_drain(self) -> None:
+        # Quiet at the check, then a chat appears before the drain flag lands.
+        busy = snap(requests=1, chat=1, quiet=0.0)
+        world = World([snap(quiet=30.0), snap(quiet=30.0), busy, snap(quiet=0.5)])
+        code = world.invoke("--quiet-seconds", "20")
+        self.assertEqual(code, sr.EXIT_OK, world.text)
+        self.assertEqual(world.posts()[0]["draining"], True)
+
+    def test_negative_quiet_is_a_usage_error(self) -> None:
+        args = sr.build_parser().parse_args(["--quiet-seconds", "-1"])
+        self.assertIn("quiet", sr.validate(args))
 
 
 class LlamaModeTests(unittest.TestCase):
