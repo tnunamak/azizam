@@ -4367,6 +4367,7 @@ async def _dispatch_selected_stt_route(
     its own service); with no readable ``model`` it is the capability default.
     """
     selected_service: str | None = None
+    fallbacks: tuple[tuple[str, str | None], ...] = ()
     model_unpeeked = False
     if "multipart/form-data" in request.headers.get("content-type", ""):
         peeked_model, request = await speech_stream.peek_multipart_field(request, "model")
@@ -4378,6 +4379,7 @@ async def _dispatch_selected_stt_route(
                 return model_compatibility_error(error)
             if peeked.alias is not None and peeked.alias.engine:
                 selected_service = peeked.alias.service
+                fallbacks = peeked.alias.fallbacks
     try:
         execution = _stt_execution_snapshot(operation, selected_service)
     except stt_chunking.SttConfigurationError:
@@ -4393,7 +4395,30 @@ async def _dispatch_selected_stt_route(
     decision = _apply_selected_stt_policy(receipt, auth_context, operation=operation)
     if decision is not None and decision.denied:
         return _policy_denied_response(decision)
+    model_override: str | None = None
     not_ready = await _ensure_speech_service_ready(execution.service_id, label="STT engine")
+    if not_ready is not None:
+        # The picked engine will not start (GPU0 full, unit failed). A tier lists a fallback engine
+        # after it; try those in order. A name that is an engine id has none and fails as before.
+        for fallback_engine, fallback_service in fallbacks:
+            if not fallback_service:
+                continue
+            try:
+                fallback_execution = _stt_execution_snapshot(operation, fallback_service)
+            except stt_chunking.SttConfigurationError:
+                continue
+            if fallback_execution is None:
+                continue
+            fallback_receipt = _stt_receipt(request=request, auth_context=auth_context, operation=operation, service_id=fallback_execution.service_id)
+            decision = _apply_selected_stt_policy(fallback_receipt, auth_context, operation=operation)
+            if decision is not None and decision.denied:
+                continue
+            fallback_not_ready = await _ensure_speech_service_ready(fallback_execution.service_id, label="STT engine")
+            if fallback_not_ready is not None:
+                continue
+            print(f"[proxy] STT engine on {execution.service_id} could not start; serving from {fallback_engine}", flush=True)
+            execution, receipt, model_override, not_ready = fallback_execution, fallback_receipt, fallback_engine, None
+            break
     if not_ready is not None:
         return not_ready
     return await proxy_stt_request(
@@ -4403,6 +4428,7 @@ async def _dispatch_selected_stt_route(
         execution_snapshot=execution,
         route_receipt=receipt,
         model_unpeeked=model_unpeeked,
+        model_override=model_override,
     )
 
 
@@ -4477,6 +4503,7 @@ async def proxy_stt_request(
     execution_snapshot: stt_chunking.SttExecutionConfig | None = None,
     route_receipt: RouteReceipt | None = None,
     model_unpeeked: bool = False,
+    model_override: str | None = None,
 ) -> Response:
     """Forward one bounded STT request using one selected service snapshot.
 
@@ -4538,7 +4565,7 @@ async def proxy_stt_request(
             if not uploads:
                 return openai_error_response("No file part in the request.", status_code=400, param="file", code="missing_file")
 
-            requested_model = str(parsed.form.get("model", "whisper-1"))
+            requested_model = model_override or str(parsed.form.get("model", "whisper-1"))
             model_resolution = resolve_model_for_operation(operation, requested_model)
             effective_model = model_resolution.effective_model or execution.default_model or STT_BACKEND_MODEL
             if model_resolution.is_openai_alias and execution.default_model:

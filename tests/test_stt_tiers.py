@@ -29,7 +29,9 @@ class SttServiceSelectionTests(SttCase):
         self.assertEqual(resp.json()["text"], "hello world")
 
     def test_openai_names_follow_the_alias_tiers(self) -> None:
-        cases = {"whisper-1": 5092, "stt": 5092, "stt-quality": 5092, "gpt-4o-mini-transcribe": 8012, "canary": 8013}
+        # Parakeet on GPU0 (8017) leads stt and stt-quality; the CPU Parakeet (5092) is the engine id `parakeet`.
+        cases = {"whisper-1": 8017, "stt": 8017, "stt-quality": 8017, "parakeet-tdt-0.6b": 8017, "gpt-4o-mini-transcribe": 8012,
+                 "canary": 8013, "parakeet-gpu": 8017, "parakeet": 5092}
         seen = self._json_upstream()
         for model, port in cases.items():
             with self.subTest(model=model):
@@ -39,8 +41,14 @@ class SttServiceSelectionTests(SttCase):
 
     def test_unknown_model_uses_the_default_service(self) -> None:
         seen = self._json_upstream()
-        self.assertEqual(self._post([("model", "parakeet-tdt-0.6b-v3")]).status_code, 200)
+        self.assertEqual(self._post([("model", "some-other-model")]).status_code, 200)
         self.assertEqual(seen[0].url.port, 5092)
+
+    def test_gpu_parakeet_gets_its_own_model_id_and_chunk_limits(self) -> None:
+        seen = self._json_upstream()
+        self.assertEqual(self._post([("model", "whisper-1")]).status_code, 200)
+        self.assertIn(b"\r\n\r\nparakeet-tdt-0.6b-v3\r\n", seen[0].content)
+        self.assertEqual(seen[0].url.port, 8017)
 
     def test_model_after_a_small_file_still_selects_the_service(self) -> None:
         seen = self._json_upstream()
@@ -75,17 +83,44 @@ class SttServiceSelectionTests(SttCase):
         self.assertEqual(self._post([("model", "stt-fast")]).status_code, 200)
         self.ensure.assert_awaited_once_with("stt-nemotron", None)
 
-    def test_default_service_with_external_lifecycle_is_not_probed(self) -> None:
+    def test_always_on_service_with_external_lifecycle_is_not_probed(self) -> None:
         self._json_upstream()
-        self.assertEqual(self._post([("model", "whisper-1")]).status_code, 200)
+        self.assertEqual(self._post([("model", "parakeet")]).status_code, 200)
         self.health.assert_not_awaited()
 
-    def test_engine_that_will_not_start_is_a_503(self) -> None:
+    def test_engine_by_id_that_will_not_start_is_a_503(self) -> None:
         self.health.return_value = False
         self.ensure.return_value = False
-        resp = self._post([("model", "stt-fast")])
-        self.assertEqual(resp.status_code, 503)
-        self.assertEqual(resp.json()["error"]["code"], "backend_unavailable")
+        for model in ("nemotron-streaming", "parakeet-gpu"):
+            with self.subTest(model=model):
+                resp = self._post([("model", model)])
+                self.assertEqual(resp.status_code, 503)
+                self.assertEqual(resp.json()["error"]["code"], "backend_unavailable")
+
+    def test_a_tier_falls_back_to_the_next_engine_when_the_first_will_not_start(self) -> None:
+        self.health.return_value = False
+        self.ensure.return_value = False        # GPU0 is full: no on-demand unit comes up
+        seen = self._json_upstream()
+        for model, first_port in (("whisper-1", 8017), ("stt-fast", 8012)):
+            with self.subTest(model=model):
+                seen.clear()
+                resp = self._post([("model", model)])
+                self.assertEqual(resp.status_code, 200, resp.text)
+                self.assertEqual([r.url.port for r in seen], [5092])  # the always-on CPU Parakeet answered
+                # ... with the CPU engine's own model id, not the failed engine's.
+                self.assertIn(b"\r\n\r\nparakeet-tdt-0.6b-v3\r\n", seen[0].content)
+                self.ensure.assert_any_await({8017: "stt-parakeet-gpu", 8012: "stt-nemotron"}[first_port], None)
+
+    def test_a_tier_with_no_working_engine_is_a_503(self) -> None:
+        self.health.return_value = False
+        self.ensure.return_value = False
+        self.cfg["backends"]["stt"]["lifecycle"] = {"driver": "systemd", "driver_config": {"unit": "stt.service", "scope": "user"}}
+        resp = self._post([("model", "whisper-1")])
+        self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (503, "backend_unavailable"))
+
+    def test_the_fallback_is_listed_in_the_alias_resolution(self) -> None:
+        body = self.client.get("/gateway/v1/aliases/resolve", params={"operation": "transcriptions", "model": "stt"}).json()
+        self.assertEqual((body["engine"], body["fallback_engines"]), ("parakeet-gpu", ["parakeet"]))
 
     def test_undeployed_engine_by_name_is_still_a_coded_400(self) -> None:
         del self.cfg["backends"]["stt-canary"]

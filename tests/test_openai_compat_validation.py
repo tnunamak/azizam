@@ -305,7 +305,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
         with stt_translation_capability_enabled(), patch.object(proxy.httpx, "AsyncClient", _FakeSTTAsyncClient):
             resp = self.client.post(
                 "/v1/audio/translations",
-                data={"model": "whisper-1"},
+                data={"model": "parakeet"},  # the always-on CPU engine; whisper-1 now leads with an on-demand GPU engine
                 files={"file": ("sample.wav", b"RIFF....WAVE", "audio/wav")},
             )
 

@@ -415,6 +415,42 @@ backends:
         unit: canary-stt.service
         health_endpoint: /health
         health_timeout_s: 90
+  stt-parakeet-gpu:
+    name: parakeet-gpu-stt
+    native_passthrough: true
+    host: 127.0.0.1
+    port: 8017
+    health_endpoint: /health
+    timeout: 120
+    # Higher number = lower priority: the always-on default service keeps winning capability lookups.
+    priority: 200
+    role: standby
+    note: "On-demand audio.cpp Parakeet TDT 0.6B v3 (q8) on GPU0: CPU-Parakeet accuracy at 5-9x the speed; weights unload after 5 min idle; started by the gateway lifecycle driver."
+    capabilities:
+      - audio
+      - transcriptions
+    managed: false
+    default_model: parakeet-tdt-0.6b-v3
+    # Measured on 313 s and 1576 s read speech (WER): 15 s 1.7/3.3%, 20 s 1.5/3.8%, 30 s 1.5/3.3%, 45 s -/3.8%,
+    # 60 s 2.0/4.8%, 90 s 2.0/5.4%, 200 s 6.0%; one 313 s request fails outright. Shorter than the 60 s the CPU
+    # service needs: cut at silences into about 30 s pieces.
+    chunking:
+      enabled: true
+      threshold_seconds: 40
+      target_seconds: 30
+      silence_search_seconds: 10
+      max_duration_seconds: 3600
+      max_segments: 128
+      spool_dir: data/stt-spool
+      backend_timeout_seconds: 180
+      deadline_seconds: 360
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: parakeet-gpu-stt.service
+        health_endpoint: /health
+        health_timeout_s: 90
   stt-diarize:
     name: diarize-stt
     native_passthrough: true
@@ -1020,6 +1056,12 @@ model_aliases:
         service: stt
         model: parakeet-tdt-0.6b-v3
         description: NVIDIA Parakeet TDT 0.6B v3 (CPU service; long audio is chunked by the gateway)
+      parakeet-gpu:
+        service: stt-parakeet-gpu
+        model: parakeet-tdt-0.6b-v3
+        upload_format: wav16k      # audio.cpp reads only 16 kHz mono WAV; the gateway converts uploads
+        placement: "audio.cpp on GPU0 (about 2.3-3.2 GB while loaded; weights unload after 5 min idle), on-demand unit"
+        description: "Parakeet TDT 0.6B v3 q8 on GPU0 (same model as `parakeet`, no blanked spans: 5 min set WER 1.5% in 1.1 s vs 2.05% in 13.8 s on CPU)"
       nemotron-streaming:
         service: stt-nemotron
         model: nemotron-3.5-asr-streaming-0.6b          # served in offline mode: fastest final text
@@ -1041,14 +1083,16 @@ model_aliases:
         placement: "CPU only (about 1.5 GB RAM; exits after 15 min idle), on-demand unit; words come from the Parakeet service"
         description: "Nemotron 3 Diarization (speakers) + Parakeet TDT (word timestamps): gpt-4o-transcribe-diarize shape, diarized_json"
     stable:
-      stt: [parakeet]
+      # Parakeet on GPU0 first (fast, on demand); the CPU Parakeet is the fallback when GPU0 is full.
+      stt: [parakeet-gpu, parakeet]
       stt-fast: [nemotron-streaming, parakeet]
-      stt-quality: [parakeet, canary]
+      stt-quality: [parakeet-gpu, parakeet, canary]
       # Diarization has no fallback: a plain-text engine would silently drop the speakers.
       stt-diarize: [nemotron-diarize]
     openai:
       - {match: "*transcribe-diarize*", to: stt-diarize}
       - {match: "whisper*", to: stt}
+      - {match: "parakeet-*", to: stt}   # e.g. OpenWhispr sends parakeet-tdt-0.6b; the engine ids `parakeet` and `parakeet-gpu` match first
       - {match: "gpt-4o-mini-transcribe*", to: stt-fast}
       - {match: "gpt-4o*transcribe*", to: stt-quality}
       - {match: "*transcribe*", to: stt}

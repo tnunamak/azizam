@@ -73,6 +73,9 @@ class AliasResolution:
     upstream_model: str | None = None
     skipped_engines: tuple[str, ...] = ()
     engine_spec: Mapping[str, Any] | None = None
+    # Deployed engines after the picked one in the same tier, as (engine id, service id), in order.
+    # A caller that cannot start the picked engine may try these; empty for a name that is an engine id.
+    fallbacks: tuple[tuple[str, str | None], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -88,6 +91,8 @@ class AliasResolution:
             out["upstream_model"] = self.upstream_model
         if self.skipped_engines:
             out["skipped_engines"] = list(self.skipped_engines)
+        if self.fallbacks:
+            out["fallback_engines"] = [engine for engine, _service in self.fallbacks]
         return out
 
 
@@ -136,6 +141,7 @@ def _engine_resolution(
     engine_id: str,
     spec: Mapping[str, Any],
     skipped: tuple[str, ...] = (),
+    fallbacks: tuple[tuple[str, str | None], ...] = (),
 ) -> AliasResolution:
     return AliasResolution(
         requested=requested,
@@ -148,6 +154,22 @@ def _engine_resolution(
         upstream_model=str(spec.get("model") or "") or None,
         skipped_engines=skipped,
         engine_spec=spec,
+        fallbacks=fallbacks,
+    )
+
+
+def _fallbacks_after(
+    candidates: list[Any],
+    picked: str,
+    engines: Mapping[str, Mapping[str, Any]],
+    available: EngineAvailable,
+) -> tuple[tuple[str, str | None], ...]:
+    names = [_norm(raw) for raw in candidates]
+    rest = names[names.index(picked) + 1 :] if picked in names else []
+    return tuple(
+        (engine_id, str(engines[engine_id].get("service") or "") or None)
+        for engine_id in rest
+        if engine_id in engines and available(engine_id, engines[engine_id])
     )
 
 
@@ -235,6 +257,7 @@ def resolve_alias(
                     engine_id=engine_id,
                     spec=engine_spec,
                     skipped=skipped,
+                    fallbacks=_fallbacks_after(spec, engine_id, engines, engine_available),
                 )
             target = str(spec or "").strip()
             if not target:

@@ -408,7 +408,18 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(any(root.glob("segment-*.wav")))
 
 
+def _cpu_parakeet_only(test: unittest.TestCase) -> None:
+    """These tests exercise the default (always-on, CPU) STT service through `whisper-1`; the GPU engine ahead of it in the tier is on demand."""
+    patcher = patch.dict(proxy.config["backends"])
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    proxy.config["backends"].pop("stt-parakeet-gpu", None)
+
+
 class RequestWorkspaceIsolationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        _cpu_parakeet_only(self)
+
     async def test_two_live_routes_cannot_cross_workspace_paths_audio_or_unlinks(self) -> None:
         """Interleave both first chunks at the shipped process concurrency limit.
 
@@ -873,6 +884,9 @@ class _BlockingSttClient:
 
 
 class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        _cpu_parakeet_only(self)
+
     async def test_real_asgi_disconnect_during_spooling_cleans_up_and_terminalizes_once(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1052,6 +1066,9 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        _cpu_parakeet_only(self)
+
     async def test_short_and_ineligible_requests_use_the_local_async_transport_unchanged(self) -> None:
         real_async_client = httpx.AsyncClient
         for kind, fields in (

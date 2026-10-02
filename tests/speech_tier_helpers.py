@@ -75,6 +75,12 @@ def _base_config(spool: str) -> dict:
         "chunking": {"enabled": False, "spool_dir": spool},
         "lifecycle": {"driver": "systemd", "driver_config": {"unit": "nemotron-stt.service", "scope": "user"}},
     }
+    cfg["backends"]["stt-parakeet-gpu"] = {
+        "name": "parakeet-gpu", "host": "127.0.0.1", "port": 8017, "capabilities": ["audio", "transcriptions"], "priority": 200,
+        "default_model": "parakeet-tdt-0.6b-v3", "timeout": 30,
+        "chunking": {"enabled": False, "spool_dir": spool},
+        "lifecycle": {"driver": "systemd", "driver_config": {"unit": "parakeet-gpu-stt.service", "scope": "user"}},
+    }
     cfg["backends"]["stt-canary"] = {
         "name": "canary", "host": "127.0.0.1", "port": 8013, "capabilities": ["audio", "transcriptions"], "priority": 200,
         "default_model": "canary-180m-flash", "timeout": 30,

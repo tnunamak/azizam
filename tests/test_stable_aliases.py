@@ -243,7 +243,8 @@ class ShippedConfigTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "model_not_deployed")
         # The generic gpt-4o transcribe names keep their own tier.
         res = sa.resolve_alias(ALIASES, "transcriptions", "gpt-4o-transcribe", engine_available=_all_up)
-        self.assertEqual(res.engine, "parakeet")
+        self.assertEqual(res.engine, "parakeet-gpu")  # first of stt-quality; the CPU Parakeet is its fallback
+        self.assertEqual([e for e, _ in res.fallbacks], ["parakeet", "canary"])
 
     def test_fast_tiers_split_when_their_engine_is_deployed(self):
         res = sa.resolve_alias(ALIASES, "speech", "tts-fast", engine_available=_all_up)

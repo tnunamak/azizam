@@ -1136,9 +1136,9 @@ an exact model or settings. Unknown names pass through unchanged.
 | TTS | `tts` | Chatterbox Turbo (GPU0, on demand), then OmniVoice. The 13 OpenAI voice names are fixed cloned identities, and `voice: {"id": "voice_..."}` selects a user-created voice | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
 | | `tts-fast` | Supertonic (audio.cpp, GPU0; preset voices), then Chatterbox, then OmniVoice | none (point `tts-1` here to make it the fast tier) |
 | | `tts-quality` | Chatterbox Turbo, then OmniVoice, then Kokoro | `tts-1-hd` |
-| STT | `stt` | Parakeet TDT 0.6B v3 | `whisper*` |
+| STT | `stt` | Parakeet TDT 0.6B v3 on GPU0 (audio.cpp, on demand), then the CPU Parakeet if GPU0 is full | `whisper*`, `parakeet-*` |
 | | `stt-fast` | Nemotron streaming (audio.cpp, GPU0), then Parakeet | `gpt-4o-mini-transcribe*` |
-| | `stt-quality` | Parakeet first; Canary 180M Flash is the second candidate | `gpt-4o-transcribe*` |
+| | `stt-quality` | Parakeet on GPU0, then CPU Parakeet, then Canary 180M Flash | `gpt-4o-transcribe*` |
 | | `stt-diarize` | Nemotron 3 Diarization (CPU) for speakers + Parakeet for words; no fallback engine | `gpt-4o-transcribe-diarize*`, `*transcribe-diarize*` |
 | Translations | -- | not supported by the local STT backend (clear 400) | |
 | Music / SFX | `music` | `ace-step-1.5-xl-turbo` | |
@@ -1147,7 +1147,7 @@ an exact model or settings. Unknown names pass through unchanged.
 
 TTS and STT aliases resolve through **engines**: each tier lists engines in
 order and the first one whose service is deployed wins. Engine ids
-(`chatterbox`, `omnivoice`, `supertonic`, `kokoro`, `parakeet`, `nemotron-streaming`,
+(`chatterbox`, `omnivoice`, `supertonic`, `kokoro`, `parakeet-gpu`, `parakeet`, `nemotron-streaming`,
 `canary`, `nemotron-diarize`) are valid `model` values too; an engine that is not deployed returns
 `400 model_not_deployed`. Chatterbox Turbo and OmniVoice clone the 13 OpenAI voice
 names from the same fixed reference clips (the nine public OpenAI sample clips for
@@ -1156,6 +1156,11 @@ cedar, marin and verse, which OpenAI publishes no sample for). Supertonic and Ko
 map OpenAI voice names to the closest preset voice (`voice_map`; an engine-native
 voice name is passed through). The tier order is a policy choice: Chatterbox won the
 blind listening test 7/7, so it leads `tts` and `tts-quality`, and OmniVoice is the fallback.
+
+**Fallback.** When the first engine of a tier cannot start (GPU0 full, unit failed), STT tries the
+next engine of the same tier (`whisper-1` -> Parakeet on GPU, then the always-on CPU Parakeet) and logs it. A name that is an
+engine id (`model=parakeet-gpu`) never falls back and answers `503`. `GET /gateway/v1/aliases/resolve` lists
+`fallback_engines`.
 
 **Starting engines.** An engine whose service has a `systemd` lifecycle is
 started on demand (one health check, then `systemctl --user start` and a health
