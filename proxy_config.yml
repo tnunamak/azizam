@@ -324,26 +324,6 @@ backends:
         unit: kokoro-tts.service
         health_endpoint: /health
         health_timeout_s: 90
-  faces:
-    name: face-service
-    native_passthrough: true
-    host: 127.0.0.1
-    port: 8021
-    health_endpoint: /health
-    timeout: 120
-    priority: 200
-    role: standby
-    note: "On-demand CPU face detection + ArcFace embeddings (insightface) for the likeness check and the identity scene workflow; exits after 15 min idle; started by the gateway lifecycle driver."
-    capabilities:
-      - faces
-    managed: false
-    lifecycle:
-      driver: systemd
-      driver_config:
-        scope: user
-        unit: face-service.service
-        health_endpoint: /health
-        health_timeout_s: 120
   tts-chatterbox:
     name: chatterbox-tts
     native_passthrough: true
@@ -611,8 +591,21 @@ routing:
   check_interval: 30
 
 identity:
-  # Backend id (backends.<id>) of the CPU face sidecar used by the likeness check and image-identity.
-  face_service: faces
+  # CPU face sidecar (services/face-service) used by the likeness check and image-identity.
+  # Declared here, not under backends:, so an already-seeded service registry needs no change.
+  # The gateway starts the user unit on demand; the sidecar exits after 15 idle minutes.
+  face_service:
+    host: 127.0.0.1
+    port: 8021
+    health_endpoint: /health
+    timeout: 120
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: face-service.service
+        health_endpoint: /health
+        health_timeout_s: 120
 
 # Local reasoning policy. Pi sends qualitative effort; the native gateway
 # translates it to the local server's numeric per-request thinking budget.

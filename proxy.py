@@ -13153,27 +13153,45 @@ voices_api.register_voice_routes(
 
 # --- identity scene + likeness check (gateway/identity_api.py) ----------------
 IDENTITY_CFG = config.get("identity", {}) or {}
-IDENTITY_FACE_SERVICE_ID = str(IDENTITY_CFG.get("face_service", "faces"))
 IDENTITY_MODEL_ID = "image-identity"
 IDENTITY_MANIFEST_ID = "image.edit.image-identity"
 _IDENTITY_ROUTE_POLICY = {"protocol": "openai.images", "intent": "image.edit", "backend": "comfyui"}
 _identity_template_cache: tuple[dict[str, Any], dict[str, Any]] | None = None
 
 
+def _identity_face_cfg() -> Mapping[str, Any]:
+    cfg = IDENTITY_CFG.get("face_service")
+    return cfg if isinstance(cfg, Mapping) else {}
+
+
 def _identity_face_client() -> identity_api.FaceServiceClient:
-    bcfg = (config.get("backends") or {}).get(IDENTITY_FACE_SERVICE_ID) or {}
-    host = bcfg.get("host", "127.0.0.1")
-    port = bcfg.get("port", 8021)
-    return identity_api.FaceServiceClient(f"http://{host}:{port}", timeout=float(bcfg.get("timeout", 120)))
+    bcfg = _identity_face_cfg()
+    return identity_api.FaceServiceClient(
+        f"http://{bcfg.get('host', '127.0.0.1')}:{bcfg.get('port', 8021)}",
+        timeout=float(bcfg.get("timeout", 120)),
+    )
 
 
 async def _identity_ensure_face_service() -> Response | None:
-    if IDENTITY_FACE_SERVICE_ID not in (config.get("backends") or {}):
+    """Start the face sidecar through its lifecycle driver (config data, not the service registry)."""
+    from gateway.lifecycle_drivers import driver_for_service
+
+    bcfg = dict(_identity_face_cfg())
+    if not bcfg:
         return Response(
             content=json.dumps({"error": {"message": "The face service is not configured.", "type": "service_unavailable"}}),
             status_code=503, media_type="application/json",
         )
-    return await _ensure_speech_service_ready(IDENTITY_FACE_SERVICE_ID, label="Face service")
+    driver = driver_for_service("faces", {"faces": bcfg})
+    if await driver.ensure_ready(bcfg, timeout_s=HEALTH_CHECK_TIMEOUT):
+        return None
+    return Response(
+        content=json.dumps({"error": {
+            "message": "The face service could not be started.", "type": "service_unavailable",
+            "code": "backend_unavailable", "service": "faces",
+        }}),
+        status_code=503, media_type="application/json", headers={"Retry-After": "5"},
+    )
 
 
 def _identity_template() -> tuple[dict[str, Any], dict[str, Any]]:
