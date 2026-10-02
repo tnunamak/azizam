@@ -109,6 +109,11 @@ class LikenessRouteTests(unittest.TestCase):
         self.assertEqual([p["label"] for p in report["people"]], ["left"])
         self.assertEqual(report["thresholds"]["match"], 0.9)
 
+    def test_pooling_is_accepted_and_echoed(self) -> None:
+        client, _, _ = build([])
+        self.assertEqual(self.post(client, GOOD, pooling="mean").json()["pooling"], "mean")
+        self.assertEqual(self.post(client, GOOD, pooling="median").json()["error"]["param"], "pooling")
+
     def test_errors_use_the_envelope(self) -> None:
         client, _, _ = build([])
         r = client.post(identity_api.LIKENESS_PATH, files=[("candidate", ("c.png", GOOD, "image/png"))])

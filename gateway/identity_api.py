@@ -288,6 +288,8 @@ LIKENESS_OPENAPI: dict[str, Any] = {
                               "description": "Reference photo(s) of the real people. Repeat the field for several photos."},
                 "candidate": {"type": "string", "format": "binary", "description": "The image to check."},
                 "people": _people_schema(),
+                "pooling": {"type": "string", "enum": list(likeness.POOLINGS), "default": "best",
+                            "description": "How several reference photos of one person are scored: closest photo, or the mean over all."},
                 "thresholds": {"type": "string", "description": "JSON object overriding match, uncertain and min_margin."},
             },
         }}},
@@ -396,6 +398,7 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
             req = SceneRequest(
                 photos=photos, prompt="-", people=parse_people(_json_field(form, "people"), len(photos)),
                 thresholds=parse_thresholds(_json_field(form, "thresholds")),
+                pooling=_enum(form, "pooling", likeness.POOLINGS, "best"),
             )
             not_ready = await deps.ensure_face_service()
             if not_ready is not None:
@@ -404,10 +407,11 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
             people = await ids.resolve_people(req, fdeps, with_heads=False)
             candidate_faces = await ids._faces(fdeps, candidates[0])
             report = likeness.check_likeness(
-                [p.person for p in people], candidate_faces, models=deps.models, thresholds=req.thresholds
+                [p.person for p in people], candidate_faces, models=deps.models, thresholds=req.thresholds,
+                pooling=req.pooling,
             )
             report["references"] = [
-                {"label": p.label, "photo": p.spec.image, "face_bbox": [round(v, 1) for v in p.face_bbox], "age_estimate": p.age}
+                {"label": p.label, "photo": p.primary_photo, "reference_photos": len(p.person.faces), "face_bbox": [round(v, 1) for v in p.face_bbox], "age_estimate": p.age}
                 for p in people
             ]
             return JSONResponse(report)

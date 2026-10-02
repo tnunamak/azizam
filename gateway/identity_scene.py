@@ -121,6 +121,7 @@ class ResolvedPerson:
     age: int | None
     gender: str | None
     sources_used: list[tuple[FaceRecord, int]] = field(default_factory=list)   # (face, photo) behind the heads
+    primary_photo: int = 0                                                      # photo of the best reference face
 
     @property
     def head_png(self) -> bytes:
@@ -475,6 +476,7 @@ async def resolve_people(
                 age=primary.age,
                 gender=primary.gender,
                 sources_used=keep,
+                primary_photo=ranked[0][1],
             )
         )
     labels = [r.label for r in resolved]
@@ -712,7 +714,7 @@ async def run_identity_scene(
         people=[
             {
                 "label": rp.label,
-                "photo": rp.spec.image,
+                "photo": rp.primary_photo,
                 "face_bbox": [round(v, 1) for v in rp.face_bbox],
                 "age_estimate": rp.age,
                 "reference_photos": len(rp.person.faces),
