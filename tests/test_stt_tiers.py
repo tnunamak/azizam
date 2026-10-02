@@ -183,3 +183,92 @@ class SttStreamingTests(SttCase):
         self.assertEqual(resp.status_code, 200)
         riff = seen[0].content[seen[0].content.index(b"RIFF"):]
         self.assertEqual(struct.unpack("<HI", riff[22:28]), (1, 16000))
+
+
+class SttRuntimeFallbackTests(SttCase):
+    """A tier falls back when the first engine fails while serving, not only when it will not start."""
+
+    def _engines(self, gpu_response, cpu_response=None):
+        seen = self.use_upstream(lambda r: gpu_response(r) if r.url.port == 8017 else (cpu_response or (lambda _r: httpx.Response(200, json={"text": "cpu"})))(r))
+        return seen
+
+    def test_gpu_allocation_failure_falls_back_to_the_cpu_engine(self) -> None:
+        msg = {"error": {"message": "Failed to allocate Parakeet TDT encoder graph tensors", "type": "server_error"}}
+        seen = self._engines(lambda r: httpx.Response(500, json=msg))
+        resp = self._post([("model", "whisper-1")])
+        self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu"), resp.text)
+        self.assertEqual([r.url.port for r in seen], [8017, 5092])
+        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (gpu_oom)")
+        # The CPU engine gets the whole upload again, with its own model id.
+        self.assertIn(b"\r\n\r\nparakeet-tdt-0.6b-v3\r\n", seen[1].content)
+        self.assertIn(b'name="file"', seen[1].content)
+
+    def test_the_replayed_upload_is_byte_identical(self) -> None:
+        seen = self._engines(lambda r: httpx.Response(500, json={"error": {"message": "CUDA out of memory"}}))
+        audio = _wav_bytes(16000, 1, 1.5)
+        resp = self._post([("model", "stt")], audio=audio, file_first=True)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual([r.url.port for r in seen], [8017, 5092])
+        self.assertIn(audio, seen[1].content)
+
+    def test_the_serving_receipt_records_the_fallback(self) -> None:
+        self._engines(lambda r: httpx.Response(503, json={"error": {"message": "busy"}}))
+        proxy.receipt_store.begin.reset_mock()
+        resp = self._post([("model", "whisper-1")])
+        self.assertEqual(resp.status_code, 200)
+        receipts = [call.args[0] for call in proxy.receipt_store.begin.call_args_list]
+        self.assertEqual([r.backend for r in receipts], ["stt-parakeet-gpu", "stt"])
+        self.assertNotIn("parakeet-gpu->parakeet (busy)", receipts[0].fallback_reasons)
+        self.assertIn("parakeet-gpu->parakeet (busy)", receipts[1].fallback_reasons)
+
+    def test_connection_refused_falls_back(self) -> None:
+        def refuse(request):
+            raise httpx.ConnectError("refused")
+        seen = self._engines(refuse)
+        resp = self._post([("model", "stt-quality")])
+        self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu"), resp.text)
+        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (connection_refused)")
+
+    def test_a_unit_that_starts_but_answers_503_falls_back(self) -> None:
+        # The live case: systemd starts the unit, /health answers, the model load then fails with 503.
+        self.health.return_value = False
+        self.ensure.return_value = True
+        self._engines(lambda r: httpx.Response(503, json={"error": {"message": "loading"}}))
+        resp = self._post([("model", "whisper-1")])
+        self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu"))
+
+    def test_start_failure_is_named_in_the_header(self) -> None:
+        self.health.return_value = False
+        self.ensure.return_value = False
+        self._json_upstream()
+        resp = self._post([("model", "whisper-1")])
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (start_failed)")
+
+    def test_a_client_error_does_not_fall_back(self) -> None:
+        answer = {}
+        seen = self._engines(lambda r: httpx.Response(answer["status"], json=answer["body"]))
+        for status, body in ((400, {"error": {"message": "unsupported audio"}}), (422, {"error": {"message": "bad file"}}),
+                             (500, {"error": {"message": "could not decode audio"}})):
+            with self.subTest(status=status):
+                seen.clear()
+                answer.update(status=status, body=body)
+                resp = self._post([("model", "whisper-1")])
+                self.assertEqual(resp.status_code, status)
+                self.assertNotIn("x-vivid-fallback", resp.headers)
+                self.assertEqual([r.url.port for r in seen], [8017])
+
+    def test_an_engine_id_by_name_never_falls_back(self) -> None:
+        seen = self._engines(lambda r: httpx.Response(500, json={"error": {"message": "Failed to allocate tensors"}}))
+        resp = self._post([("model", "parakeet-gpu")])
+        self.assertEqual(resp.status_code, 500)
+        self.assertNotIn("x-vivid-fallback", resp.headers)
+        self.assertEqual([r.url.port for r in seen], [8017])
+
+    def test_every_engine_failing_returns_the_last_error_with_the_header(self) -> None:
+        seen = self.use_upstream(lambda r: httpx.Response(503, json={"error": {"message": "busy"}}))
+        resp = self._post([("model", "stt-quality")])
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual([r.url.port for r in seen], [8017, 5092, 8013])
+        self.assertEqual(resp.headers["x-vivid-fallback"],
+                         "parakeet-gpu->parakeet (busy), parakeet->canary (busy)")

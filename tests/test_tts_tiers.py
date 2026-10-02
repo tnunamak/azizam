@@ -48,6 +48,62 @@ class TtsLifecycleTests(RouteCase):
         self.ensure.assert_not_awaited()
 
 
+class TtsRuntimeFallbackTests(RouteCase):
+    """The TTS tiers fall back by the same rules as STT."""
+
+    def _speak(self, model="tts", **extra):
+        payload = {"model": model, "voice": "nova", "input": "hello", "response_format": "wav", **extra}
+        return self.client.post("/v1/audio/speech", json=payload)
+
+    def _ports(self):
+        ports = {name: self.cfg["backends"][name]["port"] for name in ("tts", "tts-chatterbox")}
+        return ports["tts-chatterbox"], ports["tts"]  # first engine of the `tts` tier, then its fallback
+
+    def _upstream(self, first_response):
+        first, _second = self._ports()
+        return self.use_upstream(
+            lambda r: first_response(r) if r.url.port == first else httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"})
+        )
+
+    def test_allocation_failure_falls_back_with_a_header(self) -> None:
+        seen = self._upstream(lambda r: httpx.Response(500, json={"error": {"message": "CUDA out of memory"}}))
+        resp = self._speak()
+        self.assertEqual((resp.status_code, resp.content), (200, b"RIFFwav"))
+        self.assertEqual([r.url.port for r in seen], list(self._ports()))
+        self.assertEqual(resp.headers["x-vivid-fallback"], "chatterbox->omnivoice (gpu_oom)")
+        self.assertEqual(json.loads(seen[1].content)["model"], "k2-fsa/OmniVoice")
+
+    def test_start_failure_falls_back(self) -> None:
+        self.health.side_effect = lambda bcfg, _t: bcfg.get("port") != self._ports()[0]
+        self.ensure.return_value = False
+        self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        resp = self._speak()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers["x-vivid-fallback"], "chatterbox->omnivoice (start_failed)")
+
+    def test_connection_refused_falls_back(self) -> None:
+        def refuse(request):
+            raise httpx.ConnectError("refused")
+        self._upstream(refuse)
+        resp = self._speak()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers["x-vivid-fallback"], "chatterbox->omnivoice (connection_refused)")
+
+    def test_a_client_error_does_not_fall_back(self) -> None:
+        seen = self._upstream(lambda r: httpx.Response(400, json={"error": {"message": "bad voice"}}))
+        resp = self._speak()
+        self.assertEqual(resp.status_code, 400)
+        self.assertNotIn("x-vivid-fallback", resp.headers)
+        self.assertEqual(len(seen), 1)
+
+    def test_an_engine_id_by_name_never_falls_back(self) -> None:
+        seen = self._upstream(lambda r: httpx.Response(503, json={"error": {"message": "busy"}}))
+        resp = self._speak(model="chatterbox")
+        self.assertEqual(resp.status_code, 503)
+        self.assertNotIn("x-vivid-fallback", resp.headers)
+        self.assertEqual(len(seen), 1)
+
+
 class TtsStreamingTests(RouteCase):
     def _post(self, **extra):
         payload = {"model": "tts-fast", "voice": "shimmer", "input": "hello", **extra}

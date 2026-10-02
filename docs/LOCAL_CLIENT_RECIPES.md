@@ -1240,10 +1240,23 @@ map OpenAI voice names to the closest preset voice (`voice_map`; an engine-nativ
 voice name is passed through). The tier order is a policy choice: Chatterbox won the
 blind listening test 7/7, so it leads `tts` and `tts-quality`, and OmniVoice is the fallback.
 
-**Fallback.** When the first engine of a tier cannot start (GPU0 full, unit failed), STT tries the
-next engine of the same tier (`whisper-1` -> Parakeet on GPU, then the always-on CPU Parakeet) and logs it. A name that is an
-engine id (`model=parakeet-gpu`) never falls back and answers `503`. `GET /gateway/v1/aliases/resolve` lists
-`fallback_engines`.
+**Fallback.** STT and TTS tiers try the tier's next engine (`whisper-1` -> Parakeet on GPU, then the
+always-on CPU Parakeet) when the first engine cannot serve the request:
+
+| Reason in the header | Trigger |
+| --- | --- |
+| `start_failed` | the unit would not start (GPU0 full, unit failed) |
+| `connection_refused` | the engine refused the connection (unit stopped after the health check) |
+| `busy` | the engine answered `503` (still loading, GPU0 busy) |
+| `gpu_oom` | the engine answered `500`/`502`/`507` with an allocation or out-of-memory message |
+
+A `4xx`, bad audio, a timeout and any other `5xx` never fall back, and a name that is an engine id
+(`model=parakeet-gpu`) never falls back. Each fallback is visible: the response carries
+`x-vivid-fallback: parakeet-gpu->parakeet (gpu_oom)` (comma-joined when there are several), the gateway logs
+it, and for STT the serving receipt lists it in `fallback_reasons`. When every engine fails, the last
+engine's error is returned with the header. A TTS fallback engine applies its own voice map, so the voice
+can differ; a custom voice only falls back to engines that accept one. `GET /gateway/v1/aliases/resolve`
+lists `fallback_engines`.
 
 **Starting engines.** An engine whose service has a `systemd` lifecycle is
 started on demand (one health check, then `systemctl --user start` and a health

@@ -4017,9 +4017,12 @@ async def _ensure_speech_service_ready(service_id: str, *, label: str) -> Respon
     )
 
 
-def _tts_error(message: str, status_code: int) -> Response:
+def _tts_error(message: str, status_code: int, code: str | None = None) -> Response:
+    error: dict[str, Any] = {"message": message, "type": "api_error"}
+    if code:
+        error["code"] = code
     return Response(
-        content=json.dumps({"error": {"message": message, "type": "api_error"}}),
+        content=json.dumps({"error": error}),
         status_code=status_code,
         media_type="application/json",
     )
@@ -4056,7 +4059,7 @@ async def _stream_tts_upstream(
         return _tts_error("TTS request timeout", 504)
     except httpx.ConnectError:
         await client.aclose()
-        return _tts_error(f"TTS backend unavailable at {url}", 502)
+        return _tts_error(f"TTS backend unavailable at {url}", 502, "tts_backend_unavailable")
     except Exception as e:  # noqa: BLE001
         await client.aclose()
         return _tts_error(f"TTS proxy error: {e}", 502)
@@ -4085,7 +4088,52 @@ async def _stream_tts_upstream(
 
 
 async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Response:
-    """Forward TTS request to TTS backend."""
+    """Forward a TTS request; a tier falls back to its next engine when the first cannot serve it.
+
+    Fallback rules are those of STT (``_speech_fallback_reason``): start failure, connection refused,
+    503 and a 5xx that names an allocation failure. An engine id by name has no fallbacks. The
+    fallback engine applies its own voice map, so the voice can differ; ``x-vivid-fallback`` says so.
+    """
+    response = await _proxy_tts_once(request, auth_context)
+    fallbacks = await _tts_tier_fallbacks(request)
+    notes: list[str] = []
+    engine_id, _ = fallbacks.pop(0) if fallbacks else (None, None)
+    for next_engine, _service in fallbacks:
+        reason = _speech_fallback_reason(response)
+        if reason is None:
+            break
+        note = f"{engine_id}->{next_engine} ({reason})"
+        notes.append(note)
+        print(f"[proxy] TTS fallback {note}", flush=True)
+        response = await _proxy_tts_once(request, auth_context, model_override=next_engine)
+        engine_id = next_engine
+    return _with_fallback_header(response, notes)
+
+
+async def _tts_tier_fallbacks(request: Request) -> list[tuple[str, str | None]]:
+    """``[(picked engine, service), *(fallback engine, service)]`` for the request's model, or ``[]``.
+
+    Empty when the body is not a JSON object, the model is not a tier, or it names an engine.
+    A custom voice only goes to engines that accept one.
+    """
+    try:
+        body_json = json.loads(await request.body())
+        resolution = resolve_model_for_operation("speech", body_json.get("model", "tts-1")).alias
+    except (ValueError, AttributeError, ModelCompatibilityError):
+        return []
+    if resolution is None or not resolution.engine or not resolution.fallbacks:
+        return []
+    custom_voice = voices_api.custom_voice_id(body_json.get("voice")) is not None
+    engines = _speech_engines()
+    usable = [
+        (engine, service) for engine, service in resolution.fallbacks
+        if not custom_voice or bool_from_config((engines.get(engine) or {}).get("custom_voices"), False)
+    ]
+    return [(resolution.engine, resolution.service), *usable]
+
+
+async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None) -> Response:
+    """Forward TTS request to one TTS engine."""
     if not TTS_ENABLED:
         return openai_error_response(
             "TTS not enabled",
@@ -4127,7 +4175,7 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
                     code="unsupported_stream_format",
                 )
 
-        requested_model = body_json.get("model", "tts-1")
+        requested_model = model_override or body_json.get("model", "tts-1")
         try:
             model_resolution = resolve_model_for_operation("speech", requested_model)
         except ModelCompatibilityError as e:
@@ -4255,7 +4303,7 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
     except httpx.TimeoutException:
         return _tts_error("TTS request timeout", 504)
     except httpx.ConnectError:
-        return _tts_error(f"TTS backend unavailable at {_tts_host}", 502)
+        return _tts_error(f"TTS backend unavailable at {_tts_host}", 502, "tts_backend_unavailable")
     except Exception as e:
         return _tts_error(f"TTS proxy error: {str(e)}", 502)
 
@@ -4369,6 +4417,90 @@ def _record_stt_input_shape(
     }
 
 
+_RESOURCE_ERROR = re.compile(
+    r"alloc|out of memory|\boom\b|cudamalloc|cuda error|insufficient (?:vram|memory)|not enough (?:vram|memory)",
+    re.IGNORECASE,
+)
+# 503s the gateway itself raises: another engine behind the same gateway would hit them too.
+_GATEWAY_OWN_503_CODES = {"stt_cancellation_capacity", "stt_configuration_invalid"}
+
+
+def _speech_fallback_reason(response: Response) -> str | None:
+    """Why a speech engine's answer lets the tier try its next engine, or None when it does not.
+
+    A tier falls back on: the engine refusing the connection, 503 (busy, still loading, drained),
+    and a 5xx whose body names an allocation or out-of-memory failure (GPU0 full). A 4xx, bad audio,
+    a timeout and any other 5xx are returned to the caller: another engine would not fix them.
+    """
+    status = response.status_code
+    raw = getattr(response, "body", b"")
+    text = raw[:4096].decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else ""
+    try:
+        error = json.loads(text).get("error")
+    except (ValueError, AttributeError):
+        error = None
+    error = error if isinstance(error, Mapping) else {}
+    code = str(error.get("code") or "")
+    if code in {"stt_backend_unavailable", "tts_backend_unavailable"}:
+        return "connection_refused"
+    if status == 503:
+        if code == "backend_unavailable":  # the gateway's own: operator drain carries a `state`, else the unit would not start
+            return "unavailable" if error.get("state") else "start_failed"
+        return None if code in _GATEWAY_OWN_503_CODES else "busy"
+    if status in (500, 502, 507) and _RESOURCE_ERROR.search(text):
+        return "gpu_oom"
+    return None
+
+
+def _with_fallback_header(response: Response, notes: Sequence[str]) -> Response:
+    """Make a fallback visible to the caller: ``x-vivid-fallback: parakeet-gpu->parakeet (gpu_oom)``."""
+    if notes:
+        response.headers["x-vivid-fallback"] = ", ".join(notes)
+    return response
+
+
+class _ReplayableBody:
+    """Replays a request body to a second attempt without holding it in memory.
+
+    Every body message the first attempt reads is also written to a temp file (spilled to disk
+    above 8 MiB). ``request()`` then returns a request that yields the recorded messages first and
+    the rest of the live stream after.
+    """
+
+    def __init__(self, request: Request, spool_dir: Path) -> None:
+        spool_dir.mkdir(parents=True, exist_ok=True)
+        self._scope = request.scope
+        self._receive = request.receive
+        self._file = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, dir=spool_dir)
+        self._log: list[tuple[int, int, bool]] = []  # (offset, size, more_body)
+        self._end = 0
+
+    def request(self) -> Request:
+        index = 0
+
+        async def receive() -> Mapping[str, Any]:
+            nonlocal index
+            if index < len(self._log):
+                offset, size, more = self._log[index]
+                index += 1
+                self._file.seek(offset)
+                return {"type": "http.request", "body": self._file.read(size), "more_body": more}
+            message = await self._receive()
+            if message["type"] == "http.request":
+                data = message.get("body", b"")
+                self._file.seek(self._end)
+                self._file.write(data)
+                self._log.append((self._end, len(data), bool(message.get("more_body", False))))
+                self._end += len(data)
+                index += 1
+            return message
+
+        return Request(self._scope, receive)
+
+    def close(self) -> None:
+        self._file.close()
+
+
 async def _dispatch_selected_stt_route(
     request: Request,
     auth_context: AuthContext,
@@ -4381,6 +4513,7 @@ async def _dispatch_selected_stt_route(
     its own service); with no readable ``model`` it is the capability default.
     """
     selected_service: str | None = None
+    peeked_engine: str | None = None
     fallbacks: tuple[tuple[str, str | None], ...] = ()
     model_unpeeked = False
     if "multipart/form-data" in request.headers.get("content-type", ""):
@@ -4393,6 +4526,7 @@ async def _dispatch_selected_stt_route(
                 return model_compatibility_error(error)
             if peeked.alias is not None and peeked.alias.engine:
                 selected_service = peeked.alias.service
+                peeked_engine = peeked.alias.engine
                 fallbacks = peeked.alias.fallbacks
     try:
         execution = _stt_execution_snapshot(operation, selected_service)
@@ -4409,41 +4543,58 @@ async def _dispatch_selected_stt_route(
     decision = _apply_selected_stt_policy(receipt, auth_context, operation=operation)
     if decision is not None and decision.denied:
         return _policy_denied_response(decision)
+    remaining = [(engine, service) for engine, service in fallbacks if service]
+    body = _ReplayableBody(request, execution.spool_dir) if remaining else None
+    engine_id = peeked_engine
     model_override: str | None = None
-    not_ready = await _ensure_speech_service_ready(execution.service_id, label="STT engine")
-    if not_ready is not None:
-        # The picked engine will not start (GPU0 full, unit failed). A tier lists a fallback engine
-        # after it; try those in order. A name that is an engine id has none and fails as before.
-        for fallback_engine, fallback_service in fallbacks:
-            if not fallback_service:
-                continue
-            try:
-                fallback_execution = _stt_execution_snapshot(operation, fallback_service)
-            except stt_chunking.SttConfigurationError:
-                continue
-            if fallback_execution is None:
-                continue
-            fallback_receipt = _stt_receipt(request=request, auth_context=auth_context, operation=operation, service_id=fallback_execution.service_id)
-            decision = _apply_selected_stt_policy(fallback_receipt, auth_context, operation=operation)
-            if decision is not None and decision.denied:
-                continue
-            fallback_not_ready = await _ensure_speech_service_ready(fallback_execution.service_id, label="STT engine")
-            if fallback_not_ready is not None:
-                continue
-            print(f"[proxy] STT engine on {execution.service_id} could not start; serving from {fallback_engine}", flush=True)
-            execution, receipt, model_override, not_ready = fallback_execution, fallback_receipt, fallback_engine, None
-            break
-    if not_ready is not None:
-        return not_ready
-    return await proxy_stt_request(
-        request,
-        auth_context,
-        operation=operation,
-        execution_snapshot=execution,
-        route_receipt=receipt,
-        model_unpeeked=model_unpeeked,
-        model_override=model_override,
-    )
+    notes: list[str] = []
+    try:
+        while True:
+            not_ready = await _ensure_speech_service_ready(execution.service_id, label="STT engine")
+            if not_ready is None:
+                response = await proxy_stt_request(
+                    body.request() if body is not None else request,
+                    auth_context,
+                    operation=operation,
+                    execution_snapshot=execution,
+                    route_receipt=receipt,
+                    model_unpeeked=model_unpeeked,
+                    model_override=model_override,
+                )
+                reason = _speech_fallback_reason(response) if body is not None else None
+            else:
+                response, reason = not_ready, "start_failed"
+            if reason is None:
+                break
+            # The engine could not serve this request for a reason another engine may not share.
+            # Try the tier's next engine; a 4xx or any other error is the caller's and is returned as is.
+            chosen = None
+            while remaining and chosen is None:
+                next_engine, next_service = remaining.pop(0)
+                try:
+                    next_execution = _stt_execution_snapshot(operation, next_service)
+                except stt_chunking.SttConfigurationError:
+                    continue
+                if next_execution is None:
+                    continue
+                next_receipt = _stt_receipt(request=request, auth_context=auth_context, operation=operation, service_id=next_execution.service_id)
+                next_decision = _apply_selected_stt_policy(next_receipt, auth_context, operation=operation)
+                if next_decision is not None and next_decision.denied:
+                    continue
+                chosen = (next_engine, next_execution, next_receipt)
+            if chosen is None:
+                break
+            next_engine, execution, receipt = chosen
+            note = f"{engine_id or execution.service_id}->{next_engine} ({reason})"
+            notes.append(note)
+            for earlier in notes:
+                receipt.add_fallback_reason(earlier)
+            print(f"[proxy] STT fallback {note}", flush=True)
+            engine_id, model_override = next_engine, next_engine
+    finally:
+        if body is not None:
+            body.close()
+    return _with_fallback_header(response, notes)
 
 
 def _stt_receipt(
