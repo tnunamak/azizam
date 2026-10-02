@@ -501,7 +501,7 @@ def _video_status_schema() -> JsonObjectSchema:
             "object": {"type": "string"},
             "status": {
                 "type": "string",
-                "enum": ["queued", "running", "succeeded", "failed", "cancelled"],
+                "enum": ["queued", "in_progress", "completed", "failed"],
             },
             "progress": {"type": "number"},
             "created_at": {"type": "integer"},
@@ -550,7 +550,7 @@ VIDEOS_STATUS_OPENAPI: JsonObjectSchema = {
 VIDEOS_CONTENT_OPENAPI: JsonObjectSchema = {
     "responses": {
         "200": {
-            "description": "Rendered video bytes (mp4) once status=succeeded.",
+            "description": "Rendered video bytes (mp4) once status=completed.",
             "content": {
                 "video/mp4": {"schema": {"type": "string", "format": "binary"}},
                 "application/octet-stream": {

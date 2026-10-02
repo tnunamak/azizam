@@ -169,8 +169,8 @@ The repository also carries [`autotile-edge-stitch`](skills/autotile-edge-stitch
 | `POST /gateway/v1/media/jobs` | proxy + selected media provider/workflow | Durable media-job submit. For images, send `{"intent":"image.generate","request":{...}}`. |
 | `GET  /gateway/v1/media/jobs/{id}/content` | proxy cache | Fetch the OpenAI-shaped image payload for a completed durable image job. |
 | `POST /v1/videos` | Profile-selected video provider/workflow | Submit video job (Sora-shaped, async) |
-| `GET  /v1/videos/{id}` | selected video provider/workflow | Poll job status (`queued` → `running` → `succeeded`/`failed`) |
-| `GET  /v1/videos/{id}/content` | selected video provider/workflow | Fetch rendered MP4 once `status=succeeded` |
+| `GET  /v1/videos/{id}` | selected video provider/workflow | Poll job status (`queued` → `in_progress` → `completed`/`failed`; legacy internal values are exposed as `vivid_status`) |
+| `GET  /v1/videos/{id}/content` | selected video provider/workflow | Fetch rendered MP4 once `status=completed` |
 | `GET  /v1/videos` | selected video provider/workflow | List video jobs submitted by the calling API key via this route since the gateway process last restarted (`limit`, `after`, `order`; no durable store, see `/v1/videos/{id}`'s own statelessness) |
 | `DELETE /v1/videos/{id}` | selected video provider/workflow | Cancels a queued/running job before tombstoning it (`409` if cancellation can't be confirmed). Status/content/list/delete are all scoped to the owning API key. |
 | `POST /v1/videos/{id}/remix` | — | Stub: always a stable `501` (`video_remix_not_configured`, or `video_remix_not_implemented` if `videos.remix_workflow` is set) — no remix backend exists yet |
