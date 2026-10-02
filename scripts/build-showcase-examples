@@ -587,10 +587,12 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out)
     force = set(filter(None, (args.force or "").split(",")))
     todo = select(args.only.split(",") if args.only else None, args.groups.split(",") if args.groups else None)
-    done = {e["id"] for e in EXAMPLES if (out / e["id"] / "example.json").is_file()}
+    def is_done(ex_id: str) -> bool:
+        return (out / ex_id / "example.json").is_file()
+
     if args.list:
         for e in todo:
-            print(f"{e['group']:7} {e['id']:28} {e['card']:30} {'done' if e['id'] in done else 'pending'}")
+            print(f"{e['group']:7} {e['id']:28} {e['card']:30} {'done' if is_done(e['id']) else 'pending'}")
         return 0
 
     def log(msg: str) -> None:
@@ -601,7 +603,7 @@ def main(argv: list[str] | None = None) -> int:
     ctx = Ctx(gw, out)
     failures: list[str] = []
     for e in todo:
-        if e["id"] in done and e["id"] not in force:
+        if is_done(e["id"]) and e["id"] not in force:
             log(f"skip {e['id']} (present)")
             continue
         guard.wait(e["id"])

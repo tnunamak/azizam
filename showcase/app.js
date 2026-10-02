@@ -258,7 +258,7 @@
     } else {
       input = h("input", { type: "text", id, placeholder: f.def !== undefined ? String(f.def) : "" });
     }
-    const range = f.min !== undefined || f.max !== undefined ? " (" + (f.min ?? "") + " to " + (f.max ?? "") + ")" : "";
+    const range = f.min !== undefined && f.max !== undefined ? " (" + f.min + " to " + f.max + ")" : f.min !== undefined ? " (min " + f.min + ")" : f.max !== undefined ? " (max " + f.max + ")" : "";
     const wrap = h("div", { class: "field" + (f.required ? " required" : "") },
       h("label", { for: id, text: f.name + (f.required ? " *" : "") + range }),
       input,
@@ -315,7 +315,9 @@
     const btn = h("button", { class: "run" + (slow ? " slow" : ""), type: "button", text: "Run" + (typical ? " (" + fmtSeconds(typical) + ")" : "") });
     const res = resultBox();
     const code = h("pre", { class: "plan" });
-    form.append(h("div", { class: "actions" }, btn), slow ? h("p", { class: "warn", text: "Slow: typically " + fmtSeconds(typical) + " and it holds the GPU. Other users wait while it runs." }) : null, res.el);
+    form.append(h("div", { class: "actions" }, btn));
+    if (slow) form.append(h("p", { class: "warn", text: "Slow: typically " + fmtSeconds(typical) + " and it holds the GPU. Other users wait while it runs." }));
+    form.append(res.el);
 
     const collect = async () => {
       const values = {};
