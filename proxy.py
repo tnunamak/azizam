@@ -6640,6 +6640,42 @@ def _comfy_execution_error_message(job: Mapping[str, Any] | None) -> str | None:
     return None
 
 
+def _comfy_execution_error_node_id(job: Mapping[str, Any] | None) -> str | None:
+    status_block = (job or {}).get("status", {}) if isinstance(job, Mapping) else {}
+    for msg in (status_block.get("messages", []) or []) if isinstance(status_block, Mapping) else []:
+        if isinstance(msg, (list, tuple)) and msg and msg[0] == "execution_error":
+            payload = msg[1] if len(msg) > 1 and isinstance(msg[1], Mapping) else {}
+            node_id = str(payload.get("node_id") or "").strip()
+            return node_id or None
+    return None
+
+
+def _chain_failure_error(record: Mapping[str, Any] | None, job: Mapping[str, Any] | None, message: str) -> dict[str, Any]:
+    """Error object for a failed video job. A long-video chain adds which
+    segment failed and how many finished. The job fails as a whole: no partial
+    video is kept, so a truncated clip is never passed off as the result."""
+    error: dict[str, Any] = {"code": "video_generation_failed", "message": message}
+    chain = (record or {}).get("chain") if isinstance(record, Mapping) else None
+    if not isinstance(chain, Mapping):
+        return error
+    index = video_extend.segment_of_node(chain.get("units") or [], _comfy_execution_error_node_id(job) or "")
+    if index is None:
+        return error
+    total = int(chain.get("segments") or 0)
+    frames = list(chain.get("segment_frames") or [])
+    fps = float(chain.get("fps") or 24.0)
+    done_frames = int(chain.get("source_frames") or 0) + sum(frames[:index])
+    error.update({
+        "message": (f"segment {index + 1} of {total} failed ({index} finished); no partial video is kept. "
+                    f"{message}")[:600],
+        "failed_segment": index + 1,
+        "segments_completed": index,
+        "segments_total": total,
+        "completed_seconds": round(done_frames / fps, 3),
+    })
+    return error
+
+
 def _comfy_prompt_queue_position_from_queue(queue: Mapping[str, Any], prompt_id: str) -> Optional[int]:
     """Return a 1-based pending queue position for a ComfyUI prompt, if known."""
     pending = queue.get("queue_pending")
@@ -8658,6 +8694,7 @@ def _tracked_video_fields(prompt_id: str) -> dict[str, Any]:
         for key in (
             "model", "size", "seconds", "actual_seconds", "created_at", "completed_at",
             "expires_at", "prompt", "error", "remixed_from_video_id",
+            "extended_from_video_id", "total_seconds",
         )
         if record.get(key) is not None
     }
@@ -8714,6 +8751,17 @@ def _openai_video_payload(
     if status == "succeeded" and payload.get("completed_at") is None:
         payload["completed_at"] = updated_at or int(time.time())
     payload.update({key: value for key, value in extra.items() if value is not None})
+    chain = (_video_job_records.get(prompt_id) or {}).get("chain")
+    if isinstance(chain, Mapping):
+        total = int(chain.get("segments") or 0)
+        if status == "succeeded":
+            done = total
+        else:
+            node = (_video_progress.get(prompt_id) or {}).get("node")
+            index = video_extend.segment_of_node(chain.get("units") or [], str(node or ""))
+            done = index if index is not None else 0
+        payload["segments_total"] = total
+        payload["segments_completed"] = done
     return payload
 
 
@@ -10974,11 +11022,10 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                 payload["phase"] = live.get("phase")
             _hold_video_progress(prompt_id, payload)
             if sora_status == "failed":
-                payload["error"] = {
-                    "code": "video_generation_failed",
-                    "message": _comfy_execution_error_message(job)
-                    or "ComfyUI execution_error",
-                }
+                payload["error"] = _chain_failure_error(
+                    _video_job_records.get(prompt_id), job,
+                    _comfy_execution_error_message(job) or "ComfyUI execution_error",
+                )
             return Response(
                 content=json.dumps(payload),
                 status_code=200,
