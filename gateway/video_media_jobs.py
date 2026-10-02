@@ -242,6 +242,12 @@ def video_generation_payload(
         "created_at": job.get("created_at"),
         "updated_at": job.get("updated_at"),
         "completed_at": job.get("updated_at") if internal_status == media_jobs.STATUS_SUCCEEDED else None,
+        "expires_at": metadata.get("expires_at"),
+        "prompt": metadata.get("prompt"),
+        "size": metadata.get("size") or "1280x720",
+        "seconds": metadata.get("seconds") or "5",
+        "remixed_from_video_id": metadata.get("remixed_from_video_id"),
+        "error": None,
     }
     if job.get("workflow") is not None:
         payload["vivid_fish_resolved_model"] = job["workflow"]
@@ -249,7 +255,12 @@ def video_generation_payload(
         if key in metadata:
             payload[key] = metadata[key]
     if job.get("error"):
-        payload["error"] = job.get("error")
+        error = job["error"]
+        payload["error"] = (
+            dict(error)
+            if isinstance(error, Mapping)
+            else {"code": "video_generation_failed", "message": str(error)}
+        )
     if include_assets and assets:
         payload["assets"] = [dict(asset) for asset in assets if isinstance(asset, Mapping)]
     elif job.get("status") == media_jobs.STATUS_SUCCEEDED and assets:
@@ -258,7 +269,9 @@ def video_generation_payload(
             content_url = first.get("content_url") or first.get("url")
             if content_url:
                 payload["content_url"] = content_url
-    return {key: value for key, value in payload.items() if value is not None}
+    return {key: value for key, value in payload.items() if value is not None or key in {
+        "completed_at", "expires_at", "prompt", "remixed_from_video_id", "error"
+    }}
 
 
 def openai_video_status(status: str) -> str:

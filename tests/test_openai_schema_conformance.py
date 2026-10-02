@@ -9,7 +9,9 @@ does not need network access.
 from __future__ import annotations
 
 import json
+import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway import media_jobs, video_media_jobs  # noqa: E402
 
 
 SPEC_PATH = ROOT / "tests" / "fixtures" / "openai-openapi-responses.json"
@@ -131,15 +134,48 @@ class OpenAISchemaConformanceTests(unittest.TestCase):
         assert_openai_schema(self, "CreateEmbeddingResponse", embeddings.json())
 
     def test_image_route_response_schema_accepts_gateway_shape(self) -> None:
-        # This is a hermetic route response contract fixture. The image route's
-        # dedicated tests exercise provider dispatch and binary/url result paths.
-        payload = {
-            "created": 1_700_000_000,
-            "data": [{"b64_json": "aGVsbG8="}],
-            "output_format": "png",
-            "size": "1024x1024",
-        }
-        assert_openai_schema(self, "ImagesResponse", payload)
+        from PIL import Image
+
+        class ImageRequest:
+            headers: dict[str, str] = {}
+            url = SimpleNamespace(scheme="http", netloc="gateway.test")
+
+        image = Image.new("RGBA", (2, 1), (1, 2, 3, 255))
+        raw_image = io.BytesIO()
+        image.save(raw_image, format="PNG")
+        with tempfile.TemporaryDirectory() as cache_dir, patch.object(
+            proxy, "IMAGE_CACHE_DIR", Path(cache_dir)
+        ), patch.object(proxy, "_image_url_signing_secret", return_value=b"test-secret"):
+            response = proxy._build_image_response_payload(
+                ImageRequest(),  # type: ignore[arg-type]
+                [raw_image.getvalue()],
+                "b64_json",
+                {},
+                output_format="png",
+                size="1024x1024",
+            )
+
+        assert_openai_schema(self, "ImagesResponse", json.loads(response.body))
+
+    def test_video_job_response_serializer_conforms(self) -> None:
+        payload = video_media_jobs.video_generation_payload(
+            {
+                "job_id": "video_hermetic",
+                "workflow": "video-ltx-2.5-t2v",
+                "status": media_jobs.STATUS_RUNNING,
+                "progress": 42,
+                "created_at": 1_700_000_000,
+                "updated_at": 1_700_000_030,
+                "metadata": {
+                    "model": "ltx-2.5",
+                    "size": "1280x720",
+                    "seconds": "5",
+                    "prompt": "a short synthetic clip",
+                },
+                "assets": [],
+            }
+        )
+        assert_openai_schema(self, "VideoResource", payload)
 
     def test_audio_transcription_response_schema_accepts_gateway_shape(self) -> None:
         async def dispatch(_request, _auth_context, *, operation):

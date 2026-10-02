@@ -8038,7 +8038,10 @@ def _tracked_video_fields(prompt_id: str) -> dict[str, Any]:
     record = _video_job_records.get(prompt_id) or {}
     fields = {
         key: record.get(key)
-        for key in ("model", "size", "seconds", "actual_seconds", "created_at", "completed_at")
+        for key in (
+            "model", "size", "seconds", "actual_seconds", "created_at", "completed_at",
+            "expires_at", "prompt", "error", "remixed_from_video_id",
+        )
         if record.get(key) is not None
     }
     if record.get("resolved_model") is not None:
@@ -8063,6 +8066,11 @@ def _openai_video_payload(
         "status": _openai_video_status(status),
         "vivid_status": status,
         "progress": _video_progress_percent(progress),
+        "completed_at": None,
+        "expires_at": None,
+        "prompt": None,
+        "remixed_from_video_id": None,
+        "error": None,
     }
     payload.update(tracked)
     if updated_at is not None:
@@ -9469,6 +9477,10 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
                         "actual_seconds": round(actual_seconds, 4),
                         "created_at": now,
                         "completed_at": None,
+                        "expires_at": now + 86400,
+                        "prompt": prompt,
+                        "error": None,
+                        "remixed_from_video_id": None,
                         # Owner scoping for GET/list/DELETE/content -- mirrors
                         # _asset_owner_key's existing image/audio asset model.
                         "owner_key_hash": _asset_owner_key(auth_context),
@@ -9484,7 +9496,11 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
                 "status": "queued",
                 "progress": 0,
                 "created_at": now,
+                "completed_at": None,
                 "expires_at": now + 86400,
+                "prompt": prompt,
+                "remixed_from_video_id": None,
+                "error": None,
                 "size": f"{width}x{height}",
                 "seconds": seconds_str,
                 "actual_seconds": round(actual_seconds, 4),
@@ -9603,7 +9619,11 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                 payload["node"] = live.get("node")
                 payload["phase"] = live.get("phase")
             if sora_status == "failed":
-                payload["error"] = _comfy_execution_error_message(job) or "ComfyUI execution_error"
+                payload["error"] = {
+                    "code": "video_generation_failed",
+                    "message": _comfy_execution_error_message(job)
+                    or "ComfyUI execution_error",
+                }
             return Response(
                 content=json.dumps(payload),
                 status_code=200,
