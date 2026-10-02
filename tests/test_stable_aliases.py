@@ -248,11 +248,14 @@ class ShippedConfigTests(unittest.TestCase):
     def test_fast_tiers_split_when_their_engine_is_deployed(self):
         res = sa.resolve_alias(ALIASES, "speech", "tts-fast", engine_available=_all_up)
         self.assertEqual(res.engine, "supertonic")
-        # Until Tim's blind listening test, the plain and quality names stay on OmniVoice,
-        # and so does tts-1 (Daisy sends it and keeps its cloned voice).
+        # Chatterbox Turbo is the default voice-cloning engine (Tim's blind listening test, 7/7).
         for name in ("tts", "tts-1", "tts-1-hd", "tts-quality", "gpt-4o-mini-tts"):
             res = sa.resolve_alias(ALIASES, "speech", name, engine_available=_all_up)
-            self.assertEqual(res.engine, "omnivoice", name)
+            self.assertEqual(res.engine, "chatterbox", name)
+        # OmniVoice stays reachable by engine id and is the fallback behind Chatterbox.
+        self.assertEqual(sa.resolve_alias(ALIASES, "speech", "omnivoice", engine_available=_all_up).engine, "omnivoice")
+        fallback = sa.resolve_alias(ALIASES, "speech", "tts", engine_available=_only("omnivoice"))
+        self.assertEqual(fallback.engine, "omnivoice")
         res = sa.resolve_alias(ALIASES, "speech", "kokoro", engine_available=_all_up)
         self.assertEqual(res.engine, "kokoro")
         res = sa.resolve_alias(ALIASES, "transcriptions", "stt-fast", engine_available=_all_up)
@@ -345,17 +348,19 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         speech = resp.json()["operations"]["speech"]
         rows = {r["alias"]: r for r in speech["stable"]}
-        self.assertEqual(rows["tts"]["resolves_to"], "omnivoice")
-        self.assertEqual(rows["tts-fast"]["candidates"], ["supertonic", "omnivoice"])
+        self.assertEqual(rows["tts"]["resolves_to"], "chatterbox")
+        self.assertEqual(rows["tts"]["candidates"], ["chatterbox", "omnivoice"])
+        self.assertEqual(rows["tts-fast"]["candidates"], ["supertonic", "chatterbox", "omnivoice"])
         engines = {e["engine"]: e["deployed"] for e in speech["engines"]}
         self.assertTrue(engines["omnivoice"])
         self.assertTrue(engines["supertonic"])
         self.assertEqual(rows["tts-fast"]["resolves_to"], "supertonic")
-        self.assertEqual(rows["tts-quality"]["resolves_to"], "omnivoice")
+        self.assertEqual(rows["tts-quality"]["resolves_to"], "chatterbox")
+        self.assertEqual(rows["tts-quality"]["candidates"], ["chatterbox", "omnivoice", "kokoro"])
         with self._without_service("tts-supertonic"):
             resp = self.client.get("/gateway/v1/aliases", params={"operation": "speech"})
         rows = {r["alias"]: r for r in resp.json()["operations"]["speech"]["stable"]}
-        self.assertEqual(rows["tts-fast"]["resolves_to"], "omnivoice")
+        self.assertEqual(rows["tts-fast"]["resolves_to"], "chatterbox")
         self.assertEqual(rows["tts-fast"]["skipped_engines"], ["supertonic"])
 
     def test_models_entries_for_stable_aliases(self):
@@ -431,6 +436,7 @@ class SpeechEngineRoutingTests(unittest.TestCase):
             patch.object(proxy, "config", cfg),
             patch.object(proxy.httpx, "AsyncClient", _FakeTTSClient),
             patch.object(proxy, "_service_availability_response", return_value=None),
+            patch.object(proxy, "_ensure_speech_service_ready", AsyncMock(return_value=None)),
         ]
         for p in self.patches:
             p.start()
@@ -457,10 +463,17 @@ class SpeechEngineRoutingTests(unittest.TestCase):
         self.assertEqual(self._speak("supertonic", "M3")["body"]["voice"], "M3")
         self.assertEqual(self._speak("tts-fast", "no-such-voice")["body"]["voice"], "F1")
 
-    def test_tts_alias_keeps_omnivoice_identity_voices(self):
+    def test_tts_alias_goes_to_chatterbox_with_identity_voices(self):
         sent = self._speak("tts", "nova")
+        self.assertEqual(sent["url"], "http://127.0.0.1:8014/v1/audio/speech")
+        self.assertEqual(sent["body"]["model"], "chatterbox-turbo")
+        self.assertEqual(sent["body"]["voice"], "nova")
+
+    def test_omnivoice_engine_id_still_reaches_omnivoice(self):
+        sent = self._speak("omnivoice", "nova")
         self.assertEqual(sent["body"]["model"], "k2-fsa/OmniVoice")
         self.assertEqual(sent["body"]["voice"], "nova")
+        self.assertNotIn(":8014", sent["url"])
         self.assertNotIn(":8010", sent["url"])
 
 

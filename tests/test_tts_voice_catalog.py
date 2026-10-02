@@ -11,7 +11,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -83,6 +83,7 @@ class VoiceRouteTests(unittest.TestCase):
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
             patch.object(proxy.httpx, "AsyncClient", _FakeTTSAsyncClient),
+            patch.object(proxy, "_ensure_speech_service_ready", AsyncMock(return_value=None)),
         ]
         for p in self.patches:
             p.start()

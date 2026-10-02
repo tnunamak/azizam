@@ -314,6 +314,28 @@ backends:
         unit: kokoro-tts.service
         health_endpoint: /health
         health_timeout_s: 90
+  tts-chatterbox:
+    name: chatterbox-tts
+    native_passthrough: true
+    host: 127.0.0.1
+    port: 8014
+    health_endpoint: /health
+    timeout: 120
+    # Higher number = lower priority: the always-on default service keeps winning capability lookups.
+    priority: 200
+    role: standby
+    note: "On-demand Chatterbox Turbo (Python) voice-cloning TTS on GPU0; weights unload after 10 min idle, process exits after 1 h; started by the gateway lifecycle driver."
+    capabilities:
+      - audio
+      - speech
+    managed: false
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: chatterbox-tts.service
+        health_endpoint: /health
+        health_timeout_s: 90
   stt-nemotron:
     name: nemotron-stt
     native_passthrough: true
@@ -931,7 +953,20 @@ model_aliases:
         service: tts
         model: k2-fsa/OmniVoice
         voice_transform: voxtral-voices    # OpenAI voice names -> cloned fixed identities
-        description: OmniVoice (Apache-2.0) cloned OpenAI voices; stable speaker identity
+        custom_voices: true                # accepts a user-created voice (voice_ref + ref_text)
+        description: OmniVoice (Apache-2.0) cloned OpenAI voices; stable speaker identity; fallback behind Chatterbox
+      chatterbox:
+        service: tts-chatterbox
+        model: chatterbox-turbo
+        voice_transform: voxtral-voices    # OpenAI voice names -> the 13 reference clips the engine clones
+        streaming: true                    # response_format=pcm streams one chunk per sentence group
+        native_sample_rate: 24000
+        custom_voices: true                # accepts a user-created voice (voice_ref = its stored clip)
+        placement: "Python server on GPU0 (about 3.1 GB while loaded; weights unload after 10 min idle, process exits after 1 h), on-demand unit"
+        default_voice: alloy
+        voices: [alloy, ash, ballad, cedar, coral, echo, fable, marin, nova, onyx, sage, shimmer, verse]
+        voice_map: {alloy: alloy, ash: ash, ballad: ballad, cedar: cedar, coral: coral, echo: echo, fable: fable, marin: marin, nova: nova, onyx: onyx, sage: sage, shimmer: shimmer, verse: verse}
+        description: "Chatterbox Turbo (MIT): clones the 13 OpenAI voice names from fixed reference clips, first audio about 0.2 s streamed"
       supertonic:
         service: tts-supertonic
         model: supertonic
@@ -958,14 +993,13 @@ model_aliases:
         description: "Kokoro quality engine (bake-off: best quality balance, UTMOS 3.83, round-trip WER 3.1%)"
     stable:
       # Order is a policy decision: the first deployed engine wins.
-      # `tts` and `tts-quality` keep OmniVoice (cloned OpenAI identities) first until
-      # Tim's blind listening test (~/media-refresh-samples/tts-bakeoff.html) picks a winner.
-      tts: [omnivoice]
-      tts-fast: [supertonic, omnivoice]
-      tts-quality: [omnivoice, kokoro]
+      # Chatterbox Turbo is the default (Tim's blind listening test, 7/7) and OmniVoice is the fallback.
+      tts: [chatterbox, omnivoice]
+      tts-fast: [supertonic, chatterbox, omnivoice]
+      tts-quality: [chatterbox, omnivoice, kokoro]
     openai:
-      # tts-1 stays on the default engine so existing clients keep their voice
-      # (Daisy sends tts-1). Re-point it at tts-fast to make tts-1 the fast tier.
+      # tts-1 follows the default engine (Daisy sends tts-1 with voice shimmer).
+      # Re-point it at tts-fast to make tts-1 the fast tier.
       - {match: "tts-1", to: tts}
       - {match: "tts-1-hd", to: tts-quality}
       - {match: "gpt-4o*-tts*", to: tts}

@@ -39,7 +39,8 @@ class TtsLifecycleTests(RouteCase):
         self.assertEqual(resp.json()["error"]["code"], "backend_unavailable")
         self.assertEqual(resp.headers["retry-after"], "5")
 
-    def test_always_on_default_service_is_never_probed(self) -> None:
+    def test_always_on_service_is_never_probed(self) -> None:
+        self.cfg["backends"]["tts-chatterbox"].pop("lifecycle", None)  # an always-on (external) service
         self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
         resp = self.client.post("/v1/audio/speech", json={"model": "tts", "voice": "nova", "input": "hi"})
         self.assertEqual(resp.status_code, 200)
@@ -110,7 +111,7 @@ class TtsStreamingTests(RouteCase):
         self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
         resp = self.client.post(
             "/v1/audio/speech",
-            json={"model": "tts", "voice": "nova", "input": "hi", "response_format": "wav", "stream_format": "sse"},
+            json={"model": "omnivoice", "voice": "nova", "input": "hi", "response_format": "wav", "stream_format": "sse"},
         )
         events = [json.loads(line[6:]) for line in resp.text.split("\n\n") if line.startswith("data: ")]
         self.assertEqual([e["type"] for e in events], ["speech.audio.delta", "speech.audio.done"])
