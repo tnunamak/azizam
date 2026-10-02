@@ -224,13 +224,26 @@ class ShippedConfigTests(unittest.TestCase):
         up = {"speech": _only("omnivoice"), "transcriptions": _only("parakeet")}
         for op, names in {
             "speech": ["tts-1", "tts-1-hd", "gpt-4o-mini-tts", "gpt-4o-tts", "tts", "tts-realtime", "tts-quality", "omnivoice"],
-            "transcriptions": ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-transcribe-diarize",
+            "transcriptions": ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe",
                                "stt", "stt-realtime", "stt-quality", "parakeet"],
         }.items():
             for name in names:
                 res = sa.resolve_alias(ALIASES, op, name, engine_available=up[op])
                 self.assertIsNotNone(res, f"{op}:{name}")
                 self.assertEqual(res.engine, {"speech": "omnivoice", "transcriptions": "parakeet"}[op])
+
+    def test_diarize_names_resolve_only_to_the_diarize_engine(self):
+        for name in ("gpt-4o-transcribe-diarize", "gpt-4o-transcribe-diarize-2026-01-01", "stt-diarize", "nemotron-diarize"):
+            res = sa.resolve_alias(ALIASES, "transcriptions", name, engine_available=_all_up)
+            self.assertEqual(res.engine, "nemotron-diarize", name)
+            self.assertEqual(res.service, "stt-diarize", name)
+        # No plain-text fallback: an engine without speakers would silently drop them.
+        with self.assertRaises(sa.AliasUnavailableError) as ctx:
+            sa.resolve_alias(ALIASES, "transcriptions", "gpt-4o-transcribe-diarize", engine_available=_only("parakeet"))
+        self.assertEqual(ctx.exception.code, "model_not_deployed")
+        # The generic gpt-4o transcribe names keep their own tier.
+        res = sa.resolve_alias(ALIASES, "transcriptions", "gpt-4o-transcribe", engine_available=_all_up)
+        self.assertEqual(res.engine, "parakeet")
 
     def test_realtime_tiers_split_when_their_engine_is_deployed(self):
         res = sa.resolve_alias(ALIASES, "speech", "tts-realtime", engine_available=_all_up)
