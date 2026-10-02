@@ -275,6 +275,12 @@ class RouteTests(unittest.TestCase):
         for p in reversed(self.patches):
             p.stop()
 
+    def _without_service(self, service_id):
+        """The shipped config with one engine service removed (an undeployed engine)."""
+        cfg = copy.deepcopy(proxy.config)
+        del cfg["backends"][service_id]
+        return patch.object(proxy, "config", cfg)
+
     def _chat_body_seen(self, path, payload):
         forward = AsyncMock(return_value=proxy.Response(content=b"{}", media_type="application/json"))
         with patch.object(proxy, "_forward_litellm_proxy_request", forward), patch.object(
@@ -315,6 +321,9 @@ class RouteTests(unittest.TestCase):
         resp = self.client.get("/gateway/v1/aliases/resolve", params={"operation": "chat", "model": "coder-q5"})
         self.assertEqual(resp.json(), {"alias": False, "resolved": True, "requested": "coder-q5", "operation": "chat", "resolves_to": "coder-q5"})
         resp = self.client.get("/gateway/v1/aliases/resolve", params={"operation": "speech", "model": "supertonic"})
+        self.assertEqual(resp.status_code, 200)
+        with self._without_service("tts-supertonic"):
+            resp = self.client.get("/gateway/v1/aliases/resolve", params={"operation": "speech", "model": "supertonic"})
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.json()["code"], "model_not_deployed")
 
@@ -327,7 +336,14 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(rows["tts-realtime"]["candidates"], ["supertonic", "omnivoice"])
         engines = {e["engine"]: e["deployed"] for e in speech["engines"]}
         self.assertTrue(engines["omnivoice"])
-        self.assertFalse(engines["supertonic"])
+        self.assertTrue(engines["supertonic"])
+        self.assertEqual(rows["tts-realtime"]["resolves_to"], "supertonic")
+        self.assertEqual(rows["tts-quality"]["resolves_to"], "omnivoice")
+        with self._without_service("tts-supertonic"):
+            resp = self.client.get("/gateway/v1/aliases", params={"operation": "speech"})
+        rows = {r["alias"]: r for r in resp.json()["operations"]["speech"]["stable"]}
+        self.assertEqual(rows["tts-realtime"]["resolves_to"], "omnivoice")
+        self.assertEqual(rows["tts-realtime"]["skipped_engines"], ["supertonic"])
 
     def test_models_entries_for_stable_aliases(self):
         entries = {e["id"]: e for e in proxy._stable_alias_model_entries()}
@@ -347,15 +363,16 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(res.effective_model, "video-ltx-2.5-t2v")
         res = proxy.resolve_model_for_operation("images", "flux2-klein-4b")
         self.assertFalse(res.is_openai_alias)
-        with self.assertRaises(proxy.ModelCompatibilityError):
+        with self._without_service("tts-supertonic"), self.assertRaises(proxy.ModelCompatibilityError):
             proxy.resolve_model_for_operation("speech", "supertonic")
         with self.assertRaises(proxy.ModelCompatibilityError):
             proxy.resolve_model_for_operation("speech", "dall-e-3")
 
     def test_undeployed_engine_by_name_is_a_coded_400(self):
-        resp = self.client.post(
-            "/v1/audio/speech", json={"model": "supertonic", "voice": "nova", "input": "hi"}
-        )
+        with self._without_service("tts-supertonic"):
+            resp = self.client.post(
+                "/v1/audio/speech", json={"model": "supertonic", "voice": "nova", "input": "hi"}
+            )
         self.assertEqual(resp.status_code, 400)
         error = resp.json()["error"]
         self.assertEqual((error["code"], error["param"]), ("model_not_deployed", "model"))

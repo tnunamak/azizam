@@ -454,11 +454,14 @@ class TestSeedCapabilityPinning(unittest.TestCase):
 
     def test_audio_speech_capability_pool_is_tts_backend(self) -> None:
         result = self._backends_for("audio.speech")
-        self.assertEqual(result, ["tts"])
+        # The always-on default wins capability lookups; on-demand engine services rank after it.
+        self.assertEqual(result[0], "tts")
+        self.assertEqual(sorted(result), ["tts", "tts-kokoro", "tts-supertonic"])
 
     def test_audio_transcriptions_capability_pool_is_stt_backend(self) -> None:
         result = self._backends_for("audio.transcriptions")
-        self.assertEqual(result, ["stt"])
+        self.assertEqual(result[0], "stt")
+        self.assertEqual(sorted(result), ["stt", "stt-canary", "stt-nemotron"])
 
     def test_audio_translations_pool_is_empty_for_current_config(self) -> None:
         """Current stt does not declare audio.translations → empty pool → legacy fallback."""

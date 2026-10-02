@@ -270,6 +270,119 @@ backends:
       - audio
       - transcriptions
     managed: false
+  tts-supertonic:
+    name: supertonic-tts
+    native_passthrough: true
+    host: 127.0.0.1
+    port: 8010
+    health_endpoint: /health
+    timeout: 120
+    # Higher number = lower priority: the always-on default service keeps winning capability lookups.
+    priority: 200
+    role: standby
+    note: "On-demand audio.cpp Supertonic realtime TTS on GPU0; started by the gateway lifecycle driver."
+    capabilities:
+      - audio
+      - speech
+    managed: false
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: supertonic-tts.service
+        health_endpoint: /health
+        health_timeout_s: 90
+  tts-kokoro:
+    name: kokoro-tts
+    native_passthrough: true
+    host: 127.0.0.1
+    port: 8011
+    health_endpoint: /health
+    timeout: 120
+    # Higher number = lower priority: the always-on default service keeps winning capability lookups.
+    priority: 200
+    role: standby
+    note: "On-demand Kokoro-82M Python TTS on GPU0; exits after 10 min idle; started by the gateway lifecycle driver."
+    capabilities:
+      - audio
+      - speech
+    managed: false
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: kokoro-tts.service
+        health_endpoint: /health
+        health_timeout_s: 90
+  stt-nemotron:
+    name: nemotron-stt
+    native_passthrough: true
+    host: 127.0.0.1
+    port: 8012
+    health_endpoint: /health
+    timeout: 120
+    # Higher number = lower priority: the always-on default service keeps winning capability lookups.
+    priority: 200
+    role: standby
+    note: "On-demand audio.cpp Nemotron 3.5 streaming ASR on GPU0; started by the gateway lifecycle driver."
+    capabilities:
+      - audio
+      - transcriptions
+    managed: false
+    default_model: nemotron-3.5-asr-streaming-0.6b
+    # Offline mode handles about 120 s per request, so longer audio is cut at silences.
+    # (stream=true uses streaming mode, which has no length limit.)
+    chunking:
+      enabled: true
+      threshold_seconds: 110
+      target_seconds: 60
+      silence_search_seconds: 30
+      max_duration_seconds: 3600
+      max_segments: 64
+      spool_dir: data/stt-spool
+      backend_timeout_seconds: 180
+      deadline_seconds: 360
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: nemotron-stt.service
+        health_endpoint: /health
+        health_timeout_s: 90
+  stt-canary:
+    name: canary-stt
+    native_passthrough: true
+    host: 127.0.0.1
+    port: 8013
+    health_endpoint: /health
+    timeout: 120
+    # Higher number = lower priority: the always-on default service keeps winning capability lookups.
+    priority: 200
+    role: standby
+    note: "On-demand audio.cpp Canary 180M Flash ASR on GPU0; started by the gateway lifecycle driver."
+    capabilities:
+      - audio
+      - transcriptions
+    managed: false
+    default_model: canary-180m-flash
+    # Measured: accurate to about 240 s per request, drops words near 300 s. Cut longer audio at silences.
+    chunking:
+      enabled: true
+      threshold_seconds: 200
+      target_seconds: 120
+      silence_search_seconds: 40
+      max_duration_seconds: 3600
+      max_segments: 64
+      spool_dir: data/stt-spool
+      backend_timeout_seconds: 180
+      deadline_seconds: 360
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: canary-stt.service
+        health_endpoint: /health
+        health_timeout_s: 90
   embeddings:
     name: nomic-embed-text-v1.5 CPU
     native_passthrough: true
@@ -751,7 +864,7 @@ model_aliases:
         model: supertonic
         streaming: true
         native_sample_rate: 44100
-        placement: "audio.cpp on GPU0 (~1.2 GB while loaded; weights unload after 10 min idle), on-demand unit"
+        placement: "audio.cpp on GPU0 (~0.7 GB while loaded; weights unload after 30 min idle), on-demand unit"
         default_voice: F1
         voices: [F1, F2, F3, F4, F5, M1, M2, M3, M4, M5]
         # Chosen by gender and measured pitch/brightness against OpenAI's voice descriptions
@@ -763,7 +876,7 @@ model_aliases:
         model: kokoro
         streaming: true
         native_sample_rate: 24000
-        placement: "Python server on GPU0 (~1.7 GB while running; exits after 15 min idle), on-demand unit"
+        placement: "Python server on GPU0 (~1.7 GB while running; exits after 10 min idle), on-demand unit"
         default_voice: af_heart
         voices: [af_alloy, af_aoede, af_bella, af_heart, af_jessica, af_kore, af_nicole, af_nova, af_river, af_sarah, af_sky, am_adam, am_echo, am_eric, am_fenrir, am_liam, am_michael, am_onyx, am_puck, am_santa, bf_alice, bf_emma, bf_isabella, bf_lily, bm_daniel, bm_fable, bm_george, bm_lewis]
         # Chosen by gender and measured pitch/brightness against OpenAI's voice descriptions
@@ -796,13 +909,13 @@ model_aliases:
         stream_model: nemotron-3.5-asr-streaming-0.6b-stream  # same weights in streaming mode, used when stream=true
         streaming: true            # stream=true sends transcript.text.delta events while decoding
         upload_format: wav16k      # audio.cpp reads only 16 kHz mono WAV; the gateway converts uploads
-        placement: "audio.cpp on GPU0 (~1.5 GB while loaded; weights unload after 10 min idle), on-demand unit"
+        placement: "audio.cpp on GPU0 (~2.4 GB with both modes loaded; weights unload after 5 min idle), on-demand unit"
         description: "Nemotron streaming (bake-off: 194 ms end-of-speech to final)"
       canary:
         service: stt-canary
         model: canary-180m-flash
         upload_format: wav16k
-        placement: "audio.cpp on GPU0 (~0.8 GB while loaded; weights unload after 10 min idle), on-demand unit"
+        placement: "audio.cpp on GPU0 (~0.9 GB while loaded; weights unload after 5 min idle), on-demand unit"
         description: Canary 180M Flash (low VRAM, strong clean-speech WER)
     stable:
       stt: [parakeet]

@@ -944,12 +944,12 @@ an exact model or settings. Unknown names pass through unchanged.
 | Video | `video` | `video-ltx-2.5-t2v`; `input_reference` switches to image-to-video | `sora-2`, `sora-2-pro`, `sora*` |
 | | `video-fast` | `video-ltx-2.5-t2v` (same graph as `video`) | |
 | | `video-long` | `video-ltx-2.5-long` (2-50 s) | |
-| TTS | `tts` | OmniVoice (OpenAI voice names are fixed cloned identities) | `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
-| | `tts-realtime` | OmniVoice today; Supertonic once deployed | `tts-1` |
-| | `tts-quality` | OmniVoice today; Kokoro once deployed | `tts-1-hd` |
+| TTS | `tts` | OmniVoice (OpenAI voice names are fixed cloned identities) | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
+| | `tts-realtime` | Supertonic (audio.cpp, GPU0), then OmniVoice | none (point `tts-1` here to make it the fast tier) |
+| | `tts-quality` | OmniVoice first until the listening test; Kokoro is the second candidate | `tts-1-hd` |
 | STT | `stt` | Parakeet TDT 0.6B v3 | `whisper*` |
-| | `stt-realtime` | Parakeet today; Nemotron streaming once deployed | `gpt-4o-mini-transcribe*` |
-| | `stt-quality` | Parakeet today; Canary is the second candidate | `gpt-4o-transcribe*`, `gpt-4o-transcribe-diarize` |
+| | `stt-realtime` | Nemotron streaming (audio.cpp, GPU0), then Parakeet | `gpt-4o-mini-transcribe*` |
+| | `stt-quality` | Parakeet first; Canary 180M Flash is the second candidate | `gpt-4o-transcribe*`, `gpt-4o-transcribe-diarize` |
 | Translations | -- | not supported by the local STT backend (clear 400) | |
 | Music / SFX | `music` | `ace-step-1.5-xl-turbo` | |
 | | `song` | `yue2-song` (vocals; license CC BY-NC) | |
@@ -961,9 +961,29 @@ order and the first one whose service is deployed wins. Engine ids
 `canary`) are valid `model` values too; an engine that is not deployed returns
 `400 model_not_deployed`. When an alias uses a non-OmniVoice engine, OpenAI
 voice names are mapped to that engine's closest voice (`voice_map`; an
-engine-native voice name is passed through). The realtime and quality tiers
-point at the same model until the second engine is deployed; the tier order is
-a policy choice that waits on the TTS listening test.
+engine-native voice name is passed through). The tier order is a
+policy choice; `tts` and `tts-quality` keep OmniVoice first until the TTS
+listening test.
+
+**Starting engines.** An engine whose service has a `systemd` lifecycle is
+started on demand (one health check, then `systemctl --user start` and a health
+poll). `supertonic-tts`, `kokoro-tts`, `nemotron-stt` and `canary-stt` are
+operator-owned user units; the gateway only starts them.
+
+**Streaming speech.** For engines marked `streaming: true`,
+`response_format: "pcm"` streams chunked 24 kHz s16le audio while the engine is
+still speaking; add `stream_format: "audio"` to stream `mp3`/`opus`/`aac`/`flac`/`wav`
+too, or `stream_format: "sse"` for `speech.audio.delta` events. Other engines
+answer once (an SSE request gets one delta). `GET /v1/audio/voices` lists each
+deployed engine's voices under `engines`.
+
+**Streaming transcription.** Send `stream=true` on
+`POST /v1/audio/transcriptions` to get `transcript.text.delta` events followed by
+`transcript.text.done`. Streaming engines (Nemotron) send deltas while decoding;
+other engines send the whole text in one delta. The gateway reads the `model`
+field before the file to choose the service, so send `model` first (OpenAI SDKs
+do); a request whose `model` names an engine on another service but arrives after
+more than 8 MiB of audio gets `400 stt_model_field_order`.
 
 Discovery and dry run (no model is loaded or run):
 
