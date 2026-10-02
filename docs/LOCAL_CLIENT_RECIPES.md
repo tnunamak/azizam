@@ -530,7 +530,7 @@ stored in `media_jobs.db` (table `video_job_records`) and kept 14 days, so ids
 and their owner survive a gateway restart. Status, content, list, delete, remix,
 edit and extend are all scoped to the owning key: another key's id, and any id
 the gateway has no record of (never made here, expired, or made before records
-were stored), returns `404 video_id not found` (unless auth is disabled). A
+were stored), returns `404 video_id not found` (unless auth is disabled). Set `videos.allow_untracked_ids: true` to keep videos made before records were stored readable for a while. A
 different API key's jobs never appear in the list:
 
 ```bash
