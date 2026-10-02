@@ -1444,6 +1444,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
                 "source_image": {"type": "asset", "required": True},
                 "scale": {"type": "number", "enum": [2, 4], "default": 2},
             },
+            "outputs": {"image": {"media_type": "image/png"}},
             "bindings": {
                 "comfyui": {
                     "workflow": "workflows/images/promptless.json",
@@ -1502,7 +1503,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
                 receipt=receipt,
             )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 200, response.body.decode("utf-8"))
         self.assertEqual(captured["base_workflow"]["6"]["inputs"]["text"], "")
         self.assertEqual(
             receipt.ignored_inputs.get("prompt"),
