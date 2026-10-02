@@ -211,6 +211,7 @@ from gateway.toolcall_detection import (
     ToolcallStreamDetector as _ToolcallStreamDetector,
 )
 from gateway.discovery import WorkflowRegistry
+from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
     build_llms_txt,
@@ -25136,6 +25137,24 @@ app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
 # =============================================================================
 # Main
 # =============================================================================
+
+def _gateway_openapi() -> dict[str, Any]:
+    """FastAPI's schema plus the typed native workflow surface (cached)."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = _fastapi_openapi()
+    _augment_workflow_openapi(
+        schema,
+        GATEWAY_WORKFLOW_REGISTRY.records(),
+        aliases=_gateway_aliases_provider(),
+    )
+    app.openapi_schema = schema
+    return schema
+
+
+_fastapi_openapi = app.openapi
+app.openapi = _gateway_openapi  # type: ignore[method-assign]
+
 
 def signal_handler(signum, frame):
     print(f"\n[proxy] Received signal {signum}, shutting down...", flush=True)

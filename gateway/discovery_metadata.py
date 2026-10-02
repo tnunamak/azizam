@@ -193,6 +193,7 @@ def build_gateway_discovery_metadata(
         "llms_txt": "/llms.txt",
         "skill_catalog": "/.well-known/skills",
         "skill": "/.well-known/skills/openai-proxy-gateway/SKILL.md",
+        "workflow_catalog": "/openapi.json#x-vividfish-workflows",
         "capabilities": "/gateway/v1/capabilities",
         "extensions": "/gateway/v1/extensions",
         "model_capabilities": "/gateway/v1/models/{model}/capabilities",
@@ -274,6 +275,7 @@ def build_gateway_discovery_metadata(
                 "Fetch this metadata document.",
                 "Fetch the openai-proxy-gateway skill if your agent runtime supports skills.",
                 "Use /gateway/v1/capabilities with a bearer token before assuming a modality.",
+                "Read x-vividfish-workflows in /openapi.json for typed workflow inputs, sync/async routes and aliases, then call the route with curl or an OpenAI SDK.",
             ],
             "default_surface": "Use canonical /openai/v1 endpoints for new OpenAI-compatible setup; /v1 remains a convenience route for existing clients.",
             "protocol_aliases": "Use /anthropic/v1 for Anthropic Messages and /ollama/api for Ollama-compatible clients; /api remains an Ollama convenience route.",
@@ -334,6 +336,11 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         "8. Fetch /gateway/v1/workflows before using extensions.com.vividfish.workflow controls.",
         "9. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",
         "10. Reuse generated images via data[].asset_id or signed /v1/assets/{asset_id}/content URLs when present; asset IDs are scoped to the minting App API key.",
+        "",
+        "## Native Workflows (image, audio, video generation and editing)",
+        f"- {prefix}/openapi.json lists every workflow in the root list `x-vividfish-workflows`: typed inputs (`WorkflowInputs_<id>` schemas), aliases, typical seconds, the sync route, the async route, which to prefer, and where each input goes in the request.",
+        "- Slow work (video, long music) uses an async route: submit, poll until terminal, then fetch the content. Image, audio and video generation can use POST /gateway/v1/media/jobs; video uses POST /v1/videos.",
+        "- Any OpenAPI-aware tool can read this document; for a plain call, build a curl request from the entry's `execution` block (route, content type, and the `fields` map that says where each input goes).",
         "",
     ]
     return "\n".join(lines)

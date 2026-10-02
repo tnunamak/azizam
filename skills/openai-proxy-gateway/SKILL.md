@@ -29,6 +29,8 @@ curl -fsS "$BASE/gateway/v1/workflows" \
 
 `OPENAI_PROXY_API_KEY` is still accepted by existing apps and tooling as an env-var alias for the same bearer token.
 
+Typed inputs, aliases, typical times, and the sync and async route of every native workflow are in `GET /openapi.json`, root list `x-vividfish-workflows` (each entry points at a `WorkflowInputs_<id>` schema). Slow work uses an async route: submit, poll, fetch the content. Pick the entry, then call its route with curl or an OpenAI SDK: `execution.fields` says whether each input is a body field, an `extensions["com.vividfish.workflow"]` key, or a file part.
+
 If a needed capability is absent or unavailable, stop and report that honestly.
 
 ## Choose The Surface
