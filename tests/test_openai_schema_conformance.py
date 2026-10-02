@@ -145,7 +145,7 @@ class OpenAISchemaConformanceTests(unittest.TestCase):
         image.save(raw_image, format="PNG")
         with tempfile.TemporaryDirectory() as cache_dir, patch.object(
             proxy, "IMAGE_CACHE_DIR", Path(cache_dir)
-        ), patch.object(proxy, "_image_url_signing_secret", return_value=b"test-secret"):
+        ), patch.object(proxy, "_image_url_signing_secret", b"test-secret"):
             response = proxy._build_image_response_payload(
                 ImageRequest(),  # type: ignore[arg-type]
                 [raw_image.getvalue()],
