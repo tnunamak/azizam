@@ -799,6 +799,24 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
         proxy.config.clear()
         proxy.config.update(self._orig_config)
 
+    def test_a_service_start_budget_is_honoured_without_a_model(self):
+        """A model-loading engine declares health_timeout_s; the 5 s default must not cut its cold start short."""
+        import gateway.lifecycle_drivers as _lcd
+
+        seen: list[float] = []
+
+        async def _fake_ready(svc, timeout_s):
+            seen.append(timeout_s)
+            return True
+
+        slow = {"host": "127.0.0.1", "port": 1, "lifecycle": {"driver": "systemd", "driver_config": {"unit": "slow.service", "health_timeout_s": 120}}}
+        plain = {"host": "127.0.0.1", "port": 2, "lifecycle": {"driver": "systemd", "driver_config": {"unit": "plain.service"}}}
+        proxy.config["backends"] = {**proxy.config["backends"], "slow-engine": slow, "plain-engine": plain}
+        with patch.object(_lcd._systemd_driver, "ensure_ready", side_effect=_fake_ready):
+            self.assertTrue(_run(proxy.ensure_target("slow-engine", None)))
+            self.assertTrue(_run(proxy.ensure_target("plain-engine", None)))
+        self.assertEqual(seen, [120.0, float(proxy.HEALTH_CHECK_TIMEOUT)])
+
     def test_kobold_driver_path_calls_systemd_swap(self):
         """ensure_target('kobold', gguf) calls SystemdDriver.swap()."""
         import gateway.lifecycle_drivers as _lcd

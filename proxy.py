@@ -1345,7 +1345,14 @@ async def ensure_target(
 
     # Non-swap driver, or no model requested → just make the backend ready.
     if not (supports_swap(driver) and model):
-        ready = await driver.ensure_ready(bcfg, timeout_s=HEALTH_CHECK_TIMEOUT)
+        # A service that declares a start budget (driver_config.health_timeout_s: engines that load
+        # a model in 30-60 s) gets it; the 5 s default only covers services that declare none.
+        declared = ((bcfg.get("lifecycle") or {}).get("driver_config") or {}).get("health_timeout_s")
+        try:
+            budget = max(HEALTH_CHECK_TIMEOUT, float(declared)) if declared is not None else HEALTH_CHECK_TIMEOUT
+        except (TypeError, ValueError):
+            budget = HEALTH_CHECK_TIMEOUT
+        ready = await driver.ensure_ready(bcfg, timeout_s=budget)
         if not ready:
             print(
                 f"[proxy] ensure_target: backend '{backend}' unreachable via driver",
