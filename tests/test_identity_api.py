@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gateway import identity_api  # noqa: E402
 
 TEMPLATE = json.loads((ROOT / "workflows/identity/qwen-image-2.1-identity.json").read_text())
-BINDING = {"image_nodes": [f"L{i}" for i in range(1, 7)], "prompt_node": "7", "seed_node": "8"}
+BINDING = {"image_nodes": [f"L{i}" for i in range(1, 11)], "prompt_node": "7", "seed_node": "8"}
 
 
 def png(color: tuple[int, int, int]) -> bytes:
@@ -167,6 +167,81 @@ class IdentityRouteTests(unittest.TestCase):
         r = self.post(client)
         self.assertEqual(r.status_code, 502)
         self.assertEqual(r.json()["error"]["code"], "identity_backend_error")
+
+
+class PeopleParsingTests(unittest.TestCase):
+    def test_images_list_and_repeated_labels_merge_into_one_person(self) -> None:
+        people = identity_api.parse_people([
+            {"label": "grandma", "images": [0, {"image": 2, "box": [1, 2, 3, 4]}], "description": "glasses"},
+            {"label": "baby", "image": 1, "infant": True},
+            {"label": "grandma", "image": 3},
+        ], 4)
+        self.assertEqual([p.label for p in people], ["grandma", "baby"])
+        grandma = people[0]
+        self.assertEqual([(s.image, s.box) for s in grandma.sources()], [(0, None), (2, (1.0, 2.0, 3.0, 4.0)), (3, None)])
+        self.assertEqual(grandma.description, "glasses")
+        self.assertTrue(people[1].infant)
+
+    def test_bad_sources_are_rejected(self) -> None:
+        for raw in ([{"label": "a", "images": []}], [{"label": "a", "images": ["x"]}], [{"label": "a", "images": [9]}],
+                    [{"label": "a", "images": [{"image": 0, "box": [1, 2]}]}]):
+            with self.assertRaises(identity_api.IdentityError):
+                identity_api.parse_people(raw, 2)
+
+    def test_scene_options_defaults_and_ranges(self) -> None:
+        req = identity_api.build_scene_request({}, [b"x"], "p")
+        self.assertEqual((req.refine, req.pooling, req.pose_policy, req.max_refs_per_person, req.resolution),
+                         ("auto", "best", "likeness", 3, None))
+        for bad in ({"refine": "sometimes"}, {"pooling": "median"}, {"max_refs_per_person": "9"}, {"refine_attempts": "0"}):
+            with self.assertRaises(identity_api.IdentityError):
+                identity_api.build_scene_request(bad, [b"x"], "p")
+
+    def test_mode_resolution(self) -> None:
+        quick = identity_api.build_scene_request({"attempts": "1", "refine": "off"}, [b"x"], "p")
+        slow = identity_api.build_scene_request({}, [b"x"], "p")
+        self.assertFalse(identity_api.wants_async({}, quick))
+        self.assertTrue(identity_api.wants_async({}, slow))
+        self.assertFalse(identity_api.wants_async({"mode": "sync"}, slow))
+        self.assertTrue(identity_api.wants_async({"mode": "async"}, quick))
+        self.assertFalse(identity_api.wants_async({}, slow, default="sync"))
+
+
+class AsyncRouteTests(unittest.TestCase):
+    def test_identity_route_hands_long_runs_to_the_job_queue(self) -> None:
+        client, calls, _ = build([GOOD])
+        submitted = {}
+
+        async def submit_job(request, auth, req, fmt):
+            from fastapi.responses import JSONResponse
+            submitted["req"] = req
+            return JSONResponse({"object": "media.job", "id": "job_1", "status": "queued", "progress": 0,
+                                 "poll_url": "/gateway/v1/media/jobs/job_1", "content_url": "/gateway/v1/media/jobs/job_1/content"},
+                                status_code=202)
+
+        # rebuild with a submit_job dep
+        from fastapi import FastAPI
+        app2 = FastAPI()
+        deps = identity_api.IdentityApiDeps(
+            authenticate=lambda r, p: "auth", enforce_policy=lambda a, p: None, ensure_face_service=lambda: _none(),
+            face_client=lambda: FakeClient(), run_workflow=lambda a, g, u: _good(), template=lambda: (TEMPLATE, BINDING),
+            store_image=lambda *a: {"asset_id": "i"}, models=("buffalo_l",), submit_job=submit_job)
+        identity_api.register_identity_routes(app2, deps)
+        c2 = TestClient(app2)
+        r = c2.post(identity_api.IDENTITY_PATH, files=[("image", ("p.png", PHOTO, "image/png"))], data={"prompt": "x"})
+        self.assertEqual(r.status_code, 202)
+        self.assertEqual(r.json()["poll_url"], "/gateway/v1/media/jobs/job_1")
+        r = c2.post(identity_api.IDENTITY_PATH, files=[("image", ("p.png", PHOTO, "image/png"))],
+                    data={"prompt": "x", "attempts": "1", "refine": "off"})
+        self.assertEqual(r.status_code, 200)  # a short run stays synchronous
+        self.assertEqual(calls, [])
+
+
+async def _none():
+    return None
+
+
+async def _good():
+    return GOOD
 
 
 class OpenApiTests(unittest.TestCase):

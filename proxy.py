@@ -6924,8 +6924,12 @@ async def _comfy_run_round(
     *,
     vram_probe: Optional[_VramProbe] = None,
     request: Request | None = None,
+    max_wait_s: int | None = None,
 ) -> tuple[Optional[Response], list[bytes]]:
     """Submit a single ComfyUI prompt and harvest the resulting image bytes.
+
+    ``max_wait_s`` replaces COMFY_TIMEOUT as the wall-clock limit (queue wait included);
+    async jobs pass a long value so a prompt queued behind a video render is not cancelled.
 
     Returns (error_response, image_bytes_list). On success error_response is None.
     Caller is responsible for any retry / batch-splitting strategy.
@@ -6985,7 +6989,7 @@ async def _comfy_run_round(
 
         print(f"[proxy] ComfyUI {label} submitted: {prompt_id}", flush=True)
 
-        max_polls = COMFY_TIMEOUT * 2  # 0.5s cadence
+        max_polls = (max_wait_s or COMFY_TIMEOUT) * 2  # 0.5s cadence
         job = None
         for _ in range(max_polls):
             if await _request_is_disconnected(request):
@@ -7958,34 +7962,20 @@ async def _identity_edit_alias(
         photos = [await item.read() for item in image_files]
         if not photos or len(photos) > identity_api.MAX_PHOTOS or not all(photos):
             raise identity_scene.IdentityError(f"send 1 to {identity_api.MAX_PHOTOS} reference photos", param="image")
-        unknown = set(options) - {
-            "people", "attempts", "seed", "resolution", "steps", "cfg",
-            "only_listed_people", "photo_as_canvas", "stop_when_pass", "facing_each_other", "thresholds",
-        }
+        unknown = set(options) - identity_api.SCENE_OPTION_NAMES
         if unknown:
             raise identity_scene.IdentityError(f"unknown identity option: {sorted(unknown)[0]}", param="extensions")
-        req = identity_scene.SceneRequest(
-            photos=photos,
-            prompt=prompt,
-            people=identity_api.parse_people(options.get("people"), len(photos)),
-            attempts=int(options.get("attempts", 3)),
-            seed=int(options.get("seed", 0)),
-            resolution=int(options.get("resolution", 1536)),
-            steps=int(options.get("steps", 25)),
-            cfg=float(options.get("cfg", 1.0)),
-            only_listed_people=bool(options.get("only_listed_people", True)),
-            photo_as_canvas=bool(options.get("photo_as_canvas", True)),
-            stop_when_pass=bool(options.get("stop_when_pass", True)),
-            facing_each_other=bool(options.get("facing_each_other", False)),
-            thresholds=identity_api.parse_thresholds(options.get("thresholds")),
-        )
+        req = identity_api.build_scene_request(options, photos, prompt)
+        # The OpenAI-shaped edit route stays synchronous unless the client asks for a job.
+        if identity_api.wants_async(options, req, default="sync"):
+            return await app.state.identity_submit(request, auth_context, req, response_format)
         return await app.state.identity_run_scene(request, auth_context, req, response_format)
     except (identity_scene.IdentityError, likeness_module.LikenessError) as exc:
         return identity_api.error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None))
     except (TypeError, ValueError) as exc:
         return identity_api.error(400, "invalid_option", f"invalid identity option: {exc}", param="extensions")
     except (httpx.HTTPError, RuntimeError) as exc:
-        return identity_api.error(502, "identity_backend_error", f"identity workflow failed: {exc or type(exc).__name__}")
+        return identity_api.error(502, "identity_backend_error", f"identity workflow failed: {str(exc) or type(exc).__name__}")
 
 
 async def proxy_comfy_edit_request(
@@ -12477,6 +12467,7 @@ async def lifespan(app: FastAPI):
     try:
         media_jobs.init_db()
         pruned = media_jobs.prune()
+        _fail_orphaned_identity_jobs()
         print(f"[proxy] Hydrated {_hydrate_video_job_records()} persisted video job record(s)", flush=True)
         print(
             f"[proxy] Media job store initialized (db={media_jobs.DB_PATH}, "
@@ -13473,7 +13464,10 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
             if upload_error is not None:
                 raise RuntimeError("ComfyUI image upload failed")
             graph[node_id]["inputs"]["image"] = name
-        error, images = await _comfy_run_round(client, graph, dict(headers), "identity scene")
+        error, images = await _comfy_run_round(
+            client, graph, dict(headers), "identity scene",
+            max_wait_s=int(IDENTITY_CFG.get("max_wait_s", 3600)),
+        )
     if error is not None:
         try:
             message = json.loads(error.body.decode("utf-8"))["error"]["message"]
@@ -13522,6 +13516,140 @@ def _identity_store_image(request: Request, auth_context: AuthContext, content: 
     return item
 
 
+
+_IDENTITY_JOB_INTENT = "image.identity"
+_identity_job_semaphore = asyncio.Semaphore(1)
+_identity_job_tasks: set[asyncio.Task] = set()
+
+
+def _identity_request_shim(request: Request) -> Any:
+    """A Request-shaped object that outlives the HTTP request (host headers for signed URLs)."""
+    return _JsonBodyRequestShim(
+        body={},
+        headers=_safe_image_job_headers(request),
+        scheme=request.url.scheme or "http",
+        netloc=getattr(request.url, "netloc", "") or request.headers.get("host", "127.0.0.1"),
+        scope=getattr(request, "scope", {}),
+    )
+
+
+async def _identity_submit_job(
+    request: Request, auth_context: AuthContext, req: identity_scene.SceneRequest, response_format: str,
+) -> Response:
+    """Queue an identity scene as a media job: poll /gateway/v1/media/jobs/{id}, fetch .../content."""
+    admission = _media_job_admission_response("image.generate")
+    if admission is not None:
+        return admission
+    profile = _profile_for_auth_context(auth_context)
+    job = media_jobs.MediaJob(
+        intent=_IDENTITY_JOB_INTENT,
+        workflow=IDENTITY_MANIFEST_ID,
+        backend="comfyui",
+        request_id=f"identity-{uuid.uuid4().hex}",
+        app_profile=profile.id,
+        api_key_name=auth_context.identity.name if auth_context.identity else None,
+        metadata={"mode": "async_identity", "attempts": req.attempts, "photos": len(req.photos)},
+    )
+    media_jobs.create(job, path=media_jobs.DB_PATH)
+    shim = _identity_request_shim(request)
+    task = asyncio.create_task(_run_identity_job(job.job_id, shim, auth_context, req, response_format))
+    _identity_job_tasks.add(task)
+    task.add_done_callback(_identity_job_tasks.discard)
+    return _image_media_job_response(
+        media_jobs.get(job.job_id, audience="internal", path=media_jobs.DB_PATH) or job.to_dict("internal"),
+        request,
+        status_code=202,
+    )
+
+
+def _identity_job_progress(job_id: str) -> Callable[[str, float, dict[str, Any]], None]:
+    def report(phase: str, fraction: float, detail: dict[str, Any]) -> None:
+        percent = int(min(99, max(1, fraction * 100)))
+        patch = {"phase": phase, **{k: v for k, v in detail.items() if isinstance(v, (str, int, float, bool))}}
+        try:
+            media_jobs.update_status(
+                job_id, media_jobs.STATUS_RUNNING, progress=percent, metadata_patch=patch, path=media_jobs.DB_PATH
+            )
+            media_jobs.append_event(
+                job_id, "progress", {"phase": phase, "status": media_jobs.STATUS_RUNNING, "progress": percent, **patch},
+                path=media_jobs.DB_PATH,
+            )
+        except ValueError:
+            pass  # the job was cancelled or finished; a late callback is not an error
+
+    return report
+
+
+async def _run_identity_job(
+    job_id: str, shim: Any, auth_context: AuthContext, req: identity_scene.SceneRequest, response_format: str,
+) -> None:
+    async with _identity_job_semaphore:
+        try:
+            media_jobs.update_status(
+                job_id, media_jobs.STATUS_RUNNING, progress=1,
+                metadata_patch={"started_at": int(time.time()), "phase": "queued"}, path=media_jobs.DB_PATH,
+            )
+        except ValueError:
+            return
+        req.on_progress = _identity_job_progress(job_id)
+        try:
+            result = await app.state.identity_execute(auth_context, req)
+            item = _identity_store_image(shim, auth_context, result.image, response_format)
+            asset = {k: item[k] for k in ("asset_id", "asset_url", "media_type", "url") if k in item}
+            asset.update(identity_api.scene_extras(result))
+            media_jobs.update_status(
+                job_id, media_jobs.STATUS_SUCCEEDED, progress=100, add_assets=[asset],
+                metadata_patch={"completed_at": int(time.time())}, path=media_jobs.DB_PATH,
+            )
+            media_jobs.append_event(
+                job_id, "succeeded", {"phase": "complete", "status": media_jobs.STATUS_SUCCEEDED, "progress": 100},
+                path=media_jobs.DB_PATH,
+            )
+        except identity_api.IdentityUnavailable:
+            _identity_job_failed(job_id, "The face service could not be started.")
+        except (identity_scene.IdentityError, likeness_module.LikenessError) as exc:
+            _identity_job_failed(job_id, str(exc))
+        except asyncio.CancelledError:
+            _identity_job_failed(job_id, "The gateway stopped before the job finished.")
+            raise
+        except Exception as exc:  # noqa: BLE001
+            _identity_job_failed(job_id, f"identity workflow failed: {str(exc) or type(exc).__name__}")
+
+
+def _identity_job_failed(job_id: str, message: str) -> None:
+    try:
+        media_jobs.update_status(
+            job_id, media_jobs.STATUS_FAILED, error=message[:500],
+            metadata_patch={"completed_at": int(time.time())}, path=media_jobs.DB_PATH,
+        )
+    except ValueError:
+        pass
+
+
+def _fail_orphaned_identity_jobs() -> int:
+    """Identity jobs run in memory only: after a restart a queued or running one cannot continue."""
+    failed = 0
+    for status_value in (media_jobs.STATUS_RUNNING, media_jobs.STATUS_QUEUED):
+        try:
+            rows = media_jobs.recent(limit=200, audience="internal", status=status_value, path=media_jobs.DB_PATH)
+        except Exception:  # noqa: BLE001
+            continue
+        for job in rows:
+            if job.get("intent") == _IDENTITY_JOB_INTENT:
+                _identity_job_failed(str(job.get("job_id")), "The gateway restarted before the job finished; submit it again.")
+                failed += 1
+    return failed
+
+
+def _identity_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, Any]:
+    payload = _openai_image_payload_from_media_job(job)
+    assets = [a for a in (job.get("assets") or []) if isinstance(a, Mapping)]
+    if assets:
+        extras = {k: assets[0][k] for k in identity_api.EXTRA_KEYS if k in assets[0]}
+        payload.update(extras)
+    return payload
+
+
 identity_api.register_identity_routes(
     app,
     identity_api.IdentityApiDeps(
@@ -13533,6 +13661,7 @@ identity_api.register_identity_routes(
         template=lambda: _identity_template(),
         store_image=lambda request, auth, content, fmt: _identity_store_image(request, auth, content, fmt),
         note_delivery=lambda auth, fields: _identity_note_delivery(auth, fields),
+        submit_job=lambda request, auth, req, fmt: _identity_submit_job(request, auth, req, fmt),
     ),
 )
 
@@ -18478,7 +18607,7 @@ def _openai_video_payload_from_media_job(
 
 def _media_job_content_route_policy(job: Mapping[str, Any]) -> dict[str, Any] | None:
     intent = str(job.get("intent") or "")
-    if intent == "image.generate":
+    if intent in ("image.generate", _IDENTITY_JOB_INTENT):
         return _RUNTIME_ROUTE_POLICY["/gateway/v1/media/jobs/{job_id}/content"]
     if intent in _AUDIO_MEDIA_JOB_INTENTS:
         return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get("aud")
@@ -20164,6 +20293,9 @@ async def gateway_media_job_content(job_id: str, request: Request):
     intent = str(job.get("intent") or "")
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)
+        missing_message = "media job has no image assets"
+    elif intent == _IDENTITY_JOB_INTENT:
+        payload = _identity_payload_from_media_job(job)
         missing_message = "media job has no image assets"
     elif intent in _AUDIO_MEDIA_JOB_INTENTS:
         payload = _openai_audio_payload_from_media_job(job, request)
