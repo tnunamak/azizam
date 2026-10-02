@@ -194,6 +194,7 @@ Details and per-client recipes are in `docs/LOCAL_CLIENT_RECIPES.md`.
 | `POST /v1/chat/completions` | LiteLLM execution substrate | Chat completion; gateway activates local vision targets before execution when needed |
 | `POST /v1/completions` | LiteLLM execution substrate | Text completion |
 | `POST /v1/embeddings` | LiteLLM execution substrate | OpenAI-compatible embeddings; no GPU budget claim |
+| `POST /v1/rerank`, `/openai/v1/rerank`, `/rerank`, `/v2/rerank` | on-demand CPU reranker (`rerank` service) | Cohere, Jina, Voyage and TEI rerank shapes for RAG clients (Open WebUI, LlamaIndex, Dify, Continue); the engine starts on the first request and exits after 10 idle minutes (docs/LOCAL_CLIENT_RECIPES.md, "Recipe: Rerank") |
 | `POST /v1/audio/speech` | Profile-selected TTS provider | OpenAI-compatible TTS, voice-mapped; `response_format` supports `wav` and `mp3` |
 | `POST /v1/audio/transcriptions` | Profile-selected STT provider | Multipart audio → transcript |
 | `POST /v1/audio/translations` | Profile-selected STT provider | OpenAI-compatible route; returns `unsupported_audio_translation` unless the selected STT provider declares translation support |

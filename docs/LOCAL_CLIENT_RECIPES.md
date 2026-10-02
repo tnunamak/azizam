@@ -57,6 +57,10 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | Hosted tools (web search, file search, code interpreter, computer use), `background`, `conversation`, `prompt`, `cancel`, `input_tokens` count | Unsupported: 400 with a specific `code` | same |
 | | Reasoning summaries (`reasoning.summary`) | Not produced; raw reasoning returns as a `reasoning` item | documented gap |
 | **OpenAI** chat, completions, embeddings, models, images, audio, video | Response shapes | Works | `tests/test_openai_schema_conformance.py` (openai/openai-openapi `145fd3b`); Live: `openai` Python SDK |
+| **Rerank** (`/v1/rerank`, `/openai/v1/rerank`, `/rerank`, `/v2/rerank`) | Cohere and Jina body (`query`, `documents` as strings or `{"text"}` objects, `top_n`, `return_documents`); Voyage `top_k`; TEI `texts` (answered as TEI's bare list) | Works | `tests/test_rerank.py`; Live: `cohere` Python SDK 7.2.0 (`Client` and `ClientV2` with `base_url`) |
+| | Response | `results[]` and `data[]` (same items: `index`, `relevance_score` in 0..1, optional `document.text`), `id`, `usage`, `meta` | same |
+| | Errors | 400 with `message` (Cohere), `detail` (Jina, Voyage) and `error{}` (gateway) in one body; TEI bodies get TEI's `error` and `error_type` | same |
+| | `max_tokens_per_doc`, `max_chunks_per_doc`, `rank_fields` | Unsupported: 400 `unsupported_parameter` (they would change what is scored) | same |
 
 Per-client recipes follow in this document.
 
@@ -870,6 +874,52 @@ runtime APIs, and provider-native passthrough require
 `api_key`, `apiKey`, or `x-api-key`; the value is still the gateway `opk_...`
 token, not an upstream OpenAI, Anthropic, or Ollama credential.
 
+## Recipe: Rerank (Open WebUI, LlamaIndex, langchain-cohere, Dify, Continue)
+
+`POST /v1/rerank` takes the Cohere and Jina body and returns the same results list
+every one of those clients reads. `/rerank` and `/v2/rerank` are the same engine under
+the other common paths; `/v2/rerank` does not echo documents unless you ask.
+
+```bash
+curl -s http://127.0.0.1:5000/v1/rerank \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"rerank","query":"capital of France","top_n":2,
+       "documents":["Paris is the capital of France.","Bananas are yellow.","Lyon is a city in France."]}'
+# {"results":[{"index":0,"relevance_score":0.99,...},{"index":2,...}], "data":[...same...], ...}
+```
+
+Cohere's own SDK works with a base URL override (checked with `cohere` 7.2.0):
+
+```python
+import cohere
+co = cohere.ClientV2(api_key=KEY, base_url="http://127.0.0.1:5000")   # posts to /v2/rerank
+r = co.rerank(model="rerank", query=q, documents=docs, top_n=3)
+# v1 client: cohere.Client(api_key=KEY, base_url="http://127.0.0.1:5000") posts to /v1/rerank
+```
+
+Settings in the other clients (field names from each client's rerank settings; these clients were not run
+against the gateway here, the request shape they send is the one above):
+
+- **Open WebUI:** Admin Settings, Documents, Reranking Engine `External`; URL
+  `http://127.0.0.1:5000/v1/rerank`; key `$OPENAI_PROXY_API_KEY`; model `rerank`.
+- **LlamaIndex / langchain-cohere:** the Cohere rerank class with `base_url` set to
+  `http://127.0.0.1:5000` and any `rerank*` model name.
+- **Dify, Continue:** a Cohere-style or Jina-style rerank provider; endpoint
+  `http://127.0.0.1:5000/v1/rerank`.
+
+Notes:
+
+- The model name does not choose a model. Stable name `rerank` and every name that contains `rerank`
+  (`rerank-v3.5`, `rerank-english-v3.0`, `jina-reranker-v2-base-multilingual`, `bge-reranker-v2-m3`) reach the one engine;
+  any other name is a 404 `model_not_found`. See `model_aliases.rerank` in `proxy_config.yml`.
+- The engine is a CPU `llama-server --rerank` unit (`rerank-cpu.service`, see `docs/ops/rerank-cpu.service`).
+  It is not running when idle. The first request after a pause starts it and waits for it (a few seconds);
+  it exits after 10 minutes without a request.
+- Limits: 1000 documents, 10 000 characters per document. Longer input is a 400, not silently cut.
+- Scores are model scores in 0..1. They compare documents within one request. Do not reuse a threshold from
+  another reranker.
+- A key may rerank when its profile allows `text.embeddings`.
+
 ## Recipe: Open WebUI
 
 Open WebUI talks to any OpenAI-compatible server. The OpenAI provider is the
@@ -1257,6 +1307,7 @@ an exact model or settings. Unknown names pass through unchanged.
 | | `h3-long`, `minimax-h3-long` | `video-minimax-h3-long` (code-built H3 chain, same cap; `minimax-h3` itself also chains past 10 s) | |
 | | `video-remix` | `video-bernini-r-remix`; needs `extensions...source_video`; also what `/v1/videos/{id}/remix` runs | |
 | | `character-replace` | `video-scail-2-replace`; needs `extensions...source_video` and `reference_image` | |
+| Rerank | `rerank` | Qwen3-Reranker-0.6B Q5_K_M (CPU, on demand) | any name containing `rerank` |
 | TTS | `tts` | Chatterbox Turbo (GPU0, on demand), then OmniVoice. The 13 OpenAI voice names are fixed cloned identities, and `voice: {"id": "voice_..."}` selects a user-created voice | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
 | | `tts-fast` | Supertonic (audio.cpp, GPU0; preset voices), then Chatterbox, then OmniVoice | none (point `tts-1` here to make it the fast tier) |
 | | `tts-quality` | Chatterbox Turbo, then OmniVoice, then Kokoro | `tts-1-hd` |
