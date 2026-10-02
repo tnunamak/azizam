@@ -153,6 +153,24 @@ def _multipart_audio_input_schema(*, translation: bool = False) -> JsonObjectSch
         base["description"] = (
             "Translation endpoint: input audio is translated to English text."
         )
+    else:
+        # Speaker diarization (model gpt-4o-transcribe-diarize, alias stt-diarize).
+        props = base["properties"]
+        props["response_format"]["enum"] = ["json", "text", "srt", "verbose_json", "vtt", "diarized_json"]
+        props["chunking_strategy"] = {
+            "description": "\"auto\" or {\"type\": \"server_vad\"}. Accepted by the diarize model; the service always chunks long audio itself.",
+            "oneOf": [{"type": "string", "enum": ["auto"]}, {"type": "object"}],
+        }
+        props["known_speaker_names[]"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Diarize model: names for the speakers in known_speaker_references[] (1 to 4, same count).",
+        }
+        props["known_speaker_references[]"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Diarize model: base64 data URLs of 2 to 10 s of each known speaker.",
+        }
     return base
 
 
