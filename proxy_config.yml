@@ -72,9 +72,9 @@ backends:
     models:
       - id: default
         model_group: default
-        upstream_model: Qwen3.8-27B-UD-Q4_K_XL.gguf
-        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
-        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
+        upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q5-q4
         context_window: 202752
         # Aggregate completion guard for the selected default model only.
@@ -89,9 +89,9 @@ backends:
             set: {max_tokens: 16384}
       - id: coder
         model_group: coder
-        upstream_model: Qwen3.8-27B-UD-Q4_K_XL.gguf
-        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
-        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
+        upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q5-q4
         context_window: 202752
       - id: coder-q5
@@ -100,18 +100,18 @@ backends:
         # Unique internal lifecycle aliases preserve the selected KV profile
         # across LiteLLM's gateway -> internal-gateway hop.
         upstream_model: coder-q5
-        backend_model: Qwen3.8-27B-UD-Q4_K_XL.gguf
-        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
-        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
+        backend_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q5-q4
         context_window: 202752
       - id: coder-q8
         model_group: coder-q8
         base_model_id: coder
         upstream_model: coder-q8
-        backend_model: Qwen3.8-27B-UD-Q4_K_XL.gguf
-        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
-        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
+        backend_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q8
         context_window: 145408
       - id: coder-unchained
@@ -127,9 +127,9 @@ backends:
       - id: default-fast
         model_group: default-fast
         base_model_id: default
-        upstream_model: Qwen3.8-27B-UD-Q4_K_XL.gguf
-        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
-        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
+        upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q5-q4
         context_window: 202752
         policy_overlay:
@@ -140,11 +140,11 @@ backends:
       - id: current
         model_group: current
         base_model_id: default
-        upstream_model: Qwen3.8-27B-UD-Q4_K_XL.gguf
+        upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
       - id: current-fast
         model_group: current-fast
         base_model_id: default
-        upstream_model: Qwen3.8-27B-UD-Q4_K_XL.gguf
+        upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
         policy_overlay:
           - kind: default-params
             set: {reasoning_effort: none}
@@ -156,8 +156,8 @@ backends:
         backend_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
-        activation_profile: kv-q5-q4-rp
-        context_window: 217088
+        activation_profile: kv-q5-q4
+        context_window: 202752
     role: required
     capabilities:
       - openai
@@ -389,11 +389,11 @@ reasoning:
 roles:
   default:
     backend: kobold
-    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
-    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
     activation_profile: kv-q5-q4
     context_window: 202752
-    description: Default LLM (Qwen3.8-27B UD-Q4_K_XL via local llama.cpp on :5051)
+    description: Default LLM (Qwen3.8-27B-Uncensored Q4_K_M via local llama.cpp on :5051)
     # Qwen3.8 thinking mode — from official Qwen team recommendations. Qwen3.6's
     # card had a separate lower-temperature override for precise coding tasks;
     # Qwen3.8's card dropped that distinction and lists only this one setting.
@@ -408,8 +408,8 @@ roles:
   # overlay owns its reasoning default so explicit callers still win.
   default-fast:
     backend: kobold
-    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
-    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
     activation_profile: kv-q5-q4
     context_window: 202752
     description: Default LLM, reasoning off (low-latency)
@@ -427,8 +427,8 @@ roles:
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
-    activation_profile: kv-q5-q4-rp
-    context_window: 217088
+    activation_profile: kv-q5-q4
+    context_window: 202752
     description: Roleplay LLM (JonathanColetti Qwen3.8-27B-Uncensored Q4_K_M, MTP-verified)
     # Qwen3.8 non-thinking/instruct mode — from official Qwen team recommendations
     sampling:
@@ -440,11 +440,11 @@ roles:
       repetition_penalty: 1.0
   coder:
     backend: kobold
-    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
-    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
     activation_profile: kv-q5-q4
     context_window: 202752
-    description: Coding LLM (Qwen3.8-27B UD-Q4_K_XL via local llama.cpp)
+    description: Coding LLM (Qwen3.8-27B-Uncensored Q4_K_M via local llama.cpp)
     # Qwen3.8 thinking mode — from official Qwen team recommendations. Qwen3.6's
     # card had a separate lower-temperature override for precise coding tasks;
     # Qwen3.8's card dropped that distinction and lists only this one setting.
@@ -457,8 +457,8 @@ roles:
       repetition_penalty: 1.0
   coder-q5:
     backend: kobold
-    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
-    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
     activation_profile: kv-q5-q4
     context_window: 202752
     description: Coding LLM with balanced Q5_0 K / Q4_1 V cache
@@ -471,8 +471,8 @@ roles:
       repetition_penalty: 1.0
   coder-q8:
     backend: kobold
-    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf
-    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-mmproj-BF16.gguf
+    model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+    mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
     activation_profile: kv-q8
     context_window: 145408
     description: Coding LLM with conservative Q8_0 K / Q8_0 V cache
