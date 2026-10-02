@@ -1,0 +1,1426 @@
+{
+ "AudioConcat": {
+  "input": {
+   "optional": {},
+   "required": {
+    "audio1": "AUDIO",
+    "audio2": "AUDIO",
+    "direction": "COMBO"
+   }
+  },
+  "output": [
+   "AUDIO"
+  ]
+ },
+ "BasicScheduler": {
+  "input": {
+   "optional": {},
+   "required": {
+    "denoise": "FLOAT",
+    "model": "MODEL",
+    "scheduler": "COMBO",
+    "steps": "INT"
+   }
+  },
+  "output": [
+   "SIGMAS"
+  ]
+ },
+ "CFGGuider": {
+  "input": {
+   "optional": {},
+   "required": {
+    "cfg": "FLOAT",
+    "model": "MODEL",
+    "negative": "CONDITIONING",
+    "positive": "CONDITIONING"
+   }
+  },
+  "output": [
+   "GUIDER"
+  ]
+ },
+ "CLIPLoader": {
+  "input": {
+   "optional": {
+    "device": [
+     "default",
+     "cpu"
+    ]
+   },
+   "required": {
+    "clip_name": [
+     "clip_l.safetensors",
+     "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+     "google-flan-t5-large/model.safetensors",
+     "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+     "qwen3vl_4b_fp8_scaled.safetensors",
+     "qwen3vl_8b_w4a8.safetensors",
+     "qwen_0.6b_ace15.safetensors",
+     "qwen_1.7b_ace15.safetensors",
+     "qwen_3_4b.safetensors",
+     "qwen_3_8b_fp8mixed.safetensors",
+     "t5gemma_b_b_ul2.safetensors",
+     "umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+    ],
+    "type": [
+     "stable_diffusion",
+     "stable_cascade",
+     "sd3",
+     "stable_audio",
+     "mochi",
+     "ltxv",
+     "pixart",
+     "cosmos",
+     "lumina2",
+     "wan",
+     "hidream",
+     "chroma",
+     "ace",
+     "omnigen2",
+     "qwen_image",
+     "hunyuan_image",
+     "flux2",
+     "ovis",
+     "longcat_image",
+     "cogvideox",
+     "lens",
+     "pixeldit",
+     "ideogram4",
+     "boogu",
+     "krea2",
+     "joyimage",
+     "mage",
+     "minimax",
+     "yue2"
+    ]
+   }
+  },
+  "output": [
+   "CLIP"
+  ]
+ },
+ "CLIPTextEncode": {
+  "input": {
+   "optional": {},
+   "required": {
+    "clip": "CLIP",
+    "text": "STRING"
+   }
+  },
+  "output": [
+   "CONDITIONING"
+  ]
+ },
+ "CLIPVisionEncode": {
+  "input": {
+   "optional": {},
+   "required": {
+    "clip_vision": "CLIP_VISION",
+    "crop": [
+     "center",
+     "none"
+    ],
+    "image": "IMAGE"
+   }
+  },
+  "output": [
+   "CLIP_VISION_OUTPUT"
+  ]
+ },
+ "CLIPVisionLoader": {
+  "input": {
+   "optional": {},
+   "required": {
+    "clip_name": [
+     "clip_vision_h.safetensors"
+    ]
+   }
+  },
+  "output": [
+   "CLIP_VISION"
+  ]
+ },
+ "CheckpointLoaderSimple": {
+  "input": {
+   "optional": {},
+   "required": {
+    "ckpt_name": [
+     "ace_step_1.5_turbo_aio.safetensors",
+     "sam3.1_multiplex_fp16.safetensors",
+     "sd_xl_base_1.0.safetensors",
+     "stable_audio_3_small_sfx.safetensors",
+     "yue2_3b_int8_convrot.safetensors"
+    ]
+   }
+  },
+  "output": [
+   "MODEL",
+   "CLIP",
+   "VAE"
+  ]
+ },
+ "ComfyMathExpression": {
+  "input": {
+   "optional": {},
+   "required": {
+    "expression": "STRING",
+    "values": "COMFY_AUTOGROW_V3"
+   }
+  },
+  "output": [
+   "FLOAT",
+   "INT",
+   "BOOLEAN"
+  ]
+ },
+ "CreateVideo": {
+  "input": {
+   "optional": {
+    "audio": "AUDIO",
+    "bit_depth": "COMBO",
+    "codec": "COMBO",
+    "color_space": "COMBO"
+   },
+   "required": {
+    "fps": "FLOAT",
+    "images": "IMAGE"
+   }
+  },
+  "output": [
+   "VIDEO"
+  ]
+ },
+ "EmptyImage": {
+  "input": {
+   "optional": {},
+   "required": {
+    "batch_size": "INT",
+    "color": "INT",
+    "height": "INT",
+    "width": "INT"
+   }
+  },
+  "output": [
+   "IMAGE"
+  ]
+ },
+ "EmptyLTXVLatentVideo": {
+  "input": {
+   "optional": {},
+   "required": {
+    "batch_size": "INT",
+    "height": "INT",
+    "length": "INT",
+    "width": "INT"
+   }
+  },
+  "output": [
+   "LATENT"
+  ]
+ },
+ "GetImageSize": {
+  "input": {
+   "optional": {},
+   "required": {
+    "image": "IMAGE"
+   }
+  },
+  "output": [
+   "INT",
+   "INT",
+   "INT"
+  ]
+ },
+ "GetVideoComponents": {
+  "input": {
+   "optional": {},
+   "required": {
+    "video": "VIDEO"
+   }
+  },
+  "output": [
+   "IMAGE",
+   "AUDIO",
+   "FLOAT",
+   "COMBO",
+   "COMBO"
+  ]
+ },
+ "INPAINT_MaskBoundingBox": {
+  "input": {
+   "optional": {},
+   "required": {
+    "mask": "MASK"
+   }
+  },
+  "output": [
+   "INT",
+   "INT",
+   "INT",
+   "INT"
+  ]
+ },
+ "INTConstant": {
+  "input": {
+   "optional": {},
+   "required": {
+    "value": "INT"
+   }
+  },
+  "output": [
+   "INT"
+  ]
+ },
+ "ImageBatch": {
+  "input": {
+   "optional": {},
+   "required": {
+    "image1": "IMAGE",
+    "image2": "IMAGE"
+   }
+  },
+  "output": [
+   "IMAGE"
+  ]
+ },
+ "ImageCompositeMasked": {
+  "input": {
+   "optional": {
+    "mask": "MASK"
+   },
+   "required": {
+    "destination": "IMAGE",
+    "resize_source": "BOOLEAN",
+    "source": "IMAGE",
+    "x": "INT",
+    "y": "INT"
+   }
+  },
+  "output": [
+   "IMAGE"
+  ]
+ },
+ "ImageCropByMask": {
+  "input": {
+   "optional": {},
+   "required": {
+    "image": "IMAGE",
+    "mask": "MASK"
+   }
+  },
+  "output": [
+   "IMAGE"
+  ]
+ },
+ "ImageFromBatch": {
+  "input": {
+   "optional": {},
+   "required": {
+    "batch_index": "INT",
+    "image": "IMAGE",
+    "length": "INT"
+   }
+  },
+  "output": [
+   "IMAGE"
+  ]
+ },
+ "ImageResizeKJv2": {
+  "input": {
+   "optional": {
+    "device": [
+     "cpu",
+     "gpu"
+    ],
+    "mask": "MASK"
+   },
+   "required": {
+    "crop_position": [
+     "center",
+     "top",
+     "bottom",
+     "left",
+     "right"
+    ],
+    "divisible_by": "INT",
+    "height": "INT",
+    "image": "IMAGE",
+    "keep_proportion": [
+     "stretch",
+     "resize",
+     "pad",
+     "pad_edge",
+     "pad_edge_pixel",
+     "crop",
+     "pillarbox_blur",
+     "total_pixels"
+    ],
+    "pad_color": "STRING",
+    "upscale_method": [
+     "nearest-exact",
+     "bilinear",
+     "area",
+     "bicubic",
+     "lanczos",
+     "nvidia_rtx_vsr"
+    ],
+    "width": "INT"
+   }
+  },
+  "output": [
+   "IMAGE",
+   "INT",
+   "INT",
+   "MASK"
+  ]
+ },
+ "ImageScale": {
+  "input": {
+   "optional": {},
+   "required": {
+    "crop": [
+     "disabled",
+     "center"
+    ],
+    "height": "INT",
+    "image": "IMAGE",
+    "upscale_method": [
+     "nearest-exact",
+     "bilinear",
+     "area",
+     "bicubic",
+     "lanczos"
+    ],
+    "width": "INT"
+   }
+  },
+  "output": [
+   "IMAGE"
+  ]
+ },
+ "ImageToMask": {
+  "input": {
+   "optional": {},
+   "required": {
+    "channel": "COMBO",
+    "image": "IMAGE"
+   }
+  },
+  "output": [
+   "MASK"
+  ]
+ },
+ "InvertMask": {
+  "input": {
+   "optional": {},
+   "required": {
+    "mask": "MASK"
+   }
+  },
+  "output": [
+   "MASK"
+  ]
+ },
+ "KSamplerSelect": {
+  "input": {
+   "optional": {},
+   "required": {
+    "sampler_name": "COMBO"
+   }
+  },
+  "output": [
+   "SAMPLER"
+  ]
+ },
+ "LTXVAddLatentGuide": {
+  "input": {
+   "optional": {
+    "attention_mask": "MASK"
+   },
+   "required": {
+    "guiding_latent": "LATENT",
+    "latent": "LATENT",
+    "latent_idx": "INT",
+    "negative": "CONDITIONING",
+    "positive": "CONDITIONING",
+    "strength": "FLOAT",
+    "vae": "VAE"
+   }
+  },
+  "output": [
+   "CONDITIONING",
+   "CONDITIONING",
+   "LATENT"
+  ]
+ },
+ "LTXVAudioVAEDecode": {
+  "input": {
+   "optional": {},
+   "required": {
+    "audio_vae": "VAE",
+    "samples": "LATENT"
+   }
+  },
+  "output": [
+   "AUDIO"
+  ]
+ },
+ "LTXVConcatAVLatent": {
+  "input": {
+   "optional": {},
+   "required": {
+    "audio_latent": "LATENT",
+    "video_latent": "LATENT"
+   }
+  },
+  "output": [
+   "LATENT"
+  ]
+ },
+ "LTXVConditioning": {
+  "input": {
+   "optional": {},
+   "required": {
+    "frame_rate": "FLOAT",
+    "negative": "CONDITIONING",
+    "positive": "CONDITIONING"
+   }
+  },
+  "output": [
+   "CONDITIONING",
+   "CONDITIONING"
+  ]
+ },
+ "LTXVCropGuides": {
+  "input": {
+   "optional": {},
+   "required": {
+    "latent": "LATENT",
+    "negative": "CONDITIONING",
+    "positive": "CONDITIONING"
+   }
+  },
+  "output": [
+   "CONDITIONING",
+   "CONDITIONING",
+   "LATENT"
+  ]
+ },
+ "LTXVEmptyLatentAudio": {
+  "input": {
+   "optional": {},
+   "required": {
+    "audio_vae": "VAE",
+    "batch_size": "INT",
+    "frame_rate": "FLOAT,INT",
+    "frames_number": "INT"
+   }
+  },
+  "output": [
+   "LATENT"
+  ]
+ },
+ "LTXVImgToVideoInplace": {
+  "input": {
+   "optional": {},
+   "required": {
+    "bypass": "BOOLEAN",
+    "image": "IMAGE",
+    "latent": "LATENT",
+    "strength": "FLOAT",
+    "vae": "VAE"
+   }
+  },
+  "output": [
+   "LATENT"
+  ]
+ },
+ "LTXVPreprocess": {
+  "input": {
+   "optional": {},
+   "required": {
+    "image": "IMAGE",
+    "img_compression": "INT"
+   }
+  },
+  "output": [
+   "IMAGE"
+  ]
+ },
+ "LTXVSeparateAVLatent": {
+  "input": {
+   "optional": {},
+   "required": {
+    "av_latent": "LATENT"
+   }
+  },
+  "output": [
+   "LATENT",
+   "LATENT"
+  ]
+ },
+ "LoadImage": {
+  "input": {
+   "optional": {},
+   "required": {
+    "image": [
+     "01-krea2-turbo.png",
+     "02-qwen-edit.png",
+     "1000020556.jpg",
+     "13032-1247288276-dutch angle, _depth of field, female focus, 1girl, science-fiction, from front, from above, sci-fi, sitting in space module, det.png",
+     "1553372697972-abea94c4-7454-4ff9-a402-1c41cad3f3b6.jpg",
+     "1bef067c-b7de-481d-8727-e03b9dd9dedf-photo-2302.jpg",
+     "1cb27fc8-5a57-4b55-bd39-1dfcef6a5ecd-1_all_1399.jpg",
+     "2c6cf0af-95fd-4a4e-9607-294fa12e0112-photo-1494.jpg",
+     "3af5e813-39b2-4472-9635-ffac2a24e039-photo-177.jpg",
+     "3d871365-5f6a-4097-8ec3-761919c7cf85-photo-2330.jpg",
+     "5f0b079a-4b85-4191-b21d-5c6879a37581-image_gen_oai_img_cnBfs5y5klEwfiLEo_Tb4.png",
+     "61ba0f8f-3f87-4555-9973-91c194f30aea-image_edit_oai_img_i6smPCSee0DKIQqtubsrE.png",
+     "65720506-708c-452e-9638-d0353d2a2d72-photo-912.jpg",
+     "6b75f7b6-745e-4b48-a262-6be4ff90fbbd-image_gen_oai_img_PnDnMQ9uoFEzRuM82v0ln.png",
+     "8eb6ba5d-0427-4560-8572-16c68ae5f707-photo-205.jpg",
+     "8f506b4e-c68e-4db0-8423-7441c75e15cd-photo-195.jpg",
+     "ComfyUI_00064_.png",
+     "ComfyUI_00090_.png",
+     "ComfyUI_00096_.png",
+     "Monica Langley.png",
+     "Screenshot_20250802_210746.png",
+     "_layered_corner_4f105d10.canvas.png",
+     "_layered_corner_4f105d10.mask.png",
+     "androgynous-shared-living-room-empty.png",
+     "anonymous-attic-empty.png",
+     "baby-crop.jpg",
+     "baby-random.jpg",
+     "baby-test.jpg",
+     "baby.jpg",
+     "batch1.jpg",
+     "batch4.jpg",
+     "batch5.jpg",
+     "bren.jpeg",
+     "c5f070f2-1a02-4b4b-bebd-46e65cb565d6-photo-186.jpg",
+     "clip1-wakeup-lastframe (1).png",
+     "clip1-wakeup-lastframe.png",
+     "clip2-running-bounce-lastframe (1).png",
+     "clip2-running-bounce-lastframe.png",
+     "clip3-nearly-topples-lastframe.png",
+     "daily-baby.jpg",
+     "daisy-fixes-test.png",
+     "deda3b28-d326-4ec6-bb87-d439ffcd8924-photo-2270.jpg",
+     "dfe5aabb-7713-4a52-b063-210e957d679e-image_edit_oai_img_oVxYY5ELyU_QDoRjtgGvP.png",
+     "e1.png",
+     "edge_stitch_0280352b_mask.png",
+     "edge_stitch_0280352b_ref.png",
+     "edge_stitch_04a98bf0_mask.png",
+     "edge_stitch_04a98bf0_ref.png",
+     "edge_stitch_05631a28_mask.png",
+     "edge_stitch_05631a28_ref.png",
+     "edge_stitch_05b044f9_mask.png",
+     "edge_stitch_05b044f9_ref.png",
+     "edge_stitch_09420916_mask.png",
+     "edge_stitch_09420916_ref.png",
+     "edge_stitch_0a214951_mask.png",
+     "edge_stitch_0a214951_ref.png",
+     "edge_stitch_0a327cf1_mask.png",
+     "edge_stitch_0a327cf1_ref.png",
+     "edge_stitch_0caad990_mask.png",
+     "edge_stitch_0caad990_ref.png",
+     "edge_stitch_144e0845_mask.png",
+     "edge_stitch_144e0845_ref.png",
+     "edge_stitch_1b92ddcb_mask.png",
+     "edge_stitch_1b92ddcb_ref.png",
+     "edge_stitch_1d9453a2_mask.png",
+     "edge_stitch_1d9453a2_ref.png",
+     "edge_stitch_1ef06b0b_mask.png",
+     "edge_stitch_1ef06b0b_ref.png",
+     "edge_stitch_1faf6d7c_mask.png",
+     "edge_stitch_1faf6d7c_ref.png",
+     "edge_stitch_1fe718fc_mask.png",
+     "edge_stitch_1fe718fc_ref.png",
+     "edge_stitch_21e1f7da_mask.png",
+     "edge_stitch_21e1f7da_ref.png",
+     "edge_stitch_222d37b8_mask.png",
+     "edge_stitch_222d37b8_ref.png",
+     "edge_stitch_22e972a6_mask.png",
+     "edge_stitch_22e972a6_ref.png",
+     "edge_stitch_24355e35_mask.png",
+     "edge_stitch_24355e35_ref.png",
+     "edge_stitch_25c8c76a_mask.png",
+     "edge_stitch_25c8c76a_ref.png",
+     "edge_stitch_25e30449_mask.png",
+     "edge_stitch_25e30449_ref.png",
+     "edge_stitch_29977f39_mask.png",
+     "edge_stitch_29977f39_ref.png",
+     "edge_stitch_2adac382_mask.png",
+     "edge_stitch_2adac382_ref.png",
+     "edge_stitch_2f793954_mask.png",
+     "edge_stitch_2f793954_ref.png",
+     "edge_stitch_2ff8ebbe_mask.png",
+     "edge_stitch_2ff8ebbe_ref.png",
+     "edge_stitch_3199230e_mask.png",
+     "edge_stitch_3199230e_ref.png",
+     "edge_stitch_3327a07c_mask.png",
+     "edge_stitch_3327a07c_ref.png",
+     "edge_stitch_351dd13c_mask.png",
+     "edge_stitch_351dd13c_ref.png",
+     "edge_stitch_363ce8b7_mask.png",
+     "edge_stitch_363ce8b7_ref.png",
+     "edge_stitch_39308825_mask.png",
+     "edge_stitch_39308825_ref.png",
+     "edge_stitch_3c37fb06_mask.png",
+     "edge_stitch_3c37fb06_ref.png",
+     "edge_stitch_448e0935_mask.png",
+     "edge_stitch_448e0935_ref.png",
+     "edge_stitch_4893df30_mask.png",
+     "edge_stitch_4893df30_ref.png",
+     "edge_stitch_4d519b05_mask.png",
+     "edge_stitch_4d519b05_ref.png",
+     "edge_stitch_4f4fc5d9_mask.png",
+     "edge_stitch_4f4fc5d9_ref.png",
+     "edge_stitch_54120d06_mask.png",
+     "edge_stitch_54120d06_ref.png",
+     "edge_stitch_5a7f52be_mask.png",
+     "edge_stitch_5a7f52be_ref.png",
+     "edge_stitch_5bda08c2_mask.png",
+     "edge_stitch_5bda08c2_ref.png",
+     "edge_stitch_6035d89a_mask.png",
+     "edge_stitch_6035d89a_ref.png",
+     "edge_stitch_604b7885_mask.png",
+     "edge_stitch_604b7885_ref.png",
+     "edge_stitch_622b093d_mask.png",
+     "edge_stitch_622b093d_ref.png",
+     "edge_stitch_63395d72_mask.png",
+     "edge_stitch_63395d72_ref.png",
+     "edge_stitch_64b27095_mask.png",
+     "edge_stitch_64b27095_ref.png",
+     "edge_stitch_69de4b1b_mask.png",
+     "edge_stitch_69de4b1b_ref.png",
+     "edge_stitch_6c04dea7_mask.png",
+     "edge_stitch_6c04dea7_ref.png",
+     "edge_stitch_6c391ca4_mask.png",
+     "edge_stitch_6c391ca4_ref.png",
+     "edge_stitch_6da5a67a_mask.png",
+     "edge_stitch_6da5a67a_ref.png",
+     "edge_stitch_6f89ea74_mask.png",
+     "edge_stitch_6f89ea74_ref.png",
+     "edge_stitch_70c43a5c_mask.png",
+     "edge_stitch_70c43a5c_ref.png",
+     "edge_stitch_727510fc_mask.png",
+     "edge_stitch_727510fc_ref.png",
+     "edge_stitch_76fcb88f_mask.png",
+     "edge_stitch_76fcb88f_ref.png",
+     "edge_stitch_7ac35629_mask.png",
+     "edge_stitch_7ac35629_ref.png",
+     "edge_stitch_7f9a1708_mask.png",
+     "edge_stitch_7f9a1708_ref.png",
+     "edge_stitch_80696d82_mask.png",
+     "edge_stitch_80696d82_ref.png",
+     "edge_stitch_8094d10f_mask.png",
+     "edge_stitch_8094d10f_ref.png",
+     "edge_stitch_811db228_mask.png",
+     "edge_stitch_811db228_ref.png",
+     "edge_stitch_8144c922_mask.png",
+     "edge_stitch_8144c922_ref.png",
+     "edge_stitch_83cfdee2_mask.png",
+     "edge_stitch_83cfdee2_ref.png",
+     "edge_stitch_8777ae59_mask.png",
+     "edge_stitch_8777ae59_ref.png",
+     "edge_stitch_886b4614_mask.png",
+     "edge_stitch_886b4614_ref.png",
+     "edge_stitch_8bd00a65_mask.png",
+     "edge_stitch_8bd00a65_ref.png",
+     "edge_stitch_8c37b16a_mask.png",
+     "edge_stitch_8c37b16a_ref.png",
+     "edge_stitch_900b3d8a_mask.png",
+     "edge_stitch_900b3d8a_ref.png",
+     "edge_stitch_9731af1e_mask.png",
+     "edge_stitch_9731af1e_ref.png",
+     "edge_stitch_97e344fc_mask.png",
+     "edge_stitch_97e344fc_ref.png",
+     "edge_stitch_9cb6f0a8_mask.png",
+     "edge_stitch_9cb6f0a8_ref.png",
+     "edge_stitch_9dbfe2e2_mask.png",
+     "edge_stitch_9dbfe2e2_ref.png",
+     "edge_stitch_9e4f5347_mask.png",
+     "edge_stitch_9e4f5347_ref.png",
+     "edge_stitch_9eb09c0e_mask.png",
+     "edge_stitch_9eb09c0e_ref.png",
+     "edge_stitch_a3e5f71d_mask.png",
+     "edge_stitch_a3e5f71d_ref.png",
+     "edge_stitch_a3e924da_mask.png",
+     "edge_stitch_a3e924da_ref.png",
+     "edge_stitch_a4722976_mask.png",
+     "edge_stitch_a4722976_ref.png",
+     "edge_stitch_a4ea0c7f_mask.png",
+     "edge_stitch_a4ea0c7f_ref.png",
+     "edge_stitch_a676440f_mask.png",
+     "edge_stitch_a676440f_ref.png",
+     "edge_stitch_a7bc7914_mask.png",
+     "edge_stitch_a7bc7914_ref.png",
+     "edge_stitch_a8eb1b53_mask.png",
+     "edge_stitch_a8eb1b53_ref.png",
+     "edge_stitch_a96cb6ad_mask.png",
+     "edge_stitch_a96cb6ad_ref.png",
+     "edge_stitch_aaa4f9d3_mask.png",
+     "edge_stitch_aaa4f9d3_ref.png",
+     "edge_stitch_ac68509a_mask.png",
+     "edge_stitch_ac68509a_ref.png",
+     "edge_stitch_af262c28_mask.png",
+     "edge_stitch_af262c28_ref.png",
+     "edge_stitch_b35b02d2_mask.png",
+     "edge_stitch_b35b02d2_ref.png",
+     "edge_stitch_bc0911fa_mask.png",
+     "edge_stitch_bc0911fa_ref.png",
+     "edge_stitch_be029c6d_mask.png",
+     "edge_stitch_be029c6d_ref.png",
+     "edge_stitch_bf01ef68_mask.png",
+     "edge_stitch_bf01ef68_ref.png",
+     "edge_stitch_bf454465_mask.png",
+     "edge_stitch_bf454465_ref.png",
+     "edge_stitch_c0a19d81_mask.png",
+     "edge_stitch_c0a19d81_ref.png",
+     "edge_stitch_c9e9dc87_mask.png",
+     "edge_stitch_c9e9dc87_ref.png",
+     "edge_stitch_cb50ca21_mask.png",
+     "edge_stitch_cb50ca21_ref.png",
+     "edge_stitch_cc7ff2af_mask.png",
+     "edge_stitch_cc7ff2af_ref.png",
+     "edge_stitch_d48bba21_mask.png",
+     "edge_stitch_d48bba21_ref.png",
+     "edge_stitch_d53d5ae8_mask.png",
+     "edge_stitch_d53d5ae8_ref.png",
+     "edge_stitch_d9ac3972_mask.png",
+     "edge_stitch_d9ac3972_ref.png",
+     "edge_stitch_dd611e9b_mask.png",
+     "edge_stitch_dd611e9b_ref.png",
+     "edge_stitch_ddcc628a_mask.png",
+     "edge_stitch_ddcc628a_ref.png",
+     "edge_stitch_dfea7c0b_mask.png",
+     "edge_stitch_dfea7c0b_ref.png",
+     "edge_stitch_e0bd89e4_mask.png",
+     "edge_stitch_e0bd89e4_ref.png",
+     "edge_stitch_e381b577_mask.png",
+     "edge_stitch_e381b577_ref.png",
+     "edge_stitch_e463629f_mask.png",
+     "edge_stitch_e463629f_ref.png",
+     "edge_stitch_e54fc053_mask.png",
+     "edge_stitch_e54fc053_ref.png",
+     "edge_stitch_ef37699d_mask.png",
+     "edge_stitch_ef37699d_ref.png",
+     "edge_stitch_f4fef8f3_mask.png",
+     "edge_stitch_f4fef8f3_ref.png",
+     "edge_stitch_f5ca8935_mask.png",
+     "edge_stitch_f5ca8935_ref.png",
+     "edge_stitch_f87b5a0e_mask.png",
+     "edge_stitch_f87b5a0e_ref.png",
+     "edge_stitch_f880b76f_mask.png",
+     "edge_stitch_f880b76f_ref.png",
+     "edge_stitch_f8d04b58_mask.png",
+     "edge_stitch_f8d04b58_ref.png",
+     "edge_stitch_ff8f8aa7_mask.png",
+     "edge_stitch_ff8f8aa7_ref.png",
+     "edge_test_B.png",
+     "edge_test_mask.png",
+     "edit-farm-magic.png",
+     "edit-farm-ride.png",
+     "edit-preserve.png",
+     "edit-storybook.png",
+     "edit_v2_matched.png",
+     "edited-travel-weddings-ghazal-tim-elopement-8841.jpg",
+     "error.png",
+     "example.png",
+     "file_64---d56815dc-67f3-47c8-b8c9-7d4fa32700e3.jpg",
+     "file_66---0647d224-fb8e-4bf9-8c92-57f16e5b54f0.jpg",
+     "file_66---2b673ec1-107e-4c20-8d7e-be732a6a0193.jpg",
+     "file_66---5c64bfe0-5175-431b-93a7-f3a04f0ce696.jpg",
+     "file_66---717fb3d2-5979-4625-a683-e523b7f0bf97.jpg",
+     "file_66---a857fc96-d30c-466f-b5d1-4d6ed72af3f5.jpg",
+     "file_67---8ea20880-cd6e-4c8b-9ac6-ec811e9a8c55.jpg",
+     "file_67---be04aaa3-7489-4833-b96f-59e1be7b46d1.jpg",
+     "file_67---d1bf71a6-f30a-4322-a028-bccc38cd631b.jpg",
+     "file_68---0599d8ae-cdf5-46e2-94a8-4fb007028108.jpg",
+     "file_69---076ffa73-52cf-4b15-ab43-e3215d51793a.jpg",
+     "file_70---1c3f1395-7aef-499e-871b-57831ea606d7.jpg",
+     "frame01 (1).png",
+     "frame01 (10).png",
+     "frame01 (11).png",
+     "frame01 (2).png",
+     "frame01 (3).png",
+     "frame01 (4).png",
+     "frame01 (5).png",
+     "frame01 (6).png",
+     "frame01 (7).png",
+     "frame01 (8).png",
+     "frame01 (9).png",
+     "frame01.png",
+     "frame02 (1).png",
+     "frame02 (2).png",
+     "frame02 (3).png",
+     "frame02 (4).png",
+     "frame02.png",
+     "frame03 (1).png",
+     "frame03 (2).png",
+     "frame03 (3).png",
+     "frame03.png",
+     "frame04.png",
+     "frame05.png",
+     "gen (1).png",
+     "gen.png",
+     "generation_default.png",
+     "generation_krea (1).png",
+     "generation_krea.png",
+     "gettyimages-1373194171-2048x2048.jpg",
+     "ghazal_00012_.png",
+     "grandma-crop.jpg",
+     "hockey-full-body.png",
+     "hockey-kid.png",
+     "honesty-fix-url-img.png",
+     "i2v-test-frame.png",
+     "i2v-test-input.png",
+     "icon_green_1024.png",
+     "icon_green_edit1_1024.png",
+     "icon_green_edit2_1024.png",
+     "in.png",
+     "input (1).png",
+     "input.png",
+     "input_reference (1).png",
+     "input_reference.jpg",
+     "input_reference.png",
+     "krea2-turbo-20261002-104543.png",
+     "man-basement-workshop-empty.png",
+     "man-home-office-empty.png",
+     "mc_hero_v3.png",
+     "mc_r3_B2.png",
+     "no_blanket.jpg",
+     "normalized-mask.png",
+     "offset-tile-1 (1).png",
+     "offset-tile-1 (10).png",
+     "offset-tile-1 (11).png",
+     "offset-tile-1 (12).png",
+     "offset-tile-1 (13).png",
+     "offset-tile-1 (14).png",
+     "offset-tile-1 (15).png",
+     "offset-tile-1 (16).png",
+     "offset-tile-1 (17).png",
+     "offset-tile-1 (18).png",
+     "offset-tile-1 (19).png",
+     "offset-tile-1 (2).png",
+     "offset-tile-1 (20).png",
+     "offset-tile-1 (21).png",
+     "offset-tile-1 (22).png",
+     "offset-tile-1 (23).png",
+     "offset-tile-1 (24).png",
+     "offset-tile-1 (25).png",
+     "offset-tile-1 (26).png",
+     "offset-tile-1 (27).png",
+     "offset-tile-1 (28).png",
+     "offset-tile-1 (29).png",
+     "offset-tile-1 (3).png",
+     "offset-tile-1 (30).png",
+     "offset-tile-1 (31).png",
+     "offset-tile-1 (32).png",
+     "offset-tile-1 (33).png",
+     "offset-tile-1 (34).png",
+     "offset-tile-1 (35).png",
+     "offset-tile-1 (36).png",
+     "offset-tile-1 (37).png",
+     "offset-tile-1 (38).png",
+     "offset-tile-1 (39).png",
+     "offset-tile-1 (4).png",
+     "offset-tile-1 (40).png",
+     "offset-tile-1 (41).png",
+     "offset-tile-1 (42).png",
+     "offset-tile-1 (43).png",
+     "offset-tile-1 (44).png",
+     "offset-tile-1 (45).png",
+     "offset-tile-1 (46).png",
+     "offset-tile-1 (47).png",
+     "offset-tile-1 (48).png",
+     "offset-tile-1 (49).png",
+     "offset-tile-1 (5).png",
+     "offset-tile-1 (50).png",
+     "offset-tile-1 (51).png",
+     "offset-tile-1 (52).png",
+     "offset-tile-1 (53).png",
+     "offset-tile-1 (54).png",
+     "offset-tile-1 (55).png",
+     "offset-tile-1 (56).png",
+     "offset-tile-1 (57).png",
+     "offset-tile-1 (58).png",
+     "offset-tile-1 (59).png",
+     "offset-tile-1 (6).png",
+     "offset-tile-1 (60).png",
+     "offset-tile-1 (61).png",
+     "offset-tile-1 (7).png",
+     "offset-tile-1 (8).png",
+     "offset-tile-1 (9).png",
+     "offset-tile-1.png",
+     "offset-tile-mask-1 (1).png",
+     "offset-tile-mask-1 (2).png",
+     "offset-tile-mask-1 (3).png",
+     "offset-tile-mask-1 (4).png",
+     "offset-tile-mask-1 (5).png",
+     "offset-tile-mask-1.png",
+     "openai-proxy-inpaint-source.png",
+     "openai-proxy-source.png",
+     "outpainted.jpg",
+     "pink-woman-lastframe.png",
+     "pink-woman-v8-krea.png",
+     "placeholder_black_1920x1080.png",
+     "placeholder_black_32x32.png",
+     "probe (1).png",
+     "probe (2).png",
+     "probe.png",
+     "probe64.png",
+     "probe_7df20c_reference-character.png",
+     "qwen_edit_ref2.png",
+     "qwen_edit_src.png",
+     "qwen_inpaint_src.png",
+     "rap_ref.jpg",
+     "red-square (1).png",
+     "red-square.png",
+     "ref2.png",
+     "ref3-alt-5s.png",
+     "ref3.png",
+     "ref4.png",
+     "ref5.png",
+     "ref6.png",
+     "reference (1).jpg",
+     "reference (2).jpg",
+     "reference (3).jpg",
+     "reference.jpg",
+     "reference.png",
+     "reference_full.jpg",
+     "room-night.png",
+     "round2-lighthouse.png",
+     "round2-ref-char.png",
+     "src (1).png",
+     "src.png",
+     "test (1).png",
+     "test-baby.jpg",
+     "test-baby2.jpg",
+     "test-edit.png",
+     "test.png",
+     "test4.jpg",
+     "test5.jpg",
+     "test6.jpg",
+     "test_baby.png",
+     "test_edit.png",
+     "tile (1).png",
+     "tile.png",
+     "travel-weddings-ghazal-tim-elopement-8841.jpg",
+     "wetsuit-ref-final.png",
+     "wetsuit-ref-final2.png",
+     "wetsuit-ref-v6.png",
+     "wetsuit-ref-v8.png",
+     "will.png",
+     "woman-city-studio-empty.png",
+     "woman-kitchen-dawn-empty.png"
+    ]
+   }
+  },
+  "output": [
+   "IMAGE",
+   "MASK"
+  ]
+ },
+ "LoadVideo": {
+  "input": {
+   "optional": {},
+   "required": {
+    "file": "COMBO"
+   }
+  },
+  "output": [
+   "VIDEO"
+  ]
+ },
+ "LoraLoaderModelOnly": {
+  "input": {
+   "optional": {},
+   "required": {
+    "lora_name": [
+     "add-detail-xl.safetensors",
+     "araminta-glamourphotography_f1_v1_3000.safetensors",
+     "ghazal.3000.safetensors",
+     "ghazal.4000.safetensors",
+     "ghazal.5000.safetensors",
+     "ghazal.7000.safetensors",
+     "ghazal.safetensors",
+     "ghazal_flux_lora_v1.safetensors",
+     "ghazalart.safetensors",
+     "lenovo.safetensors",
+     "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+     "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
+     "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+     "tim.4000.safetensors",
+     "trained-by-tim/ghazal_flux_lora_v1_000006750.safetensors",
+     "trained-by-tim/ghazalart_flux_lora_v1_simple_000003500.safetensors",
+     "trained-by-tim/my_first_flux_lora_v1_000001750.safetensors",
+     "trained-by-tim/tim_flux_lora_v1_000003500.safetensors",
+     "trained-by-tim/tim_flux_lora_v1_simple_000003500.safetensors",
+     "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors"
+    ],
+    "model": "MODEL",
+    "strength_model": "FLOAT"
+   }
+  },
+  "output": [
+   "MODEL"
+  ]
+ },
+ "ManualSigmas": {
+  "input": {
+   "optional": {},
+   "required": {
+    "sigmas": "STRING"
+   }
+  },
+  "output": [
+   "SIGMAS"
+  ]
+ },
+ "MaskToImage": {
+  "input": {
+   "optional": {},
+   "required": {
+    "mask": "MASK"
+   }
+  },
+  "output": [
+   "IMAGE"
+  ]
+ },
+ "ModelSamplingSD3": {
+  "input": {
+   "optional": {},
+   "required": {
+    "model": "MODEL",
+    "shift": "FLOAT"
+   }
+  },
+  "output": [
+   "MODEL"
+  ]
+ },
+ "PreviewAny": {
+  "input": {
+   "optional": {},
+   "required": {
+    "source": "*"
+   }
+  },
+  "output": [
+   "STRING"
+  ]
+ },
+ "PrimitiveInt": {
+  "input": {
+   "optional": {},
+   "required": {
+    "value": "INT"
+   }
+  },
+  "output": [
+   "INT"
+  ]
+ },
+ "PrimitiveStringMultiline": {
+  "input": {
+   "optional": {},
+   "required": {
+    "value": "STRING"
+   }
+  },
+  "output": [
+   "STRING"
+  ]
+ },
+ "RandomNoise": {
+  "input": {
+   "optional": {},
+   "required": {
+    "noise_seed": "INT"
+   }
+  },
+  "output": [
+   "NOISE"
+  ]
+ },
+ "ResizeImageMaskNode": {
+  "input": {
+   "optional": {},
+   "required": {
+    "input": "COMFY_MATCHTYPE_V3",
+    "resize_type": "COMFY_DYNAMICCOMBO_V3",
+    "scale_method": "COMBO"
+   }
+  },
+  "output": [
+   "COMFY_MATCHTYPE_V3"
+  ]
+ },
+ "SAM3_Detect": {
+  "input": {
+   "optional": {
+    "bboxes": "BOUNDING_BOX",
+    "conditioning": "CONDITIONING",
+    "negative_coords": "STRING",
+    "positive_coords": "STRING"
+   },
+   "required": {
+    "image": "IMAGE",
+    "individual_masks": "BOOLEAN",
+    "model": "MODEL",
+    "refine_iterations": "INT",
+    "threshold": "FLOAT"
+   }
+  },
+  "output": [
+   "MASK",
+   "BOUNDING_BOX"
+  ]
+ },
+ "SAM3_VideoTrack": {
+  "input": {
+   "optional": {
+    "conditioning": "CONDITIONING",
+    "initial_mask": "MASK"
+   },
+   "required": {
+    "detect_interval": "INT",
+    "detection_threshold": "FLOAT",
+    "images": "IMAGE",
+    "max_objects": "INT",
+    "model": "MODEL"
+   }
+  },
+  "output": [
+   "SAM3_TRACK_DATA"
+  ]
+ },
+ "SCAIL2ColoredMask": {
+  "input": {
+   "optional": {
+    "ref_track_data": "SAM3_TRACK_DATA,MASK"
+   },
+   "required": {
+    "driving_track_data": "SAM3_TRACK_DATA",
+    "object_indices": "STRING",
+    "replacement_mode": "BOOLEAN",
+    "sort_by": "COMBO"
+   }
+  },
+  "output": [
+   "IMAGE",
+   "IMAGE"
+  ]
+ },
+ "SamplerCustom": {
+  "input": {
+   "optional": {},
+   "required": {
+    "add_noise": "BOOLEAN",
+    "cfg": "FLOAT",
+    "latent_image": "LATENT",
+    "model": "MODEL",
+    "negative": "CONDITIONING",
+    "noise_seed": "INT",
+    "positive": "CONDITIONING",
+    "sampler": "SAMPLER",
+    "sigmas": "SIGMAS"
+   }
+  },
+  "output": [
+   "LATENT",
+   "LATENT"
+  ]
+ },
+ "SamplerCustomAdvanced": {
+  "input": {
+   "optional": {},
+   "required": {
+    "guider": "GUIDER",
+    "latent_image": "LATENT",
+    "noise": "NOISE",
+    "sampler": "SAMPLER",
+    "sigmas": "SIGMAS"
+   }
+  },
+  "output": [
+   "LATENT",
+   "LATENT"
+  ]
+ },
+ "SaveVideo": {
+  "input": {
+   "optional": {
+    "codec": "COMFY_DYNAMICCOMBO_V3"
+   },
+   "required": {
+    "filename_prefix": "STRING",
+    "format": "COMFY_DYNAMICCOMBO_V3",
+    "video": "VIDEO"
+   }
+  },
+  "output": [
+   "VIDEO"
+  ]
+ },
+ "TrimAudioDuration": {
+  "input": {
+   "optional": {},
+   "required": {
+    "audio": "AUDIO",
+    "duration": "FLOAT",
+    "start_index": "FLOAT"
+   }
+  },
+  "output": [
+   "AUDIO"
+  ]
+ },
+ "UNETLoader": {
+  "input": {
+   "optional": {},
+   "required": {
+    "unet_name": [
+     "acestep_v1.5_xl_turbo_bf16.safetensors",
+     "krea2_turbo_int8_convrot.safetensors",
+     "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+     "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+     "qwen_image_2.1_int8_convrot.safetensors",
+     "seedvr2_7b_sharp_int8_convrot.safetensors"
+    ],
+    "weight_dtype": [
+     "default",
+     "fp8_e4m3fn",
+     "fp8_e4m3fn_fast",
+     "fp8_e5m2"
+    ]
+   }
+  },
+  "output": [
+   "MODEL"
+  ]
+ },
+ "UnetLoaderGGUF": {
+  "input": {
+   "optional": {},
+   "required": {
+    "unet_name": [
+     "SCAIL-2-Q4_K_M.gguf",
+     "flux-2-klein-4b-Q6_K.gguf",
+     "flux-2-klein-9b-Q8_0.gguf",
+     "ideogram4-Q8_0.gguf",
+     "ideogram4_unconditional-Q8_0.gguf",
+     "wan2.2-ti2v-5b-Q8_0.gguf",
+     "wan2.2_bernini_r_high-Q4_K_M.gguf",
+     "wan2.2_bernini_r_low-Q4_K_M.gguf"
+    ]
+   }
+  },
+  "output": [
+   "MODEL"
+  ]
+ },
+ "VAEDecode": {
+  "input": {
+   "optional": {},
+   "required": {
+    "samples": "LATENT",
+    "vae": "VAE"
+   }
+  },
+  "output": [
+   "IMAGE"
+  ]
+ },
+ "VAEDecodeTiled": {
+  "input": {
+   "optional": {},
+   "required": {
+    "overlap": "INT",
+    "samples": "LATENT",
+    "temporal_overlap": "INT",
+    "temporal_size": "INT",
+    "tile_size": "INT",
+    "vae": "VAE"
+   }
+  },
+  "output": [
+   "IMAGE"
+  ]
+ },
+ "VAEEncode": {
+  "input": {
+   "optional": {},
+   "required": {
+    "pixels": "IMAGE",
+    "vae": "VAE"
+   }
+  },
+  "output": [
+   "LATENT"
+  ]
+ },
+ "VAELoader": {
+  "input": {
+   "optional": {},
+   "required": {
+    "vae_name": [
+     "ace_1.5_vae.safetensors",
+     "ae.safetensors",
+     "flux2-klein.safetensors",
+     "flux2-vae.safetensors",
+     "ltx-2.5-audio-vae-bf16.safetensors",
+     "ltx-2.5-video-vae-bf16.safetensors",
+     "minimax_h3_audio_vae_fp32.safetensors",
+     "minimax_h3_video_vae_int8_convrot.safetensors",
+     "qwen_image_vae.safetensors",
+     "seedvr2_ema_vae_fp16.safetensors",
+     "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
+     "wan2.2_vae.safetensors",
+     "wan_2.1_vae.safetensors",
+     "pixel_space"
+    ]
+   }
+  },
+  "output": [
+   "VAE"
+  ]
+ },
+ "WanSCAILToVideo": {
+  "input": {
+   "optional": {
+    "clip_vision_output": "CLIP_VISION_OUTPUT",
+    "pose_video": "IMAGE",
+    "pose_video_mask": "IMAGE",
+    "previous_frames": "IMAGE",
+    "reference_image": "IMAGE",
+    "reference_image_mask": "IMAGE",
+    "replacement_mode": "BOOLEAN"
+   },
+   "required": {
+    "batch_size": "INT",
+    "height": "INT",
+    "length": "INT",
+    "negative": "CONDITIONING",
+    "pose_end": "FLOAT",
+    "pose_start": "FLOAT",
+    "pose_strength": "FLOAT",
+    "positive": "CONDITIONING",
+    "previous_frame_count": "INT",
+    "vae": "VAE",
+    "video_frame_offset": "INT",
+    "width": "INT"
+   }
+  },
+  "output": [
+   "CONDITIONING",
+   "CONDITIONING",
+   "LATENT",
+   "INT"
+  ]
+ }
+}
