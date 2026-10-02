@@ -12,7 +12,7 @@ scripts/safe-restart --llama     # drain chat, wait, restart llama-bee
 scripts/safe-restart --force     # skip the wait; KILLS in-flight work
 ```
 
-Options: `--timeout SEC` (default 900), `--quiet-seconds SEC` (default 20; 0 = off), `--ignore-async-jobs`,
+Options: `--timeout SEC` (default 3600), `--quiet-seconds SEC` (default 300, so a deploy waits for 5 idle minutes and never lands mid-session; 20 is enough only when nobody is using an agent; 0 = off), `--ignore-async-jobs`,
 `--health-timeout SEC`, `--unit`, `--llama-unit`, `--url`.
 
 ## Exit codes

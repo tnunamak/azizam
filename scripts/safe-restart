@@ -12,7 +12,7 @@ openai-proxy` cuts every streaming reply and sync media call that is running.
 
 The script first waits, while the gateway still ACCEPTS work, until nothing is
 in flight and no chat request started or finished for --quiet-seconds (default
-20). An agent turn is a chain of chat calls with tool steps between them, so
+300). Use --quiet-seconds 20 only when nobody is using an agent. An agent turn is a chain of chat calls with tool steps between them, so
 "nothing in flight" is not enough. Then it asks the gateway to drain (new work
 gets 503 + Retry-After), waits for any request that slipped in, restarts the
 unit, waits for health, and leaves draining off. The deadline covers both
@@ -59,8 +59,8 @@ EXIT_INTERRUPTED = 130
 
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:5000"
 DEFAULT_LLAMA_URL = "http://127.0.0.1:5051"
-DEFAULT_TIMEOUT_S = 900.0
-DEFAULT_QUIET_S = 20.0
+DEFAULT_TIMEOUT_S = 3600.0  # long enough to find a 5-minute idle window during normal use
+DEFAULT_QUIET_S = 300.0  # a person using an agent pauses for minutes between messages; 20 s only covered tool steps
 TOKEN_ENV_NAMES = ("AI_GATEWAY_ADMIN_KEY", "VIVID_ADMIN_API_KEY", "OPENAI_PROXY_ADMIN_KEY")
 MAX_TTL_S = 7200.0
 
@@ -519,13 +519,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="restart without waiting (or without a drain endpoint). KILLS in-flight requests",
     )
-    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="seconds to wait for in-flight work (default 900)")
+    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="seconds to wait for a quiet window and in-flight work (default 3600)")
     parser.add_argument(
         "--quiet-seconds",
         type=float,
         default=DEFAULT_QUIET_S,
         help="also wait until no chat request started or finished for this long, "
-        "so a multi-step agent turn is not cut between tool calls (default 20; 0 disables)",
+        "so neither an agent turn nor a person's session is cut (default 300; 0 disables)",
     )
     parser.add_argument("--ignore-async-jobs", action="store_true", help="do not wait for async media jobs (they resume from the start)")
     parser.add_argument("--health-timeout", type=float, default=None, help="seconds to wait for health after restart (default 120; 600 with --llama)")
