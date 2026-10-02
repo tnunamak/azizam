@@ -154,7 +154,8 @@ def build_prompt(
     slot = 1
     if photo_as_canvas:
         parts.append(
-            f"<image{slot}> is the original photo: the reference for clothing, setting and light."
+            f"<image{slot}> is the original photo. Use it only for clothing, setting and light: "
+            "do not copy its composition, its poses or any other person in it."
         )
         slot += 1
     for rp in people:
@@ -167,7 +168,7 @@ def build_prompt(
     parts.append(user_prompt.strip())
     if only_listed_people:
         names = ", ".join(rp.label for rp in people)
-        parts.append(f"Show only these people and nobody else: {names}.")
+        parts.append(f"Create a new photograph that shows only these people and nobody else: {names}.")
     parts.append(
         "Every face must be the same person as its identity reference, "
         "photorealistic, sharp, natural skin."
@@ -351,14 +352,16 @@ async def run_identity_scene(
         image = await deps.run_workflow(graph, uploads)
         candidate = await _faces(deps, image)
         report = likeness.check_likeness(
-            [rp.person for rp in people], candidate, models=deps.models, thresholds=req.thresholds
+            [rp.person for rp in people], candidate, models=deps.models, thresholds=req.thresholds,
+            allow_extra_faces=not req.only_listed_people,
         )
-        key = likeness.rank_key(report)
+        key = likeness.rank_key(report, penalise_extra_faces=req.only_listed_people)
         attempts.append({
             "attempt": index + 1,
             "seed": seed,
             "status": report["overall"]["status"],
             "min_score": report["overall"]["min_score"],
+            "extra_faces": report["overall"]["extra_faces"],
             "scores": {p["label"]: (p["match"] or {}).get("score") for p in report["people"]},
         })
         if best is None or key > best[0]:

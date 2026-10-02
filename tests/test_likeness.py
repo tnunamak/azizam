@@ -118,6 +118,28 @@ class CheckLikenessTests(unittest.TestCase):
         self.assertEqual(report["people"][0]["verdict"], "missing")
 
 
+class ExtraFaceTests(unittest.TestCase):
+    def test_unclaimed_face_is_listed_and_can_block_the_pass(self) -> None:
+        alice = Person("alice", (face(A),))
+        stranger = face(B, x=300)
+        allowed = likeness.check_likeness([alice], [face(A), stranger])
+        self.assertEqual(allowed["overall"]["extra_faces"], 1)
+        self.assertEqual(allowed["overall"]["status"], "pass")
+        strict = likeness.check_likeness([alice], [face(A), stranger], allow_extra_faces=False)
+        self.assertFalse(strict["overall"]["all_meet_threshold"])
+        self.assertEqual(strict["overall"]["status"], "review")
+
+    def test_tiny_unclaimed_faces_are_ignored(self) -> None:
+        report = likeness.check_likeness([Person("a", (face(A),))], [face(A), face(B, width=20)])
+        self.assertEqual(report["overall"]["extra_faces"], 0)
+
+    def test_rank_key_penalises_extras_only_when_asked(self) -> None:
+        clean = {"people": [{"match": {"score": 0.5}}], "extra_faces": []}
+        crowded = {"people": [{"match": {"score": 0.7}}], "extra_faces": [{}]}
+        self.assertGreater(likeness.rank_key(clean, penalise_extra_faces=True), likeness.rank_key(crowded, penalise_extra_faces=True))
+        self.assertGreater(likeness.rank_key(crowded), likeness.rank_key(clean))
+
+
 class MergeAndRankTests(unittest.TestCase):
     def test_merge_models_joins_by_overlap(self) -> None:
         a = [{"bbox": [0, 0, 100, 100], "det_score": 0.9, "age": 30, "embedding": [1, 0]}]

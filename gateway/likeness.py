@@ -176,8 +176,14 @@ def check_likeness(
     *,
     models: Sequence[str] = DEFAULT_MODELS,
     thresholds: Mapping[str, float] | None = None,
+    allow_extra_faces: bool = True,
 ) -> dict[str, Any]:
-    """Score ``candidate_faces`` against the reference ``people``."""
+    """Score ``candidate_faces`` against the reference ``people``.
+
+    A candidate face that no reference person claimed is an *extra face*. It is
+    always listed; with ``allow_extra_faces=False`` it also stops the overall
+    result from meeting the threshold (the caller asked for only these people).
+    """
     if not people:
         raise LikenessError("at least one reference person is required")
     if len(people) > MAX_PEOPLE:
@@ -239,6 +245,19 @@ def check_likeness(
         )
         results.append(entry)
 
+    claimed = {a for a in assignment if a is not None}
+    extras = [
+        {"bbox": list(f.bbox), "det_score": round(f.det_score, 4), "age": f.age}
+        for i, f in enumerate(candidate_faces)
+        if i not in claimed and f.width >= SMALL_FACE_PX and f.det_score >= LOW_DET_SCORE
+    ]
+    overall = _overall(results)
+    overall["extra_faces"] = len(extras)
+    if extras and not allow_extra_faces:
+        overall["all_meet_threshold"] = False
+        if overall["status"] == "pass":
+            overall["status"] = "review"
+        overall["needs_human_check"] = True
     return {
         "object": "likeness.check",
         "models": models,
@@ -248,7 +267,8 @@ def check_likeness(
             for f in candidate_faces
         ],
         "people": results,
-        "overall": _overall(results),
+        "extra_faces": extras,
+        "overall": overall,
     }
 
 
@@ -278,13 +298,15 @@ def _overall(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-def rank_key(report: Mapping[str, Any]) -> tuple[float, float]:
+def rank_key(report: Mapping[str, Any], *, penalise_extra_faces: bool = False) -> tuple[float, float, float]:
     """Sort key for choosing the best of several candidates (higher is better).
 
-    Worst person first: one wrong face outweighs a great second face.
+    Fewer extra faces first when the caller wants only the listed people, then the
+    worst person (one wrong face outweighs a great second face), then the mean.
     """
     people = report.get("people") or []
     scores = [p["match"]["score"] if p.get("match") else -1.0 for p in people]
+    extras = -float(len(report.get("extra_faces") or [])) if penalise_extra_faces else 0.0
     if not scores:
-        return (-1.0, -1.0)
-    return (min(scores), sum(scores) / len(scores))
+        return (extras, -1.0, -1.0)
+    return (extras, min(scores), sum(scores) / len(scores))
