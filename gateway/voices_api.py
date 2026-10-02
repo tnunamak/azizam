@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
-from fastapi import APIRouter, Request, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 
 from gateway.custom_voices import (
@@ -118,8 +118,12 @@ def _text_field(form: Any, field: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def create_voices_router(deps: VoiceApiDeps) -> APIRouter:
-    router = APIRouter()
+def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
+    """Add the voice and consent routes straight to ``app``.
+
+    Not an ``APIRouter``: current FastAPI wraps an included router in an opaque object, which hides
+    these routes from route enumeration (``app.routes``) that the alias and registry tests rely on.
+    """
 
     def guard(request: Request, policy_path: str) -> tuple[Any, str | None] | Response:
         auth = deps.authenticate(request, policy_path)
@@ -380,17 +384,16 @@ def create_voices_router(deps: VoiceApiDeps) -> APIRouter:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     for prefix in ("/v1", "/openai/v1"):
-        router.add_api_route(f"{prefix}/audio/voice_consents", create_consent, methods=["POST"], include_in_schema=False)
-        router.add_api_route(f"{prefix}/audio/voice_consents", list_consents, methods=["GET"], include_in_schema=False)
-        router.add_api_route(f"{prefix}/audio/voice_consents/{{consent_id}}", get_consent, methods=["GET"], include_in_schema=False)
-        router.add_api_route(f"{prefix}/audio/voice_consents/{{consent_id}}", rename_consent, methods=["POST"], include_in_schema=False)
-        router.add_api_route(f"{prefix}/audio/voice_consents/{{consent_id}}", delete_consent, methods=["DELETE"], include_in_schema=False)
-        router.add_api_route(f"{prefix}/audio/voices", create_voice, methods=["POST"], include_in_schema=False)
-        router.add_api_route(f"{prefix}/audio/voices/{{voice_id}}", get_voice, methods=["GET"], include_in_schema=False)
-        router.add_api_route(f"{prefix}/audio/voices/{{voice_id}}", update_voice, methods=["POST"], include_in_schema=False)
-        router.add_api_route(f"{prefix}/audio/voices/{{voice_id}}", delete_voice, methods=["DELETE"], include_in_schema=False)
-        router.add_api_route(f"{prefix}/audio/voices/{{voice_id}}/sample", voice_sample, methods=["GET"], include_in_schema=False)
-    return router
+        app.add_api_route(f"{prefix}/audio/voice_consents", create_consent, methods=["POST"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/audio/voice_consents", list_consents, methods=["GET"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/audio/voice_consents/{{consent_id}}", get_consent, methods=["GET"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/audio/voice_consents/{{consent_id}}", rename_consent, methods=["POST"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/audio/voice_consents/{{consent_id}}", delete_consent, methods=["DELETE"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/audio/voices", create_voice, methods=["POST"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/audio/voices/{{voice_id}}", get_voice, methods=["GET"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/audio/voices/{{voice_id}}", update_voice, methods=["POST"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/audio/voices/{{voice_id}}", delete_voice, methods=["DELETE"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/audio/voices/{{voice_id}}/sample", voice_sample, methods=["GET"], include_in_schema=False)
 
 
 def custom_voice_id(value: Any) -> str | None:

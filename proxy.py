@@ -12320,20 +12320,19 @@ app.include_router(
     )
 )
 
-app.include_router(
-    voices_api.create_voices_router(
-        voices_api.VoiceApiDeps(
-            store=lambda: _voice_store(),
-            sample_limits=lambda: _voice_sample_limits(),
-            authenticate=lambda request, path: authenticate_request(request, path),
-            enforce_policy=lambda auth, path: _enforce_voice_route_policy(auth, path),
-            owner_of=lambda auth: _asset_owner_key(auth),
-            probe_quality=lambda reference: _probe_voice_quality(reference),
-            design_voice=lambda prompt, script, seed: _design_voice(prompt, script, seed),
-            compatible_engines=lambda: _custom_voice_engines(),
-            quality_warn_below=lambda: float(_voice_settings().get("quality_warn_below", 0.45)),
-        )
-    )
+voices_api.register_voice_routes(
+    app,
+    voices_api.VoiceApiDeps(
+        store=lambda: _voice_store(),
+        sample_limits=lambda: _voice_sample_limits(),
+        authenticate=lambda request, path: authenticate_request(request, path),
+        enforce_policy=lambda auth, path: _enforce_voice_route_policy(auth, path),
+        owner_of=lambda auth: _asset_owner_key(auth),
+        probe_quality=lambda reference: _probe_voice_quality(reference),
+        design_voice=lambda prompt, script, seed: _design_voice(prompt, script, seed),
+        compatible_engines=lambda: _custom_voice_engines(),
+        quality_warn_below=lambda: float(_voice_settings().get("quality_warn_below", 0.45)),
+    ),
 )
 
 

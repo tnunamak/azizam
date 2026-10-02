@@ -62,7 +62,7 @@ class ApiCase(unittest.TestCase):
             quality_warn_below=lambda: 0.45,
         )
         app = FastAPI()
-        app.include_router(api.create_voices_router(deps))
+        api.register_voice_routes(app, deps)
         self.client = TestClient(app)
 
     def upload(self, *, name="Narrator", wav=SAMPLE, owner="key-a", extra=None, filename="s.wav", mime="audio/wav", prefix="/v1"):
@@ -286,8 +286,7 @@ class PromptVoiceTests(ApiCase):
         async def down(*_a):
             raise cv.VoiceError(503, "backend_unavailable", "Voice design needs the omnivoice engine.")
 
-        self.client.app.dependency_overrides = {}
-        # Rebuild the router with a failing design function.
+        # Rebuild the app with a failing design function.
         deps = VoiceApiDeps(
             store=lambda: self.store, sample_limits=lambda: SampleLimits(),
             authenticate=lambda r, p: SimpleNamespace(owner="key-a"), enforce_policy=lambda a, p: None,
@@ -295,7 +294,7 @@ class PromptVoiceTests(ApiCase):
             compatible_engines=lambda: [], quality_warn_below=lambda: 0.45,
         )
         app = FastAPI()
-        app.include_router(api.create_voices_router(deps))
+        api.register_voice_routes(app, deps)
         resp = TestClient(app).post("/v1/audio/voices", json={"type": "prompt", "name": "x", "prompt": "calm"})
         self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (503, "backend_unavailable"))
 

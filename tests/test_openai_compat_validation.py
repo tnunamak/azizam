@@ -10,7 +10,7 @@ import unittest
 import wave
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -95,6 +95,8 @@ class OpenAICompatValidationTests(unittest.TestCase):
             patch.object(proxy, "AUTH_ENABLED", False),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
+            # tts-1 resolves to an on-demand engine; never start a real unit from a test.
+            patch.object(proxy, "_ensure_speech_service_ready", AsyncMock(return_value=None)),
         ]
         for patcher in self.patches:
             patcher.start()

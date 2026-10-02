@@ -16,7 +16,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
@@ -223,7 +223,9 @@ class OpenAISchemaConformanceTests(unittest.TestCase):
             async def post(self, *args, **kwargs):
                 return AudioResponse()
 
-        with patch.object(proxy.httpx, "AsyncClient", AudioClient):
+        with patch.object(proxy.httpx, "AsyncClient", AudioClient), patch.object(
+            proxy, "_ensure_speech_service_ready", AsyncMock(return_value=None)
+        ):
             response = self.client.post(
                 "/v1/audio/speech",
                 json={"model": "tts-1", "voice": "alloy", "input": "hello", "response_format": "wav"},
