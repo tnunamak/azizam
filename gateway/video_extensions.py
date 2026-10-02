@@ -106,6 +106,17 @@ def _request_with_workflow_namespace(
     return copied
 
 
+def merge_workflow_inputs(
+    request_body: Mapping[str, Any],
+    *,
+    namespace: str = WORKFLOW_EXTENSION_NAMESPACE,
+) -> dict[str, Any]:
+    """Return the body with a top-level ``inputs`` block moved under ``extensions``."""
+    merged = _request_with_workflow_namespace(request_body, namespace)
+    merged.pop("inputs", None)
+    return merged
+
+
 def _reject_route_managed_inputs(
     supplied: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, str]]:

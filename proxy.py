@@ -16,6 +16,7 @@ Features:
 """
 
 import asyncio
+import shutil
 import base64
 import copy
 import json
@@ -66,6 +67,7 @@ from gateway import (
     resource_admission_http,
     route_registry,
     service_registry,
+    video_inputs,
     video_media_job_http,
     video_media_jobs,
 )
@@ -247,6 +249,7 @@ from gateway.manifests import (
     validate_inputs,
 )
 from gateway.video_extensions import (
+    merge_workflow_inputs,
     STANDARD_VIDEO_CREATE_FIELDS,
     bind_video_workflow_extensions,
 )
@@ -264,6 +267,7 @@ from gateway.openai_media_schemas import (
     VIDEOS_CREATE_OPENAPI,
     VIDEOS_DELETE_OPENAPI,
     VIDEOS_LIST_OPENAPI,
+    VIDEOS_EDIT_OPENAPI,
     VIDEOS_REMIX_OPENAPI,
     VIDEOS_STATUS_OPENAPI,
     VOICES_LIST_OPENAPI,
@@ -819,10 +823,9 @@ VIDEO_ALIASES = {
     str(k).strip().lower(): str(v).strip()
     for k, v in (videos_cfg.get("aliases", {}) or {}).items()
 }
-# POST /v1/videos/{id}/remix has no backend implementation yet (see
-# proxy_comfy_video_remix). This key exists so an operator/implementer has a
-# stable config surface to wire one into without another route-shape change;
-# unset (the default) means remix always returns a clear 501.
+# Workflow id that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
+# Unset means both routes return a clear 501 (video_remix_not_configured). Keep
+# the `video-remix` stable alias pointing at the same workflow.
 VIDEO_REMIX_WORKFLOW = videos_cfg.get("remix_workflow") or None
 _OPENAI_VIDEO_STATUS_BY_INTERNAL = {
     "queued": "queued",
@@ -9133,7 +9136,7 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
         raise _VideoFormParseError(f"Invalid multipart body: {exc}") from exc
 
     try:
-        body: dict[str, Any] = {}
+        items: list[tuple[str, Any]] = []
         for name, value in form.multi_items():
             if name in _VIDEO_FORM_FILE_FIELDS and hasattr(value, "read") and hasattr(value, "filename"):
                 try:
@@ -9143,19 +9146,252 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
                         f"failed to read uploaded {name}: {exc}"
                     ) from exc
                 mime = getattr(value, "content_type", None) or "application/octet-stream"
-                body[name] = "data:" + mime + ";base64," + base64.b64encode(raw).decode("ascii")
+                items.append((name, "data:" + mime + ";base64," + base64.b64encode(raw).decode("ascii")))
                 continue
             # Plain scalar form field. OpenAI's SDK sends everything else as text;
             # callers may send numeric/bool-looking strings, which the existing JSON
             # path also accepts as strings (it coerces seconds/seed via float()/int()).
-            body[name] = value if not hasattr(value, "read") else str(value)
-        return body
+            items.append((name, value if not hasattr(value, "read") else str(value)))
+        try:
+            # The SDK flattens extra_body={"extensions": {...}} into
+            # extensions[ns][name] fields; rebuild the nested mapping.
+            return video_inputs.parse_bracket_form(items)
+        except ValueError as exc:
+            raise _VideoFormParseError(str(exc)) from exc
     finally:
         await form.close()
 
 
-async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) -> Response:
-    """POST /v1/videos — submit a job and return {video_id, status: queued}."""
+class _VideoAssetError(Exception):
+    """A video-workflow asset input could not be resolved."""
+
+    def __init__(self, message: str, *, param: str, status: int = 400, code: str | None = None):
+        super().__init__(message)
+        self.param = param
+        self.status = status
+        self.code = code
+
+
+def _video_asset_error_response(exc: "_VideoAssetError") -> Response:
+    error: dict[str, Any] = {
+        "message": str(exc),
+        "type": "invalid_request_error" if exc.status < 500 else "api_error",
+        "param": exc.param,
+    }
+    if exc.code:
+        error["code"] = exc.code
+    return Response(content=json.dumps({"error": error}), status_code=exc.status, media_type="application/json")
+
+
+async def _load_completed_video_bytes(
+    video_id: str,
+    auth_context: AuthContext | None,
+) -> tuple[bytes, str]:
+    """Return (mp4 bytes, filename) of a completed gateway video the caller owns.
+
+    Mirrors proxy_comfy_video_content's ownership gate: a tracked job must be
+    visible to the caller; an untracked id (gateway restarted since submit)
+    falls through to ComfyUI's history, as the status route does.
+    """
+    param = "video"
+    prompt_id = _prompt_id_from_video_id(video_id)
+    if not prompt_id:
+        raise _VideoAssetError("invalid video_id", param=param)
+    if prompt_id in _video_job_records and not _video_job_visible(prompt_id, auth_context):
+        raise _VideoAssetError("video_id not found", param=param, status=404)
+    headers = configured_downstream_headers(auth_context, "comfyui")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+        job = await _comfy_history(client, prompt_id, headers)
+        if job is None:
+            raise _VideoAssetError("video_id not found", param=param, status=404)
+        status, _ = _job_status_from_history(job)
+        if status != "succeeded":
+            raise _VideoAssetError(
+                f"Source video is not completed (status={_openai_video_status(status)})",
+                param=param, code="video_not_ready",
+            )
+        file_info = _extract_video_output(job)
+        if not file_info:
+            raise _VideoAssetError("Source video has no output", param=param, status=404)
+        params = {"filename": file_info["filename"], "type": file_info["type"]}
+        if file_info["subfolder"]:
+            params["subfolder"] = file_info["subfolder"]
+        view = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
+        if view.status_code != 200:
+            raise _VideoAssetError(f"ComfyUI /view error: {view.status_code}", param=param, status=502)
+        return view.content, Path(file_info["filename"]).name
+
+
+def _asset_reference_video_id(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        candidate = value.get("video_id") or value.get("id")
+        return candidate.strip() if isinstance(candidate, str) and candidate.strip() else None
+    if isinstance(value, str) and value.strip().startswith(VIDEO_ID_PREFIX):
+        return value.strip()
+    return None
+
+
+async def _resolve_video_workflow_asset(
+    value: Any,
+    *,
+    kind: str,
+    param: str,
+    auth_context: AuthContext | None,
+) -> tuple[bytes, str, str]:
+    """Resolve one workflow asset to (bytes, filename, content_type).
+
+    Accepted values: a gateway video id (`video_...` or `{"video_id": ...}`,
+    video inputs only), an `asset_id` (images only), an http(s) URL, a data:
+    URI, or a base64 string.
+    """
+    if kind == "video":
+        video_id = _asset_reference_video_id(value)
+        if video_id:
+            try:
+                data, name = await _load_completed_video_bytes(video_id, auth_context)
+            except _VideoAssetError as exc:
+                raise _VideoAssetError(str(exc), param=param, status=exc.status, code=exc.code) from exc
+            return data, name, "video/mp4"
+        if isinstance(value, Mapping):
+            value = value.get("url") or value.get("data")
+        if isinstance(value, str) and value.startswith(_DATA_URI_PREFIX):
+            header, _, b64 = value.partition(",")
+            mime = header[len(_DATA_URI_PREFIX):].split(";", 1)[0].strip().lower()
+            if not mime.startswith("video/"):
+                raise _VideoAssetError(f"{param} data URI must be video/*, got {mime or 'no type'}", param=param)
+            try:
+                data = base64.b64decode(b64, validate=False)
+            except Exception as exc:
+                raise _VideoAssetError(f"{param} is not valid base64: {exc}", param=param) from exc
+            return data, f"source{video_inputs.suffix_for_video(None, mime)}", mime
+        if not isinstance(value, str) or not value.strip().startswith(("http://", "https://")):
+            raise _VideoAssetError(
+                f"{param} must be a video id, an http(s) URL, or a video/* data URI",
+                param=param,
+            )
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10), follow_redirects=True) as client:
+                resp = await client.get(value.strip())
+                resp.raise_for_status()
+        except Exception as exc:
+            raise _VideoAssetError(f"failed to download {param}: {exc}", param=param) from exc
+        mime = resp.headers.get("content-type", "video/mp4")
+        name = value.rsplit("/", 1)[-1].split("?", 1)[0]
+        return resp.content, f"source{video_inputs.suffix_for_video(name, mime)}", mime
+    try:
+        data, name = await _resolve_input_reference(value, auth_context)
+    except _InputReferenceError as exc:
+        raise _VideoAssetError(f"{param}: {exc}", param=param) from exc
+    suffix = Path(name).suffix.lower()
+    mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}.get(suffix, "image/png")
+    return data, name, mime
+
+
+async def _resolve_video_workflow_assets(
+    body: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    workflow_cfg: Mapping[str, Any],
+    auth_context: AuthContext | None,
+) -> tuple[dict[str, tuple[bytes, str, str]], "video_inputs.VideoProbe | None"]:
+    """Resolve every asset extension input a request supplied, and probe the source video.
+
+    Nothing is uploaded to ComfyUI here, so a request that fails validation
+    later leaves no files behind in ComfyUI's input directory.
+    """
+    block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
+    if not isinstance(block, Mapping):
+        raise _VideoAssetError("extensions must be a mapping", param="extensions")
+    specs = manifest.get("inputs") or {}
+    binding_map = (((manifest.get("bindings") or {}).get("comfyui") or {}).get("map")) or {}
+    source_input = workflow_cfg.get("source_video_input")
+    ext_param = f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}"
+    if source_input and source_input not in block:
+        raise _VideoAssetError(
+            f"{source_input} is required for this model: pass a video id, URL or data URI",
+            param=f"{ext_param}.{source_input}",
+        )
+    assets: dict[str, tuple[bytes, str, str]] = {}
+    for name, value in block.items():
+        spec = specs.get(name)
+        if not isinstance(spec, Mapping) or spec.get("type") != "asset" or name not in binding_map:
+            continue
+        kind = "video" if name == source_input else "image"
+        data, filename, mime = await _resolve_video_workflow_asset(
+            value, kind=kind, param=f"{ext_param}.{name}", auth_context=auth_context
+        )
+        if not data:
+            raise _VideoAssetError(f"{name} is empty", param=f"{ext_param}.{name}")
+        if len(data) > video_inputs.MAX_SOURCE_VIDEO_BYTES:
+            raise _VideoAssetError(f"{name} is larger than the {video_inputs.MAX_SOURCE_VIDEO_BYTES >> 20} MB limit", param=f"{ext_param}.{name}")
+        assets[name] = (data, filename, mime)
+    probe = None
+    if source_input and source_input in assets:
+        data, filename, mime = assets[source_input]
+        probe = await asyncio.to_thread(
+            video_inputs.probe_video,
+            data,
+            video_inputs.suffix_for_video(filename, mime),
+            workdir=Path(__file__).parent / "cache" / "video_inputs",
+        )
+        if probe is None and shutil.which("ffprobe") is not None:
+            raise _VideoAssetError(
+                f"{source_input} is not a readable video", param=f"{ext_param}.{source_input}"
+            )
+    return assets, probe
+
+
+async def _upload_video_workflow_assets(
+    body: Mapping[str, Any],
+    assets: Mapping[str, tuple[bytes, str, str]],
+    auth_context: AuthContext | None,
+) -> tuple[dict[str, Any], Response | None]:
+    """Upload resolved assets to ComfyUI's input dir; return the body with filenames."""
+    updated = dict(body)
+    extensions = dict(updated.get("extensions") or {})
+    block = dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+    headers = configured_downstream_headers(auth_context, "comfyui")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+            for name, (data, filename, mime) in assets.items():
+                resp = await client.post(
+                    f"{COMFY_HOST}/upload/image",
+                    headers=headers,
+                    files={"image": (filename, data, mime)},
+                )
+                uploaded = resp.json().get("name") if resp.status_code == 200 else None
+                if not uploaded:
+                    return updated, Response(
+                        content=json.dumps({"error": {
+                            "message": f"ComfyUI upload failed for {name}: {resp.text[:200]}",
+                            "type": "api_error",
+                        }}),
+                        status_code=502,
+                        media_type="application/json",
+                    )
+                block[name] = str(uploaded)
+    except httpx.HTTPError as exc:
+        return updated, Response(
+            content=json.dumps({"error": {"message": f"Asset upload failed: {exc}", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json",
+        )
+    extensions[WORKFLOW_EXTENSION_NAMESPACE] = block
+    updated["extensions"] = extensions
+    return updated, None
+
+
+async def proxy_comfy_video_create(
+    request: Request,
+    auth_context: AuthContext,
+    *,
+    body_override: Mapping[str, Any] | None = None,
+    remixed_from_video_id: str | None = None,
+) -> Response:
+    """POST /v1/videos — submit a job and return {video_id, status: queued}.
+
+    `body_override` and `remixed_from_video_id` let the remix routes reuse this
+    pipeline with an already-parsed body.
+    """
     if not COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
@@ -9170,7 +9406,9 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
         return service_response
 
     content_type = request.headers.get("content-type", "")
-    if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+    if body_override is not None:
+        body = dict(body_override)
+    elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
         # openai-python's videos.create always uploads as multipart/form-data so
         # that input_reference can be a binary upload. Normalize the form into
         # the JSON body shape the rest of this handler expects.
@@ -9296,11 +9534,76 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             media_type="application/json"
         )
 
+    # Video-conditioned workflows (remix, character replace) take a source video
+    # as an extension input. Resolve and probe it now: its frame rate and length
+    # decide the frame count below. Upload happens later, after validation.
+    staged_assets: dict[str, tuple[bytes, str, str]] = {}
+    source_probe = None
+    video_manifest = None
+    if workflow_cfg.get("requires_extensions"):
+        try:
+            video_manifest = _find_video_manifest(str(workflow_name), workflow_cfg)
+        except ManifestError as e:
+            return Response(
+                content=json.dumps({"error": {"message": str(e), "type": "api_error"}}),
+                status_code=500,
+                media_type="application/json",
+            )
+        if video_manifest is None:
+            return Response(
+                content=json.dumps({"error": {
+                    "message": f"Workflow {workflow_name} does not have a video workflow manifest",
+                    "type": "api_error",
+                    "code": "workflow_manifest_missing",
+                }}),
+                status_code=500,
+                media_type="application/json",
+            )
+        try:
+            body = merge_workflow_inputs(body)
+            ext_block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+            if isinstance(ext_block, Mapping):
+                body["extensions"] = {
+                    **body["extensions"],
+                    WORKFLOW_EXTENSION_NAMESPACE: video_inputs.coerce_form_scalars(
+                        ext_block, video_manifest.get("inputs") or {}
+                    ),
+                }
+            staged_assets, source_probe = await _resolve_video_workflow_assets(
+                body, video_manifest, workflow_cfg, auth_context
+            )
+        except ExtensionError as e:
+            return Response(
+                content=json.dumps({"error": {
+                    "message": str(e),
+                    "type": "invalid_request_error",
+                    "code": "invalid_workflow_extension",
+                }}),
+                status_code=400,
+                media_type="application/json",
+            )
+        except _VideoAssetError as e:
+            return _video_asset_error_response(e)
+
     # Validate / clamp request inputs.
     max_seconds = float(workflow_cfg.get("max_seconds", 8))
     min_seconds = float(workflow_cfg.get("min_seconds", 1))
+    source_fps = source_probe.fps if source_probe is not None else None
+    source_seconds = (
+        source_probe.frames / source_probe.fps if source_probe is not None else None
+    )
     try:
-        seconds_val = float(seconds) if seconds is not None else min(5.0, max_seconds)
+        if seconds is not None:
+            seconds_val = float(seconds)
+        elif source_seconds is not None:
+            # No seconds given: keep the source's length, up to the workflow default.
+            seconds_val = min(
+                float(workflow_cfg.get("default_seconds", max_seconds)),
+                max_seconds,
+                source_seconds,
+            )
+        else:
+            seconds_val = min(5.0, max_seconds)
     except (TypeError, ValueError):
         return Response(
             content=json.dumps({"error": {"message": "seconds must be a number", "type": "invalid_request_error"}}),
@@ -9321,14 +9624,31 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             media_type="application/json"
         )
 
+    if source_seconds is not None and seconds_val > source_seconds + 0.05:
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": (
+                        f"seconds ({seconds_val:g}) is longer than the source video "
+                        f"({source_seconds:.2f} s)"
+                    ),
+                    "type": "invalid_request_error",
+                    "param": "seconds",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+
     size = size_from_body or workflow_cfg.get("default_size") or "1280x720"
     width, height = _parse_size_clamped(
         size,
         workflow_cfg.get("max_size", "1280x720"),
         int(workflow_cfg.get("size_multiple", 32)),
     )
-    frame_rate = float(workflow_cfg.get("frame_rate", 25))
-    # Frame count must be step*k+offset (LTX: 8k+1; MiniMax H3: 17k+5).
+    # The output keeps the source clip's frame rate for video-conditioned workflows.
+    frame_rate = float(source_fps or workflow_cfg.get("frame_rate", 25))
+    # Frame count must be step*k+offset (LTX: 8k+1; MiniMax H3: 17k+5; Wan: 4k+1).
     length_step = int(workflow_cfg.get("length_step", 8))
     length = _seconds_to_length(
         seconds_val,
@@ -9336,6 +9656,18 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
         step=length_step,
         offset=int(workflow_cfg.get("length_offset", 1)),
     )
+    if source_probe is not None or workflow_cfg.get("max_length"):
+        # Never ask for more frames than the source has, or than the model was tested at.
+        cap = int(workflow_cfg["max_length"]) if workflow_cfg.get("max_length") else None
+        length = video_inputs.snap_length_down(
+            length,
+            step=length_step,
+            offset=int(workflow_cfg.get("length_offset", 1)),
+            available=min(
+                [v for v in (cap, source_probe.frames if source_probe is not None else None) if v]
+                or [length]
+            ),
+        )
     # `actual_seconds` is what the rendered mp4 will actually contain (within
     # codec/container rounding). It starts as the LTX 8N+1-snapped duration for
     # short workflows; long-form overrides this further down.
@@ -9420,6 +9752,10 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
         duration_adjustment_reason = (
             "ltx_latent_8np1_stride" if length_step == 8 else "frame_count_stride"
         )
+
+    # Remix workflows slice the source clip; keep half a frame of slack past `length`.
+    for nid in _as_list(meta.get("duration_node")):
+        _set_field(nid, ["duration"], round((length + 0.5) / frame_rate, 4))
 
     fr_targets = _as_list(meta.get("frame_rate_nodes")) or _as_list(fr_node)
     for nid in fr_targets:
@@ -9593,14 +9929,18 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
             if target_node in workflow:
                 workflow[target_node].setdefault("inputs", {})[target_field] = [image_node, 0]
 
-    has_workflow_extensions = bool(body.get("inputs")) or bool(
+    if staged_assets:
+        body, upload_error = await _upload_video_workflow_assets(body, staged_assets, auth_context)
+        if upload_error is not None:
+            return upload_error
+    has_workflow_extensions = bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(
         (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
         if isinstance(body.get("extensions"), Mapping)
         else body.get("extensions")
     )
     if has_workflow_extensions:
         try:
-            manifest = _find_video_manifest(str(workflow_name), workflow_cfg)
+            manifest = video_manifest or _find_video_manifest(str(workflow_name), workflow_cfg)
             if manifest is None:
                 return Response(
                     content=json.dumps({"error": {
@@ -9759,7 +10099,7 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
                         "expires_at": now + 86400,
                         "prompt": prompt,
                         "error": None,
-                        "remixed_from_video_id": None,
+                        "remixed_from_video_id": remixed_from_video_id,
                         # Owner scoping for GET/list/DELETE/content -- mirrors
                         # _asset_owner_key's existing image/audio asset model.
                         "owner_key_hash": _asset_owner_key(auth_context),
@@ -9778,7 +10118,7 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
                 "completed_at": None,
                 "expires_at": now + 86400,
                 "prompt": prompt,
-                "remixed_from_video_id": None,
+                "remixed_from_video_id": remixed_from_video_id,
                 "error": None,
                 "size": f"{width}x{height}",
                 "seconds": seconds_str,
@@ -10354,15 +10694,106 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
     )
 
 
-async def proxy_comfy_video_remix(video_id: str, auth_context: AuthContext) -> Response:
-    """POST /v1/videos/{video_id}/remix — stub.
+VIDEO_REMIX_PUBLIC_MODEL = "video-remix"
 
-    No ComfyUI workflow on this gateway supports video-conditioned remixing
-    today. Returns a clear, stable 501 unless an operator has configured
-    `videos.remix_workflow` in proxy_config.yml -- and even then, there is no
-    backend implementation behind it yet (see VIDEO_REMIX_WORKFLOW's own
-    comment). The config key exists so a future implementation has a stable
-    place to land without another route-shape change.
+
+async def _read_video_request_body(request: Request) -> dict[str, Any]:
+    """Read a JSON or multipart body for the remix/edit routes into a dict.
+
+    Raises _VideoFormParseError on a body that is not an object.
+    """
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        try:
+            form = await request.form()
+        except Exception as exc:
+            raise _VideoFormParseError(f"Invalid multipart body: {exc}") from exc
+        try:
+            items: list[tuple[str, Any]] = []
+            for name, value in form.multi_items():
+                if hasattr(value, "read") and hasattr(value, "filename"):
+                    raw = await value.read()
+                    mime = getattr(value, "content_type", None) or "application/octet-stream"
+                    items.append((name, "data:" + mime + ";base64," + base64.b64encode(raw).decode("ascii")))
+                else:
+                    items.append((name, value))
+            try:
+                return video_inputs.parse_bracket_form(items)
+            except ValueError as exc:
+                raise _VideoFormParseError(str(exc)) from exc
+        finally:
+            await form.close()
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise _VideoFormParseError("Invalid JSON body") from exc
+    if not isinstance(body, dict):
+        raise _VideoFormParseError("Request body must be a JSON object")
+    return body
+
+
+def _json_error(status: int, message: str, *, code: str | None = None, param: str | None = None,
+                kind: str = "invalid_request_error") -> Response:
+    error: dict[str, Any] = {"message": message, "type": kind}
+    if param:
+        error["param"] = param
+    if code:
+        error["code"] = code
+    return Response(content=json.dumps({"error": error}), status_code=status, media_type="application/json")
+
+
+async def _submit_video_remix(
+    request: Request,
+    auth_context: AuthContext,
+    *,
+    body: dict[str, Any],
+    source: Any,
+    remixed_from_video_id: str | None,
+) -> Response:
+    """Create a remix job: the standard video create pipeline with `source_video` bound."""
+    if not VIDEO_REMIX_WORKFLOW:
+        return _json_error(
+            501,
+            "Video remix is not configured on this gateway. Set "
+            "videos.remix_workflow in proxy_config.yml to enable it.",
+            code="video_remix_not_configured",
+        )
+    block = (merge_workflow_inputs(body).get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
+    if isinstance(block, Mapping) and "source_video" in block:
+        return _json_error(
+            400,
+            "source_video is set by the remix route; do not pass it as a workflow extension",
+            param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.source_video",
+            code="invalid_workflow_extension",
+        )
+    create_body = merge_workflow_inputs(body)
+    create_body.setdefault("model", VIDEO_REMIX_PUBLIC_MODEL)
+    extensions = dict(create_body.get("extensions") or {})
+    extensions[WORKFLOW_EXTENSION_NAMESPACE] = {
+        **dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {}),
+        "source_video": source,
+    }
+    create_body["extensions"] = extensions
+    return await proxy_comfy_video_create(
+        request,
+        auth_context,
+        body_override=create_body,
+        remixed_from_video_id=remixed_from_video_id,
+    )
+
+
+async def proxy_comfy_video_remix(
+    video_id: str,
+    auth_context: AuthContext,
+    request: Request | None = None,
+) -> Response:
+    """POST /v1/videos/{video_id}/remix -- re-render a completed video with a new prompt.
+
+    Same contract as OpenAI's remix: JSON `{"prompt": ...}`, a new video job
+    back, `remixed_from_video_id` set to the source. The gateway runs
+    `videos.remix_workflow` (Bernini-R). `model` is optional; when absent the
+    resource reports `video-remix`. Gateway extras (`seed`, `seconds`, `size`,
+    `negative_prompt`) are accepted as top-level fields.
     """
     if not COMFY_ENABLED:
         return Response(
@@ -10382,41 +10813,70 @@ async def proxy_comfy_video_remix(video_id: str, auth_context: AuthContext) -> R
             media_type="application/json"
         )
     async with _video_progress_lock:
-        if prompt_id in _video_job_records:
-            known = _video_job_visible(prompt_id, auth_context)
-        else:
-            known = prompt_id in _video_progress
-    if not known:
-        return Response(
-            content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
-            status_code=404,
-            media_type="application/json"
-        )
-
+        if prompt_id in _video_job_records and not _video_job_visible(prompt_id, auth_context):
+            return _json_error(404, "video_id not found", kind="not_found")
     if not VIDEO_REMIX_WORKFLOW:
-        return Response(
-            content=json.dumps({"error": {
-                "message": (
-                    "Video remix is not configured on this gateway. Set "
-                    "videos.remix_workflow in proxy_config.yml to enable it."
-                ),
-                "type": "invalid_request_error",
-                "code": "video_remix_not_configured",
-            }}),
-            status_code=501,
-            media_type="application/json",
+        return _json_error(
+            501,
+            "Video remix is not configured on this gateway. Set "
+            "videos.remix_workflow in proxy_config.yml to enable it.",
+            code="video_remix_not_configured",
         )
-    return Response(
-        content=json.dumps({"error": {
-            "message": (
-                f"Video remix workflow '{VIDEO_REMIX_WORKFLOW}' is configured "
-                "but this gateway has no remix backend implementation yet."
-            ),
-            "type": "invalid_request_error",
-            "code": "video_remix_not_implemented",
-        }}),
-        status_code=501,
-        media_type="application/json",
+    if request is None:
+        return _json_error(400, "remix needs a request body", param="prompt")
+    try:
+        body = await _read_video_request_body(request)
+    except _VideoFormParseError as exc:
+        return _json_error(400, str(exc))
+    if not isinstance(body.get("prompt"), str) or not body["prompt"].strip():
+        return _json_error(400, "prompt is required", param="prompt")
+    return await _submit_video_remix(
+        request,
+        auth_context,
+        body=body,
+        source={"video_id": video_id},
+        remixed_from_video_id=video_id,
+    )
+
+
+async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) -> Response:
+    """POST /v1/videos/edits -- OpenAI's video edit: prompt plus a source video.
+
+    `video` is either an uploaded file (multipart) or a reference to a
+    completed gateway video (`{"id": ...}` as JSON, or `video[id]` in a form).
+    An uploaded clip gives `remixed_from_video_id: null`.
+    """
+    if not COMFY_ENABLED:
+        return _json_error(503, "Video generation not enabled", kind="service_unavailable")
+    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    if service_response is not None:
+        return service_response
+    try:
+        body = await _read_video_request_body(request)
+    except _VideoFormParseError as exc:
+        return _json_error(400, str(exc))
+    if not isinstance(body.get("prompt"), str) or not body["prompt"].strip():
+        return _json_error(400, "prompt is required", param="prompt")
+    video = body.pop("video", None)
+    if video is None:
+        return _json_error(400, "video is required: upload a file or pass {\"id\": \"video_...\"}", param="video")
+    source_id = _asset_reference_video_id(video)
+    if source_id:
+        prompt_id = _prompt_id_from_video_id(source_id)
+        if not prompt_id:
+            return _json_error(400, "invalid video id", param="video")
+        async with _video_progress_lock:
+            if prompt_id in _video_job_records and not _video_job_visible(prompt_id, auth_context):
+                return _json_error(404, "video_id not found", kind="not_found")
+        source: Any = {"video_id": source_id}
+    else:
+        source = video
+    return await _submit_video_remix(
+        request,
+        auth_context,
+        body=body,
+        source=source,
+        remixed_from_video_id=source_id,
     )
 
 
@@ -18708,7 +19168,7 @@ async def videos_delete(video_id: str, request: Request):
 @app.post("/openai/v1/videos/{video_id}/remix", openapi_extra=VIDEOS_REMIX_OPENAPI)
 @app.post("/v1/videos/{video_id}/remix", openapi_extra=VIDEOS_REMIX_OPENAPI)
 async def videos_remix(video_id: str, request: Request):
-    """Stub: always a clear 501 unless videos.remix_workflow is configured."""
+    """Remix a completed video with a new prompt (Bernini-R); 501 unless videos.remix_workflow is set."""
     auth_context = authenticate_request(request, "/v1/videos/{video_id}/remix")
     if isinstance(auth_context, Response):
         return auth_context
@@ -18717,7 +19177,20 @@ async def videos_remix(video_id: str, request: Request):
     )
     if policy_response is not None:
         return policy_response
-    return await proxy_comfy_video_remix(video_id, auth_context)
+    return await proxy_comfy_video_remix(video_id, auth_context, request)
+
+
+@app.post("/openai/v1/videos/edits", openapi_extra=VIDEOS_EDIT_OPENAPI)
+@app.post("/v1/videos/edits", openapi_extra=VIDEOS_EDIT_OPENAPI)
+async def videos_edit(request: Request):
+    """OpenAI video edit: prompt + uploaded or existing video -> new video job."""
+    auth_context = authenticate_request(request, "/v1/videos/edits")
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/videos/edits")
+    if policy_response is not None:
+        return policy_response
+    return await proxy_comfy_video_edit(request, auth_context)
 
 
 # =============================================================================

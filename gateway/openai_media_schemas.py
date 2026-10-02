@@ -655,17 +655,56 @@ VIDEOS_DELETE_OPENAPI: JsonObjectSchema = {
 
 VIDEOS_REMIX_OPENAPI: JsonObjectSchema = {
     "responses": {
-        # No remix backend exists on this gateway -- always a stable 501
-        # unless videos.remix_workflow is configured in proxy_config.yml, and
-        # even then there is no implementation behind it yet. Documenting the
-        # real (always-error) behavior here, not an aspirational 200.
-        "501": _json_error_response(
-            "Video remix is not configured or implemented on this gateway."
-        ),
-        **{
-            code: payload
-            for code, payload in _common_error_responses().items()
-            if code != "501"
+        "200": {
+            "description": (
+                "New video job rendered from a completed source video. "
+                "`remixed_from_video_id` names the source."
+            ),
+            "content": {"application/json": {"schema": _video_status_schema()}},
         },
+        # 501 video_remix_not_configured when videos.remix_workflow is unset.
+        **_common_error_responses(),
+    },
+}
+
+
+VIDEOS_EDIT_OPENAPI: JsonObjectSchema = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "required": ["prompt", "video"],
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "video": {"type": "string", "format": "binary"},
+                    },
+                    "additionalProperties": True,
+                }
+            },
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["prompt", "video"],
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "video": {
+                            "type": "object",
+                            "required": ["id"],
+                            "properties": {"id": {"type": "string"}},
+                        },
+                    },
+                    "additionalProperties": True,
+                }
+            },
+        },
+    },
+    "responses": {
+        "200": {
+            "description": "New video job rendered from an uploaded or existing video.",
+            "content": {"application/json": {"schema": _video_status_schema()}},
+        },
+        **_common_error_responses(),
     },
 }

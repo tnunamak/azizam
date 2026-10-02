@@ -1,0 +1,351 @@
+{
+  "_meta": {
+    "name": "video-bernini-r-remix",
+    "description": "Bernini-R (Wan 2.2 14B high/low MoE, Q4_K_M GGUF) prompt-driven video editing (remix / content propagation). Source video + edit instruction -> edited video. Turbo: lightx2v T2V 4-step-style distill LoRA (high 3.0 / low 1.5), 6 steps split at 3, CFG 1, res_multistep. Approximate edit (strong reference-conditioned regen), not frame-exact. Output keeps source audio and fps. License: Apache-2.0.",
+    "model_file": "wan2.2_bernini_r_high-Q4_K_M.gguf",
+    "frame_rate": 24,
+    "default_steps": 6,
+    "max_seconds": 5,
+    "default_size": "832x480",
+    "prompt_node": "10",
+    "size_node": [
+      "20",
+      "21"
+    ],
+    "length_nodes": [
+      "22"
+    ],
+    "seed_nodes": [
+      "30"
+    ],
+    "video_node": "1",
+    "save_node": "60",
+    "duration_node": "2"
+  },
+  "1": {
+    "class_type": "LoadVideo",
+    "inputs": {
+      "file": "round2b-dog.mp4"
+    }
+  },
+  "2": {
+    "class_type": "Video Slice",
+    "inputs": {
+      "video": [
+        "1",
+        0
+      ],
+      "start_time": 0.0,
+      "duration": 3.4,
+      "strict_duration": false
+    }
+  },
+  "3": {
+    "class_type": "GetVideoComponents",
+    "inputs": {
+      "video": [
+        "2",
+        0
+      ]
+    }
+  },
+  "4": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    }
+  },
+  "5": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    }
+  },
+  "6": {
+    "class_type": "UnetLoaderGGUF",
+    "inputs": {
+      "unet_name": "wan2.2_bernini_r_high-Q4_K_M.gguf"
+    }
+  },
+  "7": {
+    "class_type": "UnetLoaderGGUF",
+    "inputs": {
+      "unet_name": "wan2.2_bernini_r_low-Q4_K_M.gguf"
+    }
+  },
+  "8": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "6",
+        0
+      ],
+      "lora_name": "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
+      "strength_model": 3.0
+    }
+  },
+  "9": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "lora_name": "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
+      "strength_model": 1.5
+    }
+  },
+  "10": {
+    "class_type": "PrimitiveStringMultiline",
+    "inputs": {
+      "value": "Replace the beach with a snowy mountain landscape at golden hour. Keep the dog, its pose and motion unchanged."
+    },
+    "_meta": {
+      "title": "Edit instruction"
+    }
+  },
+  "11": {
+    "class_type": "StringConcatenate",
+    "inputs": {
+      "string_a": "You are a helpful assistant specialized in video editing on content propagation.",
+      "string_b": [
+        "10",
+        0
+      ],
+      "delimiter": ""
+    }
+  },
+  "12": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "4",
+        0
+      ],
+      "text": [
+        "11",
+        0
+      ]
+    }
+  },
+  "13": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "4",
+        0
+      ],
+      "text": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
+    }
+  },
+  "20": {
+    "class_type": "INTConstant",
+    "inputs": {
+      "value": 832
+    },
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "21": {
+    "class_type": "INTConstant",
+    "inputs": {
+      "value": 480
+    },
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "22": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 81
+    },
+    "_meta": {
+      "title": "Length (frames)"
+    }
+  },
+  "14": {
+    "class_type": "BerniniConditioning",
+    "inputs": {
+      "positive": [
+        "12",
+        0
+      ],
+      "negative": [
+        "13",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ],
+      "width": [
+        "20",
+        0
+      ],
+      "height": [
+        "21",
+        0
+      ],
+      "length": [
+        "22",
+        0
+      ],
+      "batch_size": 1,
+      "source_video": [
+        "3",
+        0
+      ],
+      "ref_max_size": 848
+    }
+  },
+  "15": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": 6,
+      "denoise": 1.0
+    }
+  },
+  "16": {
+    "class_type": "SplitSigmas",
+    "inputs": {
+      "sigmas": [
+        "15",
+        0
+      ],
+      "step": 3
+    }
+  },
+  "17": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "res_multistep"
+    }
+  },
+  "30": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 42
+    },
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "18": {
+    "class_type": "SamplerCustom",
+    "inputs": {
+      "model": [
+        "8",
+        0
+      ],
+      "add_noise": true,
+      "noise_seed": [
+        "30",
+        0
+      ],
+      "cfg": 1.0,
+      "positive": [
+        "14",
+        0
+      ],
+      "negative": [
+        "14",
+        1
+      ],
+      "sampler": [
+        "17",
+        0
+      ],
+      "sigmas": [
+        "16",
+        0
+      ],
+      "latent_image": [
+        "14",
+        2
+      ]
+    }
+  },
+  "19": {
+    "class_type": "SamplerCustom",
+    "inputs": {
+      "model": [
+        "9",
+        0
+      ],
+      "add_noise": false,
+      "noise_seed": 0,
+      "cfg": 1.0,
+      "positive": [
+        "14",
+        0
+      ],
+      "negative": [
+        "14",
+        1
+      ],
+      "sampler": [
+        "17",
+        0
+      ],
+      "sigmas": [
+        "16",
+        1
+      ],
+      "latent_image": [
+        "18",
+        0
+      ]
+    }
+  },
+  "50": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "19",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ]
+    }
+  },
+  "58": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "50",
+        0
+      ],
+      "fps": [
+        "3",
+        2
+      ],
+      "audio": [
+        "3",
+        1
+      ]
+    }
+  },
+  "60": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "58",
+        0
+      ],
+      "filename_prefix": "video/bernini-r-remix",
+      "format": "mp4",
+      "codec": "auto"
+    }
+  }
+}

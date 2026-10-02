@@ -1,5 +1,5 @@
 """Tests for GET /v1/videos (list), DELETE /v1/videos/{id}, and the
-POST /v1/videos/{id}/remix stub.
+POST /v1/videos/{id}/remix guard rails.
 
 These drive the proxy_comfy_video_* handlers directly (not through
 FastAPI's TestClient) with a fake httpx.AsyncClient, mirroring the style
@@ -618,41 +618,60 @@ class TestVideosOwnership(VideoRegistryTestCase):
         self.assertEqual(response.status_code, 200)
 
 
+class _JsonRemixRequest:
+    headers = {"content-type": "application/json"}
+
+    def __init__(self, body: dict) -> None:
+        self._body = body
+
+    async def json(self) -> dict:
+        return self._body
+
+
 class TestVideosRemix(VideoRegistryTestCase):
+    """Guard rails around POST /v1/videos/{id}/remix. The full create path
+    (graph binding, source upload) is covered in test_video_remix_replace."""
+
     async def test_unknown_id_is_404(self) -> None:
-        response = await proxy.proxy_comfy_video_remix(
-            "video_does-not-exist", proxy.NO_AUTH_CONTEXT
-        )
+        from _fake_comfy_video import FakeComfy
+
+        comfy = FakeComfy()
+        with patch.object(proxy.httpx, "AsyncClient", comfy.client_class()):
+            response = await proxy.proxy_comfy_video_remix(
+                "video_does-not-exist",
+                proxy.NO_AUTH_CONTEXT,
+                _JsonRemixRequest({"prompt": "x"}),
+            )
         self.assertEqual(response.status_code, 404)
+        self.assertEqual(comfy.submitted, [])
 
     async def test_unconfigured_returns_stable_501(self) -> None:
         self._seed("p1")
         with patch.object(proxy, "VIDEO_REMIX_WORKFLOW", None):
             response = await proxy.proxy_comfy_video_remix(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"),
+                proxy.NO_AUTH_CONTEXT,
+                _JsonRemixRequest({"prompt": "x"}),
             )
         self.assertEqual(response.status_code, 501)
         self.assertEqual(
             json.loads(response.body)["error"]["code"], "video_remix_not_configured"
         )
 
-    async def test_configured_but_unimplemented_returns_different_stable_code(self) -> None:
-        self._seed("p1")
-        with patch.object(proxy, "VIDEO_REMIX_WORKFLOW", "future-remix-workflow"):
-            response = await proxy.proxy_comfy_video_remix(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
-            )
-        self.assertEqual(response.status_code, 501)
-        self.assertEqual(
-            json.loads(response.body)["error"]["code"], "video_remix_not_implemented"
-        )
-
     async def test_non_owner_gets_404_not_remix_error(self) -> None:
         self._seed("p1", owner_key_hash="sha256:alice")
         response = await proxy.proxy_comfy_video_remix(
-            proxy._video_id_from_prompt_id("p1"), BOB
+            proxy._video_id_from_prompt_id("p1"),
+            BOB,
+            _JsonRemixRequest({"prompt": "x"}),
         )
         self.assertEqual(response.status_code, 404)
+
+    async def test_shipped_config_enables_remix_with_a_matching_alias(self) -> None:
+        self.assertEqual(proxy.VIDEO_REMIX_WORKFLOW, "video-bernini-r-remix")
+        self.assertEqual(
+            proxy._resolve_video_workflow("video-remix")[0], proxy.VIDEO_REMIX_WORKFLOW
+        )
 
 
 class TestVideoJobRecordGC(VideoRegistryTestCase):

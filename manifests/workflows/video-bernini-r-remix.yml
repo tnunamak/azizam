@@ -1,0 +1,72 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: video.edit.bernini-r-remix
+intent: video.edit
+display_name: Bernini-R Remix
+description: >-
+  Prompt-driven video editing (remix): source video + edit instruction -> edited video (Wan 2.2 14B Bernini-R, Q4_K_M GGUF high+low, lightx2v turbo 6 steps). Approximate edit, not frame-exact. 3.4 s 832x480 = ~460 s warm. Apache-2.0.
+source: local
+trusted: true
+inputs:
+  source_video:
+    type: asset
+    required: true
+  prompt:
+    type: string
+    required: true
+  width:
+    type: integer
+    minimum: 256
+    maximum: 1280
+    default: 832
+  height:
+    type: integer
+    minimum: 256
+    maximum: 720
+    default: 480
+  length:
+    type: integer
+    minimum: 5
+    maximum: 121
+    default: 81
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/video-bernini-r-remix.json
+    map:
+      source_video:
+        - node: "1"
+          input: file
+      prompt:
+        - node: "10"
+          input: value
+      width:
+        - node: "20"
+          input: value
+      height:
+        - node: "21"
+          input: value
+      length:
+        - node: "22"
+          input: value
+      seed:
+        - node: "30"
+          input: value
+requires:
+  models:
+    - role: diffusion_model
+      path: diffusion_models/wan2.2_bernini_r_high-Q4_K_M.gguf
+    - role: diffusion_model
+      path: diffusion_models/wan2.2_bernini_r_low-Q4_K_M.gguf
+    - role: text_encoder
+      path: text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+    - role: vae
+      path: vae/wan_2.1_vae.safetensors
+    - role: lora
+      path: loras/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors

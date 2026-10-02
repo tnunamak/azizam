@@ -1,0 +1,90 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: video.edit.scail-2-replace
+intent: video.edit
+display_name: SCAIL-2 Character Replace
+description: >-
+  Reference character image + driving video -> the reference character performs the driving video's motion in the driving scene (SAM3.1 tracking, replacement mode, first 81-frame segment). source_subject and reference_subject are the SAM3 text prompts that find the person to replace in the video and the character in the image. SCAIL-2 Q4_K_M GGUF, 6 steps. ~300 s warm at 832x448. MIT.
+source: local
+trusted: true
+inputs:
+  reference_image:
+    type: asset
+    required: true
+  source_video:
+    type: asset
+    required: true
+  source_subject:
+    type: string
+    default: person
+  reference_subject:
+    type: string
+    default: person
+  prompt:
+    type: string
+    required: true
+  width:
+    type: integer
+    minimum: 256
+    maximum: 1024
+    default: 832
+  height:
+    type: integer
+    minimum: 256
+    maximum: 1024
+    default: 448
+  length:
+    type: integer
+    minimum: 5
+    maximum: 81
+    default: 81
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/video-scail-2-replace.json
+    map:
+      reference_image:
+        - node: "2"
+          input: image
+      source_subject:
+        - node: "16"
+          input: text
+      reference_subject:
+        - node: "17"
+          input: text
+      source_video:
+        - node: "1"
+          input: file
+      prompt:
+        - node: "10"
+          input: value
+      width:
+        - node: "20"
+          input: value
+      height:
+        - node: "21"
+          input: value
+      length:
+        - node: "22"
+          input: value
+      seed:
+        - node: "30"
+          input: value
+requires:
+  models:
+    - role: diffusion_model
+      path: diffusion_models/SCAIL-2-Q4_K_M.gguf
+    - role: lora
+      path: loras/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors
+    - role: lora
+      path: loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors
+    - role: checkpoint
+      path: checkpoints/sam3.1_multiplex_fp16.safetensors
+    - role: clip_vision
+      path: clip_vision/clip_vision_h.safetensors

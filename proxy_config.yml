@@ -659,14 +659,11 @@ models:
     description: "TheDrummer Cydonia 24B v4.3 (Q6_K, text-only)"
 videos:
   default_workflow: video-ltx-2.5-t2v
-  # POST /v1/videos/{id}/remix has no backend implementation on this gateway
-  # yet (no ComfyUI workflow currently supports video-conditioned remixing).
-  # Unset (the default) means remix always returns a clear 501
-  # video_remix_not_configured. Setting this to a workflow id changes the
-  # error to video_remix_not_implemented -- it does NOT enable remix; this
-  # key only exists so a future implementation has a config surface to land
-  # on without another route-shape change.
-  # remix_workflow: some-future-video-remix-workflow
+  # Workflow that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
+  # Unset means both return 501 video_remix_not_configured. Keep the
+  # `video-remix` alias below (and in model_aliases.videos.stable) pointing at
+  # the same workflow.
+  remix_workflow: video-bernini-r-remix
   workflows:
     # LTX-2.5 (default). Separate t2v/i2v graphs: a request with input_reference
     # is routed to `i2v_workflow`. Width/height are floored to multiples of 64
@@ -713,6 +710,42 @@ videos:
       frame_rate: 24
       length_step: 17
       length_offset: 5
+    # Video-conditioned workflows. Both need extension inputs (`source_video`,
+    # and `reference_image` for character replace), so `requires_extensions`
+    # makes the create route insist on them. `source_video_input` names the
+    # input that is probed for fps and length. Output frame rate follows the
+    # source clip; frames are Wan 4k+1, capped at `max_length`.
+    # Bernini-R remix (Wan 2.2 14B high+low Q4_K_M GGUF, lightx2v 6 steps):
+    # 81 frames at 832x480 = 462 s warm on the 3090 (benchmarked at 3.4 s).
+    video-bernini-r-remix:
+      file: workflows/videos/video-bernini-r-remix.json
+      requires_extensions: true
+      source_video_input: source_video
+      min_seconds: 1
+      max_seconds: 4
+      default_seconds: 3.4
+      max_size: 832x480
+      default_size: 832x480
+      frame_rate: 24
+      length_step: 4
+      length_offset: 1
+      max_length: 97
+    # SCAIL-2 character replace (Wan 2.1 14B Q4_K_M GGUF + SAM3.1 tracking):
+    # one 81-frame segment at 832x448 = 303 s warm. The driving video must
+    # have at least 81 frames; longer clips use their first 81 frames.
+    video-scail-2-replace:
+      file: workflows/videos/video-scail-2-replace.json
+      requires_extensions: true
+      source_video_input: source_video
+      min_seconds: 1
+      max_seconds: 4
+      default_seconds: 4
+      max_size: 832x448
+      default_size: 832x448
+      frame_rate: 24
+      length_step: 4
+      length_offset: 1
+      max_length: 81
     # LTX-2.5 long form (30-50 s). Same chunked single-pass loop the retired
     # LTX-2.3 long workflow used: chunk 0 plus max(LOOPS, 1) loop chunks, each
     # chained to the previous one with guide frames and an audio mask. Chunks
@@ -766,6 +799,10 @@ videos:
     video-ltx-2.3-long: video-ltx-2.5-long
     wan-2.2: video-wan-2.2-ti2v-5b-q8
     wan-2.2-ti2v-5b: video-wan-2.2-ti2v-5b-q8
+    video-remix: video-bernini-r-remix
+    bernini-r: video-bernini-r-remix
+    character-replace: video-scail-2-replace
+    scail-2: video-scail-2-replace
 audio:
   default_workflow: ace-step-1.5-xl-turbo
   workflows_dir: ./workflows/audio
@@ -874,6 +911,8 @@ model_aliases:
       video: video-ltx-2.5-t2v             # text-to-video; input_reference switches to image-to-video
       video-fast: video-ltx-2.5-t2v          # same graph as `video`; 960x512 default is the quick setting
       video-long: video-ltx-2.5-long
+      video-remix: video-bernini-r-remix     # needs extensions.source_video; also what POST /v1/videos/{id}/remix runs
+      character-replace: video-scail-2-replace  # needs extensions.source_video + reference_image
     openai:
       # Exact names are also mirrored into videos.aliases (media jobs read that
       # table); the glob catches dated snapshots on the main route.
