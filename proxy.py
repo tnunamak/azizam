@@ -14530,6 +14530,32 @@ DRAIN_STATE.register_job_counter("audio", lambda: len(_audio_media_job_tasks))
 DRAIN_STATE.register_job_counter("video", lambda: len(_video_media_job_tasks))
 
 
+def _unfinished_openai_video_jobs(max_age_s: int = 2 * 3600) -> int:
+    """Count /v1/videos jobs still rendering in ComfyUI.
+
+    These live only in process memory (`_video_job_records`), so a restart
+    orphans them. `completed_at` is stamped only when a client polls, so use
+    the websocket progress state for terminal status, and ignore records older
+    than `max_age_s` so a lost event cannot block a restart forever.
+    """
+    now = int(time.time())
+    count = 0
+    for prompt_id, record in list(_video_job_records.items()):
+        if record.get("completed_at") is not None or record.get("deleted_at") is not None:
+            continue
+        created = record.get("created_at") or now
+        if now - int(created) > max_age_s:
+            continue
+        status = (_video_progress.get(prompt_id) or {}).get("status")
+        if status in ("succeeded", "failed"):
+            continue
+        count += 1
+    return count
+
+
+DRAIN_STATE.register_job_counter("openai_video", _unfinished_openai_video_jobs)
+
+
 def _drain_peer_is_loopback(request: Request) -> bool:
     # The socket peer only. X-Forwarded-For is client-controlled and the
     # gateway also listens on a LAN address behind a reverse proxy.
