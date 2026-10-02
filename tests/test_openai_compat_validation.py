@@ -325,7 +325,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
             resp = self.client.post(
                 "/v1/audio/speech",
                 json={
-                    "model": "tts-1",
+                    "model": "omnivoice",  # a non-streaming engine: the gateway converts its WAV
                     "voice": "alloy",
                     "input": "hello",
                     "response_format": "mp3",
@@ -358,7 +358,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
                 resp = self.client.post(
                     "/v1/audio/speech",
                     json={
-                        "model": "tts-1",
+                        "model": "omnivoice",  # a non-streaming engine: the gateway converts its WAV
                         "voice": "alloy",
                         "input": "hello",
                         "response_format": audio_format,
