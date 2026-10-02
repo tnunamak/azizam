@@ -20522,12 +20522,52 @@ def _current_loaded_model_entries() -> list[dict[str, Any]]:
     ]
 
 
+def _is_anthropic_sdk_request(request: Request) -> bool:
+    """Anthropic SDKs always send ``anthropic-version``; OpenAI clients never do."""
+    return "anthropic-version" in request.headers
+
+
+@app.get("/anthropic/v1/models/{model_id:path}")
+@app.get("/v1/models/{model_id:path}")
+async def anthropic_model_retrieve(model_id: str, request: Request):
+    """Retrieve one model. Anthropic shape for Anthropic SDKs, else OpenAI."""
+    anthropic = (
+        request.url.path.startswith("/anthropic/") or _is_anthropic_sdk_request(request)
+    )
+    if anthropic:
+        listed = await anthropic_models(request)
+    else:
+        listed = await list_models(request)
+    if listed.status_code != 200:
+        return listed
+    try:
+        entries = json.loads(listed.body).get("data") or []
+    except (ValueError, AttributeError):
+        entries = []
+    for entry in entries:
+        if isinstance(entry, Mapping) and entry.get("id") == model_id:
+            return _json_error_response(dict(entry), status_code=200)
+    if anthropic:
+        return _anthropic_error_response(f"model: {model_id}", status_code=404)
+    return _json_error_response(
+        {
+            "error": {
+                "message": f"The model '{model_id}' does not exist.",
+                "type": "invalid_request_error",
+                "param": "model",
+                "code": "model_not_found",
+            }
+        },
+        status_code=404,
+    )
+
+
 @app.get("/anthropic/v1/models")
 async def anthropic_models(request: Request):
     """Anthropic-compatible model list projected from the gateway catalog."""
     auth_context = authenticate_request(request, "/anthropic/v1/models")
     if isinstance(auth_context, Response):
-        return auth_context
+        return _anthropic_auth_error(auth_context)
 
     policy_response = _enforce_runtime_route_policy(
         auth_context,
@@ -20562,6 +20602,8 @@ async def list_models(request: Request):
       1. LiteLLM's OpenAI-shaped LLM model catalog when the substrate is enabled
       2. Gateway-native media workflow model IDs
     """
+    if _is_anthropic_sdk_request(request):
+        return await anthropic_models(request)
     route_auth = authenticate_runtime_or_litellm_request(
         request,
         "/v1/models",
@@ -20874,8 +20916,18 @@ async def _responses_prune_loop(stop_event: asyncio.Event) -> None:
             pass
 
 
-def _responses_error(message: str, *, code: str = "invalid_request_error", param: Optional[str] = None, status: int = 400) -> Response:
-    payload = {"error": {"message": message, "type": code, "param": param, "code": code}}
+def _responses_error(
+    message: str,
+    *,
+    code: str = "invalid_request_error",
+    param: Optional[str] = None,
+    status: int = 400,
+    error_type: Optional[str] = None,
+) -> Response:
+    if error_type is None:
+        # OpenAI types are a short list; the specific reason goes in ``code``.
+        error_type = "invalid_request_error" if status < 500 else "server_error"
+    payload = {"error": {"message": message, "type": error_type, "param": param, "code": code}}
     return Response(
         content=json.dumps(payload),
         status_code=status,
@@ -20883,16 +20935,52 @@ def _responses_error(message: str, *, code: str = "invalid_request_error", param
     )
 
 
+class _PreviousResponseNotFound(Exception):
+    pass
+
+
+def _responses_row_visible(row: Optional[dict], auth_context) -> bool:
+    """A stored response belongs to the key that created it."""
+    if not row:
+        return False
+    return row.get("api_key_name") == _api_key_name(auth_context)
+
+
 async def _build_prior_messages(previous_response_id: Optional[str], auth_context) -> list[dict]:
     """Walk the stored chain for previous_response_id and rebuild messages.
-    No auth scoping (any client with the response id can chain); revisit when
-    multi-tenant becomes a concern."""
+
+    A chain the caller cannot see (unknown, expired, deleted, or created by
+    another key) is an error. Continuing without the context would answer a
+    different question than the caller asked."""
     if not previous_response_id:
         return []
     chain = responses_store.walk_chain(previous_response_id)
-    if not chain:
-        return []
+    if not chain or not all(_responses_row_visible(row, auth_context) for row in chain):
+        raise _PreviousResponseNotFound(previous_response_id)
     return responses_translator.stored_chain_to_messages(chain)
+
+
+def _responses_upstream_error(message: str, status_code: int) -> Response:
+    """OpenAI-shaped error for a failed chat call behind /v1/responses."""
+    match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
+    if match and status_code in (400, 404):
+        model = match.group("model") or match.group("model2")
+        return _responses_error(
+            f"The model `{model}` does not exist.",
+            code="model_not_found",
+            param="model",
+            status=404,
+            error_type="invalid_request_error",
+        )
+    return Response(
+        content=json.dumps({"error": {
+            "message": message or "Upstream chat-completions error.",
+            "type": "upstream_error",
+            "code": "upstream_error",
+        }}),
+        status_code=status_code,
+        media_type="application/json",
+    )
 
 
 def _api_key_name(auth_context) -> Optional[str]:
@@ -21147,11 +21235,13 @@ def _json_error_response(
     payload: Mapping[str, Any],
     *,
     status_code: int,
+    headers: Mapping[str, str] | None = None,
 ) -> Response:
     return Response(
         content=json.dumps(dict(payload)),
         status_code=status_code,
         media_type="application/json",
+        headers=dict(headers) if headers else None,
     )
 
 
@@ -21174,26 +21264,87 @@ def _extension_validation_error_response(
     )
 
 
+_ANTHROPIC_ERROR_TYPES_BY_STATUS = {
+    400: "invalid_request_error",
+    401: "authentication_error",
+    402: "billing_error",
+    403: "permission_error",
+    404: "not_found_error",
+    413: "request_too_large",
+    429: "rate_limit_error",
+    529: "overloaded_error",
+}
+
+_UNKNOWN_MODEL_ERROR_RE = re.compile(
+    r"Invalid model name passed in model=(?P<model>\S+?)\.?(?:\s|$)"
+    r"|model [\"'`]?(?P<model2>[^\s\"'`]+)[\"'`]? (?:not found|does not exist)",
+    re.IGNORECASE,
+)
+
+
+def _anthropic_error_type_for_status(status_code: int) -> str:
+    known = _ANTHROPIC_ERROR_TYPES_BY_STATUS.get(status_code)
+    if known:
+        return known
+    return "api_error" if status_code >= 500 else "invalid_request_error"
+
+
 def _anthropic_error_response(
     message: str,
     *,
     status_code: int = 400,
-    error_type: str = "invalid_request_error",
+    error_type: str | None = None,
 ) -> Response:
+    """Anthropic-shaped error. The type follows the status unless given."""
+    match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
+    if match and status_code in (400, 404):
+        # The backend says the model is unknown. Anthropic answers 404 with
+        # ``not_found_error`` and ``model: <name>``.
+        status_code = 404
+        error_type = "not_found_error"
+        message = f"model: {match.group('model') or match.group('model2')}"
     return _json_error_response(
         {
             "type": "error",
             "error": {
-                "type": error_type,
+                "type": error_type or _anthropic_error_type_for_status(status_code),
                 "message": message,
             },
         },
         status_code=status_code,
+        headers={"request-id": f"req_{uuid.uuid4().hex}"},
     )
 
 
+def _anthropic_auth_error(response: Response) -> Response:
+    """Re-shape an OpenAI-style auth failure for Anthropic clients."""
+    return _anthropic_error_response(
+        _response_error_message(response, "request denied"),
+        status_code=response.status_code,
+    )
+
+
+def _ollama_model_not_found(model: str) -> str:
+    return f'model "{model}" not found, try pulling it first'
+
+
 def _ollama_error_response(message: str, *, status_code: int = 400) -> Response:
+    match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
+    if match and status_code in (400, 404):
+        # Ollama answers an unknown model with 404 and this wording.
+        status_code = 404
+        message = _ollama_model_not_found(
+            match.group("model") or match.group("model2")
+        )
     return _json_error_response({"error": message}, status_code=status_code)
+
+
+def _ollama_auth_error(response: Response) -> Response:
+    """Re-shape an OpenAI-style auth failure for Ollama clients."""
+    return _ollama_error_response(
+        _response_error_message(response, "request denied"),
+        status_code=response.status_code,
+    )
 
 
 def _protocol_policy_decision(
@@ -21243,7 +21394,7 @@ async def anthropic_count_tokens(request: Request):
     """Anthropic Messages count_tokens-compatible estimator."""
     auth_context = authenticate_request(request, "/anthropic/v1/messages/count_tokens")
     if isinstance(auth_context, Response):
-        return auth_context
+        return _anthropic_auth_error(auth_context)
 
     body = await _read_json_object(request)
     if isinstance(body, Response):
@@ -21255,7 +21406,9 @@ async def anthropic_count_tokens(request: Request):
             {**body, "max_tokens": body.get("max_tokens") or 1}
         )
     except anthropic_protocol.AnthropicTranslationError as e:
-        return _json_error_response(e.error_body, status_code=e.http_status)
+        return _anthropic_error_response(
+            str(e), status_code=e.http_status, error_type=e.error_type
+        )
 
     decision = _protocol_policy_decision(
         auth_context,
@@ -21284,7 +21437,7 @@ async def anthropic_messages(request: Request):
         allow_litellm_delegation=True,
     )
     if isinstance(route_auth, Response):
-        return route_auth
+        return _anthropic_auth_error(route_auth)
     auth_context = route_auth.auth_context
 
     body = await _read_json_object(request)
@@ -21294,7 +21447,9 @@ async def anthropic_messages(request: Request):
     try:
         canonical = anthropic_protocol.messages_request_to_canonical(body)
     except anthropic_protocol.AnthropicTranslationError as e:
-        return _json_error_response(e.error_body, status_code=e.http_status)
+        return _anthropic_error_response(
+            str(e), status_code=e.http_status, error_type=e.error_type
+        )
 
     if not route_auth.delegated_to_litellm:
         decision = _protocol_policy_decision(
@@ -21327,11 +21482,11 @@ async def anthropic_messages(request: Request):
                     fallback="Upstream chat-completions error.",
                 ),
                 status_code=upstream.status_code,
-                error_type="api_error",
             )
 
         translator = anthropic_protocol.MessagesStreamTranslator(
-            request_model=canonical.get("model")
+            request_model=canonical.get("model"),
+            thinking=anthropic_protocol.thinking_requested(body),
         )
 
         async def event_stream():
@@ -21357,7 +21512,11 @@ async def anthropic_messages(request: Request):
             event_stream(),
             status_code=200,
             media_type="text/event-stream",
-            headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+            headers={
+                "cache-control": "no-cache",
+                "x-accel-buffering": "no",
+                "request-id": f"req_{uuid.uuid4().hex}",
+            },
         )
 
     upstream = await _forward_chat_completions(
@@ -21370,17 +21529,23 @@ async def anthropic_messages(request: Request):
         return _anthropic_error_response(
             _response_error_message(upstream, "Upstream chat-completions error."),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
-            error_type="api_error",
         )
 
     try:
         payload = anthropic_protocol.canonical_response_to_messages(
             _response_json_payload(upstream),
             request_model=body.get("model"),
+            thinking=anthropic_protocol.thinking_requested(body),
         )
     except anthropic_protocol.AnthropicTranslationError as e:
-        return _json_error_response(e.error_body, status_code=e.http_status)
-    return _json_error_response(payload, status_code=200)
+        return _anthropic_error_response(
+            str(e), status_code=e.http_status, error_type=e.error_type
+        )
+    return _json_error_response(
+        payload,
+        status_code=200,
+        headers={"request-id": f"req_{uuid.uuid4().hex}"},
+    )
 
 
 def _ollama_native_annotation_error(canonical: Mapping[str, Any]) -> Response | None:
@@ -21463,7 +21628,7 @@ async def _ollama_forward_streaming(
     *,
     protocol: str,
     intent: str,
-    translate_chunk: Callable[[dict[str, Any]], dict[str, Any]],
+    translator: Any,
 ) -> Response:
     policy_error = None
     if not _request_uses_litellm_virtual_key(request):
@@ -21493,11 +21658,19 @@ async def _ollama_forward_streaming(
             status_code=upstream.status_code,
         )
 
+    def ndjson_line(payload: Mapping[str, Any]) -> str:
+        return json.dumps(payload, separators=(",", ":")) + "\n"
+
     async def ndjson_stream():
         try:
             async for event in _iter_openai_sse_json(upstream):
-                payload = translate_chunk(event)
-                yield json.dumps(payload, separators=(",", ":")) + "\n"
+                for payload in translator.feed(event):
+                    yield ndjson_line(payload)
+            for payload in translator.finish():
+                yield ndjson_line(payload)
+        except Exception as e:  # noqa: BLE001
+            # Ollama reports a failure after the first byte as an error line.
+            yield ndjson_line({"error": str(e)})
         finally:
             try:
                 await upstream.aclose()
@@ -21639,6 +21812,33 @@ def _ollama_model_policy_response(
     return None
 
 
+async def _ollama_load_response(
+    request: Request,
+    auth_context: AuthContext,
+    body: dict[str, Any],
+    *,
+    endpoint: str,
+) -> Response:
+    """Answer the empty chat/generate request Ollama clients send to warm a model."""
+    model = body.get("model")
+    if not isinstance(model, str) or not model:
+        return _ollama_error_response("'model' is required", status_code=400)
+    policy_error = _ollama_model_policy_response(
+        auth_context, intent="models.show", model=model
+    )
+    if policy_error is not None:
+        return policy_error
+    for summary in await _ollama_model_catalog_summaries(request, auth_context):
+        if _ollama_summary_matches_model(summary, model):
+            return _json_error_response(
+                ollama_protocol.load_response(
+                    model, endpoint=endpoint, keep_alive=body.get("keep_alive")
+                ),
+                status_code=200,
+            )
+    return _ollama_error_response(_ollama_model_not_found(model), status_code=404)
+
+
 @app.post("/ollama/api/chat")
 @app.post("/api/chat")
 async def ollama_chat(request: Request):
@@ -21649,12 +21849,16 @@ async def ollama_chat(request: Request):
         allow_litellm_delegation=True,
     )
     if isinstance(route_auth, Response):
-        return route_auth
+        return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
 
     body = await _read_json_object(request)
     if isinstance(body, Response):
         return _ollama_error_response("invalid JSON body", status_code=400)
+
+    started_ns = time.monotonic_ns()
+    if ollama_protocol.is_load_request(body, endpoint="chat"):
+        return await _ollama_load_response(request, auth_context, body, endpoint="chat")
 
     try:
         canonical = ollama_protocol.chat_request_to_canonical(body)
@@ -21668,9 +21872,10 @@ async def ollama_chat(request: Request):
             canonical,
             protocol="ollama.chat",
             intent="chat.completions",
-            translate_chunk=lambda event: ollama_protocol.canonical_stream_chunk_to_chat(
-                event,
+            translator=ollama_protocol.OllamaStreamTranslator(
+                endpoint="chat",
                 request_model=body.get("model"),
+                thinking=ollama_protocol.thinking_requested(body),
             ),
         )
 
@@ -21687,6 +21892,8 @@ async def ollama_chat(request: Request):
         ollama_protocol.canonical_response_to_chat(
             upstream,
             request_model=body.get("model"),
+            thinking=ollama_protocol.thinking_requested(body),
+            started_ns=started_ns,
         ),
         status_code=200,
     )
@@ -21702,12 +21909,18 @@ async def ollama_generate(request: Request):
         allow_litellm_delegation=True,
     )
     if isinstance(route_auth, Response):
-        return route_auth
+        return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
 
     body = await _read_json_object(request)
     if isinstance(body, Response):
         return _ollama_error_response("invalid JSON body", status_code=400)
+
+    started_ns = time.monotonic_ns()
+    if ollama_protocol.is_load_request(body, endpoint="generate"):
+        return await _ollama_load_response(
+            request, auth_context, body, endpoint="generate"
+        )
 
     try:
         canonical = ollama_protocol.generate_request_to_canonical(body)
@@ -21721,9 +21934,10 @@ async def ollama_generate(request: Request):
             canonical,
             protocol="ollama.generate",
             intent="chat.generate",
-            translate_chunk=lambda event: ollama_protocol.canonical_stream_chunk_to_generate(
-                event,
+            translator=ollama_protocol.OllamaStreamTranslator(
+                endpoint="generate",
                 request_model=body.get("model"),
+                thinking=ollama_protocol.thinking_requested(body),
             ),
         )
 
@@ -21740,6 +21954,8 @@ async def ollama_generate(request: Request):
         ollama_protocol.canonical_response_to_generate(
             upstream,
             request_model=body.get("model"),
+            thinking=ollama_protocol.thinking_requested(body),
+            started_ns=started_ns,
         ),
         status_code=200,
     )
@@ -21755,7 +21971,7 @@ async def ollama_embed(request: Request):
         allow_litellm_delegation=True,
     )
     if isinstance(route_auth, Response):
-        return route_auth
+        return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
 
     body = await _read_json_object(request)
@@ -21794,7 +22010,7 @@ async def ollama_embeddings(request: Request):
         allow_litellm_delegation=True,
     )
     if isinstance(route_auth, Response):
-        return route_auth
+        return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
 
     body = await _read_json_object(request)
@@ -21833,7 +22049,7 @@ async def ollama_tags(request: Request):
         allow_litellm_delegation=True,
     )
     if isinstance(route_auth, Response):
-        return route_auth
+        return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
 
     if not route_auth.delegated_to_litellm:
@@ -21864,7 +22080,7 @@ async def ollama_show(request: Request):
     """Ollama `/api/show` projected from the gateway's visible LLM catalog."""
     auth_context = authenticate_request(request, "/api/show")
     if isinstance(auth_context, Response):
-        return auth_context
+        return _ollama_auth_error(auth_context)
 
     body = await _read_json_object(request)
     if isinstance(body, Response):
@@ -21896,7 +22112,7 @@ async def ollama_ps(request: Request):
     """Ollama `/api/ps` projected from the gateway's currently loaded LLM."""
     auth_context = authenticate_request(request, "/api/ps")
     if isinstance(auth_context, Response):
-        return auth_context
+        return _ollama_auth_error(auth_context)
     policy_error = _ollama_model_policy_response(
         auth_context,
         intent="models.running",
@@ -21917,7 +22133,7 @@ async def ollama_version(request: Request):
     """Ollama `/api/version` compatibility response."""
     auth_context = authenticate_request(request, "/api/version")
     if isinstance(auth_context, Response):
-        return auth_context
+        return _ollama_auth_error(auth_context)
     policy_error = _ollama_model_policy_response(
         auth_context,
         intent="models.version",
@@ -21925,7 +22141,7 @@ async def ollama_version(request: Request):
     if policy_error is not None:
         return policy_error
     return _json_error_response(
-        ollama_protocol.version_response("vivid-fish-ai-gateway"),
+        ollama_protocol.version_response(),
         status_code=200,
     )
 
@@ -21938,7 +22154,7 @@ async def _ollama_unsupported_model_mutation(
 ) -> Response:
     auth_context = authenticate_request(request, canonical_path)
     if isinstance(auth_context, Response):
-        return auth_context
+        return _ollama_auth_error(auth_context)
     policy_error = _ollama_model_policy_response(auth_context, intent=intent)
     if policy_error is not None:
         return policy_error
@@ -21991,6 +22207,20 @@ async def ollama_push(request: Request):
         request,
         canonical_path="/api/push",
         intent="models.push",
+    )
+
+
+@app.head("/ollama/api/blobs/{digest}")
+@app.head("/api/blobs/{digest}")
+@app.post("/ollama/api/blobs/{digest}")
+@app.post("/api/blobs/{digest}")
+async def ollama_blobs(digest: str, request: Request):
+    # `ollama create` uploads files as blobs first. The gateway owns no model
+    # files, so say so instead of a generic not-found.
+    return await _ollama_unsupported_model_mutation(
+        request,
+        canonical_path="/api/blobs",
+        intent="models.create",
     )
 
 
@@ -22055,6 +22285,14 @@ async def create_response(request: Request):
             )
         except responses_translator.ResponsesTranslationError as e:
             return _responses_error(e.message, code=e.code, param=e.param)
+        except _PreviousResponseNotFound:
+            return _responses_error(
+                f"Previous response with id '{req_body.get('previous_response_id')}' not found.",
+                code="previous_response_not_found",
+                param="previous_response_id",
+                status=404,
+                error_type="invalid_request_error",
+            )
 
         # Reject obviously-malformed: no messages at all.
         if not cc_body.get("messages"):
@@ -22105,14 +22343,9 @@ async def create_response(request: Request):
                         upstream_json = json.loads(body_bytes.decode("utf-8", errors="replace") or "{}")
                     except Exception:
                         upstream_json = {"error": {"message": body_bytes.decode("utf-8", errors="replace")[:1000]}}
-                    return Response(
-                        content=json.dumps({"error": {
-                            "message": (upstream_json.get("error") or {}).get("message") or "Upstream chat-completions error.",
-                            "type": "upstream_error",
-                            "code": "upstream_error",
-                        }}),
-                        status_code=upstream.status_code,
-                        media_type="application/json",
+                    return _responses_upstream_error(
+                        (upstream_json.get("error") or {}).get("message") or "",
+                        upstream.status_code,
                     )
 
                 translator = responses_translator.StreamTranslator(
@@ -22173,14 +22406,9 @@ async def create_response(request: Request):
                 except Exception:
                     upstream_json = {"error": {"message": upstream.text[:1000]}}
                 owner.report(status="failed", reason="failed")
-                return Response(
-                    content=json.dumps({"error": {
-                        "message": (upstream_json.get("error") or {}).get("message") or "Upstream chat-completions error.",
-                        "type": "upstream_error",
-                        "code": "upstream_error",
-                    }}),
-                    status_code=upstream.status_code,
-                    media_type="application/json",
+                return _responses_upstream_error(
+                    (upstream_json.get("error") or {}).get("message") or "",
+                    upstream.status_code,
                 )
 
             try:
@@ -22243,7 +22471,7 @@ async def retrieve_response(response_id: str, request: Request):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] responses_store.get failed: {e}", flush=True)
         return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
-    if not row:
+    if not _responses_row_visible(row, auth_context):
         return _responses_error(
             f"Response with id '{response_id}' not found.",
             code="not_found",
@@ -22254,6 +22482,52 @@ async def retrieve_response(response_id: str, request: Request):
         content=json.dumps(resp_json),
         status_code=200,
         media_type="application/json",
+    )
+
+
+@app.get("/openai/v1/responses/{response_id}/input_items")
+@app.get("/v1/responses/{response_id}/input_items")
+async def list_response_input_items(response_id: str, request: Request):
+    auth_context = authenticate_request(request, "/v1/responses")
+    if isinstance(auth_context, Response):
+        return auth_context
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol="openai.chat",
+        intent="chat.responses",
+    )
+    if decision.denied:
+        return _policy_denied_response(decision)
+    row = responses_store.get(response_id)
+    if not _responses_row_visible(row, auth_context):
+        return _responses_error(
+            f"Response with id '{response_id}' not found.",
+            code="not_found",
+            status=404,
+        )
+    items = responses_translator.input_items_from_request(row.get("request_json") or {})
+    return _json_error_response(
+        {
+            "object": "list",
+            "data": items,
+            "first_id": items[0]["id"] if items else None,
+            "last_id": items[-1]["id"] if items else None,
+            "has_more": False,
+        },
+        status_code=200,
+    )
+
+
+@app.post("/openai/v1/responses/input_tokens")
+@app.post("/v1/responses/input_tokens")
+async def count_response_input_tokens(request: Request):
+    auth_context = authenticate_request(request, "/v1/responses")
+    if isinstance(auth_context, Response):
+        return auth_context
+    return _responses_error(
+        "Counting input tokens is not supported: the gateway has no tokenizer "
+        "for its local models.",
+        code="unsupported_operation",
     )
 
 
@@ -22291,7 +22565,9 @@ async def delete_response(response_id: str, request: Request):
     if decision.denied:
         return _policy_denied_response(decision)
     try:
-        existed = responses_store.delete(response_id)
+        existed = _responses_row_visible(responses_store.get(response_id), auth_context)
+        if existed:
+            responses_store.delete(response_id)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] responses_store.delete failed: {e}", flush=True)
         return _responses_error(f"Internal error: {e}", code="internal_error", status=500)

@@ -410,6 +410,18 @@ def to_chat_completions(
     if not isinstance(req, dict):
         raise ResponsesTranslationError("Request body must be a JSON object.")
 
+    for field, what in (
+        ("background", "background responses"),
+        ("conversation", "the Conversations API"),
+        ("prompt", "stored prompt templates"),
+    ):
+        if req.get(field):
+            raise ResponsesTranslationError(
+                f"`{field}` is not supported: this gateway does not implement {what}.",
+                code="unsupported_operation",
+                param=field,
+            )
+
     messages: list[dict] = []
     if prior_messages:
         messages.extend(prior_messages)
@@ -441,9 +453,10 @@ def to_chat_completions(
         "messages": messages,
     }
 
-    # Streaming
+    # Streaming. Ask for the usage chunk so the final response reports tokens.
     if req.get("stream"):
         cc["stream"] = True
+        cc["stream_options"] = {"include_usage": True}
 
     # Sampling
     for k_in, k_out in (
@@ -486,8 +499,65 @@ def to_chat_completions(
 
     # Backend hint for thinking-capable models when reasoning.effort=minimal.
     _apply_reasoning_effort_kwargs(cc, req.get("reasoning"))
+    reasoning = req.get("reasoning")
+    effort = reasoning.get("effort") if isinstance(reasoning, dict) else None
+    if effort in ("low", "medium", "high"):
+        cc["reasoning_effort"] = effort
 
     return cc
+
+
+def _echo_tools(tools: Any) -> list:
+    """Echo request tools in the shape the Response schema requires.
+
+    A function tool always carries ``strict`` and ``parameters`` in a Response,
+    even when the request left them out.
+    """
+    out: list = []
+    for tool in tools if isinstance(tools, list) else []:
+        if isinstance(tool, dict) and tool.get("type") == "function":
+            tool = {
+                **tool,
+                "strict": tool.get("strict"),
+                "parameters": tool.get("parameters"),
+            }
+        out.append(tool)
+    return out
+
+
+def _echo_fields(req: dict) -> dict:
+    """Request settings that every Response object repeats back."""
+    return {
+        "instructions": req.get("instructions"),
+        "max_output_tokens": req.get("max_output_tokens"),
+        "parallel_tool_calls": req.get("parallel_tool_calls", True),
+        "previous_response_id": req.get("previous_response_id"),
+        "reasoning": req.get("reasoning") or {"effort": None, "summary": None},
+        "store": req.get("store") is not False,
+        "temperature": req.get("temperature"),
+        "text": req.get("text") or {"format": {"type": "text"}},
+        "tool_choice": req.get("tool_choice") or "auto",
+        "tools": _echo_tools(req.get("tools")),
+        "top_p": req.get("top_p"),
+        "truncation": req.get("truncation") or "disabled",
+        "user": req.get("user"),
+        "metadata": req.get("metadata") or {},
+        "access_programs": None,
+    }
+
+
+def _output_text_part(text: str) -> dict:
+    return {"type": "output_text", "text": text, "annotations": [], "logprobs": []}
+
+
+def _reasoning_item(item_id: str, text: str, status: str = "completed") -> dict:
+    return {
+        "id": item_id,
+        "type": "reasoning",
+        "status": status,
+        "summary": [],
+        "content": [{"type": "reasoning_text", "text": text}] if text else [],
+    }
 
 
 def _build_output_items_from_message(msg: dict) -> list[dict]:
@@ -504,13 +574,7 @@ def _build_output_items_from_message(msg: dict) -> list[dict]:
     content = msg.get("content")
     tool_calls = msg.get("tool_calls") or []
     if isinstance(reasoning_content, str) and reasoning_content:
-        items.append({
-            "id": "rs_" + secrets.token_hex(12),
-            "type": "reasoning",
-            "status": "completed",
-            "summary": [],
-            "content": [{"type": "reasoning_text", "text": reasoning_content}],
-        })
+        items.append(_reasoning_item("rs_" + secrets.token_hex(12), reasoning_content))
     if content:
         text = content if isinstance(content, str) else _coerce_content_to_text(content)
         items.append({
@@ -518,7 +582,7 @@ def _build_output_items_from_message(msg: dict) -> list[dict]:
             "type": "message",
             "role": "assistant",
             "status": "completed",
-            "content": [{"type": "output_text", "text": text, "annotations": []}],
+            "content": [_output_text_part(text)],
         })
     for tc in tool_calls:
         if not isinstance(tc, dict):
@@ -552,15 +616,26 @@ def _flatten_output_text(output: list[dict]) -> str:
 def _translate_usage(usage: Any) -> dict:
     """Chat Completions usage -> Responses usage."""
     if not isinstance(usage, dict):
-        return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        usage = {}
     pt = int(usage.get("prompt_tokens", 0) or 0)
     ct = int(usage.get("completion_tokens", 0) or 0)
     tt = int(usage.get("total_tokens", pt + ct) or 0)
+    prompt_details = usage.get("prompt_tokens_details")
+    completion_details = usage.get("completion_tokens_details")
+    cached = (prompt_details or {}).get("cached_tokens") if isinstance(prompt_details, dict) else 0
+    reasoning = (
+        (completion_details or {}).get("reasoning_tokens")
+        if isinstance(completion_details, dict)
+        else 0
+    )
     return {
         "input_tokens": pt,
-        "input_tokens_details": {"cached_tokens": 0},
+        "input_tokens_details": {
+            "cached_tokens": int(cached or 0),
+            "cache_write_tokens": 0,
+        },
         "output_tokens": ct,
-        "output_tokens_details": {"reasoning_tokens": 0},
+        "output_tokens_details": {"reasoning_tokens": int(reasoning or 0)},
         "total_tokens": tt,
     }
 
@@ -597,26 +672,35 @@ def from_chat_completions(
         "status": status,
         "error": None,
         "incomplete_details": incomplete_details,
-        "instructions": original_request.get("instructions"),
-        "max_output_tokens": original_request.get("max_output_tokens"),
         "model": model,
         "output": output,
         "output_text": _flatten_output_text(output),
-        "parallel_tool_calls": original_request.get("parallel_tool_calls", True),
-        "previous_response_id": original_request.get("previous_response_id"),
-        "reasoning": original_request.get("reasoning") or {"effort": None, "summary": None},
-        "store": original_request.get("store", True) if original_request.get("store") is not False else False,
-        "temperature": original_request.get("temperature"),
-        "text": original_request.get("text") or {"format": {"type": "text"}},
-        "tool_choice": original_request.get("tool_choice") or "auto",
-        "tools": original_request.get("tools") or [],
-        "top_p": original_request.get("top_p"),
-        "truncation": original_request.get("truncation") or "disabled",
         "usage": _translate_usage(cc_resp.get("usage")),
-        "user": original_request.get("user"),
-        "metadata": original_request.get("metadata") or {},
+        **_echo_fields(original_request),
     }
     return out
+
+
+def input_items_from_request(req: dict) -> list[dict]:
+    """The ``input`` of a stored request as Responses input items, in order."""
+    value = req.get("input")
+    if isinstance(value, str):
+        value = [{"role": "user", "content": value}]
+    items: list[dict] = []
+    for position, item in enumerate(value if isinstance(value, list) else []):
+        if not isinstance(item, dict):
+            continue
+        item = dict(item)
+        if item.get("type") in (None, "message"):
+            item["type"] = "message"
+            content = item.get("content")
+            if isinstance(content, str):
+                role = item.get("role")
+                kind = "output_text" if role == "assistant" else "input_text"
+                item["content"] = [{"type": kind, "text": content}]
+        item.setdefault("id", f"item_{position}_" + secrets.token_hex(8))
+        items.append(item)
+    return items
 
 
 def stored_chain_to_messages(chain: list[dict]) -> list[dict]:
@@ -687,24 +771,11 @@ def make_skeleton_response(
         "status": status,
         "error": None,
         "incomplete_details": None,
-        "instructions": original_request.get("instructions"),
-        "max_output_tokens": original_request.get("max_output_tokens"),
         "model": model,
         "output": [],
         "output_text": "",
-        "parallel_tool_calls": original_request.get("parallel_tool_calls", True),
-        "previous_response_id": original_request.get("previous_response_id"),
-        "reasoning": original_request.get("reasoning") or {"effort": None, "summary": None},
-        "store": original_request.get("store", True) if original_request.get("store") is not False else False,
-        "temperature": original_request.get("temperature"),
-        "text": original_request.get("text") or {"format": {"type": "text"}},
-        "tool_choice": original_request.get("tool_choice") or "auto",
-        "tools": original_request.get("tools") or [],
-        "top_p": original_request.get("top_p"),
-        "truncation": original_request.get("truncation") or "disabled",
         "usage": None,
-        "user": original_request.get("user"),
-        "metadata": original_request.get("metadata") or {},
+        **_echo_fields(original_request),
     }
 
 
@@ -731,6 +802,7 @@ class StreamTranslator:
         self._buf = ""
 
         # Output bookkeeping
+        self._reasoning: Optional[dict] = None  # index, id, text parts, closed
         self._message_index: Optional[int] = None
         self._message_id: Optional[str] = None
         self._message_text: list[str] = []
@@ -802,8 +874,60 @@ class StreamTranslator:
             events.extend(self._handle_cc_chunk(chunk))
         return events
 
+    def _reasoning_delta(self, text: str) -> list[bytes]:
+        events: list[bytes] = []
+        if self._reasoning is None:
+            idx = len(self._output_order)
+            self._reasoning = {
+                "index": idx,
+                "id": "rs_" + secrets.token_hex(12),
+                "text": [],
+                "closed": False,
+            }
+            self._output_order.append(("reasoning", idx))
+            events.append(sse_pack("response.output_item.added", {
+                "type": "response.output_item.added",
+                "sequence_number": self._next_seq(),
+                "output_index": idx,
+                "item": _reasoning_item(self._reasoning["id"], "", "in_progress"),
+            }))
+        r = self._reasoning
+        r["text"].append(text)
+        events.append(sse_pack("response.reasoning_text.delta", {
+            "type": "response.reasoning_text.delta",
+            "sequence_number": self._next_seq(),
+            "item_id": r["id"],
+            "output_index": r["index"],
+            "content_index": 0,
+            "delta": text,
+        }))
+        return events
+
+    def _close_reasoning(self) -> list[bytes]:
+        r = self._reasoning
+        if r is None or r["closed"]:
+            return []
+        r["closed"] = True
+        full = "".join(r["text"])
+        return [
+            sse_pack("response.reasoning_text.done", {
+                "type": "response.reasoning_text.done",
+                "sequence_number": self._next_seq(),
+                "item_id": r["id"],
+                "output_index": r["index"],
+                "content_index": 0,
+                "text": full,
+            }),
+            sse_pack("response.output_item.done", {
+                "type": "response.output_item.done",
+                "sequence_number": self._next_seq(),
+                "output_index": r["index"],
+                "item": _reasoning_item(r["id"], full),
+            }),
+        ]
+
     def _ensure_message_item(self) -> tuple[list[bytes], int, str]:
-        out_events: list[bytes] = []
+        out_events: list[bytes] = self._close_reasoning()
         if self._message_index is None:
             idx = len(self._output_order)
             mid = "msg_" + secrets.token_hex(12)
@@ -829,12 +953,12 @@ class StreamTranslator:
                 "output_index": idx,
                 "item_id": mid,
                 "content_index": 0,
-                "part": {"type": "output_text", "text": "", "annotations": []},
+                "part": _output_text_part(""),
             }))
         return out_events, self._message_index, self._message_id  # type: ignore[return-value]
 
     def _ensure_tool_call_item(self, tc_index: int, tc_id: Optional[str], name: Optional[str]) -> tuple[list[bytes], dict]:
-        out_events: list[bytes] = []
+        out_events: list[bytes] = self._close_reasoning()
         if tc_index not in self._tool_calls:
             order_idx = len(self._output_order)
             fc_id = "fc_" + secrets.token_hex(12)
@@ -888,6 +1012,10 @@ class StreamTranslator:
         if not isinstance(choice, dict):
             return events
         delta = choice.get("delta") or {}
+        # Reasoning delta (llama-server: reasoning_content)
+        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+        if isinstance(reasoning, str) and reasoning:
+            events.extend(self._reasoning_delta(reasoning))
         # Text delta
         content = delta.get("content")
         if isinstance(content, str) and content:
@@ -935,7 +1063,7 @@ class StreamTranslator:
         if self._done_sent:
             return []
         self._done_sent = True
-        events: list[bytes] = []
+        events: list[bytes] = self._close_reasoning()
 
         # Close message item if any.
         if self._message_index is not None and self._message_id is not None:
@@ -955,7 +1083,7 @@ class StreamTranslator:
                 "output_index": self._message_index,
                 "item_id": self._message_id,
                 "content_index": 0,
-                "part": {"type": "output_text", "text": full_text, "annotations": []},
+                "part": _output_text_part(full_text),
             }))
             events.append(sse_pack("response.output_item.done", {
                 "type": "response.output_item.done",
@@ -966,7 +1094,7 @@ class StreamTranslator:
                     "type": "message",
                     "role": "assistant",
                     "status": "completed",
-                    "content": [{"type": "output_text", "text": full_text, "annotations": []}],
+                    "content": [_output_text_part(full_text)],
                 },
             }))
 
@@ -995,8 +1123,9 @@ class StreamTranslator:
 
         # Final response.completed
         final = self.build_final_response()
-        events.append(sse_pack("response.completed", {
-            "type": "response.completed",
+        terminal = "response.incomplete" if final["status"] == "incomplete" else "response.completed"
+        events.append(sse_pack(terminal, {
+            "type": terminal,
             "sequence_number": self._next_seq(),
             "response": final,
         }))
@@ -1010,7 +1139,12 @@ class StreamTranslator:
         output: list[dict] = []
         full_text = "".join(self._message_text)
         for kind, key in self._output_order:
-            if kind == "message":
+            if kind == "reasoning":
+                if self._reasoning is not None:
+                    output.append(_reasoning_item(
+                        self._reasoning["id"], "".join(self._reasoning["text"])
+                    ))
+            elif kind == "message":
                 if self._message_id is None:
                     continue
                 output.append({
@@ -1018,7 +1152,7 @@ class StreamTranslator:
                     "type": "message",
                     "role": "assistant",
                     "status": "completed",
-                    "content": [{"type": "output_text", "text": full_text, "annotations": []}],
+                    "content": [_output_text_part(full_text)],
                 })
             elif kind == "function_call":
                 entry = self._tool_calls.get(key)
@@ -1043,13 +1177,7 @@ class StreamTranslator:
             incomplete_details = {"reason": "content_filter"}
 
         model = self._model_seen or self.original_request.get("model") or "default"
-        usage = _translate_usage(self._usage) if self._usage else {
-            "input_tokens": 0,
-            "input_tokens_details": {"cached_tokens": 0},
-            "output_tokens": 0,
-            "output_tokens_details": {"reasoning_tokens": 0},
-            "total_tokens": 0,
-        }
+        usage = _translate_usage(self._usage)
         return {
             "id": self.response_id,
             "object": "response",
@@ -1057,22 +1185,9 @@ class StreamTranslator:
             "status": status,
             "error": None,
             "incomplete_details": incomplete_details,
-            "instructions": self.original_request.get("instructions"),
-            "max_output_tokens": self.original_request.get("max_output_tokens"),
             "model": model,
             "output": output,
             "output_text": full_text,
-            "parallel_tool_calls": self.original_request.get("parallel_tool_calls", True),
-            "previous_response_id": self.original_request.get("previous_response_id"),
-            "reasoning": self.original_request.get("reasoning") or {"effort": None, "summary": None},
-            "store": self.original_request.get("store", True) if self.original_request.get("store") is not False else False,
-            "temperature": self.original_request.get("temperature"),
-            "text": self.original_request.get("text") or {"format": {"type": "text"}},
-            "tool_choice": self.original_request.get("tool_choice") or "auto",
-            "tools": self.original_request.get("tools") or [],
-            "top_p": self.original_request.get("top_p"),
-            "truncation": self.original_request.get("truncation") or "disabled",
             "usage": usage,
-            "user": self.original_request.get("user"),
-            "metadata": self.original_request.get("metadata") or {},
+            **_echo_fields(self.original_request),
         }

@@ -37,16 +37,165 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
         self.assertFalse(out["stream"])
         self.assertEqual(out["reasoning_effort"], "minimal")
 
-    def test_top_level_thinking_is_rejected(self) -> None:
+    def test_thinking_enabled_maps_budget_to_reasoning_effort(self) -> None:
+        def effort(thinking):
+            return anthro.messages_request_to_canonical(
+                {
+                    "model": "m",
+                    "max_tokens": 4096,
+                    "thinking": thinking,
+                    "messages": [{"role": "user", "content": "hello"}],
+                }
+            )["reasoning_effort"]
+
+        self.assertEqual(effort({"type": "enabled", "budget_tokens": 1024}), "low")
+        self.assertEqual(effort({"type": "enabled", "budget_tokens": 4000}), "medium")
+        self.assertEqual(effort({"type": "enabled", "budget_tokens": 20000}), "high")
+        self.assertEqual(effort({"type": "adaptive"}), "medium")
+        self.assertEqual(effort({"type": "disabled"}), "minimal")
+
+    def test_invalid_thinking_is_rejected(self) -> None:
+        for thinking in (
+            "yes",
+            {"type": "enabled"},
+            {"type": "enabled", "budget_tokens": 0},
+            {"type": "sideways"},
+        ):
+            with self.assertRaises(anthro.AnthropicTranslationError, msg=thinking):
+                anthro.messages_request_to_canonical(
+                    {
+                        "model": "m",
+                        "max_tokens": 64,
+                        "thinking": thinking,
+                        "messages": [{"role": "user", "content": "hello"}],
+                    }
+                )
+
+    def test_system_role_messages_join_the_system_prompt(self) -> None:
+        # Claude Code sends a system-role entry inside ``messages``.
+        out = anthro.messages_request_to_canonical(
+            {
+                "model": "m",
+                "max_tokens": 64,
+                "system": [{"type": "text", "text": "base"}],
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                    {"role": "system", "content": [{"type": "text", "text": "env info"}]},
+                ],
+            }
+        )
+        self.assertEqual(
+            out["messages"],
+            [
+                {"role": "system", "content": "base\n\nenv info"},
+                {"role": "user", "content": "q"},
+            ],
+        )
+        with self.assertRaises(anthro.AnthropicTranslationError):
+            anthro.messages_request_to_canonical(
+                {
+                    "model": "m",
+                    "max_tokens": 64,
+                    "messages": [{"role": "system", "content": "only"}],
+                }
+            )
+
+    def test_adaptive_thinking_uses_output_config_effort_and_display(self) -> None:
         body = {
-            "model": "claude-3-haiku",
+            "model": "m",
             "max_tokens": 64,
-            "thinking": {"type": "enabled", "budget_tokens": 1024},
-            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive", "display": "omitted"},
+            "output_config": {"effort": "high"},
+            "messages": [{"role": "user", "content": "q"}],
         }
-        with self.assertRaises(anthro.AnthropicTranslationError) as ctx:
-            anthro.messages_request_to_canonical(body)
-        self.assertIn("thinking", str(ctx.exception))
+        self.assertEqual(anthro.messages_request_to_canonical(body)["reasoning_effort"], "high")
+        self.assertFalse(anthro.thinking_requested(body))
+        body["thinking"] = {"type": "adaptive"}
+        self.assertTrue(anthro.thinking_requested(body))
+
+    def test_prior_thinking_blocks_are_dropped_from_history(self) -> None:
+        out = anthro.messages_request_to_canonical(
+            {
+                "model": "m",
+                "max_tokens": 64,
+                "messages": [
+                    {"role": "user", "content": "q"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "hm", "signature": "sig"},
+                            {"type": "redacted_thinking", "data": "xx"},
+                            {"type": "text", "text": "answer"},
+                        ],
+                    },
+                    {"role": "user", "content": "next"},
+                ],
+            }
+        )
+        self.assertEqual(out["messages"][1], {"role": "assistant", "content": "answer"})
+
+    def test_tool_results_precede_user_text_in_the_same_turn(self) -> None:
+        out = anthro.messages_request_to_canonical(
+            {
+                "model": "m",
+                "max_tokens": 64,
+                "messages": [
+                    {"role": "user", "content": "q"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "tool_use", "id": "t1", "name": "f", "input": {}}
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "also this"},
+                            {"type": "tool_result", "tool_use_id": "t1", "content": "r"},
+                        ],
+                    },
+                ],
+            }
+        )
+        self.assertEqual(
+            [m["role"] for m in out["messages"]],
+            ["user", "assistant", "tool", "user"],
+        )
+
+    def test_tool_choice_none_and_parallel_flag_and_top_k(self) -> None:
+        out = anthro.messages_request_to_canonical(
+            {
+                "model": "m",
+                "max_tokens": 64,
+                "top_k": 40,
+                "tools": [{"name": "f", "input_schema": {"type": "object"}}],
+                "tool_choice": {"type": "none"},
+                "messages": [{"role": "user", "content": "q"}],
+            }
+        )
+        self.assertEqual(out["tool_choice"], "none")
+        self.assertEqual(out["top_k"], 40)
+        out = anthro.messages_request_to_canonical(
+            {
+                "model": "m",
+                "max_tokens": 64,
+                "tools": [{"name": "f", "input_schema": {"type": "object"}}],
+                "tool_choice": {"type": "auto", "disable_parallel_tool_use": True},
+                "messages": [{"role": "user", "content": "q"}],
+            }
+        )
+        self.assertIs(out["parallel_tool_calls"], False)
+
+    def test_server_tool_types_are_rejected_not_faked(self) -> None:
+        with self.assertRaises(anthro.AnthropicTranslationError):
+            anthro.messages_request_to_canonical(
+                {
+                    "model": "m",
+                    "max_tokens": 64,
+                    "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                    "messages": [{"role": "user", "content": "q"}],
+                }
+            )
 
     def test_system_prompt_string_is_prepended(self) -> None:
         body = {
@@ -228,7 +377,7 @@ class AnthropicRequestTranslationTests(unittest.TestCase):
         )
 
     def test_document_thinking_blocks_are_rejected(self) -> None:
-        for btype in ("document", "thinking", "redacted_thinking"):
+        for btype in ("document",):
             with self.subTest(btype=btype):
                 body = {
                     "model": "claude-3-haiku",
@@ -605,8 +754,9 @@ class OllamaChatTranslationTests(unittest.TestCase):
         self.assertFalse(out["stream"])
         self.assertAlmostEqual(out["temperature"], 0.2)
         self.assertEqual(out["max_tokens"], 128)
-        # native-only options ride along in a namespaced bucket
-        self.assertEqual(out["__ollama_options__"], {"top_k": 40})
+        # sampling options the backend understands are forwarded
+        self.assertEqual(out["top_k"], 40)
+        self.assertNotIn("__ollama_options__", out)
 
     def test_chat_format_json_maps_to_response_format(self) -> None:
         body = {
@@ -697,7 +847,7 @@ class OllamaChatTranslationTests(unittest.TestCase):
         out = oll.canonical_response_to_chat(canonical)
         self.assertEqual(out["model"], "llama3")
         self.assertTrue(out["done"])
-        self.assertEqual(out["done_reason"], "tool_calls")
+        self.assertEqual(out["done_reason"], "stop")
         self.assertEqual(out["message"]["content"], "hello")
         self.assertEqual(
             out["message"]["tool_calls"][0]["function"]["name"], "get_weather"
@@ -709,30 +859,72 @@ class OllamaChatTranslationTests(unittest.TestCase):
         self.assertEqual(out["prompt_eval_count"], 10)
         self.assertEqual(out["eval_count"], 3)
 
-    def test_canonical_stream_chunk_to_chat_delta(self) -> None:
-        chunk = {
-            "model": "llama3",
-            "choices": [
-                {"delta": {"role": "assistant", "content": "hel"}, "index": 0}
-            ],
-        }
-        out = oll.canonical_stream_chunk_to_chat(chunk)
-        self.assertEqual(out["model"], "llama3")
-        self.assertFalse(out["done"])
-        self.assertEqual(out["message"], {"role": "assistant", "content": "hel"})
-        self.assertNotIn("done_reason", out)
+    def test_stream_translator_chat_text_then_final_with_late_usage(self) -> None:
+        tr = oll.OllamaStreamTranslator(endpoint="chat", request_model="llama3")
+        objs = []
+        for chunk in (
+            {"model": "llama3", "choices": [{"delta": {"role": "assistant"}}]},
+            {"model": "llama3", "choices": [{"delta": {"content": "hel"}}]},
+            {"model": "llama3", "choices": [{"delta": {}, "finish_reason": "stop"}]},
+            {
+                "model": "llama3",
+                "choices": [{"delta": {}}],
+                "usage": {"prompt_tokens": 7, "completion_tokens": 2},
+                "timings": {"prompt_ms": 2.0, "predicted_ms": 3.0},
+            },
+        ):
+            objs.extend(tr.feed(chunk))
+        objs.extend(tr.finish())
+        self.assertEqual([o["done"] for o in objs], [False, True])
+        self.assertEqual(objs[0]["message"], {"role": "assistant", "content": "hel"})
+        final = objs[-1]
+        self.assertEqual(final["done_reason"], "stop")
+        self.assertEqual(final["prompt_eval_count"], 7)
+        self.assertEqual(final["eval_count"], 2)
+        self.assertEqual(final["prompt_eval_duration"], 2_000_000)
+        self.assertEqual(final["eval_duration"], 3_000_000)
+        self.assertIsInstance(final["total_duration"], int)
 
-    def test_canonical_stream_chunk_to_chat_done_with_usage(self) -> None:
-        chunk = {
-            "model": "llama3",
-            "choices": [{"delta": {}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 7, "completion_tokens": 2},
-        }
-        out = oll.canonical_stream_chunk_to_chat(chunk)
-        self.assertTrue(out["done"])
-        self.assertEqual(out["done_reason"], "stop")
-        self.assertEqual(out["prompt_eval_count"], 7)
-        self.assertEqual(out["eval_count"], 2)
+    def test_stream_translator_sends_tool_call_whole(self) -> None:
+        tr = oll.OllamaStreamTranslator(endpoint="chat")
+        objs = []
+        parts = [
+            {"index": 0, "id": "c1", "function": {"name": "get_weather", "arguments": "{"}},
+            {"index": 0, "function": {"arguments": '"city":"'}},
+            {"index": 0, "function": {"arguments": 'Paris"}'}},
+        ]
+        for part in parts:
+            objs.extend(
+                tr.feed({"model": "m", "choices": [{"delta": {"tool_calls": [part]}}]})
+            )
+        objs.extend(
+            tr.feed({"model": "m", "choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
+        )
+        objs.extend(tr.finish())
+        self.assertEqual(len(objs), 2)
+        self.assertEqual(
+            objs[0]["message"]["tool_calls"],
+            [{"function": {"name": "get_weather", "arguments": {"city": "Paris"}}}],
+        )
+        self.assertTrue(objs[1]["done"])
+
+    def test_stream_translator_think_off_does_not_leak_reasoning(self) -> None:
+        def run(finish_reason, thinking):
+            tr = oll.OllamaStreamTranslator(endpoint="chat", thinking=thinking)
+            objs = tr.feed(
+                {"model": "m", "choices": [{"delta": {"reasoning_content": "hm"}}]}
+            )
+            objs += tr.feed(
+                {"model": "m", "choices": [{"delta": {}, "finish_reason": finish_reason}]}
+            )
+            return objs + tr.finish()
+
+        cut = run("length", False)
+        self.assertEqual([o["message"]["content"] for o in cut], [""])
+        self.assertNotIn("thinking", cut[0]["message"])
+        shown = run("stop", True)
+        self.assertEqual(shown[0]["message"]["thinking"], "hm")
+        self.assertEqual(shown[0]["message"]["content"], "")
 
 
 # ---------------------------------------------------------------------------
@@ -799,28 +991,27 @@ class OllamaGenerateTranslationTests(unittest.TestCase):
         self.assertEqual(out["prompt_eval_count"], 4)
         self.assertEqual(out["eval_count"], 1)
 
-    def test_canonical_stream_chunk_to_generate_delta(self) -> None:
-        chunk = {
-            "model": "llama3",
-            "choices": [{"delta": {"content": "ha"}, "index": 0}],
-        }
-        out = oll.canonical_stream_chunk_to_generate(chunk)
-        self.assertEqual(out["response"], "ha")
-        self.assertFalse(out["done"])
-        self.assertNotIn("done_reason", out)
-
-    def test_canonical_stream_chunk_to_generate_done_with_usage(self) -> None:
-        chunk = {
-            "model": "llama3",
-            "choices": [{"delta": {}, "finish_reason": "length"}],
-            "usage": {"prompt_tokens": 4, "completion_tokens": 8},
-        }
-        out = oll.canonical_stream_chunk_to_generate(chunk)
-        self.assertEqual(out["response"], "")
-        self.assertTrue(out["done"])
-        self.assertEqual(out["done_reason"], "length")
-        self.assertEqual(out["prompt_eval_count"], 4)
-        self.assertEqual(out["eval_count"], 8)
+    def test_stream_translator_generate_text_and_final(self) -> None:
+        tr = oll.OllamaStreamTranslator(endpoint="generate", request_model="llama3")
+        objs = tr.feed({"model": "llama3", "choices": [{"delta": {"content": "ha"}}]})
+        objs += tr.feed(
+            {"model": "llama3", "choices": [{"delta": {}, "finish_reason": "length"}]}
+        )
+        objs += tr.feed(
+            {
+                "model": "llama3",
+                "choices": [],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 8},
+            }
+        )
+        objs += tr.finish()
+        self.assertEqual(objs[0]["response"], "ha")
+        self.assertFalse(objs[0]["done"])
+        self.assertEqual(objs[1]["response"], "")
+        self.assertTrue(objs[1]["done"])
+        self.assertEqual(objs[1]["done_reason"], "length")
+        self.assertEqual(objs[1]["prompt_eval_count"], 4)
+        self.assertEqual(objs[1]["eval_count"], 8)
 
 
 # ---------------------------------------------------------------------------

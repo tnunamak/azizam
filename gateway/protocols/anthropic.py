@@ -52,9 +52,10 @@ _TOOL_USE_STOP_REASON = "tool_use"
 _MAX_TOKENS_STOP_REASON = "max_tokens"
 _STOP_SEQUENCE_STOP_REASON = "stop_sequence"
 
-_UNSUPPORTED_BLOCK_TYPES = frozenset(
-    {"document", "thinking", "redacted_thinking"}
-)
+_UNSUPPORTED_BLOCK_TYPES = frozenset({"document"})
+# Prior-turn reasoning that clients echo back. Local models cannot use a
+# signed thinking block, so the translator drops it.
+_DROPPED_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
 
 
 class AnthropicTranslationError(ValueError):
@@ -107,6 +108,52 @@ def invalid_request_error(message: str) -> dict[str, Any]:
         "type": "error",
         "error": {"type": "invalid_request_error", "message": message},
     }
+
+
+def thinking_requested(body: Any) -> bool:
+    """True when the caller asked for visible ``thinking`` blocks.
+
+    ``display: "omitted"`` (sent by Claude Code) asks the model to think but
+    not return the text, so no thinking block is produced.
+    """
+    thinking = body.get("thinking") if isinstance(body, dict) else None
+    return (
+        isinstance(thinking, dict)
+        and thinking.get("type") in ("enabled", "adaptive")
+        and thinking.get("display") != "omitted"
+    )
+
+
+_OUTPUT_EFFORTS = {"low": "low", "medium": "medium", "high": "high", "max": "high"}
+
+
+def _reasoning_effort_for_thinking(thinking: Any, output_config: Any = None) -> str:
+    """Map the Anthropic ``thinking`` parameter to a chat ``reasoning_effort``."""
+    if thinking is None:
+        return "minimal"
+    if not isinstance(thinking, dict):
+        raise AnthropicTranslationError("'thinking' must be an object")
+    kind = thinking.get("type")
+    if kind == "disabled":
+        return "minimal"
+    if kind == "adaptive":
+        effort = output_config.get("effort") if isinstance(output_config, dict) else None
+        return _OUTPUT_EFFORTS.get(effort, "medium")
+    if kind == "enabled":
+        budget = thinking.get("budget_tokens")
+        if not isinstance(budget, int) or isinstance(budget, bool) or budget <= 0:
+            raise AnthropicTranslationError(
+                "'thinking.budget_tokens' must be a positive integer when "
+                "thinking is enabled"
+            )
+        if budget <= 2048:
+            return "low"
+        if budget <= 8192:
+            return "medium"
+        return "high"
+    raise AnthropicTranslationError(
+        "'thinking.type' must be 'enabled', 'disabled' or 'adaptive'"
+    )
 
 
 def estimate_count_tokens(body: dict[str, Any]) -> dict[str, Any]:
@@ -162,39 +209,65 @@ def messages_request_to_canonical(body: dict[str, Any]) -> dict[str, Any]:
         raise AnthropicTranslationError(
             "'max_tokens' must be a positive integer"
         )
-    if body.get("thinking") is not None:
-        raise AnthropicTranslationError(
-            "unsupported Anthropic feature: thinking",
-        )
+    reasoning_effort = _reasoning_effort_for_thinking(
+        body.get("thinking"), body.get("output_config")
+    )
 
     canonical_messages: list[dict[str, Any]] = []
 
+    system_parts: list[str] = []
     system = body.get("system")
     if isinstance(system, str) and system:
-        canonical_messages.append({"role": "system", "content": system})
+        system_parts.append(system)
     elif isinstance(system, list):
         merged = _flatten_text_blocks(system, where="system")
         if merged:
-            canonical_messages.append({"role": "system", "content": merged})
+            system_parts.append(merged)
 
     for index, msg in enumerate(raw_messages):
+        if isinstance(msg, dict) and msg.get("role") == "system":
+            # Current Claude Code sends system-role entries inside ``messages``.
+            # Chat templates only allow a system message first, so they join
+            # the system prompt.
+            content = msg.get("content")
+            text = (
+                content
+                if isinstance(content, str)
+                else _flatten_text_blocks(content, where=f"messages[{index}].content")
+                if isinstance(content, list)
+                else ""
+            )
+            if text:
+                system_parts.append(text)
+            continue
         canonical_messages.extend(_translate_message(msg, index=index))
+    if system_parts:
+        canonical_messages.insert(
+            0, {"role": "system", "content": "\n\n".join(system_parts)}
+        )
+    if not any(m["role"] != "system" for m in canonical_messages):
+        raise AnthropicTranslationError("'messages' needs at least one user message")
 
     canonical: dict[str, Any] = {
         "model": model,
         "messages": canonical_messages,
         "max_tokens": max_tokens,
         "stream": bool(body.get("stream", False)),
-        # Anthropic Messages does not expose local chain-of-thought by default.
-        # Ask the gateway chat path to suppress local reasoning-model chatter
-        # before it reaches the response translator.
-        "reasoning_effort": "minimal",
+        # Anthropic Messages does not expose local chain-of-thought unless the
+        # caller enables ``thinking``. Otherwise ask the gateway chat path to
+        # suppress local reasoning-model chatter.
+        "reasoning_effort": reasoning_effort,
     }
 
+    if canonical["stream"]:
+        # Ask for the usage chunk so message_delta can report token counts.
+        canonical["stream_options"] = {"include_usage": True}
     if "temperature" in body:
         canonical["temperature"] = body["temperature"]
     if "top_p" in body:
         canonical["top_p"] = body["top_p"]
+    if isinstance(body.get("top_k"), int) and not isinstance(body["top_k"], bool):
+        canonical["top_k"] = body["top_k"]
     stop_sequences = body.get("stop_sequences")
     if isinstance(stop_sequences, list) and stop_sequences:
         canonical["stop"] = list(stop_sequences)
@@ -206,6 +279,11 @@ def messages_request_to_canonical(body: dict[str, Any]) -> dict[str, Any]:
     tool_choice = body.get("tool_choice")
     if tool_choice is not None:
         canonical["tool_choice"] = _translate_tool_choice(tool_choice)
+        if (
+            isinstance(tool_choice, dict)
+            and tool_choice.get("disable_parallel_tool_use") is True
+        ):
+            canonical["parallel_tool_calls"] = False
 
     metadata = body.get("metadata")
     if isinstance(metadata, dict) and metadata:
@@ -219,13 +297,19 @@ def messages_request_to_canonical(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def canonical_response_to_messages(
-    canonical: dict[str, Any], *, request_model: str | None = None
+    canonical: dict[str, Any],
+    *,
+    request_model: str | None = None,
+    thinking: bool = False,
 ) -> dict[str, Any]:
     """Translate an OpenAI chat-completions response to Anthropic Messages.
 
     ``canonical`` is expected to follow the OpenAI chat-completions
     response envelope. Missing optional fields are tolerated; missing
     required fields produce a best-effort response with empty content.
+    ``thinking`` is true when the caller enabled extended thinking; local
+    reasoning is then returned as a ``thinking`` block. Otherwise it is not
+    shown to the caller.
     """
     if not isinstance(canonical, dict):
         raise AnthropicTranslationError(
@@ -237,13 +321,25 @@ def canonical_response_to_messages(
     choices = canonical.get("choices") or []
     first = choices[0] if choices else {}
     message = first.get("message") or {}
+    finish_reason = first.get("finish_reason")
 
     content_blocks: list[dict[str, Any]] = []
+    reasoning = message.get("reasoning_content")
+    if thinking and isinstance(reasoning, str) and reasoning.strip():
+        content_blocks.append(
+            {"type": "thinking", "thinking": reasoning, "signature": ""}
+        )
     text = _visible_text_from_local_reasoning(message.get("content"))
-    if (text is None or text == "") and isinstance(
-        message.get("reasoning_content"), str
+    if (
+        (text is None or text == "")
+        and not thinking
+        and isinstance(reasoning, str)
+        and finish_reason in (None, "stop")
     ):
-        text = _visible_text_from_local_reasoning(message.get("reasoning_content"))
+        # Some local backends put the whole answer in reasoning_content. Use
+        # it only when the model finished on its own; a length stop means the
+        # reasoning was cut off and is not an answer.
+        text = _visible_text_from_local_reasoning(reasoning)
     if isinstance(text, str) and text:
         content_blocks.append({"type": "text", "text": text})
 
@@ -254,7 +350,6 @@ def canonical_response_to_messages(
             if block is not None:
                 content_blocks.append(block)
 
-    finish_reason = first.get("finish_reason")
     stop_reason = _finish_reason_to_stop_reason(finish_reason, content_blocks)
 
     usage = canonical.get("usage") or {}
@@ -280,7 +375,10 @@ def canonical_response_to_messages(
 
 
 def canonical_stream_to_messages_sse(
-    canonical_stream: Iterable[Any], *, request_model: str | None = None
+    canonical_stream: Iterable[Any],
+    *,
+    request_model: str | None = None,
+    thinking: bool = False,
 ) -> list[str]:
     """Translate OpenAI chat-completions stream chunks to Anthropic SSE frames.
 
@@ -289,11 +387,14 @@ def canonical_stream_to_messages_sse(
     event through this pure helper without depending on FastAPI/httpx.
     """
 
-    translator = MessagesStreamTranslator(request_model=request_model)
+    translator = MessagesStreamTranslator(
+        request_model=request_model, thinking=thinking
+    )
     frames: list[str] = []
 
     for raw_event in canonical_stream:
         frames.extend(translator.feed(raw_event))
+    frames.extend(translator.finish())
 
     return frames
 
@@ -303,17 +404,110 @@ class MessagesStreamTranslator:
 
     Transport code feeds decoded OpenAI chat-completions chunks (or raw
     ``data: ...`` lines) as they arrive and yields the returned frames
-    immediately. ``finish()`` is idempotent and closes the Anthropic stream if
-    the upstream ended without an explicit finish chunk.
+    immediately. It calls ``finish()`` once the upstream stream ends. The
+    closing frames wait for ``finish()`` so that the usage chunk, which
+    OpenAI-style streams send after the finish chunk, reaches ``message_delta``.
+    ``finish()`` is idempotent.
     """
 
-    def __init__(self, *, request_model: str | None = None) -> None:
+    def __init__(
+        self, *, request_model: str | None = None, thinking: bool = False
+    ) -> None:
         self.response_id: str | None = None
         self.model = request_model or ""
-        self.content_started = False
+        self.thinking = thinking
         self.finished = False
         self.suppressing_local_reasoning = False
         self.local_reasoning_prefix_buffer = ""
+        self._next_index = 0
+        self._open_kind: str | None = None
+        self._tool_blocks: dict[Any, int] = {}
+        self._emitted_text = False
+        self._emitted_tool = False
+        self._reasoning_buffer: list[str] = []
+        self._finish_reason: Any = None
+        self._usage: dict[str, Any] = {}
+
+    # -- frame helpers -----------------------------------------------------
+
+    def _message_start(self) -> str:
+        return _anthropic_sse_frame(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {
+                    "id": self.response_id,
+                    "type": "message",
+                    "role": "assistant",
+                    "model": self.model,
+                    "content": [],
+                    "stop_reason": None,
+                    "stop_sequence": None,
+                    "usage": {"input_tokens": 0, "output_tokens": 0},
+                },
+            },
+        )
+
+    def _close_block(self) -> list[str]:
+        if self._open_kind is None:
+            return []
+        frames: list[str] = []
+        index = self._next_index - 1
+        if self._open_kind == "thinking":
+            frames.append(
+                _anthropic_sse_frame(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {"type": "signature_delta", "signature": ""},
+                    },
+                )
+            )
+        frames.append(
+            _anthropic_sse_frame(
+                "content_block_stop",
+                {"type": "content_block_stop", "index": index},
+            )
+        )
+        self._open_kind = None
+        return frames
+
+    def _open_block(self, kind: str, block: dict[str, Any]) -> list[str]:
+        frames = self._close_block()
+        frames.append(
+            _anthropic_sse_frame(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": self._next_index,
+                    "content_block": block,
+                },
+            )
+        )
+        self._next_index += 1
+        self._open_kind = kind
+        return frames
+
+    def _delta(self, delta: dict[str, Any]) -> str:
+        return _anthropic_sse_frame(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": self._next_index - 1,
+                "delta": delta,
+            },
+        )
+
+    def _text_frames(self, text: str) -> list[str]:
+        frames: list[str] = []
+        if self._open_kind != "text":
+            frames.extend(self._open_block("text", {"type": "text", "text": ""}))
+        frames.append(self._delta({"type": "text_delta", "text": text}))
+        self._emitted_text = True
+        return frames
+
+    # -- upstream chunks ---------------------------------------------------
 
     def feed(self, raw_event: Any) -> list[str]:
         if self.finished:
@@ -327,103 +521,115 @@ class MessagesStreamTranslator:
         if self.response_id is None:
             self.response_id = _messages_response_id(chunk.get("id"))
             self.model = chunk.get("model") or self.model
-            frames.append(
-                _anthropic_sse_frame(
-                    "message_start",
-                    {
-                        "type": "message_start",
-                        "message": {
-                            "id": self.response_id,
-                            "type": "message",
-                            "role": "assistant",
-                            "model": self.model,
-                            "content": [],
-                            "stop_reason": None,
-                            "stop_sequence": None,
-                            "usage": {"input_tokens": 0, "output_tokens": 0},
-                        },
-                    },
-                )
-            )
+            frames.append(self._message_start())
+
+        if isinstance(chunk.get("usage"), dict) and chunk["usage"]:
+            self._usage = chunk["usage"]
 
         choices = chunk.get("choices") or []
         first = choices[0] if choices else {}
         delta = first.get("delta") or {}
 
-        text = self._visible_text_delta(delta.get("content"))
-        if (text is None or text == "") and isinstance(
-            delta.get("reasoning_content"), str
-        ):
-            text = self._visible_text_delta(delta.get("reasoning_content"))
-        if isinstance(text, str) and text:
-            if not self.content_started:
-                self.content_started = True
-                frames.append(
-                    _anthropic_sse_frame(
-                        "content_block_start",
-                        {
-                            "type": "content_block_start",
-                            "index": 0,
-                            "content_block": {"type": "text", "text": ""},
-                        },
+        reasoning = delta.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            if self.thinking:
+                if self._open_kind != "thinking":
+                    frames.extend(
+                        self._open_block(
+                            "thinking",
+                            {"type": "thinking", "thinking": "", "signature": ""},
+                        )
                     )
+                frames.append(
+                    self._delta({"type": "thinking_delta", "thinking": reasoning})
                 )
-            frames.append(
-                _anthropic_sse_frame(
-                    "content_block_delta",
+            else:
+                self._reasoning_buffer.append(reasoning)
+
+        text = self._visible_text_delta(delta.get("content"))
+        if isinstance(text, str) and text:
+            frames.extend(self._text_frames(text))
+
+        tool_calls = delta.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for call in tool_calls:
+                frames.extend(self._tool_call_frames(call))
+
+        if first.get("finish_reason") is not None:
+            self._finish_reason = first["finish_reason"]
+        return frames
+
+    def _tool_call_frames(self, call: Any) -> list[str]:
+        if not isinstance(call, dict):
+            return []
+        key = call.get("index", 0)
+        fn = call.get("function") or {}
+        frames: list[str] = []
+        if key not in self._tool_blocks:
+            frames.extend(
+                self._open_block(
+                    "tool_use",
                     {
-                        "type": "content_block_delta",
-                        "index": 0,
-                        "delta": {"type": "text_delta", "text": text},
+                        "type": "tool_use",
+                        "id": call.get("id") or f"toolu_{uuid.uuid4().hex[:16]}",
+                        "name": fn.get("name") or "",
+                        "input": {},
                     },
                 )
             )
-
-        finish_reason = first.get("finish_reason")
-        if finish_reason is not None:
-            frames.extend(self.finish(finish_reason=finish_reason))
+            self._tool_blocks[key] = self._next_index - 1
+            self._emitted_tool = True
+        arguments = fn.get("arguments")
+        if isinstance(arguments, dict):
+            arguments = json.dumps(arguments, separators=(",", ":"))
+        if isinstance(arguments, str) and arguments:
+            frames.append(
+                self._delta({"type": "input_json_delta", "partial_json": arguments})
+            )
         return frames
 
-    def finish(self, *, finish_reason: Any = "stop") -> list[str]:
+    def finish(self, *, finish_reason: Any = None) -> list[str]:
         if self.finished:
             return []
         self.finished = True
-        stop_reason = _finish_reason_to_stop_reason(finish_reason, [])
+        if finish_reason is not None:
+            self._finish_reason = finish_reason
         frames: list[str] = []
         if self.response_id is None:
             self.response_id = _messages_response_id(None)
-            frames.append(
-                _anthropic_sse_frame(
-                    "message_start",
-                    {
-                        "type": "message_start",
-                        "message": {
-                            "id": self.response_id,
-                            "type": "message",
-                            "role": "assistant",
-                            "model": self.model,
-                            "content": [],
-                            "stop_reason": None,
-                            "stop_sequence": None,
-                            "usage": {"input_tokens": 0, "output_tokens": 0},
-                        },
-                    },
-                )
+            frames.append(self._message_start())
+
+        if (
+            self._reasoning_buffer
+            and not self._emitted_text
+            and not self._emitted_tool
+            and self._finish_reason in (None, "stop")
+        ):
+            # Same rule as the non-streaming path: reasoning is an answer only
+            # when the model stopped on its own and said nothing else.
+            fallback = _visible_text_from_local_reasoning(
+                "".join(self._reasoning_buffer)
             )
-        if self.content_started:
-            frames.append(
-                _anthropic_sse_frame(
-                    "content_block_stop",
-                    {"type": "content_block_stop", "index": 0},
-                )
-            )
+            if fallback:
+                frames.extend(self._text_frames(fallback))
+
+        frames.extend(self._close_block())
+        stop_reason = _finish_reason_to_stop_reason(
+            self._finish_reason,
+            [{"type": "tool_use"}] if self._emitted_tool else [],
+        )
+        usage: dict[str, Any] = {
+            "output_tokens": int(self._usage.get("completion_tokens") or 0)
+        }
+        if self._usage.get("prompt_tokens") is not None:
+            usage["input_tokens"] = int(self._usage.get("prompt_tokens") or 0)
         frames.append(
             _anthropic_sse_frame(
                 "message_delta",
                 {
                     "type": "message_delta",
                     "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-                    "usage": {"output_tokens": 0},
+                    "usage": usage,
                 },
             )
         )
@@ -556,6 +762,8 @@ def _translate_message(msg: Any, *, index: int) -> list[dict[str, Any]]:
                 f"messages[{index}].content[{block_index}] must be an object"
             )
         btype = block.get("type")
+        if btype in _DROPPED_BLOCK_TYPES:
+            continue
         if btype in _UNSUPPORTED_BLOCK_TYPES:
             raise AnthropicTranslationError(
                 f"unsupported content block type '{btype}' at "
@@ -591,6 +799,9 @@ def _translate_message(msg: Any, *, index: int) -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     joined_text = "\n".join(p for p in text_parts if p)
+    # OpenAI requires each ``tool`` message to directly follow the assistant
+    # turn that made the call, so tool results go before any user text.
+    out.extend(tool_result_messages)
     if role == "assistant" and tool_use_messages:
         assistant_msg: dict[str, Any] = {"role": "assistant"}
         assistant_msg["content"] = joined_text if joined_text else None
@@ -598,9 +809,9 @@ def _translate_message(msg: Any, *, index: int) -> list[dict[str, Any]]:
             tu["__tool_call__"] for tu in tool_use_messages
         ]
         out.append(assistant_msg)
-    elif role == "user" and tool_result_messages and not joined_text:
+    elif role == "user" and tool_result_messages and not content_parts:
         # A user turn made entirely of tool_result blocks becomes the
-        # OpenAI tool messages below; no empty user message in between.
+        # OpenAI tool messages above; no empty user message after them.
         pass
     elif role == "user" and any(
         part.get("type") == "image_url" for part in content_parts
@@ -608,10 +819,6 @@ def _translate_message(msg: Any, *, index: int) -> list[dict[str, Any]]:
         out.append({"role": role, "content": content_parts})
     elif joined_text or role == "user":
         out.append({"role": role, "content": joined_text})
-
-    # tool_result blocks on Anthropic user messages map to OpenAI "tool"
-    # role messages, which must follow the assistant tool_calls.
-    out.extend(tool_result_messages)
     return out
 
 
@@ -727,6 +934,11 @@ def _translate_tool_decl(tool: Any) -> dict[str, Any]:
     name = tool.get("name")
     if not isinstance(name, str) or not name:
         raise AnthropicTranslationError("tool.name is required")
+    if tool.get("type") not in (None, "custom"):
+        raise AnthropicTranslationError(
+            f"unsupported tool type '{tool.get('type')}' for tool '{name}'; "
+            "only custom (client-side) tools are available",
+        )
     description = tool.get("description") or ""
     schema = tool.get("input_schema") or {"type": "object", "properties": {}}
     return {
@@ -746,6 +958,8 @@ def _translate_tool_choice(choice: Any) -> Any:
             return "auto"
         if ctype == "any":
             return "required"
+        if ctype == "none":
+            return "none"
         if ctype == "tool":
             name = choice.get("name")
             if not isinstance(name, str) or not name:

@@ -320,7 +320,7 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         f"- Agent skill: {prefix}/.well-known/skills/openai-proxy-gateway/SKILL.md",
         "",
         "## Auth",
-        "- Use Authorization: Bearer $AI_GATEWAY_API_KEY (OPENAI_PROXY_API_KEY remains a working alias) for all /openai/v1, /anthropic/v1, /ollama/api, /v1, /api, and /gateway/v1 calls except /health.",
+        "- Use Authorization: Bearer $AI_GATEWAY_API_KEY (OPENAI_PROXY_API_KEY remains a working alias; x-api-key is accepted too, as Anthropic SDKs send it) for all /openai/v1, /anthropic/v1, /ollama/api, /v1, /api, and /gateway/v1 calls except /health.",
         "- Do not ask users to paste raw opk tokens into chat.",
         "",
         "## Preferred Flow",

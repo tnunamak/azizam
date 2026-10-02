@@ -157,12 +157,10 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
     def test_unknown_protocol_namespace_routes_return_not_found_without_backend_passthrough(self) -> None:
         client = TestClient(proxy.app)
         cases = (
-            ("GET", "/v1/models/extra"),
             ("GET", "/v1/unknown"),
             ("POST", "/v1/unknown"),
             ("GET", "/openai/v1/unknown"),
             ("POST", "/openai/v1/unknown"),
-            ("GET", "/anthropic/v1/models/extra"),
             ("POST", "/anthropic/v1/unknown"),
             ("GET", "/ollama/api"),
             ("POST", "/ollama/api/unknown"),
