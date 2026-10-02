@@ -41,13 +41,14 @@ OPERATIONS = (
     "speech",
     "transcriptions",
     "audio_generate",
+    "rerank",
 )
 # Request operations that share another operation's alias table.
 _SECTION_FOR_OPERATION = {
     "completions": "chat",
     "translations": "transcriptions",
 }
-ENGINE_OPERATIONS = ("speech", "transcriptions")
+ENGINE_OPERATIONS = ("speech", "transcriptions", "rerank")
 _MAX_CHAIN = 6
 
 EngineAvailable = Callable[[str, Mapping[str, Any]], bool]
@@ -316,7 +317,7 @@ def validate_aliases(cfg: Mapping[str, Any] | None) -> list[str]:
         stable = _stable_map(section)
         engines = _engine_map(section)
         if engines and operation not in ENGINE_OPERATIONS:
-            problems.append(f"{operation}: engines are only valid for speech/transcriptions")
+            problems.append(f"{operation}: engines are only valid for speech/transcriptions/rerank")
         for engine_id, spec in engines.items():
             if not spec.get("service"):
                 problems.append(f"{operation}.engines.{engine_id}: missing service")

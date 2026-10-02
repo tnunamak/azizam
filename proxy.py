@@ -76,6 +76,7 @@ from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_met
 from gateway import video_subject
 from gateway import video_job_records
 from gateway.showcase import build_showcase_router, is_public_showcase_path
+from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import speech_stream
 from gateway import custom_voices
@@ -16354,6 +16355,9 @@ _FIREHOSE_EVENT_TYPES = {
     "/v1/audio/speech": "tts_synthesize",
     "/v1/audio/transcriptions": "stt_transcribe",
     "/v1/audio/translations": "stt_translate",
+    "/v1/rerank": "rerank",
+    "/v2/rerank": "rerank",
+    "/rerank": "rerank",
 }
 
 
@@ -16668,6 +16672,145 @@ async def audio_translations(request: Request):
     if isinstance(auth_context, Response):
         return auth_context
     return await _dispatch_selected_stt_route(request, auth_context, operation="translations")
+
+
+# ---------------------------------------------------------------------------
+# Rerank: Cohere / Jina / Voyage / TEI request shapes over an on-demand engine
+# ---------------------------------------------------------------------------
+
+_RERANK_POLICY_PATH = "/v1/rerank"
+# Same policy as the route record in registry/protocol_frontends.yml. A populated admin.db owns its own
+# route list and does not gain new seed routes, so without this fallback rerank would be open to every
+# valid key (even one whose profile allows chat only) until an operator edits the DB.
+_RERANK_DEFAULT_POLICY: dict[str, Any] = {
+    "protocol": "openai.rerank",
+    "intent": "text.embeddings",
+    "backend": "rerank",
+    "capability_exposure": "default",
+    "capability_trust_tier": "stable",
+    "capability_resource_tier": "interactive",
+}
+
+
+def _rerank_error(
+    status: int,
+    message: str,
+    *,
+    code: str,
+    param: str | None = None,
+    tei: bool = False,
+    kind: str = "invalid_request_error",
+    headers: Mapping[str, str] | None = None,
+) -> Response:
+    return Response(
+        content=json.dumps(rerank_api.error_body(message, code=code, param=param, tei=tei, kind=kind)),
+        status_code=status,
+        media_type="application/json",
+        headers=dict(headers or {}),
+    )
+
+
+async def _handle_rerank(request: Request, path: str) -> Response:
+    auth_context = authenticate_request(request, path)
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_response = _enforce_runtime_route_policy(
+        auth_context,
+        _RERANK_POLICY_PATH,
+        policy=_RUNTIME_ROUTE_POLICY.get(_RERANK_POLICY_PATH) or _RERANK_DEFAULT_POLICY,
+    )
+    if policy_response is not None:
+        return policy_response
+    try:
+        body = json.loads(await request.body())
+    except (ValueError, UnicodeDecodeError):
+        return _rerank_error(400, "Request body must be valid JSON.", code="invalid_json")
+    tei = isinstance(body, Mapping) and "documents" not in body and "texts" in body
+
+    requested_model = body.get("model") if isinstance(body, Mapping) else None
+    if requested_model is not None and not isinstance(requested_model, str):
+        return _rerank_error(400, "model must be a string.", code="invalid_request", param="model", tei=tei)
+    try:
+        resolution = resolve_stable_alias("rerank", requested_model or rerank_api.DEFAULT_MODEL)
+    except stable_aliases.AliasUnavailableError as exc:
+        return _rerank_error(503, str(exc), code=exc.code, tei=tei, kind="api_error")
+    if resolution is None or resolution.engine is None:
+        known = ", ".join(sorted(((config.get("model_aliases") or {}).get("rerank") or {}).get("stable") or {})) or "none"
+        return _rerank_error(
+            404,
+            f"Model '{requested_model}' is not a rerank model on this gateway (use one of: {known}).",
+            code="model_not_found",
+            param="model",
+            tei=tei,
+        )
+    spec = resolution.engine_spec or {}
+    try:
+        req = rerank_api.parse_request(
+            body,
+            max_documents=int(spec.get("max_documents") or rerank_api.DEFAULT_MAX_DOCUMENTS),
+            max_document_chars=int(spec.get("max_document_chars") or rerank_api.DEFAULT_MAX_DOCUMENT_CHARS),
+        )
+    except rerank_api.RerankInputError as exc:
+        return _rerank_error(400, str(exc), code=exc.code, param=exc.param, tei=tei)
+
+    service_id = str(resolution.service or "")
+    service = (config.get("backends") or {}).get(service_id) or {}
+    if await _ensure_speech_service_ready(service_id, label="Rerank engine") is not None:
+        return _rerank_error(
+            503, "The rerank engine could not be started.", code="backend_unavailable",
+            tei=tei, kind="api_error", headers={"Retry-After": "5"},
+        )
+    url = f"http://{service['host']}:{service['port']}/v1/rerank"
+    timeout = float(service.get("timeout") or 120)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+            upstream = await client.post(url, json=rerank_api.upstream_body(req, resolution.upstream_model))
+    except httpx.HTTPError as exc:
+        return _rerank_error(502, f"The rerank engine did not answer: {type(exc).__name__}.", code="backend_error", tei=tei, kind="api_error")
+    if upstream.status_code != 200:
+        status = 400 if upstream.status_code in (400, 413, 422) else 502
+        detail = ""
+        try:
+            err = upstream.json().get("error")
+            detail = str(err.get("message") if isinstance(err, Mapping) else err or "")[:300]
+        except (ValueError, AttributeError):
+            pass
+        return _rerank_error(
+            status,
+            detail or f"The rerank engine answered HTTP {upstream.status_code}.",
+            code="invalid_request" if status == 400 else "backend_error",
+            tei=tei,
+            kind="invalid_request_error" if status == 400 else "api_error",
+        )
+    try:
+        payload = rerank_api.build_response(
+            req,
+            upstream.json(),
+            model=resolution.requested,
+            default_return_documents=path != "/v2/rerank",
+        )
+    except (ValueError, rerank_api.RerankUpstreamError) as exc:
+        return _rerank_error(502, str(exc), code="backend_error", tei=tei, kind="api_error")
+    return JSONResponse(payload, headers={"x-vivid-engine": resolution.engine or ""})
+
+
+@app.post("/openai/v1/rerank")
+@app.post("/v1/rerank")
+async def rerank_v1(request: Request):
+    """Cohere, Jina and Voyage rerank."""
+    return await _handle_rerank(request, "/v1/rerank")
+
+
+@app.post("/v2/rerank")
+async def rerank_v2(request: Request):
+    """Cohere v2 rerank (no document echo unless asked)."""
+    return await _handle_rerank(request, "/v2/rerank")
+
+
+@app.post("/rerank")
+async def rerank_root(request: Request):
+    """Jina and TEI style root path."""
+    return await _handle_rerank(request, "/rerank")
 
 
 # Map image route paths to canonical intents for receipt construction.

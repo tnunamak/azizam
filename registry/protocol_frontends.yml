@@ -117,6 +117,12 @@ records:
         canonical: /v1/videos/edits
         alias: /openai/v1/videos/edits
         runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
+      # /rerank and /v2/rerank are handled in-handler with the policy of /v1/rerank. rerank is retrieval
+      # infrastructure like embeddings, so it shares the text.embeddings intent: a key that may embed may rerank.
+      - methods: [POST]
+        canonical: /v1/rerank
+        alias: /openai/v1/rerank
+        runtime_policy: {protocol: openai.rerank, intent: text.embeddings, backend: rerank, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [POST]
         canonical: /v1/videos/extensions
         alias: /openai/v1/videos/extensions
@@ -162,6 +168,7 @@ records:
         - /openai/v1/chat/completions
         - /openai/v1/completions
         - /openai/v1/embeddings
+        - /openai/v1/rerank
         - /openai/v1/responses
         - /openai/v1/images/generations
         - /openai/v1/images/edits
@@ -179,6 +186,9 @@ records:
         - /v1/chat/completions
         - /v1/completions
         - /v1/embeddings
+        - /v1/rerank
+        - /v2/rerank
+        - /rerank
         - /v1/responses
         - /v1/images/generations
         - /v1/images/edits

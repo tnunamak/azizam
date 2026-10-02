@@ -485,6 +485,27 @@ backends:
         unit: diarize-stt.service
         health_endpoint: /health
         health_timeout_s: 120
+  rerank:
+    name: rerank-cpu
+    host: 127.0.0.1
+    port: 8018
+    health_endpoint: /health
+    timeout: 120
+    # Higher number = lower priority: nothing else serves rerank, but the on-demand engines stay behind the always-on ones.
+    priority: 200
+    role: standby
+    note: "On-demand CPU reranker (llama-server --rerank, Qwen3-Reranker-0.6B); about 1 GB RAM while running, exits after 10 min idle, started by the gateway lifecycle driver. Never a GPU."
+    capabilities:
+      - rerank
+    managed: false
+    default_model: qwen3-reranker-0.6b
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: rerank-cpu.service
+        health_endpoint: /health
+        health_timeout_s: 90
   embeddings:
     name: nomic-embed-text-v1.5 CPU
     native_passthrough: true
@@ -1152,6 +1173,21 @@ model_aliases:
       - {match: "gpt-4o-mini-transcribe*", to: stt-fast}
       - {match: "gpt-4o*transcribe*", to: stt-quality}
       - {match: "*transcribe*", to: stt}
+  rerank:
+    engines:
+      qwen3-reranker-0.6b:
+        service: rerank
+        model: qwen3-reranker-0.6b
+        max_documents: 1000
+        max_document_chars: 10000   # about 3000 tokens: query plus document must fit the 4096-token engine context
+        placement: "CPU only (1 GB RAM while running; exits after 10 min idle), on-demand unit"
+        description: "Qwen3-Reranker-0.6B on CPU"
+    stable:
+      rerank: [qwen3-reranker-0.6b]
+    openai:
+      # Cohere (rerank-v3.5, rerank-english-v3.0), Jina (jina-reranker-v2-base-multilingual), Voyage (rerank-2)
+      # and any other *rerank* name that a RAG client sends all reach the one engine.
+      - {match: "*rerank*", to: rerank}
   audio_generate:
     stable:
       music: ace-step-1.5-xl-turbo   # instrumental/short music, fastest
