@@ -31,7 +31,7 @@ from typing import Any, Awaitable, Callable, Mapping, Sequence
 from PIL import Image, ImageOps
 
 from gateway import likeness
-from gateway.likeness import FaceRecord, LikenessError, Person
+from gateway.likeness import FaceRecord, Person
 
 MAX_ATTEMPTS = 8
 MAX_PEOPLE = 5
