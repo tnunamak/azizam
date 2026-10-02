@@ -6,12 +6,13 @@ synchronous media call that is running.
 
 ```
 scripts/safe-restart --dry-run   # what is in flight? changes nothing
-scripts/safe-restart             # drain, wait (max 15 min), restart, verify
+scripts/safe-restart             # wait for idle + quiet, drain, restart, verify (max 15 min)
+scripts/safe-restart --quiet-seconds 0   # skip the quiet-window wait
 scripts/safe-restart --llama     # drain chat, wait, restart llama-bee
 scripts/safe-restart --force     # skip the wait; KILLS in-flight work
 ```
 
-Options: `--timeout SEC` (default 900), `--ignore-async-jobs`,
+Options: `--timeout SEC` (default 900), `--quiet-seconds SEC` (default 20; 0 = off), `--ignore-async-jobs`,
 `--health-timeout SEC`, `--unit`, `--llama-unit`, `--url`.
 
 ## Exit codes
@@ -36,6 +37,31 @@ The script needs an admin bearer key in `AI_GATEWAY_ADMIN_KEY`,
 The key is never printed.
 
 ## How it works
+
+- **Two phases, in this order.** An agent turn is a chain of chat calls with
+  tool steps between them. "Nothing in flight" is true in every gap, so a
+  drain that starts in a gap would answer the agent's next call with 503.
+  1. *Quiet wait (gateway still accepting).* The script polls until nothing is
+     in flight and no chat request started or finished for `--quiet-seconds`
+     (default 20). New requests are accepted and served normally, so a
+     running agent never sees a refusal. Each new chat call restarts the
+     window. The gateway computes it (`seconds_since_chat_activity` in the
+     drain snapshot), so the script and the gateway share one clock.
+  2. *Drain, then restart at once.* The script sets the drain flag, waits for
+     any request that slipped in between the check and the flag (at least
+     30 s, otherwise the rest of the deadline), then restarts.
+  The deadline (`--timeout`) covers both phases. If it passes in phase 1,
+  nothing was drained, so nothing needs undoing; exit code 3. A tool step that
+  runs longer than the quiet window can still be cut between calls; raise
+  `--quiet-seconds` for that case. Only chat paths count as activity (see
+  `CHAT_PATHS` in `gateway/drain.py`); image/audio/video are covered by the
+  in-flight and async-job counts.
+- `--force` skips both waits. A gateway that predates the activity fields
+  (the first deploy of this feature) gets a warning and the quiet check is
+  skipped.
+- `GET /admin/api/drain` reports `last_chat_activity_at` (wall-clock epoch
+  seconds; now, while a chat runs; null if no chat since the process started)
+  and `seconds_since_chat_activity` (0 while a chat runs; null likewise).
 
 - `gateway/drain.py` counts requests from start to the last response byte
   (pure ASGI, so an SSE stream stays counted while tokens flow). Async media
