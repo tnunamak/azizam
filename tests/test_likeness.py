@@ -140,6 +140,33 @@ class ExtraFaceTests(unittest.TestCase):
         self.assertGreater(likeness.rank_key(crowded), likeness.rank_key(clean))
 
 
+class FacingTests(unittest.TestCase):
+    @staticmethod
+    def posed(x: float, nose_dx: float, vec: tuple[float, ...]) -> FaceRecord:
+        kps = ((x + 30, 50.0), (x + 90, 50.0), (x + 60 + nose_dx, 80.0), (x + 35, 110.0), (x + 85, 110.0))
+        return FaceRecord((x, 0, x + 120, 120), 0.9, 40, {"buffalo_l": vec, "antelopev2": vec}, kps=kps)
+
+    def test_yaw_sign(self) -> None:
+        self.assertGreater(self.posed(0, 20, A).yaw, 0.3)
+        self.assertLess(self.posed(0, -20, A).yaw, -0.3)
+        self.assertAlmostEqual(self.posed(0, 0, A).yaw, 0.0)
+        self.assertIsNone(face(A).yaw)
+
+    def test_facing_each_other(self) -> None:
+        people = [Person("l", (face(A),)), Person("r", (face(B),))]
+        toward = [self.posed(0, 20, A), self.posed(300, -20, B)]
+        away = [self.posed(0, -20, A), self.posed(300, 20, B)]
+        self.assertTrue(likeness.check_likeness(people, toward)["overall"]["facing_each_other"])
+        self.assertFalse(likeness.check_likeness(people, away)["overall"]["facing_each_other"])
+        self.assertIsNone(likeness.check_likeness(people[:1], toward[:1])["overall"]["facing_each_other"])
+
+    def test_rank_key_prefers_facing_when_asked(self) -> None:
+        yes = {"people": [{"match": {"score": 0.4}}], "overall": {"facing_each_other": True}}
+        no = {"people": [{"match": {"score": 0.8}}], "overall": {"facing_each_other": False}}
+        self.assertGreater(likeness.rank_key(yes, want_facing=True), likeness.rank_key(no, want_facing=True))
+        self.assertGreater(likeness.rank_key(no), likeness.rank_key(yes))
+
+
 class MergeAndRankTests(unittest.TestCase):
     def test_merge_models_joins_by_overlap(self) -> None:
         a = [{"bbox": [0, 0, 100, 100], "det_score": 0.9, "age": 30, "embedding": [1, 0]}]

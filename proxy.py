@@ -7928,7 +7928,7 @@ async def _identity_edit_alias(
             raise identity_scene.IdentityError(f"send 1 to {identity_api.MAX_PHOTOS} reference photos", param="image")
         unknown = set(options) - {
             "people", "attempts", "seed", "resolution", "steps", "cfg",
-            "only_listed_people", "photo_as_canvas", "stop_when_pass", "thresholds",
+            "only_listed_people", "photo_as_canvas", "stop_when_pass", "facing_each_other", "thresholds",
         }
         if unknown:
             raise identity_scene.IdentityError(f"unknown identity option: {sorted(unknown)[0]}", param="extensions")
@@ -7944,6 +7944,7 @@ async def _identity_edit_alias(
             only_listed_people=bool(options.get("only_listed_people", True)),
             photo_as_canvas=bool(options.get("photo_as_canvas", True)),
             stop_when_pass=bool(options.get("stop_when_pass", True)),
+            facing_each_other=bool(options.get("facing_each_other", False)),
             thresholds=identity_api.parse_thresholds(options.get("thresholds")),
         )
         return await app.state.identity_run_scene(request, auth_context, req, response_format)

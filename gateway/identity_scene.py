@@ -68,6 +68,7 @@ class SceneRequest:
     only_listed_people: bool = True
     photo_as_canvas: bool = True
     stop_when_pass: bool = True
+    facing_each_other: bool = False   # require both heads turned toward each other (two people)
     thresholds: Mapping[str, float] | None = None
 
 
@@ -355,18 +356,24 @@ async def run_identity_scene(
             [rp.person for rp in people], candidate, models=deps.models, thresholds=req.thresholds,
             allow_extra_faces=not req.only_listed_people,
         )
-        key = likeness.rank_key(report, penalise_extra_faces=req.only_listed_people)
+        key = likeness.rank_key(
+            report, penalise_extra_faces=req.only_listed_people, want_facing=req.facing_each_other
+        )
         attempts.append({
             "attempt": index + 1,
             "seed": seed,
             "status": report["overall"]["status"],
             "min_score": report["overall"]["min_score"],
             "extra_faces": report["overall"]["extra_faces"],
+            "facing_each_other": report["overall"]["facing_each_other"],
             "scores": {p["label"]: (p["match"] or {}).get("score") for p in report["people"]},
         })
         if best is None or key > best[0]:
             best = (key, image, report, index)
-        if req.stop_when_pass and report["overall"]["all_meet_threshold"]:
+        done = report["overall"]["all_meet_threshold"] and (
+            not req.facing_each_other or report["overall"]["facing_each_other"]
+        )
+        if req.stop_when_pass and done:
             break
     assert best is not None
     for number, item in enumerate(attempts):

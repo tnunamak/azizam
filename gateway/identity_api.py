@@ -226,6 +226,8 @@ IDENTITY_OPENAPI: dict[str, Any] = {
                                     "description": "Also pass the first photo whole as the style, clothing and setting reference."},
                 "only_listed_people": {"type": "boolean", "default": True},
                 "stop_when_pass": {"type": "boolean", "default": True},
+                "facing_each_other": {"type": "boolean", "default": False,
+                                      "description": "Two people only: prefer, and stop early on, results where both heads are turned toward each other (landmark yaw; head turn, not gaze)."},
                 "response_format": {"type": "string", "enum": ["b64_json", "url"], "default": "b64_json"},
                 "thresholds": {"type": "string", "description": "JSON object overriding match, uncertain and min_margin."},
             },
@@ -324,6 +326,7 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
                 only_listed_people=_bool(form, "only_listed_people", True),
                 photo_as_canvas=_bool(form, "photo_as_canvas", True),
                 stop_when_pass=_bool(form, "stop_when_pass", True),
+                facing_each_other=_bool(form, "facing_each_other", False),
                 thresholds=parse_thresholds(_json_field(form, "thresholds")),
             )
             return await run_scene(request, auth, req, response_format)

@@ -150,6 +150,12 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([p["label"] for p in result.people], ["grandma", "baby"])
         self.assertEqual(len(fakes.uploads[0]), 2)
 
+    def test_facing_requirement_keeps_trying_when_pose_is_unknown(self) -> None:
+        fakes = Fakes([OUT_LIST[1], OUT_LIST[1], OUT_LIST[1]])
+        result = scene(fakes, SceneRequest(photos=[PHOTO], prompt="x", attempts=3, facing_each_other=True))
+        self.assertEqual(len(fakes.graphs), 3)  # faces carry no landmarks, so facing is never confirmed
+        self.assertIsNone(result.attempts[0]["facing_each_other"])
+
     def test_box_without_a_face_is_an_error(self) -> None:
         fakes = Fakes([])
         with self.assertRaises(IdentityError) as ctx:

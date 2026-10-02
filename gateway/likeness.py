@@ -53,10 +53,24 @@ class FaceRecord:
     age: int | None
     embeddings: Mapping[str, tuple[float, ...]]
     gender: str | None = None
+    kps: tuple[tuple[float, float], ...] = ()
 
     @property
     def width(self) -> float:
         return self.bbox[2] - self.bbox[0]
+
+    @property
+    def yaw(self) -> float | None:
+        """Head turn from the five landmarks: nose offset over eye distance.
+
+        0 is frontal, positive is turned toward the right edge of the image,
+        about +-0.5 is a hard profile. None when landmarks are missing.
+        """
+        if len(self.kps) < 3:
+            return None
+        (lx, _), (rx, _), (nx, _) = self.kps[0], self.kps[1], self.kps[2]
+        eye_dist = abs(rx - lx)
+        return (nx - (lx + rx) / 2) / eye_dist if eye_dist > 1e-6 else None
 
 
 @dataclass(frozen=True)
@@ -80,6 +94,7 @@ def face_from_service(item: Mapping[str, Any], model: str) -> FaceRecord:
         age=item.get("age"),
         embeddings={model: tuple(float(v) for v in item["embedding"])},
         gender=item.get("gender"),
+        kps=_kps(item),
     )
 
 
@@ -111,8 +126,13 @@ def merge_models(per_model: Mapping[str, Sequence[Mapping[str, Any]]]) -> list[F
             age=item.get("age"),
             embeddings=embeddings,
             gender=item.get("gender"),
+            kps=_kps(item),
         ))
     return out
+
+
+def _kps(item: Mapping[str, Any]) -> tuple[tuple[float, float], ...]:
+    return tuple((float(x), float(y)) for x, y in (item.get("kps") or ()))
 
 
 def _iou(a: Sequence[float], b: Sequence[float]) -> float:
@@ -239,6 +259,7 @@ def check_likeness(
                 "scores": {k: round(v, 4) for k, v in scores.items()},
                 "score": round(score, 4),
                 "margin": None if margin is None else round(margin, 4),
+                "yaw": None if face.yaw is None else round(face.yaw, 3),
             },
             verdict=verdict,
             notes=notes,
@@ -253,6 +274,7 @@ def check_likeness(
     ]
     overall = _overall(results)
     overall["extra_faces"] = len(extras)
+    overall["facing_each_other"] = _facing_each_other(results)
     if extras and not allow_extra_faces:
         overall["all_meet_threshold"] = False
         if overall["status"] == "pass":
@@ -270,6 +292,21 @@ def check_likeness(
         "extra_faces": extras,
         "overall": overall,
     }
+
+
+FACING_MIN_YAW = 0.12
+
+
+def _facing_each_other(results: Sequence[Mapping[str, Any]]) -> bool | None:
+    """For exactly two matched people: is the left one turned right and the right one turned left?
+
+    Head orientation, not gaze: a three-quarter turn toward each other counts.
+    """
+    matched = [r["match"] for r in results if r.get("match") and r["match"].get("yaw") is not None]
+    if len(results) != 2 or len(matched) != 2:
+        return None
+    left, right = sorted(matched, key=lambda m: m["bbox"][0])
+    return left["yaw"] >= FACING_MIN_YAW and right["yaw"] <= -FACING_MIN_YAW
 
 
 def _verdict(score: float, margin: float | None, limits: Mapping[str, float]) -> str:
@@ -298,15 +335,19 @@ def _overall(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-def rank_key(report: Mapping[str, Any], *, penalise_extra_faces: bool = False) -> tuple[float, float, float]:
+def rank_key(
+    report: Mapping[str, Any], *, penalise_extra_faces: bool = False, want_facing: bool = False
+) -> tuple[float, float, float, float]:
     """Sort key for choosing the best of several candidates (higher is better).
 
-    Fewer extra faces first when the caller wants only the listed people, then the
+    Fewer extra faces first when the caller wants only the listed people, then facing each
+    other when asked, then the
     worst person (one wrong face outweighs a great second face), then the mean.
     """
     people = report.get("people") or []
     scores = [p["match"]["score"] if p.get("match") else -1.0 for p in people]
     extras = -float(len(report.get("extra_faces") or [])) if penalise_extra_faces else 0.0
+    facing = 1.0 if (want_facing and (report.get("overall") or {}).get("facing_each_other")) else 0.0
     if not scores:
-        return (extras, -1.0, -1.0)
-    return (extras, min(scores), sum(scores) / len(scores))
+        return (extras, facing, -1.0, -1.0)
+    return (extras, facing, min(scores), sum(scores) / len(scores))

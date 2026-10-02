@@ -61,6 +61,10 @@ inputs:
   stop_when_pass:
     type: boolean
     default: true
+  facing_each_other:
+    type: boolean
+    default: false
+    description: Two people only. Prefer and stop early on results where both heads are turned toward each other (head turn from landmarks, not gaze).
   thresholds:
     type: string
     description: JSON object overriding match, uncertain and min_margin.
