@@ -58,7 +58,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | Submit/poll/download. |
 | `GET /openai/v1/videos` | OpenAI-shaped video | List video jobs *submitted by the calling API key* via this route since the gateway process last restarted (`limit`, `after`, `order`). No durable store -- same statelessness as retrieve/content. |
 | `DELETE /openai/v1/videos/{id}` | OpenAI-shaped video | Cancels a queued/running job (ComfyUI `/api/jobs/{id}/cancel`) before tombstoning it; a `409` means cancellation couldn't be confirmed, not that the job survived. Scoped to the owning API key -- all four of status/content/list/delete are. |
-| `POST /openai/v1/videos/{id}/remix` | OpenAI-shaped video | Stub: always a stable `501` (`video_remix_not_configured`, or `video_remix_not_implemented` if an operator sets `videos.remix_workflow`) -- no remix backend exists on this gateway. |
+| `POST /openai/v1/videos/{id}/remix`, `POST /openai/v1/videos/edits` | OpenAI-shaped video | Remix a completed or uploaded video with a new prompt (Bernini-R). `501 video_remix_not_configured` if `videos.remix_workflow` is unset. See "Remix and character replace". |
 | `GET /v1/status` | Admin | Operational status; requires admin auth. |
 | `POST /anthropic/v1/messages` | Anthropic Messages | Translator over chat completions with SSE streaming; `/v1/messages` remains a legacy convenience route. |
 | `GET /ollama/api/tags` | Ollama-compatible | Model list from configured catalog; `/api/tags` remains a convenience route. |
@@ -514,18 +514,88 @@ curl -s -X DELETE "http://127.0.0.1:5000/v1/videos/$VIDEO_ID" \
   -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
 ```
 
-Remix is a stub — no backend exists for it on this gateway yet. It always
-returns a stable `501`:
+### Remix and character replace
+
+Two workflows take a source video as input. Both need the Wan models and
+ComfyUI nodes on this host (`video-bernini-r-remix`, `video-scail-2-replace`).
+
+**Remix** follows OpenAI's API. `POST /v1/videos/{video_id}/remix` takes
+`{"prompt": ...}` and returns a new video job with `remixed_from_video_id` set
+to the source. The source must be a completed video of the same API key. It runs
+Bernini-R (Wan 2.2 14B, Q4_K_M). The edit is approximate, not frame-exact: use
+prompts like "Replace the beach with a snowy mountain. Keep the dog and its
+motion unchanged."
 
 ```bash
 curl -s -X POST "http://127.0.0.1:5000/v1/videos/$VIDEO_ID/remix" \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
-# {"error": {"message": "...", "type": "invalid_request_error", "code": "video_remix_not_configured"}}
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" -H "Content-Type: application/json" \
+  -d '{"prompt": "Replace the beach with a snowy mountain at golden hour. Keep the dog unchanged."}'
 ```
 
-Set `videos.remix_workflow` in `proxy_config.yml` to change the error code to
-`video_remix_not_implemented` — this does not enable remix, it only moves the
-config surface a future implementation would land on.
+```python
+video = client.videos.remix(video_id, prompt="Make it snowy. Keep the dog unchanged.")
+video = client.videos.poll(video.id)
+client.videos.download_content(video.id).write_to_file("remix.mp4")
+```
+
+To remix a clip that is not a gateway video, use OpenAI's edit route,
+`POST /v1/videos/edits`: `client.videos.edit(prompt=..., video=open("clip.mp4", "rb"))`.
+Over JSON, `video` can also be `{"id": "video_..."}` (this sets
+`remixed_from_video_id`). An upload gives `remixed_from_video_id: null`. The same
+upload also works on `POST /v1/videos` with `model: "video-remix"` and
+`extensions.com.vividfish.workflow.source_video` set to a video id, an http(s) URL
+or a `data:video/mp4;base64,...` URI.
+
+Optional gateway fields on remix and edit: `seed`, `seconds`, `size`, `negative_prompt`,
+and `model`. Without `model` the resource reports `"model": "video-remix"` (OpenAI reports
+the source's model); `vivid_fish_resolved_model` is always `video-bernini-r-remix`.
+Output keeps the source frame rate and audio. `seconds` defaults to the source length, up to
+3.4 s, and may not exceed the source length; the maximum is 4 s, 832x480 (4k+1 frames).
+Measured on the 3090: 81 frames at 832x480 = 462 s warm.
+
+**Character replace** has no OpenAI equivalent, so it is a gateway workflow on
+`POST /v1/videos` with `model: "character-replace"` (also `scail-2`). A reference
+character image takes over the person in a driving video, with the driving
+video's motion and scene (SCAIL-2, Q4_K_M, SAM 3.1 tracking). Inputs go in
+`extensions.com.vividfish.workflow`:
+
+| Input | Required | Meaning |
+|---|---|---|
+| `source_video` | yes | The driving video: `{"video_id": "video_..."}` (or `"video_..."`), an http(s) URL, or a `data:video/*` URI. |
+| `reference_image` | yes | The character: a data URI, URL, base64, or `{"asset_id": "img_..."}`. |
+| `source_subject` | no | SAM 3 text prompt for the person to replace in the video. Default `person`. |
+| `reference_subject` | no | SAM 3 text prompt for the character in the image. Default `person`. |
+
+`prompt` describes the character in the scene. One 81-frame segment is rendered
+(832x448, about 3.4 s at 24 fps); longer driving videos use their first 81 frames and a
+source with fewer frames gives a shorter clip. Measured on the 3090: 303 s warm.
+Name the subjects when several people appear ("man in gray hoodie", "woman"): the default
+`person` can pick the wrong one.
+
+```python
+import base64
+ref = "data:image/png;base64," + base64.b64encode(open("character.png", "rb").read()).decode()
+video = client.videos.create_and_poll(
+    model="character-replace",
+    prompt="A young woman in a bright red raincoat walks toward the camera, waving.",
+    extra_body={"extensions": {"com.vividfish.workflow": {
+        "source_video": {"video_id": driving_video.id},
+        "reference_image": ref,
+        "source_subject": "man in gray hoodie",
+        "reference_subject": "woman",
+    }}},
+)
+```
+
+The OpenAI Python SDK sends `extra_body` on `videos.create` as bracketed multipart
+fields (`extensions[com.vividfish.workflow][source_video][video_id]`); the gateway
+rebuilds them, and converts numeric strings to the manifest's types.
+
+Both jobs use the normal video resource: `queued` to `in_progress` to `completed`
+or `failed`, `GET /v1/videos/{id}/content` returns 404 `video_not_ready` until done.
+`model` echoes what you sent. Errors: 400 for a missing or unreadable source, a missing
+reference image, or `seconds` longer than the source; 404 for a video id that is not yours;
+501 `video_remix_not_configured` if `videos.remix_workflow` is unset.
 
 ControlNet is not ready on the current local system. The audit exists, but
 operators should not advertise or send ControlNet controls until a real
@@ -944,6 +1014,8 @@ an exact model or settings. Unknown names pass through unchanged.
 | Video | `video` | `video-ltx-2.5-t2v`; `input_reference` switches to image-to-video | `sora-2`, `sora-2-pro`, `sora*` |
 | | `video-fast` | `video-ltx-2.5-t2v` (same graph as `video`) | |
 | | `video-long` | `video-ltx-2.5-long` (2-50 s) | |
+| | `video-remix` | `video-bernini-r-remix`; needs `extensions...source_video`; also what `/v1/videos/{id}/remix` runs | |
+| | `character-replace` | `video-scail-2-replace`; needs `extensions...source_video` and `reference_image` | |
 | TTS | `tts` | OmniVoice (OpenAI voice names are fixed cloned identities) | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
 | | `tts-realtime` | Supertonic (audio.cpp, GPU0), then OmniVoice | none (point `tts-1` here to make it the fast tier) |
 | | `tts-quality` | OmniVoice first until the listening test; Kokoro is the second candidate | `tts-1-hd` |
