@@ -1,0 +1,166 @@
+{
+    "_meta": {
+        "name": "qwen-image-2.1-identity",
+        "description": "Gateway-composed identity scene: Qwen-Image 2.1 multi-reference edit with up to six tagged reference images (image 1 is the canvas/style photo, the rest are per-person head references). Reference images use the dotted Autogrow keys images.image_N; unused slots are pruned by the composer. Node 7 prompt, node 8 seed.",
+        "prompt_node": "7",
+        "seed_node": "8"
+    },
+    "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+            "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+            "weight_dtype": "default"
+        }
+    },
+    "2": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+            "clip_name": "qwen3vl_8b_w4a8.safetensors",
+            "type": "qwen_image",
+            "device": "default"
+        }
+    },
+    "3": {
+        "class_type": "VAELoader",
+        "inputs": {
+            "vae_name": "texture_fix_vae_for_qwen_image_2.1_bf16.safetensors"
+        }
+    },
+    "5": {
+        "class_type": "QwenImage21Cache",
+        "inputs": {
+            "model": [
+                "1",
+                0
+            ],
+            "device": "auto",
+            "dtype": "default"
+        }
+    },
+    "L1": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "slot1.png"
+        }
+    },
+    "L2": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "slot2.png"
+        }
+    },
+    "L3": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "slot3.png"
+        }
+    },
+    "L4": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "slot4.png"
+        }
+    },
+    "L5": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "slot5.png"
+        }
+    },
+    "L6": {
+        "class_type": "LoadImage",
+        "inputs": {
+            "image": "slot6.png"
+        }
+    },
+    "7": {
+        "class_type": "TextEncodeQwenImage21",
+        "inputs": {
+            "clip": [
+                "2",
+                0
+            ],
+            "prompt": "identity scene",
+            "negative_prompt": "",
+            "resolution": 1536,
+            "vae": [
+                "3",
+                0
+            ],
+            "images.image_1": [
+                "L1",
+                0
+            ],
+            "images.image_2": [
+                "L2",
+                0
+            ],
+            "images.image_3": [
+                "L3",
+                0
+            ],
+            "images.image_4": [
+                "L4",
+                0
+            ],
+            "images.image_5": [
+                "L5",
+                0
+            ],
+            "images.image_6": [
+                "L6",
+                0
+            ]
+        }
+    },
+    "8": {
+        "class_type": "KSampler",
+        "inputs": {
+            "model": [
+                "5",
+                0
+            ],
+            "seed": 0,
+            "steps": 25,
+            "cfg": 1.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "positive": [
+                "7",
+                0
+            ],
+            "negative": [
+                "7",
+                1
+            ],
+            "latent_image": [
+                "7",
+                2
+            ],
+            "denoise": 1.0
+        }
+    },
+    "9": {
+        "class_type": "VAEDecode",
+        "inputs": {
+            "samples": [
+                "8",
+                0
+            ],
+            "vae": [
+                "3",
+                0
+            ]
+        }
+    },
+    "10": {
+        "class_type": "SaveImage",
+        "inputs": {
+            "images": [
+                "9",
+                0
+            ],
+            "filename_prefix": "image-identity"
+        }
+    }
+}

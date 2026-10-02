@@ -1,0 +1,290 @@
+"""Objective likeness check: do the faces in an image match reference faces?
+
+Pure module. A face sidecar (``services/face-service``) detects faces and
+returns ArcFace embeddings; this module turns those into per-person scores.
+
+Scoring rules, all verified against real data in ``docs/IDENTITY_LIKENESS.md``:
+
+* The score is the cosine similarity of L2-normalised embeddings, averaged over
+  the recognisers that were run (``buffalo_l`` and ``antelopev2`` by default).
+* Each reference person is matched to exactly one candidate face by the
+  assignment that maximises the summed score, so two people can never claim the
+  same output face.
+* ``margin`` is the score minus the best score the same candidate face reaches
+  against any *other* reference person. A face that looks like everybody has
+  no identity, whatever its absolute score.
+* Infant faces are scored but flagged ``reliability: "low"``: ArcFace-class
+  recognisers are weak on infants, so the score only ranks candidates.
+"""
+
+from __future__ import annotations
+
+import itertools
+import math
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Sequence
+
+DEFAULT_MODELS: tuple[str, ...] = ("buffalo_l", "antelopev2")
+
+# Verdict bands on the mean cosine similarity. Calibrated on LFW pairs and on
+# real family photos (see docs/IDENTITY_LIKENESS.md); override through
+# ``thresholds`` when a client has its own data.
+DEFAULT_THRESHOLDS: dict[str, float] = {
+    "match": 0.45,       # at or above: the same person
+    "uncertain": 0.30,   # between uncertain and match: needs a human look
+    "min_margin": 0.10,  # a match must beat every other reference person by this much
+}
+
+INFANT_MAX_AGE = 3        # estimated age at or below this flags low reliability
+SMALL_FACE_PX = 48        # a face narrower than this carries little identity signal
+LOW_DET_SCORE = 0.6       # a shaky detection is not a trustworthy crop
+
+MAX_PEOPLE = 8            # assignment is brute-forced; keep the search space small
+
+
+class LikenessError(ValueError):
+    """The request cannot be scored (no faces, bad box, too many people)."""
+
+
+@dataclass(frozen=True)
+class FaceRecord:
+    bbox: tuple[float, float, float, float]
+    det_score: float
+    age: int | None
+    embeddings: Mapping[str, tuple[float, ...]]
+    gender: str | None = None
+
+    @property
+    def width(self) -> float:
+        return self.bbox[2] - self.bbox[0]
+
+
+@dataclass(frozen=True)
+class Person:
+    label: str
+    faces: tuple[FaceRecord, ...]  # one or more reference faces of this person
+    infant: bool | None = None     # caller override of the age-based infant flag
+
+    def is_infant(self) -> bool:
+        if self.infant is not None:
+            return self.infant
+        ages = [f.age for f in self.faces if f.age is not None]
+        return bool(ages) and min(ages) <= INFANT_MAX_AGE
+
+
+def face_from_service(item: Mapping[str, Any], model: str) -> FaceRecord:
+    bbox = item["bbox"]
+    return FaceRecord(
+        bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
+        det_score=float(item.get("det_score", 0.0)),
+        age=item.get("age"),
+        embeddings={model: tuple(float(v) for v in item["embedding"])},
+        gender=item.get("gender"),
+    )
+
+
+def merge_models(per_model: Mapping[str, Sequence[Mapping[str, Any]]]) -> list[FaceRecord]:
+    """Join the per-model detections of one image into one record per face.
+
+    The detector is the same SCRFD weights in both packs, so boxes line up; a
+    face is joined to the other model's box with the highest overlap.
+    """
+    models = list(per_model)
+    if not models:
+        return []
+    base = models[0]
+    out: list[FaceRecord] = []
+    for item in per_model[base]:
+        embeddings = {base: tuple(float(v) for v in item["embedding"])}
+        for other in models[1:]:
+            best, best_iou = None, 0.3
+            for cand in per_model[other]:
+                overlap = _iou(item["bbox"], cand["bbox"])
+                if overlap > best_iou:
+                    best, best_iou = cand, overlap
+            if best is not None:
+                embeddings[other] = tuple(float(v) for v in best["embedding"])
+        bbox = item["bbox"]
+        out.append(FaceRecord(
+            bbox=(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
+            det_score=float(item.get("det_score", 0.0)),
+            age=item.get("age"),
+            embeddings=embeddings,
+            gender=item.get("gender"),
+        ))
+    return out
+
+
+def _iou(a: Sequence[float], b: Sequence[float]) -> float:
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+    x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def cosine(a: Sequence[float], b: Sequence[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def face_scores(person: Person, face: FaceRecord, models: Sequence[str]) -> dict[str, float]:
+    """Best cosine over the person's reference faces, per model."""
+    scores: dict[str, float] = {}
+    for model in models:
+        values = [
+            cosine(ref.embeddings[model], face.embeddings[model])
+            for ref in person.faces
+            if model in ref.embeddings and model in face.embeddings
+        ]
+        if values:
+            scores[model] = max(values)
+    return scores
+
+
+def _mean(scores: Mapping[str, float]) -> float:
+    return sum(scores.values()) / len(scores) if scores else -1.0
+
+
+def _assign(matrix: list[list[float]]) -> list[int | None]:
+    """Row i -> column, maximising the total. Rows beyond the columns get None."""
+    rows, cols = len(matrix), len(matrix[0]) if matrix else 0
+    if not rows or not cols:
+        return [None] * rows
+    best_total, best = -math.inf, [None] * rows
+    if rows <= cols:
+        for chosen in itertools.permutations(range(cols), rows):
+            total = sum(matrix[r][c] for r, c in enumerate(chosen))
+            if total > best_total:
+                best_total, best = total, list(chosen)
+    else:
+        for chosen_rows in itertools.permutations(range(rows), cols):
+            total = sum(matrix[r][c] for c, r in enumerate(chosen_rows))
+            if total > best_total:
+                best_total = total
+                best = [None] * rows
+                for c, r in enumerate(chosen_rows):
+                    best[r] = c
+    return best
+
+
+def check_likeness(
+    people: Sequence[Person],
+    candidate_faces: Sequence[FaceRecord],
+    *,
+    models: Sequence[str] = DEFAULT_MODELS,
+    thresholds: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
+    """Score ``candidate_faces`` against the reference ``people``."""
+    if not people:
+        raise LikenessError("at least one reference person is required")
+    if len(people) > MAX_PEOPLE:
+        raise LikenessError(f"at most {MAX_PEOPLE} reference people are supported")
+    limits = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    models = list(models)
+
+    matrix = [
+        [_mean(face_scores(person, face, models)) for face in candidate_faces]
+        for person in people
+    ]
+    assignment = _assign(matrix)
+
+    results: list[dict[str, Any]] = []
+    for index, person in enumerate(people):
+        column = assignment[index]
+        notes: list[str] = []
+        entry: dict[str, Any] = {
+            "label": person.label,
+            "reference_faces": len(person.faces),
+            "infant": person.is_infant(),
+            "reliability": "low" if person.is_infant() else "normal",
+        }
+        if person.is_infant():
+            notes.append(
+                "infant face: ArcFace-class recognisers are weak on infants; "
+                "use the score to rank candidates and check by eye"
+            )
+        if column is None:
+            entry.update(match=None, verdict="missing", meets_threshold=False)
+            notes.append("no candidate face left for this person")
+            entry["notes"] = notes
+            results.append(entry)
+            continue
+        face = candidate_faces[column]
+        scores = face_scores(person, face, models)
+        score = _mean(scores)
+        others = [matrix[o][column] for o in range(len(people)) if o != index]
+        margin = score - max(others) if others else None
+        if face.width < SMALL_FACE_PX:
+            notes.append(f"candidate face is only {face.width:.0f}px wide; the score is unreliable")
+        if face.det_score < LOW_DET_SCORE:
+            notes.append(f"weak face detection (score {face.det_score:.2f})")
+        verdict = _verdict(score, margin, limits)
+        entry["meets_threshold"] = verdict == "match"
+        if verdict == "match" and entry["reliability"] == "low":
+            verdict = "uncertain"
+            notes.append("a match on an infant face is downgraded to uncertain")
+        entry.update(
+            match={
+                "candidate_face": column,
+                "bbox": list(face.bbox),
+                "scores": {k: round(v, 4) for k, v in scores.items()},
+                "score": round(score, 4),
+                "margin": None if margin is None else round(margin, 4),
+            },
+            verdict=verdict,
+            notes=notes,
+        )
+        results.append(entry)
+
+    return {
+        "object": "likeness.check",
+        "models": models,
+        "thresholds": limits,
+        "candidate_faces": [
+            {"bbox": list(f.bbox), "det_score": round(f.det_score, 4), "age": f.age}
+            for f in candidate_faces
+        ],
+        "people": results,
+        "overall": _overall(results),
+    }
+
+
+def _verdict(score: float, margin: float | None, limits: Mapping[str, float]) -> str:
+    if score >= limits["match"] and (margin is None or margin >= limits["min_margin"]):
+        return "match"
+    if score >= limits["uncertain"]:
+        return "uncertain"
+    return "mismatch"
+
+
+def _overall(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    verdicts = [r["verdict"] for r in results]
+    if all(v == "match" for v in verdicts):
+        status = "pass"
+    elif any(v in ("mismatch", "missing") for v in verdicts):
+        status = "fail"
+    else:
+        status = "review"
+    scores = [r["match"]["score"] for r in results if r.get("match")]
+    return {
+        "status": status,
+        "all_meet_threshold": all(r.get("meets_threshold") for r in results),
+        "min_score": min(scores) if scores else None,
+        "mean_score": round(sum(scores) / len(scores), 4) if scores else None,
+        "needs_human_check": any(r.get("reliability") == "low" for r in results) or status != "pass",
+    }
+
+
+def rank_key(report: Mapping[str, Any]) -> tuple[float, float]:
+    """Sort key for choosing the best of several candidates (higher is better).
+
+    Worst person first: one wrong face outweighs a great second face.
+    """
+    people = report.get("people") or []
+    scores = [p["match"]["score"] if p.get("match") else -1.0 for p in people]
+    if not scores:
+        return (-1.0, -1.0)
+    return (min(scores), sum(scores) / len(scores))
