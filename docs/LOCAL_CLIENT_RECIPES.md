@@ -674,12 +674,20 @@ video's motion and scene (SCAIL-2, Q4_K_M, SAM 3.1 tracking). Inputs go in
 | `reference_image` | yes | The character: a data URI, URL, base64, or `{"asset_id": "img_..."}`. |
 | `source_subject` | no | SAM 3 text prompt for the person to replace in the video. Default `person`. |
 | `reference_subject` | no | SAM 3 text prompt for the character in the image. Default `person`. |
+| `subject_index` | no | Which tracked person to replace. SAM 3 tracks every match (background people too); they are ordered by size in the first frame they appear: `0` (default) is the largest, `1` the next. A list such as `0,2` replaces several only if you also give a multi-person reference; leave it at one index. |
+| `source_point_x`, `source_point_y` | no | A point on the person to replace in the FIRST frame, as 0-1 fractions from the top left. SAM 3 segments that point and tracks only that person. Most reliable when several people are in the clip; it overrides `subject_index`. |
+| `reference_fit` | no | Default `true`. Cuts the character out of the full reference image, scales it to the height of the replaced person in the first frame and places it at that person's position on a grey canvas, then uses that as the reference. Set `false` to send the image as is (it is then centre-cropped to 832x448). |
 
 `prompt` describes the character in the scene. One 81-frame segment is rendered
 (832x448, about 3.4 s at 24 fps); longer driving videos use their first 81 frames and a
 source with fewer frames gives a shorter clip. Measured on the 3090: 303 s warm.
-Name the subjects when several people appear ("man in gray hoodie", "woman"): the default
-`person` can pick the wrong one.
+Only one person is replaced. With several people in the clip, name the person by position
+(`source_point_x`/`source_point_y`) or by order (`subject_index`); text names such as "man in gray hoodie"
+still track every match and the largest one wins. When more than one person was tracked and you did
+not choose, the finished video has `vivid_fish_warnings` saying how many were tracked and how to choose.
+Measured on a clip with two men and a crowd: the old graph (reference centre-cropped, all tracked people
+masked) drew a large extra woman and left the man; a point on the man plus `reference_fit` replaced him
+and kept the other man. A reference with the whole character in frame (head to feet) works best.
 
 ```python
 import base64
