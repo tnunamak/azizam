@@ -228,6 +228,36 @@ class GraphTests(unittest.TestCase):
         self.assertIsNone(ve.segment_of_node(built.units, "unet"))
 
 
+class ProgressOrderTests(unittest.IsolatedAsyncioTestCase):
+    """ComfyUI runs a later segment's text encode before an earlier segment's
+    sampler. Progress and the finished-segment count must not jump for it."""
+
+    async def test_a_later_segments_encode_does_not_move_progress(self) -> None:
+        built = h3.build_chain_graph(_spec(_plan([("a", 5), ("b", 5)])))
+        self.assertIsNone(ve.segment_of_node(built.units, "s1_cond", progress_only=True))
+        self.assertEqual(ve.segment_of_node(built.units, "s1_cond"), 1)  # errors still name the segment
+        pid = "pppppppp-0000-0000-0000-000000000001"
+        graph = built.graph
+        with patch.dict(proxy._video_chain_units, {pid: built.units}), \
+                patch.dict(proxy._video_workflows, {pid: graph}), \
+                patch.dict(proxy._video_job_records, {pid: {"chain": {"segments": 2, "units": built.units}}}):
+            proxy._video_progress.pop(pid, None)
+            await proxy._record_event({"type": "executing", "data": {"prompt_id": pid, "node": "s0_cond"}})
+            await proxy._record_event({"type": "executing", "data": {"prompt_id": pid, "node": "s1_cond"}})
+            entry = proxy._video_progress[pid]
+            self.assertLessEqual(entry["percent"], 5)
+            await proxy._record_event({"type": "progress", "data": {"prompt_id": pid, "node": "s0_sample", "value": 4, "max": 8}})
+            half = proxy._video_progress[pid]["percent"]
+            self.assertGreater(half, 5)
+            self.assertLess(half, 48)
+            payload = proxy._openai_video_payload(video_id="video_" + pid, prompt_id=pid, status="running", progress=half)
+            self.assertEqual(payload["segments_completed"], 0)
+            await proxy._record_event({"type": "progress", "data": {"prompt_id": pid, "node": "s1_sample", "value": 1, "max": 8}})
+            payload = proxy._openai_video_payload(video_id="video_" + pid, prompt_id=pid, status="running", progress=50)
+            self.assertEqual(payload["segments_completed"], 1)
+            proxy._video_progress.pop(pid, None)
+
+
 class ExtensionGraphTests(unittest.TestCase):
     SOURCE = ve.SourceVideo("s.mp4", 244, FPS, 960, 544, True)
 

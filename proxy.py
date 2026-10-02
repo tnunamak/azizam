@@ -8902,7 +8902,7 @@ def _phase_percent(phase: str, sampler_frac: float) -> int:
 def _video_percent(prompt_id: str, node_id: str | None, phase: str, frac: float) -> int:
     """Overall percent for a node event. A chain job spreads 5..92 over its segments."""
     units = _video_chain_units.get(prompt_id)
-    index = video_extend.segment_of_node(units, str(node_id or "")) if units else None
+    index = video_extend.segment_of_node(units, str(node_id or ""), progress_only=True) if units else None
     if index is None:
         return _phase_percent(phase, frac)
     frac = max(0.0, min(1.0, frac))
@@ -8992,8 +8992,8 @@ def _openai_video_payload(
         if status == "succeeded":
             done = total
         else:
-            node = (_video_progress.get(prompt_id) or {}).get("node")
-            index = video_extend.segment_of_node(chain.get("units") or [], str(node or ""))
+            node = (_video_progress.get(prompt_id) or {}).get("unit_node")
+            index = video_extend.segment_of_node(chain.get("units") or [], str(node or ""), progress_only=True)
             done = index if index is not None else 0
         payload["segments_total"] = total
         payload["segments_completed"] = done
@@ -9021,6 +9021,10 @@ async def _record_event(event: dict) -> None:
         })
 
         wf = _video_workflows.get(prompt_id)
+        units = _video_chain_units.get(prompt_id)
+        event_node = data.get("node") if etype == "executing" else data.get("node") or data.get("node_id")
+        if units and event_node is not None and video_extend.segment_of_node(units, str(event_node), progress_only=True) is not None:
+            entry["unit_node"] = str(event_node)
 
         if etype == "executing":
             node_id = data.get("node")

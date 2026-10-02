@@ -352,10 +352,15 @@ def engine_for(builder: str | None) -> ChainEngine | None:
     return ENGINES.get(str(builder or ""))
 
 
-def segment_of_node(units: Sequence[Mapping[str, str]], node_id: str) -> int | None:
-    """Index of the added-segment unit that owns ``node_id`` (None if shared)."""
+def segment_of_node(units: Sequence[Mapping[str, str]], node_id: str, *, progress_only: bool = False) -> int | None:
+    """Index of the added-segment unit that owns ``node_id`` (None if shared).
+
+    ``progress_only`` matches only a unit's sampler and decoder nodes. ComfyUI
+    may run a later segment's text encode before an earlier segment's sampler,
+    so progress and the finished-segment count must not follow other nodes.
+    """
     for index, unit in enumerate(units):
-        if node_id in unit.values() or node_id.startswith(f"s{index}_"):
+        if node_id in unit.values() or (not progress_only and node_id.startswith(f"s{index}_")):
             return index
     return None
 
