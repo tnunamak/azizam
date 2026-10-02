@@ -82,6 +82,7 @@ from gateway import speech_stream
 from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
+from gateway import a1111_api
 from gateway import mcp_server
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
@@ -13456,6 +13457,18 @@ mcp_server.register_mcp_routes(
         public_base_url=lambda request: _public_base_url(request),
         server_version=str((config.get("proxy") or {}).get("version") or "1"),
         allowed_origins=lambda: [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])],
+    ),
+)
+
+# --- A1111 /sdapi/v1 subset for SillyTavern (gateway/a1111_api.py) ------------
+a1111_api.register_a1111_routes(
+    app,
+    a1111_api.A1111Deps(
+        authenticate=lambda request, path: authenticate_request(request, path),
+        call=_mcp_internal_call,
+        catalog=_mcp_catalog,
+        aliases=lambda: _gateway_aliases_provider(),
+        owner_of=lambda auth: _asset_owner_key(auth if isinstance(auth, AuthContext) else None),
     ),
 )
 
