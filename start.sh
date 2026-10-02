@@ -106,7 +106,21 @@ if [ "${AI_GATEWAY_MANAGE_LITELLM:-true}" != "false" ]; then
             kill "$(cat "$LITELLM_PID_FILE")" >/dev/null 2>&1 || true
         fi
     }
-    trap cleanup EXIT INT TERM
+    trap cleanup EXIT
+
+    # Graceful stop: systemd (KillMode=mixed) sends SIGTERM to this script only.
+    # Forward it to the proxy and wait for uvicorn to finish in-flight
+    # responses BEFORE stopping LiteLLM, which chat requests may still depend
+    # on. systemd's TimeoutStopSec bounds the wait. See docs/ops/SAFE_RESTART.md.
+    PROXY_PID=""
+    stop_proxy() {
+        if [ -n "$PROXY_PID" ] && kill -0 "$PROXY_PID" >/dev/null 2>&1; then
+            kill -TERM "$PROXY_PID" >/dev/null 2>&1 || true
+            wait "$PROXY_PID" >/dev/null 2>&1 || true
+        fi
+        exit 0
+    }
+    trap stop_proxy INT TERM
 
     python3 proxy.py "$@" &
     PROXY_PID=$!
