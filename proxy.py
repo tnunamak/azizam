@@ -4448,6 +4448,8 @@ def _speech_fallback_reason(response: Response) -> str | None:
     code = str(error.get("code") or "")
     if code in {"stt_backend_unavailable", "tts_backend_unavailable"}:
         return "connection_refused"
+    if code == "stt_backend_connection_lost":
+        return "connection_lost"
     if status == 503:
         if code == "backend_unavailable":  # the gateway's own: operator drain carries a `state`, else the unit would not start
             return "unavailable" if error.get("state") else "start_failed"
@@ -4571,6 +4573,11 @@ async def _dispatch_selected_stt_route(
                 response, reason = not_ready, "start_failed"
             if reason is None:
                 break
+            # Chunk attempts that began mean the engine failed part-way through a long file;
+            # the next engine restarts the whole file.
+            chunks_started = int((receipt.metadata.get("stt") or {}).get("attempts_started") or 0)
+            if chunks_started:
+                reason = f"{reason}@chunk{chunks_started}"
             # The engine could not serve this request for a reason another engine may not share.
             # Try the tier's next engine; a 4xx or any other error is the caller's and is returned as is.
             chosen = None
@@ -4792,6 +4799,10 @@ async def proxy_stt_request(
                     raise stt_chunking.SttBackendTimeout("STT backend timed out") from error
                 except httpx.ConnectError as error:
                     raise stt_chunking.SttBackendUnavailable("STT backend is unavailable") from error
+                except httpx.TransportError as error:
+                    # Reset/closed/protocol error after the connection was made: the engine died
+                    # mid-request (typically a GPU out-of-memory kill). Another engine may serve it.
+                    raise stt_chunking.SttBackendConnectionLost("STT backend dropped the connection") from error
 
             async def post_file(path: Path, filename: str, media_type: str) -> stt_chunking.UpstreamResponse:
                 handle = path.open("rb")
@@ -4992,6 +5003,9 @@ async def proxy_stt_request(
         except stt_chunking.SttBackendTimeout:
             owner.report(status="timed_out", reason="idle_timeout")
             return _stt_error("STT request timeout.", status_code=504, code="stt_request_timeout")
+        except stt_chunking.SttBackendConnectionLost:
+            owner.report(status="failed", reason="connect_error")
+            return _stt_error("STT backend dropped the connection.", status_code=502, code="stt_backend_connection_lost")
         except stt_chunking.SttBackendUnavailable:
             owner.report(status="failed", reason="connect_error")
             return _stt_error("STT backend is unavailable.", status_code=502, code="stt_backend_unavailable")

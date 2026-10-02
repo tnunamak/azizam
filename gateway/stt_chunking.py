@@ -144,6 +144,10 @@ class SttBackendUnavailable(SttExecutionError):
     """The selected backend could not accept one direct STT request."""
 
 
+class SttBackendConnectionLost(SttBackendUnavailable):
+    """The backend accepted the request, then dropped the connection (its process died mid-request)."""
+
+
 class SttResponseLimitExceeded(SttExecutionError):
     """A backend or local media utility exceeded its configured output bound."""
 

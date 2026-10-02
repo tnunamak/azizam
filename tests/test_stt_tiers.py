@@ -6,6 +6,7 @@ import asyncio
 import json
 import struct
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -307,3 +308,82 @@ class SttRuntimeFallbackTests(SttCase):
         self.assertEqual([r.url.port for r in seen], [8017, 5092, 8013])
         self.assertEqual(resp.headers["x-vivid-fallback"],
                          "parakeet-gpu->parakeet (busy), parakeet->canary (busy)")
+
+
+class SttMidFileFallbackTests(SttCase):
+    """An engine that dies part-way through a chunked long file hands the whole file to the tier's next engine."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        gpu = self.cfg["backends"]["stt-parakeet-gpu"]
+        gpu["chunking"] = {
+            "enabled": True, "spool_dir": self.tmp.name, "threshold_seconds": 30, "target_seconds": 20,
+            "max_duration_seconds": 600, "max_segments": 8, "min_free_bytes": 1,
+        }
+        self.durations = [75.0]  # the GPU engine's probe sees a long file; the CPU engine's sees a short one
+        from gateway import stt_chunking
+
+        async def probe(*_args, **_kwargs):
+            return stt_chunking.ProbedAudio(self.durations.pop(0) if self.durations else 10.0, 16000, 1)
+
+        async def extract(_source, destination, **_kwargs):
+            Path(destination).write_bytes(b"RIFFchunk")
+
+        for patcher in (
+            patch.object(stt_chunking, "probe_audio", side_effect=probe),
+            patch.object(stt_chunking, "detect_silences", new=unittest.mock.AsyncMock(return_value=[(19, 21), (39, 41), (59, 61)])),
+            patch.object(stt_chunking, "extract_segment", side_effect=extract),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _gpu_dies_on_second_chunk(self, failure):
+        gpu_calls = []
+
+        def handler(request):
+            if request.url.port != 8017:
+                return httpx.Response(200, json={"text": "cpu whole file"})
+            gpu_calls.append(1)
+            if len(gpu_calls) == 1:
+                return httpx.Response(200, json={"text": "first chunk"})
+            return failure(request)
+
+        return self.use_upstream(handler)
+
+    def test_a_dropped_connection_on_a_later_chunk_restarts_the_file_on_the_next_engine(self) -> None:
+        def drop(request):
+            raise httpx.ReadError("connection reset by peer", request=request)
+
+        seen = self._gpu_dies_on_second_chunk(drop)
+        proxy.receipt_store.begin.reset_mock()
+        resp = self._post([("model", "whisper-1")])
+        self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu whole file"), resp.text)
+        self.assertEqual([r.url.port for r in seen], [8017, 8017, 5092])
+        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (connection_lost@chunk2)")
+        receipts = [call.args[0] for call in proxy.receipt_store.begin.call_args_list]
+        self.assertIn("parakeet-gpu->parakeet (connection_lost@chunk2)", receipts[-1].fallback_reasons)
+
+    def test_an_out_of_memory_answer_on_a_later_chunk_falls_back_and_names_the_chunk(self) -> None:
+        seen = self._gpu_dies_on_second_chunk(
+            lambda r: httpx.Response(500, json={"error": {"message": "Failed to allocate Parakeet TDT encoder graph tensors"}})
+        )
+        resp = self._post([("model", "whisper-1")])
+        self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu whole file"), resp.text)
+        self.assertEqual([r.url.port for r in seen], [8017, 8017, 5092])
+        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (gpu_oom@chunk2)")
+
+    def test_a_refused_connection_on_a_later_chunk_falls_back(self) -> None:
+        def refuse(request):
+            raise httpx.ConnectError("refused", request=request)
+
+        self._gpu_dies_on_second_chunk(refuse)
+        resp = self._post([("model", "whisper-1")])
+        self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu whole file"), resp.text)
+        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (connection_refused@chunk2)")
+
+    def test_a_client_error_on_a_later_chunk_does_not_fall_back(self) -> None:
+        seen = self._gpu_dies_on_second_chunk(lambda r: httpx.Response(400, json={"error": {"message": "bad audio"}}))
+        resp = self._post([("model", "whisper-1")])
+        self.assertEqual(resp.status_code, 400)
+        self.assertNotIn("x-vivid-fallback", resp.headers)
+        self.assertEqual([r.url.port for r in seen], [8017, 8017])
