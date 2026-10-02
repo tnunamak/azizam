@@ -140,6 +140,27 @@ class ExtraFaceTests(unittest.TestCase):
         self.assertGreater(likeness.rank_key(crowded), likeness.rank_key(clean))
 
 
+class PoolingTests(unittest.TestCase):
+    def test_best_versus_mean_over_several_reference_photos(self) -> None:
+        person = Person("p", (face(A), face(B)))          # two reference photos, one matches
+        best = likeness.check_likeness([person], [face(A)], pooling="best")
+        mean = likeness.check_likeness([person], [face(A)], pooling="mean")
+        self.assertAlmostEqual(best["people"][0]["match"]["score"], 1.0, places=3)
+        self.assertAlmostEqual(mean["people"][0]["match"]["score"], 0.5, places=3)
+        self.assertEqual(best["people"][0]["match"]["per_reference"], [1.0, 0.0])
+        self.assertEqual(mean["pooling"], "mean")
+
+    def test_unknown_pooling_is_an_error(self) -> None:
+        with self.assertRaises(LikenessError):
+            likeness.check_likeness([Person("p", (face(A),))], [face(A)], pooling="median")
+
+    def test_profile_heads_get_a_note(self) -> None:
+        kps = ((30, 50.0), (90, 50.0), (110, 80.0), (35, 110.0), (85, 110.0))   # nose far past the eyes
+        profile = FaceRecord((0, 0, 120, 120), 0.9, 40, {"buffalo_l": A, "antelopev2": A}, kps=kps)
+        report = likeness.check_likeness([Person("p", (face(A),))], [profile])
+        self.assertTrue(any("profile" in n for n in report["people"][0]["notes"]))
+
+
 class FacingTests(unittest.TestCase):
     @staticmethod
     def posed(x: float, nose_dx: float, vec: tuple[float, ...]) -> FaceRecord:

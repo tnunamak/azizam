@@ -150,8 +150,18 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
-def face_scores(person: Person, face: FaceRecord, models: Sequence[str]) -> dict[str, float]:
-    """Best cosine over the person's reference faces, per model."""
+POOLINGS = ("best", "mean")
+PROFILE_YAW = 0.45   # |yaw| above this is a near-profile head: ArcFace likeness drops sharply
+
+
+def face_scores(
+    person: Person, face: FaceRecord, models: Sequence[str], pooling: str = "best"
+) -> dict[str, float]:
+    """Cosine to the person's reference faces, per model, pooled by ``pooling``.
+
+    ``best`` takes the closest reference photo; ``mean`` averages over all of them.
+    With one reference photo the two are the same.
+    """
     scores: dict[str, float] = {}
     for model in models:
         values = [
@@ -160,8 +170,21 @@ def face_scores(person: Person, face: FaceRecord, models: Sequence[str]) -> dict
             if model in ref.embeddings and model in face.embeddings
         ]
         if values:
-            scores[model] = max(values)
+            scores[model] = max(values) if pooling == "best" else sum(values) / len(values)
     return scores
+
+
+def per_reference_scores(person: Person, face: FaceRecord, models: Sequence[str]) -> list[float]:
+    """Mean-over-models cosine to each reference photo, in the order they were given."""
+    out: list[float] = []
+    for ref in person.faces:
+        values = [
+            cosine(ref.embeddings[m], face.embeddings[m])
+            for m in models
+            if m in ref.embeddings and m in face.embeddings
+        ]
+        out.append(round(sum(values) / len(values), 4) if values else -1.0)
+    return out
 
 
 def _mean(scores: Mapping[str, float]) -> float:
@@ -197,6 +220,7 @@ def check_likeness(
     models: Sequence[str] = DEFAULT_MODELS,
     thresholds: Mapping[str, float] | None = None,
     allow_extra_faces: bool = True,
+    pooling: str = "best",
 ) -> dict[str, Any]:
     """Score ``candidate_faces`` against the reference ``people``.
 
@@ -208,11 +232,13 @@ def check_likeness(
         raise LikenessError("at least one reference person is required")
     if len(people) > MAX_PEOPLE:
         raise LikenessError(f"at most {MAX_PEOPLE} reference people are supported")
+    if pooling not in POOLINGS:
+        raise LikenessError(f"pooling must be one of {', '.join(POOLINGS)}")
     limits = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     models = list(models)
 
     matrix = [
-        [_mean(face_scores(person, face, models)) for face in candidate_faces]
+        [_mean(face_scores(person, face, models, pooling)) for face in candidate_faces]
         for person in people
     ]
     assignment = _assign(matrix)
@@ -239,12 +265,14 @@ def check_likeness(
             results.append(entry)
             continue
         face = candidate_faces[column]
-        scores = face_scores(person, face, models)
+        scores = face_scores(person, face, models, pooling)
         score = _mean(scores)
         others = [matrix[o][column] for o in range(len(people)) if o != index]
         margin = score - max(others) if others else None
         if face.width < SMALL_FACE_PX:
             notes.append(f"candidate face is only {face.width:.0f}px wide; the score is unreliable")
+        if face.yaw is not None and abs(face.yaw) > PROFILE_YAW:
+            notes.append("near-profile head: likeness is much less reliable in profile; ask for a three-quarter view")
         if face.det_score < LOW_DET_SCORE:
             notes.append(f"weak face detection (score {face.det_score:.2f})")
         verdict = _verdict(score, margin, limits)
@@ -260,6 +288,7 @@ def check_likeness(
                 "score": round(score, 4),
                 "margin": None if margin is None else round(margin, 4),
                 "yaw": None if face.yaw is None else round(face.yaw, 3),
+                "per_reference": per_reference_scores(person, face, models),
             },
             verdict=verdict,
             notes=notes,
@@ -284,6 +313,7 @@ def check_likeness(
         "object": "likeness.check",
         "models": models,
         "thresholds": limits,
+        "pooling": pooling,
         "candidate_faces": [
             {"bbox": list(f.bbox), "det_score": round(f.det_score, 4), "age": f.age}
             for f in candidate_faces
