@@ -29,7 +29,6 @@ import asyncio
 import base64
 import binascii
 import json
-import re
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
@@ -38,7 +37,9 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from gateway.workflow_openapi import WORKFLOW_EXTENSION_NAMESPACE
+from gateway.workflow_call import (
+    BuiltRequest, CallError, asset_id_in, build_request, effective_schema, error_from, kind_for, sniff, validate_inputs,
+)
 
 MODERN_VERSION = "2026-07-28"
 LEGACY_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
@@ -67,8 +68,6 @@ MAX_WAIT_SECONDS = 120
 SYNC_TIMEOUT_SECONDS = 300.0
 MAX_ASSET_BYTES = 512 * 1024 * 1024
 
-ASSET_ID_RE = re.compile(r"\b((?:img|aud|vid)_[0-9a-f]{64})\b")
-
 SPEECH_TARGET = "speech"
 SPEECH_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -83,14 +82,6 @@ SPEECH_SCHEMA: dict[str, Any] = {
     "required": ["input"],
     "additionalProperties": False,
 }
-
-
-class ToolError(Exception):
-    """A failure the model can act on. Becomes ``isError: true``, not a protocol error."""
-
-    def __init__(self, message: str, **details: Any) -> None:
-        super().__init__(message)
-        self.details = details
 
 
 @dataclass
@@ -207,210 +198,7 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
-# ------------------------------------------------------------- input handling
-
-
-def _type_error(name: str, value: Any, spec: Mapping[str, Any]) -> str | None:
-    kind = spec.get("type")
-    if kind == "string":
-        if not isinstance(value, str):
-            return f"input {name!r} must be a string"
-    elif kind == "integer":
-        if isinstance(value, bool) or not isinstance(value, int):
-            return f"input {name!r} must be an integer"
-    elif kind == "number":
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return f"input {name!r} must be a number"
-    elif kind == "boolean":
-        if not isinstance(value, bool):
-            return f"input {name!r} must be a boolean"
-    if "enum" in spec and value not in spec["enum"]:
-        return f"input {name!r} must be one of {spec['enum']}"
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if "minimum" in spec and value < spec["minimum"]:
-            return f"input {name!r} must be at least {spec['minimum']}"
-        if "maximum" in spec and value > spec["maximum"]:
-            return f"input {name!r} must be at most {spec['maximum']}"
-    return None
-
-
-def validate_inputs(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> None:
-    """Check ``inputs`` against a flat manifest-derived schema. Raises ToolError."""
-    props = schema.get("properties") or {}
-    problems = [f"unknown input {name!r}" for name in inputs if name not in props]
-    problems += [f"missing required input {name!r}" for name in schema.get("required") or [] if name not in inputs]
-    for name, value in inputs.items():
-        if name in props:
-            problem = _type_error(name, value, props[name])
-            if problem:
-                problems.append(problem)
-    if problems:
-        raise ToolError("; ".join(problems), invalid_inputs=problems, valid_inputs=sorted(props))
-
-
-def effective_schema(entry: Mapping[str, Any]) -> dict[str, Any]:
-    """Manifest inputs plus the route-owned fields (``n``, ``size``, ``seconds``)."""
-    base = entry.get("inputs") or {"type": "object", "properties": {}}
-    props = dict(base.get("properties") or {})
-    for extra in entry.get("route_inputs") or []:
-        spec = {k: v for k, v in extra.items() if k in ("type", "minimum", "maximum", "description", "enum")}
-        props.setdefault(extra["name"], spec)
-    schema = {k: v for k, v in base.items() if k not in ("x-vividfish-workflow-id", "description")}
-    schema["properties"] = props
-    return schema
-
-
-def _sniff(data: bytes, hint: str | None = None) -> tuple[str, str]:
-    """(media type, suffix) from magic bytes, falling back to ``hint``."""
-    if data[:8] == b"\x89PNG\r\n\x1a\n":
-        return "image/png", ".png"
-    if data[:3] == b"\xff\xd8\xff":
-        return "image/jpeg", ".jpg"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp", ".webp"
-    if data[4:8] == b"ftyp":
-        return "video/mp4", ".mp4"
-    if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
-        return "audio/wav", ".wav"
-    if data[:3] == b"ID3" or data[:2] in (b"\xff\xfb", b"\xff\xf3"):
-        return "audio/mpeg", ".mp3"
-    if data[:4] == b"fLaC":
-        return "audio/flac", ".flac"
-    if data[:4] == b"OggS":
-        return "audio/ogg", ".ogg"
-    hint = (hint or "").split(";")[0].strip().lower()
-    return hint or "application/octet-stream", {
-        "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "video/mp4": ".mp4",
-        "video/webm": ".webm", "audio/wav": ".wav", "audio/mpeg": ".mp3", "audio/flac": ".flac",
-        "audio/ogg": ".ogg", "audio/mp4": ".m4a", "audio/aac": ".aac", "audio/opus": ".ogg",
-    }.get(hint, ".bin")
-
-
-def _kind_for(media_type: str) -> str:
-    return {"image": "img", "audio": "aud", "video": "vid"}.get(media_type.split("/")[0], "")
-
-
-def _asset_id_in(value: str) -> str | None:
-    match = ASSET_ID_RE.search(value)
-    return match.group(1) if match else None
-
-
-async def _asset_bytes(deps: McpDeps, request: Request, auth: Any, name: str, value: Any) -> tuple[bytes, str]:
-    """Bytes for an asset input: a data URI or a gateway asset id or signed URL."""
-    if not isinstance(value, str) or not value:
-        raise ToolError(f"input {name!r} must be a data URI or an asset id from an earlier result")
-    if value.startswith("data:"):
-        head, _, payload = value.partition(",")
-        try:
-            raw = base64.b64decode(payload, validate=True) if ";base64" in head else payload.encode()
-        except (binascii.Error, ValueError):
-            raise ToolError(f"input {name!r} is not a valid base64 data URI") from None
-        return raw, head[5:].split(";")[0]
-    asset_id = _asset_id_in(value)
-    if asset_id is None:
-        raise ToolError(
-            f"input {name!r}: only data URIs and gateway asset ids or signed asset URLs are accepted; "
-            "this adapter does not fetch external URLs"
-        )
-    content = await asyncio.to_thread(deps.read_asset, request, auth, asset_id)
-    if content is None:
-        raise ToolError(f"input {name!r}: asset {asset_id} was not found for this key (it may have expired)")
-    return content, ""
-
-
-# ------------------------------------------------------------ request building
-
-
-@dataclass
-class BuiltRequest:
-    method: str
-    path: str
-    json: dict[str, Any] | None = None
-    data: dict[str, str] | None = None
-    files: dict[str, tuple[str, bytes, str]] | None = None
-
-
-def _combine_size(inputs: Mapping[str, Any], mapping: Mapping[str, Any], body: dict[str, Any]) -> None:
-    groups: dict[str, tuple[str, list[str]]] = {}
-    for name, m in mapping.items():
-        if m.get("combine") and name in inputs:
-            groups[m["field"]] = (m["field"], list(m["combine"]))
-    for field, (_, parts) in groups.items():
-        missing = [p for p in parts if p not in inputs]
-        if missing:
-            raise ToolError(f"give {' and '.join(parts)} together; missing {missing}")
-        body[field] = "x".join(str(int(inputs[p])) for p in parts)
-
-
-async def build_request(
-    deps: McpDeps, request: Request, auth: Any, entry: Mapping[str, Any], route: Mapping[str, Any],
-    inputs: Mapping[str, Any], *, wrap_intent: str | None,
-) -> BuiltRequest:
-    """Turn typed inputs into the request the core route expects, per the manifest field map."""
-    mapping: dict[str, Any] = dict(route.get("fields") or {})
-    for extra in entry.get("route_inputs") or []:
-        mapping.setdefault(extra["name"], {"in": extra.get("in", "body"), "field": extra.get("field", extra["name"])})
-    multipart = route.get("content_type", "").startswith("multipart")
-    body: dict[str, Any] = {}
-    ext: dict[str, Any] = {}
-    files: dict[str, tuple[str, bytes, str]] = {}
-    consumed: set[str] = set()
-    for name, value in inputs.items():
-        m = mapping.get(name)
-        if m is None:
-            raise ToolError(f"input {name!r} is not available on the {route.get('method', 'POST')} {route.get('path')} route")
-        where = m.get("in")
-        if where == "none":
-            raise ToolError(f"input {name!r} is managed by the gateway on this route and cannot be set")
-        if m.get("combine"):
-            consumed.add(name)
-            continue
-        if where in ("file", "file+extension"):
-            raw, hint = await _asset_bytes(deps, request, auth, name, value)
-            media_type, suffix = _sniff(raw, hint)
-            part = m["field"] if where == "file" else name
-            files[part] = (f"{name}{suffix}", raw, media_type)
-            if where == "file+extension":
-                ext[m["field"]] = {"multipart_field": part}
-        elif where == "extension":
-            ext[m["field"]] = value
-        elif where in ("body", "form"):
-            if isinstance(value, str) and m["field"] == "input_reference":
-                value = _asset_id_in(value) or value
-            body[m["field"]] = value
-        else:
-            raise ToolError(f"input {name!r} has an unsupported field mapping: {where!r}")
-    _combine_size(inputs, mapping, body)
-    model = route.get("model")
-    if model:
-        body = {"model": model, **body}
-    if entry["intent"].startswith("image."):
-        body.setdefault("response_format", "url")
-    if ext:
-        body["extensions"] = {WORKFLOW_EXTENSION_NAMESPACE: ext}
-
-    if wrap_intent:  # media-job submit
-        return BuiltRequest("POST", route["path"], json={"intent": wrap_intent, "request": body})
-    if multipart:
-        data = {k: v if isinstance(v, str) else json.dumps(v) for k, v in body.items()}
-        return BuiltRequest(route.get("method", "POST"), route["path"], data=data, files=files)
-    return BuiltRequest(route.get("method", "POST"), route["path"], json=body)
-
-
 # ------------------------------------------------------------------ result I/O
-
-
-def _error_from(resp: Any) -> ToolError:
-    try:
-        payload = resp.json()
-    except Exception:  # noqa: BLE001
-        payload = {}
-    err = payload.get("error") if isinstance(payload, Mapping) else None
-    if isinstance(err, Mapping):
-        message = str(err.get("message") or err.get("code") or "request failed")
-        return ToolError(message, http_status=resp.status_code, code=err.get("code"), type=err.get("type"))
-    detail = payload.get("detail") if isinstance(payload, Mapping) else None
-    return ToolError(str(detail or f"gateway returned HTTP {resp.status_code}"), http_status=resp.status_code)
 
 
 def _asset(item: Mapping[str, Any], name: str) -> dict[str, Any]:
@@ -433,22 +221,22 @@ async def _assets_from_response(deps: McpDeps, request: Request, auth: Any, resp
                 name = f"{stem}-{index + 1}"
                 if item.get("b64_json"):
                     raw = base64.b64decode(item["b64_json"])
-                    media_type, suffix = _sniff(raw)
-                    stored = await asyncio.to_thread(deps.store_asset, request, auth, raw, _kind_for(media_type) or "img", suffix)
+                    media_type, suffix = sniff(raw)
+                    stored = await asyncio.to_thread(deps.store_asset, request, auth, raw, kind_for(media_type) or "img", suffix)
                     assets.append(_asset(stored, name + suffix))
                 elif item.get("url") or item.get("content_url"):
-                    asset_id = item.get("asset_id") or _asset_id_in(str(item.get("url") or item.get("content_url")))
+                    asset_id = item.get("asset_id") or asset_id_in(str(item.get("url") or item.get("content_url")))
                     assets.append(_asset({**item, "url": item.get("url") or item.get("content_url"), "asset_id": asset_id}, name))
             if assets:
                 return assets, None
         return [], payload
     raw = resp.content
     if len(raw) > MAX_ASSET_BYTES:
-        raise ToolError("the result is larger than this adapter will hand out", size_bytes=len(raw))
-    media_type, suffix = _sniff(raw, ctype)
-    kind = _kind_for(media_type)
+        raise CallError("the result is larger than this adapter will hand out", size_bytes=len(raw))
+    media_type, suffix = sniff(raw, ctype)
+    kind = kind_for(media_type)
     if not kind:
-        raise ToolError(f"the gateway returned an unexpected content type: {ctype or 'none'}")
+        raise CallError(f"the gateway returned an unexpected content type: {ctype or 'none'}")
     stored = await asyncio.to_thread(deps.store_asset, request, auth, raw, kind, suffix)
     return [_asset(stored, stem + suffix)], None
 
@@ -514,7 +302,7 @@ class Tools:
                 return (0 if accepts else 1, 0 if entry["intent"].endswith(".generate") else 1)
             return "workflow", min(matches, key=rank), None
         names = sorted({e["short_id"] for e in entries} | {a for e in entries for a in e.get("aliases") or []})
-        raise ToolError(f"unknown target {target!r}; call `capabilities` to list valid targets",
+        raise CallError(f"unknown target {target!r}; call `capabilities` to list valid targets",
                         targets=names + [SPEECH_TARGET] + self._speech_names())
 
     # -- capabilities -----------------------------------------------------
@@ -573,7 +361,7 @@ class Tools:
         execution = entry.get("execution") or {}
         if requested in ("sync", "async"):
             if not execution.get(requested):
-                raise ToolError(f"mode {requested!r} is not available for {entry['short_id']}; "
+                raise CallError(f"mode {requested!r} is not available for {entry['short_id']}; "
                                 f"available: {[m for m in ('sync', 'async') if execution.get(m)]}")
             return requested
         return execution.get("recommended") or ("sync" if execution.get("sync") else "async")
@@ -583,13 +371,13 @@ class Tools:
     async def run(self, args: Mapping[str, Any]) -> dict[str, Any]:
         target = args.get("target")
         if not isinstance(target, str) or not target:
-            raise ToolError("`target` is required")
+            raise CallError("`target` is required")
         inputs = args.get("inputs") or {}
         if not isinstance(inputs, Mapping):
-            raise ToolError("`inputs` must be an object")
+            raise CallError("`inputs` must be an object")
         mode = args.get("mode") or "auto"
         if mode not in ("auto", "sync", "async"):
-            raise ToolError("`mode` must be auto, sync or async")
+            raise CallError("`mode` must be auto, sync or async")
         wait = self._wait(args.get("wait_seconds"), DEFAULT_WAIT_SECONDS)
         kind, entry, speech_model = self.resolve(target, inputs)
         if kind == "speech":
@@ -601,23 +389,23 @@ class Tools:
         stem = entry["short_id"]
         if chosen == "sync":
             route = execution["sync"]
-            built = await build_request(self.deps, self.request, self.auth, entry, route, inputs, wrap_intent=None)
+            built = await build_request(self.deps.read_asset, self.request, self.auth, entry, route, inputs, wrap_intent=None)
             resp = await self._send(built, SYNC_TIMEOUT_SECONDS)
             if resp.status_code >= 400:
-                raise _error_from(resp)
+                raise error_from(resp)
             assets, result = await _assets_from_response(self.deps, self.request, self.auth, resp, stem)
             return self._done(entry, assets, result)
         route = execution["async"]
         wrap = route["submit"]["body"]["intent"] if route["kind"] == "media_job" else None
         submit = {**route["submit"], "fields": route["fields"], "content_type": route["submit"].get("content_type", "")}
-        built = await build_request(self.deps, self.request, self.auth, entry, submit, inputs, wrap_intent=wrap)
+        built = await build_request(self.deps.read_asset, self.request, self.auth, entry, submit, inputs, wrap_intent=wrap)
         resp = await self._send(built, 60.0)
         if resp.status_code >= 400:
-            raise _error_from(resp)
+            raise error_from(resp)
         payload = resp.json()
         job_id = payload.get("job_id") or payload.get("id")
         if not job_id:
-            raise ToolError("the gateway accepted the job but returned no id")
+            raise CallError("the gateway accepted the job but returned no id")
         return await self._await(str(job_id), wait, entry)
 
     async def _speech(self, inputs: Mapping[str, Any], model: str | None) -> dict[str, Any]:
@@ -627,7 +415,7 @@ class Tools:
         built = BuiltRequest("POST", "/v1/audio/speech", json=body)
         resp = await self._send(built, SYNC_TIMEOUT_SECONDS)
         if resp.status_code >= 400:
-            raise _error_from(resp)
+            raise error_from(resp)
         assets, _ = await _assets_from_response(self.deps, self.request, self.auth, resp, "speech")
         return {"status": "succeeded", "target": SPEECH_TARGET, "assets": assets}
 
@@ -642,14 +430,14 @@ class Tools:
         try:
             return await asyncio.wait_for(self.deps.call(self.request, built.method, built.path, **kwargs), timeout)
         except asyncio.TimeoutError:
-            raise ToolError("the gateway did not answer in time; retry with mode=async if the workflow offers it") from None
+            raise CallError("the gateway did not answer in time; retry with mode=async if the workflow offers it") from None
 
     @staticmethod
     def _wait(value: Any, default: int) -> int:
         if value is None:
             return default
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_WAIT_SECONDS:
-            raise ToolError(f"`wait_seconds` must be an integer from 0 to {MAX_WAIT_SECONDS}")
+            raise CallError(f"`wait_seconds` must be an integer from 0 to {MAX_WAIT_SECONDS}")
         return value
 
     @staticmethod
@@ -665,7 +453,7 @@ class Tools:
         method, path = _job_paths(_job_family(job_id), job_id)["poll"]
         resp = await self.deps.call(self.request, method, path)
         if resp.status_code >= 400:
-            raise _error_from(resp)
+            raise error_from(resp)
         payload = resp.json()
         return {**_normalize_job(payload), "raw": payload}
 
@@ -694,20 +482,20 @@ class Tools:
         method, path = _job_paths(_job_family(job_id), job_id)["content"]
         resp = await self.deps.call(self.request, method, path)
         if resp.status_code >= 400:
-            raise _error_from(resp)
+            raise error_from(resp)
         assets, _ = await _assets_from_response(self.deps, self.request, self.auth, resp, stem)
         return assets
 
     async def job(self, args: Mapping[str, Any]) -> dict[str, Any]:
         job_id = args.get("job_id")
         if not isinstance(job_id, str) or not job_id:
-            raise ToolError("`job_id` is required")
+            raise CallError("`job_id` is required")
         wait = self._wait(args.get("wait_seconds"), 0)
         if args.get("cancel"):
             method, path = _job_paths(_job_family(job_id), job_id)["cancel"]
             resp = await self.deps.call(self.request, method, path)
             if resp.status_code >= 400:
-                raise _error_from(resp)
+                raise error_from(resp)
             return await self._await(job_id, 0, None)
         return await self._await(job_id, wait, None)
 
@@ -733,7 +521,7 @@ async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args:
     handler = {"capabilities": tools.capabilities, "run": tools.run, "job": tools.job}[name]
     try:
         return tool_result(await handler(args))
-    except ToolError as exc:
+    except CallError as exc:
         return tool_result({"status": "error", "error": str(exc), **exc.details}, is_error=True)
 
 
