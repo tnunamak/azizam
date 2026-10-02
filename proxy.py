@@ -71,6 +71,7 @@ from gateway import (
     video_media_job_http,
     video_media_jobs,
 )
+from gateway import video_job_records
 from gateway import stable_aliases
 from gateway import speech_stream
 from gateway import custom_voices
@@ -8537,6 +8538,58 @@ def _video_job_visible(prompt_id: str, auth_context: AuthContext | None) -> bool
     return _video_job_access_allowed(prompt_id, auth_context)
 
 
+def _video_job_blocked(prompt_id: str, auth_context: AuthContext | None) -> bool:
+    """True when the caller must get 404 for this video id.
+
+    A tracked job is blocked unless it is visible (owned, not deleted). An id
+    with no record is blocked too whenever auth is enabled: it is either
+    unknown or was created before ownership was recorded, and ComfyUI's shared
+    /history must not become a way to read another key's video. With auth
+    disabled (`_asset_owner_key` is None) nothing is owned, so an untracked id
+    still falls through to the ComfyUI history lookup.
+    """
+    if prompt_id in _video_job_records:
+        return not _video_job_visible(prompt_id, auth_context)
+    return _asset_owner_key(auth_context) is not None
+
+
+# Persisted records are kept this long. ComfyUI's /history is the bytes' source
+# of truth; this only needs to outlive typical client use of a video id.
+_VIDEO_JOB_RECORD_RETAIN = 14 * 24 * 3600
+
+
+def _persist_video_record(prompt_id: str) -> None:
+    """Write one record through to the media-jobs SQLite. Best effort: a store
+    failure must not fail a render, so it is logged and swallowed."""
+    record = _video_job_records.get(prompt_id)
+    if record is None:
+        return
+    try:
+        video_job_records.save(prompt_id, record, path=media_jobs.DB_PATH)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] video record persist failed for {prompt_id}: {type(exc).__name__}: {exc}", flush=True)
+
+
+def _forget_video_record_row(prompt_id: str) -> None:
+    try:
+        video_job_records.remove(prompt_id, path=media_jobs.DB_PATH)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] video record delete failed for {prompt_id}: {type(exc).__name__}: {exc}", flush=True)
+
+
+def _hydrate_video_job_records() -> int:
+    """Load persisted records into `_video_job_records` (startup)."""
+    try:
+        video_job_records.prune(_VIDEO_JOB_RECORD_RETAIN, path=media_jobs.DB_PATH)
+        loaded = video_job_records.load_all(path=media_jobs.DB_PATH)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] video record hydrate failed: {type(exc).__name__}: {exc}", flush=True)
+        return 0
+    for pid, rec in loaded.items():
+        _video_job_records.setdefault(pid, rec)
+    return len(loaded)
+
+
 def _classify_phase(node_class: str) -> str:
     nc = (node_class or "").lower()
     if any(s in nc for s in _SAMPLER_HINT_SUBSTRINGS):
@@ -8768,10 +8821,11 @@ def _gc_video_job_records_locked(now: float) -> None:
                 drop.append(pid)
             continue
         created_at = rec.get("created_at") or 0
-        if now - created_at > _VIDEO_PROGRESS_TTL:
+        if now - created_at > _VIDEO_JOB_RECORD_RETAIN:
             drop.append(pid)
     for pid in drop:
         _video_job_records.pop(pid, None)
+        _forget_video_record_row(pid)
 
 
 async def _gc_video_progress() -> None:
@@ -9474,7 +9528,7 @@ async def _load_completed_video_bytes(
     prompt_id = _prompt_id_from_video_id(video_id)
     if not prompt_id:
         raise _VideoAssetError("invalid video_id", param=param)
-    if prompt_id in _video_job_records and not _video_job_visible(prompt_id, auth_context):
+    if _video_job_blocked(prompt_id, auth_context):
         raise _VideoAssetError("video_id not found", param=param, status=404)
     headers = configured_downstream_headers(auth_context, "comfyui")
     async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
@@ -10393,6 +10447,7 @@ async def proxy_comfy_video_create(
                         "owner_key_hash": _asset_owner_key(auth_context),
                         "deleted_at": None,
                     }
+                _persist_video_record(prompt_id)
             except Exception:
                 pass
             payload = {
@@ -10453,7 +10508,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
     # tracked, or evicted past _video_job_records' own retention) has no
     # owner to check against, so it falls through to the legacy ComfyUI-
     # history lookup below unscoped, same as before this field existed.
-    if prompt_id in _video_job_records and not _video_job_visible(prompt_id, auth_context):
+    if _video_job_blocked(prompt_id, auth_context):
         return Response(
             content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
             status_code=404,
@@ -10568,7 +10623,7 @@ async def proxy_comfy_video_content(video_id: str, auth_context: AuthContext) ->
             media_type="application/json"
         )
     # Same ownership + tombstone gate as proxy_comfy_video_status.
-    if prompt_id in _video_job_records and not _video_job_visible(prompt_id, auth_context):
+    if _video_job_blocked(prompt_id, auth_context):
         return Response(
             content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
             status_code=404,
@@ -10682,6 +10737,7 @@ async def _record_video_job_terminal_timestamp(prompt_id: str, status: str) -> N
         record = _video_job_records.get(prompt_id)
         if record is not None and record.get("completed_at") is None:
             record["completed_at"] = int(time.time())
+            _persist_video_record(prompt_id)
 
 
 _VIDEO_LIST_DEFAULT_LIMIT = 20
@@ -10974,6 +11030,7 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
             record["deleted_at"] = now
             if record.get("completed_at") is None:
                 record["completed_at"] = now
+            _persist_video_record(prompt_id)
         _video_progress.pop(prompt_id, None)
         _video_workflows.pop(prompt_id, None)
 
@@ -11103,7 +11160,7 @@ async def proxy_comfy_video_remix(
             media_type="application/json"
         )
     async with _video_progress_lock:
-        if prompt_id in _video_job_records and not _video_job_visible(prompt_id, auth_context):
+        if _video_job_blocked(prompt_id, auth_context):
             return _json_error(404, "video_id not found", kind="not_found")
     if not VIDEO_REMIX_WORKFLOW:
         return _json_error(
@@ -11156,7 +11213,7 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
         if not prompt_id:
             return _json_error(400, "invalid video id", param="video")
         async with _video_progress_lock:
-            if prompt_id in _video_job_records and not _video_job_visible(prompt_id, auth_context):
+            if _video_job_blocked(prompt_id, auth_context):
                 return _json_error(404, "video_id not found", kind="not_found")
         source: Any = {"video_id": source_id}
     else:
@@ -11575,6 +11632,7 @@ async def lifespan(app: FastAPI):
     try:
         media_jobs.init_db()
         pruned = media_jobs.prune()
+        print(f"[proxy] Hydrated {_hydrate_video_job_records()} persisted video job record(s)", flush=True)
         print(
             f"[proxy] Media job store initialized (db={media_jobs.DB_PATH}, "
             f"pruned_jobs={pruned.get('jobs', 0)} pruned_events={pruned.get('events', 0)})",
@@ -14821,6 +14879,10 @@ def _unfinished_openai_video_jobs(max_age_s: int = 2 * 3600) -> int:
             continue
         created = record.get("created_at") or now
         if now - int(created) > max_age_s:
+            continue
+        if prompt_id not in _video_progress:
+            # Hydrated from the store after a restart: no live render state in
+            # this process, so it is not a render this process can drain.
             continue
         status = (_video_progress.get(prompt_id) or {}).get("status")
         if status in ("succeeded", "failed"):
