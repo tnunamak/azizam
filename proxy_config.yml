@@ -1098,9 +1098,9 @@ model_aliases:
         description: "Nemotron 3 Diarization (speakers) + Parakeet TDT (word timestamps): gpt-4o-transcribe-diarize shape, diarized_json"
     stable:
       # Parakeet on GPU0 first (fast, on demand); the CPU Parakeet is the fallback when GPU0 is full.
-      stt: [parakeet-gpu, parakeet]
+      stt: [parakeet, parakeet-gpu]  # CPU first until fallback on GPU OOM is fixed (2026-10-02: GPU0 full -> 500s)
       stt-fast: [nemotron-streaming, parakeet]
-      stt-quality: [parakeet-gpu, parakeet, canary]
+      stt-quality: [parakeet, parakeet-gpu, canary]
       # Diarization has no fallback: a plain-text engine would silently drop the speakers.
       stt-diarize: [nemotron-diarize]
     openai:
