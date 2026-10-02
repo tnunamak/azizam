@@ -1,0 +1,29 @@
+# Install: copy to ~/.config/systemd/user/rerank-cpu.service, then `systemctl --user daemon-reload`.
+# Do NOT enable it: the gateway starts it on the first /v1/rerank request (lifecycle driver `systemd`)
+# and the process exits by itself after 10 idle minutes, so an idle reranker costs nothing.
+[Unit]
+Description=Reranker (Qwen3-Reranker-0.6B Q5_K_M, llama-server --rerank, CPU only) - rerank engine for the gateway, port 8018
+After=network.target
+
+[Service]
+Type=simple
+# CPU only: GPU0 is shared with ComfyUI and GPU1 is the LLM. The empty value hides every GPU from the
+# process; the wrapper also passes --device none because llama.cpp otherwise puts compute buffers on GPU0.
+Environment=CUDA_VISIBLE_DEVICES=
+Environment=LLAMA_SERVER=%h/applications/llamacpp-official-b11337-fa-all-quants/bin/llama-server
+Environment="RERANK_MODEL=/media/windows/AI Models/rerankers/qwen3-reranker-0.6b/Qwen3-Reranker-0.6B-Q5_K_M.gguf"
+Environment=RERANK_PORT=8018
+Environment=RERANK_THREADS=8
+Environment=RERANK_CTX=4096
+# The wrapper exits with status 0 after this many seconds without a request, so Restart=on-failure
+# leaves the unit stopped. The gateway starts it again on demand.
+Environment=RERANK_IDLE_EXIT_S=600
+Nice=5
+MemoryMax=5G
+ExecStart=%h/applications/openai-proxy/scripts/rerank-idle-exit.sh
+Restart=on-failure
+RestartSec=10
+LimitCORE=0
+
+[Install]
+WantedBy=default.target
