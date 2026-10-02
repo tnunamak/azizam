@@ -30,6 +30,7 @@ PEAK_LIMIT = 0.95
 CLIP_LEVEL = 32500           # samples at or above this magnitude count as clipped
 SPEECH_ABOVE_NOISE_DB = 12.0
 SPEECH_FLOOR_DBFS = -50.0
+SPEECH_CEILING_DBFS = -35.0
 DECODE_TIMEOUT_S = 60
 
 
@@ -146,7 +147,8 @@ def process_sample(data: bytes, limits: SampleLimits, *, denoise: bool = False) 
     levels = _frame_db(samples)
     ordered = sorted(levels)
     noise_floor = _percentile(ordered, 0.10)
-    threshold = max(noise_floor + SPEECH_ABOVE_NOISE_DB, SPEECH_FLOOR_DBFS)
+    # Capped so audio with no pauses (a designed voice, a continuous read) is not judged against its own level.
+    threshold = min(max(noise_floor + SPEECH_ABOVE_NOISE_DB, SPEECH_FLOOR_DBFS), SPEECH_CEILING_DBFS)
     speech = [level > threshold for level in levels]
     speech_seconds_total = sum(speech) * FRAME_SECONDS
     if speech_seconds_total < limits.min_speech_seconds:
@@ -174,6 +176,8 @@ def process_sample(data: bytes, limits: SampleLimits, *, denoise: bool = False) 
     clipping_fraction = clipped_samples / max(1, len(window))
     speech_levels = sorted(level for level, flag in zip(levels[first : last + 1], window_speech) if flag)
     snr_db = _percentile(speech_levels, 0.90) - noise_floor if speech_levels else None
+    if not any(not flag for flag in window_speech):
+        snr_db = None  # no pauses to measure the noise in
 
     if clipping_fraction > 0.01:
         warnings.append("clipping")

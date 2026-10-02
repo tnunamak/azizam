@@ -88,6 +88,11 @@ class ProcessSampleTests(unittest.TestCase):
                 result = va.process_sample(transcode(wav, extension), LIMITS)
                 self.assertAlmostEqual(result.duration_seconds, 8.0, delta=0.9)
 
+    def test_continuous_speech_without_pauses_is_accepted(self) -> None:
+        result = va.process_sample(speechlike(8, burst=0.5, period=0.5), LIMITS)
+        self.assertGreater(result.speech_seconds, 6)
+        self.assertNotIn("low_snr", result.warnings)
+
     def test_denoise_is_opt_in_and_recorded(self) -> None:
         wav = speechlike(8, noise=800)
         self.assertFalse(va.process_sample(wav, LIMITS).denoised)
