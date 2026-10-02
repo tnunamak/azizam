@@ -86,7 +86,7 @@ class SpeakWithCustomVoiceTests(CustomVoiceRouteCase):
         resp = self.speak({"id": meta["id"]})
         self.assertEqual(resp.status_code, 200, resp.text)
         sent = _FakeClient.requests[-1]
-        self.assertEqual(sent["url"], "http://127.0.0.1:8014/v1/audio/speech")
+        self.assertEqual(sent["url"], "http://127.0.0.1:8015/v1/audio/speech")
         self.assertEqual(sent["body"]["model"], "chatterbox-turbo")
         self.assertEqual(sent["body"]["voice_ref"], str(self.store.reference_path("key-a", meta["id"])))
         self.assertEqual(sent["body"]["voice"], "alloy")  # placeholder; the engine clones voice_ref
@@ -102,7 +102,7 @@ class SpeakWithCustomVoiceTests(CustomVoiceRouteCase):
         for model in ("tts-1", "tts-1-hd", "gpt-4o-mini-tts", "tts-quality", "chatterbox"):
             with self.subTest(model=model):
                 self.assertEqual(self.speak({"id": meta["id"]}, model=model).status_code, 200)
-                self.assertIn(":8014", _FakeClient.requests[-1]["url"])
+                self.assertIn(":8015", _FakeClient.requests[-1]["url"])
 
     def test_unknown_malformed_and_foreign_ids_are_404_and_never_fall_back_to_a_default_voice(self) -> None:
         theirs = self.make_voice(owner="key-b")
@@ -134,7 +134,7 @@ class SpeakWithCustomVoiceTests(CustomVoiceRouteCase):
         self.assertEqual(self.speak({"id": designed["id"]}, model="omnivoice").status_code, 200)
         sent = _FakeClient.requests[-1]
         self.assertEqual((sent["body"]["ref_text"], sent["body"]["model"]), ("the exact words", "k2-fsa/OmniVoice"))
-        self.assertNotIn(":8014", sent["url"])
+        self.assertNotIn(":8015", sent["url"])
         self.assertEqual([r for r in _FakeClient.requests if "/transcriptions" in r["url"]], [])
 
         cloned = self.make_voice()

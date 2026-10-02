@@ -328,7 +328,7 @@ backends:
     name: chatterbox-tts
     native_passthrough: true
     host: 127.0.0.1
-    port: 8014
+    port: 8015
     health_endpoint: /health
     timeout: 120
     # Higher number = lower priority: the always-on default service keeps winning capability lookups.

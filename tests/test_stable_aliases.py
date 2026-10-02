@@ -465,7 +465,7 @@ class SpeechEngineRoutingTests(unittest.TestCase):
 
     def test_tts_alias_goes_to_chatterbox_with_identity_voices(self):
         sent = self._speak("tts", "nova")
-        self.assertEqual(sent["url"], "http://127.0.0.1:8014/v1/audio/speech")
+        self.assertEqual(sent["url"], "http://127.0.0.1:8015/v1/audio/speech")
         self.assertEqual(sent["body"]["model"], "chatterbox-turbo")
         self.assertEqual(sent["body"]["voice"], "nova")
 
@@ -473,7 +473,7 @@ class SpeechEngineRoutingTests(unittest.TestCase):
         sent = self._speak("omnivoice", "nova")
         self.assertEqual(sent["body"]["model"], "k2-fsa/OmniVoice")
         self.assertEqual(sent["body"]["voice"], "nova")
-        self.assertNotIn(":8014", sent["url"])
+        self.assertNotIn(":8015", sent["url"])
         self.assertNotIn(":8010", sent["url"])
 
 
