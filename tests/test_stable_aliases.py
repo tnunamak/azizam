@@ -170,9 +170,16 @@ class ShippedConfigTests(unittest.TestCase):
 
     def test_image_targets_have_workflow_files(self):
         wf_dir = ROOT / "workflows" / "images"
+        # Gateway-composed workflows have no ComfyUI file of their own; their manifest declares the model id.
+        composed = {
+            ((yaml.safe_load(p.read_text()).get("bindings") or {}).get("gateway") or {}).get("model_id")
+            for p in (ROOT / "manifests" / "workflows").glob("*.yml")
+        }
         for op, suffix in (("images", ""), ("image_edits", "")):
             for alias, target in sa.concrete_targets(ALIASES, op).items():
-                self.assertTrue((wf_dir / f"{target}.json").exists(), f"{op}:{alias}->{target}")
+                self.assertTrue(
+                    (wf_dir / f"{target}.json").exists() or target in composed, f"{op}:{alias}->{target}"
+                )
 
     def test_image_stable_defaults_match_compat_defaults(self):
         defaults = SHIPPED["model_compatibility"]["defaults"]
