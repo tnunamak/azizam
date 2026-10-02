@@ -10569,6 +10569,8 @@ async def proxy_comfy_video_create(
                 raise video_subject.SubjectError(
                     "subject_index must be a number like 0 or a list like 0,2", "subject_index")
             video_subject.apply_point(workflow, block, width, height)
+            if block.get("reference_fit", True) not in (False, "false", "False", 0):
+                video_subject.add_reference_fit(workflow)
         except video_subject.SubjectError as exc:
             return _json_error(400, str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
                                code="invalid_workflow_extension")

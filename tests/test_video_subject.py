@@ -58,6 +58,32 @@ class SubjectHelperTests(unittest.TestCase):
             with self.assertRaises(vs.SubjectError, msg=block):
                 vs.apply_point(_graph(), block, 832, 448)
 
+    def test_reference_fit_replaces_the_cropped_reference_everywhere(self) -> None:
+        g = _graph()
+        vs.add_reference_fit(g)
+        canvas = [vs.FIT_CANVAS_NODE, 0]
+        self.assertEqual(g["14"]["inputs"]["image"], canvas)  # CLIP vision
+        self.assertEqual(g["28"]["inputs"]["reference_image"], canvas)
+        self.assertEqual(g[vs.REF_DETECT_NODE]["inputs"]["image"], canvas)  # reference mask
+        # the cut-out starts from the FULL reference, not the centre-cropped one
+        self.assertEqual(g["90"]["inputs"]["image"], [vs.REF_RAW_NODE, 0])
+        for node_id, node in g.items():
+            for value in node["inputs"].values():
+                if isinstance(value, list) and len(value) == 2 and isinstance(value[0], str):
+                    self.assertIn(value[0], g, (node_id, value))
+
+    def test_reference_fit_uses_the_same_person_selection(self) -> None:
+        g = _graph()
+        vs.apply_point(g, {"source_point_x": 0.5, "source_point_y": 0.5}, 832, 448)
+        g[vs.COLOR_MASK_NODE]["inputs"]["object_indices"] = "2"
+        vs.add_reference_fit(g)
+        self.assertEqual(g["95"]["inputs"]["object_indices"], "2")
+        self.assertEqual(g["95"]["inputs"]["driving_track_data"], [vs.TRACK_NODE, 0])
+        # scaled to the person's height (node 99 = exact mask box), keeping aspect (width 0)
+        self.assertEqual(g["101"]["inputs"]["height"], ["99", 3])
+        self.assertEqual(g["101"]["inputs"]["width"], 0)
+        self.assertEqual(g[vs.FIT_CANVAS_NODE]["inputs"]["y"], ["99", 1])
+
     def test_tracked_count_reads_the_scores(self) -> None:
         out = {vs.PROBE_NODE: {"text": [TRACK_REPR % "[0.97, 0.96, 0.92, 0.91]"]}}
         self.assertEqual(vs.tracked_count(out), 4)
@@ -91,6 +117,18 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
                "reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode()}
         ext.update(extra)
         return self.client.post("/v1/videos", json={"model": "character-replace", "prompt": "a woman", "extensions": {NS: ext}})
+
+    def test_reference_fit_is_on_by_default_and_can_be_turned_off(self) -> None:
+        self.assertEqual(self._create().status_code, 200)
+        self.assertEqual(self.graph["28"]["inputs"]["reference_image"], [vs.FIT_CANVAS_NODE, 0])
+        self.comfy.submitted.clear()
+        self.assertEqual(self._create(reference_fit=False).status_code, 200)
+        self.assertEqual(self.graph["28"]["inputs"]["reference_image"], ["6", 0])
+        self.assertNotIn(vs.FIT_CANVAS_NODE, self.graph)
+
+    def test_selection_reaches_the_fit_nodes(self) -> None:
+        self._create(subject_index="1")
+        self.assertEqual(self.graph["95"]["inputs"]["object_indices"], "1")
 
     def test_default_replaces_the_largest_person(self) -> None:
         self.assertEqual(self._create().status_code, 200)
