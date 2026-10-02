@@ -23,6 +23,8 @@ sys.path.insert(0, str(ROOT))
 from gateway import video_extend as ve, video_subject as vs  # noqa: E402
 
 SIGNATURES = json.loads((ROOT / "tests/fixtures/comfy_node_signatures.json").read_text())
+# Combos that list files on the host: the value is checked at run time, not here.
+HOST_FILE_INPUTS = {"unet_name", "vae_name", "clip_name", "ckpt_name", "lora_name", "file", "image", "model_name"}
 PY_TYPES = {"INT": (int,), "FLOAT": (int, float), "STRING": (str,), "BOOLEAN": (bool,)}
 
 
@@ -63,6 +65,8 @@ def check_graph(graph: dict) -> list[str]:
                     problems.append(f"{node_id}.{name}: {outputs[index]} output linked to {spec} input")
                 continue
             if isinstance(spec, list):
+                if name in HOST_FILE_INPUTS:
+                    continue
                 if value not in spec:
                     problems.append(f"{node_id}.{name}: {value!r} is not one of {spec}")
             elif spec in PY_TYPES:
