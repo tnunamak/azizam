@@ -221,7 +221,7 @@ class TestVideosStatusAndContent(VideoRegistryTestCase):
                 proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
             )
 
-        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.status_code, 404)
         body = json.loads(response.body)
         self.assertEqual(body["error"]["code"], "video_not_ready")
         self.assertIn("queued", body["error"]["message"])

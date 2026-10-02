@@ -9690,7 +9690,7 @@ async def proxy_comfy_video_content(video_id: str, auth_context: AuthContext) ->
                                 "code": "video_not_ready",
                             }
                         }),
-                        status_code=409,
+                        status_code=404,
                         media_type="application/json",
                     )
                 return Response(
@@ -9708,7 +9708,7 @@ async def proxy_comfy_video_content(video_id: str, auth_context: AuthContext) ->
                             "code": "video_not_ready",
                         }
                     }),
-                    status_code=409,
+                    status_code=404,
                     media_type="application/json"
                 )
 
