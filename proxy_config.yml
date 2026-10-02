@@ -832,6 +832,9 @@ videos:
     # POST /v1/videos/extensions. Total length is capped by videos.max_total_seconds.
     video-ltx-2.5-long:
       builder: ltx25_chain
+      # One-segment reference graph, bound by the manifest only; requests build
+      # their graph in code (gateway/video_extend.py) and never load this file.
+      file: workflows/videos/video-ltx-2.5-long.json
       min_seconds: 1
       max_seconds: 40
       max_size: 1280x720

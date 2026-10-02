@@ -8599,6 +8599,10 @@ def _video_job_visible(prompt_id: str, auth_context: AuthContext | None) -> bool
     return _video_job_access_allowed(prompt_id, auth_context)
 
 
+# Record ids loaded from the store at startup (not created by this process).
+_video_records_restored: set[str] = set()
+
+
 def _video_job_blocked(prompt_id: str, auth_context: AuthContext | None) -> bool:
     """True when the caller must get 404 for this video id.
 
@@ -8647,7 +8651,9 @@ def _hydrate_video_job_records() -> int:
         print(f"[proxy] video record hydrate failed: {type(exc).__name__}: {exc}", flush=True)
         return 0
     for pid, rec in loaded.items():
-        _video_job_records.setdefault(pid, rec)
+        if pid not in _video_job_records:
+            _video_job_records[pid] = rec
+            _video_records_restored.add(pid)
     return len(loaded)
 
 
@@ -15363,9 +15369,9 @@ def _unfinished_openai_video_jobs(max_age_s: int = 2 * 3600) -> int:
         created = record.get("created_at") or now
         if now - int(created) > max_age_s:
             continue
-        if prompt_id not in _video_progress:
-            # Hydrated from the store after a restart: no live render state in
-            # this process, so it is not a render this process can drain.
+        if prompt_id in _video_records_restored:
+            # Loaded from the store after a restart: this process never saw it
+            # render, so there is nothing for the drain to wait for.
             continue
         status = (_video_progress.get(prompt_id) or {}).get("status")
         if status in ("succeeded", "failed"):

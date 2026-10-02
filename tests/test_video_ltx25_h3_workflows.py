@@ -158,7 +158,6 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
     def test_long_workflow_is_built_in_code(self) -> None:
         cfg = proxy.config["videos"]["workflows"]["video-ltx-2.5-long"]
         self.assertEqual(cfg["builder"], "ltx25_chain")
-        self.assertNotIn("file", cfg)
 
     def test_manifest_reference_graph_matches_the_builder(self) -> None:
         """workflows/videos/video-ltx-2.5-long.json is the one-segment graph the
