@@ -220,9 +220,9 @@ class Restarter:
 
     # -- waiting ------------------------------------------------------------
 
-    def _busy_count(self, snapshot: Mapping[str, Any]) -> int:
+    def _busy_count(self, snapshot: Mapping[str, Any], *, chat_only: bool = False) -> int:
         active = snapshot.get("active") or {}
-        if self.args.llama:
+        if self.args.llama or chat_only:
             return int(active.get("chat", 0))
         count = int(active.get("requests", 0))
         if not self.args.ignore_async_jobs:
@@ -255,15 +255,19 @@ class Restarter:
         *,
         timeout: float | None = None,
         quiet: float = 0.0,
+        chat_only: bool = False,
     ) -> tuple[bool, dict[str, Any]]:
-        """Wait until nothing is in flight and (if ``quiet`` > 0) no chat ran for ``quiet`` s."""
+        """Wait until nothing is in flight and (if ``quiet`` > 0) no chat ran for ``quiet`` s.
+
+        ``chat_only`` ignores non-chat work (media) in the in-flight count.
+        """
         deadline = self.clock() + (self.args.timeout if timeout is None else timeout)
         last_report = -1e9
         last_state: tuple[int, int | None, bool] | None = None
         warned_slots = False
         warned_quiet = False
         while True:
-            busy = self._busy_count(snapshot)
+            busy = self._busy_count(snapshot, chat_only=chat_only)
             slots = self.llama_busy_slots() if self.args.llama else 0
             if self.args.llama and slots is None and not warned_slots:
                 self.warn("llama /slots is unavailable; relying on the gateway's chat count only")
@@ -363,13 +367,16 @@ class Restarter:
         if quiet > 0:
             # Phase 1: keep ACCEPTING work. An agent turn is a chain of chat
             # calls with tool steps in between; refusing the next call would
-            # break the turn. Wait for a gap, then drain and restart at once.
+            # break the turn. Wait for a chat gap, then drain and restart at
+            # once. Media work in flight is waited for in phase 2, after the
+            # drain stops new media; otherwise steady media traffic could
+            # starve the restart.
             self.say(
-                f"waiting for the gateway to be idle and quiet (no chat activity for {quiet:.0f}s); "
+                f"waiting for chat to be idle and quiet (no chat activity for {quiet:.0f}s); "
                 "new requests are still accepted"
             )
             try:
-                ok, snapshot = self.wait_idle(self.get_drain_or(snapshot), quiet=quiet)
+                ok, snapshot = self.wait_idle(self.get_drain_or(snapshot), quiet=quiet, chat_only=True)
             except KeyboardInterrupt:
                 self.say("interrupted")
                 return EXIT_INTERRUPTED
@@ -377,7 +384,7 @@ class Restarter:
                 self._report_deadline(snapshot, target)
                 self.say(f"NOT restarting {target}. Nothing was drained.")
                 return EXIT_BUSY
-            self.say("idle and quiet")
+            self.say("chat is idle and quiet")
 
         busy = self._busy_count(snapshot)
         self.say(

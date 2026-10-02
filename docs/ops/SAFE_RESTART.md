@@ -41,15 +41,15 @@ The key is never printed.
 - **Two phases, in this order.** An agent turn is a chain of chat calls with
   tool steps between them. "Nothing in flight" is true in every gap, so a
   drain that starts in a gap would answer the agent's next call with 503.
-  1. *Quiet wait (gateway still accepting).* The script polls until nothing is
-     in flight and no chat request started or finished for `--quiet-seconds`
-     (default 20). New requests are accepted and served normally, so a
+  1. *Quiet wait (gateway still accepting).* The script polls until no chat
+     request is in flight and none started or finished for `--quiet-seconds`
+     (default 20). Media work in flight does not hold this phase. New requests are accepted and served normally, so a
      running agent never sees a refusal. Each new chat call restarts the
      window. The gateway computes it (`seconds_since_chat_activity` in the
      drain snapshot), so the script and the gateway share one clock.
   2. *Drain, then restart at once.* The script sets the drain flag, waits for
-     any request that slipped in between the check and the flag (at least
-     30 s, otherwise the rest of the deadline), then restarts.
+     all in-flight work (media included; new media is now refused, so it cannot
+     starve) for at least 30 s or the rest of the deadline, then restarts.
   The deadline (`--timeout`) covers both phases. If it passes in phase 1,
   nothing was drained, so nothing needs undoing; exit code 3. A tool step that
   runs longer than the quiet window can still be cut between calls; raise

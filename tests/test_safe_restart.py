@@ -355,6 +355,16 @@ class QuietWindowTests(unittest.TestCase):
         self.assertEqual(code, sr.EXIT_OK, world.text)
         self.assertEqual(world.posts()[0]["draining"], True)
 
+    def test_media_in_flight_does_not_hold_phase_one(self) -> None:
+        # Chat is quiet; a slow image edit runs. Drain at once so new media stops,
+        # then wait for the edit in phase 2.
+        media = snap(requests=1, quiet=40.0)
+        world = World([media, media, snap(quiet=45.0)])
+        code = world.invoke("--quiet-seconds", "20")
+        self.assertEqual(code, sr.EXIT_OK, world.text)
+        self.assertEqual(world.posts()[0]["draining"], True)
+        self.assertLess(world.sleeps, 3)
+
     def test_negative_quiet_is_a_usage_error(self) -> None:
         args = sr.build_parser().parse_args(["--quiet-seconds", "-1"])
         self.assertIn("quiet", sr.validate(args))
