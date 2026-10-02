@@ -221,7 +221,8 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
              + __import__("base64").b64encode(PNG).decode()}
         )
         self.assertEqual(status, 200, payload)
-        self.assertEqual(payload["model"], "video-ltx-2.5-i2v")
+        self.assertEqual(payload["model"], "video-ltx-2.5-t2v")
+        self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-i2v")
         self.assertEqual(graph["70"]["inputs"]["image"], "uploaded-ref.png")
         self.assertEqual(graph["79"]["inputs"]["value"], 0.7)
 
@@ -245,7 +246,8 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
             {"model": "minimax-h3", "prompt": "a cat walks\n\nAudio: footsteps", "seconds": 5, "seed": 3}
         )
         self.assertEqual(status, 200, payload)
-        self.assertEqual(payload["model"], "video-minimax-h3-t2v")
+        self.assertEqual(payload["model"], "minimax-h3")
+        self.assertEqual(payload["vivid_fish_resolved_model"], "video-minimax-h3-t2v")
         self.assertEqual(payload["size"], "960x544")
         self.assertEqual(graph["9"]["inputs"]["prompt"], "a cat walks\n\nAudio: footsteps")
         self.assertNotIn("text", graph["9"]["inputs"])
@@ -260,7 +262,8 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
              "data:image/png;base64," + __import__("base64").b64encode(PNG).decode()}
         )
         self.assertEqual(status, 200, payload)
-        self.assertEqual(payload["model"], "video-minimax-h3-i2v")
+        self.assertEqual(payload["model"], "minimax-h3")
+        self.assertEqual(payload["vivid_fish_resolved_model"], "video-minimax-h3-i2v")
         self.assertEqual(graph["20"]["inputs"]["image"], "uploaded-ref.png")
         self.assertEqual(graph["9"]["inputs"]["prompt"], "x")
 
@@ -270,7 +273,8 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
              "data:image/png;base64," + __import__("base64").b64encode(PNG).decode()}
         )
         self.assertEqual(status, 200, payload)
-        self.assertEqual(payload["model"], "video-ltx-2.5-i2v")
+        self.assertEqual(payload["model"], "ltx-2.3")
+        self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-i2v")
         self.assertEqual(graph["70"]["inputs"]["image"], "uploaded-ref.png")
 
     async def test_long_workflow_sets_chunks_seed_and_first_frame(self) -> None:
@@ -278,7 +282,8 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
             {"model": "video-long", "prompt": "a long walk", "seconds": 32, "seed": 5}
         )
         self.assertEqual(status, 200, payload)
-        self.assertEqual(payload["model"], "video-ltx-2.5-long")
+        self.assertEqual(payload["model"], "video-long")
+        self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-long")
         self.assertEqual(graph["1621"]["inputs"]["text"], "a long walk")
         self.assertEqual(graph["1527"]["inputs"]["value"], 5)
         length_sec, loops, total = proxy._long_form_chunks(32, 24)
@@ -293,7 +298,8 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
              "input_reference": "data:image/png;base64," + __import__("base64").b64encode(PNG).decode()}
         )
         self.assertEqual(status, 200, payload)
-        self.assertEqual(payload["model"], "video-ltx-2.5-long")
+        self.assertEqual(payload["model"], "ltx-2.3-long")
+        self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-long")
         self.assertEqual(graph["444"]["inputs"]["image"], "uploaded-ref.png")
         self.assertEqual(graph["1722"]["inputs"]["value"], 1.0)
 

@@ -243,6 +243,8 @@ def video_generation_payload(
         "updated_at": job.get("updated_at"),
         "completed_at": job.get("updated_at") if internal_status == media_jobs.STATUS_SUCCEEDED else None,
     }
+    if job.get("workflow") is not None:
+        payload["vivid_fish_resolved_model"] = job["workflow"]
     for key in ("size", "seconds", "actual_seconds"):
         if key in metadata:
             payload[key] = metadata[key]

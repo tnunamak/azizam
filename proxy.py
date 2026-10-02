@@ -8036,11 +8036,14 @@ def _video_progress_percent(value: Any, *, floor: int = 0, ceiling: int = 100) -
 
 def _tracked_video_fields(prompt_id: str) -> dict[str, Any]:
     record = _video_job_records.get(prompt_id) or {}
-    return {
+    fields = {
         key: record.get(key)
         for key in ("model", "size", "seconds", "actual_seconds", "created_at", "completed_at")
         if record.get(key) is not None
     }
+    if record.get("resolved_model") is not None:
+        fields["vivid_fish_resolved_model"] = record["resolved_model"]
+    return fields
 
 
 def _openai_video_payload(
@@ -9460,6 +9463,7 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
                 async with _video_progress_lock:
                     _video_job_records[prompt_id] = {
                         "model": public_model,
+                        "resolved_model": workflow_name,
                         "size": f"{width}x{height}",
                         "seconds": seconds_str,
                         "actual_seconds": round(actual_seconds, 4),
