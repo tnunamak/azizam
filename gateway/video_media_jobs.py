@@ -14,7 +14,16 @@ from typing import Any, Mapping
 from gateway import media_jobs
 
 INTENT_VIDEO_GENERATE = "video.generate"
-VIDEO_OBJECT = "video.generation"
+VIDEO_OBJECT = "video"
+LEGACY_VIDEO_OBJECT = "video.generation"
+
+OPENAI_STATUS_BY_INTERNAL = {
+    media_jobs.STATUS_QUEUED: "queued",
+    media_jobs.STATUS_RUNNING: "in_progress",
+    media_jobs.STATUS_SUCCEEDED: "completed",
+    media_jobs.STATUS_FAILED: "failed",
+    media_jobs.STATUS_CANCELED: "failed",
+}
 
 _VIDEO_EXTENSIONS = {
     ".mp4": "video/mp4",
@@ -217,18 +226,22 @@ def video_generation_payload(
     public_id: str | None = None,
     include_assets: bool = False,
 ) -> dict[str, Any]:
-    """Project a durable job into the route-level ``video.generation`` shape."""
+    """Project a durable job into the route-level OpenAI ``video`` shape."""
 
     metadata = job.get("metadata") if isinstance(job.get("metadata"), Mapping) else {}
     assets = job.get("assets") if isinstance(job.get("assets"), list) else []
+    internal_status = str(job.get("status") or media_jobs.STATUS_QUEUED)
     payload: dict[str, Any] = {
         "id": public_id or job.get("job_id"),
         "object": VIDEO_OBJECT,
+        "vivid_object": LEGACY_VIDEO_OBJECT,
         "model": metadata.get("model") or job.get("workflow"),
-        "status": job.get("status"),
+        "status": openai_video_status(internal_status),
+        "vivid_status": internal_status,
         "progress": _progress(job.get("progress", 0)),
         "created_at": job.get("created_at"),
         "updated_at": job.get("updated_at"),
+        "completed_at": job.get("updated_at") if internal_status == media_jobs.STATUS_SUCCEEDED else None,
     }
     for key in ("size", "seconds", "actual_seconds"):
         if key in metadata:
@@ -244,6 +257,12 @@ def video_generation_payload(
             if content_url:
                 payload["content_url"] = content_url
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def openai_video_status(status: str) -> str:
+    """Map internal durable-job status to the OpenAI video public status."""
+
+    return OPENAI_STATUS_BY_INTERNAL.get(status, status)
 
 
 def _progress(value: Any) -> int:

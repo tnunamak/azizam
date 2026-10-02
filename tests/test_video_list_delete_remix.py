@@ -135,6 +135,98 @@ ALICE = proxy.AuthContext(identity=proxy.AuthIdentity(name="alice", key_hash="sh
 BOB = proxy.AuthContext(identity=proxy.AuthIdentity(name="bob", key_hash="sha256:bob"))
 
 
+class TestVideosStatusAndContent(VideoRegistryTestCase):
+    async def test_status_maps_internal_running_to_openai_in_progress(self) -> None:
+        self._seed(
+            "p1",
+            created_at=1000,
+            model="sora-2",
+            size="1280x720",
+            seconds="5",
+        )
+        proxy._video_progress["p1"] = {
+            "status": "running",
+            "percent": 73,
+            "step": 7,
+            "total": 10,
+            "node": "12",
+            "phase": "sampling",
+            "updated_at": 1100,
+        }
+        client = _FakeVideoAsyncClient()
+
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_status(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.body)
+        self.assertEqual(body["object"], "video")
+        self.assertEqual(body["vivid_object"], "video.generation")
+        self.assertEqual(body["model"], "sora-2")
+        self.assertEqual(body["status"], "in_progress")
+        self.assertEqual(body["vivid_status"], "running")
+        self.assertEqual(body["progress"], 73)
+        self.assertEqual(body["created_at"], 1000)
+        self.assertEqual(body["updated_at"], 1100)
+        self.assertEqual(body["size"], "1280x720")
+        self.assertEqual(body["seconds"], "5")
+
+    async def test_status_maps_history_success_to_openai_completed(self) -> None:
+        self._seed("p1", created_at=1000, model="sora-2")
+        client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
+
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_status(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.body)
+        self.assertEqual(body["object"], "video")
+        self.assertEqual(body["status"], "completed")
+        self.assertEqual(body["vivid_status"], "succeeded")
+        self.assertEqual(body["progress"], 100)
+        self.assertEqual(body["model"], "sora-2")
+        self.assertIsNotNone(body["completed_at"])
+
+    async def test_status_progress_is_monotonic_when_history_lags_live_progress(self) -> None:
+        self._seed("p1", created_at=1000)
+        proxy._video_progress["p1"] = {
+            "status": "running",
+            "percent": 80,
+            "step": 8,
+            "total": 10,
+            "updated_at": 1100,
+        }
+        client = _FakeVideoAsyncClient(history={"p1": _running_history_entry()})
+
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_status(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+
+        body = json.loads(response.body)
+        self.assertEqual(body["status"], "in_progress")
+        self.assertEqual(body["progress"], 80)
+
+    async def test_content_for_known_unfinished_job_returns_not_ready(self) -> None:
+        self._seed("p1", created_at=1000)
+        proxy._video_progress["p1"] = {"status": "queued", "updated_at": 1000}
+        client = _FakeVideoAsyncClient(queue={"queue_running": [], "queue_pending": [[0, "p1"]]})
+
+        with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
+            response = await proxy.proxy_comfy_video_content(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+
+        self.assertEqual(response.status_code, 409)
+        body = json.loads(response.body)
+        self.assertEqual(body["error"]["code"], "video_not_ready")
+        self.assertIn("queued", body["error"]["message"])
+
+
 class TestVideosList(VideoRegistryTestCase):
     async def test_empty_list(self) -> None:
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: _FakeVideoAsyncClient()):

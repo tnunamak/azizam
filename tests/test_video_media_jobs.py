@@ -159,12 +159,35 @@ class VideoStatusShapeTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["id"], "video_abc")
-        self.assertEqual(payload["object"], "video.generation")
+        self.assertEqual(payload["object"], "video")
+        self.assertEqual(payload["vivid_object"], "video.generation")
         self.assertEqual(payload["model"], "sora-local")
-        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["vivid_status"], "succeeded")
         self.assertEqual(payload["progress"], 100)
         self.assertEqual(payload["content_url"], "/v1/videos/video_abc/content")
         self.assertNotIn("metadata", payload)
+
+    def test_video_generation_payload_maps_openai_poll_statuses(self) -> None:
+        cases = [
+            (media_jobs.STATUS_QUEUED, "queued"),
+            (media_jobs.STATUS_RUNNING, "in_progress"),
+            (media_jobs.STATUS_SUCCEEDED, "completed"),
+            (media_jobs.STATUS_FAILED, "failed"),
+            (media_jobs.STATUS_CANCELED, "failed"),
+        ]
+
+        for internal, public in cases:
+            with self.subTest(internal=internal):
+                job = media_jobs.MediaJob(
+                    intent="video.generate",
+                    workflow="video-ltx",
+                    status=internal,
+                ).to_dict("internal")
+                payload = video_media_jobs.video_generation_payload(job)
+
+                self.assertEqual(payload["status"], public)
+                self.assertEqual(payload["vivid_status"], internal)
 
     def test_progress_validation_rejects_out_of_range_values(self) -> None:
         with self.assertRaises(ValueError):

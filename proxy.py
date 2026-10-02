@@ -6089,6 +6089,106 @@ def _comfy_execution_error_message(job: Mapping[str, Any] | None) -> str | None:
     return None
 
 
+def _comfy_prompt_queue_position_from_queue(queue: Mapping[str, Any], prompt_id: str) -> Optional[int]:
+    """Return a 1-based pending queue position for a ComfyUI prompt, if known."""
+    pending = queue.get("queue_pending")
+    if not isinstance(pending, list):
+        return None
+    for index, entry in enumerate(pending, start=1):
+        if isinstance(entry, (list, tuple)) and len(entry) >= 2 and entry[1] == prompt_id:
+            return index
+    return None
+
+
+async def _comfy_prompt_queue_position(
+    client: httpx.AsyncClient,
+    prompt_id: str,
+    headers: Mapping[str, str],
+) -> Optional[int]:
+    try:
+        response = await client.get(f"{COMFY_HOST}/queue", headers=dict(headers), timeout=HEALTH_CHECK_TIMEOUT)
+    except Exception:
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        queue = response.json()
+    except Exception:
+        return None
+    if not isinstance(queue, Mapping):
+        return None
+    return _comfy_prompt_queue_position_from_queue(queue, prompt_id)
+
+
+async def _cancel_comfy_prompt(
+    client: httpx.AsyncClient,
+    prompt_id: str,
+    headers: Mapping[str, str],
+    *,
+    reason: str,
+) -> bool:
+    try:
+        response = await client.post(
+            f"{COMFY_HOST}/api/jobs/{prompt_id}/cancel",
+            headers=dict(headers),
+            timeout=HEALTH_CHECK_TIMEOUT,
+        )
+    except Exception as e:
+        print(f"[proxy] ComfyUI cancel failed for {prompt_id} after {reason}: {e}", flush=True)
+        return False
+    if response.status_code != 200:
+        print(
+            f"[proxy] ComfyUI cancel failed for {prompt_id} after {reason}: HTTP {response.status_code}",
+            flush=True,
+        )
+        return False
+    print(f"[proxy] ComfyUI prompt cancelled after {reason}: {prompt_id}", flush=True)
+    return True
+
+
+def _image_generation_timeout_response(queue_position: Optional[int]) -> Response:
+    error: dict[str, Any] = {
+        "message": "Image generation timed out before ComfyUI returned an image",
+        "type": "api_error",
+        "code": "image_generation_timeout",
+    }
+    if queue_position is not None:
+        error["queue_position"] = queue_position
+        error["message"] = (
+            "Image generation timed out before ComfyUI returned an image "
+            f"(queue_position={queue_position})"
+        )
+    return Response(
+        content=json.dumps({"error": error}),
+        status_code=504,
+        media_type="application/json",
+    )
+
+
+def _image_client_disconnected_response(prompt_id: str) -> Response:
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": "Image generation cancelled because the client disconnected",
+                "type": "api_error",
+                "code": "image_client_disconnected",
+                "prompt_id": prompt_id,
+            }
+        }),
+        status_code=499,
+        media_type="application/json",
+    )
+
+
+async def _request_is_disconnected(request: Request | None) -> bool:
+    if request is None or not hasattr(request, "is_disconnected"):
+        return False
+    try:
+        return bool(await request.is_disconnected())
+    except Exception:
+        return False
+
+
 async def _comfy_run_round(
     client: httpx.AsyncClient,
     workflow: dict,
@@ -6096,6 +6196,7 @@ async def _comfy_run_round(
     label: str,
     *,
     vram_probe: Optional[_VramProbe] = None,
+    request: Request | None = None,
 ) -> tuple[Optional[Response], list[bytes]]:
     """Submit a single ComfyUI prompt and harvest the resulting image bytes.
 
@@ -6118,6 +6219,7 @@ async def _comfy_run_round(
             except Exception as e:
                 print(f"[proxy] VRAM probe stop error: {e}", flush=True)
 
+    prompt_id: Optional[str] = None
     try:
         try:
             resp = await client.post(
@@ -6159,6 +6261,9 @@ async def _comfy_run_round(
         max_polls = COMFY_TIMEOUT * 2  # 0.5s cadence
         job = None
         for _ in range(max_polls):
+            if await _request_is_disconnected(request):
+                await _cancel_comfy_prompt(client, prompt_id, headers, reason="client disconnect")
+                return _image_client_disconnected_response(prompt_id), []
             await asyncio.sleep(0.5)
             try:
                 history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
@@ -6187,11 +6292,9 @@ async def _comfy_run_round(
                 break
 
         if job is None:
-            return Response(
-                content=json.dumps({"error": {"message": "Image generation timeout", "type": "api_error"}}),
-                status_code=504,
-                media_type="application/json",
-            ), []
+            queue_position = await _comfy_prompt_queue_position(client, prompt_id, headers)
+            await _cancel_comfy_prompt(client, prompt_id, headers, reason="image timeout")
+            return _image_generation_timeout_response(queue_position), []
 
         images: list[bytes] = []
         outputs = job.get("outputs", {})
@@ -6212,6 +6315,10 @@ async def _comfy_run_round(
                 if img_resp.status_code == 200 and img_resp.content:
                     images.append(img_resp.content)
         return None, images
+    except asyncio.CancelledError:
+        if prompt_id:
+            await _cancel_comfy_prompt(client, prompt_id, headers, reason="request cancellation")
+        raise
     finally:
         await _finalize_probe()
 
@@ -6404,6 +6511,7 @@ async def _generate_images_with_adaptive_batching(
             headers,
             label=f"image round {rounds_run}/{max_rounds} (target={batch_target})",
             vram_probe=probe,
+            request=request,
         )
         if err is not None and not models_freed and IMAGE_FREE_VRAM_ON_EXHAUSTION:
             try:
@@ -6422,6 +6530,7 @@ async def _generate_images_with_adaptive_batching(
                     err, round_images = await _comfy_run_round(
                         client, round_workflow, headers,
                         label=f"image round {rounds_run}/{max_rounds} after model unload",
+                        request=request,
                     )
         if models_freed:
             response_headers["X-ComfyUI-Models-Freed"] = "true"
@@ -14554,6 +14663,7 @@ def _set_workflow_seed(
 
 async def _run_single_comfy_image(
     *,
+    request: Request | None = None,
     client: httpx.AsyncClient,
     workflow: dict[str, Any],
     meta: Mapping[str, Any],
@@ -14576,6 +14686,7 @@ async def _run_single_comfy_image(
         round_workflow,
         dict(headers),
         label,
+        request=request,
     )
     if err is not None:
         return err, None
@@ -14762,6 +14873,7 @@ async def _proxy_offset_inpaint_tile_request(
                 )
                 seam_seed = base_seed + 1 if base_seed is not None else None
                 err, base_image = await _run_single_comfy_image(
+                    request=request,
                     client=client,
                     workflow=base_workflow,
                     meta=base_meta,
@@ -14824,6 +14936,7 @@ async def _proxy_offset_inpaint_tile_request(
                 ).request
 
                 err, repaired_offset = await _run_single_comfy_image(
+                    request=request,
                     client=client,
                     workflow=edit_workflow,
                     meta=edit_meta,
