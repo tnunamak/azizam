@@ -1411,6 +1411,28 @@ curl -s "localhost:5000/gateway/v1/aliases/resolve?operation=chat&model=gpt-4o" 
 each stable alias as a capability tagged `alias`, `resolves_to:<target>` and
 `engine:<id>`.
 
+## Showcase page: `/showcase`
+
+`GET /showcase` serves a static demo page (source in `showcase/`, no build step,
+no CDN). It builds one card per capability at load time from
+`/gateway/v1/workflows`, `/gateway/v1/capabilities`, `/gateway/v1/aliases`,
+`/v1/voices` and `/openapi.json`, so a new workflow manifest appears without a
+code change. Section order and matching rules are data in
+`showcase/sections.json`; an unmatched workflow lands in "More workflows".
+
+Each card shows a recorded example (input, output, wall time, alias and what it
+resolves to), a Try it form built from the OpenAPI input schema, and copy-paste
+curl, Python and JavaScript. The Try it panels call the gateway from the browser
+on the same origin, so LAN bypass works; an optional API key is kept only in
+`localStorage`. The top strip shows engine status, the ComfyUI queue and whether
+the LLM is generating (`GET /showcase/api/status`, normal auth).
+
+The page, its assets and the example files are public. Examples live in
+`data/showcase/examples/<id>/` (gitignored; override with
+`OPENAI_PROXY_SHOWCASE_EXAMPLES_DIR`). Record them with
+`scripts/build-showcase-examples`. It is idempotent, waits for an idle GPU before
+every job, and runs cheap jobs first and video last. `--list` shows what is pending.
+
 ## Discovery and Debugging: `/gateway/v1/*`
 
 The read-only gateway router (`gateway/api.py`) is mounted into the live app.
