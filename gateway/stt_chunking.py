@@ -88,6 +88,9 @@ _DECODED_RESPONSE_REPRESENTATION_HEADERS = frozenset(
 # not safely mergeable without response-specific timestamp semantics.
 _SDK_TRANSCRIPTION_FIELDS = frozenset(Transcription.__annotations__)
 _MERGEABLE_TRANSCRIPTION_FIELDS = frozenset({"text", "usage"})
+# Per-request diagnostics some engines add beside the text (audio.cpp sends
+# {"timing": ...}). They describe one chunk, so a merge drops them.
+_ENGINE_DIAGNOSTIC_FIELDS = frozenset({"timing"})
 _SDK_DURATION_USAGE_FIELDS = frozenset(UsageDuration.__annotations__)
 _SDK_TOKEN_USAGE_FIELDS = frozenset(UsageTokens.__annotations__)
 _SDK_TOKEN_DETAIL_FIELDS = frozenset(UsageTokensInputTokenDetails.__annotations__)
@@ -1139,6 +1142,7 @@ def _parse_mergeable_chunk_payload(body: bytes) -> Mapping[str, Any]:
         raise SttChunkResponseError("STT chunk returned non-JSON output") from error
     if not isinstance(payload, Mapping) or not isinstance(payload.get("text"), str):
         raise SttChunkResponseError("STT chunk returned no text")
+    payload = {name: value for name, value in payload.items() if name not in _ENGINE_DIAGNOSTIC_FIELDS}
     unknown = set(payload) - _SDK_TRANSCRIPTION_FIELDS
     unsupported = set(payload) - _MERGEABLE_TRANSCRIPTION_FIELDS
     if unknown or unsupported:

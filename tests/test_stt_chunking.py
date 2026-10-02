@@ -113,6 +113,13 @@ class SttChunkMergeTests(unittest.TestCase):
         self.assertEqual(tokens["usage"]["total_tokens"], 23)
         self.assertEqual(tokens["usage"]["input_token_details"], {"audio_tokens": 5, "text_tokens": 4})
 
+    def test_engine_timing_diagnostics_are_dropped_not_rejected(self) -> None:
+        body = json.dumps({"text": "hello", "timing": {"wall_ms": 12.5, "rtf": 0.01}}).encode()
+        payload = stt_chunking._parse_mergeable_chunk_payload(body)
+        self.assertEqual(stt_chunking.merge_transcription_payloads([payload, payload]), {"text": "hello hello"})
+        with self.assertRaises(stt_chunking.SttChunkResponseError):
+            stt_chunking._parse_mergeable_chunk_payload(json.dumps({"text": "x", "segments": []}).encode())
+
     def test_merges_each_optional_sdk_token_detail_without_inventing_absent_values(self) -> None:
         payload = stt_chunking.merge_transcription_payloads([
             {"text": "one", "usage": {"type": "tokens", "input_tokens": 1, "output_tokens": 0, "total_tokens": 1, "input_token_details": {"audio_tokens": 1}}},
