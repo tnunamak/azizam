@@ -574,7 +574,7 @@ v2 = client.videos.extend(video={"id": v.id}, prompt="she climbs into the pines"
 v2 = client.videos.poll(v2.id)       # v2.seconds is the stitched total, v2.remixed_from_video_id == v.id
 
 # 2. Storyboard: one request, one prompt and length per shot (gateway extension on /v1/videos).
-client.videos.create(model="video-long", prompt="", seconds=None, extra_body={"shots": [
+client.videos.create(model="video-long", prompt="", extra_body={"shots": [
     {"prompt": "a lone cyclist on a coast road, golden hour", "seconds": 8},
     {"prompt": "the road climbs into pine forest", "seconds": 8},
     {"prompt": "she coasts down into a white village", "seconds": 8}]})
