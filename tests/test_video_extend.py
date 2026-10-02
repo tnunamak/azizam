@@ -327,6 +327,15 @@ class ExtensionRouteTests(RemixReplaceBase):
         self.assertIsNone(r.json()["remixed_from_video_id"])
         self.assertEqual(self.comfy.uploads[0][1], b"clip")
 
+    def test_sdk_multipart_shape_with_bracketed_video_id(self) -> None:
+        """openai-python's videos.extend sends multipart with `video[id]`, plus
+        gateway extras as bracketed fields."""
+        r = self.client.post("/v1/videos/extensions", data={
+            "prompt": "continue", "seconds": "8", "video[id]": SOURCE_ID, "context_seconds": "2"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["remixed_from_video_id"], SOURCE_ID)
+        self.assertEqual(self.graph["s0_tail"]["inputs"]["length"], 8 * 6 + 1)
+
     def test_openai_prefixed_alias_route_exists(self) -> None:
         r = self.client.post("/openai/v1/videos/extensions",
                              json={"video": {"id": SOURCE_ID}, "prompt": "x", "seconds": 4})
