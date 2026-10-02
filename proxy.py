@@ -82,6 +82,7 @@ from gateway import speech_stream
 from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
+from gateway import mcp_server
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking
@@ -221,6 +222,7 @@ from gateway.toolcall_detection import (
 from gateway.discovery import WorkflowRegistry
 from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
+from gateway.workflow_openapi import workflow_catalog, workflow_inputs_schema
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
     build_llms_txt,
@@ -13395,6 +13397,67 @@ voices_api.register_voice_routes(
     ),
 )
 
+
+
+# --- MCP server (gateway/mcp_server.py) ---------------------------------------
+# Thin adapter: every tool action is dispatched in process to the core routes
+# with the caller's own credentials, so auth, profile policy and receipts apply.
+_MCP_SKIP_FORWARD_HEADERS = {
+    "content-length", "content-type", "accept", "accept-encoding", "connection", "transfer-encoding",
+    "mcp-protocol-version", "mcp-method", "mcp-name", "mcp-session-id", "origin", "idempotency-key",
+}
+
+
+async def _mcp_internal_call(request: Request, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    headers = {k: v for k, v in request.headers.items()
+               if k.lower() not in _MCP_SKIP_FORWARD_HEADERS and not k.lower().startswith("mcp-param-")}
+    client = request.client
+    transport = httpx.ASGITransport(app=app, client=(client.host, client.port) if client else ("127.0.0.1", 0))
+    async with httpx.AsyncClient(transport=transport, base_url="http://gateway.internal", timeout=None) as http:
+        return await http.request(method, path, headers=headers, **kwargs)
+
+
+def _mcp_catalog() -> list[dict[str, Any]]:
+    records = GATEWAY_WORKFLOW_REGISTRY.records()
+    by_id = {record.id: record for record in records}
+    entries = workflow_catalog(records, _gateway_aliases_provider())
+    return [{**entry, "inputs": workflow_inputs_schema(by_id[entry["id"]])} for entry in entries]
+
+
+def _mcp_store_asset(request: Request, auth: Any, content: bytes, kind: str, suffix: str) -> dict[str, Any]:
+    owner = _asset_owner_key(auth if isinstance(auth, AuthContext) else None)
+    asset_id = store_asset_bytes(content, kind=kind, suffix=suffix, owner_key_hash=owner)
+    return {
+        "asset_id": asset_id,
+        "url": build_signed_asset_url(request, asset_id),
+        "media_type": asset_media_type(asset_id),
+        "size_bytes": len(content),
+    }
+
+
+def _mcp_read_asset(request: Request, auth: Any, asset_id: str) -> bytes | None:
+    path = asset_cache_path(asset_id)
+    if path is None or not path.exists():
+        return None
+    if not _asset_access_allowed(asset_id, auth if isinstance(auth, AuthContext) else None):
+        return None
+    return path.read_bytes()
+
+
+mcp_server.register_mcp_routes(
+    app,
+    mcp_server.McpDeps(
+        authenticate=lambda request, path: authenticate_request(request, path),
+        call=_mcp_internal_call,
+        catalog=_mcp_catalog,
+        aliases=lambda: _gateway_aliases_provider(),
+        store_asset=_mcp_store_asset,
+        read_asset=_mcp_read_asset,
+        public_base_url=lambda request: _public_base_url(request),
+        server_version=str((config.get("proxy") or {}).get("version") or "1"),
+        allowed_origins=lambda: [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])],
+    ),
+)
 
 # --- identity scene + likeness check (gateway/identity_api.py) ----------------
 IDENTITY_CFG = config.get("identity", {}) or {}

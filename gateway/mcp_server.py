@@ -1,0 +1,868 @@
+"""MCP server for the gateway: three meta-tools over the existing capability core.
+
+Transport: Streamable HTTP at one endpoint (``POST /mcp``). Protocol: the current
+revision (2026-07-28, stateless: every request carries its version and
+identity in ``_meta``, no ``initialize``, no session) plus the handshake-based
+revisions 2025-03-26 to 2025-11-25, which Claude Code and most SDKs still speak.
+Legacy clients get a session-less ``initialize`` answer (we never mint
+``Mcp-Session-Id``); ``GET`` and ``DELETE`` return 405 because the server has
+no stream to offer. Responses are always plain JSON.
+
+Tools (about 200 standing tokens each, generated from discovery, never one tool
+per model):
+
+* ``capabilities``: list or describe workflows, stable aliases and operations
+  with typed inputs. Generated from ``x-vividfish-workflows``.
+* ``run``: start a workflow or an OpenAI-style media operation (speech). Returns
+  the result, or a job id when the work outlives ``wait_seconds``.
+* ``job``: poll, wait for, or cancel a job; fetches the result.
+
+The module owns no business logic. Authentication, profile policy, receipts and
+job storage stay in the core routes: every action is dispatched in process to
+those routes with the caller's own credentials (``McpDeps.call``). Media comes
+back as MCP ``resource_link`` blocks that point at signed asset URLs, never as
+base64 blobs. A feature the core cannot do returns an explicit tool error.
+"""
+from __future__ import annotations
+
+import asyncio
+import base64
+import binascii
+import json
+import re
+import time
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Mapping
+from urllib.parse import urlsplit
+
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+
+from gateway.workflow_openapi import WORKFLOW_EXTENSION_NAMESPACE
+
+MODERN_VERSION = "2026-07-28"
+LEGACY_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
+SUPPORTED_VERSIONS = (MODERN_VERSION, *LEGACY_VERSIONS)
+
+META_VERSION = "io.modelcontextprotocol/protocolVersion"
+
+# JSON-RPC and MCP error codes.
+PARSE_ERROR = -32700
+INVALID_REQUEST = -32600
+METHOD_NOT_FOUND = -32601
+INVALID_PARAMS = -32602
+INTERNAL_ERROR = -32603
+HEADER_MISMATCH = -32020
+UNSUPPORTED_VERSION = -32022
+
+SERVER_NAME = "vivid-fish-ai-gateway"
+INSTRUCTIONS = (
+    "Media generation gateway. Call `capabilities` to see workflows and aliases "
+    "(image, video, music, sfx, speech), `capabilities` with `target` for typed "
+    "inputs, `run` to generate, and `job` to poll slow work. Results are signed URLs."
+)
+
+DEFAULT_WAIT_SECONDS = 30
+MAX_WAIT_SECONDS = 120
+SYNC_TIMEOUT_SECONDS = 300.0
+MAX_ASSET_BYTES = 512 * 1024 * 1024
+
+ASSET_ID_RE = re.compile(r"\b((?:img|aud|vid)_[0-9a-f]{64})\b")
+
+SPEECH_TARGET = "speech"
+SPEECH_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "input": {"type": "string", "description": "Text to speak."},
+        "voice": {"type": "string", "description": "Voice name or custom voice id. Optional."},
+        "model": {"type": "string", "description": "Speech alias or engine, e.g. tts, tts-fast, tts-quality."},
+        "speed": {"type": "number", "minimum": 0.25, "maximum": 4.0},
+        "instructions": {"type": "string", "description": "Style hint, for engines that take one."},
+        "response_format": {"type": "string", "enum": ["mp3", "wav", "opus", "aac", "flac"], "default": "mp3"},
+    },
+    "required": ["input"],
+    "additionalProperties": False,
+}
+
+
+class ToolError(Exception):
+    """A failure the model can act on. Becomes ``isError: true``, not a protocol error."""
+
+    def __init__(self, message: str, **details: Any) -> None:
+        super().__init__(message)
+        self.details = details
+
+
+@dataclass
+class McpDeps:
+    authenticate: Callable[[Request, str], Any]
+    # (request, method, path, kwargs: json=, data=, files=, params=) -> httpx.Response
+    call: Callable[..., Awaitable[Any]]
+    catalog: Callable[[], list[dict[str, Any]]]
+    aliases: Callable[[], Mapping[str, Any]]
+    # (request, auth, content, kind "img|aud|vid", suffix) -> {"asset_id", "url", "media_type", "size_bytes"}
+    store_asset: Callable[[Request, Any, bytes, str, str], dict[str, Any]]
+    # (request, auth, asset_id) -> bytes, or None when missing or not the caller's
+    read_asset: Callable[[Request, Any, str], bytes | None]
+    public_base_url: Callable[[Request], str | None]
+    server_version: str = "1"
+    allowed_origins: Callable[[], list[str]] = lambda: []
+    poll_interval: float = 1.0
+
+
+# ------------------------------------------------------------------ JSON-RPC
+
+
+def rpc_error(msg_id: Any, code: int, message: str, data: Any = None) -> dict[str, Any]:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
+    return {"jsonrpc": "2.0", "id": msg_id, "error": error}
+
+
+def _decode_header_value(value: str) -> str:
+    if value.startswith("=?base64?") and value.endswith("?="):
+        try:
+            return base64.b64decode(value[len("=?base64?"):-2], validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            return value
+    return value
+
+
+def _origin_allowed(request: Request, extra: list[str]) -> bool:
+    origin = request.headers.get("origin")
+    if not origin:
+        return True  # not a browser
+    if origin in extra:
+        return True
+    host = urlsplit(origin).netloc.lower()
+    own = {
+        (request.headers.get("x-forwarded-host") or "").lower(),
+        (request.headers.get("host") or "").lower(),
+    }
+    return bool(host) and host in own
+
+
+# ---------------------------------------------------------------- tool schemas
+
+TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "capabilities",
+        "title": "List gateway capabilities",
+        "description": (
+            "List the media workflows, stable aliases (image, video, music, sfx, ...) and operations "
+            "(speech) this gateway can run. Pass `target` for one entry's typed inputs, outputs and "
+            "expected run time. Pass `query` to filter."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "Workflow id, short id, alias, or `speech`. Returns its typed inputs."},
+                "query": {"type": "string", "description": "Case-insensitive filter on id, alias, intent and description."},
+                "intent": {"type": "string", "description": "Filter by intent, e.g. image.generate, video.generate, audio.generate."},
+            },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "run",
+        "title": "Run a workflow or media operation",
+        "description": (
+            "Run a workflow, stable alias or `speech`. `inputs` follow the schema from `capabilities` "
+            "with `target`. Fast work returns the result. Slow work (video, long music) returns a "
+            "`job_id` after `wait_seconds`; call `job` to continue. Media comes back as signed URLs. "
+            "Image and video inputs take a data URI or an asset id from an earlier result."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "Workflow id, short id, alias (image, video, music, sfx, ...), or `speech`."},
+                "inputs": {"type": "object", "description": "Typed inputs for the target. See `capabilities`."},
+                "mode": {"type": "string", "enum": ["auto", "sync", "async"], "default": "auto"},
+                "wait_seconds": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_SECONDS, "default": DEFAULT_WAIT_SECONDS,
+                                 "description": "How long to wait for a job before returning its id."},
+            },
+            "required": ["target"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "job",
+        "title": "Poll, wait for or cancel a job",
+        "description": "Get the status of a `job_id` from `run`, optionally waiting; returns the result when done. `cancel` stops it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string"},
+                "wait_seconds": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_SECONDS, "default": 0},
+                "cancel": {"type": "boolean", "default": False},
+            },
+            "required": ["job_id"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+]
+
+
+# ------------------------------------------------------------- input handling
+
+
+def _type_error(name: str, value: Any, spec: Mapping[str, Any]) -> str | None:
+    kind = spec.get("type")
+    if kind == "string":
+        if not isinstance(value, str):
+            return f"input {name!r} must be a string"
+    elif kind == "integer":
+        if isinstance(value, bool) or not isinstance(value, int):
+            return f"input {name!r} must be an integer"
+    elif kind == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return f"input {name!r} must be a number"
+    elif kind == "boolean":
+        if not isinstance(value, bool):
+            return f"input {name!r} must be a boolean"
+    if "enum" in spec and value not in spec["enum"]:
+        return f"input {name!r} must be one of {spec['enum']}"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if "minimum" in spec and value < spec["minimum"]:
+            return f"input {name!r} must be at least {spec['minimum']}"
+        if "maximum" in spec and value > spec["maximum"]:
+            return f"input {name!r} must be at most {spec['maximum']}"
+    return None
+
+
+def validate_inputs(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> None:
+    """Check ``inputs`` against a flat manifest-derived schema. Raises ToolError."""
+    props = schema.get("properties") or {}
+    problems = [f"unknown input {name!r}" for name in inputs if name not in props]
+    problems += [f"missing required input {name!r}" for name in schema.get("required") or [] if name not in inputs]
+    for name, value in inputs.items():
+        if name in props:
+            problem = _type_error(name, value, props[name])
+            if problem:
+                problems.append(problem)
+    if problems:
+        raise ToolError("; ".join(problems), invalid_inputs=problems, valid_inputs=sorted(props))
+
+
+def effective_schema(entry: Mapping[str, Any]) -> dict[str, Any]:
+    """Manifest inputs plus the route-owned fields (``n``, ``size``, ``seconds``)."""
+    base = entry.get("inputs") or {"type": "object", "properties": {}}
+    props = dict(base.get("properties") or {})
+    for extra in entry.get("route_inputs") or []:
+        spec = {k: v for k, v in extra.items() if k in ("type", "minimum", "maximum", "description", "enum")}
+        props.setdefault(extra["name"], spec)
+    schema = {k: v for k, v in base.items() if k not in ("x-vividfish-workflow-id", "description")}
+    schema["properties"] = props
+    return schema
+
+
+def _sniff(data: bytes, hint: str | None = None) -> tuple[str, str]:
+    """(media type, suffix) from magic bytes, falling back to ``hint``."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", ".png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", ".jpg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp", ".webp"
+    if data[4:8] == b"ftyp":
+        return "video/mp4", ".mp4"
+    if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return "audio/wav", ".wav"
+    if data[:3] == b"ID3" or data[:2] in (b"\xff\xfb", b"\xff\xf3"):
+        return "audio/mpeg", ".mp3"
+    if data[:4] == b"fLaC":
+        return "audio/flac", ".flac"
+    if data[:4] == b"OggS":
+        return "audio/ogg", ".ogg"
+    hint = (hint or "").split(";")[0].strip().lower()
+    return hint or "application/octet-stream", {
+        "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "video/mp4": ".mp4",
+        "video/webm": ".webm", "audio/wav": ".wav", "audio/mpeg": ".mp3", "audio/flac": ".flac",
+        "audio/ogg": ".ogg", "audio/mp4": ".m4a", "audio/aac": ".aac", "audio/opus": ".ogg",
+    }.get(hint, ".bin")
+
+
+def _kind_for(media_type: str) -> str:
+    return {"image": "img", "audio": "aud", "video": "vid"}.get(media_type.split("/")[0], "")
+
+
+def _asset_id_in(value: str) -> str | None:
+    match = ASSET_ID_RE.search(value)
+    return match.group(1) if match else None
+
+
+async def _asset_bytes(deps: McpDeps, request: Request, auth: Any, name: str, value: Any) -> tuple[bytes, str]:
+    """Bytes for an asset input: a data URI or a gateway asset id or signed URL."""
+    if not isinstance(value, str) or not value:
+        raise ToolError(f"input {name!r} must be a data URI or an asset id from an earlier result")
+    if value.startswith("data:"):
+        head, _, payload = value.partition(",")
+        try:
+            raw = base64.b64decode(payload, validate=True) if ";base64" in head else payload.encode()
+        except (binascii.Error, ValueError):
+            raise ToolError(f"input {name!r} is not a valid base64 data URI") from None
+        return raw, head[5:].split(";")[0]
+    asset_id = _asset_id_in(value)
+    if asset_id is None:
+        raise ToolError(
+            f"input {name!r}: only data URIs and gateway asset ids or signed asset URLs are accepted; "
+            "this adapter does not fetch external URLs"
+        )
+    content = await asyncio.to_thread(deps.read_asset, request, auth, asset_id)
+    if content is None:
+        raise ToolError(f"input {name!r}: asset {asset_id} was not found for this key (it may have expired)")
+    return content, ""
+
+
+# ------------------------------------------------------------ request building
+
+
+@dataclass
+class BuiltRequest:
+    method: str
+    path: str
+    json: dict[str, Any] | None = None
+    data: dict[str, str] | None = None
+    files: dict[str, tuple[str, bytes, str]] | None = None
+
+
+def _combine_size(inputs: Mapping[str, Any], mapping: Mapping[str, Any], body: dict[str, Any]) -> None:
+    groups: dict[str, tuple[str, list[str]]] = {}
+    for name, m in mapping.items():
+        if m.get("combine") and name in inputs:
+            groups[m["field"]] = (m["field"], list(m["combine"]))
+    for field, (_, parts) in groups.items():
+        missing = [p for p in parts if p not in inputs]
+        if missing:
+            raise ToolError(f"give {' and '.join(parts)} together; missing {missing}")
+        body[field] = "x".join(str(int(inputs[p])) for p in parts)
+
+
+async def build_request(
+    deps: McpDeps, request: Request, auth: Any, entry: Mapping[str, Any], route: Mapping[str, Any],
+    inputs: Mapping[str, Any], *, wrap_intent: str | None,
+) -> BuiltRequest:
+    """Turn typed inputs into the request the core route expects, per the manifest field map."""
+    mapping: dict[str, Any] = dict(route.get("fields") or {})
+    for extra in entry.get("route_inputs") or []:
+        mapping.setdefault(extra["name"], {"in": extra.get("in", "body"), "field": extra.get("field", extra["name"])})
+    multipart = route.get("content_type", "").startswith("multipart")
+    body: dict[str, Any] = {}
+    ext: dict[str, Any] = {}
+    files: dict[str, tuple[str, bytes, str]] = {}
+    consumed: set[str] = set()
+    for name, value in inputs.items():
+        m = mapping.get(name)
+        if m is None:
+            raise ToolError(f"input {name!r} is not available on the {route.get('method', 'POST')} {route.get('path')} route")
+        where = m.get("in")
+        if where == "none":
+            raise ToolError(f"input {name!r} is managed by the gateway on this route and cannot be set")
+        if m.get("combine"):
+            consumed.add(name)
+            continue
+        if where in ("file", "file+extension"):
+            raw, hint = await _asset_bytes(deps, request, auth, name, value)
+            media_type, suffix = _sniff(raw, hint)
+            part = m["field"] if where == "file" else name
+            files[part] = (f"{name}{suffix}", raw, media_type)
+            if where == "file+extension":
+                ext[m["field"]] = {"multipart_field": part}
+        elif where == "extension":
+            ext[m["field"]] = value
+        elif where in ("body", "form"):
+            if isinstance(value, str) and m["field"] == "input_reference":
+                value = _asset_id_in(value) or value
+            body[m["field"]] = value
+        else:
+            raise ToolError(f"input {name!r} has an unsupported field mapping: {where!r}")
+    _combine_size(inputs, mapping, body)
+    model = route.get("model")
+    if model:
+        body = {"model": model, **body}
+    if entry["intent"].startswith("image."):
+        body.setdefault("response_format", "url")
+    if ext:
+        body["extensions"] = {WORKFLOW_EXTENSION_NAMESPACE: ext}
+
+    if wrap_intent:  # media-job submit
+        return BuiltRequest("POST", route["path"], json={"intent": wrap_intent, "request": body})
+    if multipart:
+        data = {k: v if isinstance(v, str) else json.dumps(v) for k, v in body.items()}
+        return BuiltRequest(route.get("method", "POST"), route["path"], data=data, files=files)
+    return BuiltRequest(route.get("method", "POST"), route["path"], json=body)
+
+
+# ------------------------------------------------------------------ result I/O
+
+
+def _error_from(resp: Any) -> ToolError:
+    try:
+        payload = resp.json()
+    except Exception:  # noqa: BLE001
+        payload = {}
+    err = payload.get("error") if isinstance(payload, Mapping) else None
+    if isinstance(err, Mapping):
+        message = str(err.get("message") or err.get("code") or "request failed")
+        return ToolError(message, http_status=resp.status_code, code=err.get("code"), type=err.get("type"))
+    detail = payload.get("detail") if isinstance(payload, Mapping) else None
+    return ToolError(str(detail or f"gateway returned HTTP {resp.status_code}"), http_status=resp.status_code)
+
+
+def _asset(item: Mapping[str, Any], name: str) -> dict[str, Any]:
+    out = {k: item[k] for k in ("asset_id", "url", "media_type", "size_bytes") if item.get(k) is not None}
+    media_type = str(out.get("media_type") or "")
+    out["kind"] = media_type.split("/")[0] if media_type else item.get("kind", "file")
+    out["name"] = name
+    return out
+
+
+async def _assets_from_response(deps: McpDeps, request: Request, auth: Any, resp: Any, stem: str) -> tuple[list[dict[str, Any]], Any]:
+    """Assets (and any non-media JSON) from a core response."""
+    ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if ctype == "application/json":
+        payload = resp.json()
+        data = payload.get("data") if isinstance(payload, Mapping) else None
+        if isinstance(data, list) and data and all(isinstance(i, Mapping) for i in data):
+            assets: list[dict[str, Any]] = []
+            for index, item in enumerate(data):
+                name = f"{stem}-{index + 1}"
+                if item.get("b64_json"):
+                    raw = base64.b64decode(item["b64_json"])
+                    media_type, suffix = _sniff(raw)
+                    stored = await asyncio.to_thread(deps.store_asset, request, auth, raw, _kind_for(media_type) or "img", suffix)
+                    assets.append(_asset(stored, name + suffix))
+                elif item.get("url") or item.get("content_url"):
+                    asset_id = item.get("asset_id") or _asset_id_in(str(item.get("url") or item.get("content_url")))
+                    assets.append(_asset({**item, "url": item.get("url") or item.get("content_url"), "asset_id": asset_id}, name))
+            if assets:
+                return assets, None
+        return [], payload
+    raw = resp.content
+    if len(raw) > MAX_ASSET_BYTES:
+        raise ToolError("the result is larger than this adapter will hand out", size_bytes=len(raw))
+    media_type, suffix = _sniff(raw, ctype)
+    kind = _kind_for(media_type)
+    if not kind:
+        raise ToolError(f"the gateway returned an unexpected content type: {ctype or 'none'}")
+    stored = await asyncio.to_thread(deps.store_asset, request, auth, raw, kind, suffix)
+    return [_asset(stored, stem + suffix)], None
+
+
+_STATUS_MAP = {"queued": "queued", "running": "running", "in_progress": "running", "processing": "running",
+               "succeeded": "succeeded", "completed": "succeeded", "failed": "failed",
+               "canceled": "canceled", "cancelled": "canceled"}
+
+
+def _job_family(job_id: str) -> str:
+    return "video" if job_id.startswith("video_") else "media_job"
+
+
+def _job_paths(family: str, job_id: str) -> dict[str, tuple[str, str]]:
+    if family == "video":
+        return {"poll": ("GET", f"/v1/videos/{job_id}"), "content": ("GET", f"/v1/videos/{job_id}/content"),
+                "cancel": ("DELETE", f"/v1/videos/{job_id}")}
+    return {"poll": ("GET", f"/gateway/v1/media/jobs/{job_id}"),
+            "content": ("GET", f"/gateway/v1/media/jobs/{job_id}/content"),
+            "cancel": ("POST", f"/gateway/v1/media/jobs/{job_id}/cancel")}
+
+
+def _normalize_job(payload: Mapping[str, Any]) -> dict[str, Any]:
+    raw_status = str(payload.get("status") or "queued")
+    err = payload.get("error")
+    if isinstance(err, Mapping):
+        err = err.get("message") or err.get("code")
+    return {
+        "status": _STATUS_MAP.get(raw_status, raw_status),
+        "progress": payload.get("progress"),
+        "error": str(err) if err else None,
+    }
+
+
+# ------------------------------------------------------------------- the tools
+
+
+class Tools:
+    def __init__(self, deps: McpDeps, request: Request, auth: Any) -> None:
+        self.deps, self.request, self.auth = deps, request, auth
+
+    # -- resolution -----------------------------------------------------
+
+    def _speech_names(self) -> list[str]:
+        section = (self.deps.aliases().get("operations") or self.deps.aliases()).get("speech") or {}
+        return [str(a.get("alias")) for a in section.get("stable") or [] if a.get("alias")]
+
+    def resolve(self, target: str, inputs: Mapping[str, Any] | None = None) -> tuple[str, dict[str, Any] | None, str | None]:
+        """(kind, catalog entry, speech model). kind is ``workflow`` or ``speech``.
+
+        An alias can name a generate and an edit workflow (``image``). The caller's
+        inputs pick the one that accepts them all; ties go to the generate workflow.
+        """
+        t = target.strip()
+        if t == SPEECH_TARGET or t in self._speech_names():
+            return "speech", None, None if t == SPEECH_TARGET else t
+        entries = self.deps.catalog()
+        matches = [e for e in entries if t in (e["id"], e["short_id"]) or t in (e.get("aliases") or [])]
+        if matches:
+            def rank(entry: Mapping[str, Any]) -> tuple[int, int]:
+                props = effective_schema(entry).get("properties") or {}
+                accepts = all(name in props for name in (inputs or {}))
+                return (0 if accepts else 1, 0 if entry["intent"].endswith(".generate") else 1)
+            return "workflow", min(matches, key=rank), None
+        names = sorted({e["short_id"] for e in entries} | {a for e in entries for a in e.get("aliases") or []})
+        raise ToolError(f"unknown target {target!r}; call `capabilities` to list valid targets",
+                        targets=names + [SPEECH_TARGET] + self._speech_names())
+
+    # -- capabilities -----------------------------------------------------
+
+    async def capabilities(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        target = args.get("target")
+        if target:
+            kind, entry, model = self.resolve(str(target))
+            if kind == "speech":
+                detail: dict[str, Any] = {
+                    "target": SPEECH_TARGET, "intent": "audio.speech", "aliases": self._speech_names(),
+                    "description": "Text to speech through the OpenAI-style speech route.",
+                    "inputs": SPEECH_SCHEMA, "outputs": [{"name": "audio", "media_type": "audio/mpeg"}],
+                    "mode": "sync",
+                }
+                try:
+                    resp = await self.deps.call(self.request, "GET", "/v1/audio/voices")
+                    if resp.status_code == 200:
+                        listing = resp.json()
+                        detail["voices"] = {"default": listing.get("default_voice"),
+                                            "ids": [v.get("voice_id") for v in listing.get("voices") or []]}
+                except Exception:  # noqa: BLE001 - voices are a nicety
+                    pass
+                return detail
+            return self._describe(entry)
+        query = str(args.get("query") or "").lower()
+        intent = str(args.get("intent") or "")
+        rows = []
+        for entry in self.deps.catalog():
+            hay = " ".join([entry["id"], entry.get("description") or "", entry["intent"], *(entry.get("aliases") or [])]).lower()
+            if query and query not in hay or intent and entry["intent"] != intent:
+                continue
+            rows.append({
+                "target": entry["short_id"], "intent": entry["intent"], "aliases": entry.get("aliases") or [],
+                "description": (entry.get("description") or "")[:160],
+                "typical_seconds": entry.get("typical_seconds"), "mode": self._mode_for(entry, "auto"),
+            })
+        if not intent and (not query or query in SPEECH_TARGET):
+            rows.append({"target": SPEECH_TARGET, "intent": "audio.speech", "aliases": self._speech_names(),
+                          "description": "Text to speech.", "typical_seconds": None, "mode": "sync"})
+        return {"workflows": rows, "hint": "Call capabilities with `target` for typed inputs; run with `target` and `inputs`."}
+
+    def _describe(self, entry: Mapping[str, Any]) -> dict[str, Any]:
+        execution = entry.get("execution") or {}
+        return {
+            "target": entry["short_id"], "id": entry["id"], "intent": entry["intent"],
+            "display_name": entry.get("display_name"), "description": entry.get("description"),
+            "aliases": entry.get("aliases") or [], "typical_seconds": entry.get("typical_seconds"),
+            "mode": self._mode_for(entry, "auto"),
+            "modes_available": [m for m in ("sync", "async") if execution.get(m)],
+            "inputs": effective_schema(entry), "outputs": entry.get("outputs") or [],
+        }
+
+    @staticmethod
+    def _mode_for(entry: Mapping[str, Any], requested: str) -> str:
+        execution = entry.get("execution") or {}
+        if requested in ("sync", "async"):
+            if not execution.get(requested):
+                raise ToolError(f"mode {requested!r} is not available for {entry['short_id']}; "
+                                f"available: {[m for m in ('sync', 'async') if execution.get(m)]}")
+            return requested
+        return execution.get("recommended") or ("sync" if execution.get("sync") else "async")
+
+    # -- run ------------------------------------------------------------
+
+    async def run(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        target = args.get("target")
+        if not isinstance(target, str) or not target:
+            raise ToolError("`target` is required")
+        inputs = args.get("inputs") or {}
+        if not isinstance(inputs, Mapping):
+            raise ToolError("`inputs` must be an object")
+        mode = args.get("mode") or "auto"
+        if mode not in ("auto", "sync", "async"):
+            raise ToolError("`mode` must be auto, sync or async")
+        wait = self._wait(args.get("wait_seconds"), DEFAULT_WAIT_SECONDS)
+        kind, entry, speech_model = self.resolve(target, inputs)
+        if kind == "speech":
+            return await self._speech(inputs, speech_model)
+        assert entry is not None
+        validate_inputs(effective_schema(entry), inputs)
+        chosen = self._mode_for(entry, mode)
+        execution = entry["execution"]
+        stem = entry["short_id"]
+        if chosen == "sync":
+            route = execution["sync"]
+            built = await build_request(self.deps, self.request, self.auth, entry, route, inputs, wrap_intent=None)
+            resp = await self._send(built, SYNC_TIMEOUT_SECONDS)
+            if resp.status_code >= 400:
+                raise _error_from(resp)
+            assets, result = await _assets_from_response(self.deps, self.request, self.auth, resp, stem)
+            return self._done(entry, assets, result)
+        route = execution["async"]
+        wrap = route["submit"]["body"]["intent"] if route["kind"] == "media_job" else None
+        submit = {**route["submit"], "fields": route["fields"], "content_type": route["submit"].get("content_type", "")}
+        built = await build_request(self.deps, self.request, self.auth, entry, submit, inputs, wrap_intent=wrap)
+        resp = await self._send(built, 60.0)
+        if resp.status_code >= 400:
+            raise _error_from(resp)
+        payload = resp.json()
+        job_id = payload.get("job_id") or payload.get("id")
+        if not job_id:
+            raise ToolError("the gateway accepted the job but returned no id")
+        return await self._await(str(job_id), wait, entry)
+
+    async def _speech(self, inputs: Mapping[str, Any], model: str | None) -> dict[str, Any]:
+        validate_inputs(SPEECH_SCHEMA, inputs)
+        body = {"model": model or inputs.get("model") or "tts", **{k: v for k, v in inputs.items() if k != "model"}}
+        body.setdefault("response_format", "mp3")
+        built = BuiltRequest("POST", "/v1/audio/speech", json=body)
+        resp = await self._send(built, SYNC_TIMEOUT_SECONDS)
+        if resp.status_code >= 400:
+            raise _error_from(resp)
+        assets, _ = await _assets_from_response(self.deps, self.request, self.auth, resp, "speech")
+        return {"status": "succeeded", "target": SPEECH_TARGET, "assets": assets}
+
+    async def _send(self, built: BuiltRequest, timeout: float) -> Any:
+        kwargs: dict[str, Any] = {}
+        if built.json is not None:
+            kwargs["json"] = built.json
+        if built.data is not None:
+            kwargs["data"] = built.data
+        if built.files:
+            kwargs["files"] = built.files
+        try:
+            return await asyncio.wait_for(self.deps.call(self.request, built.method, built.path, **kwargs), timeout)
+        except asyncio.TimeoutError:
+            raise ToolError("the gateway did not answer in time; retry with mode=async if the workflow offers it") from None
+
+    @staticmethod
+    def _wait(value: Any, default: int) -> int:
+        if value is None:
+            return default
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_WAIT_SECONDS:
+            raise ToolError(f"`wait_seconds` must be an integer from 0 to {MAX_WAIT_SECONDS}")
+        return value
+
+    @staticmethod
+    def _done(entry: Mapping[str, Any] | None, assets: list[dict[str, Any]], result: Any) -> dict[str, Any]:
+        out: dict[str, Any] = {"status": "succeeded", "target": entry["short_id"] if entry else None, "assets": assets}
+        if result is not None:
+            out["result"] = result
+        return out
+
+    # -- jobs -------------------------------------------------------------
+
+    async def _poll(self, job_id: str) -> dict[str, Any]:
+        method, path = _job_paths(_job_family(job_id), job_id)["poll"]
+        resp = await self.deps.call(self.request, method, path)
+        if resp.status_code >= 400:
+            raise _error_from(resp)
+        payload = resp.json()
+        return {**_normalize_job(payload), "raw": payload}
+
+    async def _await(self, job_id: str, wait: int, entry: Mapping[str, Any] | None) -> dict[str, Any]:
+        deadline = time.monotonic() + wait
+        state = await self._poll(job_id)
+        while state["status"] in ("queued", "running") and time.monotonic() < deadline:
+            await asyncio.sleep(min(self.deps.poll_interval, max(0.0, deadline - time.monotonic())))
+            state = await self._poll(job_id)
+        out: dict[str, Any] = {"status": state["status"], "job_id": job_id}
+        if entry:
+            out["target"] = entry["short_id"]
+        elif state["raw"].get("workflow"):
+            out["target"] = str(state["raw"]["workflow"]).split(".")[-1]
+        if state["progress"] is not None:
+            out["progress"] = state["progress"]
+        if state["status"] == "succeeded":
+            out["assets"] = await self._job_assets(job_id, out.get("target") or "result")
+        elif state["status"] in ("failed", "canceled"):
+            out["error"] = state["error"] or state["status"]
+        else:
+            out["next"] = "Call `job` with this job_id to keep waiting (set wait_seconds)."
+        return out
+
+    async def _job_assets(self, job_id: str, stem: str) -> list[dict[str, Any]]:
+        method, path = _job_paths(_job_family(job_id), job_id)["content"]
+        resp = await self.deps.call(self.request, method, path)
+        if resp.status_code >= 400:
+            raise _error_from(resp)
+        assets, _ = await _assets_from_response(self.deps, self.request, self.auth, resp, stem)
+        return assets
+
+    async def job(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        job_id = args.get("job_id")
+        if not isinstance(job_id, str) or not job_id:
+            raise ToolError("`job_id` is required")
+        wait = self._wait(args.get("wait_seconds"), 0)
+        if args.get("cancel"):
+            method, path = _job_paths(_job_family(job_id), job_id)["cancel"]
+            resp = await self.deps.call(self.request, method, path)
+            if resp.status_code >= 400:
+                raise _error_from(resp)
+            return await self._await(job_id, 0, None)
+        return await self._await(job_id, wait, None)
+
+
+def tool_result(payload: Mapping[str, Any], *, is_error: bool = False) -> dict[str, Any]:
+    """MCP tool result: JSON text for any client, structured content, links for media."""
+    content: list[dict[str, Any]] = [{"type": "text", "text": json.dumps(payload, separators=(",", ":"), default=str)}]
+    for asset in payload.get("assets") or []:
+        link: dict[str, Any] = {"type": "resource_link", "uri": asset["url"], "name": asset.get("name") or "asset"}
+        if asset.get("media_type"):
+            link["mimeType"] = asset["media_type"]
+        if asset.get("size_bytes") is not None:
+            link["size"] = asset["size_bytes"]
+        content.append(link)
+    result: dict[str, Any] = {"content": content, "structuredContent": dict(payload)}
+    if is_error:
+        result["isError"] = True
+    return result
+
+
+async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any]) -> dict[str, Any]:
+    tools = Tools(deps, request, auth)
+    handler = {"capabilities": tools.capabilities, "run": tools.run, "job": tools.job}[name]
+    try:
+        return tool_result(await handler(args))
+    except ToolError as exc:
+        return tool_result({"status": "error", "error": str(exc), **exc.details}, is_error=True)
+
+
+# ------------------------------------------------------------------- transport
+
+
+def _json(status: int, body: Any, headers: Mapping[str, str] | None = None) -> JSONResponse:
+    return JSONResponse(body, status_code=status, headers=dict(headers or {}))
+
+
+def _validate_modern(request: Request, msg: Mapping[str, Any], meta: Mapping[str, Any]) -> JSONResponse | None:
+    mid = msg.get("id")
+    header_version = request.headers.get("mcp-protocol-version")
+    version = meta.get(META_VERSION)
+    if version != header_version:
+        return _json(400, rpc_error(mid, HEADER_MISMATCH,
+                                    f"Header mismatch: MCP-Protocol-Version {header_version!r} does not match _meta {version!r}"))
+    if version != MODERN_VERSION:
+        return _json(400, rpc_error(mid, UNSUPPORTED_VERSION, "Unsupported protocol version",
+                                    {"supported": list(SUPPORTED_VERSIONS), "requested": version}))
+    if request.headers.get("mcp-method") != msg.get("method"):
+        return _json(400, rpc_error(mid, HEADER_MISMATCH,
+                                    f"Header mismatch: Mcp-Method {request.headers.get('mcp-method')!r} does not match body {msg.get('method')!r}"))
+    if msg.get("method") == "tools/call":
+        name = (msg.get("params") or {}).get("name")
+        header = request.headers.get("mcp-name")
+        if header is None or _decode_header_value(header) != name:
+            return _json(400, rpc_error(mid, HEADER_MISMATCH,
+                                        f"Header mismatch: Mcp-Name {header!r} does not match body {name!r}"))
+    return None
+
+
+async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mapping[str, Any], modern: bool) -> dict[str, Any] | None:
+    """One JSON-RPC message. ``None`` means a notification (no response)."""
+    mid, method = msg.get("id"), msg.get("method")
+    params = msg.get("params") or {}
+    if "id" not in msg:
+        return None
+    if method == "ping":
+        result: dict[str, Any] = {}
+    elif method == "initialize":
+        asked = params.get("protocolVersion")
+        result = {
+            "protocolVersion": asked if asked in LEGACY_VERSIONS else LEGACY_VERSIONS[0],
+            "capabilities": {"tools": {"listChanged": False}},
+            "serverInfo": {"name": SERVER_NAME, "version": deps.server_version},
+            "instructions": INSTRUCTIONS,
+        }
+    elif method == "server/discover" and modern:
+        result = {
+            "supportedVersions": list(SUPPORTED_VERSIONS),
+            "capabilities": {"tools": {"listChanged": False}},
+            "_meta": {"io.modelcontextprotocol/serverInfo": {"name": SERVER_NAME, "version": deps.server_version}},
+            "instructions": INSTRUCTIONS, "ttlMs": 3600000, "cacheScope": "public",
+        }
+    elif method == "tools/list":
+        result = {"tools": TOOLS}
+        if modern:
+            result.update(ttlMs=300000, cacheScope="public")
+    elif method == "tools/call":
+        name = params.get("name")
+        if name not in {t["name"] for t in TOOLS}:
+            return rpc_error(mid, INVALID_PARAMS, f"Unknown tool: {name}")
+        args = params.get("arguments") or {}
+        if not isinstance(args, Mapping):
+            return rpc_error(mid, INVALID_PARAMS, "arguments must be an object")
+        result = await call_tool(deps, request, auth, name, args)
+    else:
+        return rpc_error(mid, METHOD_NOT_FOUND, f"Method not found: {method}")
+    if modern:
+        result = {"resultType": "complete", **result}
+    return {"jsonrpc": "2.0", "id": mid, "result": result}
+
+
+def register_mcp_routes(app: FastAPI, deps: McpDeps, *, path: str = "/mcp") -> None:
+    def metadata_url(request: Request) -> str:
+        base = (deps.public_base_url(request) or "").rstrip("/")
+        return f"{base}/.well-known/oauth-protected-resource{path}"
+
+    @app.post(path, include_in_schema=False)
+    async def mcp_post(request: Request) -> Response:
+        if not _origin_allowed(request, deps.allowed_origins()):
+            return _json(403, rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
+        auth = deps.authenticate(request, path)
+        if isinstance(auth, Response):
+            if auth.status_code == 401:
+                auth.headers["WWW-Authenticate"] = f'Bearer resource_metadata="{metadata_url(request)}"'
+            return auth
+        try:
+            body = json.loads(await request.body())
+        except (ValueError, UnicodeDecodeError):
+            return _json(400, rpc_error(None, PARSE_ERROR, "Parse error"))
+        if isinstance(body, list):  # JSON-RPC batch: only 2025-03-26 allowed these
+            if not body or not all(isinstance(m, Mapping) for m in body):
+                return _json(400, rpc_error(None, INVALID_REQUEST, "Invalid batch"))
+            replies = [r for r in [await handle_message(deps, request, auth, m, False) for m in body] if r]
+            return _json(200, replies) if replies else Response(status_code=202)
+        if not isinstance(body, Mapping) or body.get("jsonrpc") != "2.0" or not isinstance(body.get("method"), str):
+            return _json(400, rpc_error(None, INVALID_REQUEST, "Invalid Request"))
+
+        params = body.get("params") if isinstance(body.get("params"), Mapping) else {}
+        meta = params.get("_meta") if isinstance(params.get("_meta"), Mapping) else {}
+        header_version = request.headers.get("mcp-protocol-version")
+        modern = body["method"] != "initialize" and (META_VERSION in meta or header_version == MODERN_VERSION)
+        if "id" not in body:  # notification
+            return Response(status_code=202)
+        if modern:
+            failure = _validate_modern(request, body, meta)
+            if failure is not None:
+                return failure
+        elif header_version and header_version not in SUPPORTED_VERSIONS:
+            return _json(400, rpc_error(body.get("id"), UNSUPPORTED_VERSION, "Unsupported protocol version",
+                                        {"supported": list(SUPPORTED_VERSIONS), "requested": header_version}))
+        reply = await handle_message(deps, request, auth, body, modern)
+        status = 404 if modern and reply and reply.get("error", {}).get("code") == METHOD_NOT_FOUND else 200
+        return _json(status, reply)
+
+    @app.api_route(path, methods=["GET", "DELETE"], include_in_schema=False)
+    async def mcp_no_stream(request: Request) -> Response:
+        return Response(status_code=405, headers={"Allow": "POST"})
+
+    async def protected_resource(request: Request) -> JSONResponse:
+        base = (deps.public_base_url(request) or "").rstrip("/")
+        return JSONResponse({
+            "resource": f"{base}{path}",
+            "bearer_methods_supported": ["header"],
+            "resource_name": SERVER_NAME,
+            "resource_documentation": f"{base}/llms.txt",
+        })
+
+    app.add_api_route(f"/.well-known/oauth-protected-resource{path}", protected_resource, methods=["GET"], include_in_schema=False)
+    app.add_api_route("/.well-known/oauth-protected-resource", protected_resource, methods=["GET"], include_in_schema=False)
