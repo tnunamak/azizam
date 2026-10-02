@@ -342,6 +342,10 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         "- Slow work (video, long music) uses an async route: submit, poll until terminal, then fetch the content. Image, audio and video generation can use POST /gateway/v1/media/jobs; video uses POST /v1/videos.",
         "- Any OpenAPI-aware tool can read this document; for a plain call, build a curl request from the entry's `execution` block (route, content type, and the `fields` map that says where each input goes).",
         "",
+        "## MCP and A1111 adapters",
+        f"- MCP (Streamable HTTP, same bearer key): {prefix}/mcp. Three tools: `capabilities` (workflows, aliases, typed inputs), `run`, `job`. Media comes back as signed asset URLs.",
+        f"- A1111 /sdapi/v1 subset at host root for SillyTavern's SD WebUI source: {prefix}/sdapi/v1/txt2img, options, sd-models, samplers, schedulers, upscalers, progress, interrupt. Put `user:API_KEY` in its Authentication box.",
+        "",
     ]
     return "\n".join(lines)
 

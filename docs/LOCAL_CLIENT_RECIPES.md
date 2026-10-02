@@ -61,6 +61,16 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | Response | `results[]` and `data[]` (same items: `index`, `relevance_score` in 0..1, optional `document.text`), `id`, `usage`, `meta` | same |
 | | Errors | 400 with `message` (Cohere), `detail` (Jina, Voyage) and `error{}` (gateway) in one body; TEI bodies get TEI's `error` and `error_type` | same |
 | | `max_tokens_per_doc`, `max_chunks_per_doc`, `rank_fields` | Unsupported: 400 `unsupported_parameter` (they would change what is scored) | same |
+| **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech` | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
+| | Protocol revisions | 2026-07-28 (stateless) and 2025-03-26 to 2025-11-25 (no sessions) | same |
+| | Auth | Bearer app key. A 401 carries an RFC 9728 `resource_metadata` challenge. There is no OAuth server. | same |
+| | Results | `resource_link` blocks that point at signed asset URLs; no base64 | same |
+| | Resources, prompts, sampling, elicitation, tasks, `subscriptions/listen`, SSE streams, `GET /mcp`, session ids | Unsupported: `-32601` or 405 | same |
+| | External image URLs as tool inputs | Unsupported: tool error. Use a data URI or an asset id from an earlier result. | same |
+| **A1111 / SD WebUI** (`/sdapi/v1`, host root) | `txt2img`, `options`, `sd-models`, `samplers`, `schedulers`, `upscalers`, `latent-upscale-modes`, `sd-vae`, `progress`, `interrupt` | Works | `tests/test_a1111_api.py`; Live: SillyTavern 1.18.0 server code against a temporary gateway |
+| | Hires fix, `restore_faces`, ADetailer and other scripts, LoRA tags, styles, variation seeds | Unsupported: 422 that names the field | same |
+| | Negative prompt, sampler, scheduler, `cfg_scale`, `clip_skip` on a model that does not use them | Dropped; the names are in the `x-gateway-ignored-params` header | same |
+| | `img2img`, extras upscaling, `interrogate`, `png-info` | Unsupported: 501 | same |
 
 Per-client recipes follow in this document.
 
@@ -1274,6 +1284,96 @@ Expected unsupported features:
 - Assistants API — registered compatibility routes return `unsupported_operation`; use Responses.
 - Fine-tuning, files, batches — registered compatibility routes return `unsupported_operation`.
 - Realtime API — registered compatibility routes return `unsupported_operation`.
+
+## Recipe: MCP clients (Claude Code, Pi, Cursor, Codex)
+
+The gateway is an MCP server at `/mcp` (Streamable HTTP). It has three tools, so an
+agent pays about 600 tokens once and gets every workflow:
+
+| Tool | Use |
+|---|---|
+| `capabilities` | List workflows, aliases (`image`, `video`, `music`, `sfx`, ...) and `speech`. With `target`, return the typed inputs, outputs and expected run time. |
+| `run` | Start a `target` with `inputs`. Fast work returns the result. Slow work returns a `job_id` after `wait_seconds` (default 30, at most 120). |
+| `job` | Poll a `job_id`, wait for it (`wait_seconds`), or `cancel` it. |
+
+Media comes back as MCP `resource_link` blocks that point at signed asset URLs, and
+as `structuredContent.assets[]` with the `asset_id`. Pass an `asset_id` or a data URI
+as an image input to chain an edit. The adapter does not fetch external URLs.
+
+The tools are generated from `x-vividfish-workflows` and the stable aliases, so a
+new workflow appears with no code change. Every action is dispatched to the same
+core route a plain HTTP client would call, with your key, so profile policy and
+receipts apply. A policy denial comes back as a tool error that carries the HTTP status.
+
+Auth is the same bearer key. A request without a key gets `401` with
+`WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"`.
+The gateway has no OAuth server, so give the client the key as a header.
+
+Protocol: revision 2026-07-28 (stateless, `server/discover`) and the handshake
+revisions 2025-03-26 to 2025-11-25. The server never issues `Mcp-Session-Id`;
+`GET` and `DELETE` on `/mcp` return 405.
+
+**Claude Code:**
+
+```bash
+claude mcp add vivid https://ai.vivid.fish/mcp --transport http \
+  -H 'Authorization: Bearer ${AI_GATEWAY_API_KEY}'
+```
+
+**Pi (`pi-mcp-adapter`)**, in `.mcp.json` or `~/.config/mcp/mcp.json`:
+
+```json
+{ "mcpServers": { "vivid": { "url": "https://ai.vivid.fish/mcp",
+    "headers": { "Authorization": "Bearer ${AI_GATEWAY_API_KEY}" },
+    "protocolVersion": "auto" } } }
+```
+
+`protocolVersion` may be `legacy` (the adapter default), `auto` or `2026-07-28`; all three work.
+
+**Smoke test without a client:**
+
+```bash
+curl -s https://ai.vivid.fish/mcp -H "Authorization: Bearer $AI_GATEWAY_API_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run","arguments":{"target":"tts-fast","inputs":{"input":"Hello."}}}}'
+```
+
+## Recipe: SillyTavern image generation (A1111 source)
+
+SillyTavern's `openai` image source is hard-coded to api.openai.com. Its "SD WebUI
+(AUTOMATIC1111)" source works, because the gateway serves the `/sdapi/v1` routes
+SillyTavern calls at host root.
+
+**Extensions → Image Generation → Source: Stable Diffusion Web UI (AUTOMATIC1111):**
+
+```text
+SD WebUI URL:    http://127.0.0.1:5000        (host root, no path)
+Authentication:  gateway:$AI_GATEWAY_API_KEY  (user:password; the password is the key)
+```
+
+Click Connect, then pick a model. The model list holds the stable image aliases
+(`image`, `image-fast`) first, then each image workflow. The chosen model is
+remembered per API key until the gateway restarts; the default is `image`.
+
+What maps and what does not:
+
+- `prompt`, `width`, `height`, `steps`, `seed`, `batch_size` and `n_iter` map onto the
+  chosen workflow. `cfg_scale`, `negative_prompt`, `sampler_name` and `scheduler` map
+  only when that workflow has the input (for example `flux2-klein-4b` takes
+  `guidance`; `krea2-turbo` takes none of them). Otherwise the response header
+  `x-gateway-ignored-params` names what was dropped. `steps` and `cfg_scale` clamp
+  to the workflow's range and say so in the same header.
+- A size outside the workflow's range is a 422, not a silent resize.
+- Hires fix (`enable_hr`), face restoration, ADetailer and other scripts, styles,
+  variation seeds, VAE choice, and LoRA tags in the prompt are rejected with a 422
+  that names the field. Leave "Hires fix", "Restore faces" and "ADetailer" off in
+  SillyTavern.
+- If you send no seed, the gateway picks one and reports it in `info.seed`.
+- `img2img`, extras upscaling, `interrogate` and `png-info` return 501.
+- `interrupt` cancels the request in flight for that key.
+
+SillyTavern's generate call waits for the whole image, so a workflow with a long
+`typical_seconds` (see `capabilities`) makes it wait that long.
 
 ## Model aliases (stable names)
 

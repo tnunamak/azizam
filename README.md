@@ -166,6 +166,16 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | Hosted tools (web search, file search, code interpreter, computer use), `background`, `conversation`, `prompt`, `cancel`, `input_tokens` count | Unsupported: 400 with a specific `code` | same |
 | | Reasoning summaries (`reasoning.summary`) | Not produced; raw reasoning returns as a `reasoning` item | documented gap |
 | **OpenAI** chat, completions, embeddings, models, images, audio, video | Response shapes | Works | `tests/test_openai_schema_conformance.py` (openai/openai-openapi `145fd3b`); Live: `openai` Python SDK |
+| **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech` | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
+| | Protocol revisions | 2026-07-28 (stateless) and 2025-03-26 to 2025-11-25 (no sessions) | same |
+| | Auth | Bearer app key. A 401 carries an RFC 9728 `resource_metadata` challenge. There is no OAuth server. | same |
+| | Results | `resource_link` blocks that point at signed asset URLs; no base64 | same |
+| | Resources, prompts, sampling, elicitation, tasks, `subscriptions/listen`, SSE streams, `GET /mcp`, session ids | Unsupported: `-32601` or 405 | same |
+| | External image URLs as tool inputs | Unsupported: tool error. Use a data URI or an asset id from an earlier result. | same |
+| **A1111 / SD WebUI** (`/sdapi/v1`, host root) | `txt2img`, `options`, `sd-models`, `samplers`, `schedulers`, `upscalers`, `latent-upscale-modes`, `sd-vae`, `progress`, `interrupt` | Works | `tests/test_a1111_api.py`; Live: SillyTavern 1.18.0 server code against a temporary gateway |
+| | Hires fix, `restore_faces`, ADetailer and other scripts, LoRA tags, styles, variation seeds | Unsupported: 422 that names the field | same |
+| | Negative prompt, sampler, scheduler, `cfg_scale`, `clip_skip` on a model that does not use them | Dropped; the names are in the `x-gateway-ignored-params` header | same |
+| | `img2img`, extras upscaling, `interrogate`, `png-info` | Unsupported: 501 | same |
 
 Details and per-client recipes are in `docs/LOCAL_CLIENT_RECIPES.md`.
 
