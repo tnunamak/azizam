@@ -93,6 +93,20 @@ class ProcessSampleTests(unittest.TestCase):
         self.assertGreater(result.speech_seconds, 6)
         self.assertNotIn("low_snr", result.warnings)
 
+    def test_natural_level_swings_are_not_mistaken_for_long_silences(self) -> None:
+        # A designed or read voice has syllables 10-15 dB apart and never goes quiet for long.
+        # Judging speech against the clip's own quietest frames used to flag it as mostly silence.
+        import math
+
+        rate = RATE
+        samples = array.array("h", (
+            int((2500 + 6500 * abs(math.sin(2 * math.pi * 1.7 * n / rate))) * math.sin(2 * math.pi * 190 * n / rate) * 0.6)
+            for n in range(int(10 * rate))
+        ))
+        result = va.process_sample(wav_of(samples), LIMITS)
+        self.assertNotIn("long_silences", result.warnings)
+        self.assertGreater(result.speech_seconds / result.duration_seconds, 0.9)
+
     def test_denoise_is_opt_in_and_recorded(self) -> None:
         wav = speechlike(8, noise=800)
         self.assertFalse(va.process_sample(wav, LIMITS).denoised)

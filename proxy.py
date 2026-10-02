@@ -3840,23 +3840,36 @@ def _speech_engine_endpoint(engine_id: str) -> tuple[str, str] | None:
 
 
 async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
-    """Speaker similarity of a test synthesis made from the clip (advisory; None when unavailable)."""
+    """Speaker similarity of a test synthesis made from the clip.
+
+    Advisory: returns ``{"error": reason}`` when the engine cannot run it (not deployed, would not
+    start, GPU0 busy after retries), never raises. A 503 from the engine (GPU0 full or still loading)
+    is retried twice, five seconds apart.
+    """
     engine_id = str(_voice_settings().get("quality_engine") or "chatterbox")
     endpoint = _speech_engine_endpoint(engine_id)
     if endpoint is None:
-        return None
+        return {"error": "engine_not_deployed"}
     service_id, base_url = endpoint
-    if await _ensure_speech_service_ready(service_id, label="TTS engine") is not None:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
-            resp = await client.post(f"{base_url}/v1/audio/voice-check", json={"voice_ref": str(reference)})
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        return {"speaker_similarity": float(data["speaker_similarity"]), "encoder": data.get("encoder"), "engine": engine_id}
-    except (httpx.HTTPError, ValueError, KeyError, TypeError):
-        return None
+    reason = "engine_unavailable"
+    for attempt in range(3):
+        if await _ensure_speech_service_ready(service_id, label="TTS engine") is not None:
+            reason = "engine_would_not_start"
+        else:
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+                    resp = await client.post(f"{base_url}/v1/audio/voice-check", json={"voice_ref": str(reference)})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return {"speaker_similarity": float(data["speaker_similarity"]), "encoder": data.get("encoder"), "engine": engine_id}
+                reason = "gpu_busy" if resp.status_code == 503 else f"engine_http_{resp.status_code}"
+                if resp.status_code != 503:
+                    break
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+                reason = f"engine_error: {type(exc).__name__}"
+        if attempt < 2:
+            await asyncio.sleep(5)
+    return {"error": reason}
 
 
 async def _design_voice(instruct: str, script: str, seed: int) -> bytes:

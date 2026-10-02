@@ -235,8 +235,9 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
         except Exception:  # noqa: BLE001 - the probe is advisory
             probe = None
         warnings = list(meta.get("warnings") or [])
-        if probe is None:
-            quality = {"speaker_similarity": None, "encoder": None, "engine": None, "status": "unchecked"}
+        if probe is None or "error" in probe:
+            quality = {"speaker_similarity": None, "encoder": None, "engine": None, "status": "unchecked",
+                       "reason": (probe or {}).get("error", "probe_failed")}
             warnings.append("quality_check_unavailable")
         else:
             similarity = float(probe["speaker_similarity"])

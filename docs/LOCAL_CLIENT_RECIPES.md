@@ -1210,7 +1210,7 @@ of a longer recording; levels it to -20 dBFS; and stores a 24 kHz mono WAV. It w
 a low signal-to-noise ratio and long silences. Denoising is off unless you ask for it, because it can
 make clean audio worse. After creation the clone engine speaks a test sentence from the clip and the
 gateway reports the ECAPA speaker similarity: `status` is `ok` at 0.45 or higher and `low` below it
-(the 13 built-in voices score 0.64-0.79); `unchecked` means the engine was unavailable. It is a warning only.
+(the 13 built-in voices score 0.64-0.79); `unchecked` means the engine was unavailable (`quality.reason` says why: `gpu_busy` after three tries, `engine_would_not_start`, ...). It is a warning only.
 
 Rules. Every voice and consent belongs to the API key that created it; another key gets `404`.
 A voice is used only through `{"id": ...}` or a bare `voice_<24 hex>` string, never by its name, and a

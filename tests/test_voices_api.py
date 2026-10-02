@@ -105,6 +105,11 @@ class CreateVoiceTests(ApiCase):
         self.assertEqual(body["quality"]["status"], "unchecked")
         self.assertIn("quality_check_unavailable", body["warnings"])
 
+    def test_an_unchecked_voice_says_why(self) -> None:
+        self.probe_result = {"error": "gpu_busy"}
+        quality = self.upload().json()["quality"]
+        self.assertEqual((quality["status"], quality["reason"]), ("unchecked", "gpu_busy"))
+
     def test_a_probe_that_raises_does_not_block_creation(self) -> None:
         self.probe_error = True
         body = self.upload().json()

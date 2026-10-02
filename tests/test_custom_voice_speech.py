@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import tempfile
@@ -218,6 +219,54 @@ class VoiceRoutesThroughTheGatewayTests(CustomVoiceRouteCase):
     def test_list_pagination_arguments_are_validated(self) -> None:
         self.assertEqual(self.client.get("/v1/audio/voices", params={"limit": 0}).status_code, 400)
         self.assertEqual(self.client.get("/v1/audio/voices", params={"after": "voice_" + "0" * 24}).status_code, 404)
+
+
+class QualityProbeTests(CustomVoiceRouteCase):
+    """The post-creation probe retries a busy engine and says why it gave up."""
+
+    class _Engine:
+        def __init__(self, statuses):
+            self.statuses = list(statuses)
+            self.calls = 0
+
+        def __call__(self, *args, **kwargs):
+            outer = self
+
+            class Client:
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, *exc):
+                    return None
+
+                async def post(self, url, json=None, **kwargs):
+                    outer.calls += 1
+                    status = outer.statuses.pop(0)
+                    body = {"speaker_similarity": 0.71, "encoder": "ecapa"} if status == 200 else {"error": {"message": "busy"}}
+                    return proxy.httpx.Response(status, json=body)
+
+            return Client()
+
+    def probe(self, statuses):
+        engine = self._Engine(statuses)
+        with patch.object(proxy.httpx, "AsyncClient", engine), patch.object(proxy.asyncio, "sleep", AsyncMock()):
+            result = asyncio.run(proxy._probe_voice_quality(Path(self.tmp.name) / "reference.wav"))
+        return result, engine.calls
+
+    def test_a_busy_engine_is_retried_then_answers(self) -> None:
+        result, calls = self.probe([503, 503, 200])
+        self.assertEqual((result["speaker_similarity"], result["engine"], calls), (0.71, "chatterbox", 3))
+
+    def test_a_busy_engine_after_three_tries_is_reported_as_gpu_busy(self) -> None:
+        self.assertEqual(self.probe([503, 503, 503]), ({"error": "gpu_busy"}, 3))
+
+    def test_other_errors_are_not_retried(self) -> None:
+        self.assertEqual(self.probe([500]), ({"error": "engine_http_500"}, 1))
+
+    def test_an_engine_that_will_not_start_is_reported(self) -> None:
+        self.ready.return_value = object()  # a non-None response means "could not be started"
+        result, calls = self.probe([200])
+        self.assertEqual((result, calls), ({"error": "engine_would_not_start"}, 0))
 
 
 class RevocationCleanupTests(CustomVoiceRouteCase):
