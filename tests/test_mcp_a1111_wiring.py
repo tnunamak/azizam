@@ -1,0 +1,71 @@
+"""The MCP and A1111 adapters mounted on the real proxy app: auth, catalog and in-process dispatch."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import proxy  # noqa: E402
+
+CALL = {"jsonrpc": "2.0", "id": 1, "method": "tools/call"}
+
+
+def _tool(client: TestClient, name: str, arguments: dict) -> dict:
+    resp = client.post("/mcp", json={**CALL, "params": {"name": name, "arguments": arguments}})
+    assert resp.status_code == 200, resp.text
+    return resp.json()["result"]
+
+
+class ProxyWiringTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = TestClient(proxy.app)
+
+    def test_mcp_and_sdapi_need_a_key_when_auth_is_on(self) -> None:
+        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(proxy, "LAN_BYPASS_ENABLED", False):
+            resp = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+            self.assertEqual(resp.status_code, 401)
+            self.assertIn("resource_metadata=", resp.headers["www-authenticate"])
+            self.assertEqual(self.client.get("/sdapi/v1/options").status_code, 401)
+            self.assertEqual(self.client.get("/.well-known/oauth-protected-resource/mcp").status_code, 200)
+
+    def test_tools_and_catalog_come_from_the_real_manifests(self) -> None:
+        with patch.object(proxy, "AUTH_ENABLED", False):
+            tools = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()["result"]["tools"]
+            self.assertEqual([t["name"] for t in tools], ["capabilities", "run", "job"])
+            rows = _tool(self.client, "capabilities", {})["structuredContent"]["workflows"]
+            targets = {r["target"] for r in rows}
+            self.assertTrue({"krea2-turbo", "speech"} <= targets, targets)
+            detail = _tool(self.client, "capabilities", {"target": "krea2-turbo"})["structuredContent"]
+            self.assertIn("prompt", detail["inputs"]["properties"])
+            self.assertIn("n", detail["inputs"]["properties"])  # route-owned field merged in
+
+    def test_a_run_reaches_the_core_route_and_a_core_refusal_comes_back_as_a_tool_error(self) -> None:
+        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(proxy, "COMFY_ENABLED", False):
+            result = _tool(self.client, "run", {"target": "krea2-turbo", "inputs": {"prompt": "x", "width": 256, "height": 256}})
+        self.assertTrue(result["isError"])
+        self.assertGreaterEqual(result["structuredContent"]["http_status"], 400)
+
+    def test_sdapi_lists_the_real_image_models(self) -> None:
+        with patch.object(proxy, "AUTH_ENABLED", False):
+            titles = [m["title"] for m in self.client.get("/sdapi/v1/sd-models").json()]
+            self.assertEqual(titles[:2], ["image", "image-fast"])
+            self.assertIn("krea2-turbo", titles)
+            self.assertEqual(self.client.get("/sdapi/v1/options").json()["sd_model_checkpoint"], "image")
+            bad = self.client.post("/sdapi/v1/txt2img", json={"prompt": "x", "enable_hr": True})
+            self.assertEqual(bad.status_code, 422)
+
+    def test_the_adapters_are_listed_in_llms_txt(self) -> None:
+        text = self.client.get("/llms.txt").text
+        self.assertIn("/mcp", text)
+        self.assertIn("/sdapi/v1/txt2img", text)
+
+
+if __name__ == "__main__":
+    unittest.main()
