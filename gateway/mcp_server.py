@@ -523,6 +523,9 @@ async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args:
         return tool_result(await handler(args))
     except CallError as exc:
         return tool_result({"status": "error", "error": str(exc), **exc.details}, is_error=True)
+    except Exception as exc:  # noqa: BLE001 - never leak a traceback to the client
+        print(f"[mcp] tool {name} failed: {type(exc).__name__}: {exc}", flush=True)
+        return tool_result({"status": "error", "error": "the adapter hit an unexpected error; see the gateway log"}, is_error=True)
 
 
 # ------------------------------------------------------------------- transport

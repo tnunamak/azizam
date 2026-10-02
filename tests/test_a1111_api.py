@@ -226,6 +226,11 @@ def test_send_images_false_returns_no_images(env):
     assert env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, "send_images": False}, headers=H).json()["images"] == []
 
 
+def test_a_field_of_the_wrong_type_is_a_422_not_a_500(env):
+    resp = env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, "steps": "many"}, headers=H)
+    assert resp.status_code == 422 and env.core.calls == []
+
+
 def test_prompt_is_required(env):
     assert env.client.post("/sdapi/v1/txt2img", json={"steps": 5}, headers=H).status_code == 422
 

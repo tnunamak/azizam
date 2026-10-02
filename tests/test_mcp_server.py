@@ -468,3 +468,19 @@ def test_job_unknown_id_is_a_tool_error(env):
 def test_wait_seconds_is_bounded(env):
     result = call(env, "run", {"target": "krea", "inputs": {"prompt": "x"}, "wait_seconds": 9999})
     assert result["isError"] and "wait_seconds" in result["structuredContent"]["error"]
+
+
+def test_an_unexpected_failure_becomes_a_tool_error_without_a_traceback(env):
+    async def boom(request, method, path, **kwargs):
+        raise RuntimeError("secret internal detail")
+
+    env.core.call = boom
+    # the deps hold the bound method from fixture time, so rebuild the app with the failing call
+    deps = McpDeps(authenticate=lambda r, p: SimpleNamespace(), call=boom, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
+                   store_asset=env.core.store_asset, read_asset=env.core.read_asset, public_base_url=lambda r: "https://gw.test")
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    resp = TestClient(app).post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                              "params": {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}}})
+    result = resp.json()["result"]
+    assert result["isError"] is True and "secret" not in json.dumps(result)

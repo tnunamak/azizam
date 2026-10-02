@@ -325,6 +325,8 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
                 return await handler(request, auth, session)
             except A1111Error as exc:
                 return error_response(exc)
+            except (ValueError, TypeError) as exc:  # a field of the wrong type, e.g. steps="many"
+                return error_response(A1111Error(422, f"invalid field value: {exc}"))
             except CallError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=int(exc.details.get("http_status") or 400))
         return route
