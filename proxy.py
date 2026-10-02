@@ -8308,7 +8308,7 @@ def _find_video_manifest(workflow_name: str, workflow_cfg: dict) -> Optional[dic
 def _parse_size_clamped(size_str: str, max_size_str: str, multiple: int = 32) -> tuple[int, int]:
     """Parse 'WxH', clamp to per-workflow max_size, floor to a multiple.
 
-    `multiple` is 32 for LTX-2.3 and most workflows; LTX-2.5 needs 64 (its first
+    `multiple` is 32 for most workflows; LTX-2.5 needs 64 (its first
     stage runs at half size, which must itself be a multiple of 32). Sizes are
     floored (not rejected) so any OpenAI-style size string stays usable; the
     created job reports the size actually used.
@@ -8349,20 +8349,22 @@ def _seconds_to_length(seconds: float, frame_rate: float, *, step: int = 8, offs
 
 def _long_form_chunks(seconds: float, frame_rate: float,
                       max_length_sec: int = 10, max_loops: int = 50) -> tuple[int, int, float]:
-    """For ltx-2.3-long: search for (LENGTH_seconds, LOOPS) closest to `seconds`.
+    """For video-ltx-2.5-long: search for (LENGTH_seconds, LOOPS) closest to `seconds`.
 
-    Empirically verified formula (req=2s → cf=49 frames → 97 rendered frames):
-      chunk0_frames = ((round(LENGTH * fps - 1)/8) * 8 + 1)   # 8N+1 stride
-      total_frames  = chunk0_frames * (LOOPS + 2) - 1         # see note
+    The workflow renders one chunk outside the loop (chunk 0), then an Easy-Use
+    ``forLoopStart``/``forLoopEnd`` body that runs ``max(LOOPS, 1)`` times (the
+    loop continues while ``index + 1 < total``, so it always runs at least
+    once). Each junction between chunks drops one frame. So:
+
+      chunk_frames  = ((round(LENGTH * fps - 1) / 8) * 8) + 1      # 8N+1 stride
+      chunks        = max(LOOPS, 1) + 1
+      total_frames  = (chunk_frames - 1) * chunks + 1
       total_seconds = total_frames / fps
 
-    The (LOOPS + 2) factor (rather than +1) reflects the RuneXX easy
-    forLoopStart node, whose body executes once even at total=LOOPS=0; the
-    workflow then runs `LOOPS` body iterations on top of that, plus the
-    initial chunk0 outside the loop. The trailing `- 1` is the latent-stride
-    boundary subtraction observed at the VAE concat point. This matches the
-    long-form bug report (req=8s with default LENGTH=10, LOOPS=0 produced
-    241*2-1 = 481 frames @ 24fps = 20.04s).
+    Measured on LTX-2.5 (2026-10-01): LENGTH=2, LOOPS=0 -> 97 frames (2 chunks);
+    LENGTH=8, LOOPS=2 -> 577 frames (3 chunks), not the 4 chunks the older
+    ``LOOPS + 2`` formula predicted. LOOPS=1 gives the same 2 chunks as
+    LOOPS=0, so the search never returns it.
 
     LENGTH is an INTConstant (integer seconds) so granularity in `total_seconds`
     is determined by which (LENGTH, LOOPS) pairs we can hit. We pick the (L, N)
@@ -8380,7 +8382,10 @@ def _long_form_chunks(seconds: float, frame_rate: float,
     for L in range(1, max_length_sec + 1):
         cf = chunk_frames(L)
         for n in range(0, max_loops + 1):
-            total_frames = cf * (n + 2) - 1
+            if n == 1:
+                continue  # identical to n == 0 (loop body always runs once)
+            chunks = max(n, 1) + 1
+            total_frames = (cf - 1) * chunks + 1
             total = total_frames / frame_rate
             err = abs(total - seconds)
             key = (round(err, 6), n, L)
@@ -8916,7 +8921,7 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
     seed_targets = _as_list(meta.get("seed_nodes")) or _as_list(seed_node)
     for nid in seed_targets:
         # `value` covers INTConstant nodes used as a shared seed source that
-        # downstream RandomNoise/Math nodes derive from (e.g. ltx-2.3-long's
+        # downstream RandomNoise/Math nodes derive from (e.g. ltx-2.5-long's
         # node 1527 → 1322 RandomNoise + 1715:1664 ComfyMathExpression →
         # 1715:1551 per-chunk RandomNoise). Without `value` the seed silently
         # never reaches the graph and ComfyUI's full-graph cache returns
@@ -8925,23 +8930,12 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
 
     # Long-form chunked-loop workflows (RuneXX single-pass loop). The duration is
     # driven by two integers: `LENGTH` seconds per chunk (snapped to LTX 8N+1
-    # frames internally by the workflow's SimpleCalculatorKJ at node 1651) and
-    # `LOOPS` (additional iterations of the easy-forLoop body). Empirically:
-    #
-    #   chunk_frames = ((round(LENGTH*fps - 1)/8) * 8) + 1
-    #   total_frames = chunk_frames * (LOOPS + 2) - 1   # see _long_form_chunks
-    #   total_seconds = total_frames / fps
-    #
-    # The (LOOPS + 2) accounts for chunk0 (one chunk outside the loop) plus the
-    # easy forLoopStart body, which always executes once even when total=0,
-    # plus `LOOPS` further iterations. The trailing -1 is the latent-stride
-    # boundary subtraction at the VAE concat. See bug report 2026-05-08:
-    # seconds=8 with workflow defaults (LENGTH=10, LOOPS=0) → 241*2-1=481
-    # frames @ 24 fps = 20.04 s actual.
+    # frames internally by the workflow's SimpleCalculatorKJ) and `LOOPS` (the
+    # easy-forLoop `total`). See _long_form_chunks for the measured frame
+    # arithmetic: chunks = max(LOOPS, 1) + 1, and each junction drops one frame.
     #
     # We search the (LENGTH, LOOPS) integer grid for the closest total_seconds
-    # to the request and write both. Single-shot (LOOPS=0) is the fast path
-    # for any seconds that fits within a single chunk's max_length_sec.
+    # to the request and write both.
     chunk_count_node = meta.get("chunk_count_node")
     chunk_length_node = meta.get("chunk_length_node")
     if chunk_count_node:
