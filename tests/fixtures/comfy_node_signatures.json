@@ -5,7 +5,10 @@
    "required": {
     "audio1": "AUDIO",
     "audio2": "AUDIO",
-    "direction": "COMBO"
+    "direction": [
+     "after",
+     "before"
+    ]
    }
   },
   "output": [
@@ -18,7 +21,17 @@
    "required": {
     "denoise": "FLOAT",
     "model": "MODEL",
-    "scheduler": "COMBO",
+    "scheduler": [
+     "simple",
+     "sgm_uniform",
+     "karras",
+     "exponential",
+     "ddim_uniform",
+     "beta",
+     "normal",
+     "linear_quadratic",
+     "kl_optimal"
+    ],
     "steps": "INT"
    }
   },
@@ -178,9 +191,22 @@
   "input": {
    "optional": {
     "audio": "AUDIO",
-    "bit_depth": "COMBO",
-    "codec": "COMBO",
-    "color_space": "COMBO"
+    "bit_depth": [
+     "auto",
+     8,
+     10
+    ],
+    "codec": [
+     "none",
+     "auto",
+     "h264",
+     "av1"
+    ],
+    "color_space": [
+     "sRGB",
+     "HDR",
+     "HDR PQ"
+    ]
    },
    "required": {
     "fps": "FLOAT",
@@ -403,7 +429,12 @@
   "input": {
    "optional": {},
    "required": {
-    "channel": "COMBO",
+    "channel": [
+     "red",
+     "green",
+     "blue",
+     "alpha"
+    ],
     "image": "IMAGE"
    }
   },
@@ -426,7 +457,53 @@
   "input": {
    "optional": {},
    "required": {
-    "sampler_name": "COMBO"
+    "sampler_name": [
+     "euler",
+     "euler_cfg_pp",
+     "euler_ancestral",
+     "euler_ancestral_cfg_pp",
+     "heun",
+     "heunpp2",
+     "exp_heun_2_x0",
+     "exp_heun_2_x0_sde",
+     "dpm_2",
+     "dpm_2_ancestral",
+     "lms",
+     "dpm_fast",
+     "dpm_adaptive",
+     "dpmpp_2s_ancestral",
+     "dpmpp_2s_ancestral_cfg_pp",
+     "dpmpp_sde",
+     "dpmpp_sde_gpu",
+     "dpmpp_2m",
+     "dpmpp_2m_cfg_pp",
+     "dpmpp_2m_sde",
+     "dpmpp_2m_sde_gpu",
+     "dpmpp_2m_sde_heun",
+     "dpmpp_2m_sde_heun_gpu",
+     "dpmpp_3m_sde",
+     "dpmpp_3m_sde_gpu",
+     "ddpm",
+     "lcm",
+     "ipndm",
+     "ipndm_v",
+     "deis",
+     "cfgpp_ud10_ab",
+     "res_multistep",
+     "res_multistep_cfg_pp",
+     "res_multistep_ancestral",
+     "res_multistep_ancestral_cfg_pp",
+     "gradient_estimation",
+     "gradient_estimation_cfg_pp",
+     "er_sde",
+     "seeds_2",
+     "seeds_3",
+     "sa_solver",
+     "sa_solver_pece",
+     "ddim",
+     "uni_pc",
+     "uni_pc_bh2"
+    ]
    }
   },
   "output": [
@@ -1028,7 +1105,25 @@
   "input": {
    "optional": {},
    "required": {
-    "file": "COMBO"
+    "file": [
+     "06a-ltx-video.mp4",
+     "clip.mp4",
+     "input (1).mp4",
+     "input.mp4",
+     "ltx-2.5-t2v_00011_.mp4",
+     "ltx-2.5-t2v_00012_.mp4",
+     "ltx-2.5-t2v_00013_.mp4",
+     "probe_3a37dc_driving-man.mp4",
+     "probe_4162ba_driving-man.mp4",
+     "probe_c7bfc0_driving-man.mp4",
+     "probe_fd0c6a_driving-man.mp4",
+     "rife_test_src.mp4",
+     "round2-person-drive.mp4",
+     "round2b-dog.mp4",
+     "short-input.mp4",
+     "source (1).mp4",
+     "source.mp4"
+    ]
    }
   },
   "output": [
@@ -1153,7 +1248,13 @@
    "required": {
     "input": "COMFY_MATCHTYPE_V3",
     "resize_type": "COMFY_DYNAMICCOMBO_V3",
-    "scale_method": "COMBO"
+    "scale_method": [
+     "nearest-exact",
+     "bilinear",
+     "area",
+     "bicubic",
+     "lanczos"
+    ]
    }
   },
   "output": [
@@ -1208,7 +1309,11 @@
     "driving_track_data": "SAM3_TRACK_DATA",
     "object_indices": "STRING",
     "replacement_mode": "BOOLEAN",
-    "sort_by": "COMBO"
+    "sort_by": [
+     "none",
+     "left_to_right",
+     "area"
+    ]
    }
   },
   "output": [

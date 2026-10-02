@@ -69,8 +69,11 @@ def check_graph(graph: dict) -> list[str]:
                     continue
                 if value not in spec:
                     problems.append(f"{node_id}.{name}: {value!r} is not one of {spec}")
-            elif spec in PY_TYPES:
-                if isinstance(value, bool) != (spec == "BOOLEAN") or not isinstance(value, PY_TYPES[spec]):
+            elif "DYNAMICCOMBO" in spec or spec == "COMBO":
+                continue  # options depend on the host or on another input
+            elif all(t in PY_TYPES for t in spec.split(",")):
+                allowed = tuple(p for t in spec.split(",") for p in PY_TYPES[t])
+                if isinstance(value, bool) != ("BOOLEAN" in spec.split(",")) or not isinstance(value, allowed):
                     problems.append(f"{node_id}.{name}: {value!r} is not {spec}")
             else:
                 problems.append(f"{node_id}.{name}: literal {value!r} given for a {spec} input")
