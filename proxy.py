@@ -72,6 +72,7 @@ from gateway import (
     video_media_jobs,
 )
 from gateway import video_extend
+from gateway import video_subject
 from gateway import video_job_records
 from gateway import stable_aliases
 from gateway import speech_stream
@@ -6650,6 +6651,17 @@ def _comfy_execution_error_node_id(job: Mapping[str, Any] | None) -> str | None:
     return None
 
 
+def _video_job_warnings(record: Mapping[str, Any] | None, job: Mapping[str, Any] | None) -> list[str]:
+    """Warnings read from a finished job's outputs (character replace: how many
+    people were tracked)."""
+    subject = (record or {}).get("subject") if isinstance(record, Mapping) else None
+    if not isinstance(subject, Mapping):
+        return []
+    count = video_subject.tracked_count((job or {}).get("outputs") if isinstance(job, Mapping) else None)
+    return video_subject.warnings_for(
+        count, explicit=bool(subject.get("explicit")), subject=str(subject.get("subject") or "person"))
+
+
 def _chain_failure_error(record: Mapping[str, Any] | None, job: Mapping[str, Any] | None, message: str) -> dict[str, Any]:
     """Error object for a failed video job. A long-video chain adds which
     segment failed and how many finished. The job fails as a whole: no partial
@@ -10540,7 +10552,28 @@ async def proxy_comfy_video_create(
             )
         workflow = extension_binding.request
 
+    subject_record: dict[str, Any] | None = None
+    if workflow_cfg.get("subject_select"):
+        # Character replace: pick which person is replaced, and remember how to
+        # read how many were tracked once the job is done.
+        block = ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+        try:
+            index_text = str(block.get("subject_index", "0")).strip()
+            if not re.fullmatch(r"\d+(,\d+)*", index_text):
+                raise video_subject.SubjectError(
+                    "subject_index must be a number like 0 or a list like 0,2", "subject_index")
+            video_subject.apply_point(workflow, block, width, height)
+        except video_subject.SubjectError as exc:
+            return _json_error(400, str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
+                               code="invalid_workflow_extension")
+        subject_record = {
+            "probe_node": video_subject.PROBE_NODE,
+            "explicit": video_subject.explicit_selection(block),
+            "subject": str(block.get("source_subject") or "person"),
+        }
+
     return await _submit_video_graph(
+        record_extra={"subject": subject_record} if subject_record else None,
         workflow=workflow,
         auth_context=auth_context,
         workflow_name=workflow_name,
@@ -11028,6 +11061,10 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                 payload["node"] = live.get("node")
                 payload["phase"] = live.get("phase")
             _hold_video_progress(prompt_id, payload)
+            if sora_status == "succeeded":
+                warnings = _video_job_warnings(_video_job_records.get(prompt_id), job)
+                if warnings:
+                    payload["vivid_fish_warnings"] = warnings
             if sora_status == "failed":
                 payload["error"] = _chain_failure_error(
                     _video_job_records.get(prompt_id), job,

@@ -246,19 +246,19 @@
     }
   },
   "19": {
-    "class_type": "SAM3_VideoTrack",
+    "class_type": "SAM3_Detect",
     "inputs": {
-      "images": [
-        "6",
-        0
-      ],
       "model": [
         "15",
         0
       ],
-      "detection_threshold": 0.5,
-      "max_objects": 4,
-      "detect_interval": 1,
+      "image": [
+        "6",
+        0
+      ],
+      "threshold": 0.5,
+      "refine_iterations": 2,
+      "individual_masks": false,
       "conditioning": [
         "17",
         0
@@ -272,8 +272,8 @@
         "18",
         0
       ],
-      "object_indices": "",
-      "sort_by": "left_to_right",
+      "object_indices": "0",
+      "sort_by": "area",
       "replacement_mode": true,
       "ref_track_data": [
         "19",
@@ -473,6 +473,26 @@
       "filename_prefix": "video/scail-2-replace",
       "format": "mp4",
       "codec": "auto"
+    }
+  },
+  "70": {
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "image": [
+        "5",
+        0
+      ],
+      "batch_index": 0,
+      "length": 1
+    }
+  },
+  "71": {
+    "class_type": "PreviewAny",
+    "inputs": {
+      "source": [
+        "18",
+        0
+      ]
     }
   }
 }

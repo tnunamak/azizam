@@ -812,6 +812,7 @@ videos:
     # have at least 81 frames; longer clips use their first 81 frames.
     video-scail-2-replace:
       file: workflows/videos/video-scail-2-replace.json
+      subject_select: true  # subject_index / source_point_*; warns when several people are tracked
       requires_extensions: true
       source_video_input: source_video
       min_seconds: 1
