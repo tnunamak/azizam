@@ -19,7 +19,8 @@
     "seed_nodes": [
       "30"
     ],
-    "save_node": "60"
+    "save_node": "60",
+    "prompt_field": "value"
   },
   "1": {
     "class_type": "LoadVideo",

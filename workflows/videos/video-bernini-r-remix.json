@@ -20,7 +20,8 @@
     ],
     "video_node": "1",
     "save_node": "60",
-    "duration_node": "2"
+    "duration_node": "2",
+    "prompt_field": "value"
   },
   "1": {
     "class_type": "LoadVideo",
