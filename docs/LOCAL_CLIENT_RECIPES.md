@@ -1043,8 +1043,10 @@ blind listening test 7/7, so it leads `tts` and `tts-quality`, and OmniVoice is 
 
 **Starting engines.** An engine whose service has a `systemd` lifecycle is
 started on demand (one health check, then `systemctl --user start` and a health
-poll). `supertonic-tts`, `kokoro-tts`, `nemotron-stt`, `canary-stt` and `diarize-stt` are
-operator-owned user units; the gateway only starts them.
+poll). `chatterbox-tts`, `omnivoice-tts`, `supertonic-tts`, `kokoro-tts`, `nemotron-stt`, `canary-stt` and `diarize-stt` are
+operator-owned user units; the gateway only starts them. Chatterbox frees its weights after 10 min idle and exits after
+1 h; OmniVoice exits after 5 min idle. If GPU0 is full (ComfyUI is rendering), Chatterbox answers
+`503` with `Retry-After` instead of failing mid-request.
 
 **Streaming speech.** For engines marked `streaming: true`,
 `response_format: "pcm"` streams chunked 24 kHz s16le audio while the engine is

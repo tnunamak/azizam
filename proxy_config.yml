@@ -210,9 +210,9 @@ backends:
     health_endpoint: /health
     timeout: 86400
     # OmniVoice is the fallback behind Chatterbox, so it is on demand: the server exits after
-    # 15 min idle (OMNIVOICE_IDLE_EXIT_S in the unit's drop-in) and the gateway starts it again.
+    # 5 min idle (OMNIVOICE_IDLE_EXIT_S in the unit's drop-in) and the gateway starts it again.
     role: standby
-    note: "OmniVoice, the fallback speech engine; on demand: exits after 15 min idle (frees about 4-10 GB of GPU0), started by the gateway lifecycle driver."
+    note: "OmniVoice, the fallback speech engine; on demand: exits after 5 min idle (frees 2-4 GB of GPU0, more after long texts), started by the gateway lifecycle driver."
     capabilities:
       - audio
       - speech
