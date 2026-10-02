@@ -244,7 +244,9 @@ def _slim(face: FaceRecord) -> dict[str, Any]:
     return {"bbox": [round(v, 1) for v in face.bbox], "age": face.age, "det_score": round(face.det_score, 3)}
 
 
-async def resolve_people(req: SceneRequest, deps: IdentityDeps) -> list[ResolvedPerson]:
+async def resolve_people(
+    req: SceneRequest, deps: IdentityDeps, *, with_heads: bool = True
+) -> list[ResolvedPerson]:
     if not req.photos:
         raise IdentityError("at least one reference photo is required", param="image")
     detected: dict[int, list[FaceRecord]] = {}
@@ -257,11 +259,13 @@ async def resolve_people(req: SceneRequest, deps: IdentityDeps) -> list[Resolved
         return detected[index]
 
     specs = list(req.people)
-    if not specs:  # auto: every usable face in the first photo, left to right
+    if not specs and len(req.photos) == 1:  # auto: every usable face in the photo, left to right
         faces = [f for f in await faces_of(0) if f.width >= MIN_REF_FACE_PX]
         if not faces:
             raise IdentityError("no face was found in the reference photo", param="image", code="no_face")
         specs = [PersonSpec(label=f"person {i + 1}", image=0, box=tuple(f.bbox)) for i, f in enumerate(faces)]
+    elif not specs:  # auto with several photos: the largest face of each photo is one person
+        specs = [PersonSpec(label=f"person {i + 1}", image=i) for i in range(len(req.photos))]
     if len(specs) > MAX_PEOPLE:
         raise IdentityError(f"at most {MAX_PEOPLE} people are supported", param="people")
 
@@ -288,7 +292,7 @@ async def resolve_people(req: SceneRequest, deps: IdentityDeps) -> list[Resolved
                 label=label,
                 spec=spec,
                 person=Person(label=label, faces=(face,), infant=spec.infant),
-                head_png=head_reference_png(req.photos[spec.image], face.bbox),
+                head_png=head_reference_png(req.photos[spec.image], face.bbox) if with_heads else b"",
                 face_bbox=face.bbox,
                 age=face.age,
                 gender=face.gender,

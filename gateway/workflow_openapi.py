@@ -170,6 +170,12 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
     out: dict[str, dict[str, Any]] = {}
     is_asset = {n: (s or {}).get("type") == "asset" for n, s in inputs.items()}
 
+    if mode == "sync" and gateway_route(record):  # a native route: plain multipart form
+        for name in inputs:
+            field = "image" if name == "source_image" else name
+            out[name] = {"in": "file" if is_asset[name] else "form", "field": field}
+        return out
+
     if intent == "video.edit" and mode == "sync":  # run route: plain form
         for name in inputs:
             out[name] = {"in": "file" if is_asset[name] else "form", "field": name}
@@ -224,6 +230,13 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
     return out
 
 
+def gateway_route(record: WorkflowRecord) -> str | None:
+    """The native route a gateway-composed workflow is served at, when it has one."""
+    binding = (record.manifest.get("bindings") or {}).get("gateway")
+    route = binding.get("route") if isinstance(binding, Mapping) else None
+    return route if isinstance(route, str) and route.startswith("/") else None
+
+
 def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     """Request fields the route owns that the manifest does not list.
 
@@ -234,6 +247,8 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     inputs = record.manifest.get("inputs") or {}
     has_size = "width" in inputs and "height" in inputs
     out: list[dict[str, Any]] = []
+    if gateway_route(record):
+        return out
     if record.intent in ("image.generate", "image.edit"):
         out.append({"name": "n", "type": "integer", "minimum": 1, "maximum": 10,
                     "description": "Number of images.", "in": "body", "field": "n"})
@@ -276,7 +291,15 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
             "fields": request_mapping(record, "async"),
         }
 
-    if intent == "image.generate":
+    native = gateway_route(record)
+    if native:
+        sync = {"method": "POST", "path": native, "content_type": _MULTIPART,
+                "fields": request_mapping(record, "sync"),
+                "output": "JSON (see the route's response schema)"}
+        if intent == "image.edit":
+            sync["alternate"] = {"method": "POST", "path": "/v1/images/edits", "model": model,
+                                 "note": "options go in extensions['com.vividfish.workflow']"}
+    elif intent == "image.generate":
         sync = {"method": "POST", "path": "/v1/images/generations", "content_type": _JSON,
                 "model": model, "fields": request_mapping(record, "sync"),
                 "output": "data[].b64_json or data[].url"}

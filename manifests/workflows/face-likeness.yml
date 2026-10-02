@@ -1,0 +1,39 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.analyze.face-likeness
+intent: image.analyze
+display_name: Face Likeness Check
+description: >-
+  Objective likeness check: detect the faces in a candidate image and score them against the people in
+  reference photos (ArcFace cosine similarity, buffalo_l and antelopev2 averaged, one-to-one matching,
+  margin against the other people). Returns per-person score, verdict (match, uncertain, mismatch,
+  missing), reliability and the thresholds used. Runs on CPU in the face sidecar, about 2 seconds. Infant
+  faces are flagged reliability=low and never reach "match": ArcFace-class recognisers are weak on infants.
+  Calibration data and thresholds are in docs/IDENTITY_LIKENESS.md.
+source: local
+trusted: true
+typical_seconds: 2
+inputs:
+  reference:
+    type: asset
+    required: true
+    description: Reference photo of the real people. Repeat the field for several photos.
+  candidate:
+    type: asset
+    required: true
+    description: The image to check.
+  people:
+    type: string
+    description: JSON array of {label, image, box [x1,y1,x2,y2], infant}. Omit to auto-detect.
+  thresholds:
+    type: string
+    description: JSON object overriding match, uncertain and min_margin.
+outputs:
+  report:
+    media_type: application/json
+bindings:
+  gateway:
+    model_id: face-likeness
+    compose: face_likeness
+    route: /gateway/v1/faces/likeness

@@ -1,0 +1,86 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.edit.image-identity
+intent: image.edit
+display_name: Identity Scene (real people into a new scene)
+description: >-
+  Put the real people from one or more reference photos into a new scene or pose and return the best
+  of N seeds with objective likeness scores. The gateway crops a roomy head per person from the ORIGINAL
+  photo (never a tiny face tile), tags every input <imageN> for Qwen-Image 2.1 multi-reference edit, runs
+  up to `attempts` seeds, scores each result with ArcFace (buffalo_l + antelopev2, CPU) against the real
+  faces, and keeps the best. Served at POST /gateway/v1/images/identity (typed, JSON response with
+  `likeness`) and at POST /v1/images/edits with model=image-identity (options in
+  extensions["com.vividfish.workflow"]). Infant faces are scored but flagged reliability=low: the score
+  only ranks candidates, so verify a baby by eye. Measured on a family photo: 0.60 adult, 0.48 infant
+  (docs/IDENTITY_LIKENESS.md).
+source: local
+trusted: true
+typical_seconds: 120
+inputs:
+  prompt:
+    type: string
+    required: true
+    description: The new scene, poses and gaze. People are tagged automatically.
+  source_image:
+    type: asset
+    required: true
+    description: Reference photo at full resolution. Send more photos as extra image parts.
+  people:
+    type: string
+    description: JSON array of {label, image, box [x1,y1,x2,y2], description, infant}. Omit to auto-detect.
+  attempts:
+    type: integer
+    minimum: 1
+    maximum: 8
+    default: 3
+  seed:
+    type: integer
+    minimum: 0
+  resolution:
+    type: integer
+    minimum: 512
+    maximum: 2048
+    default: 1536
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 60
+    default: 25
+  cfg:
+    type: number
+    minimum: 0
+    maximum: 10
+    default: 1.0
+  photo_as_canvas:
+    type: boolean
+    default: true
+  only_listed_people:
+    type: boolean
+    default: true
+  stop_when_pass:
+    type: boolean
+    default: true
+  thresholds:
+    type: string
+    description: JSON object overriding match, uncertain and min_margin.
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  gateway:
+    model_id: image-identity
+    compose: identity_scene
+    route: /gateway/v1/images/identity
+    workflow: workflows/identity/qwen-image-2.1-identity.json
+    image_nodes: ["L1", "L2", "L3", "L4", "L5", "L6"]
+    prompt_node: "7"
+    seed_node: "8"
+requires:
+  models:
+    - role: diffusion_model
+      path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors
+    - role: text_encoder
+      path: text_encoders/qwen3vl_8b_w4a8.safetensors
+    - role: vae
+      path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors

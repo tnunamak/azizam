@@ -324,6 +324,26 @@ backends:
         unit: kokoro-tts.service
         health_endpoint: /health
         health_timeout_s: 90
+  faces:
+    name: face-service
+    native_passthrough: true
+    host: 127.0.0.1
+    port: 8021
+    health_endpoint: /health
+    timeout: 120
+    priority: 200
+    role: standby
+    note: "On-demand CPU face detection + ArcFace embeddings (insightface) for the likeness check and the identity scene workflow; exits after 15 min idle; started by the gateway lifecycle driver."
+    capabilities:
+      - faces
+    managed: false
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: face-service.service
+        health_endpoint: /health
+        health_timeout_s: 120
   tts-chatterbox:
     name: chatterbox-tts
     native_passthrough: true
@@ -589,6 +609,10 @@ routing:
   default_backend: kobold
   audio_backend: tts
   check_interval: 30
+
+identity:
+  # Backend id (backends.<id>) of the CPU face sidecar used by the likeness check and image-identity.
+  face_service: faces
 
 # Local reasoning policy. Pi sends qualitative effort; the native gateway
 # translates it to the local server's numeric per-request thinking budget.
@@ -984,6 +1008,7 @@ model_aliases:
       image-fast: flux2-klein-4b-edit
       image-edit: qwen-image-2.1-edit    # masks and 2+ images pick inpaint/multiref automatically
       image-edit-fast: flux2-klein-4b-edit
+      image-identity: image-identity     # real people from reference photos into a new scene, with likeness scores
     openai:
       - {match: "gpt-image-*", to: image-edit}
       - {match: "chatgpt-image-*", to: image-edit}

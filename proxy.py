@@ -79,6 +79,8 @@ from gateway import speech_stream
 from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
+from gateway import identity_api, identity_scene
+from gateway import likeness as likeness_module
 from gateway import stt_chunking
 from gateway.alias_policy import (
     AliasPolicyResolutionError,
@@ -7901,6 +7903,58 @@ def _image_edit_node_slots(meta: Mapping[str, Any]) -> list[str]:
     return [str(single)] if single else []
 
 
+
+async def _identity_edit_alias(
+    request: Request,
+    auth_context: AuthContext,
+    form: Any,
+    form_dict: Mapping[str, Any],
+    image_files: list[Any],
+    prompt: str,
+    response_format: str,
+) -> Response:
+    """``POST /v1/images/edits`` with ``model=image-identity``.
+
+    The reference photos are the ``image[]`` parts. Options (people, attempts,
+    seed, ...) travel in ``extensions["com.vividfish.workflow"]``. The response is
+    the usual image payload plus ``likeness``, ``attempts`` and ``people``.
+    """
+    options = ((form_dict.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+    if not isinstance(options, Mapping):
+        return identity_api.error(400, "invalid_extensions", "the workflow extension must be an object", param="extensions")
+    try:
+        photos = [await item.read() for item in image_files]
+        if not photos or len(photos) > identity_api.MAX_PHOTOS or not all(photos):
+            raise identity_scene.IdentityError(f"send 1 to {identity_api.MAX_PHOTOS} reference photos", param="image")
+        unknown = set(options) - {
+            "people", "attempts", "seed", "resolution", "steps", "cfg",
+            "only_listed_people", "photo_as_canvas", "stop_when_pass", "thresholds",
+        }
+        if unknown:
+            raise identity_scene.IdentityError(f"unknown identity option: {sorted(unknown)[0]}", param="extensions")
+        req = identity_scene.SceneRequest(
+            photos=photos,
+            prompt=prompt,
+            people=identity_api.parse_people(options.get("people"), len(photos)),
+            attempts=int(options.get("attempts", 3)),
+            seed=int(options.get("seed", 0)),
+            resolution=int(options.get("resolution", 1536)),
+            steps=int(options.get("steps", 25)),
+            cfg=float(options.get("cfg", 1.0)),
+            only_listed_people=bool(options.get("only_listed_people", True)),
+            photo_as_canvas=bool(options.get("photo_as_canvas", True)),
+            stop_when_pass=bool(options.get("stop_when_pass", True)),
+            thresholds=identity_api.parse_thresholds(options.get("thresholds")),
+        )
+        return await app.state.identity_run_scene(request, auth_context, req, response_format)
+    except (identity_scene.IdentityError, likeness_module.LikenessError) as exc:
+        return identity_api.error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None))
+    except (TypeError, ValueError) as exc:
+        return identity_api.error(400, "invalid_option", f"invalid identity option: {exc}", param="extensions")
+    except (httpx.HTTPError, RuntimeError) as exc:
+        return identity_api.error(502, "identity_backend_error", f"identity workflow failed: {exc}")
+
+
 async def proxy_comfy_edit_request(
     request: Request,
     auth_context: AuthContext,
@@ -8064,6 +8118,11 @@ async def proxy_comfy_edit_request(
 
     if receipt is not None:
         receipt.resolved_model = str(model) if model is not None else None
+
+    if str(model) == IDENTITY_MODEL_ID:
+        return await _identity_edit_alias(
+            request, auth_context, form, form_dict, image_files, str(prompt or ""), response_format,
+        )
 
     workflow = load_comfy_workflow(model)
     if not workflow:
@@ -13088,6 +13147,98 @@ voices_api.register_voice_routes(
         design_voice=lambda prompt, script, seed: _design_voice(prompt, script, seed),
         compatible_engines=lambda: _custom_voice_engines(),
         quality_warn_below=lambda: float(_voice_settings().get("quality_warn_below", 0.45)),
+    ),
+)
+
+
+# --- identity scene + likeness check (gateway/identity_api.py) ----------------
+IDENTITY_CFG = config.get("identity", {}) or {}
+IDENTITY_FACE_SERVICE_ID = str(IDENTITY_CFG.get("face_service", "faces"))
+IDENTITY_MODEL_ID = "image-identity"
+IDENTITY_MANIFEST_ID = "image.edit.image-identity"
+_IDENTITY_ROUTE_POLICY = {"protocol": "openai.images", "intent": "image.edit", "backend": "comfyui"}
+_identity_template_cache: tuple[dict[str, Any], dict[str, Any]] | None = None
+
+
+def _identity_face_client() -> identity_api.FaceServiceClient:
+    bcfg = (config.get("backends") or {}).get(IDENTITY_FACE_SERVICE_ID) or {}
+    host = bcfg.get("host", "127.0.0.1")
+    port = bcfg.get("port", 8021)
+    return identity_api.FaceServiceClient(f"http://{host}:{port}", timeout=float(bcfg.get("timeout", 120)))
+
+
+async def _identity_ensure_face_service() -> Response | None:
+    if IDENTITY_FACE_SERVICE_ID not in (config.get("backends") or {}):
+        return Response(
+            content=json.dumps({"error": {"message": "The face service is not configured.", "type": "service_unavailable"}}),
+            status_code=503, media_type="application/json",
+        )
+    return await _ensure_speech_service_ready(IDENTITY_FACE_SERVICE_ID, label="Face service")
+
+
+def _identity_template() -> tuple[dict[str, Any], dict[str, Any]]:
+    """The identity ComfyUI graph and its node bindings, both read from the manifest."""
+    global _identity_template_cache
+    if _identity_template_cache is None:
+        record = GATEWAY_WORKFLOW_REGISTRY.get(IDENTITY_MANIFEST_ID)
+        binding = ((record.manifest.get("bindings") or {}).get("gateway") or {}) if record else {}
+        artifact = binding.get("workflow")
+        if not isinstance(artifact, str):
+            raise RuntimeError("identity workflow manifest is missing")
+        graph = json.loads((Path(__file__).parent / artifact).read_text(encoding="utf-8"))
+        _identity_template_cache = (graph, dict(binding))
+    return _identity_template_cache
+
+
+async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any], uploads: dict[str, bytes]) -> bytes:
+    if not COMFY_ENABLED:
+        raise RuntimeError("ComfyUI media backend is disabled")
+    headers = configured_downstream_headers(auth_context, "comfyui")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+        for node_id, content in uploads.items():
+            name, upload_error = await _upload_comfy_image_bytes(
+                client, headers, content, filename=f"identity-{uuid.uuid4().hex}.png"
+            )
+            if upload_error is not None:
+                raise RuntimeError("ComfyUI image upload failed")
+            graph[node_id]["inputs"]["image"] = name
+        error, images = await _comfy_run_round(client, graph, dict(headers), "identity scene")
+    if error is not None:
+        try:
+            message = json.loads(error.body.decode("utf-8"))["error"]["message"]
+        except Exception:  # noqa: BLE001
+            message = "ComfyUI returned an error"
+        raise RuntimeError(str(message)[:300])
+    if not images:
+        raise RuntimeError("ComfyUI returned no image")
+    return images[0]
+
+
+def _identity_store_image(request: Request, auth_context: AuthContext, content: bytes, response_format: str) -> dict[str, Any]:
+    encoded, mime_type = encode_image_bytes(content, "png", None)
+    image_id = store_image_bytes(encoded, owner_key_hash=_asset_owner_key(auth_context), suffix=".png")
+    item: dict[str, Any] = {
+        "asset_id": image_id,
+        "asset_url": build_signed_asset_url(request, image_id),
+        "media_type": mime_type,
+    }
+    if response_format == "url":
+        item["url"] = build_signed_image_url(request, image_id)
+    else:
+        item["b64_json"] = base64.b64encode(encoded).decode("utf-8")
+    return item
+
+
+identity_api.register_identity_routes(
+    app,
+    identity_api.IdentityApiDeps(
+        authenticate=lambda request, path: _gateway_auth_context(request, path),
+        enforce_policy=lambda auth, path: _enforce_runtime_route_policy(auth, path, policy=_IDENTITY_ROUTE_POLICY),
+        ensure_face_service=lambda: _identity_ensure_face_service(),
+        face_client=lambda: _identity_face_client(),
+        run_workflow=lambda auth, graph, uploads: _identity_run_workflow(auth, graph, uploads),
+        template=lambda: _identity_template(),
+        store_image=lambda request, auth, content, fmt: _identity_store_image(request, auth, content, fmt),
     ),
 )
 
