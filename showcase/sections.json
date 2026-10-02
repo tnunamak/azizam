@@ -27,7 +27,7 @@
     {
       "id": "image-analysis",
       "title": "Image analysis",
-      "blurb": "",
+      "blurb": "Score how closely the faces in an image match reference photos.",
       "match": {
         "intent": "image.analyze"
       }
