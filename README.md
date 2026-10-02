@@ -493,4 +493,6 @@ The `/v1/status` payload exposes a `metrics` block with windowed aggregates (5 m
 
 ## Operational notes
 
+**Restart only with `scripts/safe-restart`** (add `--llama` for llama-bee). A plain `systemctl --user restart` cuts streaming replies and media calls in flight. See `docs/ops/SAFE_RESTART.md`.
+
 `inbox/` holds dated audits, proposals, and "final state" snapshots from incremental work on the proxy — these are running notes rather than canonical docs. Treat the README and the top-level `*.md` files as the authoritative reference; the inbox is operational history.

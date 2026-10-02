@@ -15,6 +15,14 @@ Environment="TABBY_IDLE_TIMEOUT=300"
 Environment="TTS_ENABLED=true"
 Environment="TTS_HOST=http://127.0.0.1:8001"
 
+# Graceful stop: SIGTERM goes to start.sh only, which forwards it to the proxy
+# and stops LiteLLM after the proxy exits. uvicorn waits up to
+# AI_GATEWAY_GRACEFUL_SHUTDOWN_S (120) for in-flight responses; systemd
+# SIGKILLs everything left at TimeoutStopSec. See docs/ops/SAFE_RESTART.md.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=150s
+
 # Resource limits
 LimitNOFILE=65535
 
