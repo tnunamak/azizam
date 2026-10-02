@@ -1,4 +1,5 @@
-"""Long-video planning and ComfyUI graph building for LTX-2.5.
+"""Long-video planning and ComfyUI graph building (LTX-2.5; MiniMax H3 lives in
+``video_extend_h3``).
 
 One request makes one ComfyUI prompt. The prompt renders a first segment (or
 loads a source video) and then adds segments one after another. Each added
@@ -70,7 +71,8 @@ class ChainSpec:
     fps: float
     seed: int
     negative: str = NEGATIVE_DEFAULT
-    context_frames_latents: int = 3  # c: tail is 8c+1 frames
+    context_frames_latents: int = 3  # LTX: c, so the tail is 8c+1 frames
+    context_frames: int | None = None  # tail length in frames; wins over context_frames_latents
     context_strength: float = DEFAULT_CONTEXT_STRENGTH
     source: SourceVideo | None = None
     first_frame_image: str | None = None  # ComfyUI input filename, first segment only
@@ -79,6 +81,8 @@ class ChainSpec:
 
     @property
     def tail_frames(self) -> int:
+        if self.context_frames is not None:
+            return self.context_frames
         return FRAME_STEP * self.context_frames_latents + 1
 
     @property
@@ -296,18 +300,46 @@ def build_chain_graph(spec: ChainSpec) -> BuiltChain:
 class ChainEngine:
     """A continuity backend for long video.
 
-    The gateway plans segments and routes requests; an engine turns a
-    ``ChainSpec`` into one ComfyUI graph and says how each added segment is
-    conditioned on the video so far. A workflow selects its engine with
-    ``builder:`` in proxy_config.yml. Only ``ltx25_chain`` exists today (frame
-    window: the last ``context`` frames are encoded and pinned with a latent
-    guide). Planned: an LTX overlap-latent engine (keeps latents between
-    segments, no decode round trip) and an H3 multishot latent engine; both
-    reuse the planner, the routes, the record and the failure info unchanged.
+    The gateway routes requests, checks the cap and records the job; an engine
+    knows its model's frame arithmetic, plans segments, and turns a ``ChainSpec``
+    into one ComfyUI graph. A workflow selects its engine with ``builder:`` in
+    proxy_config.yml. Engines:
+
+    * ``ltx25_chain`` (here): frame window. The last ``context`` frames are
+      encoded and pinned with a latent guide.
+    * ``h3_chain`` (``video_extend_h3``): MiniMax H3. Inside one request the
+      previous segment's latent tail is pinned (no decode, no re-encode);
+      for an extension of an existing video the decoded tail and its audio are.
+
+    Planned: an LTX overlap-latent engine (see docs/long-video-design.md).
     """
 
     name = "ltx25_chain"
     model_family = "ltx-2.5"
+    stride_reason = "ltx_latent_8np1_stride"
+    min_shot_seconds = MIN_SHOT_SECONDS
+    # Extension options (extensions.com.vividfish.workflow) this engine understands.
+    option_keys = ("state_ledger", "context_seconds", "context_strength")
+    default_negative = NEGATIVE_DEFAULT
+
+    def tail_frames(self, context_seconds: float, fps: float) -> int:
+        """Frames of the video so far that condition the next segment."""
+        return FRAME_STEP * context_latents(context_seconds, fps) + 1
+
+    def check_source(self, fps: float) -> None:
+        """Raise ``PlanError`` when a source video of this frame rate cannot be extended."""
+
+    def plan_segments(
+        self,
+        shots: Sequence[tuple[str, float]],
+        *,
+        fps: float,
+        has_source: bool,
+        max_segment_seconds: float,
+        state_ledger: str | None,
+    ) -> list[Segment]:
+        return plan_segments(shots, fps=fps, has_source=has_source,
+                             max_segment_seconds=max_segment_seconds, state_ledger=state_ledger)
 
     def build(self, spec: "ChainSpec") -> "BuiltChain":
         return build_chain_graph(spec)
@@ -326,3 +358,10 @@ def segment_of_node(units: Sequence[Mapping[str, str]], node_id: str) -> int | N
         if node_id in unit.values() or node_id.startswith(f"s{index}_"):
             return index
     return None
+
+
+# Engines that live in their own module register here (they import the shared
+# dataclasses above, so this import has to come last).
+from gateway import video_extend_h3  # noqa: E402
+
+ENGINES[video_extend_h3.H3ChainEngine.name] = video_extend_h3.H3ChainEngine()

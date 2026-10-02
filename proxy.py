@@ -10315,7 +10315,7 @@ async def proxy_comfy_video_create(
             if chain_cfg is None:
                 return _json_error(
                     400, f"Model {workflow_name} cannot render shots or clips longer than "
-                    f"{workflow_cfg.get('max_seconds', 8):g} s; use video-long or ltx-2.5-long",
+                    f"{workflow_cfg.get('max_seconds', 8):g} s; use video-long, ltx-2.5-long or minimax-h3",
                     param="shots" if body.get("shots") is not None else "seconds",
                     code="long_video_not_supported")
     if chain_cfg is not None:
@@ -10826,7 +10826,6 @@ async def proxy_comfy_video_create(
 # the persisted record work as for any other video. A failure fails the whole
 # job; the error names the segment that failed and how many were finished.
 
-_CHAIN_EXTENSION_KEYS = ("state_ledger", "context_seconds", "context_strength")
 _CHAIN_MAX_SHOTS = 12
 _CHAIN_MAX_TEXT = 8000
 
@@ -10834,9 +10833,10 @@ _CHAIN_MAX_TEXT = 8000
 def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
     """Return (name, cfg) of the chain workflow a model name leads to, if any.
 
-    A chain workflow has `builder: ltx25_chain`. A template workflow can name
-    one with `chain_workflow` (LTX-2.5 t2v/i2v do: past their native length
-    they become a chain).
+    A chain workflow has a `builder` that names a continuity engine
+    (`video_extend.ENGINES`: `ltx25_chain`, `h3_chain`). A template workflow can
+    name one with `chain_workflow` (LTX-2.5 and MiniMax H3 t2v/i2v do: past their
+    native length they become a chain).
     """
     name, cfg = _resolve_video_workflow(str(requested_model or ""))
     if not cfg:
@@ -10887,16 +10887,18 @@ def _chain_number(value: Any, *, param: str, minimum: float, maximum: float | No
     return number
 
 
-def _parse_chain_options(body: Mapping[str, Any]) -> dict[str, Any]:
-    """Read the gateway options: ledger text, context window and strength."""
+def _parse_chain_options(body: Mapping[str, Any], engine: video_extend.ChainEngine) -> dict[str, Any]:
+    """Read the gateway options: ledger text, context window and strength.
+
+    Which options exist depends on the engine (`engine.option_keys`)."""
     merged = merge_workflow_inputs(body)
     block = (merged.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
     if not isinstance(block, Mapping):
         raise video_extend.PlanError("extensions must be a mapping", code="invalid_workflow_extension", param="extensions")
-    unknown = [k for k in block if k not in _CHAIN_EXTENSION_KEYS]
+    unknown = [k for k in block if k not in engine.option_keys]
     if unknown:
         raise video_extend.PlanError(
-            f"unsupported long-video option {unknown[0]!r}; supported: {', '.join(_CHAIN_EXTENSION_KEYS)}",
+            f"unsupported long-video option {unknown[0]!r}; supported: {', '.join(engine.option_keys)}",
             code="invalid_workflow_extension",
             param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{unknown[0]}",
         )
@@ -10918,7 +10920,7 @@ def _parse_chain_options(body: Mapping[str, Any]) -> dict[str, Any]:
     return options
 
 
-def _parse_chain_shots(body: Mapping[str, Any], *, default_seconds: float) -> list[tuple[str, float]]:
+def _parse_chain_shots(body: Mapping[str, Any], *, default_seconds: float, min_seconds: float) -> list[tuple[str, float]]:
     """Return [(prompt, seconds)] from `shots`, or from `prompt` + `seconds`."""
     shots = body.get("shots")
     if isinstance(shots, str):
@@ -10934,7 +10936,7 @@ def _parse_chain_shots(body: Mapping[str, Any], *, default_seconds: float) -> li
             raise video_extend.PlanError("prompt is required", code="invalid_value", param="prompt")
         seconds = body.get("seconds")
         value = default_seconds if seconds is None else _chain_number(
-            seconds, param="seconds", minimum=video_extend.MIN_SHOT_SECONDS)
+            seconds, param="seconds", minimum=min_seconds)
         return [(prompt.strip(), value)]
     if not isinstance(shots, list) or not shots or len(shots) > _CHAIN_MAX_SHOTS:
         raise video_extend.PlanError(
@@ -10949,7 +10951,7 @@ def _parse_chain_shots(body: Mapping[str, Any], *, default_seconds: float) -> li
         if not isinstance(prompt, str) or not prompt.strip():
             raise video_extend.PlanError(f"{label}.prompt is required", code="invalid_shots", param=f"{label}.prompt")
         seconds = _chain_number(
-            shot.get("seconds"), param=f"{label}.seconds", minimum=video_extend.MIN_SHOT_SECONDS)
+            shot.get("seconds"), param=f"{label}.seconds", minimum=min_seconds)
         out.append((prompt.strip(), seconds))
     given = body.get("seconds")
     if given is not None:
@@ -10991,9 +10993,11 @@ async def _submit_video_chain(
     """Plan, build and queue a long-video chain (create with shots or long
     seconds, or an extension of `source`)."""
     extending = source is not None
+    workflow_cfg = VIDEO_WORKFLOWS.get(workflow_name) or {}
+    engine = video_extend.engine_for(workflow_cfg.get("builder"))
     try:
-        options = _parse_chain_options(body)
-        shots = _parse_chain_shots(body, default_seconds=8.0)
+        options = _parse_chain_options(body, engine)
+        shots = _parse_chain_shots(body, default_seconds=8.0, min_seconds=engine.min_shot_seconds)
         if body.get("inputs"):
             raise video_extend.PlanError(
                 "inputs is not supported for long video; use extensions.com.vividfish.workflow",
@@ -11026,20 +11030,23 @@ async def _submit_video_chain(
         if probe is None:
             return _json_error(400, "video is not a readable video", param="video")
 
-    workflow_cfg = VIDEO_WORKFLOWS.get(workflow_name) or {}
     fps = float(probe.fps) if probe is not None else float(workflow_cfg.get("frame_rate", 24))
+    if probe is not None:
+        try:
+            engine.check_source(fps)
+        except video_extend.PlanError as exc:
+            return _json_error(400, str(exc), code=exc.code, param=exc.param)
     context_seconds = options.get("context_seconds", video_extend.DEFAULT_CONTEXT_SECONDS)
-    context_latents = video_extend.context_latents(context_seconds, fps)
-    tail_frames = video_extend.FRAME_STEP * context_latents + 1
+    tail_frames = engine.tail_frames(context_seconds, fps)
     if probe is not None and probe.frames < tail_frames:
         return _json_error(
             400, f"the source video has {probe.frames} frames; extending needs at least {tail_frames} "
             f"for context_seconds={context_seconds:g}", param="video", code="video_too_short")
 
     try:
-        segments = video_extend.plan_segments(
+        segments = engine.plan_segments(
             shots, fps=fps, has_source=extending,
-            max_segment_seconds=VIDEO_CHAIN_SEGMENT_SECONDS,
+            max_segment_seconds=float(workflow_cfg.get("chain_segment_seconds", VIDEO_CHAIN_SEGMENT_SECONDS)),
             state_ledger=options.get("state_ledger"))
     except video_extend.PlanError as exc:
         return _json_error(400, str(exc), code=exc.code, param=exc.param)
@@ -11089,13 +11096,13 @@ async def _submit_video_chain(
 
     spec = video_extend.ChainSpec(
         segments=segments, width=width, height=height, fps=fps, seed=seed_val,
-        negative=str(body.get("negative_prompt") or video_extend.NEGATIVE_DEFAULT),
-        context_frames_latents=context_latents,
+        negative=str(body.get("negative_prompt") or engine.default_negative),
+        context_frames=tail_frames,
         context_strength=options.get("context_strength", video_extend.DEFAULT_CONTEXT_STRENGTH),
         source=(video_extend.SourceVideo(uploaded, probe.frames, fps, probe.width, probe.height, probe.has_audio)
                 if probe is not None else None),
         first_frame_image=first_frame_image, first_frame_strength=first_frame_strength)
-    built = video_extend.engine_for(workflow_cfg.get("builder")).build(spec)
+    built = engine.build(spec)
     total_seconds = built.total_frames / fps
 
     prompt_text = "\n".join(p for p, _ in shots)
@@ -11110,7 +11117,7 @@ async def _submit_video_chain(
         "source_frames": source_frames,
     }
     seconds_requested = sum(s for _, s in shots) + source_frames / fps
-    reason = "ltx_latent_8np1_stride" if abs(total_seconds - seconds_requested) > 0.05 else None
+    reason = engine.stride_reason if abs(total_seconds - seconds_requested) > 0.05 else None
     return await _submit_video_graph(
         workflow=built.graph,
         auth_context=auth_context,
@@ -11177,14 +11184,19 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
         async with _video_progress_lock:
             if _video_job_blocked(prompt_id, auth_context):
                 return _json_error(404, "video_id not found", kind="not_found")
-    requested = body.get("model") or VIDEO_EXTEND_WORKFLOW
+    # Without `model`, a video is extended by the model that made it (when that
+    # model can extend), else by the configured default.
+    source_model = (
+        (_video_job_records.get(_prompt_id_from_video_id(source_id) or "") or {}).get("model")
+        if source_id else None)
+    requested = body.get("model")
+    if not requested:
+        requested = source_model if source_model and _chain_workflow_for(source_model)[1] else VIDEO_EXTEND_WORKFLOW
     workflow_name, cfg = _chain_workflow_for(requested)
     if not cfg:
-        return _json_error(400, f"model {requested!r} cannot extend videos; use video-long or ltx-2.5-long",
+        return _json_error(400, f"model {requested!r} cannot extend videos; use video-long, ltx-2.5-long or minimax-h3",
                            param="model", code="video_extend_not_supported")
-    public_model = str(body.get("model") or (
-        (_video_job_records.get(_prompt_id_from_video_id(source_id) or "") or {}).get("model")
-        if source_id else None) or "video-long")
+    public_model = str(body.get("model") or source_model or "video-long")
     return await _submit_video_chain(
         request, auth_context, body=body, workflow_name=workflow_name,
         requested_model=requested, public_model=public_model,

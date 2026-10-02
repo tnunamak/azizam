@@ -1,0 +1,192 @@
+{
+  "_meta": {
+    "name": "video-minimax-h3-long",
+    "description": "Single-segment (10 s) reference graph of the MiniMax H3 long-video chain, for manifest runs. /v1/videos builds the real multi-segment graph in code (gateway/video_extend_h3.py); a test keeps this file in sync with the builder.",
+    "frame_rate": 24
+  },
+  "unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "model": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "unet",
+        0
+      ],
+      "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+    }
+  },
+  "avae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    }
+  },
+  "clip": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    }
+  },
+  "sampler": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "res_multistep"
+    }
+  },
+  "sigmas": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": [
+        "model",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": 8,
+      "denoise": 1.0
+    }
+  },
+  "s0_cond": {
+    "class_type": "MiniMaxH3ImageToVideo",
+    "inputs": {
+      "clip": [
+        "clip",
+        0
+      ],
+      "vae": [
+        "vae",
+        0
+      ],
+      "prompt": "A cinematic shot of a serene scene with natural motion.",
+      "width": 960,
+      "height": 544,
+      "length": 243
+    }
+  },
+  "s0_guider": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": [
+        "model",
+        0
+      ],
+      "conditioning": [
+        "s0_cond",
+        0
+      ]
+    }
+  },
+  "s0_noise": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 42
+    }
+  },
+  "s0_sample": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "s0_noise",
+        0
+      ],
+      "guider": [
+        "s0_guider",
+        0
+      ],
+      "sampler": [
+        "sampler",
+        0
+      ],
+      "sigmas": [
+        "sigmas",
+        0
+      ],
+      "latent_image": [
+        "s0_cond",
+        1
+      ]
+    }
+  },
+  "s0_decode": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "s0_sample",
+        0
+      ],
+      "vae": [
+        "vae",
+        0
+      ]
+    }
+  },
+  "s0_adecode": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": {
+      "samples": [
+        "s0_sample",
+        0
+      ],
+      "vae": [
+        "avae",
+        0
+      ]
+    }
+  },
+  "s0_trim": {
+    "class_type": "MiniMaxH3MotionContextTrim",
+    "inputs": {
+      "images": [
+        "s0_decode",
+        0
+      ],
+      "trim_frames": 0,
+      "fps": 24.0,
+      "match_tail": true,
+      "audio": [
+        "s0_adecode",
+        0
+      ]
+    }
+  },
+  "create": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "s0_trim",
+        0
+      ],
+      "fps": 24.0,
+      "audio": [
+        "s0_trim",
+        1
+      ]
+    }
+  },
+  "save": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "create",
+        0
+      ],
+      "filename_prefix": "video/ltx-2.5-long",
+      "format": "mp4",
+      "codec": "auto"
+    }
+  }
+}

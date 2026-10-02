@@ -790,6 +790,7 @@ videos:
     video-minimax-h3-t2v:
       file: workflows/videos/video-minimax-h3-t2v.json
       i2v_workflow: video-minimax-h3-i2v
+      chain_workflow: video-minimax-h3-long  # seconds > max_seconds, or `shots`, runs the chain
       min_seconds: 2
       max_seconds: 10
       max_size: 1344x768
@@ -799,6 +800,7 @@ videos:
       length_offset: 5
     video-minimax-h3-i2v:
       file: workflows/videos/video-minimax-h3-i2v.json
+      chain_workflow: video-minimax-h3-long
       requires_input_reference: true
       min_seconds: 2
       max_seconds: 10
@@ -860,6 +862,24 @@ videos:
       max_size: 1280x720
       default_size: 960x512
       frame_rate: 24
+    # MiniMax H3 long video (license as above). Built in code by the `h3_chain`
+    # engine (gateway/video_extend_h3.py): segments of up to `chain_segment_seconds`,
+    # each pinned to the video so far (latent tail inside a request, decoded tail
+    # + audio when extending an existing video) with the H3 Motion Context nodes.
+    # Serves `h3-long`, `minimax-h3-long`, `shots` and `seconds` past 10 s on
+    # minimax-h3, and POST /v1/videos/extensions on an H3 video. Needs the
+    # ComfyUI-H3-Motion-Context custom node (see docs/long-video-design.md).
+    video-minimax-h3-long:
+      builder: h3_chain
+      # One-segment reference graph, bound by the manifest only (as for LTX).
+      file: workflows/videos/video-minimax-h3-long.json
+      chain_segment_seconds: 10
+      min_seconds: 2
+      max_seconds: 40
+      max_size: 1344x768
+      default_size: 960x544
+      size_multiple: 32
+      frame_rate: 24
     video-wan-2.2-ti2v-5b-q8:
       file: workflows/video-wan-2.2-ti2v-5b-q8.json
       min_seconds: 1
@@ -880,6 +900,8 @@ videos:
     minimax-h3-t2v: video-minimax-h3-t2v
     minimax-h3-i2v: video-minimax-h3-i2v
     h3: video-minimax-h3-t2v
+    minimax-h3-long: video-minimax-h3-long
+    h3-long: video-minimax-h3-long
     ltx-2.5-long: video-ltx-2.5-long
     # Retired LTX-2.3 names. LTX-2.3 is gone; these names keep old clients
     # working by pointing at the LTX-2.5 equivalent of each role.
