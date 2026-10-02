@@ -176,8 +176,8 @@ def process_sample(data: bytes, limits: SampleLimits, *, denoise: bool = False) 
     clipping_fraction = clipped_samples / max(1, len(window))
     speech_levels = sorted(level for level, flag in zip(levels[first : last + 1], window_speech) if flag)
     snr_db = _percentile(speech_levels, 0.90) - noise_floor if speech_levels else None
-    if not any(not flag for flag in window_speech):
-        snr_db = None  # no pauses to measure the noise in
+    if snr_db is not None and snr_db < 6.0 and _percentile(ordered, 0.90) - noise_floor < 6.0:
+        snr_db = None  # level is flat from start to end: no pauses to measure the noise in
 
     if clipping_fraction > 0.01:
         warnings.append("clipping")
