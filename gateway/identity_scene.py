@@ -221,6 +221,7 @@ _PROFILE_RULES: tuple[tuple[re.Pattern[str], str | None], ...] = (
     (re.compile(r"\bnose[- ]to[- ]nose\b|\beskimo kiss\b", re.I), "heads close together"),
     (re.compile(r"\bcheek[- ]to[- ]cheek\b", re.I), "heads close together"),
 )
+_NEGATED = re.compile(r"\b(?:not|no|never|without|avoid|isn't|non)\W+(?:\w+\W+){0,2}$", re.I)
 STEERING_SENTENCE = (
     "Keep each person's whole face clearly visible, near-frontal or in three-quarter view with both eyes visible, "
     "not in profile and not hidden behind the other person."
@@ -237,10 +238,14 @@ def steer_prompt(prompt: str, policy: str) -> tuple[str, list[dict[str, str]]]:
     out = prompt
     hit = False
     for pattern, replacement in _PROFILE_RULES:
-        if pattern.search(out):
+        def rewrite(match: re.Match[str]) -> str:
+            nonlocal hit
+            if _NEGATED.search(match.string[max(0, match.start() - 24): match.start()]):
+                return match.group(0)  # "not in profile" asks for the opposite: leave it alone
             hit = True
-            if policy == "likeness" and replacement:
-                out = pattern.sub(replacement, out)
+            return replacement if policy == "likeness" and replacement else match.group(0)
+
+        out = pattern.sub(rewrite, out)
     if hit:
         if policy == "likeness":
             warnings.append({

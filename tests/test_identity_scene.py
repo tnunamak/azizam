@@ -192,6 +192,13 @@ class SteeringTests(unittest.TestCase):
         self.assertIn("three-quarter", out)
         self.assertEqual(warnings[0]["code"], "pose_rewritten")
 
+    def test_a_negated_profile_is_left_alone(self) -> None:
+        text = "Both faces are clearly visible and well lit, not in profile. Avoid side view."
+        out, warnings = ids.steer_prompt(text, "likeness")
+        self.assertIn("not in profile", out)
+        self.assertIn("Avoid side view", out)
+        self.assertEqual(warnings, [])
+
     def test_as_written_keeps_the_prompt_and_warns_about_risk(self) -> None:
         out, warnings = ids.steer_prompt("a side view portrait", "as_written")
         self.assertEqual(out, "a side view portrait")
