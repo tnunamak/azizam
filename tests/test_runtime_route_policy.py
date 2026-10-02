@@ -992,7 +992,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                 "/v1/chat/completions",
                 headers=AUTH_HEADERS,
                 json={
-                    "model": "gpt-4o-mini",
+                    "model": "unaliased-vision-model",
                     "messages": [
                         {
                             "role": "user",

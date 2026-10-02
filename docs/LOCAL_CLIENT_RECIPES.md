@@ -921,6 +921,69 @@ Expected unsupported features:
 - Fine-tuning, files, batches — registered compatibility routes return `unsupported_operation`.
 - Realtime API — registered compatibility routes return `unsupported_operation`.
 
+## Model aliases (stable names)
+
+Clients never need internal model names. Two layers, both defined in the
+`model_aliases:` section of `proxy_config.yml` (the one place to re-point
+anything; code in `gateway/stable_aliases.py`):
+
+1. **Stable names** (ours; never change meaning): the names to put in new code.
+2. **OpenAI names** (`gpt-4o`, `tts-1`, `gpt-image-1`, ...): ordered globs that
+   point at a stable name, so they follow it when it is re-pointed.
+
+Concrete names (roles such as `coder-q5`, workflow ids such as `flux2-klein-4b`,
+engine ids such as `omnivoice`) always keep working, so a client can still pin
+an exact model or settings. Unknown names pass through unchanged.
+
+| API | Stable name | Resolves to today | OpenAI names that map to it |
+|---|---|---|---|
+| Chat / completions | `default` | Qwen3.8-27B, reasoning on (also does vision) | `gpt-5*`, `gpt-4.1`, `gpt-4o`, `gpt-4`, `o1*`, `o3*`, `o4*`, `chatgpt-*`, `claude-*` |
+| | `fast` | `default-fast` (same weights, reasoning off) | `gpt-*-mini*`, `gpt-*-nano*`, `o*-mini*`, `gpt-3.5*`, `claude-*haiku*` |
+| | `vision` | `default` | |
+| | `coder` | `coder` (coding profile) | `gpt-*-codex*`, `codex-*` |
+| | `rp` | `rp` (roleplay) | |
+| Embeddings | `embed` | `nomic-embed-text-v1.5` (768-dim; not vector-compatible with OpenAI's) | `text-embedding-*` |
+| Image generate | `image` | `krea2-turbo` | `gpt-image-*`, `chatgpt-image-*`, `dall-e-*` |
+| | `image-fast` | `flux2-klein-4b` | |
+| Image edit / variations | `image-edit` (also `image`) | `qwen-image-2.1-edit`; masks and 2+ images switch to inpaint / multiref automatically | `gpt-image-*`, `dall-e-*` |
+| | `image-edit-fast` (also `image-fast`) | `flux2-klein-4b-edit` | |
+| Video | `video` | `video-ltx-2.5-t2v`; `input_reference` switches to image-to-video | `sora-2`, `sora-2-pro`, `sora*` |
+| | `video-fast` | `video-ltx-2.3-pure-distilled` | |
+| | `video-long` | `video-ltx-2.3-long` | |
+| TTS | `tts` | OmniVoice (OpenAI voice names are fixed cloned identities) | `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
+| | `tts-realtime` | OmniVoice today; Supertonic once deployed | `tts-1` |
+| | `tts-quality` | OmniVoice today; Kokoro once deployed | `tts-1-hd` |
+| STT | `stt` | Parakeet TDT 0.6B v3 | `whisper*` |
+| | `stt-realtime` | Parakeet today; Nemotron streaming once deployed | `gpt-4o-mini-transcribe*` |
+| | `stt-quality` | Parakeet today; Canary is the second candidate | `gpt-4o-transcribe*`, `gpt-4o-transcribe-diarize` |
+| Translations | -- | not supported by the local STT backend (clear 400) | |
+| Music / SFX | `music` | `ace-step-1.5-xl-turbo` | |
+| | `song` | `yue2-song` (vocals; license CC BY-NC) | |
+| | `sfx` | `sa3-small-sfx` | |
+
+TTS and STT aliases resolve through **engines**: each tier lists engines in
+order and the first one whose service is deployed wins. Engine ids
+(`omnivoice`, `supertonic`, `kokoro`, `parakeet`, `nemotron-streaming`,
+`canary`) are valid `model` values too; an engine that is not deployed returns
+`400 model_not_deployed`. When an alias uses a non-OmniVoice engine, OpenAI
+voice names are mapped to that engine's closest voice (`voice_map`; an
+engine-native voice name is passed through). The realtime and quality tiers
+point at the same model until the second engine is deployed; the tier order is
+a policy choice that waits on the TTS listening test.
+
+Discovery and dry run (no model is loaded or run):
+
+```bash
+curl -s localhost:5000/v1/models -H "Authorization: Bearer $KEY"      # alias entries carry vivid_fish_resolves_to
+curl -s localhost:5000/gateway/v1/aliases -H "Authorization: Bearer $KEY"   # stable + OpenAI rules + engines (deployed or not)
+curl -s "localhost:5000/gateway/v1/aliases/resolve?operation=chat&model=gpt-4o" -H "Authorization: Bearer $KEY"
+```
+
+`operation` is one of `chat`, `embeddings`, `images`, `image_edits`, `videos`,
+`speech`, `transcriptions`, `audio_generate`. `/gateway/v1/capabilities` lists
+each stable alias as a capability tagged `alias`, `resolves_to:<target>` and
+`engine:<id>`.
+
 ## Discovery and Debugging: `/gateway/v1/*`
 
 The read-only gateway router (`gateway/api.py`) is mounted into the live app.

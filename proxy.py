@@ -69,6 +69,7 @@ from gateway import (
     video_media_job_http,
     video_media_jobs,
 )
+from gateway import stable_aliases
 from gateway import stt_chunking
 from gateway.alias_policy import (
     AliasPolicyResolutionError,
@@ -214,6 +215,7 @@ from gateway.local_capabilities import (
     INTENT_TRANSCRIPTIONS,
     INTENT_TRANSLATIONS,
     INTENT_VIDEO_GENERATE,
+    build_alias_capabilities,
     build_local_capabilities,
 )
 from gateway.extensions import ExtensionError
@@ -324,7 +326,13 @@ ADMIN_DB_PATH = _configured_admin_db_path(admin_cfg)
 
 def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, Any]:
     """Overlay DB-owned service registry onto bootstrap config."""
+    effective = _overlay_service_registry(raw_config)
+    if isinstance(effective, dict):
+        stable_aliases.fold_workflow_aliases(effective)
+    return effective
 
+
+def _overlay_service_registry(raw_config: Mapping[str, Any]) -> dict[str, Any]:
     try:
         admin_store.init_db(ADMIN_DB_PATH)
         registry = service_registry.ensure_service_registry(
@@ -2699,6 +2707,8 @@ class ModelResolution:
     operation: str
     category: Optional[str] = None
     is_openai_alias: bool = False
+    # Set when the name came from the two-layer alias table (model_aliases).
+    alias: Optional[stable_aliases.AliasResolution] = None
 
 
 def normalize_model_id(model_name: str) -> str:
@@ -2811,8 +2821,59 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
     return requested_model
 
 
+def _alias_engine_available_for(operation: str) -> stable_aliases.EngineAvailable:
+    """Engine is usable when its service is enabled in the live registry.
+
+    STT additionally requires the engine's service to be the one the STT
+    dispatcher selects: dispatch picks the service by capability before the
+    multipart body (and so the model name) is read, so an engine on any other
+    service would be resolved here but served by the wrong backend.
+    """
+
+    def available(_engine_id: str, spec: Mapping[str, Any]) -> bool:
+        service_id = str(spec.get("service") or "")
+        service = (config.get("backends") or {}).get(service_id)
+        if not isinstance(service, Mapping):
+            return False
+        if not bool_from_config(service.get("enabled"), True):
+            return False
+        if not service.get("host") or not service.get("port"):
+            return False
+        if operation in ("transcriptions", "translations"):
+            selected = service_for_capability(f"audio.{operation}")
+            return selected is not None and selected[0] == service_id
+        return True
+
+    return available
+
+
+def resolve_stable_alias(
+    operation: str, requested_model: Any
+) -> stable_aliases.AliasResolution | None:
+    """Resolve through ``model_aliases``; raises AliasUnavailableError."""
+    return stable_aliases.resolve_alias(
+        config.get("model_aliases"),
+        operation,
+        requested_model,
+        engine_available=_alias_engine_available_for(operation),
+    )
+
+
 def resolve_model_for_operation(operation: str, requested_model: str) -> ModelResolution:
     """Resolve public OpenAI model names to local operation defaults."""
+    try:
+        alias = resolve_stable_alias(operation, requested_model)
+    except stable_aliases.AliasUnavailableError as exc:
+        raise ModelCompatibilityError(str(exc)) from exc
+    if alias is not None:
+        return ModelResolution(
+            requested_model=requested_model,
+            effective_model=(alias.upstream_model if alias.engine else alias.target) or alias.target,
+            operation=operation,
+            category=stable_aliases.section_for_operation(operation),
+            is_openai_alias=True,
+            alias=alias,
+        )
     if not MODEL_COMPAT_ENABLED or not requested_model:
         return ModelResolution(
             requested_model=requested_model,
@@ -3673,6 +3734,16 @@ def convert_wav_to_audio_format(wav_content: bytes, audio_format: str) -> bytes:
         return Path(output_file.name).read_bytes()
 
 
+def _engine_voice(engine: Mapping[str, Any], requested_voice: str) -> str:
+    """Map an OpenAI voice name onto a non-OmniVoice engine's own voice ids."""
+    voice_map = {str(k).lower(): str(v) for k, v in (engine.get("voice_map") or {}).items()}
+    native = {v.lower(): v for v in voice_map.values()}
+    key = requested_voice.lower()
+    if key in native:
+        return native[key]
+    return voice_map.get(key) or str(engine.get("default_voice") or requested_voice)
+
+
 async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Response:
     """Forward TTS request to TTS backend."""
     if not TTS_ENABLED:
@@ -3688,6 +3759,7 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
     # Voice mapping is module-scoped (single source of truth shared with /v1/voices).
     body = await request.body()
     headers = prepare_downstream_headers(request.headers, auth_context, "tts")
+    tts_service_id = "tts"
 
     # Map voice in request body
     requested_response_format = "wav"
@@ -3711,7 +3783,19 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
 
         requested_voice = body_json.get("voice", "").lower()
         body_json["voice"] = requested_voice  # normalise to lowercase before transform
-        _run_request_pipeline(["voxtral-voices"], body_json, _TransformContext(), _TRANSFORM_REGISTRY)
+        engine = model_resolution.alias.engine_spec if model_resolution.alias else None
+        if engine is not None:
+            tts_service_id = model_resolution.alias.service or "tts"
+            if tts_service_id != "tts":
+                service_response = _service_availability_response(tts_service_id, service_label=tts_service_id)
+                if service_response is not None:
+                    return service_response
+                headers = prepare_downstream_headers(request.headers, auth_context, tts_service_id)
+        transform = engine.get("voice_transform") if engine is not None else "voxtral-voices"
+        if transform:
+            _run_request_pipeline([str(transform)], body_json, _TransformContext(), _TRANSFORM_REGISTRY)
+        else:
+            body_json["voice"] = _engine_voice(engine, requested_voice)
         body_json["model"] = model_resolution.effective_model or TTS_BACKEND_MODEL
         body_json["response_format"] = "wav"
         body = json.dumps(body_json).encode()
@@ -3721,6 +3805,9 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
         pass
 
     _tts_host = host_for_capability("audio.speech") or (TTS_HOST if TTS_ENABLED else None) or TTS_HOST
+    if tts_service_id != "tts":
+        _engine_service = (config.get("backends") or {}).get(tts_service_id) or {}
+        _tts_host = f"http://{_engine_service.get('host')}:{_engine_service.get('port')}"
     url = f"{_tts_host}/v1/audio/speech"
 
     try:
@@ -10764,6 +10851,8 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         backends=_live_backends,
     ))
 
+    capabilities.extend(build_alias_capabilities(_gateway_aliases_provider()))
+
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         for backend in record.supported_backends:
             try:
@@ -10920,9 +11009,56 @@ async def _gateway_resource_lister(*, audience: str) -> list:
     )
 
 
+def _gateway_aliases_provider(operation: str | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for op in ([operation] if operation else stable_aliases.OPERATIONS):
+        out.update(
+            stable_aliases.describe_aliases(
+                config.get("model_aliases"),
+                engine_available=_alias_engine_available_for(op),
+                operation=op,
+            )
+        )
+    return out
+
+
+def _gateway_alias_resolver(operation: str, model: str) -> dict[str, Any]:
+    if operation not in stable_aliases.OPERATIONS and operation not in {"completions", "translations"}:
+        return {"alias": False, "resolved": False, "error": f"unknown operation: {operation}"}
+    try:
+        res = resolve_stable_alias(operation, model)
+    except stable_aliases.AliasUnavailableError as exc:
+        return {"alias": True, "resolved": False, "requested": model, "operation": operation, "error": str(exc), "code": exc.code}
+    if res is None:
+        return {"alias": False, "resolved": True, "requested": model, "operation": operation, "resolves_to": model}
+    return {"alias": True, "resolved": True, **res.to_dict()}
+
+
+def _stable_alias_model_entries() -> list[dict[str, Any]]:
+    """One /v1/models entry per stable alias id, aggregated across operations."""
+    entries: dict[str, dict[str, Any]] = {}
+    for op, view in _gateway_aliases_provider().items():
+        for row in view.get("stable", []):
+            entry = entries.setdefault(row["alias"], {
+                "id": row["alias"],
+                "object": "model",
+                "owned_by": "vivid-fish",
+                "vivid_fish_alias": True,
+                "vivid_fish_resolves_to": {},
+            })
+            entry["vivid_fish_resolves_to"][op] = row.get("resolves_to")
+            if row.get("candidates"):
+                entry.setdefault("vivid_fish_engine_candidates", {})[op] = row["candidates"]
+            if row.get("error"):
+                entry.setdefault("vivid_fish_alias_errors", {})[op] = row["error"]
+    return list(entries.values())
+
+
 app.include_router(
     create_gateway_router(
         GATEWAY_WORKFLOW_REGISTRY,
+        aliases_provider=_gateway_aliases_provider,
+        alias_resolver=_gateway_alias_resolver,
         audience_resolver=_gateway_audience_resolver,
         capabilities_provider=_gateway_capabilities_provider,
         receipt_store_path=receipt_store.DB_PATH,
@@ -18996,6 +19132,22 @@ async def list_models(request: Request):
             data.insert(0, entry)
             existing_ids.add(entry["id"])
 
+    by_id = {item.get("id"): item for item in data if isinstance(item, dict)}
+    for alias_entry in _stable_alias_model_entries():
+        existing = by_id.get(alias_entry["id"])
+        if existing is not None:
+            existing.update({k: v for k, v in alias_entry.items() if k.startswith("vivid_fish_")})
+            continue
+        # An LLM alias is only listed when something it points at is listed
+        # (LiteLLM owns the LLM catalog); media aliases are gateway-native.
+        llm_targets = {
+            t for op, t in alias_entry["vivid_fish_resolves_to"].items()
+            if op in ("chat", "embeddings") and t
+        }
+        if llm_targets and not llm_targets <= set(by_id):
+            continue
+        data.append(alias_entry)
+
     data, policy_metadata = await _filter_model_list_for_profile(data, auth_context)
 
     # Annotate each model entry with a description sourced from roles: or
@@ -21961,6 +22113,21 @@ async def _handle_openai_litellm_request(
     parsed_body, parse_error = parse_openai_json_body(body_peek)
     if parse_error is not None:
         return parse_error
+
+    # Layer 1/2 aliases (gpt-4o, fast, text-embedding-3-small ...) become the
+    # concrete role / model group before policy and LiteLLM see the request.
+    try:
+        chat_alias = resolve_stable_alias(
+            "embeddings" if request_path == "/v1/embeddings" else "chat",
+            parsed_body.get("model"),
+        )
+    except stable_aliases.AliasUnavailableError as exc:
+        return openai_error_response(
+            str(exc), status_code=400, param="model", code=exc.code,
+        )
+    if chat_alias is not None and chat_alias.target != parsed_body.get("model"):
+        parsed_body = {**parsed_body, "model": chat_alias.target}
+        body_peek = json.dumps(parsed_body).encode("utf-8")
 
     requested_embedding_dimensions: int | None = None
     if request_path == "/v1/embeddings":

@@ -45,6 +45,19 @@ LiteLLM so non-local LiteLLM providers can still work; unknown media model names
 continue to be resolved by the gateway workflow catalog for the relevant media
 endpoint.
 
+## Stable aliases (`model_aliases`)
+
+`proxy_config.yml` `model_aliases:` is the single place that decides what a
+convenience model name means, for every API (chat, embeddings, images, image
+edits, videos, speech, transcriptions, audio generate). It has two layers:
+stable names such as `fast`, `image`, `tts-realtime` (which never change
+meaning) and ordered globs for OpenAI names (`gpt-4o-mini*` -> `fast`). The
+resolver runs before LiteLLM and before the media routes, so policy and
+receipts see the concrete target. Full table and discovery endpoints:
+`docs/LOCAL_CLIENT_RECIPES.md` ("Model aliases"). The category heuristics
+below only decide which OpenAI names are *wrong* for an endpoint (400); they no
+longer choose targets for names that `model_aliases` covers.
+
 ## Defaults
 
 Defaults live in `proxy_config.yml`:

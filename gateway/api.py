@@ -16,6 +16,8 @@ Endpoints
 * ``GET /gateway/v1/workflows``               — list workflows (audience-scoped)
 * ``GET /gateway/v1/workflows/{id}``          — single workflow summary
 * ``GET /gateway/v1/capabilities``            — list capabilities
+* ``GET /gateway/v1/aliases``                 — stable + OpenAI model aliases and what they resolve to
+* ``GET /gateway/v1/aliases/resolve``         — dry-run one alias (``operation``, ``model``)
 * ``GET /gateway/v1/extensions``              — list extension namespaces
 * ``GET /gateway/v1/models/{model}/capabilities`` — model capability view
 * ``GET /gateway/v1/receipts``                — recent route receipts
@@ -286,6 +288,8 @@ def create_gateway_router(
     media_job_canceler: MediaJobCanceler | None = None,
     media_job_submitter: MediaJobSubmitter | None = None,
     media_job_store_path: str | Path | None = None,
+    aliases_provider: Callable[[str | None], dict[str, Any]] | None = None,
+    alias_resolver: Callable[[str, str], dict[str, Any]] | None = None,
     prefix: str = "/gateway/v1",
 ) -> APIRouter:
     """Build a read-only gateway router.
@@ -371,6 +375,26 @@ def create_gateway_router(
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
         return JSONResponse(status_code=status.HTTP_200_OK, content=catalog)
+
+    @router.get("/aliases")
+    def list_aliases(operation: str | None = Query(None)) -> JSONResponse:
+        if aliases_provider is None:
+            return JSONResponse(status_code=status.HTTP_200_OK, content={"object": "aliases", "operations": {}})
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"object": "aliases", "operations": aliases_provider(operation)},
+        )
+
+    @router.get("/aliases/resolve")
+    def resolve_alias_dry_run(operation: str = Query(...), model: str = Query(...)) -> JSONResponse:
+        if alias_resolver is None:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content=_error_payload("aliases_unavailable", "alias resolution is not configured"),
+            )
+        result = alias_resolver(operation, model)
+        code = status.HTTP_200_OK if result.get("resolved") or result.get("alias") is False else status.HTTP_409_CONFLICT
+        return JSONResponse(status_code=code, content=result)
 
     @router.get("/extensions")
     def list_extensions(request: Request) -> JSONResponse:

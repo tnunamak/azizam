@@ -100,6 +100,53 @@ def build_local_capabilities(
     return capabilities
 
 
+_ALIAS_INTENTS: dict[str, tuple[str, tuple[str, ...], tuple[str, ...], str]] = {
+    "chat": (INTENT_CHAT, ("text",), ("text",), "sync"),
+    "embeddings": (INTENT_EMBEDDINGS, ("text",), ("embedding",), "sync"),
+    "images": (INTENT_IMAGE_GENERATE, ("text",), ("image",), "job"),
+    "image_edits": (INTENT_IMAGE_EDIT, ("text", "image"), ("image",), "job"),
+    "videos": (INTENT_VIDEO_GENERATE, ("text",), ("video",), "job"),
+    "speech": (INTENT_SPEECH, ("text",), ("audio",), "sync"),
+    "transcriptions": (INTENT_TRANSCRIPTIONS, ("audio",), ("text",), "sync"),
+    "audio_generate": (INTENT_AUDIO_GENERATE, ("text",), ("audio",), "job"),
+}
+
+
+def build_alias_capabilities(alias_views: Mapping[str, Any]) -> list[Capability]:
+    """One capability per stable alias, tagged with what it resolves to.
+
+    ``alias_views`` is the output of ``stable_aliases.describe_aliases``.
+    Aliases whose target is currently unresolvable are skipped.
+    """
+    out: list[Capability] = []
+    for operation, view in alias_views.items():
+        spec = _ALIAS_INTENTS.get(operation)
+        if spec is None:
+            continue
+        intent, inputs, outputs, execution = spec
+        for row in _as_mapping(view).get("stable", ()):
+            row = _as_mapping(row)
+            alias = row.get("alias")
+            target = row.get("resolves_to")
+            if not alias or not target:
+                continue
+            tags = ["alias", f"resolves_to:{target}"]
+            if row.get("engine"):
+                tags.append(f"engine:{row['engine']}")
+            out.append(
+                Capability(
+                    intent=intent,
+                    backend=str(row.get("service") or "gateway"),
+                    model=str(alias),
+                    input_modalities=inputs,
+                    output_modalities=outputs,
+                    execution=execution,
+                    tags=tuple(tags),
+                )
+            )
+    return out
+
+
 def _build_llm_capabilities(
     config: Mapping[str, Any],
     backends: Mapping[str, Any],
@@ -538,6 +585,7 @@ def _as_mapping(value: Any) -> Mapping[str, Any]:
 
 
 __all__ = [
+    "build_alias_capabilities",
     "INTENT_CHAT",
     "INTENT_COMPLETIONS",
     "INTENT_EMBEDDINGS",

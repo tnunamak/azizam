@@ -194,6 +194,7 @@ Notable behaviors documented in detail under [`AUTH_GUIDE.md`](AUTH_GUIDE.md), [
 - **Durable image jobs** — long/batch image work can use `POST /gateway/v1/media/jobs` with `intent: "image.generate"` and an OpenAI image request under `request`. The proxy queues the work server-side, retries transient VRAM/ComfyUI/tile-composition failures, persists redacted job state, and returns reusable asset handles via polling/content endpoints. The private request payload is kept on disk only while the job is pending/running so the proxy can recover from client disconnects and restarts.
 - **Generated asset handles** — generated image/audio/video outputs can be inspected at `GET /gateway/v1/assets/{asset_id}` with the minting API key and fetched through signed bearerless content URLs until expiry. Asset handles and input reuse remain scoped to the API key that minted them.
 - **Signed image URLs** — `response_format: "url"` returns hostname-aware, HMAC-signed URLs into a content-addressed cache. URLs are bearerless until expiry (default 1 h), and the cache evicts older entries (default 24 h).
+- **Stable model aliases** — one `model_aliases:` section in `proxy_config.yml` maps OpenAI names (`gpt-4o`, `gpt-4o-mini`, `text-embedding-3-small`, `gpt-image-1`, `sora-2`, `tts-1`, `whisper-1`, ...) and our own stable names (`default`, `fast`, `coder`, `embed`, `image`, `image-edit`, `video`, `tts`, `tts-realtime`, `tts-quality`, `stt`, `stt-realtime`, `stt-quality`, `music`, `song`, `sfx`) to the current local model for each use, and TTS/STT tiers to one of several engines. Concrete model names keep working. See "Model aliases" in [`docs/LOCAL_CLIENT_RECIPES.md`](docs/LOCAL_CLIENT_RECIPES.md); inspect with `GET /gateway/v1/aliases` and `GET /gateway/v1/aliases/resolve?operation=chat&model=gpt-4o`.
 - **Async video generation** — Sora-2-shaped submit/poll/fetch flow with multiple model aliases (`ltx-2.5` default, `minimax-h3`, `ltx-2.3`, `ltx-2.3-detail`, `ltx-2.3-long`, `wan-2.2`, etc.). Generated MP4s and PNGs embed the full UI-format ComfyUI workflow in metadata, so dropping an output back into ComfyUI's frontend rebuilds the editable graph.
 
 ## Control-plane nouns
@@ -300,7 +301,7 @@ proxy.py                       # Main FastAPI app: routing, auth, ComfyUI orches
 status_endpoint.py             # /v1/status — admin-only backend health, GPU/disk/queue rollup
 firehose_metrics.py            # /v1/metrics firehose — recent renders, jobs, events
 proxy_config.yml               # Bootstrap wiring, service/provider seed/provisioning, optional one-time defaults
-openai_model_aliases.generated.yml   # OpenAI-name → local-model rewrite table
+openai_model_aliases.generated.yml   # OpenAI model-name → category table (model_aliases in proxy_config.yml decides targets)
 requirements.txt               # Python deps (FastAPI, httpx, PyYAML, ...)
 start.sh                       # Service starter (systemd ExecStart)
 openai-proxy.service           # Reference systemd unit

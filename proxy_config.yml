@@ -629,8 +629,6 @@ videos:
     ltx-2.3-long-form: video-ltx-2.3-long
     wan-2.2: video-wan-2.2-ti2v-5b-q8
     wan-2.2-ti2v-5b: video-wan-2.2-ti2v-5b-q8
-    sora-2: video-ltx-2.5-t2v
-    sora-2-pro: video-ltx-2.5-t2v
 audio:
   default_workflow: ace-step-1.5-xl-turbo
   workflows_dir: ./workflows/audio
@@ -667,16 +665,154 @@ audio:
     ace-step-1.5: ace-step-1.5-xl-turbo
     ace-step-xl: ace-step-1.5-xl-turbo
     ace-step-2b: ace-step-1.5-2b-base
-    music: ace-step-1.5-xl-turbo
     tangoflux-sfx: tangoflux
-    sfx: sa3-small-sfx
     ambient: sa3-small-sfx
     sa3: sa3-small-sfx
     sa3-sfx: sa3-small-sfx
     stable-audio-3-sfx: sa3-small-sfx
     yue2: yue2-song
     yue: yue2-song
-    song: yue2-song
+# Stable model aliases: the ONE place that decides what a convenience name means.
+# Layer 2 (`stable`) is the gateway's own semantic vocabulary and never changes
+# meaning; re-point a name here to change which model serves it. Layer 1
+# (`openai`) maps OpenAI model names (ordered globs, first match wins) onto
+# layer-2 names, so re-pointing a stable alias also moves the OpenAI names that
+# use it. Concrete names (roles, workflow ids, engine ids) always keep working.
+# Discovery: GET /v1/models (vivid_fish_alias fields), GET /gateway/v1/aliases,
+# and GET /gateway/v1/aliases/resolve?operation=chat&model=gpt-4o (dry run).
+# Code: gateway/stable_aliases.py. Docs: docs/LOCAL_CLIENT_RECIPES.md.
+model_aliases:
+  chat:
+    stable:
+      default: default        # general chat + vision (Qwen3.8-27B, reasoning on)
+      fast: default-fast      # same weights, reasoning off: low latency
+      vision: default         # Qwen3.8 has a multimodal projector; images work on default
+      coder: coder            # coding profile (same weights, large context)
+      rp: rp                  # roleplay model
+    openai:
+      # Keep OSS model ids that happen to start with gpt- on their own path.
+      - {match: "gpt-oss*", passthrough: true}
+      - {match: "gpt-*-codex*", to: coder}
+      - {match: "codex-*", to: coder}
+      - {match: "gpt-*-mini*", to: fast}
+      - {match: "gpt-*-nano*", to: fast}
+      - {match: "o*-mini*", to: fast}
+      - {match: "gpt-3.5*", to: fast}
+      - {match: "claude-*-haiku*", to: fast}
+      - {match: "claude-haiku*", to: fast}
+      - {match: "claude-*", to: default}
+      - {match: "gpt-*", to: default}
+      - {match: "chatgpt-*", to: default}
+      - {match: "o1*", to: default}
+      - {match: "o3*", to: default}
+      - {match: "o4*", to: default}
+      - {match: "computer-use-*", to: default}
+      - {match: "davinci-002", to: default}
+      - {match: "babbage-002", to: default}
+  embeddings:
+    stable:
+      embed: nomic-embed-text-v1.5   # 768-dim; OpenAI text-embedding-3-* vectors are NOT compatible with it
+    openai:
+      - {match: "text-embedding-*", to: embed}
+  images:
+    stable:
+      image: krea2-turbo           # default text-to-image
+      image-fast: flux2-klein-4b   # Apache-licensed lighter fallback
+    openai:
+      - {match: "gpt-image-*", to: image}
+      - {match: "chatgpt-image-*", to: image}
+      - {match: "dall-e-*", to: image}
+  image_edits:
+    stable:
+      image: qwen-image-2.1-edit         # alias of image-edit so one name works on both routes
+      image-fast: flux2-klein-4b-edit
+      image-edit: qwen-image-2.1-edit    # masks and 2+ images pick inpaint/multiref automatically
+      image-edit-fast: flux2-klein-4b-edit
+    openai:
+      - {match: "gpt-image-*", to: image-edit}
+      - {match: "chatgpt-image-*", to: image-edit}
+      - {match: "dall-e-*", to: image-edit}
+  videos:
+    stable:
+      video: video-ltx-2.5-t2v             # text-to-video; input_reference switches to image-to-video
+      video-fast: video-ltx-2.3-pure-distilled
+      video-long: video-ltx-2.3-long
+    openai:
+      # Exact names are also mirrored into videos.aliases (media jobs read that
+      # table); the glob catches dated snapshots on the main route.
+      - {match: "sora-2", to: video}
+      - {match: "sora-2-pro", to: video}
+      - {match: "sora*", to: video}
+  speech:
+    # Engines are concrete backends. An engine is usable when its `service`
+    # exists and is enabled in the service registry; `planned: true` engines are
+    # listed for discovery only. Every engine id is also a valid `model`.
+    engines:
+      omnivoice:
+        service: tts
+        model: k2-fsa/OmniVoice
+        voice_transform: voxtral-voices    # OpenAI voice names -> cloned fixed identities
+        description: OmniVoice (Apache-2.0) cloned OpenAI voices; stable speaker identity
+      supertonic:
+        service: tts-supertonic
+        model: supertonic
+        planned: true
+        placement: "audio.cpp, CPU or GPU0 (~1.2 GB), on-demand"
+        default_voice: F1
+        # voice_map entries are provisional until the engine is deployed and its voice list is checked.
+        voice_map: {alloy: F1, ash: M1, ballad: M2, cedar: M3, coral: F2, echo: M4, fable: M5, marin: F3, nova: F4, onyx: M1, sage: F5, shimmer: F2, verse: M2}
+        description: "Supertonic realtime engine (bake-off: 49 ms first audio)"
+      kokoro:
+        service: tts-kokoro
+        model: kokoro
+        planned: true
+        placement: "Python server, GPU0 (~1.5 GB), on-demand"
+        default_voice: af_heart
+        voice_map: {alloy: af_alloy, ash: am_onyx, ballad: am_michael, cedar: am_puck, coral: af_bella, echo: am_echo, fable: bm_fable, marin: af_sky, nova: af_nova, onyx: am_onyx, sage: af_sarah, shimmer: af_heart, verse: am_adam}
+        description: "Kokoro quality engine (bake-off: 123 ms first audio, best quality balance)"
+    stable:
+      # Initially every tier resolves to OmniVoice; tiers split automatically as
+      # their first candidate gets deployed. Order is a policy decision.
+      tts: [omnivoice]
+      tts-realtime: [supertonic, omnivoice]
+      tts-quality: [kokoro, omnivoice]
+    openai:
+      - {match: "tts-1", to: tts-realtime}
+      - {match: "tts-1-hd", to: tts-quality}
+      - {match: "gpt-4o*-tts*", to: tts}
+      - {match: "tts-*", to: tts}
+  transcriptions:
+    engines:
+      parakeet:
+        service: stt
+        model: parakeet-tdt-0.6b-v3
+        description: NVIDIA Parakeet TDT 0.6B v3 (CPU service; long audio is chunked by the gateway)
+      nemotron-streaming:
+        service: stt-nemotron
+        model: nemotron-3.5-asr-streaming-0.6b
+        planned: true
+        placement: "audio.cpp, GPU0 (~1.6 GB), on-demand"
+        description: "Nemotron streaming (bake-off: 194 ms end-of-speech to final)"
+      canary:
+        service: stt-canary
+        model: canary-180m-flash
+        planned: true
+        placement: "audio.cpp, CPU or GPU0 (~0.8 GB), on-demand"
+        description: Canary 180M Flash (low VRAM, strong clean-speech WER)
+    stable:
+      stt: [parakeet]
+      stt-realtime: [nemotron-streaming, parakeet]
+      stt-quality: [parakeet, canary]
+    openai:
+      - {match: "whisper*", to: stt}
+      - {match: "gpt-4o-mini-transcribe*", to: stt-realtime}
+      - {match: "gpt-4o*transcribe*", to: stt-quality}
+      - {match: "*transcribe*", to: stt}
+  audio_generate:
+    stable:
+      music: ace-step-1.5-xl-turbo   # instrumental/short music, fastest
+      song: yue2-song                # full song with vocals from tags + lyrics
+      sfx: sa3-small-sfx             # sound effects and ambience
 model_compatibility:
   enabled: true
   generated_aliases_file: openai_model_aliases.generated.yml
