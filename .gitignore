@@ -144,3 +144,6 @@ tmp/workstreams/
 
 # User-created voices and consent recordings (per-key, private)
 data/voices/
+
+# Pending image-job spool (runtime state; private request bodies)
+data/image_media_jobs/
