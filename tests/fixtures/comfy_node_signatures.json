@@ -15,6 +15,18 @@
    "AUDIO"
   ]
  },
+ "BasicGuider": {
+  "input": {
+   "optional": {},
+   "required": {
+    "conditioning": "CONDITIONING",
+    "model": "MODEL"
+   }
+  },
+  "output": [
+   "GUIDER"
+  ]
+ },
  "BasicScheduler": {
   "input": {
    "optional": {},
@@ -1186,6 +1198,69 @@
    "IMAGE"
   ]
  },
+ "MiniMaxH3ImageToVideo": {
+  "input": {
+   "optional": {
+    "first_frame": "IMAGE",
+    "last_frame": "IMAGE"
+   },
+   "required": {
+    "clip": "CLIP",
+    "height": "INT",
+    "length": "INT",
+    "prompt": "STRING",
+    "vae": "VAE",
+    "width": "INT"
+   }
+  },
+  "output": [
+   "CONDITIONING",
+   "LATENT"
+  ]
+ },
+ "MiniMaxH3MotionContext": {
+  "input": {
+   "optional": {
+    "audio_vae": "VAE",
+    "context_audio": "AUDIO",
+    "context_frames": "IMAGE",
+    "context_latent": "LATENT"
+   },
+   "required": {
+    "audio_context_length": "INT",
+    "conditioning": "CONDITIONING",
+    "context_length": [
+     "22",
+     "5",
+     "39",
+     "56"
+    ],
+    "latent": "LATENT",
+    "vae": "VAE"
+   }
+  },
+  "output": [
+   "CONDITIONING",
+   "INT"
+  ]
+ },
+ "MiniMaxH3MotionContextTrim": {
+  "input": {
+   "optional": {
+    "audio": "AUDIO",
+    "fps": "FLOAT",
+    "match_tail": "BOOLEAN"
+   },
+   "required": {
+    "images": "IMAGE",
+    "trim_frames": "INT"
+   }
+  },
+  "output": [
+   "IMAGE",
+   "AUDIO"
+  ]
+ },
  "ModelSamplingSD3": {
   "input": {
    "optional": {},
@@ -1439,6 +1514,18 @@
   },
   "output": [
    "IMAGE"
+  ]
+ },
+ "VAEDecodeAudio": {
+  "input": {
+   "optional": {},
+   "required": {
+    "samples": "LATENT",
+    "vae": "VAE"
+   }
+  },
+  "output": [
+   "AUDIO"
   ]
  },
  "VAEDecodeTiled": {

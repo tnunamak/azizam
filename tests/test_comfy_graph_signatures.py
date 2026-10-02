@@ -6,8 +6,9 @@ input, an unknown input, a link from the wrong output type, a literal of the
 wrong type, a combo value that does not exist.
 
 `fixtures/comfy_node_signatures.json` is a snapshot of `/object_info` for the
-node classes these graphs use (ComfyUI with the LTX, KJ, SAM 3 and SCAIL nodes
-installed, 2026-10-02). Regenerate it when a node changes.
+node classes these graphs use (ComfyUI with the LTX, KJ, SAM 3, SCAIL and H3 nodes
+installed, 2026-10-02; the two H3 Motion Context entries were read from the
+pinned pack's own `INPUT_TYPES`, because the pack is not loaded until ComfyUI restarts). Regenerate it when a node changes.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import video_extend as ve, video_subject as vs  # noqa: E402
+from gateway import video_extend as ve, video_extend_h3 as h3, video_subject as vs  # noqa: E402
 
 SIGNATURES = json.loads((ROOT / "tests/fixtures/comfy_node_signatures.json").read_text())
 # Combos that list files on the host: the value is checked at run time, not here.
@@ -98,6 +99,37 @@ class ChainGraphSignatureTests(unittest.TestCase):
 
     def test_manifest_reference_graph_passes(self) -> None:
         graph = json.loads((ROOT / "workflows/videos/video-ltx-2.5-long.json").read_text())
+        graph.pop("_meta")
+        self.assertEqual(check_graph(graph), [])
+
+
+class H3ChainGraphSignatureTests(unittest.TestCase):
+    """The H3 chain uses core H3 nodes and the H3 Motion Context pack (pinned in
+    docs/long-video-design.md); its two signatures come from that pack's code."""
+
+    def _specs(self):
+        source = ve.SourceVideo("s.mp4", 244, 24.0, 832, 480, True)
+        silent = ve.SourceVideo("s.mp4", 244, 24.0, 960, 544, False)
+
+        def spec(shots, has_source=False, **kw):
+            segments = h3.plan_segments(shots, fps=24.0, has_source=has_source, max_segment_seconds=10.0)
+            return ve.ChainSpec(segments, 960, 544, 24.0, 1, context_frames=kw.pop("context", 22), **kw)
+
+        yield "text to video, 3 segments", spec([("a", 25)])
+        yield "first frame image", spec([("a", 12)], first_frame_image="x.png")
+        yield "storyboard", spec([("a", 5), ("b", 9), ("c", 3)])
+        yield "extend, scaled source", spec([("b", 12)], True, source=source)
+        yield "extend, silent source", spec([("b", 4)], True, source=silent)
+        for context in (5, 39, 56):
+            yield f"context {context}", spec([("a", 5), ("b", 5)], context=context)
+
+    def test_every_h3_chain_graph_passes_the_signature_check(self) -> None:
+        for label, spec in self._specs():
+            with self.subTest(label):
+                self.assertEqual(check_graph(h3.build_chain_graph(spec).graph), [])
+
+    def test_manifest_reference_graph_passes(self) -> None:
+        graph = json.loads((ROOT / "workflows/videos/video-minimax-h3-long.json").read_text())
         graph.pop("_meta")
         self.assertEqual(check_graph(graph), [])
 

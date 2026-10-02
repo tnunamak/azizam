@@ -297,7 +297,7 @@ class ExtensionRouteTests(RemixReplaceBase):
         self.assertEqual(self.comfy.submitted, [])
 
     def test_model_that_cannot_extend_is_rejected(self) -> None:
-        r = self._extend(model="minimax-h3", seconds=4)
+        r = self._extend(model="bernini-r", seconds=4)
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"]["code"], "video_extend_not_supported")
 
@@ -457,10 +457,10 @@ class CreateLongVideoTests(RemixReplaceBase):
         self.assertEqual(self.comfy.submitted, [])
 
     def test_model_without_a_chain_rejects_shots_and_long_seconds(self) -> None:
-        r = self._create(model="minimax-h3", shots=[{"prompt": "a", "seconds": 3}])
+        r = self._create(model="video-wan-2.2-ti2v-5b-q8", shots=[{"prompt": "a", "seconds": 3}])
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"]["code"], "long_video_not_supported")
-        r = self._create(model="minimax-h3", prompt="x", seconds=30)
+        r = self._create(model="video-wan-2.2-ti2v-5b-q8", prompt="x", seconds=30)
         self.assertEqual(r.status_code, 400)
 
     def test_state_ledger_prefixes_every_segment(self) -> None:
