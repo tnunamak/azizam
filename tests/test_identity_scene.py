@@ -46,6 +46,8 @@ OUT_LIST = list(OUTPUTS)
 
 
 FACES: dict = {}
+CENTRAL = {"bbox": [400, 400, 624, 624], "det_score": 0.9, "age": 40, "gender": "female", "embedding": vec(4),
+           "kps": [[450, 480], [574, 480], [512, 540], [460, 590], [564, 590]]}
 GOOD_PASTE = png((5, 5, 5), (64, 64))
 HURTS_OTHER_PASTE = png((6, 6, 6), (64, 64))
 OUTPUTS[GOOD_PASTE] = [face(100, 70, vec(0)), face(400, 1, vec(1))]          # baby fixed, grandma intact
@@ -61,7 +63,7 @@ class Fakes:
     async def analyze(self, image: bytes, model: str) -> list[dict]:
         if image == PHOTO:
             return [face(100, 70, vec(0)), face(400, 1, vec(1))]
-        return FACES.get(image) or OUTPUTS[image]
+        return FACES.get(image) or OUTPUTS.get(image) or [CENTRAL]
 
     async def run_workflow(self, graph: dict, uploads: dict) -> bytes:
         self.graphs.append(graph)
@@ -260,6 +262,17 @@ class MultiReferenceTests(unittest.TestCase):
         self.assertEqual(result.people[0]["reference_photo_indices"][0], 2)  # large and frontal first
         self.assertNotIn(1, result.people[0]["reference_photo_indices"])      # the 60 px face is dropped
 
+    def test_scoring_only_photos_are_not_sent_to_the_generator(self) -> None:
+        extra = png((9, 9, 9))
+        FACES[extra] = [face(40, 70, vec(0))]
+        fakes = Fakes([OUT_LIST[1]])
+        people = [PersonSpec(label="grandma", box=(0, 0, 300, 400), more=[RefSource(image=1, generate=False)]),
+                  PersonSpec(label="baby", box=(350, 0, 600, 400))]
+        result = scene(fakes, SceneRequest(refine="off", photos=[PHOTO, extra], prompt="x", people=people, photo_as_canvas=False))
+        self.assertEqual(result.people[0]["reference_photos"], 2)      # both score
+        self.assertEqual(result.people[0]["reference_heads_sent"], 1)  # one generates
+        self.assertEqual(len(fakes.uploads[0]), 2)
+
     def test_too_many_reference_images_is_an_error(self) -> None:
         many = [PersonSpec(label=f"p{i}", box=(0, 0, 300, 400)) for i in range(2)]
         deps_nodes = ids.MAX_IMAGE_SLOTS
@@ -270,37 +283,42 @@ class MultiReferenceTests(unittest.TestCase):
 
 
 class RefinementTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self._paste = ids.paste_back
-        self.addCleanup(lambda: setattr(ids, "paste_back", self._paste))
-
-    def refine_scene(self, outputs, pasted):
-        ids.paste_back = lambda base, edited_png, box: Image.open(io.BytesIO(pasted))
-        # first composition: grandma right, baby wrong
-        half = png((3, 3, 3), (64, 64))
+    def refine_scene(self, refined: bytes):
+        half = png((3, 3, 3), (64, 64))                       # grandma right, baby wrong
         FACES[half] = [face(100, 70, vec(0)), face(400, 1, vec(6))]
-        fakes = Fakes([half] + outputs)
+        fakes = Fakes([half, refined])
         result = scene(fakes, SceneRequest(refine="auto", refine_attempts=1, photos=[PHOTO], prompt="x", attempts=1))
         return fakes, result
 
-    def test_a_helpful_pass_is_kept(self) -> None:
-        fakes, result = self.refine_scene([png((4, 4, 4), (64, 64))], GOOD_PASTE)
-        self.assertEqual(len(fakes.graphs), 2)  # one compose, one refine
-        self.assertEqual(len(fakes.uploads[1]), 2)  # crop + the baby's head only
+    def test_a_helpful_pass_is_kept_and_edits_the_whole_picture_with_one_persons_references(self) -> None:
+        fakes, result = self.refine_scene(GOOD_PASTE)
+        self.assertEqual(len(fakes.graphs), 2)                 # one compose, one refine
+        refine_graph = fakes.graphs[1]["7"]["inputs"]["prompt"]
+        self.assertIn("the right person in <image1> (a baby)", refine_graph)
+        self.assertIn("<image2>", refine_graph)
+        self.assertNotIn("<image3>", refine_graph)             # only the baby's reference, not the grandmother's
+        self.assertEqual(len(fakes.uploads[1]), 2)             # the composed picture + the baby's head
         self.assertTrue(result.refinements[0]["accepted"])
         self.assertEqual(result.refinements[0]["person"], "person 2")
+        self.assertEqual(result.image, GOOD_PASTE)
         baby = next(p for p in result.report["people"] if p["label"] == "person 2")
         self.assertGreater(baby["match"]["score"], 0.9)
 
     def test_a_pass_that_hurts_the_other_person_is_rejected(self) -> None:
-        fakes, result = self.refine_scene([png((4, 4, 4), (64, 64))], HURTS_OTHER_PASTE)
+        fakes, result = self.refine_scene(HURTS_OTHER_PASTE)
         self.assertFalse(result.refinements[0]["accepted"])
+        self.assertNotEqual(result.image, HURTS_OTHER_PASTE)
         grandma = next(p for p in result.report["people"] if p["label"] == "person 1")
         self.assertGreater(grandma["match"]["score"], 0.9)
 
     def test_refine_off_runs_no_extra_pass(self) -> None:
         fakes = Fakes([OUT_LIST[0]])
         scene(fakes, SceneRequest(refine="off", photos=[PHOTO], prompt="x", attempts=1))
+        self.assertEqual(len(fakes.graphs), 1)
+
+    def test_people_who_already_match_are_not_refined_in_auto_mode(self) -> None:
+        fakes = Fakes([OUT_LIST[1]])
+        scene(fakes, SceneRequest(refine="auto", photos=[PHOTO], prompt="x", attempts=1, stop_when_pass=False))
         self.assertEqual(len(fakes.graphs), 1)
 
     def test_improvement_rule(self) -> None:
@@ -313,13 +331,10 @@ class RefinementTests(unittest.TestCase):
         self.assertFalse(ids.refinement_improves(before, extra, "a"))
         self.assertFalse(ids.refinement_improves(before, before, "a"))
 
-    def test_paste_back_blends_only_inside_the_box(self) -> None:
-        base = Image.new("RGB", (100, 100), (0, 0, 0))
-        edited = io.BytesIO()
-        Image.new("RGB", (50, 50), (255, 255, 255)).save(edited, format="PNG")
-        out = ids.paste_back(base, edited.getvalue(), (25, 25, 75, 75))
-        self.assertEqual(out.getpixel((2, 2)), (0, 0, 0))
-        self.assertGreater(out.getpixel((50, 50))[0], 200)
+    def test_where_in_frame(self) -> None:
+        self.assertEqual(ids.where_in_frame([0, 0, 200, 200], 1000), "left")
+        self.assertEqual(ids.where_in_frame([800, 0, 1000, 200], 1000), "right")
+        self.assertEqual(ids.where_in_frame([400, 0, 600, 200], 1000), "middle")
 
 
 if __name__ == "__main__":

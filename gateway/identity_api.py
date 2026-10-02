@@ -162,7 +162,10 @@ def _source(item: Any, photo_count: int) -> ids.RefSource:
         if not (isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box)):
             raise IdentityError("person box must be [x1, y1, x2, y2] in photo pixels", param="people")
         box = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
-    return ids.RefSource(image=image, box=box)
+    generate = item.get("generate", True)
+    if not isinstance(generate, bool):
+        raise IdentityError("reference generate must be true or false", param="people")
+    return ids.RefSource(image=image, box=box, generate=generate)
 
 
 def parse_people(raw: Any, photo_count: int) -> list[PersonSpec]:
@@ -199,8 +202,8 @@ def parse_people(raw: Any, photo_count: int) -> list[PersonSpec]:
             existing.description = existing.description or description
             existing.infant = existing.infant if existing.infant is not None else infant
             continue
-        spec = PersonSpec(label=label, image=sources[0].image, box=sources[0].box,
-                          description=description, infant=infant, more=sources[1:])
+        spec = PersonSpec(label=label, image=sources[0].image, box=sources[0].box, description=description,
+                          infant=infant, more=sources[1:], generate_first=sources[0].generate)
         people.append(spec)
         if label:
             by_label[label] = spec
@@ -268,7 +271,7 @@ def _people_schema() -> dict[str, Any]:
             "JSON array of people. Each: {label?, image? (index of an uploaded photo, default 0), "
             "box? [x1,y1,x2,y2] in that photo's pixels, description?, infant? (overrides the age guess)}. "
             "A person with several photos: {label, images: [0, {image: 2, box: [..]}]}; entries that repeat a label merge. "
-            "The first photo is the anchor (give a box if it holds several faces); in later photos without a box the face that looks like the anchor is chosen, and a photo with nobody who matches is skipped with a warning. "
+            "Each reference may also say generate:false to be used for scoring only (sunglasses, profile, tiny face). The first photo is the anchor (give a box if it holds several faces); in later photos without a box the face that looks like the anchor is chosen, and a photo with nobody who matches is skipped with a warning. "
             "Omit to auto-detect: every face of a single photo, or the largest face of each of several photos."
         ),
     }

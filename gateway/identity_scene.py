@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageOps
 
 from gateway import likeness
 from gateway.likeness import FaceRecord, LikenessError, Person
@@ -61,6 +61,7 @@ class RefSource:
 
     image: int = 0
     box: tuple[float, float, float, float] | None = None
+    generate: bool = True   # False: use this photo for scoring only (sunglasses, profile, tiny face)
 
 
 @dataclass
@@ -71,9 +72,10 @@ class PersonSpec:
     description: str | None = None
     infant: bool | None = None
     more: list[RefSource] = field(default_factory=list)  # further photos of the same person
+    generate_first: bool = True
 
     def sources(self) -> list[RefSource]:
-        return [RefSource(self.image, self.box), *self.more]
+        return [RefSource(self.image, self.box, self.generate_first), *self.more]
 
 
 ProgressFn = Callable[[str, float, dict[str, Any]], None]
@@ -417,6 +419,7 @@ async def resolve_people(
     for number, spec in enumerate(specs, start=1):
         label = spec.label or f"person {number}"
         found: list[tuple[FaceRecord, int]] = []   # (face, photo index)
+        scoring_only: set[int] = set()              # photo indices used only for scoring
         for position, source in enumerate(spec.sources()):
             faces = await faces_of(source.image)
             if position == 0 or source.box is not None:
@@ -455,8 +458,11 @@ async def resolve_people(
                     )
                 continue
             found.append((face, source.image))
+            if not source.generate:
+                scoring_only.add(len(found) - 1)
         # Best reference first: a larger, sharper face gives the generator more to copy.
-        ranked = sorted(found, key=lambda fp: reference_quality(fp[0]), reverse=True)
+        eligible = [fp for k, fp in enumerate(found) if k not in scoring_only] or list(found)
+        ranked = sorted(eligible, key=lambda fp: reference_quality(fp[0]), reverse=True)
         keep = ranked[: max(1, min(req.max_refs_per_person, MAX_REFS_PER_PERSON))]
         primary = ranked[0][0]
         resolved.append(
@@ -479,47 +485,20 @@ async def resolve_people(
 
 # -------------------------------------------------------------------- refinement
 
-REFINE_LONG_SIDE = 1024
 REFINE_MIN_GAIN = 0.03        # a refinement must raise the person's score by this much
 REFINE_MAX_OTHER_DROP = 0.03  # and must not lower anybody else's by more than this
 REFINE_PROMPT = (
-    "Edit <image1>: replace the face and head of the person in <image1> with the face and head of {who} "
-    "from {refs}. Keep the head angle, expression, lighting, clothing and background of <image1>. "
-    "The result must be clearly the same person as the reference, with the same hair colour, eye colour, "
-    "face shape and glasses."
+    "Edit <image1>: the {where} person in <image1> ({who}) must become the person shown in {refs}. "
+    "Replace that person's face and head with the face and head from {refs}: the same face shape, hair colour "
+    "and style, eye colour and any glasses. Keep every other person, the poses, head angles, expressions, "
+    "clothing, lighting and background of <image1> unchanged."
 )
 
 
-def refine_crop(image: Image.Image, face_bbox: Sequence[float]) -> tuple[bytes, tuple[int, int, int, int]]:
-    """A roomy square crop around one face of the composed image, scaled to REFINE_LONG_SIDE."""
-    box = head_crop_box(face_bbox, image.size)
-    crop = image.crop(box).resize((REFINE_LONG_SIDE, REFINE_LONG_SIDE), Image.LANCZOS)
-    out = io.BytesIO()
-    crop.save(out, format="PNG")
-    return out.getvalue(), box
-
-
-def paste_back(
-    base: Image.Image, edited_png: bytes, box: tuple[int, int, int, int]
-) -> Image.Image:
-    """Blend the edited crop into ``base`` through a soft ellipse so no seam shows."""
-    x1, y1, x2, y2 = box
-    width, height = x2 - x1, y2 - y1
-    with Image.open(io.BytesIO(edited_png)) as opened:
-        edited = opened.convert("RGB").resize((width, height), Image.LANCZOS)
-    mask = Image.new("L", (width, height), 0)
-    pad = int(width * 0.08)
-    ImageDraw.Draw(mask).ellipse((pad, pad, width - pad, height - pad), fill=255)
-    mask = mask.filter(ImageFilter.GaussianBlur(width * 0.10))
-    out = base.copy()
-    out.paste(edited, (x1, y1), mask)
-    return out
-
-
-def _png(image: Image.Image) -> bytes:
-    buf = io.BytesIO()
-    image.save(buf, format="PNG")
-    return buf.getvalue()
+def where_in_frame(face_bbox: Sequence[float], image_width: int) -> str:
+    """Where a face sits horizontally, in words the edit model can follow."""
+    centre = (face_bbox[0] + face_bbox[2]) / 2 / max(1, image_width)
+    return "left" if centre < 0.4 else "right" if centre > 0.6 else "middle"
 
 
 def _score_of(report: Mapping[str, Any], label: str) -> float:
@@ -550,9 +529,14 @@ async def refine_people(
     image_nodes: Sequence[str],
     prompt_node: str,
     seed_node: str,
+    resolution: int,
     progress_range: tuple[float, float] = (0.6, 0.95),
 ) -> tuple[bytes, dict[str, Any], list[dict[str, Any]]]:
-    """Refine each person's head in its own pass: crop, edit with only that person's references, paste back.
+    """Refine each person in its own pass: edit the whole picture with only that person's references.
+
+    A crop-and-paste of the head was tried first and rejected: the edit model re-poses and re-sizes the
+    head, so the pasted face does not fit the old one and the picture shows two heads. Editing the whole
+    picture keeps the layout; the guard below catches any pass that changes the other person.
 
     People are handled worst score first. A pass is kept only when it helps that person and hurts nobody.
     """
@@ -577,9 +561,9 @@ async def refine_people(
                 break
             _emit(req, "refine", progress_range[0] + (progress_range[1] - progress_range[0]) * done / total_passes,
                   person=label, attempt=attempt + 1)
-            base = Image.open(io.BytesIO(image)).convert("RGB")
-            crop_png, box = refine_crop(base, entry["match"]["bbox"])
-            uploads = {image_nodes[0]: crop_png}
+            with Image.open(io.BytesIO(image)) as current:
+                width = current.width
+            uploads = {image_nodes[0]: image}
             for k, head in enumerate(rp.heads, start=1):
                 uploads[image_nodes[k]] = head
             tags = [f"<image{k + 1}>" for k in range(1, len(uploads))]
@@ -588,12 +572,11 @@ async def refine_people(
             graph = prepare_workflow(
                 template, image_nodes=image_nodes, used_images=len(uploads),
                 prompt_node=prompt_node, seed_node=seed_node,
-                prompt=REFINE_PROMPT.format(who=who, refs=refs),
-                seed=req.seed + 1000 + 17 * attempt + len(log), resolution=REFINE_LONG_SIDE,
+                prompt=REFINE_PROMPT.format(where=where_in_frame(entry["match"]["bbox"], width), who=who, refs=refs),
+                seed=req.seed + 1000 + 17 * attempt + len(log), resolution=resolution,
                 steps=req.steps, cfg=req.cfg,
             )
-            edited = await deps.run_workflow(graph, uploads)
-            candidate = _png(paste_back(base, edited, box))
+            candidate = await deps.run_workflow(graph, uploads)
             cand_report = likeness.check_likeness(
                 [p.person for p in people], await _faces(deps, candidate), models=deps.models,
                 thresholds=req.thresholds, allow_extra_faces=not req.only_listed_people, pooling=req.pooling,
@@ -711,7 +694,7 @@ async def run_identity_scene(
     final_image, final_report, refinements = await refine_people(
         req, deps, people, final_image, final_report,
         template=template, image_nodes=image_nodes, prompt_node=prompt_node, seed_node=seed_node,
-        progress_range=(compose_end, 0.97),
+        resolution=resolution, progress_range=(compose_end, 0.97),
     )
     for entry in final_report["people"]:
         pose = (entry.get("match") or {}).get("yaw")

@@ -182,6 +182,12 @@ class PeopleParsingTests(unittest.TestCase):
         self.assertEqual(grandma.description, "glasses")
         self.assertTrue(people[1].infant)
 
+    def test_generate_false_marks_a_scoring_only_photo(self) -> None:
+        person = identity_api.parse_people([{"label": "a", "images": [0, {"image": 1, "generate": False}]}], 2)[0]
+        self.assertEqual([s.generate for s in person.sources()], [True, False])
+        with self.assertRaises(identity_api.IdentityError):
+            identity_api.parse_people([{"label": "a", "images": [{"image": 0, "generate": "no"}]}], 1)
+
     def test_bad_sources_are_rejected(self) -> None:
         for raw in ([{"label": "a", "images": []}], [{"label": "a", "images": ["x"]}], [{"label": "a", "images": [9]}],
                     [{"label": "a", "images": [{"image": 0, "box": [1, 2]}]}]):
