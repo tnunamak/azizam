@@ -136,6 +136,39 @@ The bundled skill is also committed at [`skills/openai-proxy-gateway/SKILL.md`](
 
 The repository also carries [`autotile-edge-stitch`](skills/autotile-edge-stitch/SKILL.md), a source-only client workflow for composing 16-case game autotiles. It is intentionally not advertised from `/.well-known/skills`: it needs an operator-configured image model and direct ComfyUI inpaint workflow, so it is not a universal gateway capability. It uses the documented OpenAI Images API when configured and keeps its third-party references as links with provenance and licence notes in [its documentation](skills/autotile-edge-stitch/docs/README.md).
 
+## Supported interfaces
+
+A facade route either works with its official client or returns an explicit,
+vendor-shaped "not supported" error. It never reports success it did not
+achieve. "Proof" names the offline test that checks the behavior against a
+pinned vendor schema. "Live" means an official client run against the gateway
+on 2026-10-02; those scripts are not part of the test suite.
+
+| Interface | Feature | Status | Proof |
+|---|---|---|---|
+| **Anthropic Messages** (`/anthropic/v1`, `/v1/messages`) | `messages.create`, `messages.stream`, system prompts, multi-turn | Works | `tests/test_anthropic_schema_conformance.py` (schemas from `anthropic` SDK 1.11.0); Live: Anthropic Python SDK, Claude Code 2.1.286 |
+| | Tools (`tool_use`/`tool_result`, `tool_choice`), streamed tool calls | Works | same |
+| | Images (base64/URL), `thinking` blocks | Works | same |
+| | `count_tokens` | Estimate only (about 4 characters per token) | same |
+| | `models.list`, `models.retrieve` | Works | same |
+| | Errors | Anthropic shape, typed by status, `request-id` header | same |
+| | `stop_sequence` field, prompt-cache usage fields | Not reported (`stop_sequences` still stop generation) | documented gap |
+| | `document` blocks, server tools (web search, code execution, computer use), batches, files | Unsupported: 400 `invalid_request_error` or route absent | `tests/test_protocol_frontends.py` |
+| **Ollama** (`/ollama/api`, `/api`) | `chat`, `generate`, streaming (default) and non-streaming | Works | `tests/test_ollama_api_conformance.py` (schemas from `docs/api.md`, ollama/ollama `b0c1ca4`); Live: `ollama` Python client 0.6.3 |
+| | Tools, images, `format` (JSON and schema), `think` | Works | same |
+| | `embed`, `embeddings`, `tags`, `show`, `ps`, `version` | Works | same |
+| | Empty-prompt load/unload | Answers like Ollama but does not load or free anything | same |
+| | Sampling options; runtime options (`num_ctx`, `num_gpu`, ...) | Sampling forwarded; runtime options ignored | same |
+| | `suffix`, `template`, `raw` | Unsupported: 400 Ollama-shaped error | same |
+| | `pull`, `push`, `create`, `copy`, `delete`, `blobs` | Unsupported: 501 `{"error": "unsupported operation: ..."}`. The gateway owns no model files. | same |
+| **OpenAI Responses** (`/v1/responses`, `/openai/v1/responses`) | `responses.create`, streaming events, function tools, `previous_response_id`, retrieve, delete, `input_items`, images, reasoning items, `text.format` | Works | `tests/test_openai_responses_conformance.py` (schemas from openai/openai-openapi `145fd3b`); Live: `openai` Python SDK 3.23.0 |
+| | Stored responses | Private to the creating key; unknown or foreign `previous_response_id` is a 404 | same |
+| | Hosted tools (web search, file search, code interpreter, computer use), `background`, `conversation`, `prompt`, `cancel`, `input_tokens` count | Unsupported: 400 with a specific `code` | same |
+| | Reasoning summaries (`reasoning.summary`) | Not produced; raw reasoning returns as a `reasoning` item | documented gap |
+| **OpenAI** chat, completions, embeddings, models, images, audio, video | Response shapes | Works | `tests/test_openai_schema_conformance.py` (openai/openai-openapi `145fd3b`); Live: `openai` Python SDK |
+
+Details and per-client recipes are in `docs/LOCAL_CLIENT_RECIPES.md`.
+
 ## Endpoint surface
 
 | Method + Path | Resolved lane | Purpose |
@@ -151,6 +184,7 @@ The repository also carries [`autotile-edge-stitch`](skills/autotile-edge-stitch
 | `GET  /health` | proxy | Liveness; public, no auth |
 | `GET  /v1/models` | LiteLLM + gateway catalog | List LiteLLM LLM model groups plus gateway-native workflow model IDs |
 | `POST /anthropic/v1/messages` | chat pipeline | Anthropic Messages-compatible request/response and SSE streaming; `/v1/messages` remains a convenience route |
+| `POST /v1/responses`, `GET/DELETE /v1/responses/{id}`, `GET /v1/responses/{id}/input_items` | chat pipeline | OpenAI Responses API translated onto chat completions, with SSE streaming and stored chains (`previous_response_id`) |
 | `GET  /ollama/api/tags` | proxy catalog | Ollama-compatible model list; `/api/tags` remains a convenience route |
 | `POST /ollama/api/chat`, `POST /ollama/api/generate` | chat pipeline | Ollama-compatible chat/generate with NDJSON streaming; `/api/chat` and `/api/generate` remain convenience routes |
 | `POST /ollama/api/embed`, `POST /ollama/api/embeddings` | selected embeddings provider | Ollama-compatible current and legacy embeddings; `/api/embed`, `/api/embeddings` remain convenience routes |

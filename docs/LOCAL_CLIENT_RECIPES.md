@@ -27,6 +27,39 @@ export OPENAI_PROXY_API_KEY='opk_...'
 > The `$OPENAI_PROXY_API_KEY` placeholder is used throughout. Do not paste
 > real `opk_...` values into config files, prompts, or commit messages.
 
+## Supported interfaces
+
+A facade route either works with its official client or returns an explicit,
+vendor-shaped "not supported" error. It never reports success it did not
+achieve. "Proof" names the offline test that checks the behavior against a
+pinned vendor schema. "Live" means an official client run against the gateway
+on 2026-10-02; those scripts are not part of the test suite.
+
+| Interface | Feature | Status | Proof |
+|---|---|---|---|
+| **Anthropic Messages** (`/anthropic/v1`, `/v1/messages`) | `messages.create`, `messages.stream`, system prompts, multi-turn | Works | `tests/test_anthropic_schema_conformance.py` (schemas from `anthropic` SDK 1.11.0); Live: Anthropic Python SDK, Claude Code 2.1.286 |
+| | Tools (`tool_use`/`tool_result`, `tool_choice`), streamed tool calls | Works | same |
+| | Images (base64/URL), `thinking` blocks | Works | same |
+| | `count_tokens` | Estimate only (about 4 characters per token) | same |
+| | `models.list`, `models.retrieve` | Works | same |
+| | Errors | Anthropic shape, typed by status, `request-id` header | same |
+| | `stop_sequence` field, prompt-cache usage fields | Not reported (`stop_sequences` still stop generation) | documented gap |
+| | `document` blocks, server tools (web search, code execution, computer use), batches, files | Unsupported: 400 `invalid_request_error` or route absent | `tests/test_protocol_frontends.py` |
+| **Ollama** (`/ollama/api`, `/api`) | `chat`, `generate`, streaming (default) and non-streaming | Works | `tests/test_ollama_api_conformance.py` (schemas from `docs/api.md`, ollama/ollama `b0c1ca4`); Live: `ollama` Python client 0.6.3 |
+| | Tools, images, `format` (JSON and schema), `think` | Works | same |
+| | `embed`, `embeddings`, `tags`, `show`, `ps`, `version` | Works | same |
+| | Empty-prompt load/unload | Answers like Ollama but does not load or free anything | same |
+| | Sampling options; runtime options (`num_ctx`, `num_gpu`, ...) | Sampling forwarded; runtime options ignored | same |
+| | `suffix`, `template`, `raw` | Unsupported: 400 Ollama-shaped error | same |
+| | `pull`, `push`, `create`, `copy`, `delete`, `blobs` | Unsupported: 501 `{"error": "unsupported operation: ..."}`. The gateway owns no model files. | same |
+| **OpenAI Responses** (`/v1/responses`, `/openai/v1/responses`) | `responses.create`, streaming events, function tools, `previous_response_id`, retrieve, delete, `input_items`, images, reasoning items, `text.format` | Works | `tests/test_openai_responses_conformance.py` (schemas from openai/openai-openapi `145fd3b`); Live: `openai` Python SDK 3.23.0 |
+| | Stored responses | Private to the creating key; unknown or foreign `previous_response_id` is a 404 | same |
+| | Hosted tools (web search, file search, code interpreter, computer use), `background`, `conversation`, `prompt`, `cancel`, `input_tokens` count | Unsupported: 400 with a specific `code` | same |
+| | Reasoning summaries (`reasoning.summary`) | Not produced; raw reasoning returns as a `reasoning` item | documented gap |
+| **OpenAI** chat, completions, embeddings, models, images, audio, video | Response shapes | Works | `tests/test_openai_schema_conformance.py` (openai/openai-openapi `145fd3b`); Live: `openai` Python SDK |
+
+Per-client recipes follow in this document.
+
 ## Live Surfaces Today
 
 The proxy currently exposes (live, mounted in `proxy.py`):
@@ -654,19 +687,22 @@ The Anthropic and Ollama frontends are live, but intentionally narrow:
 - Streaming is supported on `/anthropic/v1/messages`, `/ollama/api/chat`, and
   `/ollama/api/generate`.
 - Anthropic image blocks are translated into OpenAI-compatible multimodal chat
-  content and use the gateway's normal vision routing. Document/thinking blocks
-  are rejected instead of silently dropped. Anthropic-native prompt caching
-  markers and beta headers are not represented.
+  content and use the gateway's normal vision routing. `document` blocks and
+  server tools (web search, code execution, computer use) are rejected with a
+  400 instead of being faked. Prompt-caching markers (`cache_control`) and
+  `anthropic-beta` headers are accepted and ignored.
 - Ollama read-only model routes are implemented: `/api/tags`, `/api/show`,
   `/api/ps`, and `/api/version`. Mutating routes (`/api/pull`, `/api/push`,
   `/api/copy`, `/api/delete`, `/api/create`) return an Ollama-shaped
-  unsupported-operation error because the gateway does not mutate local model
-  files through this protocol surface.
-- Ollama's common generation options such as `temperature`, `top_p`,
-  `num_predict`, `seed`, `stop`, `presence_penalty`, and
-  `frequency_penalty` are mapped. Backend-native options such as `top_k`,
-  `num_ctx`, GPU placement, and memory flags are rejected because they do not
-  have a portable canonical meaning yet.
+  unsupported-operation error (501) because the gateway does not mutate local
+  model files through this protocol surface.
+- Ollama sampling options (`temperature`, `top_p`, `top_k`, `min_p`,
+  `typical_p`, `repeat_penalty`, `repeat_last_n`, `mirostat*`, `num_predict`,
+  `seed`, `stop`, `presence_penalty`, `frequency_penalty`) reach the backend.
+  Options that size a local runtime (`num_ctx`, `num_gpu`, `num_thread`,
+  `use_mmap`, and similar) and unknown options are accepted and ignored, as
+  Ollama ignores options it cannot apply. The context size is fixed by the
+  backend; read it from `/api/show`.
 
 For maximum compatibility, point general clients at the OpenAI-compatible
 surface and use the Anthropic/Ollama frontends only when a client specifically
@@ -839,7 +875,7 @@ Important caveats:
   OpenAI's `tool_calls` schema. If the agent has a toggle for
   "OpenAI-style tools", enable it.
 - Long-context features (prompt caching, beta headers) that depend on
-  Anthropic-specific request headers are silently dropped at this surface.
+  Anthropic-specific request headers are ignored at this surface.
 
 ## Recipe: Ollama-compatible clients
 
@@ -856,24 +892,36 @@ chat-completions and embeddings pipelines:
 | `POST /ollama/api/show` | Live; returns visible gateway catalog metadata. |
 | `GET /ollama/api/ps` | Live; returns the visible currently loaded LLM ids. |
 | `GET /ollama/api/version` | Live; returns the gateway compatibility version. |
-| `/ollama/api/pull`, `/ollama/api/push`, `/ollama/api/copy`, `/ollama/api/delete`, `/ollama/api/create` | Registered, but returns unsupported-operation. |
+| `/ollama/api/pull`, `/ollama/api/push`, `/ollama/api/copy`, `/ollama/api/delete`, `/ollama/api/create` | Registered, but returns unsupported-operation (501). |
 
 Point the Ollama base URL at `http://127.0.0.1:5000/ollama` when the client
 supports a pathful base URL. For clients hard-coded to `/api`, use
 `http://127.0.0.1:5000` and the convenience `/api` routes. Send
-`Authorization: Bearer $OPENAI_PROXY_API_KEY`; this is not a vanilla
-unauthenticated Ollama daemon.
+`Authorization: Bearer $AI_GATEWAY_API_KEY` (`x-api-key` also works, but the
+Ollama clients only send a bearer header); this is not a vanilla
+unauthenticated Ollama daemon. Clients on the LAN bypass list need no key.
+The official `ollama` Python client takes the key as
+`ollama.Client(host=..., headers={"Authorization": "Bearer ..."})`.
 
-The chat and generate translators map common portable options such as
-`temperature`, `top_p`, `num_predict`, `seed`, `stop`, and OpenAI-compatible
-penalties into the canonical chat request. Backend-native controls such as
-`num_ctx`, `top_k`, and `repeat_penalty` stay explicit and fail rather than
-being silently ignored. Ollama `images` are translated to OpenAI-style
-multimodal content blocks and use the gateway's normal vision routing; if no
-vision backend is configured or permitted, the chat path returns a clear vision
-error. `raw: true` remains unsupported because Ollama raw prompting bypasses
-model templating in a way the canonical chat-completions pipeline cannot
-preserve exactly across backends.
+What is verified with the official `ollama` Python client (0.6.3) and the
+`docs/api.md` schemas pinned in `tests/fixtures/ollama-api-schemas.json`:
+
+| Feature | Status |
+|---|---|
+| `chat`, `generate`, streaming and non-streaming | Works. `stream` defaults to true, as in Ollama. |
+| Tools (`tools`, assistant `tool_calls`, `role: tool` with `tool_name`) | Works. A streamed tool call arrives whole in one object. |
+| `images` (base64 or raw bytes) | Works; every local chat model has vision. |
+| `format: "json"` and JSON-schema `format` | Works. |
+| `think: true` or `"low"/"medium"/"high"` | Works; reasoning returns in `message.thinking` (`thinking` for generate). Without `think` it is not returned. |
+| Final-object stats | `prompt_eval_count`, `eval_count`, and nanosecond durations are filled from backend timings. `load_duration` is always 0. |
+| Empty `messages` / empty `prompt` | Loads or, with `keep_alive: 0`, unloads. The gateway only checks that the model exists; it does not warm or free anything. |
+| `embed`, legacy `embeddings` | Works. `truncate`, `keep_alive`, `options` are ignored; `dimensions` is forwarded. |
+| `list` / `tags`, `show`, `ps`, `version` | Works. `show` reports `completion`, `vision`, `tools`, `thinking` (`embedding` for embedding models). `version` is a semver with a `+vivid-fish` suffix. |
+| Unknown model | 404 `model "x" not found, try pulling it first`. `name:latest` is the same model as `name`. |
+| `suffix` (fill-in-the-middle), `template`, `raw: true` | Rejected with 400. The chat-completions pipeline cannot honor them. |
+| `context` (deprecated), `keep_alive`, `logprobs` | Ignored. |
+| `pull`, `push`, `create`, `copy`, `delete` | 501. Manage models in the backend. |
+| Digests, sizes, `modified_at`, `families` | Placeholders (`""`, `0`, a fixed date); the gateway does not own model files. |
 
 ```bash
 curl -fsS http://127.0.0.1:5000/ollama/api/tags \
@@ -891,9 +939,12 @@ backend service that actually owns the model directory.
 
 ## Recipe: Anthropic SDK clients
 
-The Anthropic Messages surface (`POST /anthropic/v1/messages`) is live as a
-translator over the canonical chat-completions pipeline, including
-Anthropic-shaped SSE streaming:
+The Anthropic Messages surface (`POST /anthropic/v1/messages`) is a translator
+over the canonical chat-completions pipeline, including Anthropic-shaped SSE
+streaming. It is verified with the official `anthropic` Python SDK (1.11.0) and
+with Claude Code 2.1.286, and its responses and stream events are checked
+against schemas generated from the SDK
+(`tests/fixtures/anthropic-sdk-schemas.json`).
 
 ```python
 import os
@@ -901,21 +952,86 @@ from anthropic import Anthropic
 
 client = Anthropic(
     base_url="http://127.0.0.1:5000/anthropic",
-    api_key=os.environ["OPENAI_PROXY_API_KEY"],
+    api_key=os.environ["AI_GATEWAY_API_KEY"],  # sent as x-api-key
 )
 
 msg = client.messages.create(
-    model="auto",
+    model="default",
     max_tokens=256,
     messages=[{"role": "user", "content": "ping"}],
 )
 print(msg.content[0].text)
 ```
 
-Streaming calls such as `client.messages.stream(...)` are supported. The
-Anthropic model list lives at `GET /anthropic/v1/models`, and token counting
-uses `POST /anthropic/v1/messages/count_tokens`. Do not put real Anthropic keys
-into source files, prompts, or shared docs.
+Auth: the SDK's `api_key` is sent as `x-api-key`; `auth_token=` (bearer) works
+too. Use either. Clients on the LAN bypass list need no key.
+
+Claude Code: set `ANTHROPIC_BASE_URL=http://127.0.0.1:5000`,
+`ANTHROPIC_AUTH_TOKEN=$AI_GATEWAY_API_KEY`, `ANTHROPIC_MODEL=default` and
+`ANTHROPIC_SMALL_FAST_MODEL=default`. Claude Code then runs its tool loop
+(Read, Bash, and so on) against the local model. Claude Code prints
+`unrecognized_model` for local model names; that is only a cost-table warning.
+With the base URL at the gateway root, `/v1/models` answers in Anthropic shape
+when the request carries the `anthropic-version` header, and in OpenAI shape
+otherwise.
+
+| Feature | Status |
+|---|---|
+| `messages.create`, `messages.stream` (event accumulation) | Works. |
+| System prompt as string or text blocks; multi-turn | Works. `system`-role entries inside `messages` (sent by Claude Code) are merged into the system prompt. |
+| Tools: `tool_use` / `tool_result` round trip, `tool_choice` `auto`/`any`/`tool`/`none`, `disable_parallel_tool_use` | Works, including streamed `input_json_delta`. |
+| Images (base64 and URL blocks) | Works. |
+| `thinking` `enabled` / `adaptive` | Works. Local reasoning returns as `thinking` blocks (signature is empty); `display: "omitted"` returns none. `budget_tokens` and `output_config.effort` choose a `reasoning_effort`. Without `thinking`, reasoning is never returned as text. Prior `thinking` blocks in history are dropped. |
+| `stop_reason` | `end_turn`, `max_tokens`, `tool_use`. `stop_sequence` is never reported: the backend does not say which sequence matched, so `stop_sequences` stop generation but the reason is `end_turn` and `stop_sequence` is null. A stop sequence can also match inside the model's reasoning. |
+| `usage` | `input_tokens` and `output_tokens` from the backend. Cache fields are absent. Streams report usage in `message_delta`. |
+| `count_tokens` | Estimate (about 4 characters per token); header `X-AI-Gateway-Token-Counting: estimated`. |
+| `models.list`, `models.retrieve` | Works at `/anthropic/v1/models[/{id}]`. `display_name` is the model description or a title-cased id. |
+| Errors | Anthropic shape with a `request-id` header: 400 `invalid_request_error`, 401 `authentication_error`, 403 `permission_error`, 404 `not_found_error` (unknown model: `model: <name>`), 429 `rate_limit_error`, 5xx `api_error`. |
+| `top_k` | Forwarded to the backend. `temperature`, `top_p`, `metadata.user_id` map as usual. In SDK 1.11 `temperature` is no longer a typed argument; pass it with `extra_body`. |
+| `document` blocks, server tools, `web_search`, computer use, citations, batches, files, `container`, `service_tier`, `cache_control` effects | Unsupported. The first two are rejected with 400; the rest are ignored or absent. |
+
+Known gap: the `request-id` response header is generated by the gateway and is
+not linked to a receipt.
+
+## Recipe: OpenAI Responses API
+
+`POST /v1/responses` (also `/openai/v1/responses`) translates onto the chat
+pipeline. It is verified with the official `openai` Python SDK (3.23.0), and
+its objects and every streamed event are checked against the `Response` and
+`ResponseStreamEvent` schemas of openai/openai-openapi commit `145fd3b`
+(`tests/test_openai_responses_conformance.py`).
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:5000/v1", api_key=KEY)
+first = client.responses.create(model="default", input="Remember the word mango.")
+second = client.responses.create(
+    model="default",
+    input="What word did I ask you to remember?",
+    previous_response_id=first.id,
+)
+print(second.output_text)
+```
+
+- Works: `create` (string or item-list `input`, `instructions`), streaming,
+  function tools and `function_call_output` items, `previous_response_id`
+  chains, `retrieve`, `delete`, `input_items.list`, `input_image` content,
+  `text.format` (JSON schema), `max_output_tokens` (status `incomplete`), and
+  `reasoning.effort`.
+- Reasoning: local reasoning returns as a `reasoning` output item (and as
+  `response.reasoning_text.*` events). `reasoning.summary` is accepted but no
+  summary is produced.
+- Stored responses (`store` defaults to true) last 7 days and belong to the
+  key that created them. Another key gets 404 on retrieve, delete, or as a
+  `previous_response_id`. An unknown or expired `previous_response_id` is a
+  404 `previous_response_not_found`; the gateway does not continue without the
+  context.
+- Unsupported, with an explicit 400: hosted tools (`web_search`,
+  `file_search`, `code_interpreter`, `computer_use`, ...), `background`,
+  `conversation`, `prompt`, `POST /v1/responses/{id}/cancel`, and
+  `POST /v1/responses/input_tokens`.
+- An unknown model is a 404 `model_not_found`.
 
 ## Recipe: OpenAI SDK clients
 
