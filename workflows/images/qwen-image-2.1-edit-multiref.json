@@ -84,18 +84,16 @@
             ],
             "negative_prompt": "",
             "resolution": 1024,
-            "images": {
-                "image_1": [
-                    "4",
-                    0
-                ],
-                "image_2": [
-                    "11",
-                    0
-                ]
-            },
             "vae": [
                 "3",
+                0
+            ],
+            "images.image_1": [
+                "4",
+                0
+            ],
+            "images.image_2": [
+                "11",
                 0
             ]
         }
