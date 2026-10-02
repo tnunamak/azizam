@@ -261,6 +261,20 @@ class CharacterReplaceTests(RemixReplaceBase):
         self.assertEqual(self.graph["30"]["inputs"]["value"], 5)
         self.assertEqual(self.graph["16"]["inputs"]["text"], "person")  # workflow default
 
+    def test_multipart_data_uri_larger_than_one_megabyte_is_accepted(self) -> None:
+        big = base64.b64encode(PNG + b"\x00" * (2 * 1024 * 1024)).decode()
+        r = self.client.post(
+            "/v1/videos",
+            data={
+                "model": "character-replace",
+                "prompt": "p",
+                f"extensions[{NS}][source_video][video_id]": SOURCE_ID,
+                f"extensions[{NS}][reference_image]": "data:image/png;base64," + big,
+            },
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertGreater(len(self.comfy.uploads[1][1]), 2 * 1024 * 1024)
+
     def test_missing_inputs_are_rejected_before_any_upload(self) -> None:
         body = self._body()
         del body["extensions"][NS]["reference_image"]

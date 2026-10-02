@@ -25,6 +25,9 @@ _MIME_SUFFIX = {
     "video/x-matroska": ".mkv",
 }
 MAX_SOURCE_VIDEO_BYTES = 256 * 1024 * 1024
+# Starlette caps a multipart text part at 1 MB; a data URI for a source video or
+# reference image is far larger (base64 is 4/3 of the file).
+MAX_FORM_PART_BYTES = MAX_SOURCE_VIDEO_BYTES * 2
 _BRACKET_KEY = re.compile(r"^([^\[\]]+)((?:\[[^\[\]]*\])+)$")
 
 

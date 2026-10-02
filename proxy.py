@@ -9150,7 +9150,7 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     existing input_reference resolver can decode them without any new branch.
     """
     try:
-        form = await request.form()
+        form = await request.form(max_part_size=video_inputs.MAX_FORM_PART_BYTES)
     except Exception as exc:
         raise _VideoFormParseError(f"Invalid multipart body: {exc}") from exc
 
@@ -10737,7 +10737,7 @@ async def _read_video_request_body(request: Request) -> dict[str, Any]:
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
         try:
-            form = await request.form()
+            form = await request.form(max_part_size=video_inputs.MAX_FORM_PART_BYTES)
         except Exception as exc:
             raise _VideoFormParseError(f"Invalid multipart body: {exc}") from exc
         try:
