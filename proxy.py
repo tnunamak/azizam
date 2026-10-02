@@ -73,6 +73,9 @@ from gateway import (
 )
 from gateway import stable_aliases
 from gateway import speech_stream
+from gateway import custom_voices
+from gateway import voice_audio
+from gateway import voices_api
 from gateway import stt_chunking
 from gateway.alias_policy import (
     AliasPolicyResolutionError,
@@ -3753,6 +3756,195 @@ def _engine_voice(engine: Mapping[str, Any], requested_voice: str) -> str:
     return voice_map.get(key) or str(engine.get("default_voice") or requested_voice)
 
 
+# ---- custom (user-created) voices -------------------------------------------
+# Storage, validation and the HTTP routes live in gateway/custom_voices.py,
+# gateway/voice_audio.py and gateway/voices_api.py; this block only wires them
+# to the config, the engines and the auth model.
+
+_VOICE_STORES: dict[tuple[str, custom_voices.VoiceLimits], custom_voices.VoiceStore] = {}
+
+
+def _voice_settings() -> Mapping[str, Any]:
+    section = config.get("voices")
+    return section if isinstance(section, Mapping) else {}
+
+
+def _voice_store() -> custom_voices.VoiceStore:
+    settings = _voice_settings()
+    root = Path(str(settings.get("dir") or "data/voices"))
+    if not root.is_absolute():
+        root = CONFIG_PATH.parent / root
+    mode = str(settings.get("consent_mode") or "optional")
+    limits = custom_voices.VoiceLimits(
+        max_voices=int(settings.get("max_voices_per_key", 20)),
+        max_consents=int(settings.get("max_consents_per_key", 50)),
+        max_bytes=int(settings.get("max_bytes_per_key", 200 * 1024 * 1024)),
+        consent_mode=mode if mode in custom_voices.CONSENT_MODES else "optional",
+    )
+    key = (str(root), limits)
+    store = _VOICE_STORES.get(key)
+    if store is None:
+        store = _VOICE_STORES[key] = custom_voices.VoiceStore(root, limits)
+    return store
+
+
+def _voice_sample_limits() -> voice_audio.SampleLimits:
+    settings = _voice_settings()
+    defaults = voice_audio.SampleLimits()
+    return voice_audio.SampleLimits(
+        min_seconds=float(settings.get("min_seconds", defaults.min_seconds)),
+        max_seconds=float(settings.get("max_seconds", defaults.max_seconds)),
+        min_speech_seconds=float(settings.get("min_speech_seconds", defaults.min_speech_seconds)),
+        target_seconds=float(settings.get("target_seconds", defaults.target_seconds)),
+        max_bytes=int(settings.get("max_upload_bytes", defaults.max_bytes)),
+    )
+
+
+def _speech_engines() -> Mapping[str, Any]:
+    section = (config.get("model_aliases") or {}).get("speech") or {}
+    engines = section.get("engines")
+    return engines if isinstance(engines, Mapping) else {}
+
+
+def _custom_voice_engines() -> list[str]:
+    """Deployed speech engines that accept a user-created voice."""
+    available = _alias_engine_available_for("speech")
+    usable = [
+        str(engine_id)
+        for engine_id, spec in _speech_engines().items()
+        if isinstance(spec, Mapping) and bool_from_config(spec.get("custom_voices"), False) and available(str(engine_id), spec)
+    ]
+    # Same order as the default `tts` tier, so the first one is what `tts` would pick.
+    tier = [str(e) for e in (((config.get("model_aliases") or {}).get("speech") or {}).get("stable") or {}).get("tts") or []]
+    return sorted(usable, key=lambda engine_id: (tier.index(engine_id) if engine_id in tier else len(tier), engine_id))
+
+
+def _speech_engine_endpoint(engine_id: str) -> tuple[str, str] | None:
+    """(service id, base URL) of a speech engine, or None when it is not deployed."""
+    spec = _speech_engines().get(engine_id)
+    if not isinstance(spec, Mapping):
+        return None
+    service_id = str(spec.get("service") or "")
+    service = (config.get("backends") or {}).get(service_id)
+    if not isinstance(service, Mapping) or not service.get("host") or not service.get("port"):
+        return None
+    return service_id, f"http://{service['host']}:{service['port']}"
+
+
+async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
+    """Speaker similarity of a test synthesis made from the clip (advisory; None when unavailable)."""
+    engine_id = str(_voice_settings().get("quality_engine") or "chatterbox")
+    endpoint = _speech_engine_endpoint(engine_id)
+    if endpoint is None:
+        return None
+    service_id, base_url = endpoint
+    if await _ensure_speech_service_ready(service_id, label="TTS engine") is not None:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+            resp = await client.post(f"{base_url}/v1/audio/voice-check", json={"voice_ref": str(reference)})
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        return {"speaker_similarity": float(data["speaker_similarity"]), "encoder": data.get("encoder"), "engine": engine_id}
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return None
+
+
+async def _design_voice(prompt: str, script: str, seed: int) -> bytes:
+    """Render a voice described in text once; the result becomes that voice's reference clip."""
+    engine_id = str(_voice_settings().get("design_engine") or "omnivoice")
+    endpoint = _speech_engine_endpoint(engine_id)
+    if endpoint is None:
+        raise custom_voices.VoiceError(503, "backend_unavailable", f"Voice design needs the {engine_id} engine, which is not deployed.")
+    service_id, base_url = endpoint
+    not_ready = await _ensure_speech_service_ready(service_id, label="Voice design engine")
+    if not_ready is not None:
+        raise custom_voices.VoiceError(503, "backend_unavailable", "The voice design engine could not be started.")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180, connect=10)) as client:
+            resp = await client.post(
+                f"{base_url}/v1/audio/speech",
+                json={"input": script, "voice": "alloy", "instructions": prompt, "seed": seed, "response_format": "wav"},
+            )
+    except httpx.HTTPError as exc:
+        raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed: {exc}") from exc
+    if resp.status_code != 200:
+        raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed with HTTP {resp.status_code}.")
+    return resp.content
+
+
+async def _reference_transcript(owner: str | None, meta: Mapping[str, Any], reference: Path) -> str:
+    """Transcript of a voice's reference clip (OmniVoice clones from audio plus its exact text); cached in the voice record."""
+    if meta.get("transcript"):
+        return str(meta["transcript"])
+    stt = (config.get("backends") or {}).get("stt")
+    if not isinstance(stt, Mapping) or not stt.get("host"):
+        raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs the stt service.")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+            resp = await client.post(
+                f"http://{stt['host']}:{stt['port']}/v1/audio/transcriptions",
+                files={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
+                data={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
+            )
+        text = str(resp.json().get("text") or "").strip() if resp.status_code == 200 else ""
+    except (httpx.HTTPError, ValueError, OSError):
+        text = ""
+    if not text:
+        raise custom_voices.VoiceError(503, "backend_unavailable", "The voice sample could not be transcribed for this engine.")
+    _voice_store().update_voice(owner, str(meta["id"]), {"transcript": text})
+    return text
+
+
+_VOICE_ROUTE_POLICY_PATH = "/v1/audio/voices"
+
+
+def _enforce_voice_route_policy(auth_context: AuthContext, _path: str) -> Response | None:
+    # Every voice-management route shares the policy of GET /v1/audio/voices.
+    return _enforce_runtime_route_policy(auth_context, _VOICE_ROUTE_POLICY_PATH)
+
+
+def _purge_voices_for_credential(credential: Mapping[str, Any]) -> None:
+    key_hash = credential.get("hash")
+    if key_hash and _voice_store().purge_owner(str(key_hash)):
+        print(f"[proxy] removed custom voices of revoked credential {credential.get('prefix') or credential.get('id')}", flush=True)
+
+
+
+async def _apply_custom_voice(
+    body_json: dict[str, Any],
+    voice_id: str,
+    engine: Mapping[str, Any] | None,
+    auth_context: AuthContext,
+    engine_id: str | None,
+) -> Response | None:
+    """Point a speech request at a user-created voice. Returns an error response, or None when the body is ready."""
+    owner = _asset_owner_key(auth_context)
+    store = _voice_store()
+    try:
+        meta = store.get_voice(owner, voice_id)
+    except custom_voices.VoiceError as exc:
+        return openai_error_response(exc.message, status_code=exc.status, param="voice", code=exc.code)
+    if engine is None or not bool_from_config(engine.get("custom_voices"), False):
+        usable = ", ".join(_custom_voice_engines()) or "none deployed"
+        return openai_error_response(
+            f"The selected speech engine cannot use a custom voice. Engines that can: {usable}. Use model tts or one of those engine ids.",
+            status_code=400,
+            param="voice",
+            code="custom_voice_engine_unsupported",
+        )
+    reference = store.reference_path(owner, voice_id)
+    body_json["voice"] = "alloy"          # ignored by the engine when voice_ref is present
+    body_json["voice_ref"] = str(reference)
+    if engine_id == "omnivoice":
+        try:
+            body_json["ref_text"] = await _reference_transcript(owner, meta, reference)
+        except custom_voices.VoiceError as exc:
+            return openai_error_response(exc.message, status_code=exc.status, code=exc.code)
+    return None
+
+
 def _service_has_managed_lifecycle(service_id: str) -> bool:
     lifecycle = ((config.get("backends") or {}).get(service_id) or {}).get("lifecycle")
     driver = str((lifecycle or {}).get("driver") or "external").strip().lower() if isinstance(lifecycle, Mapping) else "external"
@@ -3904,9 +4096,23 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
         except ModelCompatibilityError as e:
             return model_compatibility_error(e)
 
-        requested_voice = body_json.get("voice", "").lower()
-        body_json["voice"] = requested_voice  # normalise to lowercase before transform
         engine = model_resolution.alias.engine_spec if model_resolution.alias else None
+        custom_voice = voices_api.custom_voice_id(body_json.get("voice"))
+        if custom_voice is not None:
+            body_json.pop("voice_ref", None)  # only the gateway sets these
+            body_json.pop("ref_text", None)
+            custom_error = await _apply_custom_voice(
+                body_json, custom_voice, engine, auth_context,
+                model_resolution.alias.engine if model_resolution.alias else None,
+            )
+            if custom_error is not None:
+                return custom_error
+            requested_voice = ""
+        else:
+            requested_voice = str(body_json.get("voice", "") or "").lower()
+            body_json["voice"] = requested_voice  # normalise to lowercase before transform
+            body_json.pop("voice_ref", None)
+            body_json.pop("ref_text", None)
         if engine is not None:
             tts_service_id = model_resolution.alias.service or "tts"
             if tts_service_id != "tts":
@@ -3915,7 +4121,9 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
                     return service_response
                 headers = prepare_downstream_headers(request.headers, auth_context, tts_service_id)
         transform = engine.get("voice_transform") if engine is not None else "voxtral-voices"
-        if transform:
+        if custom_voice is not None:
+            pass  # voice and voice_ref were set by _apply_custom_voice
+        elif transform:
             _run_request_pipeline([str(transform)], body_json, _TransformContext(), _TRANSFORM_REGISTRY)
         else:
             body_json["voice"] = _engine_voice(engine, requested_voice)
@@ -12112,6 +12320,25 @@ app.include_router(
     )
 )
 
+app.include_router(
+    voices_api.create_voices_router(
+        voices_api.VoiceApiDeps(
+            store=lambda: _voice_store(),
+            sample_limits=lambda: _voice_sample_limits(),
+            authenticate=lambda request, path: authenticate_request(request, path),
+            enforce_policy=lambda auth, path: _enforce_voice_route_policy(auth, path),
+            owner_of=lambda auth: _asset_owner_key(auth),
+            probe_quality=lambda reference: _probe_voice_quality(reference),
+            design_voice=lambda prompt, script, seed: _design_voice(prompt, script, seed),
+            compatible_engines=lambda: _custom_voice_engines(),
+            quality_warn_below=lambda: float(_voice_settings().get("quality_warn_below", 0.45)),
+        )
+    )
+)
+
+
+ADMIN_STORE.on_credential_revoked = _purge_voices_for_credential
+
 
 def _resolved_admin_oidc_config() -> tuple[Any, Mapping[str, Any]]:
     """Return the parsed runtime config and the DB state it accepted.
@@ -15066,7 +15293,15 @@ async def list_voices(request: Request):
         })
     # Canonical voices first, then aliases and language presets.
     voices.sort(key=lambda v: (v["voice_id"] not in CANONICAL_TTS_VOICES, v["alias"], v["voice_id"]))
-    return {"default_voice": DEFAULT_TTS_VOICE, "voices": voices, "engines": _speech_engine_voices()}
+    # The caller's own custom voices, in OpenAI's list shape (object, data, first_id, last_id, has_more).
+    try:
+        after, limit = voices_api.parse_page_args(request)
+        mine, has_more = _voice_store().list_voices(_asset_owner_key(auth_context), after=after, limit=limit)
+    except custom_voices.VoiceError as exc:
+        return openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code)
+    engines = _custom_voice_engines()
+    page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
+    return {"default_voice": DEFAULT_TTS_VOICE, "voices": voices, "engines": _speech_engine_voices(), **page}
 
 
 @app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)

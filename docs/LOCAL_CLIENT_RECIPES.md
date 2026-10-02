@@ -52,7 +52,8 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /openai/v1/audio/speech` | OpenAI Audio | TTS. |
 | `POST /openai/v1/audio/transcriptions` | OpenAI Audio | STT. |
 | `POST /openai/v1/audio/translations` | OpenAI Audio | Registered compatibility route; returns `unsupported_audio_translation` unless the local STT backend declares translation support. |
-| `GET /openai/v1/voices`, `GET /openai/v1/audio/voices` | OpenAI Audio | Voice list. |
+| `GET /openai/v1/voices`, `GET /openai/v1/audio/voices` | OpenAI Audio | Built-in voice list, plus the caller's custom voices under `data` (OpenAI list shape). |
+| `POST /openai/v1/audio/voices`, `GET/POST/DELETE /openai/v1/audio/voices/{id}`, `GET .../voices/{id}/sample`, `POST/GET /openai/v1/audio/voice_consents`, `GET/POST/DELETE .../voice_consents/{id}` | OpenAI Audio | Custom voices and consent recordings; see "Custom voices" below. |
 | `POST /openai/v1/audio/generate`, `GET /openai/v1/audio/models` | Gateway native | Music/SFX/voice generation; not an OpenAI SDK-compatible audio endpoint. |
 | `GET/POST /openai/v1/assistants`, `/files`, `/batches`, `/fine_tuning/*`, `/realtime/*` | OpenAI compatibility stubs | Registered compatibility routes; return `unsupported_operation`. |
 | `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | Submit/poll/download. |
@@ -1051,6 +1052,55 @@ still speaking; add `stream_format: "audio"` to stream `mp3`/`opus`/`aac`/`flac`
 too, or `stream_format: "sse"` for `speech.audio.delta` events. Other engines
 answer once (an SSE request gets one delta). `GET /v1/audio/voices` lists each
 deployed engine's voices under `engines`.
+
+### Custom voices
+
+Users can create their own voices and use them with the speech route. The request
+and response shapes follow OpenAI's public spec (`POST /v1/audio/voices`,
+`/v1/audio/voice_consents`, and `voice: {"id": "voice_..."}` on `/v1/audio/speech`),
+so the stock `openai` SDK works. OpenAI's spec has no list, get or delete for voices;
+those and the rename and sample routes are our additions.
+
+```bash
+# 1. Optional: record a consent statement (required when voices.consent_mode is "required")
+curl $BASE/audio/voice_consents -H "Authorization: Bearer $KEY" \
+  -F name="Jo Doe" -F language=en-US -F recording=@consent.wav          # -> {"id": "cons_...", ...}
+# 2. Create the voice from a 5-60 s sample (best 8-15 s of clear speech)
+curl $BASE/audio/voices -H "Authorization: Bearer $KEY" \
+  -F name="My narrator" -F audio_sample=@me.wav -F consent=cons_...      # -> {"object": "audio.voice", "id": "voice_...", ...}
+# 3. Speak with it
+curl $BASE/audio/speech -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"model":"tts","voice":{"id":"voice_..."},"input":"Hello there."}' -o out.wav
+```
+
+| Route | Notes |
+|---|---|
+| `POST /v1/audio/voices` | multipart: `name`, `audio_sample` (file, <= 10 MiB; wav, mp3, flac, ogg, aac, webm, m4a), `consent` (id), `type` (`audio_sample`, default). Extras: `description`, `labels` (JSON object, <= 10), `remove_background_noise` (default false). |
+| `POST /v1/audio/voices` with `type: "prompt"` | JSON or multipart: `name`, `prompt` (1-2000 chars), `script_hint`, `model` (`auto`), extra `seed`. The gateway has OmniVoice render the description once and keeps that clip, so the voice works on every cloning engine (OpenAI limits prompt voices to its Live API). |
+| `GET /v1/audio/voices` | Built-in list as before, plus `object: "list"`, `data` (your custom voices, newest first), `first_id`, `last_id`, `has_more`; `after` and `limit` (1-100). |
+| `GET/POST/DELETE /v1/audio/voices/{id}` | Get; rename or relabel (JSON `name`, `description`, `labels`); delete (`{"id", "object": "audio.voice", "deleted": true}`). |
+| `GET /v1/audio/voices/{id}/sample` | The stored reference clip (`audio/wav`), to hear what the clone is built from. |
+| `/v1/audio/voice_consents[/{id}]` | OpenAI's consent CRUD: multipart `name`, `recording`, `language` (BCP 47); `POST` with JSON `{name}` renames. The gateway stores the recording; it does not verify the spoken phrase. |
+
+The voice object has OpenAI's fields (`object`, `id`, `type`, `name`, `created_at`) and these additions:
+`description`, `labels`, `duration_seconds`, `consent`, `seed`, `prompt`, `warnings`,
+`compatible_engines`, and `quality` (`speaker_similarity`, `encoder`, `engine`, `status`).
+
+What the gateway does with a sample: decodes it with ffmpeg, rejects it when it is under 5 s,
+over 60 s, has under 3.5 s of speech, or is not audio; trims silence; keeps the best 12 s window
+of a longer recording; levels it to -20 dBFS; and stores a 24 kHz mono WAV. It warns on clipping,
+a low signal-to-noise ratio and long silences. Denoising is off unless you ask for it, because it can
+make clean audio worse. After creation the clone engine speaks a test sentence from the clip and the
+gateway reports the ECAPA speaker similarity: `status` is `ok` at 0.45 or higher and `low` below it
+(the 13 built-in voices score 0.64-0.79); `unchecked` means the engine was unavailable. It is a warning only.
+
+Rules. Every voice and consent belongs to the API key that created it; another key gets `404`.
+A voice is used only through `{"id": ...}` or a bare `voice_<24 hex>` string, never by its name, and a
+voice cannot be named like a built-in voice (`400 voice_name_reserved`), so built-in names cannot be
+shadowed. Chatterbox and OmniVoice accept custom voices (`compatible_engines`); Supertonic and Kokoro answer
+`400 custom_voice_engine_unsupported`. An unknown id is `404 voice_not_found`, never a silent fallback to
+another voice. Limits per key, in `proxy_config.yml` `voices:`: 20 voices, 50 consents, 200 MB. Revoking an
+API key deletes its voices and consents. Files live under `data/voices/<owner>/`.
 
 **Streaming transcription.** Send `stream=true` on
 `POST /v1/audio/transcriptions` to get `transcript.text.delta` events followed by

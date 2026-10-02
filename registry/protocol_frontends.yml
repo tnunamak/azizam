@@ -31,6 +31,24 @@ records:
         canonical: /v1/audio/voices
         alias: /openai/v1/audio/voices
         runtime_policy: {protocol: openai.audio, intent: speech.synthesis, backend: tts, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
+      # Custom voices and consent recordings (gateway/voices_api.py). Every one of these routes
+      # enforces the policy of GET /v1/audio/voices in-handler; they carry no runtime_policy here
+      # because that dict is keyed by path alone.
+      - methods: [POST]
+        canonical: /v1/audio/voices
+        alias: /openai/v1/audio/voices
+      - methods: [GET, POST, DELETE]
+        canonical: /v1/audio/voices/{voice_id}
+        alias: /openai/v1/audio/voices/{voice_id}
+      - methods: [GET]
+        canonical: /v1/audio/voices/{voice_id}/sample
+        alias: /openai/v1/audio/voices/{voice_id}/sample
+      - methods: [GET, POST]
+        canonical: /v1/audio/voice_consents
+        alias: /openai/v1/audio/voice_consents
+      - methods: [GET, POST, DELETE]
+        canonical: /v1/audio/voice_consents/{consent_id}
+        alias: /openai/v1/audio/voice_consents/{consent_id}
       - methods: [POST]
         canonical: /v1/audio/speech
         alias: /openai/v1/audio/speech

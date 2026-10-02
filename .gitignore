@@ -141,3 +141,6 @@ tmp/workstreams/
 .env
 .env.local
 *.local.yml
+
+# User-created voices and consent recordings (per-key, private)
+data/voices/

@@ -155,7 +155,8 @@ The repository also carries [`autotile-edge-stitch`](skills/autotile-edge-stitch
 | `POST /ollama/api/chat`, `POST /ollama/api/generate` | chat pipeline | Ollama-compatible chat/generate with NDJSON streaming; `/api/chat` and `/api/generate` remain convenience routes |
 | `POST /ollama/api/embed`, `POST /ollama/api/embeddings` | selected embeddings provider | Ollama-compatible current and legacy embeddings; `/api/embed`, `/api/embeddings` remain convenience routes |
 | `POST /ollama/api/show`, `GET /ollama/api/ps`, `GET /ollama/api/version` | proxy catalog/status | Ollama-compatible read-only model metadata/status; `/api/show`, `/api/ps`, `/api/version` remain convenience routes |
-| `GET  /v1/voices`, `GET /v1/audio/voices` | proxy (static) | List TTS voices |
+| `GET  /v1/voices`, `GET /v1/audio/voices` | proxy (static) | List TTS voices (and your custom voices under `data`) |
+| `POST /v1/audio/voices`, `/v1/audio/voices/{id}`, `/v1/audio/voice_consents` | proxy (per-key store) | Create, list, get, rename, delete custom voices from an audio sample or a text description; use with `voice: {"id": "voice_..."}` (docs/LOCAL_CLIENT_RECIPES.md, "Custom voices") |
 | `POST /v1/chat/completions` | LiteLLM execution substrate | Chat completion; gateway activates local vision targets before execution when needed |
 | `POST /v1/completions` | LiteLLM execution substrate | Text completion |
 | `POST /v1/embeddings` | LiteLLM execution substrate | OpenAI-compatible embeddings; no GPU budget claim |

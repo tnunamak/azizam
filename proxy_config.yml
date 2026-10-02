@@ -1047,6 +1047,22 @@ model_aliases:
       music: ace-step-1.5-xl-turbo   # instrumental/short music, fastest
       song: yue2-song                # full song with vocals from tags + lyrics
       sfx: sa3-small-sfx             # sound effects and ambience
+# User-created voices (POST /v1/audio/voices). Stored per API key under `dir`
+# (relative to this file). See docs/LOCAL_CLIENT_RECIPES.md, "Custom voices".
+voices:
+  dir: data/voices
+  consent_mode: optional      # optional: accept and check a consent id if given; required: reject without one
+  max_voices_per_key: 20      # OpenAI's limit is 20 per organization
+  max_consents_per_key: 50
+  max_bytes_per_key: 209715200
+  max_upload_bytes: 10485760  # sample and consent recording, as OpenAI
+  min_seconds: 5
+  max_seconds: 60
+  min_speech_seconds: 3.5
+  target_seconds: 12          # the stored reference clip is the best window of about this length
+  quality_engine: chatterbox  # makes the post-creation speaker-similarity probe
+  quality_warn_below: 0.45    # ECAPA cosine; the 13 built-in voices score 0.64-0.79
+  design_engine: omnivoice    # renders `type: prompt` voices once from a text description
 model_compatibility:
   enabled: true
   generated_aliases_file: openai_model_aliases.generated.yml

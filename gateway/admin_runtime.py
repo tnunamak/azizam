@@ -256,6 +256,9 @@ class AdminSQLiteStore:
         # from outside (e.g. proxy.py after ADMIN_STORE is created) to trigger
         # an in-process hot reload without a circular import.
         self.on_service_registry_changed: "Callable[[], None] | None" = None
+        # Called with the credential record (including its stored hash) after a
+        # credential is revoked, so data keyed by that key (custom voices) can be removed.
+        self.on_credential_revoked: "Callable[[Mapping[str, Any]], None] | None" = None
         # The live host supplies this so a candidate DB override is accepted
         # only when the same parser used by login accepts its effective merge.
         self.oidc_config_validator: "Callable[[Mapping[str, Any]], None] | None" = None
@@ -1232,6 +1235,12 @@ class AdminSQLiteStore:
             metadata={"prefix": before.get("prefix")},
             path=self.path,
         )
+        callback = self.on_credential_revoked
+        if callback is not None:
+            try:
+                callback(before)
+            except Exception as exc:  # noqa: BLE001 - revoking must not fail because cleanup did
+                print(f"[admin_runtime] WARNING: on_credential_revoked callback raised: {exc}", flush=True)
         return _sanitize_credential(record or before)
 
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:

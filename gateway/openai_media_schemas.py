@@ -73,7 +73,16 @@ def _audio_speech_request_schema() -> JsonObjectSchema:
         "properties": {
             "model": {"type": "string", "description": "TTS model id, e.g. 'tts-1'."},
             "input": {"type": "string", "description": "Text to synthesize."},
-            "voice": {"type": "string", "description": "OpenAI-compatible voice name."},
+            "voice": {
+                "description": (
+                    "A built-in OpenAI voice name, or a custom voice object {\"id\": \"voice_...\"} "
+                    "created with POST /v1/audio/voices (a bare voice_<id> string also works)."
+                ),
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}}},
+                ],
+            },
             "response_format": {
                 "type": "string",
                 "enum": ["mp3", "opus", "aac", "flac", "wav", "pcm"],
@@ -257,7 +266,16 @@ VOICES_LIST_OPENAPI: JsonObjectSchema = {
                             "voices": {
                                 "type": "array",
                                 "items": _voice_entry_schema(),
-                            }
+                            },
+                            "object": {"type": "string", "enum": ["list"]},
+                            "data": {
+                                "type": "array",
+                                "description": "The caller's own custom voices (audio.voice objects), newest first; page with after and limit.",
+                                "items": {"type": "object", "additionalProperties": True},
+                            },
+                            "first_id": {"type": ["string", "null"]},
+                            "last_id": {"type": ["string", "null"]},
+                            "has_more": {"type": "boolean"},
                         },
                         "additionalProperties": True,
                     }
