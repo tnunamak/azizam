@@ -293,6 +293,33 @@ def build_chain_graph(spec: ChainSpec) -> BuiltChain:
     return BuiltChain(graph=g, save_node="save", units=units, total_frames=have)
 
 
+class ChainEngine:
+    """A continuity backend for long video.
+
+    The gateway plans segments and routes requests; an engine turns a
+    ``ChainSpec`` into one ComfyUI graph and says how each added segment is
+    conditioned on the video so far. A workflow selects its engine with
+    ``builder:`` in proxy_config.yml. Only ``ltx25_chain`` exists today (frame
+    window: the last ``context`` frames are encoded and pinned with a latent
+    guide). Planned: an LTX overlap-latent engine (keeps latents between
+    segments, no decode round trip) and an H3 multishot latent engine; both
+    reuse the planner, the routes, the record and the failure info unchanged.
+    """
+
+    name = "ltx25_chain"
+    model_family = "ltx-2.5"
+
+    def build(self, spec: "ChainSpec") -> "BuiltChain":
+        return build_chain_graph(spec)
+
+
+ENGINES: dict[str, ChainEngine] = {ChainEngine.name: ChainEngine()}
+
+
+def engine_for(builder: str | None) -> ChainEngine | None:
+    return ENGINES.get(str(builder or ""))
+
+
 def segment_of_node(units: Sequence[Mapping[str, str]], node_id: str) -> int | None:
     """Index of the added-segment unit that owns ``node_id`` (None if shared)."""
     for index, unit in enumerate(units):

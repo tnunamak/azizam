@@ -10068,7 +10068,7 @@ async def proxy_comfy_video_create(
     # Long video: `shots`, or `seconds` past the model's native length when the
     # model names a chain workflow, or a chain workflow itself (video-long).
     chain_name = chain_cfg = None
-    if workflow_cfg.get("builder") == "ltx25_chain":
+    if video_extend.engine_for(workflow_cfg.get("builder")):
         chain_name, chain_cfg = workflow_name, workflow_cfg
     else:
         try:
@@ -10583,10 +10583,10 @@ def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
     name, cfg = _resolve_video_workflow(str(requested_model or ""))
     if not cfg:
         return None, None
-    if cfg.get("builder") == "ltx25_chain":
+    if video_extend.engine_for(cfg.get("builder")):
         return name, cfg
     target = cfg.get("chain_workflow")
-    if target and target in VIDEO_WORKFLOWS and VIDEO_WORKFLOWS[target].get("builder") == "ltx25_chain":
+    if target and target in VIDEO_WORKFLOWS and video_extend.engine_for(VIDEO_WORKFLOWS[target].get("builder")):
         return str(target), VIDEO_WORKFLOWS[target]
     return None, None
 
@@ -10837,7 +10837,7 @@ async def _submit_video_chain(
         source=(video_extend.SourceVideo(uploaded, probe.frames, fps, probe.width, probe.height, probe.has_audio)
                 if probe is not None else None),
         first_frame_image=first_frame_image, first_frame_strength=first_frame_strength)
-    built = video_extend.build_chain_graph(spec)
+    built = video_extend.engine_for(workflow_cfg.get("builder")).build(spec)
     total_seconds = built.total_frames / fps
 
     prompt_text = "\n".join(p for p, _ in shots)
