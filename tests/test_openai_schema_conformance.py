@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import io
+import base64
 import sys
 import tempfile
 import unittest
@@ -25,6 +26,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+import _fake_comfy_video as rr_fake  # noqa: E402
+import test_video_remix_replace as rr  # noqa: E402
+from test_video_remix_replace import RemixReplaceBase  # noqa: E402,F401
 from gateway import media_jobs, video_media_jobs  # noqa: E402
 
 
@@ -228,6 +232,107 @@ class OpenAISchemaConformanceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.headers["content-type"], "audio/wav")
         self.assertTrue(response.content)
+
+
+def _conforms_to_video_resource(test: unittest.TestCase, payload: dict) -> None:
+    """Check a gateway video resource against OpenAI's VideoResource schema.
+
+    The gateway reports the size it actually renders (for example 832x480).
+    OpenAI's VideoSize enum lists only Sora sizes, so the size is checked as
+    WxH text here and swapped for a Sora size before the schema check. Every
+    other field is checked as published.
+    """
+    test.assertRegex(payload["size"], r"^\d+x\d+$")
+    assert_openai_schema(test, "VideoResource", {**payload, "size": "1280x720"})
+
+
+class RemixReplaceConformanceTests(RemixReplaceBase):
+    """New remix, edit and character-replace paths return the OpenAI video shape."""
+
+    def test_remix_resource_conforms_and_keeps_gateway_fields(self) -> None:
+        r = self.client.post(f"/v1/videos/{rr.SOURCE_ID}/remix", json={"prompt": "make it snowy"})
+        self.assertEqual(r.status_code, 200, r.text)
+        _conforms_to_video_resource(self, r.json())
+        self.assertEqual(r.json()["remixed_from_video_id"], rr.SOURCE_ID)
+
+    def test_edit_resources_conform(self) -> None:
+        upload = self.client.post(
+            "/v1/videos/edits",
+            data={"prompt": "to watercolor"},
+            files={"video": ("clip.mp4", b"clip", "video/mp4")},
+        )
+        self.assertEqual(upload.status_code, 200, upload.text)
+        _conforms_to_video_resource(self, upload.json())
+        self.assertIsNone(upload.json()["remixed_from_video_id"])
+        by_id = self.client.post("/v1/videos/edits", json={"prompt": "x", "video": {"id": rr.SOURCE_ID}})
+        self.assertEqual(by_id.status_code, 200, by_id.text)
+        _conforms_to_video_resource(self, by_id.json())
+
+    def test_character_replace_resource_conforms_and_echoes_the_model(self) -> None:
+        r = self.client.post(
+            "/v1/videos",
+            json={
+                "model": "character-replace",
+                "prompt": "a woman in a red raincoat",
+                "extensions": {rr.NS: {
+                    "source_video": {"video_id": rr.SOURCE_ID},
+                    "reference_image": "data:image/png;base64," + base64.b64encode(rr.PNG).decode(),
+                }},
+            },
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        _conforms_to_video_resource(self, body)
+        self.assertEqual(body["model"], "character-replace")
+        self.assertEqual(body["vivid_fish_resolved_model"], "video-scail-2-replace")
+
+    def test_job_lifecycle_is_monotonic_and_content_waits_for_completion(self) -> None:
+        r = self.client.post(f"/v1/videos/{rr.SOURCE_ID}/remix", json={"prompt": "x"})
+        video_id = r.json()["id"]
+        seen: list[tuple[str, int]] = []
+
+        def poll() -> dict:
+            resp = self.client.get(f"/v1/videos/{video_id}")
+            self.assertEqual(resp.status_code, 200, resp.text)
+            body = resp.json()
+            _conforms_to_video_resource(self, body)
+            self.assertEqual(body["model"], "video-remix")
+            self.assertEqual(body["remixed_from_video_id"], rr.SOURCE_ID)
+            seen.append((body["status"], body["progress"]))
+            return body
+
+        poll()
+        for percent in (12, 40, 85):
+            proxy._video_progress[rr.NEW_PROMPT_ID].update(status="running", percent=percent, node="18")
+            self.assertEqual(poll()["status"], "in_progress")
+            content = self.client.get(f"/v1/videos/{video_id}/content")
+            self.assertEqual(content.status_code, 404)
+            self.assertEqual(content.json()["error"]["code"], "video_not_ready")
+        self.comfy.history[rr.NEW_PROMPT_ID] = rr_fake.succeeded_history("remix_00001_.mp4")
+        self.comfy.view_bytes["remix_00001_.mp4"] = b"rendered-mp4"
+        done = poll()
+        self.assertEqual((done["status"], done["progress"]), ("completed", 100))
+        self.assertIsInstance(done["completed_at"], int)
+        content = self.client.get(f"/v1/videos/{video_id}/content")
+        self.assertEqual((content.status_code, content.content), (200, b"rendered-mp4"))
+        self.assertEqual(content.headers["content-type"], "video/mp4")
+        self.assertEqual([s for s, _ in seen][0], "queued")
+        progress = [p for _, p in seen]
+        self.assertEqual(progress, sorted(progress))
+
+    def test_failed_job_reports_failed_status_with_an_error_object(self) -> None:
+        r = self.client.post(f"/v1/videos/{rr.SOURCE_ID}/remix", json={"prompt": "x"})
+        video_id = r.json()["id"]
+        self.comfy.history[rr.NEW_PROMPT_ID] = {
+            "status": {"completed": False, "status_str": "error", "messages": [
+                ["execution_error", {"exception_message": "out of memory", "node_id": "18"}],
+            ]},
+            "outputs": {},
+        }
+        body = self.client.get(f"/v1/videos/{video_id}").json()
+        _conforms_to_video_resource(self, body)
+        self.assertEqual(body["status"], "failed")
+        self.assertEqual(body["error"]["code"], "video_generation_failed")
 
 
 if __name__ == "__main__":  # pragma: no cover
