@@ -9480,6 +9480,7 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
                 "id": video_id,
                 "object": "video",
                 "model": public_model,
+                "vivid_fish_resolved_model": workflow_name,
                 "status": "queued",
                 "progress": 0,
                 "created_at": now,
