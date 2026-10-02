@@ -402,10 +402,10 @@ class CreateLongVideoTests(RemixReplaceBase):
 
     def test_sdk_multipart_shots_are_regrouped(self) -> None:
         """openai-python sends shots as `shots[][prompt]` x N then `shots[][seconds]` x N."""
-        r = self.client.post("/v1/videos", data=[
-            ("model", "video-long"), ("prompt", ""),
-            ("shots[][prompt]", "a"), ("shots[][prompt]", "b"),
-            ("shots[][seconds]", "5"), ("shots[][seconds]", "4")])
+        fields = [("model", "video-long"), ("prompt", ""),
+                  ("shots[][prompt]", "a"), ("shots[][prompt]", "b"),
+                  ("shots[][seconds]", "5"), ("shots[][seconds]", "4")]
+        r = self.client.post("/v1/videos", files=[(k, (None, v)) for k, v in fields])
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual([self.graph[f"s{i}_text"]["inputs"]["text"] for i in range(2)], ["a", "b"])
         self.assertEqual(r.json()["segments"], 2)
