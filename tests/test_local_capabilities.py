@@ -84,10 +84,10 @@ REPRESENTATIVE_CONFIG: dict = {
         },
     ],
     "videos": {
-        "default_workflow": "video-ltx-2.3-distilled",
+        "default_workflow": "video-ltx-2.5-t2v",
         "workflows": {
-            "video-ltx-2.3-distilled": {
-                "file": "workflows/video-ltx-2.3-distilled.json",
+            "video-ltx-2.5-t2v": {
+                "file": "workflows/videos/video-ltx-2.5-t2v.json",
                 "max_seconds": 8,
             },
             "video-wan-2.2-ti2v-5b-q8": {
@@ -95,9 +95,9 @@ REPRESENTATIVE_CONFIG: dict = {
             },
         },
         "aliases": {
-            "ltx-2.3": "video-ltx-2.3-distilled",
+            "ltx-2.5": "video-ltx-2.5-t2v",
             "wan-2.2": "video-wan-2.2-ti2v-5b-q8",
-            "sora-2": "video-ltx-2.3-distilled",
+            "sora-2": "video-ltx-2.5-t2v",
         },
     },
     "audio": {
@@ -229,11 +229,11 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         ids = {c.workflow for c in video}
         self.assertEqual(
             ids,
-            {"video-ltx-2.3-distilled", "video-wan-2.2-ti2v-5b-q8"},
+            {"video-ltx-2.5-t2v", "video-wan-2.2-ti2v-5b-q8"},
         )
-        ltx = next(c for c in video if c.workflow == "video-ltx-2.3-distilled")
+        ltx = next(c for c in video if c.workflow == "video-ltx-2.5-t2v")
         joined = " ".join(ltx.caveats)
-        self.assertIn("ltx-2.3", joined)
+        self.assertIn("ltx-2.5", joined)
         self.assertIn("sora-2", joined)
 
     def test_audio_workflows_emit_capabilities(self):
@@ -304,7 +304,7 @@ class SummarySafetyTest(unittest.TestCase):
             self.assertNotIn("heretic.gguf", blob, audience)
             self.assertNotIn("cydonia.gguf", blob, audience)
             # workflow JSON paths must not be surfaced in summaries
-            self.assertNotIn("workflows/video-ltx-2.3-distilled.json", blob, audience)
+            self.assertNotIn("workflows/videos/video-ltx-2.5-t2v.json", blob, audience)
             self.assertNotIn("workflows/audio/ace-step.json", blob, audience)
             # workflows_dir path should not be advertised
             self.assertNotIn("./workflows/images", blob, audience)

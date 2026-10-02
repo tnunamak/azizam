@@ -36,6 +36,22 @@ class SizeAndLengthRuleTests(unittest.TestCase):
     def test_length_rule_ltx_is_8k_plus_1(self) -> None:
         self.assertEqual(proxy._seconds_to_length(5, 24), 121)
 
+    def test_long_form_chunk_arithmetic_matches_measured_ltx25_renders(self) -> None:
+        # Measured on the real workflow: LENGTH=2/LOOPS=0 -> 97 frames (2 chunks);
+        # LENGTH=8/LOOPS=2 -> 577 frames (3 chunks). One frame is lost per junction.
+        def frames(length_sec: int, loops: int) -> int:
+            chunk = round((length_sec * 24 - 1) / 8) * 8 + 1
+            return (chunk - 1) * (max(loops, 1) + 1) + 1
+
+        self.assertEqual(frames(2, 0), 97)
+        self.assertEqual(frames(8, 2), 577)
+        for seconds in (2, 4, 12, 30, 32, 50):
+            length_sec, loops, total = proxy._long_form_chunks(seconds, 24)
+            self.assertNotEqual(loops, 1)
+            self.assertAlmostEqual(frames(length_sec, loops) / 24, total, places=6)
+            self.assertLess(abs(total - seconds), 0.25, seconds)
+        self.assertEqual(proxy._long_form_chunks(32, 24)[:2], (8, 3))
+
     def test_length_rule_h3_is_17k_plus_5(self) -> None:
         self.assertEqual(proxy._seconds_to_length(5, 24, step=17, offset=5), 124)
         for seconds in (2, 3, 4, 6, 8, 10):
@@ -49,7 +65,7 @@ class ModelDiscoveryTests(unittest.TestCase):
         for model_id in (
             "video-ltx-2.5-t2v", "video-ltx-2.5-i2v", "video-minimax-h3-t2v",
             "video-minimax-h3-i2v", "yue2-song", "sa3-small-sfx",
-            "video-ltx-2.3-distilled", "tangoflux",
+            "video-ltx-2.5-long", "tangoflux",
         ):
             self.assertIn(model_id, by_id)
         self.assertIn("US, EU, UK", by_id["video-minimax-h3-t2v"]["description"])
@@ -127,11 +143,50 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(proxy._resolve_video_workflow("minimax-h3")[0], "video-minimax-h3-t2v")
         self.assertEqual(proxy._resolve_video_workflow("minimax-h3-i2v")[0], "video-minimax-h3-i2v")
 
-    def test_ltx23_stays_callable(self) -> None:
-        self.assertEqual(proxy._resolve_video_workflow("ltx-2.3")[0], "video-ltx-2.3-distilled")
-        self.assertEqual(
-            proxy._resolve_video_workflow("video-ltx-2.3-distilled")[0], "video-ltx-2.3-distilled"
-        )
+    def test_retired_ltx23_names_resolve_to_ltx25(self) -> None:
+        # LTX-2.3 was retired; every old name must keep working by pointing at
+        # the LTX-2.5 workflow for its role. (name, expected workflow)
+        expected = {
+            "ltx-2.3": "video-ltx-2.5-t2v",
+            "ltx-2.3-distilled": "video-ltx-2.5-t2v",
+            "ltx-2.3-fast": "video-ltx-2.5-t2v",
+            "ltx-2.3-distilled-fast": "video-ltx-2.5-t2v",
+            "ltx-2.3-pure-distilled": "video-ltx-2.5-t2v",
+            "ltx-2.3-22b": "video-ltx-2.5-t2v",
+            "ltx-2.3-detail": "video-ltx-2.5-t2v",
+            "video-ltx-2.3-distilled": "video-ltx-2.5-t2v",
+            "video-ltx-2.3-pure-distilled": "video-ltx-2.5-t2v",
+            "video-ltx-2.3-detail": "video-ltx-2.5-t2v",
+            "ltx-2.3-long": "video-ltx-2.5-long",
+            "ltx-2.3-long-form": "video-ltx-2.5-long",
+            "video-ltx-2.3-long": "video-ltx-2.5-long",
+            "ltx-2.5-long": "video-ltx-2.5-long",
+            "video-fast": "video-ltx-2.5-t2v",
+            "video-long": "video-ltx-2.5-long",
+        }
+        for name, workflow in expected.items():
+            self.assertEqual(proxy._resolve_video_workflow(name)[0], workflow, name)
+
+    def test_no_ltx23_workflow_remains_in_config(self) -> None:
+        workflows = proxy.config["videos"]["workflows"]
+        self.assertEqual([w for w in workflows if "ltx-2.3" in w], [])
+
+    def test_long_workflow_graph_is_self_consistent(self) -> None:
+        graph = json.loads((ROOT / "workflows/videos/video-ltx-2.5-long.json").read_text())
+        meta = graph.pop("_meta")
+        for node_id, node in graph.items():
+            for value in node["inputs"].values():
+                if isinstance(value, list) and len(value) == 2 and isinstance(value[0], str):
+                    self.assertIn(value[0], graph, (node_id, value))
+        for key in ("prompt_node", "negative_prompt_node", "image_node", "image_strength_node",
+                    "save_node", "chunk_count_node", "chunk_length_node"):
+            self.assertIn(meta[key], graph, key)
+        for node_id in [*meta["size_node"], *meta["frame_rate_nodes"], *meta["seed_nodes"]]:
+            self.assertIn(node_id, graph, node_id)
+        files = {v for n in graph.values() for v in n["inputs"].values()
+                 if isinstance(v, str) and v.endswith(".safetensors")}
+        self.assertTrue(files)
+        self.assertTrue(all("ltx-2.5" in f for f in files), files)
 
     async def test_default_model_t2v_sets_64_multiple_size_and_frames(self) -> None:
         status, payload, graph = await self._create(
@@ -209,14 +264,38 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(graph["20"]["inputs"]["image"], "uploaded-ref.png")
         self.assertEqual(graph["9"]["inputs"]["prompt"], "x")
 
-    async def test_ltx23_input_reference_behavior_is_unchanged(self) -> None:
+    async def test_retired_ltx23_name_with_input_reference_uses_ltx25_i2v(self) -> None:
         status, payload, graph = await self._create(
             {"model": "ltx-2.3", "prompt": "x", "seconds": 2, "input_reference":
              "data:image/png;base64," + __import__("base64").b64encode(PNG).decode()}
         )
         self.assertEqual(status, 200, payload)
-        self.assertEqual(payload["model"], "video-ltx-2.3-distilled")
-        self.assertEqual(graph["9003"]["inputs"]["value"], 1.0)
+        self.assertEqual(payload["model"], "video-ltx-2.5-i2v")
+        self.assertEqual(graph["70"]["inputs"]["image"], "uploaded-ref.png")
+
+    async def test_long_workflow_sets_chunks_seed_and_first_frame(self) -> None:
+        status, payload, graph = await self._create(
+            {"model": "video-long", "prompt": "a long walk", "seconds": 32, "seed": 5}
+        )
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["model"], "video-ltx-2.5-long")
+        self.assertEqual(graph["1621"]["inputs"]["text"], "a long walk")
+        self.assertEqual(graph["1527"]["inputs"]["value"], 5)
+        length_sec, loops, total = proxy._long_form_chunks(32, 24)
+        self.assertEqual(graph["1583"]["inputs"]["value"], length_sec)
+        self.assertEqual(graph["1611"]["inputs"]["value"], loops)
+        self.assertAlmostEqual(total, 32, delta=0.5)
+        self.assertEqual(graph["1722"]["inputs"]["value"], 0)
+
+    async def test_long_workflow_i2v_pins_first_frame(self) -> None:
+        status, payload, graph = await self._create(
+            {"model": "ltx-2.3-long", "prompt": "x", "seconds": 12, "image_strength": 1.0,
+             "input_reference": "data:image/png;base64," + __import__("base64").b64encode(PNG).decode()}
+        )
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["model"], "video-ltx-2.5-long")
+        self.assertEqual(graph["444"]["inputs"]["image"], "uploaded-ref.png")
+        self.assertEqual(graph["1722"]["inputs"]["value"], 1.0)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
 schema_version: 1
 min_gateway_version: "0.1"
 version: "0.1.0"
-id: video.generate.ltx-2.3-detail
+id: video.generate.test-extensions
 intent: video.generate
-display_name: LTX 2.3 Detail
-description: Minimal video.generate contract bound to the LTX 2.3 detail ComfyUI workflow.
+display_name: Test fixture with workflow controls
+description: Test fixture. Exercises steps/stage1_cfg/stage2_cfg workflow controls; not a shipped workflow.
 source: local
 trusted: true
 inputs:
@@ -54,7 +54,7 @@ outputs:
     media_type: video/mp4
 bindings:
   comfyui:
-    workflow: workflows/video-ltx-2.3-detail.json
+    workflow: tests/fixtures/video_extensions/workflow.json
     map:
       prompt:
         - node: "5"

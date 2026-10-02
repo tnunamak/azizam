@@ -18,8 +18,8 @@ from gateway.video_extensions import (  # noqa: E402
     bind_video_workflow_extensions,
 )
 
-MANIFEST_PATH = ROOT / "manifests" / "workflows" / "video-ltx-2.3-distilled.yml"
-WORKFLOW_PATH = ROOT / "workflows" / "video-ltx-2.3-distilled.json"
+MANIFEST_PATH = ROOT / "tests" / "fixtures" / "video_extensions" / "manifest.yml"
+WORKFLOW_PATH = ROOT / "tests" / "fixtures" / "video_extensions" / "workflow.json"
 
 
 def _load_workflow() -> dict:
@@ -38,7 +38,7 @@ class TestVideoWorkflowExtensions(unittest.TestCase):
         original = copy.deepcopy(workflow)
         body = {
             "prompt": "top level prompt",
-            "model": "video-ltx-2.3-distilled",
+            "model": "test-extensions",
             "extensions": {
                 NS: {
                     "steps": 28,

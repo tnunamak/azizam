@@ -341,7 +341,7 @@ class RouteTests(unittest.TestCase):
         res = proxy.resolve_model_for_operation("image_edits", "image-edit-fast")
         self.assertEqual(res.effective_model, "flux2-klein-4b-edit")
         res = proxy.resolve_model_for_operation("videos", "video-fast")
-        self.assertEqual(res.effective_model, "video-ltx-2.3-pure-distilled")
+        self.assertEqual(res.effective_model, "video-ltx-2.5-t2v")
         res = proxy.resolve_model_for_operation("images", "flux2-klein-4b")
         self.assertFalse(res.is_openai_alias)
         with self.assertRaises(proxy.ModelCompatibilityError):
@@ -362,7 +362,7 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(proxy._resolve_audio_workflow("song")[0], "yue2-song")
         self.assertEqual(proxy._resolve_audio_workflow("ambient")[0], "sa3-small-sfx")
         self.assertEqual(proxy._resolve_video_workflow("sora-2")[0], "video-ltx-2.5-t2v")
-        self.assertEqual(proxy._resolve_video_workflow("video-long")[0], "video-ltx-2.3-long")
+        self.assertEqual(proxy._resolve_video_workflow("video-long")[0], "video-ltx-2.5-long")
 
 
 class _FakeTTSClient:

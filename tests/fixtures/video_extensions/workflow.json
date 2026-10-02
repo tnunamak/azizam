@@ -1,0 +1,84 @@
+{
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "A cinematic shot of a goldfish swimming in clear water"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "blurry, low quality, still frame, frames, watermark, overlay, titles, has blurbox, has subtitles"
+    }
+  },
+  "9005": {
+    "class_type": "INTConstant",
+    "inputs": {
+      "value": 1280
+    }
+  },
+  "9006": {
+    "class_type": "INTConstant",
+    "inputs": {
+      "value": 720
+    }
+  },
+  "10": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 121
+    }
+  },
+  "11": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 24
+    }
+  },
+  "12": {
+    "class_type": "PrimitiveFloat",
+    "inputs": {
+      "value": 24.0
+    }
+  },
+  "16": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 0
+    }
+  },
+  "32": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 0
+    }
+  },
+  "9003": {
+    "class_type": "PrimitiveFloat",
+    "inputs": {
+      "value": 0.0
+    }
+  },
+  "22": {
+    "class_type": "LTXVScheduler",
+    "inputs": {
+      "steps": 20,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "stretch": true,
+      "terminal": 0.1
+    }
+  },
+  "18": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "cfg": 4.0
+    }
+  },
+  "31": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "cfg": 1.0
+    }
+  }
+}
