@@ -29,7 +29,7 @@ import proxy  # noqa: E402
 import _fake_comfy_video as rr_fake  # noqa: E402
 import test_video_remix_replace as rr  # noqa: E402
 from test_video_remix_replace import RemixReplaceBase  # noqa: E402,F401
-from gateway import media_jobs, video_media_jobs  # noqa: E402
+from gateway import media_jobs, video_inputs, video_media_jobs  # noqa: E402
 
 
 SPEC_PATH = ROOT / "tests" / "fixtures" / "openai-openapi-responses.json"
@@ -256,6 +256,23 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
         self.assertEqual(r.status_code, 200, r.text)
         _conforms_to_video_resource(self, r.json())
         self.assertEqual(r.json()["remixed_from_video_id"], rr.SOURCE_ID)
+
+    def test_extension_and_storyboard_resources_conform(self) -> None:
+        """Extensions reuse the VideoResource shape; `seconds` is the stitched total."""
+        with patch.object(proxy.video_inputs, "probe_video", lambda *_a, **_k: video_inputs.VideoProbe(
+                fps=24.0, duration=8.0, frames=193, width=960, height=512, has_audio=True)):
+            r = self.client.post("/v1/videos/extensions",
+                                 json={"video": {"id": rr.SOURCE_ID}, "prompt": "and then it rains", "seconds": 8})
+        self.assertEqual(r.status_code, 200, r.text)
+        _conforms_to_video_resource(self, r.json())
+        self.assertEqual(r.json()["remixed_from_video_id"], rr.SOURCE_ID)
+        self.assertEqual(r.json()["seconds"], "16.042")
+        shots = self.client.post("/v1/videos", json={"model": "video-long", "shots": [
+            {"prompt": "a", "seconds": 4}, {"prompt": "b", "seconds": 4}]})
+        self.assertEqual(shots.status_code, 200, shots.text)
+        _conforms_to_video_resource(self, shots.json())
+        status = self.client.get(f"/v1/videos/{rr.NEW_ID}")
+        _conforms_to_video_resource(self, status.json())
 
     def test_edit_resources_conform(self) -> None:
         upload = self.client.post(

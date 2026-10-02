@@ -178,7 +178,6 @@ class ExtensionRouteTests(RemixReplaceBase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.tmp_db = patch.object(media_jobs, "DB_PATH", Path("/tmp/none"))  # replaced below
         import tempfile
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
