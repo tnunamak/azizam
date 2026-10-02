@@ -155,11 +155,21 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         workflows = proxy.config["videos"]["workflows"]
         self.assertEqual([w for w in workflows if "ltx-2.3" in w], [])
 
-    def test_long_workflow_is_built_in_code_and_has_no_template_file(self) -> None:
+    def test_long_workflow_is_built_in_code(self) -> None:
         cfg = proxy.config["videos"]["workflows"]["video-ltx-2.5-long"]
         self.assertEqual(cfg["builder"], "ltx25_chain")
         self.assertNotIn("file", cfg)
-        self.assertFalse((ROOT / "workflows/videos/video-ltx-2.5-long.json").exists())
+
+    def test_manifest_reference_graph_matches_the_builder(self) -> None:
+        """workflows/videos/video-ltx-2.5-long.json is the one-segment graph the
+        manifest binds. It must not drift from gateway/video_extend.py."""
+        from gateway import video_extend
+        stored = json.loads((ROOT / "workflows/videos/video-ltx-2.5-long.json").read_text())
+        stored.pop("_meta")
+        spec = video_extend.ChainSpec(
+            [video_extend.Segment("A cinematic shot of a serene scene with natural motion.", 193, 0)],
+            960, 512, 24.0, 42)
+        self.assertEqual(stored, video_extend.build_chain_graph(spec).graph)
 
     async def test_default_model_t2v_sets_64_multiple_size_and_frames(self) -> None:
         status, payload, graph = await self._create(

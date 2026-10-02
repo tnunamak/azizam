@@ -1,0 +1,57 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: video.generate.ltx-2.5-long
+intent: video.generate
+display_name: LTX 2.5 Long
+description: LTX 2.5 long video. The manifest binds the single-segment (8 s) reference graph; POST /v1/videos builds longer chains (shots, seconds past 10 s) and POST /v1/videos/extensions extends a video, both in code.
+source: local
+trusted: true
+inputs:
+  prompt:
+    type: string
+  negative_prompt:
+    type: string
+  width:
+    type: integer
+    minimum: 64
+    maximum: 1280
+  height:
+    type: integer
+    minimum: 64
+    maximum: 720
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/video-ltx-2.5-long.json
+    map:
+      prompt:
+        - node: s0_text
+          input: text
+      negative_prompt:
+        - node: neg
+          input: text
+      width:
+        - node: s0_vlat
+          input: width
+      height:
+        - node: s0_vlat
+          input: height
+      seed:
+        - node: s0_noise
+          input: noise_seed
+requires:
+  models:
+    - role: diffusion_model
+      path: diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors
+    - role: text_encoder
+      path: text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors
+    - role: vae
+      path: vae/ltx-2.5-video-vae-bf16.safetensors
+    - role: vae
+      path: vae/ltx-2.5-audio-vae-bf16.safetensors

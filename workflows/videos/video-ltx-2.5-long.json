@@ -1,0 +1,228 @@
+{
+  "unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ltx-2.5-video-vae-bf16.safetensors"
+    }
+  },
+  "avae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ltx-2.5-audio-vae-bf16.safetensors"
+    }
+  },
+  "clip": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+      "type": "ltxv",
+      "device": "default"
+    }
+  },
+  "neg": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "clip",
+        0
+      ],
+      "text": "text, subtitles, logo, still image, still video, no motion, static, frozen, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, glitches, watermark, signature, distorted sound, saturated sound"
+    }
+  },
+  "sampler": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler_ancestral"
+    }
+  },
+  "sigmas": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    }
+  },
+  "s0_text": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "clip",
+        0
+      ],
+      "text": "A cinematic shot of a serene scene with natural motion."
+    }
+  },
+  "s0_cond": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": [
+        "s0_text",
+        0
+      ],
+      "negative": [
+        "neg",
+        0
+      ],
+      "frame_rate": 24.0
+    }
+  },
+  "s0_vlat": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": 960,
+      "height": 512,
+      "length": 193,
+      "batch_size": 1
+    }
+  },
+  "s0_alat": {
+    "class_type": "LTXVEmptyLatentAudio",
+    "inputs": {
+      "frames_number": 193,
+      "frame_rate": 24,
+      "batch_size": 1,
+      "audio_vae": [
+        "avae",
+        0
+      ]
+    }
+  },
+  "s0_av": {
+    "class_type": "LTXVConcatAVLatent",
+    "inputs": {
+      "video_latent": [
+        "s0_vlat",
+        0
+      ],
+      "audio_latent": [
+        "s0_alat",
+        0
+      ]
+    }
+  },
+  "s0_guider": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": [
+        "unet",
+        0
+      ],
+      "positive": [
+        "s0_cond",
+        0
+      ],
+      "negative": [
+        "s0_cond",
+        1
+      ],
+      "cfg": 1.0
+    }
+  },
+  "s0_noise": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 42
+    }
+  },
+  "s0_sample": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "s0_noise",
+        0
+      ],
+      "guider": [
+        "s0_guider",
+        0
+      ],
+      "sampler": [
+        "sampler",
+        0
+      ],
+      "sigmas": [
+        "sigmas",
+        0
+      ],
+      "latent_image": [
+        "s0_av",
+        0
+      ]
+    }
+  },
+  "s0_sep": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": [
+        "s0_sample",
+        0
+      ]
+    }
+  },
+  "s0_decode": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "samples": [
+        "s0_sep",
+        0
+      ],
+      "vae": [
+        "vae",
+        0
+      ],
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 16
+    }
+  },
+  "s0_audio": {
+    "class_type": "LTXVAudioVAEDecode",
+    "inputs": {
+      "samples": [
+        "s0_sep",
+        1
+      ],
+      "audio_vae": [
+        "avae",
+        0
+      ]
+    }
+  },
+  "create": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "s0_decode",
+        0
+      ],
+      "fps": 24.0,
+      "audio": [
+        "s0_audio",
+        0
+      ]
+    }
+  },
+  "save": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "create",
+        0
+      ],
+      "filename_prefix": "video/ltx-2.5-long",
+      "format": "mp4",
+      "codec": "auto"
+    }
+  },
+  "_meta": {
+    "name": "video-ltx-2.5-long",
+    "description": "Single-segment (8 s) reference graph of the LTX-2.5 long-video chain, for manifest runs. /v1/videos builds the real multi-segment graph in code (gateway/video_extend.py); a test keeps this file in sync with the builder.",
+    "frame_rate": 24
+  }
+}
