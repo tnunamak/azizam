@@ -949,7 +949,8 @@ an exact model or settings. Unknown names pass through unchanged.
 | | `tts-quality` | OmniVoice first until the listening test; Kokoro is the second candidate | `tts-1-hd` |
 | STT | `stt` | Parakeet TDT 0.6B v3 | `whisper*` |
 | | `stt-realtime` | Nemotron streaming (audio.cpp, GPU0), then Parakeet | `gpt-4o-mini-transcribe*` |
-| | `stt-quality` | Parakeet first; Canary 180M Flash is the second candidate | `gpt-4o-transcribe*`, `gpt-4o-transcribe-diarize` |
+| | `stt-quality` | Parakeet first; Canary 180M Flash is the second candidate | `gpt-4o-transcribe*` |
+| | `stt-diarize` | Nemotron 3 Diarization (CPU) for speakers + Parakeet for words; no fallback engine | `gpt-4o-transcribe-diarize*`, `*transcribe-diarize*` |
 | Translations | -- | not supported by the local STT backend (clear 400) | |
 | Music / SFX | `music` | `ace-step-1.5-xl-turbo` | |
 | | `song` | `yue2-song` (vocals; license CC BY-NC) | |
@@ -958,7 +959,7 @@ an exact model or settings. Unknown names pass through unchanged.
 TTS and STT aliases resolve through **engines**: each tier lists engines in
 order and the first one whose service is deployed wins. Engine ids
 (`omnivoice`, `supertonic`, `kokoro`, `parakeet`, `nemotron-streaming`,
-`canary`) are valid `model` values too; an engine that is not deployed returns
+`canary`, `nemotron-diarize`) are valid `model` values too; an engine that is not deployed returns
 `400 model_not_deployed`. When an alias uses a non-OmniVoice engine, OpenAI
 voice names are mapped to that engine's closest voice (`voice_map`; an
 engine-native voice name is passed through). The tier order is a
@@ -967,7 +968,7 @@ listening test.
 
 **Starting engines.** An engine whose service has a `systemd` lifecycle is
 started on demand (one health check, then `systemctl --user start` and a health
-poll). `supertonic-tts`, `kokoro-tts`, `nemotron-stt` and `canary-stt` are
+poll). `supertonic-tts`, `kokoro-tts`, `nemotron-stt`, `canary-stt` and `diarize-stt` are
 operator-owned user units; the gateway only starts them.
 
 **Streaming speech.** For engines marked `streaming: true`,
@@ -984,6 +985,36 @@ other engines send the whole text in one delta. The gateway reads the `model`
 field before the file to choose the service, so send `model` first (OpenAI SDKs
 do); a request whose `model` names an engine on another service but arrives after
 more than 8 MiB of audio gets `400 stt_model_field_order`.
+
+**Speaker diarization.** `model: "gpt-4o-transcribe-diarize"` (or `stt-diarize`) on
+`POST /v1/audio/transcriptions` follows OpenAI's request and response shape, so
+the OpenAI SDK works unchanged:
+
+```python
+r = client.audio.transcriptions.create(
+    model="gpt-4o-transcribe-diarize", file=open("meeting.wav", "rb"),
+    response_format="diarized_json", chunking_strategy="auto")
+for s in r.segments:            # s.speaker is "A", "B", ... in order of first appearance
+    print(s.speaker, s.start, s.end, s.text)
+```
+
+- `response_format`: `diarized_json` (speaker segments; `usage` is the audio duration in seconds), `json` or `text` (plain
+  text). `srt`, `vtt` and `verbose_json` are a 400, as at OpenAI. `prompt`, `include[]` and `timestamp_granularities[]` are
+  a 400 `unsupported_parameter`, as at OpenAI. `language` and `temperature` are accepted and ignored.
+- `chunking_strategy`: `"auto"` or `{"type": "server_vad"}` is accepted, and not required (OpenAI needs it above 30 s).
+  Any length up to 4 h works: the service cuts the audio at quiet points itself and ignores VAD tuning values.
+- `stream=true` with `diarized_json` sends, per segment, `transcript.text.delta` (with `segment_id`) then
+  `transcript.text.segment`, and ends with `transcript.text.done` and `[DONE]`. The first event arrives after the first
+  window (up to 52 s of audio) is transcribed.
+- `known_speaker_names[]` + `known_speaker_references[]` (1 to 4, same count, base64 data URLs of 2 to 10 s each) are
+  supported. The service puts each sample in front of the audio so the diarizer has met the voice, then labels that
+  speaker with the name. Other speakers keep the letters `A`, `B`, ... (skipping a letter a caller used as a name). A
+  wrong count, too many, a bad data URL or a sample outside 2 to 10 s is a 400 `invalid_known_speakers` /
+  `invalid_known_speaker_reference`.
+- Speakers per file: up to 8. Overlapping speech is attributed to one speaker per word (the strongest one).
+- If the engine is not deployed the answer is `400 model_not_deployed`, never plain text without speakers.
+- Cost: CPU only (about 1.5 GB RAM, unit exits after 15 min idle) plus the always-on Parakeet service for the words.
+  About 20 s of wall time per 5 min of audio and 80 s per 25 min, measured through the gateway.
 
 Discovery and dry run (no model is loaded or run):
 
