@@ -7,6 +7,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -318,6 +319,148 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(err.status_code, 502)
         body = json.loads(err.body.decode("utf-8"))
         self.assertIn("Image Seamless Texture node 45: 0.7", body["error"]["message"])
+
+    async def test_timeout_cancels_prompt_and_reports_queue_position(self) -> None:
+        class _Response:
+            def __init__(self, payload: dict[str, object], status_code: int = 200) -> None:
+                self._payload = payload
+                self.status_code = status_code
+                self.text = json.dumps(payload)
+
+            def json(self) -> dict[str, object]:
+                return self._payload
+
+        class _Client:
+            def __init__(self) -> None:
+                self.cancelled: list[str] = []
+
+            async def post(self, url: str, *_args: object, **_kwargs: object) -> _Response:
+                if url.endswith("/prompt"):
+                    return _Response({"prompt_id": "prompt-slow"})
+                if url.endswith("/api/jobs/prompt-slow/cancel"):
+                    self.cancelled.append("prompt-slow")
+                    return _Response({"cancelled": True})
+                raise AssertionError(url)
+
+            async def get(self, url: str, *_args: object, **_kwargs: object) -> _Response:
+                if url.endswith("/queue"):
+                    return _Response(
+                        {
+                            "queue_running": [],
+                            "queue_pending": [
+                                [1, "other"],
+                                [2, "prompt-slow"],
+                            ],
+                        }
+                    )
+                return _Response({})
+
+        client = _Client()
+        with patch.object(proxy, "COMFY_TIMEOUT", 0):
+            err, images = await proxy._comfy_run_round(
+                client,  # type: ignore[arg-type]
+                {},
+                {},
+                "test timeout",
+            )
+
+        self.assertEqual(images, [])
+        self.assertEqual(client.cancelled, ["prompt-slow"])
+        self.assertIsNotNone(err)
+        assert err is not None
+        self.assertEqual(err.status_code, 504)
+        body = json.loads(err.body.decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "image_generation_timeout")
+        self.assertEqual(body["error"]["queue_position"], 2)
+
+    async def test_client_disconnect_cancels_prompt(self) -> None:
+        class _Response:
+            status_code = 200
+            text = "{}"
+
+            def __init__(self, payload: dict[str, object]) -> None:
+                self._payload = payload
+
+            def json(self) -> dict[str, object]:
+                return self._payload
+
+        class _Client:
+            def __init__(self) -> None:
+                self.cancelled: list[str] = []
+
+            async def post(self, url: str, *_args: object, **_kwargs: object) -> _Response:
+                if url.endswith("/prompt"):
+                    return _Response({"prompt_id": "prompt-disconnect"})
+                if url.endswith("/api/jobs/prompt-disconnect/cancel"):
+                    self.cancelled.append("prompt-disconnect")
+                    return _Response({"cancelled": True})
+                raise AssertionError(url)
+
+            async def get(self, *_args: object, **_kwargs: object) -> _Response:
+                return _Response({})
+
+        class _Request:
+            async def is_disconnected(self) -> bool:
+                return True
+
+        client = _Client()
+        with patch.object(proxy, "COMFY_TIMEOUT", 1):
+            err, images = await proxy._comfy_run_round(
+                client,  # type: ignore[arg-type]
+                {},
+                {},
+                "test disconnect",
+                request=_Request(),  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(images, [])
+        self.assertEqual(client.cancelled, ["prompt-disconnect"])
+        self.assertIsNotNone(err)
+        assert err is not None
+        self.assertEqual(err.status_code, 499)
+        body = json.loads(err.body.decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "image_client_disconnected")
+
+    async def test_task_cancellation_cancels_prompt_and_reraises(self) -> None:
+        class _Response:
+            status_code = 200
+            text = "{}"
+
+            def __init__(self, payload: dict[str, object]) -> None:
+                self._payload = payload
+
+            def json(self) -> dict[str, object]:
+                return self._payload
+
+        class _Client:
+            def __init__(self) -> None:
+                self.cancelled: list[str] = []
+
+            async def post(self, url: str, *_args: object, **_kwargs: object) -> _Response:
+                if url.endswith("/prompt"):
+                    return _Response({"prompt_id": "prompt-cancelled"})
+                if url.endswith("/api/jobs/prompt-cancelled/cancel"):
+                    self.cancelled.append("prompt-cancelled")
+                    return _Response({"cancelled": True})
+                raise AssertionError(url)
+
+            async def get(self, *_args: object, **_kwargs: object) -> _Response:
+                return _Response({})
+
+        async def raise_cancelled(_delay: float) -> None:
+            raise proxy.asyncio.CancelledError()
+
+        client = _Client()
+        with patch.object(proxy, "COMFY_TIMEOUT", 1), patch.object(proxy.asyncio, "sleep", raise_cancelled):
+            with self.assertRaises(proxy.asyncio.CancelledError):
+                await proxy._comfy_run_round(
+                    client,  # type: ignore[arg-type]
+                    {},
+                    {},
+                    "test task cancellation",
+                )
+
+        self.assertEqual(client.cancelled, ["prompt-cancelled"])
 
 
 class TestComfyExecutionErrorParsing(unittest.TestCase):
