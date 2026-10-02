@@ -51,10 +51,7 @@ builds the graph in code; `proxy.py` routes, validates and records.
      latent store that survives a ComfyUI restart if it must serve extensions of
      old videos. Extending an arbitrary mp4 would still fall back to the frame
      window.
-   - `h3_multishot` (later): MiniMax H3 with motion-context latent prepend. The
-     community reports the best continuation there. License is not a blocker for
-     this personal stack. The Xid 109 crashes were an undervolt problem fixed on
-     2026-10-01 (+100 MHz offset): re-test before trusting H3 for long chains.
+   - `h3_chain` (built, see below): MiniMax H3 with the H3 Motion Context nodes.
 2. Per-segment retry and resume: store each finished segment (mp4 or latents) so
    a failure at segment 5 keeps segments 1 to 4 and a retry continues from there.
    The first pass keeps one job per request and reports where it stopped; the
@@ -84,7 +81,50 @@ builds the graph in code; `proxy.py` routes, validates and records.
 | Mid-chain failure info | Done (segment, counts); no partial video, no resume |
 | Pluggable engines | Registry and routes done; one engine |
 | Latent continuity | Not built (spike shows it works video-only; with audio via core nodes) |
-| H3 engine | Not built; not tested |
+| H3 engine | Built (`h3_chain`); see "H3 engine" |
 | Audio continuity | Not built |
 | Ledger beyond text, auto rest-beat splitting | Not built |
 | Cap from measurement | Not done |
+
+## H3 engine (`h3_chain`)
+
+`gateway/video_extend_h3.py`. Same routes, planner shape, cap, record and failure info as the LTX
+engine; the engine interface (`video_extend.ChainEngine`) carries what differs per model: frame
+grid, context window, accepted options, minimum shot length, source checks.
+
+Why this method (research 2026-10-02, `ai/research/video-generation/long-video-api-should-be-explicit-extend-primitive-...`
+and the r/StableDiffusion and r/comfyui threads of September and October 2026):
+
+- H3 has no native extend. The community pins the tail of the previous clip at the head of the
+  next one (never denoised) and cuts it away. ComfyUI 0.34+ has `MiniMaxH3AddGuide` for this, but
+  it takes decoded frames, so every join costs a decode, a resize and a VAE encode, and the sound
+  restarts.
+- The widely used fix is to slice the tail straight out of the previous latent (picture and
+  sound), which skips the round trip, and to put the pinned sound on the new clip's own timeline
+  so it ends at the join. Several packs do this (Motion Context, Latent Continuation, the H3
+  Multishot packs, obvpm timeline). `ComfyUI-H3-Multishot` is 42,000 lines with GGUF patches and a
+  remote-encode module; it was not installed. `ComfyUI-H3-Motion-Context` is about 1,500 lines of
+  node code, a small API surface, and checks ComfyUI's layout arithmetic before the first render.
+- Decoded-frame chaining degrades quickly ("photocopy" effect, 5 to 7 clips); the community also
+  reports the latent path "is not a world model": identity needs references and prompts.
+  So: one second of context, a prompt that holds the closing framing, and a cap.
+
+Pinned: `NikoDemon80/ComfyUI-H3-Motion-Context` 0.6.2, commit
+`5335715abe54c1a9bfbe3494da29aae3e8635ce3` (GPL-3.0; personal use), in
+`ComfyUI/custom_nodes/ComfyUI-H3-Motion-Context` at that commit. No new Python packages (uses
+torch, torchaudio, safetensors and aiohttp from ComfyUI's venv). It adds two HTTP routes
+(`/h3_motion_context/slot_exists` and `/clear_latents`, same-origin checked, limited to numbered
+`.safetensors` files under ComfyUI's output folder) that the gateway never calls; the graphs use
+only the `MiniMaxH3MotionContext` and `MiniMaxH3MotionContextTrim` nodes.
+
+Graph per segment: `MiniMaxH3ImageToVideo` (prompt, empty AV latent of `context + new` frames) ->
+`MiniMaxH3MotionContext` (`context_latent` = previous `SamplerCustomAdvanced` output; for the first
+added segment of an extension, `context_frames` + `context_audio` from the source video) ->
+`BasicGuider` -> `SamplerCustomAdvanced` (8-step turbo LoRA, `res_multistep`, the settings
+validated for single clips) -> `VAEDecode` + `VAEDecodeAudio` -> `MiniMaxH3MotionContextTrim`
+(cuts the pinned head from picture and sound, makes the sound exactly as long as the picture).
+
+Not built: latents persisted per video, so an extension of an old video also takes the lossless
+path (a latent is about 5 MB per clip; needs a store that survives a ComfyUI restart);
+re-rolling one segment without re-rendering the later ones; reference images re-injected every
+segment for identity.

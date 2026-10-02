@@ -479,7 +479,7 @@ The gateway peak-normalizes it to -1 dBFS (the raw model output is quiet; set
 
 Video generation. The default model is LTX-2.5 (`ltx-2.5`, also `sora-2`, `sora-2-pro`,
 and any request without `model`). MiniMax H3 is `minimax-h3`. Clips longer than 10 s, storyboards
-(`shots`) and extensions use the long-video chain (`ltx-2.5-long`, `video-long`; see "Long video"). LTX-2.3 is retired: every `ltx-2.3*` name still works and
+(`shots`) and extensions use the long-video chain of the model (`ltx-2.5-long`, `video-long`, `h3-long`; see "Long video"). LTX-2.3 is retired: every `ltx-2.3*` name still works and
 points at the LTX-2.5 workflow for its role (see the table below).
 
 ```bash
@@ -622,6 +622,39 @@ Strategy that works with these limits:
   Use it to restate what must not change (character, clothing, place, light). Its effect is not
   measured; treat it as a prompt aid, not a guarantee.
 - Past about 40 s every system drifts (backgrounds first). Finish and cut, or start a new video.
+
+#### Long video with MiniMax H3
+
+The same three routes work with `model: minimax-h3` (also `h3`, `minimax-h3-i2v`, `h3-long`,
+`minimax-h3-long`): `shots[]`, `seconds` above 10 s, and `POST /v1/videos/extensions`. The
+resource, the cap, the failure error and the progress are the same as for LTX. What differs:
+
+- Native audio. Each segment makes its own sound; the sound of the last second is pinned to the
+  next segment, so the soundtrack continues instead of restarting. Put sound cues after an
+  `Audio:` paragraph in each shot prompt, as for a single H3 clip.
+- Output is 960x544 by default (up to 1344x768, multiples of 32), 24 fps. A segment is at most
+  10 s (`chain_segment_seconds` on the workflow). Frames are on the `17k + 5` grid (first
+  segment) and grow in steps of 17 (added segments), so lengths can differ from the request by
+  up to about 0.4 s (`X-Duration-Adjusted`). A shot is at least 2 s.
+- Continuity inside one request is lossless: the tail of the previous segment's latent (22
+  frames and the last second of sound) is pinned to the head of the next one, with no decode and
+  no re-encode. When you extend an existing video there is no latent, so the decoded last
+  frames and audio are encoded once; that one join is lossy, the joins after it are not.
+- `context_seconds` snaps down to 5, 22, 39 or 56 frames (0.2, 0.9, 1.6 or 2.3 s). The default
+  of 1 s is 22 frames. The pinned head is cut from the result, so it costs render time but no
+  length. `context_strength` does not exist for H3 (the pinned rows are never denoised); sending
+  it returns `400 invalid_workflow_extension`. `negative_prompt` is ignored, as for single H3 clips.
+- Extending: a video made by H3 is extended by H3 when you send no `model`; a video made by
+  another model keeps the default extender (`ltx-2.5-long`). The source must be 24 fps
+  (`400 video_fps_unsupported` otherwise).
+- Write each shot so it opens by holding the closing framing of the shot before it for about
+  two seconds (give the held subject a small motion, a breath or a glance), then makes the
+  change. A prompt that opens on a different arrangement of people renders as a sum of both.
+  The model has no memory beyond the pinned second: restate what must not change in the prompt
+  or in `state_ledger`.
+- License: the MiniMax H3 Community License excludes use in the US, EU, UK and South Korea
+  (accepted for this personal stack).
+- Needs the `ComfyUI-H3-Motion-Context` custom node (pinned commit in `docs/long-video-design.md`).
 
 ### Remix and character replace
 
@@ -1214,6 +1247,7 @@ an exact model or settings. Unknown names pass through unchanged.
 | Video | `video` | `video-ltx-2.5-t2v`; `input_reference` switches to image-to-video | `sora-2`, `sora-2-pro`, `sora*` |
 | | `video-fast` | `video-ltx-2.5-t2v` (same graph as `video`) | |
 | | `video-long` | `video-ltx-2.5-long` (code-built chain, up to `videos.max_total_seconds`, default 40 s) | |
+| | `h3-long`, `minimax-h3-long` | `video-minimax-h3-long` (code-built H3 chain, same cap; `minimax-h3` itself also chains past 10 s) | |
 | | `video-remix` | `video-bernini-r-remix`; needs `extensions...source_video`; also what `/v1/videos/{id}/remix` runs | |
 | | `character-replace` | `video-scail-2-replace`; needs `extensions...source_video` and `reference_image` | |
 | TTS | `tts` | Chatterbox Turbo (GPU0, on demand), then OmniVoice. The 13 OpenAI voice names are fixed cloned identities, and `voice: {"id": "voice_..."}` selects a user-created voice | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
