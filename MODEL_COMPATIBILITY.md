@@ -50,7 +50,7 @@ endpoint.
 `proxy_config.yml` `model_aliases:` is the single place that decides what a
 convenience model name means, for every API (chat, embeddings, images, image
 edits, videos, speech, transcriptions, audio generate). It has two layers:
-stable names such as `fast`, `image`, `tts-realtime` (which never change
+stable names such as `fast`, `image`, `tts-fast` (which never change
 meaning) and ordered globs for OpenAI names (`gpt-4o-mini*` -> `fast`). The
 resolver runs before LiteLLM and before the media routes, so policy and
 receipts see the concrete target. Full table and discovery endpoints:

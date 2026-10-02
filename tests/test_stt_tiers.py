@@ -21,7 +21,7 @@ from tests.speech_tier_helpers import HAVE_FFMPEG, SttCase, _Chunks, _multipart,
 class SttServiceSelectionTests(SttCase):
     def test_engine_alias_selects_its_own_service_and_model(self) -> None:
         seen = self._json_upstream()
-        resp = self._post([("model", "stt-realtime")])
+        resp = self._post([("model", "stt-fast")])
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual(seen[0].url.port, 8012)
         # Plain requests use the offline-mode model id (fastest final text).
@@ -44,12 +44,12 @@ class SttServiceSelectionTests(SttCase):
 
     def test_model_after_a_small_file_still_selects_the_service(self) -> None:
         seen = self._json_upstream()
-        self.assertEqual(self._post([("model", "stt-realtime")], file_first=True).status_code, 200)
+        self.assertEqual(self._post([("model", "stt-fast")], file_first=True).status_code, 200)
         self.assertEqual(seen[0].url.port, 8012)
 
     def test_model_hidden_behind_a_huge_file_is_a_clear_400_not_a_wrong_engine(self) -> None:
         self._json_upstream()
-        body, ctype = _multipart([("model", "stt-realtime")], b"A" * 20000, file_first=True)
+        body, ctype = _multipart([("model", "stt-fast")], b"A" * 20000, file_first=True)
         messages = [
             {"type": "http.request", "body": body[i : i + 1000], "more_body": i + 1000 < len(body)}
             for i in range(0, len(body), 1000)
@@ -72,7 +72,7 @@ class SttServiceSelectionTests(SttCase):
     def test_down_engine_is_started_through_its_lifecycle_driver(self) -> None:
         self.health.return_value = False
         self._json_upstream()
-        self.assertEqual(self._post([("model", "stt-realtime")]).status_code, 200)
+        self.assertEqual(self._post([("model", "stt-fast")]).status_code, 200)
         self.ensure.assert_awaited_once_with("stt-nemotron", None)
 
     def test_default_service_with_external_lifecycle_is_not_probed(self) -> None:
@@ -83,7 +83,7 @@ class SttServiceSelectionTests(SttCase):
     def test_engine_that_will_not_start_is_a_503(self) -> None:
         self.health.return_value = False
         self.ensure.return_value = False
-        resp = self._post([("model", "stt-realtime")])
+        resp = self._post([("model", "stt-fast")])
         self.assertEqual(resp.status_code, 503)
         self.assertEqual(resp.json()["error"]["code"], "backend_unavailable")
 
@@ -103,7 +103,7 @@ class SttStreamingTests(SttCase):
             b"data: [DONE]\n\n",
         ]
         seen = self.use_upstream(lambda r: httpx.Response(200, stream=_Chunks(events), headers={"content-type": "text/event-stream"}))
-        resp = self._post([("model", "stt-realtime"), ("stream", "true")])
+        resp = self._post([("model", "stt-fast"), ("stream", "true")])
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.headers["content-type"].startswith("text/event-stream"))
         self.assertEqual(resp.content, b"".join(events))
@@ -114,12 +114,12 @@ class SttStreamingTests(SttCase):
 
     def test_a_streamed_response_releases_its_workspace_and_lease_when_the_body_ends(self) -> None:
         self.use_upstream(lambda r: httpx.Response(200, stream=_Chunks([b'data: {"type":"transcript.text.done","text":"x"}\n\n'])))
-        self.assertEqual(self._post([("model", "stt-realtime"), ("stream", "true")]).status_code, 200)
+        self.assertEqual(self._post([("model", "stt-fast"), ("stream", "true")]).status_code, 200)
         self.assertEqual(list(Path(self.tmp.name).glob("*")), [])
 
     def test_engine_error_before_streaming_is_a_normal_response(self) -> None:
         self.use_upstream(lambda r: httpx.Response(500, json={"error": {"message": "boom"}}))
-        resp = self._post([("model", "stt-realtime"), ("stream", "true")])
+        resp = self._post([("model", "stt-fast"), ("stream", "true")])
         self.assertEqual(resp.status_code, 500)
 
     def test_engine_without_streaming_answers_stream_true_as_one_delta(self) -> None:
@@ -134,7 +134,7 @@ class SttStreamingTests(SttCase):
     @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg is required")
     def test_audio_cpp_engines_receive_16khz_mono_wav_whatever_the_upload(self) -> None:
         seen = self.use_upstream(lambda r: httpx.Response(200, json={"text": "ok"}))
-        resp = self._post([("model", "stt-realtime")], audio=_wav_bytes(44100, 2, 0.6))
+        resp = self._post([("model", "stt-fast")], audio=_wav_bytes(44100, 2, 0.6))
         self.assertEqual(resp.status_code, 200, resp.text)
         payload = seen[0].content
         riff = payload[payload.index(b"RIFF"):]
@@ -144,7 +144,7 @@ class SttStreamingTests(SttCase):
     @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg is required")
     def test_a_streamed_request_also_gets_the_converted_wav(self) -> None:
         seen = self.use_upstream(lambda r: httpx.Response(200, stream=_Chunks([b'data: {"type":"transcript.text.done","text":"x"}\n\n'])))
-        resp = self._post([("model", "stt-realtime"), ("stream", "true")], audio=_wav_bytes(48000, 2, 0.4))
+        resp = self._post([("model", "stt-fast"), ("stream", "true")], audio=_wav_bytes(48000, 2, 0.4))
         self.assertEqual(resp.status_code, 200)
         riff = seen[0].content[seen[0].content.index(b"RIFF"):]
         self.assertEqual(struct.unpack("<HI", riff[22:28]), (1, 16000))

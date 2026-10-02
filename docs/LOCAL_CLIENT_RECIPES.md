@@ -1017,10 +1017,10 @@ an exact model or settings. Unknown names pass through unchanged.
 | | `video-remix` | `video-bernini-r-remix`; needs `extensions...source_video`; also what `/v1/videos/{id}/remix` runs | |
 | | `character-replace` | `video-scail-2-replace`; needs `extensions...source_video` and `reference_image` | |
 | TTS | `tts` | OmniVoice (OpenAI voice names are fixed cloned identities) | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
-| | `tts-realtime` | Supertonic (audio.cpp, GPU0), then OmniVoice | none (point `tts-1` here to make it the fast tier) |
+| | `tts-fast` | Supertonic (audio.cpp, GPU0), then OmniVoice | none (point `tts-1` here to make it the fast tier) |
 | | `tts-quality` | OmniVoice first until the listening test; Kokoro is the second candidate | `tts-1-hd` |
 | STT | `stt` | Parakeet TDT 0.6B v3 | `whisper*` |
-| | `stt-realtime` | Nemotron streaming (audio.cpp, GPU0), then Parakeet | `gpt-4o-mini-transcribe*` |
+| | `stt-fast` | Nemotron streaming (audio.cpp, GPU0), then Parakeet | `gpt-4o-mini-transcribe*` |
 | | `stt-quality` | Parakeet first; Canary 180M Flash is the second candidate | `gpt-4o-transcribe*` |
 | | `stt-diarize` | Nemotron 3 Diarization (CPU) for speakers + Parakeet for words; no fallback engine | `gpt-4o-transcribe-diarize*`, `*transcribe-diarize*` |
 | Translations | -- | not supported by the local STT backend (clear 400) | |

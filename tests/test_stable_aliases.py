@@ -45,8 +45,8 @@ TOY = {
             "a": {"service": "tts", "model": "model-a"},
             "b": {"service": "tts-b", "model": "model-b"},
         },
-        "stable": {"tts": ["a"], "tts-realtime": ["b", "a"]},
-        "openai": [{"match": "tts-1", "to": "tts-realtime"}],
+        "stable": {"tts": ["a"], "tts-fast": ["b", "a"]},
+        "openai": [{"match": "tts-1", "to": "tts-fast"}],
     },
 }
 
@@ -78,7 +78,7 @@ class ResolverTests(unittest.TestCase):
         self.assertEqual(sa.resolve_alias(TOY, "completions", "gpt-4o").target, "default")
 
     def test_engine_list_picks_first_deployed_and_records_skips(self):
-        res = sa.resolve_alias(TOY, "speech", "tts-realtime", engine_available=_only("a"))
+        res = sa.resolve_alias(TOY, "speech", "tts-fast", engine_available=_only("a"))
         self.assertEqual((res.engine, res.service, res.upstream_model), ("a", "tts", "model-a"))
         self.assertEqual(res.skipped_engines, ("b",))
         res = sa.resolve_alias(TOY, "speech", "tts-1", engine_available=_all_up)
@@ -115,8 +115,8 @@ class ResolverTests(unittest.TestCase):
     def test_describe_reports_resolution_candidates_and_engine_state(self):
         view = sa.describe_aliases(TOY, engine_available=_only("a"))
         rows = {r["alias"]: r for r in view["speech"]["stable"]}
-        self.assertEqual(rows["tts-realtime"]["resolves_to"], "a")
-        self.assertEqual(rows["tts-realtime"]["candidates"], ["b", "a"])
+        self.assertEqual(rows["tts-fast"]["resolves_to"], "a")
+        self.assertEqual(rows["tts-fast"]["candidates"], ["b", "a"])
         engines = {e["engine"]: e["deployed"] for e in view["speech"]["engines"]}
         self.assertEqual(engines, {"a": True, "b": False})
         self.assertEqual(view["chat"]["openai"][0], {"match": "gpt-oss*", "passthrough": True})
@@ -151,8 +151,8 @@ class ShippedConfigTests(unittest.TestCase):
             "images": {"image", "image-fast"},
             "image_edits": {"image", "image-edit", "image-fast", "image-edit-fast"},
             "videos": {"video", "video-fast", "video-long"},
-            "speech": {"tts", "tts-realtime", "tts-quality"},
-            "transcriptions": {"stt", "stt-realtime", "stt-quality"},
+            "speech": {"tts", "tts-fast", "tts-quality"},
+            "transcriptions": {"stt", "stt-fast", "stt-quality"},
             "audio_generate": {"music", "song", "sfx"},
         }
         for op, names in expected.items():
@@ -223,9 +223,9 @@ class ShippedConfigTests(unittest.TestCase):
     def test_speech_and_transcription_names_with_current_deployment(self):
         up = {"speech": _only("omnivoice"), "transcriptions": _only("parakeet")}
         for op, names in {
-            "speech": ["tts-1", "tts-1-hd", "gpt-4o-mini-tts", "gpt-4o-tts", "tts", "tts-realtime", "tts-quality", "omnivoice"],
+            "speech": ["tts-1", "tts-1-hd", "gpt-4o-mini-tts", "gpt-4o-tts", "tts", "tts-fast", "tts-quality", "omnivoice"],
             "transcriptions": ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe",
-                               "stt", "stt-realtime", "stt-quality", "parakeet"],
+                               "stt", "stt-fast", "stt-quality", "parakeet"],
         }.items():
             for name in names:
                 res = sa.resolve_alias(ALIASES, op, name, engine_available=up[op])
@@ -245,8 +245,8 @@ class ShippedConfigTests(unittest.TestCase):
         res = sa.resolve_alias(ALIASES, "transcriptions", "gpt-4o-transcribe", engine_available=_all_up)
         self.assertEqual(res.engine, "parakeet")
 
-    def test_realtime_tiers_split_when_their_engine_is_deployed(self):
-        res = sa.resolve_alias(ALIASES, "speech", "tts-realtime", engine_available=_all_up)
+    def test_fast_tiers_split_when_their_engine_is_deployed(self):
+        res = sa.resolve_alias(ALIASES, "speech", "tts-fast", engine_available=_all_up)
         self.assertEqual(res.engine, "supertonic")
         # Until Tim's blind listening test, the plain and quality names stay on OmniVoice,
         # and so does tts-1 (Daisy sends it and keeps its cloned voice).
@@ -255,7 +255,7 @@ class ShippedConfigTests(unittest.TestCase):
             self.assertEqual(res.engine, "omnivoice", name)
         res = sa.resolve_alias(ALIASES, "speech", "kokoro", engine_available=_all_up)
         self.assertEqual(res.engine, "kokoro")
-        res = sa.resolve_alias(ALIASES, "transcriptions", "stt-realtime", engine_available=_all_up)
+        res = sa.resolve_alias(ALIASES, "transcriptions", "stt-fast", engine_available=_all_up)
         self.assertEqual(res.engine, "nemotron-streaming")
 
     def test_gpt_oss_style_ids_stay_on_their_own_path(self):
@@ -267,7 +267,7 @@ class ShippedConfigTests(unittest.TestCase):
         by_model = {(c.intent, c.model): c for c in caps}
         fast = by_model[("chat.completions", "fast")]
         self.assertIn("resolves_to:default-fast", fast.tags)
-        tts = by_model[("speech.synthesis", "tts-realtime")]
+        tts = by_model[("speech.synthesis", "tts-fast")]
         self.assertIn("resolves_to:omnivoice", tts.tags)
         self.assertIn("engine:omnivoice", tts.tags)
         self.assertEqual(tts.backend, "tts")
@@ -346,17 +346,17 @@ class RouteTests(unittest.TestCase):
         speech = resp.json()["operations"]["speech"]
         rows = {r["alias"]: r for r in speech["stable"]}
         self.assertEqual(rows["tts"]["resolves_to"], "omnivoice")
-        self.assertEqual(rows["tts-realtime"]["candidates"], ["supertonic", "omnivoice"])
+        self.assertEqual(rows["tts-fast"]["candidates"], ["supertonic", "omnivoice"])
         engines = {e["engine"]: e["deployed"] for e in speech["engines"]}
         self.assertTrue(engines["omnivoice"])
         self.assertTrue(engines["supertonic"])
-        self.assertEqual(rows["tts-realtime"]["resolves_to"], "supertonic")
+        self.assertEqual(rows["tts-fast"]["resolves_to"], "supertonic")
         self.assertEqual(rows["tts-quality"]["resolves_to"], "omnivoice")
         with self._without_service("tts-supertonic"):
             resp = self.client.get("/gateway/v1/aliases", params={"operation": "speech"})
         rows = {r["alias"]: r for r in resp.json()["operations"]["speech"]["stable"]}
-        self.assertEqual(rows["tts-realtime"]["resolves_to"], "omnivoice")
-        self.assertEqual(rows["tts-realtime"]["skipped_engines"], ["supertonic"])
+        self.assertEqual(rows["tts-fast"]["resolves_to"], "omnivoice")
+        self.assertEqual(rows["tts-fast"]["skipped_engines"], ["supertonic"])
 
     def test_models_entries_for_stable_aliases(self):
         entries = {e["id"]: e for e in proxy._stable_alias_model_entries()}
@@ -447,15 +447,15 @@ class SpeechEngineRoutingTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         return _FakeTTSClient.requests[-1]
 
-    def test_realtime_alias_goes_to_the_deployed_realtime_engine_with_mapped_voice(self):
-        sent = self._speak("tts-realtime", "Nova")
+    def test_fast_alias_goes_to_the_deployed_fast_engine_with_mapped_voice(self):
+        sent = self._speak("tts-fast", "Nova")
         self.assertEqual(sent["url"], "http://127.0.0.1:8010/v1/audio/speech")
         self.assertEqual(sent["body"]["model"], "supertonic")
         self.assertEqual(sent["body"]["voice"], "F2")
 
     def test_native_voice_and_unknown_voice(self):
         self.assertEqual(self._speak("supertonic", "M3")["body"]["voice"], "M3")
-        self.assertEqual(self._speak("tts-realtime", "no-such-voice")["body"]["voice"], "F1")
+        self.assertEqual(self._speak("tts-fast", "no-such-voice")["body"]["voice"], "F1")
 
     def test_tts_alias_keeps_omnivoice_identity_voices(self):
         sent = self._speak("tts", "nova")

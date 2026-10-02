@@ -17,13 +17,13 @@ from tests.speech_tier_helpers import HAVE_FFMPEG, _multipart
 
 class MultipartPeekTests(unittest.IsolatedAsyncioTestCase):
     def test_finds_only_complete_text_fields(self) -> None:
-        body, ctype = _multipart([("model", "stt-realtime"), ("language", "en")], b"\x00\x01" * 10)
+        body, ctype = _multipart([("model", "stt-fast"), ("language", "en")], b"\x00\x01" * 10)
         boundary = speech_stream.multipart_boundary(ctype)
-        self.assertEqual(speech_stream.find_multipart_field(body, boundary, "model"), "stt-realtime")
+        self.assertEqual(speech_stream.find_multipart_field(body, boundary, "model"), "stt-fast")
         self.assertEqual(speech_stream.find_multipart_field(body, boundary, "language"), "en")
         self.assertIsNone(speech_stream.find_multipart_field(body, boundary, "temperature"))
         # A value cut off before its closing boundary is not returned.
-        cut = body[: body.index(b"stt-realtime") + 5]
+        cut = body[: body.index(b"stt-fast") + 5]
         self.assertIsNone(speech_stream.find_multipart_field(cut, boundary, "model"))
 
     def test_a_file_part_named_model_is_not_a_text_field(self) -> None:
@@ -52,9 +52,9 @@ class MultipartPeekTests(unittest.IsolatedAsyncioTestCase):
         return value, replayed
 
     async def test_peek_replays_the_whole_body_when_model_comes_first(self) -> None:
-        body, ctype = _multipart([("model", "stt-realtime")], b"A" * 5000)
+        body, ctype = _multipart([("model", "stt-fast")], b"A" * 5000)
         value, replayed = await self._peek(body, ctype, 100)
-        self.assertEqual((value, replayed), ("stt-realtime", body))
+        self.assertEqual((value, replayed), ("stt-fast", body))
 
     async def test_peek_replays_the_whole_body_when_model_is_missing(self) -> None:
         body, ctype = _multipart([("language", "en")], b"A" * 5000)

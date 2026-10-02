@@ -6,7 +6,7 @@ layer-2 name, so re-pointing a stable alias also moves every OpenAI name that
 points at it.
 
 Layer 2 (``stable``): the gateway's own semantic names (``fast``, ``image``,
-``tts-realtime`` ...). They never change meaning. Each one resolves to a
+``tts-fast`` ...). They never change meaning. Each one resolves to a
 concrete role, workflow, or model id, or (speech and transcription) to an
 ordered list of *engines* where the first deployed engine wins.
 
@@ -19,8 +19,8 @@ sub-section per operation::
         openai:   [{match: "gpt-4o-mini*", to: fast}, ...]
       speech:
         engines:  {omnivoice: {service: tts, model: k2-fsa/OmniVoice, ...}}
-        stable:   {tts: [omnivoice], tts-realtime: [supertonic, omnivoice]}
-        openai:   [{match: "tts-1", to: tts-realtime}]
+        stable:   {tts: [omnivoice], tts-fast: [supertonic, omnivoice]}
+        openai:   [{match: "tts-1", to: tts-fast}]
 
 This module is pure: no FastAPI, no network, no config loading. Callers pass in
 the section mapping and an ``engine_available`` predicate.

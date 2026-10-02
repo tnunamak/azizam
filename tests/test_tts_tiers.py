@@ -17,7 +17,7 @@ from tests.speech_tier_helpers import HAVE_FFMPEG, RouteCase, _Chunks, _wav_byte
 
 class TtsLifecycleTests(RouteCase):
     def _speak(self, **extra):
-        payload = {"model": "tts-realtime", "voice": "shimmer", "input": "hello", "response_format": "wav", **extra}
+        payload = {"model": "tts-fast", "voice": "shimmer", "input": "hello", "response_format": "wav", **extra}
         return self.client.post("/v1/audio/speech", json=payload)
 
     def test_down_engine_is_started_through_its_lifecycle_driver(self) -> None:
@@ -49,7 +49,7 @@ class TtsLifecycleTests(RouteCase):
 
 class TtsStreamingTests(RouteCase):
     def _post(self, **extra):
-        payload = {"model": "tts-realtime", "voice": "shimmer", "input": "hello", **extra}
+        payload = {"model": "tts-fast", "voice": "shimmer", "input": "hello", **extra}
         return self.client.post("/v1/audio/speech", json=payload)
 
     def test_pcm_is_resampled_and_chunked_with_the_pcm_content_type(self) -> None:
