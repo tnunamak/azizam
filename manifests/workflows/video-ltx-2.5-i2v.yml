@@ -10,6 +10,7 @@ description: 'LTX-2.5 22B distilled image-to-video with synchronized audio. Sele
   License: LTX-2.x Community License.'
 source: local
 trusted: true
+typical_seconds: 111
 inputs:
   prompt:
     type: string

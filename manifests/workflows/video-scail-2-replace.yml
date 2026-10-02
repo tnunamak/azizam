@@ -8,6 +8,7 @@ description: >-
   Reference character image + driving video -> the reference character performs the driving video's motion in the driving scene (SAM3.1 tracking, replacement mode, first 81-frame segment). source_subject and reference_subject are the SAM3 text prompts that find the person to replace in the video and the character in the image. SCAIL-2 Q4_K_M GGUF, 6 steps. ~300 s warm at 832x448. MIT.
 source: local
 trusted: true
+typical_seconds: 310
 inputs:
   reference_image:
     type: asset

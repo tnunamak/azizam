@@ -15,6 +15,7 @@ description: >-
   as of Sep 2026. Prefer masks with generous feather/soft edges over pixel-exact cutouts.
 source: local
 trusted: true
+typical_seconds: 13
 inputs:
   prompt:
     type: string

@@ -10,6 +10,7 @@ description: 'Full song with vocals from a style prompt (tags) and lyrics (YuE2-
   LICENSE: CC BY-NC (non-commercial).'
 source: local
 trusted: true
+typical_seconds: 25
 inputs:
   tags:
     type: string

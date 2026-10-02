@@ -17,6 +17,7 @@ description: >-
   for per-request Autogrow key pruning; this manifest keeps the tested 2-image shape.
 source: local
 trusted: true
+typical_seconds: 22
 inputs:
   prompt:
     type: string

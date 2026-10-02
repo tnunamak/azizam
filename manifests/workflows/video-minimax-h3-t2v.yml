@@ -10,6 +10,7 @@ description: 'MiniMax H3 FL2VA text-to-video with native stereo audio (int8_conv
   at 960x544. LICENSE: the MiniMax H3 Community License excludes use in the US, EU, UK and South Korea.'
 source: local
 trusted: true
+typical_seconds: 125
 inputs:
   prompt:
     type: string

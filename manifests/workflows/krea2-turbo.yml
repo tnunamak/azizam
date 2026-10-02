@@ -7,6 +7,7 @@ display_name: Krea 2 Turbo
 description: Local T2I workflow bound to Krea 2 Turbo (int8_convrot), the current (Sep 2026) community-consensus realism/prompt-adherence leader on Reddit r/StableDiffusion, overtaking Z-Image-Turbo. CFG-distilled turbo model (negative conditioning is zeroed, CFG fixed at 1.0).
 source: local
 trusted: true
+typical_seconds: 9
 inputs:
   prompt:
     type: string

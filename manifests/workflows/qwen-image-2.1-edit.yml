@@ -13,6 +13,7 @@ description: >-
   research-image.md.
 source: local
 trusted: true
+typical_seconds: 13
 inputs:
   prompt:
     type: string
