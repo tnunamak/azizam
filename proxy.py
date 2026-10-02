@@ -3851,8 +3851,8 @@ async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
         return None
 
 
-async def _design_voice(prompt: str, script: str, seed: int) -> bytes:
-    """Render a voice described in text once; the result becomes that voice's reference clip."""
+async def _design_voice(instruct: str, script: str, seed: int) -> bytes:
+    """Render a designed voice once (``instruct`` is OmniVoice's attribute string); the result becomes that voice's reference clip."""
     engine_id = str(_voice_settings().get("design_engine") or "omnivoice")
     endpoint = _speech_engine_endpoint(engine_id)
     if endpoint is None:
@@ -3865,10 +3865,12 @@ async def _design_voice(prompt: str, script: str, seed: int) -> bytes:
         async with httpx.AsyncClient(timeout=httpx.Timeout(180, connect=10)) as client:
             resp = await client.post(
                 f"{base_url}/v1/audio/speech",
-                json={"input": script, "voice": "alloy", "instructions": prompt, "seed": seed, "response_format": "wav"},
+                json={"input": script, "voice": "alloy", "instructions": instruct, "seed": seed, "response_format": "wav"},
             )
     except httpx.HTTPError as exc:
         raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed: {exc}") from exc
+    if resp.status_code == 400:
+        raise custom_voices.VoiceError(400, "invalid_prompt", "The voice design engine rejected this description.", param="prompt")
     if resp.status_code != 200:
         raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed with HTTP {resp.status_code}.")
     return resp.content

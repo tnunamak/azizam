@@ -239,14 +239,17 @@ class VoiceResourceTests(ApiCase):
 @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg is required")
 class PromptVoiceTests(ApiCase):
     def create(self, **body):
-        return self.client.post("/v1/audio/voices", json={"type": "prompt", "name": "Warm", "prompt": "a warm, calm narrator", **body})
+        return self.client.post("/v1/audio/voices", json={"type": "prompt", "name": "Warm", "prompt": "a warm, calm young woman, british accent", **body})
 
     def test_prompt_voice_is_designed_once_then_stored_as_a_clip(self) -> None:
         resp = self.create(seed=7)
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
-        self.assertEqual((body["type"], body["seed"], body["prompt"]), ("prompt", 7, "a warm, calm narrator"))
-        self.assertEqual(self.designs[0][0], "a warm, calm narrator")
+        self.assertEqual((body["type"], body["seed"], body["prompt"]), ("prompt", 7, "a warm, calm young woman, british accent"))
+        # OmniVoice designs from a fixed vocabulary: the description is read for it and the rest is reported, not dropped.
+        self.assertEqual(self.designs[0][0], "female, young adult, british accent")
+        self.assertEqual(body["design_instruct"], "female, young adult, british accent")
+        self.assertIn("design_terms_ignored: warm, calm", body["warnings"])
         self.assertEqual(self.designs[0][2], 7)
         self.assertIn("welcome", self.designs[0][1])
         meta = self.store.get_voice("key-a", body["id"])
@@ -267,6 +270,7 @@ class PromptVoiceTests(ApiCase):
     def test_validation(self) -> None:
         for label, body, code in (
             ("empty prompt", {"prompt": " "}, "invalid_prompt"),
+            ("no designable attribute", {"prompt": "warm and calm"}, "invalid_prompt"),
             ("long prompt", {"prompt": "x" * 2001}, "invalid_prompt"),
             ("bad model", {"model": "2026-10-01"}, "unsupported_model"),
             ("bad seed", {"seed": "x"}, "invalid_seed"),
@@ -295,7 +299,7 @@ class PromptVoiceTests(ApiCase):
         )
         app = FastAPI()
         api.register_voice_routes(app, deps)
-        resp = TestClient(app).post("/v1/audio/voices", json={"type": "prompt", "name": "x", "prompt": "calm"})
+        resp = TestClient(app).post("/v1/audio/voices", json={"type": "prompt", "name": "x", "prompt": "calm old man"})
         self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (503, "backend_unavailable"))
 
 

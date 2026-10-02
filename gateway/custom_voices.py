@@ -214,6 +214,7 @@ class VoiceStore:
         seed: int | None = None,
         prompt: str | None = None,
         transcript: str | None = None,
+        design_instruct: str | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             if self.limits.consent_mode == "required" and voice_type == "audio_sample" and not consent_id:
@@ -239,6 +240,7 @@ class VoiceStore:
                 "consent": consent_id,
                 "seed": seed,
                 "prompt": prompt,
+                "design_instruct": design_instruct,
                 "transcript": transcript,
                 "measurements": measurements,
                 "warnings": list(warnings),

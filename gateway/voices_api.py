@@ -28,6 +28,7 @@ from gateway.custom_voices import (
     validate_labels,
     validate_name,
 )
+from gateway.voice_design import DesignPromptError, design_instruct
 from gateway.voice_audio import ProcessedSample, SampleLimits, VoiceSampleError, process_sample
 
 AUDIO_EXTENSIONS = {
@@ -54,7 +55,7 @@ class VoiceApiDeps:
     enforce_policy: Callable[[Any, str], Response | None]
     owner_of: Callable[[Any], str | None]
     probe_quality: Callable[[Path], Awaitable[dict[str, Any] | None]]
-    design_voice: Callable[[str, str, int], Awaitable[bytes]]   # (prompt, script, seed) -> WAV bytes
+    design_voice: Callable[[str, str, int], Awaitable[bytes]]   # (OmniVoice instruct, script, seed) -> WAV bytes
     compatible_engines: Callable[[], list[str]]
     quality_warn_below: Callable[[], float]
 
@@ -69,7 +70,7 @@ def error_response(status: int, code: str, message: str, *, param: str | None = 
 def voice_view(meta: Mapping[str, Any], engines: list[str]) -> dict[str, Any]:
     """The public voice object: OpenAI's fields first, our additions after."""
     view = {k: meta.get(k) for k in ("object", "id", "type", "name", "created_at")}
-    for key in ("description", "labels", "duration_seconds", "consent", "seed", "prompt", "quality", "warnings"):
+    for key in ("description", "labels", "duration_seconds", "consent", "seed", "prompt", "design_instruct", "quality", "warnings"):
         view[key] = meta.get(key)
     view["compatible_engines"] = list(engines)
     return view
@@ -321,7 +322,11 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             seed = int(seed_raw) if seed_raw not in (None, "") else int.from_bytes(os.urandom(3), "big")
         except (TypeError, ValueError):
             raise VoiceError(400, "invalid_seed", "seed must be an integer.", param="seed") from None
-        wav = await deps.design_voice(prompt.strip(), script, seed)
+        try:
+            instruct, ignored = design_instruct(prompt)
+        except DesignPromptError as exc:
+            raise VoiceError(400, "invalid_prompt", str(exc), param="prompt") from exc
+        wav = await deps.design_voice(instruct, script, seed)
         try:
             processed: ProcessedSample = await asyncio.to_thread(process_sample, wav, limits, denoise=False)
         except VoiceSampleError as exc:
@@ -329,7 +334,9 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
         return deps.store().create_voice(
             owner, name=name, voice_type="prompt", reference_wav=processed.wav, duration_seconds=processed.duration_seconds,
             original=None, original_extension="wav", consent_id=None, description=description, labels=labels,
-            measurements=processed.measurements(), warnings=processed.warnings, seed=seed, prompt=prompt.strip(), transcript=script,
+            measurements=processed.measurements(),
+            warnings=[*processed.warnings, *([f"design_terms_ignored: {', '.join(ignored)}"] if ignored else [])],
+            seed=seed, prompt=prompt.strip(), transcript=script, design_instruct=instruct,
         )
 
     async def get_voice(request: Request, voice_id: str):
