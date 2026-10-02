@@ -1,0 +1,790 @@
+{
+ "commit": "b0c1ca4f7549d7acdfa52a7dcffc934bc63a43ce",
+ "doc_fixture": "ollama-api.md",
+ "note": "Hand-written JSON Schemas for the response shapes documented in docs/api.md at the pinned commit (vendored beside this file as ollama-api.md). Durations are nanoseconds; the final object of a chat or generate response carries the counts and durations.",
+ "repository": "https://github.com/ollama/ollama",
+ "schemas": {
+  "ChatChunk": {
+   "properties": {
+    "created_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "done": {
+     "const": false
+    },
+    "done_reason": {
+     "type": "string"
+    },
+    "eval_count": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "eval_duration": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "load_duration": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "message": {
+     "properties": {
+      "content": {
+       "type": "string"
+      },
+      "images": {
+       "type": [
+        "array",
+        "null"
+       ]
+      },
+      "role": {
+       "enum": [
+        "assistant"
+       ]
+      },
+      "thinking": {
+       "type": "string"
+      },
+      "tool_calls": {
+       "items": {
+        "properties": {
+         "function": {
+          "properties": {
+           "arguments": {
+            "type": "object"
+           },
+           "index": {
+            "type": "integer"
+           },
+           "name": {
+            "minLength": 1,
+            "type": "string"
+           }
+          },
+          "required": [
+           "name",
+           "arguments"
+          ],
+          "type": "object"
+         }
+        },
+        "required": [
+         "function"
+        ],
+        "type": "object"
+       },
+       "minItems": 1,
+       "type": "array"
+      }
+     },
+     "required": [
+      "role",
+      "content"
+     ],
+     "type": "object"
+    },
+    "model": {
+     "type": "string"
+    },
+    "prompt_eval_count": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "prompt_eval_duration": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "total_duration": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "required": [
+    "model",
+    "created_at",
+    "message",
+    "done"
+   ],
+   "type": "object"
+  },
+  "ChatFinal": {
+   "allOf": [
+    {
+     "properties": {
+      "created_at": {
+       "format": "date-time",
+       "type": "string"
+      },
+      "done": {
+       "type": "boolean"
+      },
+      "done_reason": {
+       "type": "string"
+      },
+      "eval_count": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "eval_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "load_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "message": {
+       "properties": {
+        "content": {
+         "type": "string"
+        },
+        "images": {
+         "type": [
+          "array",
+          "null"
+         ]
+        },
+        "role": {
+         "enum": [
+          "assistant"
+         ]
+        },
+        "thinking": {
+         "type": "string"
+        },
+        "tool_calls": {
+         "items": {
+          "properties": {
+           "function": {
+            "properties": {
+             "arguments": {
+              "type": "object"
+             },
+             "index": {
+              "type": "integer"
+             },
+             "name": {
+              "minLength": 1,
+              "type": "string"
+             }
+            },
+            "required": [
+             "name",
+             "arguments"
+            ],
+            "type": "object"
+           }
+          },
+          "required": [
+           "function"
+          ],
+          "type": "object"
+         },
+         "minItems": 1,
+         "type": "array"
+        }
+       },
+       "required": [
+        "role",
+        "content"
+       ],
+       "type": "object"
+      },
+      "model": {
+       "type": "string"
+      },
+      "prompt_eval_count": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "prompt_eval_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "total_duration": {
+       "minimum": 0,
+       "type": "integer"
+      }
+     },
+     "required": [
+      "model",
+      "created_at",
+      "message",
+      "done"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "done": {
+       "const": true
+      },
+      "done_reason": {
+       "type": "string"
+      },
+      "eval_count": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "eval_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "load_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "prompt_eval_count": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "prompt_eval_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "total_duration": {
+       "minimum": 0,
+       "type": "integer"
+      }
+     },
+     "required": [
+      "done_reason",
+      "total_duration",
+      "load_duration",
+      "prompt_eval_count",
+      "prompt_eval_duration",
+      "eval_count",
+      "eval_duration"
+     ]
+    }
+   ]
+  },
+  "Embed": {
+   "properties": {
+    "embeddings": {
+     "items": {
+      "items": {
+       "type": "number"
+      },
+      "type": "array"
+     },
+     "type": "array"
+    },
+    "load_duration": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "model": {
+     "type": "string"
+    },
+    "prompt_eval_count": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "total_duration": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "required": [
+    "model",
+    "embeddings"
+   ],
+   "type": "object"
+  },
+  "Embeddings": {
+   "properties": {
+    "embedding": {
+     "items": {
+      "type": "number"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "embedding"
+   ],
+   "type": "object"
+  },
+  "Error": {
+   "additionalProperties": false,
+   "properties": {
+    "error": {
+     "minLength": 1,
+     "type": "string"
+    }
+   },
+   "required": [
+    "error"
+   ],
+   "type": "object"
+  },
+  "GenerateChunk": {
+   "properties": {
+    "context": {
+     "items": {
+      "type": "integer"
+     },
+     "type": "array"
+    },
+    "created_at": {
+     "type": "string"
+    },
+    "done": {
+     "const": false
+    },
+    "done_reason": {
+     "type": "string"
+    },
+    "eval_count": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "eval_duration": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "load_duration": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "model": {
+     "type": "string"
+    },
+    "prompt_eval_count": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "prompt_eval_duration": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "response": {
+     "type": "string"
+    },
+    "thinking": {
+     "type": "string"
+    },
+    "total_duration": {
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "required": [
+    "model",
+    "created_at",
+    "response",
+    "done"
+   ],
+   "type": "object"
+  },
+  "GenerateFinal": {
+   "allOf": [
+    {
+     "properties": {
+      "context": {
+       "items": {
+        "type": "integer"
+       },
+       "type": "array"
+      },
+      "created_at": {
+       "type": "string"
+      },
+      "done": {
+       "type": "boolean"
+      },
+      "done_reason": {
+       "type": "string"
+      },
+      "eval_count": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "eval_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "load_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "model": {
+       "type": "string"
+      },
+      "prompt_eval_count": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "prompt_eval_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "response": {
+       "type": "string"
+      },
+      "thinking": {
+       "type": "string"
+      },
+      "total_duration": {
+       "minimum": 0,
+       "type": "integer"
+      }
+     },
+     "required": [
+      "model",
+      "created_at",
+      "response",
+      "done"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "done": {
+       "const": true
+      },
+      "done_reason": {
+       "type": "string"
+      },
+      "eval_count": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "eval_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "load_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "prompt_eval_count": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "prompt_eval_duration": {
+       "minimum": 0,
+       "type": "integer"
+      },
+      "total_duration": {
+       "minimum": 0,
+       "type": "integer"
+      }
+     },
+     "required": [
+      "done_reason",
+      "total_duration",
+      "load_duration",
+      "prompt_eval_count",
+      "prompt_eval_duration",
+      "eval_count",
+      "eval_duration"
+     ]
+    }
+   ]
+  },
+  "LoadChat": {
+   "properties": {
+    "done": {
+     "const": true
+    },
+    "done_reason": {
+     "enum": [
+      "load",
+      "unload"
+     ]
+    },
+    "message": {
+     "properties": {
+      "content": {
+       "const": ""
+      },
+      "role": {
+       "const": "assistant"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "required": [
+    "model",
+    "created_at",
+    "message",
+    "done_reason",
+    "done"
+   ],
+   "type": "object"
+  },
+  "LoadGenerate": {
+   "properties": {
+    "done": {
+     "const": true
+    },
+    "done_reason": {
+     "const": "unload"
+    },
+    "response": {
+     "const": ""
+    }
+   },
+   "required": [
+    "model",
+    "created_at",
+    "response",
+    "done"
+   ],
+   "type": "object"
+  },
+  "Ps": {
+   "properties": {
+    "models": {
+     "items": {
+      "properties": {
+       "details": {
+        "properties": {
+         "families": {
+          "items": {
+           "type": "string"
+          },
+          "type": [
+           "array",
+           "null"
+          ]
+         },
+         "family": {
+          "type": "string"
+         },
+         "format": {
+          "type": "string"
+         },
+         "parameter_size": {
+          "type": "string"
+         },
+         "parent_model": {
+          "type": "string"
+         },
+         "quantization_level": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "format",
+         "family",
+         "families",
+         "parameter_size",
+         "quantization_level"
+        ],
+        "type": "object"
+       },
+       "digest": {
+        "type": "string"
+       },
+       "expires_at": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       },
+       "size": {
+        "minimum": 0,
+        "type": "integer"
+       },
+       "size_vram": {
+        "minimum": 0,
+        "type": "integer"
+       }
+      },
+      "required": [
+       "name",
+       "model",
+       "size",
+       "digest",
+       "details",
+       "expires_at",
+       "size_vram"
+      ],
+      "type": "object"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "models"
+   ],
+   "type": "object"
+  },
+  "Show": {
+   "properties": {
+    "capabilities": {
+     "items": {
+      "enum": [
+       "completion",
+       "vision",
+       "tools",
+       "thinking",
+       "embedding",
+       "insert"
+      ]
+     },
+     "minItems": 1,
+     "type": "array"
+    },
+    "details": {
+     "properties": {
+      "families": {
+       "items": {
+        "type": "string"
+       },
+       "type": [
+        "array",
+        "null"
+       ]
+      },
+      "family": {
+       "type": "string"
+      },
+      "format": {
+       "type": "string"
+      },
+      "parameter_size": {
+       "type": "string"
+      },
+      "parent_model": {
+       "type": "string"
+      },
+      "quantization_level": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "format",
+      "family",
+      "families",
+      "parameter_size",
+      "quantization_level"
+     ],
+     "type": "object"
+    },
+    "license": {
+     "type": "string"
+    },
+    "model_info": {
+     "type": "object"
+    },
+    "modelfile": {
+     "type": "string"
+    },
+    "parameters": {
+     "type": "string"
+    },
+    "template": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "modelfile",
+    "parameters",
+    "template",
+    "details",
+    "model_info",
+    "capabilities"
+   ],
+   "type": "object"
+  },
+  "Tags": {
+   "properties": {
+    "models": {
+     "items": {
+      "properties": {
+       "details": {
+        "properties": {
+         "families": {
+          "items": {
+           "type": "string"
+          },
+          "type": [
+           "array",
+           "null"
+          ]
+         },
+         "family": {
+          "type": "string"
+         },
+         "format": {
+          "type": "string"
+         },
+         "parameter_size": {
+          "type": "string"
+         },
+         "parent_model": {
+          "type": "string"
+         },
+         "quantization_level": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "format",
+         "family",
+         "families",
+         "parameter_size",
+         "quantization_level"
+        ],
+        "type": "object"
+       },
+       "digest": {
+        "type": "string"
+       },
+       "model": {
+        "type": "string"
+       },
+       "modified_at": {
+        "type": "string"
+       },
+       "name": {
+        "type": "string"
+       },
+       "size": {
+        "minimum": 0,
+        "type": "integer"
+       }
+      },
+      "required": [
+       "name",
+       "model",
+       "modified_at",
+       "size",
+       "digest",
+       "details"
+      ],
+      "type": "object"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "models"
+   ],
+   "type": "object"
+  },
+  "Version": {
+   "properties": {
+    "version": {
+     "pattern": "^\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.+-]+)?$",
+     "type": "string"
+    }
+   },
+   "required": [
+    "version"
+   ],
+   "type": "object"
+  }
+ },
+ "source": "ollama/ollama docs/api.md"
+}
