@@ -149,6 +149,7 @@ from gateway.audio_extensions import (
 from gateway.backends.chat import build_chat_loopback_request
 from gateway.backends.embeddings import build_embeddings_loopback_request
 from gateway.backends.cancellation import CancellationRegistryFull, cancellation_registry
+from gateway.drain import DRAIN_STATE, InflightMiddleware
 from gateway.backends.request_shape import (
     effective_output_limit,
     record_request_shape_stage,
@@ -13748,6 +13749,97 @@ async def admin_config_reload(request: Request):
         )
 
 
+# -----------------------------------------------------------------------------
+# Restart drain (docs/ops/SAFE_RESTART.md). Driven by scripts/safe-restart.
+# -----------------------------------------------------------------------------
+
+_DRAIN_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"})
+
+DRAIN_STATE.register_job_counter("image", lambda: len(_image_media_job_tasks))
+DRAIN_STATE.register_job_counter("audio", lambda: len(_audio_media_job_tasks))
+DRAIN_STATE.register_job_counter("video", lambda: len(_video_media_job_tasks))
+
+
+def _drain_peer_is_loopback(request: Request) -> bool:
+    # The socket peer only. X-Forwarded-For is client-controlled and the
+    # gateway also listens on a LAN address behind a reverse proxy.
+    client = request.client
+    return client is not None and client.host in _DRAIN_LOOPBACK_HOSTS
+
+
+def _drain_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": {"code": code, "message": message}},
+    )
+
+
+def _drain_authorize(request: Request, *, write: bool) -> Response | None:
+    try:
+        ctx = ADMIN_AUTH(request)
+    except AdminAuthError as exc:
+        return Response(
+            content=json.dumps({"error": {"code": exc.code, "message": exc.message}}),
+            status_code=exc.status_code,
+            media_type="application/json",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not _drain_peer_is_loopback(request):
+        return _drain_error(
+            403, "drain_local_only", "The drain control only accepts loopback callers."
+        )
+    # A browser session cookie could be replayed cross-site; changing the flag
+    # needs an explicit admin bearer key.
+    if write and getattr(ctx, "auth_method", "") != "bearer":
+        return _drain_error(
+            403, "drain_bearer_required", "Changing the drain flag needs an admin bearer key."
+        )
+    return None
+
+
+@app.get("/admin/api/drain", include_in_schema=False)
+async def admin_drain_status(request: Request):
+    denied = _drain_authorize(request, write=False)
+    if denied is not None:
+        return denied
+    return JSONResponse(DRAIN_STATE.snapshot())
+
+
+@app.post("/admin/api/drain", include_in_schema=False)
+async def admin_drain_set(request: Request):
+    """Set or clear the draining flag. Body: {"draining": bool, "ttl_s": num, "reason": str}."""
+    denied = _drain_authorize(request, write=True)
+    if denied is not None:
+        return denied
+    try:
+        raw = await request.body()
+        payload = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        return _drain_error(400, "invalid_json", "Body must be a JSON object.")
+    if not isinstance(payload, dict):
+        return _drain_error(400, "invalid_json", "Body must be a JSON object.")
+    draining = payload.get("draining", True)
+    if not isinstance(draining, bool):
+        return _drain_error(400, "invalid_draining", "draining must be a boolean.")
+    ttl = payload.get("ttl_s")
+    if ttl is not None and (
+        isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or ttl <= 0
+    ):
+        return _drain_error(400, "invalid_ttl", "ttl_s must be a positive number.")
+    reason = payload.get("reason", "")
+    if not isinstance(reason, str):
+        return _drain_error(400, "invalid_reason", "reason must be a string.")
+    DRAIN_STATE.set_draining(draining, ttl_s=ttl, reason=reason)
+    print(
+        f"[proxy] drain {'ON' if draining else 'OFF'}"
+        + (f" ttl={ttl}" if draining and ttl else "")
+        + (f" reason={reason[:80]!r}" if draining and reason else ""),
+        flush=True,
+    )
+    return JSONResponse(DRAIN_STATE.snapshot())
+
+
+
 # Ephemeral keys that must NOT appear in the config export (they are runtime/
 # health state, not operator-authored configuration).
 _EXPORT_EPHEMERAL_KEYS = frozenset(
@@ -23686,6 +23778,12 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             )
 
 
+# Added last so it is the outermost layer: it counts a request until the whole
+# response (including every SSE chunk) is sent, and short-circuits a drain 503
+# before auth or routing work. See gateway/drain.py.
+app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -23705,10 +23803,19 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
+    # On SIGTERM uvicorn stops accepting connections and waits for in-flight
+    # responses. Bound that wait so a stuck stream cannot hold the unit open;
+    # keep it below the unit's TimeoutStopSec (docs/ops/SAFE_RESTART.md).
+    try:
+        graceful_s = int(os.environ.get("AI_GATEWAY_GRACEFUL_SHUTDOWN_S", "120"))
+    except ValueError:
+        graceful_s = 120
+
     uvicorn.run(
         app,
         host=PROXY_HOST,
         port=PROXY_PORT,
         log_level="warning",
-        access_log=False
+        access_log=False,
+        timeout_graceful_shutdown=graceful_s if graceful_s > 0 else None,
     )
