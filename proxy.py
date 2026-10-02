@@ -2697,7 +2697,9 @@ OPENAI_PUBLIC_MODEL_OWNERS = {"openai", "openai-internal", "system"}
 
 
 class ModelCompatibilityError(Exception):
-    pass
+    def __init__(self, message: str = "", *, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -2864,7 +2866,7 @@ def resolve_model_for_operation(operation: str, requested_model: str) -> ModelRe
     try:
         alias = resolve_stable_alias(operation, requested_model)
     except stable_aliases.AliasUnavailableError as exc:
-        raise ModelCompatibilityError(str(exc)) from exc
+        raise ModelCompatibilityError(str(exc), code=exc.code) from exc
     if alias is not None:
         return ModelResolution(
             requested_model=requested_model,
@@ -2910,14 +2912,14 @@ def resolve_model_for_operation(operation: str, requested_model: str) -> ModelRe
     )
 
 
-def model_compatibility_error(message: str) -> Response:
+def model_compatibility_error(error: "str | Exception") -> Response:
+    body: dict[str, Any] = {"message": str(error), "type": "invalid_request_error"}
+    code = getattr(error, "code", None)
+    if code:
+        body["param"] = "model"
+        body["code"] = code
     return Response(
-        content=json.dumps({
-            "error": {
-                "message": message,
-                "type": "invalid_request_error",
-            }
-        }),
+        content=json.dumps({"error": body}),
         status_code=400,
         media_type="application/json",
     )
@@ -3779,7 +3781,7 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
         try:
             model_resolution = resolve_model_for_operation("speech", requested_model)
         except ModelCompatibilityError as e:
-            return model_compatibility_error(str(e))
+            return model_compatibility_error(e)
 
         requested_voice = body_json.get("voice", "").lower()
         body_json["voice"] = requested_voice  # normalise to lowercase before transform
@@ -4243,7 +4245,7 @@ async def proxy_stt_request(
             return _stt_error(str(error), status_code=413, code="stt_upload_limit")
         except ModelCompatibilityError as error:
             owner.report(status="failed", reason="failed")
-            return model_compatibility_error(str(error))
+            return model_compatibility_error(error)
         except stt_chunking.SttChunkResponseError:
             owner.report(status="failed", reason="failed")
             return _stt_error("STT backend returned a chunk response that cannot be merged.", status_code=502, code="invalid_stt_chunk_response")
@@ -6728,7 +6730,7 @@ async def proxy_comfy_request(
         model_resolution = resolve_model_for_operation("images", model)
     except ModelCompatibilityError as e:
         _record_image_input(receipt, "model", rejected_reason="model_incompatible")
-        return model_compatibility_error(str(e))
+        return model_compatibility_error(e)
     if model_resolution.is_openai_alias:
         print(f"[proxy] Model alias {model} -> {model_resolution.effective_model} for image generation", flush=True)
         model = model_resolution.effective_model
@@ -7128,7 +7130,7 @@ async def proxy_comfy_edit_request(
         model_resolution = resolve_model_for_operation("image_edits", model)
     except ModelCompatibilityError as e:
         _record_image_input(receipt, "model", rejected_reason="model_incompatible")
-        return model_compatibility_error(str(e))
+        return model_compatibility_error(e)
     if model_resolution.is_openai_alias:
         print(f"[proxy] Model alias {model} -> {model_resolution.effective_model} for image edit", flush=True)
         model = model_resolution.effective_model
@@ -7676,7 +7678,7 @@ async def proxy_comfy_variations_request(
             model_resolution = resolve_model_for_operation("image_edits", requested_model)
         except ModelCompatibilityError as e:
             _record_image_input(receipt, "model", rejected_reason="model_incompatible")
-            return model_compatibility_error(str(e))
+            return model_compatibility_error(e)
         model = IMAGE_VARIATIONS_DEFAULT_WORKFLOW if model_resolution.is_openai_alias else requested_model
     else:
         model = IMAGE_VARIATIONS_DEFAULT_WORKFLOW
@@ -8713,7 +8715,7 @@ async def proxy_comfy_video_create(request: Request, auth_context: AuthContext) 
     try:
         model_resolution = resolve_model_for_operation("videos", requested_model)
     except ModelCompatibilityError as e:
-        return model_compatibility_error(str(e))
+        return model_compatibility_error(e)
     if model_resolution.is_openai_alias:
         print(
             f"[proxy] Video model alias {requested_model} -> {model_resolution.effective_model}",
@@ -16684,7 +16686,7 @@ def _validate_video_media_job_body(body: Mapping[str, Any]) -> tuple[str | None,
     try:
         model_resolution = resolve_model_for_operation("videos", requested_model)
     except ModelCompatibilityError as exc:
-        return None, model_compatibility_error(str(exc))
+        return None, model_compatibility_error(exc)
     workflow_candidate = (
         model_resolution.effective_model
         if model_resolution.is_openai_alias

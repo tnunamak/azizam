@@ -349,6 +349,14 @@ class RouteTests(unittest.TestCase):
         with self.assertRaises(proxy.ModelCompatibilityError):
             proxy.resolve_model_for_operation("speech", "dall-e-3")
 
+    def test_undeployed_engine_by_name_is_a_coded_400(self):
+        resp = self.client.post(
+            "/v1/audio/speech", json={"model": "supertonic", "voice": "nova", "input": "hi"}
+        )
+        self.assertEqual(resp.status_code, 400)
+        error = resp.json()["error"]
+        self.assertEqual((error["code"], error["param"]), ("model_not_deployed", "model"))
+
     def test_legacy_audio_and_video_tables_still_resolve(self):
         self.assertEqual(proxy._resolve_audio_workflow("sfx")[0], "sa3-small-sfx")
         self.assertEqual(proxy._resolve_audio_workflow("song")[0], "yue2-song")
