@@ -605,17 +605,21 @@ class TestVideosOwnership(VideoRegistryTestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    async def test_untracked_id_still_falls_back_unscoped(self) -> None:
-        """An id with no _video_job_records entry at all (never tracked, or
-        evicted past its own retention) has no owner to check -- it must
-        fall through to the legacy unscoped lookup rather than 404ing
-        everyone, which would regress already-shipped behavior."""
+    async def test_untracked_id_is_404_for_an_authenticated_key(self) -> None:
+        """An id with no record (never tracked, or past its retention) has no
+        owner. ComfyUI's /history is shared across keys, so falling through to
+        it let any key read it. Authenticated callers get 404; auth-disabled
+        deployments (nothing is owned) keep the history fallback."""
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_status(
                 proxy._video_id_from_prompt_id("p1"), BOB
             )
-        self.assertEqual(response.status_code, 200)
+            open_response = await proxy.proxy_comfy_video_status(
+                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(open_response.status_code, 200)
 
 
 class _JsonRemixRequest:
@@ -691,7 +695,7 @@ class TestVideoJobRecordGC(VideoRegistryTestCase):
 
     def test_completed_job_is_reaped_after_the_full_ttl(self) -> None:
         self._seed("p1", created_at=1000, completed_at=1000)
-        now = 1000 + proxy._VIDEO_PROGRESS_TTL + 1
+        now = 1000 + proxy._VIDEO_JOB_RECORD_RETAIN + 1
         proxy._gc_video_job_records_locked(now)
         self.assertNotIn("p1", proxy._video_job_records)
 
