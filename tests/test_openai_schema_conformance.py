@@ -29,6 +29,7 @@ SPEC_PATH = ROOT / "tests" / "fixtures" / "openai-openapi-responses.json"
 SPEC = json.loads(SPEC_PATH.read_text(encoding="utf-8"))
 SPEC_URI = f"urn:openai-openapi:{SPEC['commit']}"
 SPEC_DOCUMENT = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": SPEC_URI,
     "components": SPEC["components"],
 }
