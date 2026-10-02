@@ -32,6 +32,12 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 from gateway.manifests import validate_input_value
+from gateway.provenance import (
+    RESERVED_GATEWAY_CONTROLS,
+    WORKFLOW_EXTENSION_NAMESPACE as _WORKFLOW_NAMESPACE,
+    MetadataModeError,
+    parse_metadata_mode,
+)
 
 
 class ExtensionError(ValueError):
@@ -45,10 +51,14 @@ class ExtensionValidationResult:
     ``accepted`` holds validated values keyed by name. ``rejected`` and
     ``ignored`` hold reasons keyed by name. Names are safe to log; values
     are not stored anywhere except ``accepted``.
+
+    ``gateway_controls`` holds validated gateway-level controls (today only
+    ``metadata``). They are not workflow inputs: they never reach a binding.
     """
 
     namespace: str
     accepted: dict[str, Any] = field(default_factory=dict)
+    gateway_controls: dict[str, Any] = field(default_factory=dict)
     rejected: dict[str, str] = field(default_factory=dict)
     ignored: dict[str, str] = field(default_factory=dict)
 
@@ -118,6 +128,13 @@ def validate_extension_inputs(
     result = ExtensionValidationResult(namespace=namespace)
 
     for name, value in supplied.items():
+        if namespace == _WORKFLOW_NAMESPACE and name in RESERVED_GATEWAY_CONTROLS:
+            # Gateway-level control: valid on every workflow, owned by no manifest.
+            try:
+                result.gateway_controls[name] = parse_metadata_mode(value)
+            except MetadataModeError as exc:
+                result.rejected[name] = str(exc)
+            continue
         spec = specs.get(name)
         if spec is None:
             result.rejected[name] = "unknown input"
@@ -162,7 +179,7 @@ def record_extension_result(receipt: Any, result: ExtensionValidationResult) -> 
         )
 
     prefix = f"{result.namespace}." if result.namespace else ""
-    for name in result.accepted:
+    for name in (*result.accepted, *result.gateway_controls):
         accept(f"{prefix}{name}")
     for name, reason in result.rejected.items():
         reject(f"{prefix}{name}", reason)

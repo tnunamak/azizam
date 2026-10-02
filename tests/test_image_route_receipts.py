@@ -516,8 +516,8 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             owner_key_hash=owner_hash,
         )
         expires = int(proxy.time.time()) + 60
-        sig = proxy._sign_asset_token(asset_id, expires)
-        query = {"expires": str(expires), "sig": sig}
+        sig = proxy._sign_asset_token(asset_id, expires, "full")
+        query = {"expires": str(expires), "md": "full", "sig": sig}
         client = TestClient(proxy.app)
 
         with patch.object(proxy, "AUTH_ENABLED", True):
@@ -594,7 +594,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             owner_key_hash=owner_hash,
         )
         expires = int(proxy.time.time()) + 60
-        sig = proxy._sign_asset_token(asset_id, expires)
+        sig = proxy._sign_asset_token(asset_id, expires, "full")
         audio_profile = AppProfile(
             id="audio",
             protocols=frozenset({"openai.audio"}),
@@ -612,7 +612,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         ):
             ok = TestClient(proxy.app).get(
                 f"/gateway/v1/assets/{asset_id}/content",
-                params={"expires": str(expires), "sig": sig},
+                params={"expires": str(expires), "md": "full", "sig": sig},
                 headers={"Authorization": f"Bearer {raw_key}"},
             )
 

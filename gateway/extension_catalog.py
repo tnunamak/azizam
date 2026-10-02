@@ -55,6 +55,18 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
             {
                 "namespace": WORKFLOW_EXTENSION_NAMESPACE,
                 "description": "Gateway-owned workflow controls for image, video, and audio routes.",
+                "gateway_controls": [
+                    {
+                        "name": "metadata",
+                        "values": ["full", "none"],
+                        "default": "the app profile's media_metadata.default",
+                        "description": (
+                            "Whether delivered media keeps its embedded ComfyUI workflow "
+                            "and gateway provenance (full) or has all metadata removed "
+                            "losslessly (none). Valid on every route that returns generated media."
+                        ),
+                    }
+                ],
                 "routes": [
                     {
                         "route": route,

@@ -214,7 +214,8 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         assert response is not None
         job_id = json.loads(response.body.decode("utf-8"))["job_id"]
 
-        async def fake_proxy_audio_generate(request, _auth_context):
+        async def fake_proxy_audio_generate(request, _auth_context, **kwargs):
+            self.assertTrue(kwargs.get("store_full"))  # jobs store full metadata
             replayed = await request.json()
             self.assertEqual(replayed["prompt"], "private prompt")
             return Response(

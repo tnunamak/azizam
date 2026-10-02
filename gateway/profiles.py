@@ -22,12 +22,14 @@ from typing import Iterable, Mapping
 from gateway.policy import (
     DEFAULT_PROFILE,
     DEFAULT_PROFILE_ID,
+    MEDIA_METADATA_MODES,
     TARGET_ACTIVATION_MODES,
     TARGET_VISIBILITY_MODES,
     VISIBILITY_LEVELS,
     AppProfile,
     CapabilitySelector,
     FallbackPolicy,
+    MediaMetadataPolicy,
     NativePassthroughPolicy,
     ModelAccessPolicy,
     StatusVisibilityPolicy,
@@ -56,6 +58,7 @@ _PROFILE_KEYS = {
     "status_visibility",
     "target_policy",
     "model_access",
+    "media_metadata",
 }
 
 _ALLOW_KEYS = {
@@ -83,6 +86,7 @@ def serialize_default_profile() -> dict[str, object]:
             "audit": profile.native_passthrough.audit,
         },
         "status_visibility": {"level": profile.status_visibility.level},
+        "media_metadata": {"default": profile.media_metadata.default},
         "target_policy": {
             "visibility": profile.target_policy.visibility,
             "activation": profile.target_policy.activation,
@@ -235,6 +239,22 @@ def _load_model_access(value: object) -> ModelAccessPolicy:
         raise ProfileLoadError(str(exc)) from exc
 
 
+def _load_media_metadata(value: object) -> MediaMetadataPolicy:
+    data = _require_mapping(value, where="media_metadata")
+    if not data:
+        return MediaMetadataPolicy()
+    unknown = set(data.keys()) - {"default"}
+    if unknown:
+        raise ProfileLoadError(f"unknown media_metadata keys: {sorted(unknown)}")
+    default = data.get("default", "none")
+    if not isinstance(default, str) or default not in MEDIA_METADATA_MODES:
+        raise ProfileLoadError(
+            f"media_metadata.default must be one of {MEDIA_METADATA_MODES}, "
+            f"got {default!r}"
+        )
+    return MediaMetadataPolicy(default=default)
+
+
 def _load_target_policy(value: object) -> TargetPolicy:
     data = _require_mapping(value, where="target_policy")
     if not data:
@@ -320,6 +340,7 @@ def load_profile(
         ),
         target_policy=target_policy,
         model_access=model_access,
+        media_metadata=_load_media_metadata(profile_data.get("media_metadata")),
     )
 
 

@@ -1499,6 +1499,97 @@ Agents debugging a "why did this fail?" should:
 3. Inspect `warnings` for fallback notes.
 4. Re-check `capabilities` if the intent appears unsupported.
 
+## Media Metadata And Provenance
+
+The gateway always stores generated media with full metadata. What a client
+receives is a delivery choice.
+
+**What is embedded (stored copy, always).**
+
+| Media | Where | Content |
+| --- | --- | --- |
+| PNG | text chunks | ComfyUI `prompt` (API graph), `workflow` (UI graph; drag the file into ComfyUI to reopen it), `vividfish_provenance` |
+| JPEG, WebP | EXIF | `Make` = `workflow:<json>`, `Model` = `prompt:<json>`, `ImageDescription` = `vividfish_provenance:<json>` (ComfyUI's WebP convention) |
+| MP4, WebM, FLAC, MP3 | container tags | `prompt`, `workflow`, `vividfish_provenance` |
+| WAV | `comment` tag | `vividfish_provenance=<json>` (WAV has no free-form tag fields) |
+
+The `workflow` graph is derived from the graph actually submitted to ComfyUI,
+so it shows this request's prompt, seed and size. Speech (`/v1/audio/speech`)
+comes from TTS engines, not ComfyUI: it has no workflow, and `full` returns
+the engine bytes unchanged.
+
+The provenance record is JSON: `schema`, `kind`, `created_at`, `request_id`,
+`receipt` (`/gateway/v1/receipts/<id>`), `requested_model`, `model_alias`
+(set when the client used an alias), `resolved_model`, `workflow_id`,
+`workflow_version`, `workflow_hash`, `backend`, `seed`, `parameters`, `index`.
+It is built from an allow-list. API keys, auth headers, signed-URL signatures
+and uploaded media never enter it (values that look like credentials or inline
+media are replaced before embedding).
+
+**Delivery control.** Per request, on every route that returns generated media:
+
+```bash
+curl -s http://127.0.0.1:5000/v1/images/generations \
+  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"flux2-klein-4b","prompt":"a lighthouse","extensions":{"com.vividfish.workflow":{"metadata":"none"}}}'
+```
+
+- `"full"`: deliver the stored bytes, metadata included.
+- `"none"`: deliver a lossless rewrite with all metadata removed. PNG text
+  chunks, JPEG/WebP EXIF/XMP/comments, and MP4/WebM/audio tags go; pixels and
+  samples are unchanged (no re-encode; video and audio use ffmpeg
+  `-map_metadata -1 -c copy`). The stored copy is never modified.
+- Not set: the profile default applies (below).
+
+Where to put it:
+
+| Route | How |
+| --- | --- |
+| `/v1/images/generations`, `/v1/audio/generate`, `/v1/audio/speech`, `/v1/videos` | JSON `extensions` |
+| `/v1/images/edits`, `/v1/images/variations`, `/v1/videos` (multipart) | form field `extensions[com.vividfish.workflow][metadata]` (edits also accept the JSON `extensions` field) |
+| `/gateway/v1/images/identity` | form field `extensions[com.vividfish.workflow][metadata]` |
+| `/gateway/v1/workflows/{id}/run` | form field `extensions[com.vividfish.workflow][metadata]` |
+| `GET /v1/videos/{id}/content`, `GET /gateway/v1/media/jobs/{id}/content`, `GET /gateway/v1/assets/{id}` | query `?extensions[com.vividfish.workflow][metadata]=none` or the short `?metadata=none` |
+
+For `response_format: "url"`, media jobs and assets, the mode is fixed when the
+signed URL is minted: the URL carries `md=full|none` and the signature covers
+it, so a client cannot flip `none` to `full`. A signed URL minted before this
+control existed (no `md`) is delivered with `none`. A video job remembers the
+choice made when it was submitted; a later GET override wins over it. Streaming
+speech (`stream_format`) is delivered as the engine produced it, unbuffered.
+An invalid value is a `400` with `param: extensions.com.vividfish.workflow.metadata`.
+
+**Profile default.** Order: request control, then profile
+`media_metadata.default`, then `none`.
+
+```yaml
+# profile document (admin Profile `profile_json`, or an entry's `profile:` block)
+media_metadata:
+  default: full      # full | none; omitted = none
+```
+
+- Seeded `Owner (local)` profile (`owner-local`): `full`.
+- Trusted LAN/localhost clients (`auth.lan_bypass_*`): `full`.
+- Auth disabled (a personal local run): `full`.
+- Any other profile, path-token client, or profile without the block: `none`.
+
+To change an existing profile, edit its `profile_json` (admin Profile API, or
+the DB row) and add the block. Seeding never overwrites profiles, so existing
+databases need this edit once: `PATCH /admin/api/profiles/{profile_id}` with
+`{"profile": {...the full profile document..., "media_metadata": {"default": "full"}}}`
+(the body replaces the document, so send all of it). The `/admin` Profile form
+rebuilds the document from its own fields and does not carry `media_metadata`
+yet: re-saving a profile from the form drops the block.
+
+Prior art, in short: ComfyUI embeds `prompt` and `workflow` in every saved file
+and offers `--disable-metadata` as a server-wide off switch (no per-request
+choice). Automatic1111 writes one `parameters` text chunk (human-readable
+settings, no graph). Hosted image services such as OpenAI attach a C2PA
+manifest and return no workflow or generation parameters. C2PA signs a
+manifest into the asset with a certificate. It proves who made a file and does
+not carry a re-runnable workflow. The gateway does not implement C2PA; the
+provenance record is unsigned and meant for the owner's own tooling.
+
 ## Profile-Scoped Keys
 
 Dashboard-generated and imported `opk_...` keys authenticate through

@@ -72,6 +72,7 @@ from gateway import (
     video_media_jobs,
 )
 from gateway import video_extend
+from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_metadata, provenance
 from gateway import video_subject
 from gateway import video_job_records
 from gateway.showcase import build_showcase_router, is_public_showcase_path
@@ -285,7 +286,7 @@ from gateway.openai_media_schemas import (
     VIDEOS_STATUS_OPENAPI,
     VOICES_LIST_OPENAPI,
 )
-from gateway.policy import DEFAULT_PROFILE, DENIED, PolicyDecision
+from gateway.policy import DEFAULT_PROFILE, DENIED, MediaMetadataPolicy, PolicyDecision
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, new_request_id
 from gateway.runtime_auth import (
     RuntimeIdentity,
@@ -2234,10 +2235,20 @@ def _path_token_from_request(request_path: str) -> str | None:
 
 def _identity_for(name: str, marker: str):
     """Build a synthetic identity for non-credential auth (LAN / path token)."""
+    # A trusted LAN/localhost client is the owner's own machine: it keeps full
+    # media metadata by default. Other synthetic identities keep the default
+    # profile (metadata stripped on delivery).
+    profile = (
+        DEFAULT_PROFILE.with_overrides(
+            media_metadata=MediaMetadataPolicy(default=provenance.METADATA_FULL)
+        )
+        if marker == "lan"
+        else DEFAULT_PROFILE
+    )
     return RuntimeIdentity(
         name=name,
         key_hash=f"{marker}:{hashlib.sha256(name.encode()).hexdigest()[:16]}",
-        profile=DEFAULT_PROFILE,
+        profile=profile,
     )
 
 
@@ -4162,6 +4173,13 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     native_rate = speech_stream.OPENAI_PCM_RATE
     try:
         body_json = json.loads(body)
+        # Gateway-level control; engines never see the extensions envelope.
+        _begin_media_delivery(auth_context)
+        if isinstance(body_json, dict) and "extensions" in body_json:
+            metadata_error = _note_media_metadata_body(body_json)
+            if metadata_error is not None:
+                return metadata_error
+            body_json.pop("extensions", None)
         response_format = str(body_json.get("response_format", "") or "wav").lower()
         if response_format not in SUPPORTED_TTS_RESPONSE_FORMATS:
             return openai_error_response(
@@ -4300,6 +4318,19 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-cache"},
                 )
+            if (
+                200 <= resp.status_code < 300
+                and media_delivery.current_mode() == provenance.METADATA_NONE
+            ):
+                # Buffered (non-streaming) speech only: strip container tags
+                # losslessly. Streams are delivered as the engine produced them.
+                try:
+                    content = await asyncio.to_thread(
+                        media_delivery.deliver_bytes, content, content_type, provenance.METADATA_NONE
+                    )
+                except media_metadata.MediaMetadataError as exc:
+                    print(f"[proxy] speech metadata strip failed: {exc}", flush=True)
+                    return _tts_error("Could not prepare audio for delivery", 502)
             return Response(
                 content=content,
                 status_code=resp.status_code,
@@ -5026,16 +5057,14 @@ async def proxy_stt_request(
 # =============================================================================
 
 _UI_WORKFLOW_CACHE: dict[str, Optional[dict]] = {}
-_UI_WORKFLOW_MISSING_WARNED: set[str] = set()
 
 
 def _load_ui_workflow(api_path: Path) -> Optional[dict]:
     """Load a UI-format workflow JSON sibling to the given API workflow.
 
     Looks for `<name>.ui.json` next to `<name>.json`. Returns the parsed dict
-    if found, else None. Results are cached by absolute path. Logs a one-shot
-    warning per alias when a UI twin is missing so outputs lack the embedded
-    workflow PNGInfo/mp4 metadata that ComfyUI's frontend uses to re-open them.
+    if found, else None. Results are cached by absolute path. A twin is only a
+    fallback for the derived workflow (see ``_build_comfy_submit_payload``).
     """
     api_path = Path(api_path).resolve()
     key = str(api_path)
@@ -5043,13 +5072,7 @@ def _load_ui_workflow(api_path: Path) -> Optional[dict]:
         return _UI_WORKFLOW_CACHE[key]
     ui_path = api_path.with_name(api_path.stem + ".ui.json")
     if not ui_path.exists():
-        if key not in _UI_WORKFLOW_MISSING_WARNED:
-            _UI_WORKFLOW_MISSING_WARNED.add(key)
-            print(
-                f"[proxy] no UI workflow twin at {ui_path}; outputs will lack "
-                f"embedded workflow metadata (cannot be re-opened in ComfyUI frontend)",
-                flush=True,
-            )
+        # No twin is fine: the submit step derives the workflow from the graph.
         _UI_WORKFLOW_CACHE[key] = None
         return None
     try:
@@ -5072,7 +5095,12 @@ def _build_comfy_submit_payload(workflow: dict, **extra: Any) -> dict:
     so users can't drag the resulting mp4/PNG into ComfyUI's frontend to
     re-open the generation.
     """
-    ui = workflow.pop("__ui_workflow__", None)
+    twin = workflow.pop("__ui_workflow__", None)
+    # Derive from the graph actually submitted, so the embedded workflow shows
+    # this request's prompt, seed and sizes. The hand-authored twin is a
+    # fallback only: it carries the template's values, and several twins are
+    # stale (widget values shifted by control_after_generate).
+    ui = _derive_ui_workflow(workflow) or twin
     payload = {"prompt": workflow}
     if ui:
         payload["extra_data"] = {"extra_pnginfo": {"workflow": ui}}
@@ -5099,120 +5127,27 @@ def load_comfy_workflow(model_name: str) -> Optional[dict]:
     return workflow
 
 
-# Cache for object_info slot definitions and for derived UI graphs (keyed by a
-# hash of the API graph, so it survives across requests but updates if a workflow
-# file changes).
-_OBJECT_INFO_CACHE: dict[str, Optional[dict]] = {}
-_DERIVED_UI_CACHE: dict[str, Optional[dict]] = {}
 
 
 def _comfy_object_info(class_type: str) -> Optional[dict]:
-    """Fetch (and cache) a node type's slot definitions from ComfyUI /object_info.
-
-    Used to derive a UI-format graph from an API graph. Returns None on any error
-    (ComfyUI down, unknown node) so the caller falls back gracefully.
-    """
-    if class_type in _OBJECT_INFO_CACHE:
-        return _OBJECT_INFO_CACHE[class_type]
-    info = None
-    try:
-        with httpx.Client(timeout=httpx.Timeout(10, connect=3)) as client:
-            resp = client.get(f"{COMFY_HOST}/object_info/{class_type}")
-        if resp.status_code == 200:
-            info = resp.json().get(class_type)
-    except Exception:
-        info = None
-    _OBJECT_INFO_CACHE[class_type] = info
-    return info
+    """A node type's slot definitions from ComfyUI /object_info (cached), or None."""
+    return comfy_object_info.lookup(COMFY_HOST, class_type)
 
 
 def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
     """Derive a UI-format ComfyUI graph from an API-format workflow.
 
-    So generated images embed the 'workflow' PNG chunk (re-openable in the
-    ComfyUI frontend) even when no hand-authored `<name>.ui.json` twin exists.
-    Uses /object_info for each node's input/output slot ordering. Best-effort:
-    returns None if ComfyUI is unreachable or any node type is unknown, in which
-    case the caller simply omits the chunk (status quo, no regression).
+    So generated media embed the 'workflow' chunk/tag (re-openable in the
+    ComfyUI frontend). Uses /object_info for each node's slot ordering; see
+    ``gateway.comfy_ui_graph``. Best-effort: None if ComfyUI is unreachable or
+    any node type is unknown, in which case the caller falls back to a
+    hand-authored twin or omits the chunk.
     """
-    api = {k: v for k, v in api.items() if not (isinstance(k, str) and k.startswith("_"))}
     try:
-        ids = sorted(api.keys(), key=lambda x: int(x))
-    except (TypeError, ValueError):
+        return comfy_ui_graph.derive_ui_workflow(api, _comfy_object_info)
+    except Exception as exc:  # noqa: BLE001 - never fail a render over metadata
+        print(f"[proxy] UI workflow derivation failed: {type(exc).__name__}: {exc}", flush=True)
         return None
-    if not ids:
-        return None
-
-    def input_order(ct: str) -> Optional[list]:
-        oi = _comfy_object_info(ct)
-        if not oi:
-            return None
-        req = list(oi.get("input", {}).get("required", {}).keys())
-        opt = list(oi.get("input", {}).get("optional", {}).keys())
-        return req + opt
-
-    def output_types(ct: str) -> list:
-        oi = _comfy_object_info(ct)
-        if not oi:
-            return []
-        names = oi.get("output_name") or oi.get("output") or []
-        types = oi.get("output") or []
-        return list(zip(names, types)) if names else [(t, t) for t in types]
-
-    nodes = []
-    node_by_id: dict[int, dict] = {}
-    for i, nid in enumerate(ids):
-        spec = api[nid]
-        ct = spec.get("class_type")
-        if not ct:
-            return None
-        oi = input_order(ct)
-        if oi is None:
-            return None  # unknown node -> bail, omit chunk rather than emit a broken graph
-        ins = spec.get("inputs", {}) or {}
-        ui_inputs, widget_vals = [], []
-        for name in oi:
-            v = ins.get(name, None)
-            ui_inputs.append({"name": name, "localized_name": name, "type": "*",
-                              "link": None, "widget": {"name": name}})
-            if not (isinstance(v, list) and len(v) == 2 and isinstance(v[0], str)) and v is not None:
-                widget_vals.append(v)
-        ui_outputs = [{"name": (n or t), "localized_name": (n or t), "type": t,
-                       "links": [], "slot_index": j}
-                      for j, (n, t) in enumerate(output_types(ct))]
-        node = {"id": int(nid), "type": ct,
-                "pos": [100 + (i % 4) * 340, 80 + (i // 4) * 240],
-                "size": [300, 120], "flags": {}, "order": i, "mode": 0,
-                "inputs": ui_inputs, "outputs": ui_outputs,
-                "properties": {"Node name for S&R": ct}, "widgets_values": widget_vals}
-        nodes.append(node)
-        node_by_id[int(nid)] = node
-
-    links = []
-    lid = 0
-    for nid in ids:
-        spec = api[nid]
-        ct = spec.get("class_type")
-        oi = input_order(ct) or []
-        tnode = node_by_id[int(nid)]
-        for name, v in (spec.get("inputs", {}) or {}).items():
-            if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
-                from_id, from_slot = int(v[0]), int(v[1])
-                tslot = oi.index(name) if name in oi else 0
-                lid += 1
-                fnode = node_by_id.get(from_id)
-                ltype = (fnode["outputs"][from_slot]["type"]
-                         if fnode and from_slot < len(fnode["outputs"]) else "*")
-                links.append([lid, from_id, from_slot, int(nid), tslot, ltype])
-                if tslot < len(tnode["inputs"]):
-                    tnode["inputs"][tslot]["link"] = lid
-                if fnode and from_slot < len(fnode["outputs"]):
-                    fnode["outputs"][from_slot]["links"].append(lid)
-
-    return {"id": "00000000-0000-0000-0000-000000000000", "revision": 0,
-            "last_node_id": max(int(i) for i in ids), "last_link_id": lid,
-            "nodes": nodes, "links": links, "groups": [], "config": {},
-            "extra": {}, "version": 0.4}
 
 
 def _load_comfy_workflow_file(workflow_path: Path) -> Optional[dict]:
@@ -5225,12 +5160,9 @@ def _load_comfy_workflow_file(workflow_path: Path) -> Optional[dict]:
             flush=True,
         )
         return None
-    # Prefer a hand-authored UI twin (nice layout); otherwise derive one on the fly
-    # from the API graph so generated images STILL embed the re-openable workflow
-    # chunk. Works for any workflow, current or future, with no twin file needed.
+    # Hand-authored UI twin: fallback only. The submit step derives the workflow
+    # from the final graph (see _build_comfy_submit_payload).
     ui = _load_ui_workflow(workflow_path)
-    if ui is None:
-        ui = _derive_ui_workflow(workflow)
     if ui is not None:
         workflow["__ui_workflow__"] = ui
     return workflow
@@ -6503,8 +6435,11 @@ def _sign_image_token(image_id: str, expires: int) -> str:
     return _sign_asset_token(image_id, expires)
 
 
-def _sign_asset_token(asset_id: str, expires: int) -> str:
-    msg = f"{asset_id}:{expires}".encode("utf-8")
+def _sign_asset_token(asset_id: str, expires: int, metadata_mode: str | None = None) -> str:
+    # ``metadata_mode`` is part of the signed message so a client cannot flip a
+    # ``none`` URL to ``full`` (the signature covers it).
+    suffix = f":md={metadata_mode}" if metadata_mode else ""
+    msg = f"{asset_id}:{expires}{suffix}".encode("utf-8")
     return hmac.new(_image_signing_secret(), msg, hashlib.sha256).hexdigest()
 
 
@@ -6513,11 +6448,11 @@ def verify_image_signature(image_id: str, expires: int, sig: str) -> bool:
     return verify_asset_signature(image_id, expires, sig)
 
 
-def verify_asset_signature(asset_id: str, expires: int, sig: str) -> bool:
+def verify_asset_signature(asset_id: str, expires: int, sig: str, metadata_mode: str | None = None) -> bool:
     """Constant-time HMAC verification for signed asset URLs."""
     if expires < int(time.time()):
         return False
-    expected = _sign_asset_token(asset_id, expires)
+    expected = _sign_asset_token(asset_id, expires, metadata_mode)
     return hmac.compare_digest(expected, str(sig or ""))
 
 
@@ -6721,26 +6656,32 @@ def image_cache_path(image_id: str) -> Optional[Path]:
     return asset_cache_path(image_id)
 
 
-def build_signed_asset_url(request: Request, asset_id: str) -> str:
-    """Build a signed, hostname-aware URL for a generated asset."""
+def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str | None = None) -> str:
+    """Build a signed, hostname-aware URL for a generated asset.
+
+    The URL carries ``md=full|none``: the metadata mode the bytes are
+    delivered with. Default is the current request's resolved mode.
+    """
+    mode = metadata_mode or media_delivery.current_mode()
     expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
-    sig = _sign_asset_token(asset_id, expires)
+    sig = _sign_asset_token(asset_id, expires, mode)
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
-    return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&sig={sig}"
+    return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}"
 
 
-def build_signed_image_url(request: Request, image_id: str) -> str:
+def build_signed_image_url(request: Request, image_id: str, metadata_mode: str | None = None) -> str:
     """Build a signed, hostname-aware URL for an image stored in the cache.
 
     Honors `X-Forwarded-Proto` and the request's Host header so the URL works
     regardless of which Traefik route the client came in on.
     """
+    mode = metadata_mode or media_delivery.current_mode()
     expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
-    sig = _sign_image_token(image_id, expires)
+    sig = _sign_asset_token(image_id, expires, mode)
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
-    return f"{proto}://{host}/v1/images/{image_id}/content?expires={expires}&sig={sig}"
+    return f"{proto}://{host}/v1/images/{image_id}/content?expires={expires}&md={mode}&sig={sig}"
 
 
 async def evict_image_cache_loop(stop_event: asyncio.Event) -> None:
@@ -7134,19 +7075,35 @@ def _build_image_response_payload(
     data: list[dict] = []
     owner_key_hash = _asset_owner_key(auth_context)
     suffix = f".{output_format}" if output_format != "jpeg" else ".jpg"
-    for raw in images:
-        encoded, mime_type = encode_image_bytes(raw, output_format, output_compression)
+    delivery = media_delivery.current()
+    mode = delivery.mode if delivery is not None else _media_metadata_default(auth_context)
+    for index, raw in enumerate(images):
+        # Stored copy: always full (ComfyUI prompt/workflow + provenance record).
+        record = _image_provenance_record(
+            delivery, index, size=size, quality=quality, background=background,
+            output_format=output_format, output_compression=output_compression,
+        )
+        raw = media_delivery.attach_provenance(raw, ".png", record)
+        exif = (
+            media_metadata.exif_bytes(media_delivery.image_exif_entries(raw, record))
+            if output_format != "png"
+            else None
+        )
+        encoded, mime_type = encode_image_bytes(
+            raw, output_format, output_compression, exif=exif
+        )
         image_id = store_image_bytes(encoded, owner_key_hash=owner_key_hash, suffix=suffix)
         item: dict[str, Any] = {
             "asset_id": image_id,
-            "asset_url": build_signed_asset_url(request, image_id),
+            "asset_url": build_signed_asset_url(request, image_id, mode),
             "media_type": mime_type,
         }
         if response_format == "url":
-            item["url"] = build_signed_image_url(request, image_id)
+            item["url"] = build_signed_image_url(request, image_id, mode)
         else:
-            b64 = base64.b64encode(encoded).decode("utf-8")
-            item["b64_json"] = b64
+            # Delivered copy: the request/profile decides; the stored copy is untouched.
+            delivered = media_delivery.deliver_bytes(encoded, suffix, mode)
+            item["b64_json"] = base64.b64encode(delivered).decode("utf-8")
         data.append(item)
     headers = {"content-type": "application/json"}
     headers.update(warning_headers)
@@ -7171,6 +7128,35 @@ def _build_image_response_payload(
         status_code=200,
         media_type="application/json",
         headers=headers,
+    )
+
+
+def _image_provenance_record(
+    delivery: "media_delivery.DeliveryContext | None",
+    index: int,
+    *,
+    size: Optional[str],
+    quality: Optional[str],
+    background: Optional[str],
+    output_format: str,
+    output_compression: Optional[int],
+) -> dict[str, Any]:
+    """Provenance record for image ``index`` of this request (no secrets)."""
+    parameters: dict[str, Any] = dict(delivery.parameters) if delivery is not None else {}
+    parameters.update({
+        k: v for k, v in (
+            ("size", size), ("quality", quality), ("background", background),
+            ("output_format", output_format), ("output_compression", output_compression),
+        ) if v is not None
+    })
+    seeds = delivery.seeds if delivery is not None else []
+    return provenance.build_provenance_record(
+        receipt=delivery.receipt if delivery is not None else None,
+        kind="image",
+        model_alias=delivery.model_alias if delivery is not None else None,
+        seed=seeds[index] if index < len(seeds) else None,
+        parameters=parameters,
+        index=index,
     )
 
 
@@ -7320,6 +7306,17 @@ async def _generate_images_with_adaptive_batching(
                     )
         if models_freed:
             response_headers["X-ComfyUI-Models-Freed"] = "true"
+        if err is None:
+            _delivery = media_delivery.current()
+            if _delivery is not None:
+                _round_seed = (
+                    round_workflow.get(seed_node, {}).get("inputs", {}).get(seed_field)
+                    if seed_node
+                    else None
+                )
+                _delivery.seeds.extend(
+                    [_round_seed if isinstance(_round_seed, int) else None] * len(round_images)
+                )
         if err is not None:
             if (
                 background_removal_decision is not None
@@ -7582,6 +7579,9 @@ async def proxy_comfy_request(
     )
     if unknown_response is not None:
         return unknown_response
+    metadata_error = _note_media_metadata_body(body)
+    if metadata_error is not None:
+        return metadata_error
 
     prompt = body.get("prompt", "")
     requested_model = body.get("model", COMFY_DEFAULT_MODEL)
@@ -8058,6 +8058,9 @@ async def proxy_comfy_edit_request(
     )
     if unknown_response is not None:
         return unknown_response
+    metadata_error = _note_media_metadata_body(form_dict)
+    if metadata_error is not None:
+        return metadata_error
 
     image_files = _collect_edit_image_uploads(form)
     image_file = image_files[0] if image_files else None
@@ -8644,6 +8647,16 @@ async def proxy_comfy_variations_request(
         if key in form_dict:
             continue
         form_dict[str(key)] = value
+    # Variations take no workflow controls except the gateway-level metadata
+    # control. Read it, then drop it before the strict unknown-field check.
+    metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
+    if metadata_field in form_dict:
+        metadata_error = _note_media_metadata_body({
+            "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {
+                provenance.METADATA_CONTROL: form_dict.pop(metadata_field)}}
+        })
+        if metadata_error is not None:
+            return metadata_error
     unknown_response = _record_unknown_image_fields(
         receipt,
         form_dict,
@@ -10166,6 +10179,25 @@ async def _submit_video_graph(
                         "prompt": prompt,
                         "error": None,
                         "remixed_from_video_id": remixed_from_video_id,
+                        # Delivery control from the submit request (None = use profile default).
+                        "metadata_mode": (media_delivery.current().requested_mode if media_delivery.current() else None),
+                        "provenance": provenance.build_provenance_record(
+                            kind="video",
+                            requested_model=public_model,
+                            resolved_model=workflow_name,
+                            workflow_id=f"video.generate.{workflow_name}",
+                            backend="comfyui",
+                            seed=seed_val,
+                            parameters={
+                                **(media_delivery.current().parameters if media_delivery.current() else {}),
+                                "size": f"{width}x{height}",
+                                "seconds": seconds_str,
+                                "actual_seconds": round(actual_seconds, 4),
+                                "length_frames": length,
+                            },
+                            request_id=video_id,
+                            created_at=now,
+                        ),
                         **(record_extra or {}),
                         # Owner scoping for GET/list/DELETE/content -- mirrors
                         # _asset_owner_key's existing image/audio asset model.
@@ -10282,6 +10314,10 @@ async def proxy_comfy_video_create(
             status_code=400,
             media_type="application/json",
         )
+    _begin_media_delivery(auth_context)
+    metadata_error = _note_media_metadata_body(body)
+    if metadata_error is not None:
+        return metadata_error
 
     prompt = (body.get("prompt") or "").strip()
     requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
@@ -10762,10 +10798,18 @@ async def proxy_comfy_video_create(
         body, upload_error = await _upload_video_workflow_assets(body, staged_assets, auth_context)
         if upload_error is not None:
             return upload_error
-    has_workflow_extensions = bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(
+    _workflow_block = (
         (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
         if isinstance(body.get("extensions"), Mapping)
         else body.get("extensions")
+    )
+    if isinstance(_workflow_block, Mapping):
+        # Gateway-level controls (metadata) are not workflow inputs.
+        _workflow_block = {
+            k: v for k, v in _workflow_block.items() if k not in provenance.RESERVED_GATEWAY_CONTROLS
+        }
+    has_workflow_extensions = (
+        bool(workflow_cfg.get("requires_extensions")) or bool(body.get("inputs")) or bool(_workflow_block)
     )
     if has_workflow_extensions:
         try:
@@ -10931,7 +10975,10 @@ def _parse_chain_options(body: Mapping[str, Any], engine: video_extend.ChainEngi
     block = (merged.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
     if not isinstance(block, Mapping):
         raise video_extend.PlanError("extensions must be a mapping", code="invalid_workflow_extension", param="extensions")
-    unknown = [k for k in block if k not in engine.option_keys]
+    unknown = [
+        k for k in block
+        if k not in engine.option_keys and k not in provenance.RESERVED_GATEWAY_CONTROLS
+    ]
     if unknown:
         raise video_extend.PlanError(
             f"unsupported long-video option {unknown[0]!r}; supported: {', '.join(engine.option_keys)}",
@@ -11362,8 +11409,18 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
         )
 
 
-async def proxy_comfy_video_content(video_id: str, auth_context: AuthContext) -> Response:
-    """GET /v1/videos/{video_id}/content — return mp4 bytes."""
+async def proxy_comfy_video_content(
+    video_id: str,
+    auth_context: AuthContext,
+    *,
+    metadata_mode: str = provenance.METADATA_FULL,
+) -> Response:
+    """GET /v1/videos/{video_id}/content — return mp4 bytes.
+
+    The bytes always carry full metadata (ComfyUI prompt/workflow plus the
+    gateway provenance record) unless ``metadata_mode`` is ``none``. Internal
+    callers that store the result (media jobs) keep the default ``full``.
+    """
     if not COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
@@ -11458,8 +11515,27 @@ async def proxy_comfy_video_content(video_id: str, auth_context: AuthContext) ->
                 ".mkv": "video/x-matroska",
             }.get(ext, "application/octet-stream")
 
+            video_bytes = view_resp.content
+            record = _video_job_records.get(prompt_id) or {}
+            try:
+                if metadata_mode == provenance.METADATA_NONE:
+                    video_bytes = await asyncio.to_thread(
+                        media_delivery.deliver_bytes, video_bytes, ext, metadata_mode
+                    )
+                else:
+                    video_bytes = await asyncio.to_thread(
+                        media_delivery.attach_provenance, video_bytes, ext, record.get("provenance")
+                    )
+            except media_metadata.MediaMetadataError as exc:
+                print(f"[proxy] video metadata rewrite failed: {exc}", flush=True)
+                return Response(
+                    content=json.dumps({"error": {"message": "Could not prepare video for delivery", "type": "api_error"}}),
+                    status_code=502,
+                    media_type="application/json",
+                )
+
             return Response(
-                content=view_resp.content,
+                content=video_bytes,
                 status_code=200,
                 media_type=content_type,
                 headers={
@@ -12636,6 +12712,58 @@ def _profile_for_auth_context(auth_context: AuthContext):
     return auth_context.identity.profile
 
 
+def _media_metadata_default(auth_context: AuthContext | None) -> str:
+    """Profile default for delivered media metadata (``full`` or ``none``).
+
+    No identity means auth is off: a personal local run, so ``full``. A
+    caller with an identity gets ``profile.media_metadata.default``.
+    """
+    identity = getattr(auth_context, "identity", None) if auth_context else None
+    if identity is None:
+        return provenance.METADATA_FULL
+    policy = getattr(identity.profile, "media_metadata", None)
+    return getattr(policy, "default", provenance.METADATA_NONE)
+
+
+def _begin_media_delivery(auth_context: AuthContext | None, receipt: Any = None) -> media_delivery.DeliveryContext:
+    """Open the per-request media delivery context (profile default, receipt)."""
+    return media_delivery.begin(
+        profile_default=_media_metadata_default(auth_context), receipt=receipt
+    )
+
+
+def _media_metadata_error(exc: Exception) -> Response:
+    return Response(
+        content=json.dumps({"error": {
+            "message": str(exc),
+            "type": "invalid_request_error",
+            "param": f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{provenance.METADATA_CONTROL}",
+            "code": "invalid_value",
+        }}),
+        status_code=400,
+        media_type="application/json",
+    )
+
+
+def _note_media_metadata_body(body: Any) -> Response | None:
+    """Read the metadata control from a parsed body; return a 400 if invalid."""
+    try:
+        media_delivery.note_body(body if isinstance(body, Mapping) else None)
+    except provenance.MetadataModeError as exc:
+        return _media_metadata_error(exc)
+    return None
+
+
+def _note_media_metadata_query(request: Request) -> Response | None:
+    try:
+        params = getattr(request, "query_params", None) or {}
+        items = params.multi_items() if hasattr(params, "multi_items") else params.items()
+        media_delivery.note_query(items)
+    except provenance.MetadataModeError as exc:
+        return _media_metadata_error(exc)
+    return None
+
+
 def _profile_source_id(auth_context: AuthContext) -> str:
     return getattr(_profile_for_auth_context(auth_context), "id", "default-local")
 
@@ -13357,18 +13485,40 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
     return images[0]
 
 
+def _identity_note_delivery(auth_context: Any, form_fields: Mapping[str, Any]) -> Response | None:
+    """Open the delivery context for the native identity route (flat form fields)."""
+    _begin_media_delivery(auth_context)
+    try:
+        nested = video_inputs.parse_bracket_form(form_fields.items())
+    except ValueError as exc:
+        return _media_metadata_error(exc)
+    return _note_media_metadata_body(nested)
+
+
 def _identity_store_image(request: Request, auth_context: AuthContext, content: bytes, response_format: str) -> dict[str, Any]:
+    delivery = media_delivery.current() or _begin_media_delivery(auth_context)
+    mode = delivery.mode
+    record = provenance.build_provenance_record(
+        receipt=delivery.receipt,
+        kind="image",
+        workflow_id=IDENTITY_MANIFEST_ID,
+        resolved_model=IDENTITY_MODEL_ID,
+        backend="comfyui",
+        parameters=delivery.parameters or None,
+    )
+    content = media_delivery.attach_provenance(content, ".png", record)
     encoded, mime_type = encode_image_bytes(content, "png", None)
     image_id = store_image_bytes(encoded, owner_key_hash=_asset_owner_key(auth_context), suffix=".png")
     item: dict[str, Any] = {
         "asset_id": image_id,
-        "asset_url": build_signed_asset_url(request, image_id),
+        "asset_url": build_signed_asset_url(request, image_id, mode),
         "media_type": mime_type,
     }
     if response_format == "url":
-        item["url"] = build_signed_image_url(request, image_id)
+        item["url"] = build_signed_image_url(request, image_id, mode)
     else:
-        item["b64_json"] = base64.b64encode(encoded).decode("utf-8")
+        delivered = media_delivery.deliver_bytes(encoded, ".png", mode)
+        item["b64_json"] = base64.b64encode(delivered).decode("utf-8")
     return item
 
 
@@ -13382,6 +13532,7 @@ identity_api.register_identity_routes(
         run_workflow=lambda auth, graph, uploads: _identity_run_workflow(auth, graph, uploads),
         template=lambda: _identity_template(),
         store_image=lambda request, auth, content, fmt: _identity_store_image(request, auth, content, fmt),
+        note_delivery=lambda auth, fields: _identity_note_delivery(auth, fields),
     ),
 )
 
@@ -16424,6 +16575,7 @@ def start_image_route_receipt(
         visibility=profile.status_visibility.level,
     )
     _apply_image_route_policy(receipt, auth_context)
+    _begin_media_delivery(auth_context, receipt)
     return receipt
 
 
@@ -16862,6 +17014,7 @@ def _gateway_workflow_extension_values(
             reason,
             param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{name}",
         )
+    media_delivery.note_parameters(result.validation.accepted)
     return dict(result.validation.accepted), None
 
 
@@ -17610,7 +17763,13 @@ def _workflow_extensions_present(body: Mapping[str, Any]) -> bool:
     extensions = body.get("extensions")
     if not isinstance(extensions, Mapping):
         return extensions is not None
-    return WORKFLOW_EXTENSION_NAMESPACE in extensions
+    if WORKFLOW_EXTENSION_NAMESPACE not in extensions:
+        return False
+    block = extensions[WORKFLOW_EXTENSION_NAMESPACE]
+    if isinstance(block, Mapping):
+        # Gateway-level controls (metadata) are valid on every workflow.
+        return not block or any(name not in provenance.RESERVED_GATEWAY_CONTROLS for name in block)
+    return True
 
 
 def _workflow_extension_integer(body: Mapping[str, Any], name: str) -> Optional[int]:
@@ -18254,6 +18413,14 @@ def _openai_image_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, An
         "job_id": job.get("job_id"),
         "data": data,
     }
+
+
+def _job_metadata_mode_patch() -> dict[str, str]:
+    """Submit-time ``metadata`` choice, kept on the job so content GET honors it."""
+    ctx = media_delivery.current()
+    if ctx is not None and ctx.requested_mode:
+        return {"metadata_mode": ctx.requested_mode}
+    return {}
 
 
 def _media_job_asset_items(
@@ -18934,7 +19101,7 @@ async def _run_audio_media_job(job_id: str) -> None:
                 },
                 path=media_jobs.DB_PATH,
             )
-            response = await proxy_audio_generate(request_shim, auth_context)
+            response = await proxy_audio_generate(request_shim, auth_context, store_full=True)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -18978,7 +19145,7 @@ async def _run_audio_media_job(job_id: str) -> None:
             media_jobs.STATUS_SUCCEEDED,
             progress=100,
             add_assets=assets,
-            metadata_patch={"completed_at": int(time.time())},
+            metadata_patch={"completed_at": int(time.time()), **_job_metadata_mode_patch()},
             path=media_jobs.DB_PATH,
         )
         media_jobs.append_event(
@@ -19519,6 +19686,7 @@ async def _run_video_media_job(job_id: str) -> None:
                 metadata_patch={
                     "completed_at": int(time.time()),
                     "upstream_video_id": video_id,
+                    **_job_metadata_mode_patch(),
                 },
                 path=media_jobs.DB_PATH,
             )
@@ -19947,6 +20115,17 @@ async def gateway_media_job_content(job_id: str, request: Request):
     if preflight_response is not None:
         return preflight_response
     job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+    # Signed URLs minted below carry the delivery mode: the GET's own query
+    # override, else the choice made when the job was submitted, else the
+    # caller's profile default.
+    delivery = _begin_media_delivery(auth_context)
+    metadata_error = _note_media_metadata_query(request)
+    if metadata_error is not None:
+        return metadata_error
+    if delivery.requested_mode is None and job is not None:
+        submitted = (job.get("metadata") or {}).get("metadata_mode")
+        if submitted in provenance.METADATA_MODES:
+            delivery.requested_mode = submitted
     if job is None:
         return Response(
             content=json.dumps({
@@ -20092,7 +20271,8 @@ async def images_content(image_id: str, request: Request):
     URL responses, where SDKs and browsers fetch the returned URL without
     adding the original API key.
     """
-    return _signed_asset_content_response(
+    return await asyncio.to_thread(
+        _signed_asset_content_response,
         image_id,
         request,
         invalid_message="Invalid image id",
@@ -20105,7 +20285,8 @@ async def images_content(image_id: str, request: Request):
 @app.get("/v1/assets/{asset_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
 async def assets_content(asset_id: str, request: Request):
     """Serve a cached generated asset referenced by a signed URL."""
-    return _signed_asset_content_response(
+    return await asyncio.to_thread(
+        _signed_asset_content_response,
         asset_id,
         request,
         invalid_message="Invalid asset id",
@@ -20119,6 +20300,10 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
     auth_context = _gateway_auth_context(request, "/gateway/v1/assets/{asset_id}")
     if isinstance(auth_context, Response):
         return auth_context
+    _begin_media_delivery(auth_context)  # content_url below carries the delivery mode
+    metadata_error = _note_media_metadata_query(request)
+    if metadata_error is not None:
+        return metadata_error
     parsed = _parse_asset_id(asset_id)
     if parsed is None:
         return Response(
@@ -20163,7 +20348,8 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
 @app.get("/gateway/v1/assets/{asset_id}/content")
 async def gateway_asset_content(asset_id: str, request: Request):
     """Serve a cached generated asset through the gateway-native asset surface."""
-    return _signed_asset_content_response(
+    return await asyncio.to_thread(
+        _signed_asset_content_response,
         asset_id,
         request,
         invalid_message="Invalid asset id",
@@ -20196,7 +20382,16 @@ def _signed_asset_content_response(
             status_code=400,
             media_type="application/json",
         )
-    if not verify_asset_signature(asset_id, expires, sig):
+    # md is covered by the signature. A URL without it predates the control and
+    # is delivered metadata-free (safe default).
+    md_raw = request.query_params.get("md")
+    if md_raw is not None and md_raw not in provenance.METADATA_MODES:
+        return Response(
+            content=json.dumps({"error": {"message": "Invalid or expired signature", "type": "invalid_request_error"}}),
+            status_code=403,
+            media_type="application/json",
+        )
+    if not verify_asset_signature(asset_id, expires, sig, md_raw):
         return Response(
             content=json.dumps({"error": {"message": "Invalid or expired signature", "type": "invalid_request_error"}}),
             status_code=403,
@@ -20229,6 +20424,17 @@ def _signed_asset_content_response(
         )
 
     data = cache_path.read_bytes()
+    try:
+        data = media_delivery.deliver_bytes(
+            data, cache_path.suffix, md_raw or provenance.METADATA_NONE
+        )
+    except media_metadata.MediaMetadataError as exc:
+        print(f"[proxy] metadata strip failed for {asset_id}: {exc}", flush=True)
+        return Response(
+            content=json.dumps({"error": {"message": "Could not prepare asset for delivery", "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json",
+        )
     return Response(
         content=data,
         status_code=200,
@@ -20265,7 +20471,16 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
     try:
         form = await request.form()
         input_specs = record.manifest.get("inputs") or {}
-        unknown_fields = set(form.keys()) - set(input_specs)
+        _begin_media_delivery(auth_context)
+        metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
+        metadata_value = form.get(metadata_field)
+        if metadata_value is not None:
+            metadata_error = _note_media_metadata_body({
+                "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {provenance.METADATA_CONTROL: metadata_value}}
+            })
+            if metadata_error is not None:
+                return metadata_error
+        unknown_fields = set(form.keys()) - set(input_specs) - {metadata_field}
         if unknown_fields:
             raise ValueError(f"unknown workflow input: {sorted(unknown_fields)[0]}")
         supplied: dict[str, Any] = {}
@@ -20396,8 +20611,37 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             )
         suffix = Path(file_info["filename"]).suffix.lower()
         media_type = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska"}.get(suffix, "application/octet-stream")
+        rendered_bytes = rendered.content
+        try:
+            if media_delivery.current_mode() == provenance.METADATA_NONE:
+                rendered_bytes = await asyncio.to_thread(
+                    media_delivery.deliver_bytes, rendered_bytes, suffix, provenance.METADATA_NONE
+                )
+            else:
+                identity = manifest_identity(record.manifest)
+                rendered_bytes = await asyncio.to_thread(
+                    media_delivery.attach_provenance,
+                    rendered_bytes,
+                    suffix,
+                    provenance.build_provenance_record(
+                        kind="video",
+                        requested_model=workflow_id,
+                        resolved_model=record.id,
+                        workflow_id=identity.id,
+                        workflow_version=identity.version,
+                        workflow_hash=identity.manifest_hash,
+                        backend="comfyui",
+                        parameters=validation.accepted,
+                    ),
+                )
+        except media_metadata.MediaMetadataError as exc:
+            print(f"[proxy] workflow run metadata rewrite failed: {exc}", flush=True)
+            return Response(
+                content=json.dumps({"error": {"message": "Could not prepare video for delivery", "type": "api_error"}}),
+                status_code=502, media_type="application/json",
+            )
         return Response(
-            content=rendered.content, status_code=200, media_type=media_type,
+            content=rendered_bytes, status_code=200, media_type=media_type,
             headers={"Content-Disposition": f'inline; filename="{Path(file_info["filename"]).name}"', "X-Workflow-ID": record.id},
         )
 
@@ -20472,7 +20716,18 @@ async def videos_content(video_id: str, request: Request):
     )
     if policy_response is not None:
         return policy_response
-    return await proxy_comfy_video_content(video_id, auth_context)
+    _begin_media_delivery(auth_context)
+    metadata_error = _note_media_metadata_query(request)
+    if metadata_error is not None:
+        return metadata_error
+    prompt_id = _prompt_id_from_video_id(video_id)
+    record = _video_job_records.get(prompt_id) if prompt_id else None
+    delivery = media_delivery.current()
+    if delivery is not None and delivery.requested_mode is None and record:
+        delivery.requested_mode = record.get("metadata_mode")  # the submit-time choice
+    return await proxy_comfy_video_content(
+        video_id, auth_context, metadata_mode=media_delivery.current_mode()
+    )
 
 
 @app.get("/openai/v1/videos", openapi_extra=VIDEOS_LIST_OPENAPI)
@@ -20703,8 +20958,12 @@ def _extract_audio_output(job: dict):
     return None
 
 
-async def proxy_audio_generate(request: Request, auth_context):
-    """POST /v1/audio/generate — submit audio generation via ComfyUI."""
+async def proxy_audio_generate(request: Request, auth_context, *, store_full: bool = False):
+    """POST /v1/audio/generate — submit audio generation via ComfyUI.
+
+    ``store_full`` is for the media-job executor, which stores the bytes: they
+    keep full metadata and the delivery mode is applied when the asset is served.
+    """
     if not COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Audio generation not enabled", "type": "service_unavailable"}}),
@@ -20730,6 +20989,10 @@ async def proxy_audio_generate(request: Request, auth_context):
     if unknown_top_level:
         name, reason = next(iter(unknown_top_level.items()))
         return _audio_extension_error_response(reason, param=name)
+    _begin_media_delivery(auth_context)
+    metadata_error = _note_media_metadata_body(body)
+    if metadata_error is not None:
+        return metadata_error
 
     text_fields: dict[str, str | None] = {}
     for field_name in ("prompt", "input", "tags", "lyrics"):
@@ -20891,6 +21154,7 @@ async def proxy_audio_generate(request: Request, auth_context):
             workflow[node_id]["inputs"][key] = duration_value
 
     seed_targets = _injection_targets(meta.get("seed_node"), "seed")
+    seed_val: int | None = None
     if seed_targets:
         try:
             seed_val = int(seed) if seed is not None else random.randint(0, 2**32 - 1)
@@ -20973,6 +21237,39 @@ async def proxy_audio_generate(request: Request, auth_context):
                             if peak_db is not None:
                                 audio_bytes = await asyncio.to_thread(
                                     _peak_normalize_audio, audio_bytes, content_type, float(peak_db)
+                                )
+                            audio_suffix = Path(file_info["filename"]).suffix or ".wav"
+                            try:
+                                if not store_full and media_delivery.current_mode() == provenance.METADATA_NONE:
+                                    audio_bytes = await asyncio.to_thread(
+                                        media_delivery.deliver_bytes, audio_bytes, audio_suffix, provenance.METADATA_NONE
+                                    )
+                                else:
+                                    audio_bytes = await asyncio.to_thread(
+                                        media_delivery.attach_provenance,
+                                        audio_bytes,
+                                        audio_suffix,
+                                        provenance.build_provenance_record(
+                                            kind="audio",
+                                            requested_model=str(model),
+                                            resolved_model=workflow_name,
+                                            workflow_id=f"audio.generate.{workflow_name}",
+                                            backend="comfyui",
+                                            seed=seed_val,
+                                            parameters={
+                                                **media_delivery.current().parameters,
+                                                "type": audio_type,
+                                                "duration": duration_value,
+                                            },
+                                            request_id=audio_id,
+                                        ),
+                                    )
+                            except media_metadata.MediaMetadataError as exc:
+                                print(f"[proxy] audio metadata rewrite failed: {exc}", flush=True)
+                                return Response(
+                                    content=json.dumps({"error": {"message": "Could not prepare audio for delivery", "type": "api_error"}}),
+                                    status_code=502,
+                                    media_type="application/json",
                                 )
                             return Response(
                                 content=audio_bytes,

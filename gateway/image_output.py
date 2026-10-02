@@ -144,6 +144,8 @@ def encode_image_bytes(
     raw: bytes,
     output_format: str,
     compression: int | None,
+    *,
+    exif: bytes | None = None,
 ) -> tuple[bytes, str]:
     """Re-encode PNG bytes (ComfyUI's native ``SaveImage`` output) to
     ``output_format``. Returns ``(encoded_bytes, mime_type)``.
@@ -151,6 +153,9 @@ def encode_image_bytes(
     ``png`` passes through unchanged — lossless, so there is nothing to gain
     from a decode/encode round-trip, and it avoids any incidental pixel
     drift for the common case (png is also the default).
+
+    ``exif`` (jpeg/webp only) is written into the encoded file so a stored
+    copy can keep the ComfyUI prompt/workflow and gateway provenance.
     """
     if output_format not in VALID_OUTPUT_FORMATS:
         raise ValueError(f"unsupported output_format: {output_format}")
@@ -165,7 +170,13 @@ def encode_image_bytes(
     if output_format == "jpeg":
         if image.mode in ("RGBA", "LA", "P"):
             image = image.convert("RGB")
-        image.save(buf, format="JPEG", quality=quality)
+        image.save(buf, format="JPEG", quality=quality, **_exif_kwargs(exif))
     else:  # webp
-        image.save(buf, format="WEBP", quality=quality, lossless=quality >= 100)
+        image.save(
+            buf, format="WEBP", quality=quality, lossless=quality >= 100, **_exif_kwargs(exif)
+        )
     return buf.getvalue(), _MEDIA_TYPES[output_format]
+
+
+def _exif_kwargs(exif: bytes | None) -> dict[str, bytes]:
+    return {"exif": exif} if exif else {}

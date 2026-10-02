@@ -52,6 +52,9 @@ DEFAULT_PROFILE_SEEDS: tuple[dict[str, Any], ...] = (
             "id": "owner-local",
             "status_visibility": {"level": "full"},
             "fallback": {"cloud_allowed": False},
+            # Your own clients keep ComfyUI workflow + provenance in the files they
+            # download. Other profiles default to "none" (stripped).
+            "media_metadata": {"default": "full"},
         },
     },
     {

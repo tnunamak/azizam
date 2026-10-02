@@ -61,6 +61,9 @@ class IdentityApiDeps:
     template: Callable[[], tuple[Mapping[str, Any], Mapping[str, Any]]]               # (graph, gateway binding)
     store_image: Callable[[Request, Any, bytes, str], dict[str, Any]]                  # -> data[] item
     models: tuple[str, ...] = likeness.DEFAULT_MODELS
+    # Called as (auth, form) after the form is read: open the media delivery
+    # context and read the metadata control. Returns an error Response or None.
+    note_delivery: Callable[[Any, Mapping[str, Any]], Response | None] | None = None
 
 
 def error(status: int, code: str, message: str, *, param: str | None = None) -> JSONResponse:
@@ -314,6 +317,10 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
             response_format = str(form.get("response_format") or "b64_json")
             if response_format not in ("b64_json", "url"):
                 raise IdentityError("response_format must be 'b64_json' or 'url'", param="response_format")
+            if deps.note_delivery is not None:
+                bad_metadata = deps.note_delivery(auth, dict(form.multi_items()))
+                if bad_metadata is not None:
+                    return bad_metadata
             req = SceneRequest(
                 photos=photos,
                 prompt=str(form.get("prompt") or ""),

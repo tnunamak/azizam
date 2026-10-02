@@ -46,6 +46,16 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     _GUARD.restore()
 
 
+@pytest.fixture(autouse=True)
+def _no_comfy_object_info(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Submitting a ComfyUI prompt derives the embedded UI workflow from
+    ComfyUI's /object_info. Tests must not reach for a live ComfyUI, so the
+    lookup reports "unavailable" unless a test patches it."""
+    from gateway import comfy_object_info
+
+    monkeypatch.setattr(comfy_object_info, "lookup", lambda _host, _class_type: None)
+
+
 @pytest.fixture(scope="session")
 def gateway_test_state_dir() -> Path:
     return _STATE_DIR

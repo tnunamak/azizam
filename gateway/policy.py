@@ -23,6 +23,7 @@ VISIBILITY_LEVELS = ("none", "basic", "standard", "full")
 TARGET_VISIBILITY_MODES = ("catalog", "available")
 TARGET_ACTIVATION_MODES = ("may_activate", "existing_only")
 MODEL_ACCESS_MODES = ("catalog", "current_loaded")
+MEDIA_METADATA_MODES = ("full", "none")
 
 DEFAULT_PROFILE_ID = "default-local"
 
@@ -114,6 +115,26 @@ class ModelAccessPolicy:
             )
 
 
+@dataclass(frozen=True)
+class MediaMetadataPolicy:
+    """Default for the metadata embedded in generated media bytes at delivery.
+
+    ``full`` delivers the stored copy untouched (ComfyUI ``prompt``/``workflow``
+    plus the gateway provenance record). ``none`` strips every metadata block
+    from the delivered bytes. A request can override this per call with
+    ``extensions["com.vividfish.workflow"].metadata``. ``none`` is the safe
+    default: only profiles that opt in deliver workflow data.
+    """
+
+    default: str = "none"
+
+    def __post_init__(self) -> None:
+        if self.default not in MEDIA_METADATA_MODES:
+            raise ValueError(
+                f"media metadata default must be one of {MEDIA_METADATA_MODES}"
+            )
+
+
 def target_policy_from_model_access(model_access: ModelAccessPolicy) -> TargetPolicy:
     if model_access.mode == "current_loaded":
         return TargetPolicy(visibility="available", activation="existing_only")
@@ -144,6 +165,7 @@ class AppProfile:
     )
     target_policy: TargetPolicy = field(default_factory=TargetPolicy)
     model_access: ModelAccessPolicy = field(default_factory=ModelAccessPolicy)
+    media_metadata: MediaMetadataPolicy = field(default_factory=MediaMetadataPolicy)
 
     def __post_init__(self) -> None:
         if (
