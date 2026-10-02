@@ -842,6 +842,8 @@ VIDEO_REMIX_WORKFLOW = videos_cfg.get("remix_workflow") or None
 # segment loses some fidelity, so a hard cap beats silent degradation.
 VIDEO_EXTEND_WORKFLOW = videos_cfg.get("extend_workflow") or None
 VIDEO_MAX_TOTAL_SECONDS = float(videos_cfg.get("max_total_seconds", 40))
+# Escape hatch for videos made before records were persisted (see _video_job_blocked).
+VIDEO_ALLOW_UNTRACKED_IDS = bool(videos_cfg.get("allow_untracked_ids", False))
 VIDEO_CHAIN_SEGMENT_SECONDS = float(videos_cfg.get("chain_segment_seconds", 8))
 _OPENAI_VIDEO_STATUS_BY_INTERNAL = {
     "queued": "queued",
@@ -8611,10 +8613,14 @@ def _video_job_blocked(prompt_id: str, auth_context: AuthContext | None) -> bool
     unknown or was created before ownership was recorded, and ComfyUI's shared
     /history must not become a way to read another key's video. With auth
     disabled (`_asset_owner_key` is None) nothing is owned, so an untracked id
-    still falls through to the ComfyUI history lookup.
+    still falls through to the ComfyUI history lookup. `videos.allow_untracked_ids`
+    (default false) restores that fall-through for authenticated callers, for the
+    deploy that first starts recording ids: videos made before it have no record.
     """
     if prompt_id in _video_job_records:
         return not _video_job_visible(prompt_id, auth_context)
+    if VIDEO_ALLOW_UNTRACKED_IDS:
+        return False
     return _asset_owner_key(auth_context) is not None
 
 

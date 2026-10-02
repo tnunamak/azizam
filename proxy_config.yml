@@ -738,6 +738,9 @@ videos:
   # video_total_length_exceeded. Segments are at most `chain_segment_seconds`.
   extend_workflow: video-ltx-2.5-long
   max_total_seconds: 40
+  # Videos made before job records were persisted have no owner on file, so keyed
+  # callers get 404 for them. Set true for a while to keep them readable (any key).
+  allow_untracked_ids: false
   chain_segment_seconds: 8
   workflows:
     # LTX-2.5 (default). Separate t2v/i2v graphs: a request with input_reference

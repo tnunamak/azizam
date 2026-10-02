@@ -150,6 +150,11 @@ class OwnershipAfterRestartTests(VideoRegistryTestCase):
             for who in (ALICE, BOB):
                 self.assertEqual((await call(who)).status_code, 404, call.__name__)
 
+    async def test_allow_untracked_ids_restores_the_old_fallback(self) -> None:
+        with patch.object(proxy, "VIDEO_ALLOW_UNTRACKED_IDS", True):
+            self.assertEqual((await self._status(BOB)).status_code, 200)
+        self.assertFalse(proxy.VIDEO_ALLOW_UNTRACKED_IDS)  # default off
+
     async def test_unknown_id_still_works_when_auth_is_disabled(self) -> None:
         self.assertEqual((await self._status(proxy.NO_AUTH_CONTEXT)).status_code, 200)
 
