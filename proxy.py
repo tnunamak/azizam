@@ -74,6 +74,7 @@ from gateway import (
 from gateway import video_extend
 from gateway import video_subject
 from gateway import video_job_records
+from gateway.showcase import build_showcase_router, is_public_showcase_path
 from gateway import stable_aliases
 from gateway import speech_stream
 from gateway import custom_voices
@@ -2263,6 +2264,8 @@ def active_app_credential_count() -> int:
 
 def is_public_path(path: str) -> bool:
     """Allow health checks (and optionally Ollama discovery) without client auth."""
+    if is_public_showcase_path(path):
+        return True
     candidates = list(AUTH_PUBLIC_PATHS)
     if OLLAMA_COMPAT_DISCOVERY_ENABLED:
         candidates.extend(_OLLAMA_DISCOVERY_PUBLIC_PATHS)
@@ -13090,6 +13093,61 @@ async def _gateway_resource_lister(*, audience: str) -> list:
         audience=audience,
         runtime_facts=runtime_facts,
     )
+
+
+_SHOWCASE_STATIC_DIR = Path(__file__).resolve().parent / "showcase"
+_SHOWCASE_EXAMPLES_DIR = Path(
+    os.environ.get("OPENAI_PROXY_SHOWCASE_EXAMPLES_DIR")
+    or Path(__file__).resolve().parent / "data" / "showcase" / "examples"
+)
+
+
+async def _showcase_status() -> dict[str, Any]:
+    """Backend state for the /showcase status strip.
+
+    Reports engine resources, the ComfyUI queue and whether the LLM is
+    generating, so a visitor can tell "busy" from "broken". Every probe is
+    best effort and bounded; a failed probe reports ``None``, never an error.
+    """
+    async def _probe(url: str) -> Any:
+        try:
+            async with httpx.AsyncClient(timeout=1.5) as client:
+                resp = await client.get(url)
+            return resp.json() if resp.status_code == 200 else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    resources, queue, slots = await asyncio.gather(
+        _gateway_resource_lister(audience="client"),
+        _probe(f"{COMFY_HOST}/queue") if COMFY_ENABLED else asyncio.sleep(0),
+        _probe(f"{KOBOLD_HOST}/slots"),
+        return_exceptions=True,
+    )
+    engines = [
+        {"id": r.get("id"), "name": r.get("name"), "status": r.get("status"),
+         "capabilities": r.get("capabilities") or []}
+        for r in (resources if isinstance(resources, list) else [])
+        if isinstance(r, Mapping) and r.get("kind") != "llm-substrate"
+    ]
+    comfy = None
+    if isinstance(queue, Mapping):
+        comfy = {"running": len(queue.get("queue_running") or []),
+                 "pending": len(queue.get("queue_pending") or [])}
+    llm = None
+    if isinstance(slots, list):
+        llm = {"processing": any(isinstance(s, Mapping) and s.get("is_processing")
+                                 for s in slots)}
+    return {"engines": engines, "comfyui": comfy, "llm": llm}
+
+
+app.include_router(
+    build_showcase_router(
+        static_dir=_SHOWCASE_STATIC_DIR,
+        examples_dir=_SHOWCASE_EXAMPLES_DIR,
+        authenticate=lambda request, path: authenticate_request(request, path),
+        status_provider=_showcase_status,
+    )
+)
 
 
 def _gateway_aliases_provider(operation: str | None = None) -> dict[str, Any]:

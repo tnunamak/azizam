@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "note": "Section order is modality order. A workflow joins the first section whose rule matches; anything unmatched lands in the fallback section, so new workflows always appear. Rules: intent (exact), id (regex on the short id), not_id (regex that must NOT match).",
+  "sections": [
+    {"id": "chat", "title": "Chat and vision", "blurb": "Local LLM through stable aliases. Same model answers text and image questions.", "source": "aliases:chat"},
+    {"id": "images", "title": "Image generation", "blurb": "Text to image, including seamless tiles.", "match": {"intent": "image.generate"}},
+    {"id": "image-edits", "title": "Image edits and upscale", "blurb": "Instruction edits, inpainting, multi-reference edits and upscaling.", "match": {"intent": "image.edit"}},
+    {"id": "video-create", "title": "Video: create", "blurb": "Text to video and image to video, with synchronized audio on LTX.", "match": {"intent": "video.generate", "not_id": "long"}},
+    {"id": "video-long", "title": "Video: long-form", "blurb": "Clips of 2 to 50 seconds, rendered in chunks.", "match": {"intent": "video.generate", "id": "long"}},
+    {"id": "video-edit", "title": "Video: remix and character replace", "blurb": "Edit an existing video with a prompt, or swap the character.", "match": {"intent": "video.edit", "not_id": "interpolate|upscale"}},
+    {"id": "video-enhance", "title": "Video: upscale and interpolate", "blurb": "Raise the frame rate of an existing clip.", "match": {"intent": "video.edit", "id": "interpolate|upscale"}},
+    {"id": "speech", "title": "Speech", "blurb": "Text to speech in three tiers, 13 OpenAI voice names, per-language voices and custom voices.", "source": "aliases:speech"},
+    {"id": "transcription", "title": "Transcription", "blurb": "Speech to text in three tiers, plus speaker diarization.", "source": "aliases:transcriptions"},
+    {"id": "music", "title": "Music", "blurb": "Instrumental and sung music from a style prompt.", "match": {"intent": "audio.generate", "id": "ace-step"}},
+    {"id": "songs", "title": "Songs", "blurb": "Songs with vocals from lyrics.", "match": {"intent": "audio.generate", "id": "yue|song"}},
+    {"id": "sfx", "title": "Sound effects", "blurb": "Short sound effects and ambience.", "match": {"intent": "audio.generate", "id": "sfx|tango|sa3"}},
+    {"id": "embeddings", "title": "Embeddings", "blurb": "Text embeddings on CPU.", "source": "aliases:embeddings"},
+    {"id": "protocols", "title": "Protocols", "blurb": "The same models behind the OpenAI, Anthropic, Ollama and Responses APIs. Point an existing client at this host.", "source": "protocols"},
+    {"id": "more", "title": "More workflows", "blurb": "Workflows that no section above claims yet.", "fallback": true}
+  ]
+}
