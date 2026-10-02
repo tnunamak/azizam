@@ -792,15 +792,17 @@ model_aliases:
         description: NVIDIA Parakeet TDT 0.6B v3 (CPU service; long audio is chunked by the gateway)
       nemotron-streaming:
         service: stt-nemotron
-        model: nemotron-3.5-asr-streaming-0.6b
-        planned: true
-        placement: "audio.cpp, GPU0 (~1.6 GB), on-demand"
+        model: nemotron-3.5-asr-streaming-0.6b          # served in offline mode: fastest final text
+        stream_model: nemotron-3.5-asr-streaming-0.6b-stream  # same weights in streaming mode, used when stream=true
+        streaming: true            # stream=true sends transcript.text.delta events while decoding
+        upload_format: wav16k      # audio.cpp reads only 16 kHz mono WAV; the gateway converts uploads
+        placement: "audio.cpp on GPU0 (~1.5 GB while loaded; weights unload after 10 min idle), on-demand unit"
         description: "Nemotron streaming (bake-off: 194 ms end-of-speech to final)"
       canary:
         service: stt-canary
         model: canary-180m-flash
-        planned: true
-        placement: "audio.cpp, CPU or GPU0 (~0.8 GB), on-demand"
+        upload_format: wav16k
+        placement: "audio.cpp on GPU0 (~0.8 GB while loaded; weights unload after 10 min idle), on-demand unit"
         description: Canary 180M Flash (low VRAM, strong clean-speech WER)
     stable:
       stt: [parakeet]

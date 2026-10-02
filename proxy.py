@@ -2835,10 +2835,8 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
 def _alias_engine_available_for(operation: str) -> stable_aliases.EngineAvailable:
     """Engine is usable when its service is enabled in the live registry.
 
-    STT additionally requires the engine's service to be the one the STT
-    dispatcher selects: dispatch picks the service by capability before the
-    multipart body (and so the model name) is read, so an engine on any other
-    service would be resolved here but served by the wrong backend.
+    The STT dispatcher peeks the multipart ``model`` field before it picks a
+    service, so an engine on any enabled service is served by its own backend.
     """
 
     def available(_engine_id: str, spec: Mapping[str, Any]) -> bool:
@@ -2850,9 +2848,6 @@ def _alias_engine_available_for(operation: str) -> stable_aliases.EngineAvailabl
             return False
         if not service.get("host") or not service.get("port"):
             return False
-        if operation in ("transcriptions", "translations"):
-            selected = service_for_capability(f"audio.{operation}")
-            return selected is not None and selected[0] == service_id
         return True
 
     return available
@@ -4048,12 +4043,23 @@ def audio_translation_unsupported_response() -> Response:
     )
 
 
-def _stt_execution_snapshot(operation: str) -> stt_chunking.SttExecutionConfig | None:
-    """Capture one capability-selected STT service from effective hot-reload data."""
-    selected = service_for_capability(f"audio.{operation}")
-    if selected is None:
-        return None
-    service_id, service_config = selected
+def _stt_execution_snapshot(
+    operation: str, service_id: str | None = None
+) -> stt_chunking.SttExecutionConfig | None:
+    """Capture one STT service from effective hot-reload data.
+
+    ``service_id`` is the service a model alias selected; without it the
+    highest-priority service for the capability is used.
+    """
+    if service_id is not None:
+        service_config = (config.get("backends") or {}).get(service_id)
+        if not isinstance(service_config, Mapping):
+            return None
+    else:
+        selected = service_for_capability(f"audio.{operation}")
+        if selected is None:
+            return None
+        service_id, service_config = selected
     return stt_chunking.SttExecutionConfig.from_service(
         service_id=service_id,
         service_config=service_config,
@@ -4121,9 +4127,25 @@ async def _dispatch_selected_stt_route(
     *,
     operation: str,
 ) -> Response:
-    """Select and authorize exactly one STT service before route dispatch."""
+    """Select and authorize exactly one STT service before route dispatch.
+
+    The service follows the multipart ``model`` field (an engine alias picks
+    its own service); with no readable ``model`` it is the capability default.
+    """
+    selected_service: str | None = None
+    model_unpeeked = False
+    if "multipart/form-data" in request.headers.get("content-type", ""):
+        peeked_model, request = await speech_stream.peek_multipart_field(request, "model")
+        model_unpeeked = not peeked_model
+        if peeked_model:
+            try:
+                peeked = resolve_model_for_operation(operation, peeked_model.strip())
+            except ModelCompatibilityError as error:
+                return model_compatibility_error(error)
+            if peeked.alias is not None and peeked.alias.engine:
+                selected_service = peeked.alias.service
     try:
-        execution = _stt_execution_snapshot(operation)
+        execution = _stt_execution_snapshot(operation, selected_service)
     except stt_chunking.SttConfigurationError:
         return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
     if execution is None:
@@ -4137,12 +4159,16 @@ async def _dispatch_selected_stt_route(
     decision = _apply_selected_stt_policy(receipt, auth_context, operation=operation)
     if decision is not None and decision.denied:
         return _policy_denied_response(decision)
+    not_ready = await _ensure_speech_service_ready(execution.service_id, label="STT engine")
+    if not_ready is not None:
+        return not_ready
     return await proxy_stt_request(
         request,
         auth_context,
         operation=operation,
         execution_snapshot=execution,
         route_receipt=receipt,
+        model_unpeeked=model_unpeeked,
     )
 
 
@@ -4216,8 +4242,14 @@ async def proxy_stt_request(
     operation: str = "transcriptions",
     execution_snapshot: stt_chunking.SttExecutionConfig | None = None,
     route_receipt: RouteReceipt | None = None,
+    model_unpeeked: bool = False,
 ) -> Response:
-    """Forward one bounded STT request using one selected service snapshot."""
+    """Forward one bounded STT request using one selected service snapshot.
+
+    ``model_unpeeked`` is set when the dispatcher could not read the ``model``
+    field before choosing the service; a model that then names an engine on a
+    different service is refused instead of being served by the wrong backend.
+    """
     if operation not in {"transcriptions", "translations"}:
         return openai_error_response(f"Unsupported STT operation: {operation}", status_code=400, code="unsupported_stt_operation")
     if execution_snapshot is None:
@@ -4243,6 +4275,7 @@ async def proxy_stt_request(
     cleanup = stt_chunking.SttCleanupOwner()
     cancellation: Any | None = None
     cancellation_signalled = False
+    cleanup_deferred = False  # a streamed response closes cleanup when its body ends
 
     def signal_cancellation() -> None:
         nonlocal cancellation_signalled
@@ -4277,6 +4310,25 @@ async def proxy_stt_request(
             if model_resolution.is_openai_alias and execution.default_model:
                 effective_model = execution.default_model
             fields = stt_chunking.replace_model_field(fields, model=effective_model)
+            engine_spec = (model_resolution.alias.engine_spec if model_resolution.alias is not None else None) or {}
+            if model_unpeeked and model_resolution.alias is not None and model_resolution.alias.service not in (None, execution.service_id):
+                return openai_error_response(
+                    "This model is served by a different STT service than the one this request was routed to. "
+                    "Send the `model` form field before the `file` field.",
+                    status_code=400,
+                    param="model",
+                    code="stt_model_field_order",
+                )
+            native_stream = bool_from_config(engine_spec.get("streaming"), False)
+            wants_stream = any(name == "stream" and value.strip().lower() in {"true", "1"} for name, value in fields)
+            if wants_stream and not native_stream:
+                # The engine answers once; the gateway frames that answer as SSE.
+                fields = [(name, value) for name, value in fields if name != "stream"]
+            stream_model = str(engine_spec.get("stream_model") or "")
+            if wants_stream and native_stream and stream_model:
+                # One weight file served in two modes: offline answers fastest, streaming sends deltas.
+                fields = stt_chunking.replace_model_field(fields, model=stream_model)
+            wav16k_input = str(engine_spec.get("upload_format") or "") == "wav16k"
             multipart_fields: dict[str, str | list[str]] = {}
             for field_name, field_value in fields:
                 previous = multipart_fields.get(field_name)
@@ -4318,6 +4370,70 @@ async def proxy_stt_request(
                 finally:
                     await cleanup.release("chunk_upload_handle", handle.close)
 
+            async def prepared_wav(upload: Any) -> Path:
+                """Decode the upload to 16 kHz mono WAV, the only input audio.cpp engines accept."""
+                destination = workspace / "normalized-16k.wav"
+                cleanup.add("normalized_wav", lambda: destination.unlink(missing_ok=True))
+                await stt_chunking.run_media_command(
+                    [
+                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        "-i", os.fspath(stt_chunking.source_path(upload)),
+                        "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le",
+                        os.fspath(destination),
+                    ],
+                    timeout_seconds=execution.timeout_seconds,
+                    cancellation_waiters=waiters,
+                    deadline_at=deadline_at,
+                    on_cancel=signal_cancellation,
+                    max_output_bytes=execution.max_media_output_bytes,
+                )
+                size = destination.stat().st_size if destination.exists() else 0
+                if size <= 44 or size > execution.max_decoded_bytes:
+                    raise stt_chunking.SttSetupFailure("STT input could not be decoded to WAV")
+                return destination
+
+            async def open_stream(path: Path, filename: str) -> Response:
+                """Relay an engine's SSE transcript while it is being produced."""
+                nonlocal cleanup_deferred
+                handle = path.open("rb")
+                cleanup.add("stream_upload_handle", handle.close)
+                outgoing = client.build_request(
+                    "POST", url, headers=headers, data=multipart_fields,
+                    files=[("file", (filename, handle, "audio/wav" if wav16k_input else "application/octet-stream"))],
+                )
+                try:
+                    upstream = await stt_chunking.await_with_cancellation(
+                        client.send(outgoing, stream=True),
+                        cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation,
+                    )
+                except httpx.TimeoutException as error:
+                    raise stt_chunking.SttBackendTimeout("STT backend timed out") from error
+                except httpx.ConnectError as error:
+                    raise stt_chunking.SttBackendUnavailable("STT backend is unavailable") from error
+                cleanup.add("upstream_response", upstream.aclose)
+                if upstream.status_code != 200:
+                    body = await stt_chunking.read_bounded_response(
+                        upstream, max_bytes=execution.max_response_bytes,
+                        cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation,
+                    )
+                    return _stt_response_from_upstream(
+                        stt_chunking.UpstreamResponse(upstream.status_code, body, dict(upstream.headers))
+                    )
+                cleanup_deferred = True
+
+                async def relay():
+                    try:
+                        async for chunk in upstream.aiter_raw():
+                            yield chunk
+                    finally:
+                        await cleanup.aclose()
+
+                return StreamingResponse(
+                    relay(),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
+
             async def post_uploads() -> stt_chunking.UpstreamResponse:
                 opened: list[tuple[str, Any, str, str]] = []
                 try:
@@ -4330,10 +4446,13 @@ async def proxy_stt_request(
                     for index, (_name, handle, _filename, _media_type) in enumerate(opened):
                         await cleanup.release(f"direct_upload_handle_{index}", handle.close)
 
+            prepared_source: Path | None = None
             if len(uploads) == 1:
                 _name, upload = uploads[0]
+                if wav16k_input:
+                    prepared_source = await prepared_wav(upload)
                 outcome = await stt_chunking.execute_chunking(
-                    source_path=stt_chunking.source_path(upload),
+                    source_path=prepared_source or stt_chunking.source_path(upload),
                     source_stem=Path(upload.filename or "audio").stem or "audio",
                     fields=fields,
                     config=execution,
@@ -4355,13 +4474,34 @@ async def proxy_stt_request(
             if outcome.mode == "upstream_error" and outcome.upstream_response is not None:
                 receipt.metadata["status_code"] = outcome.upstream_response.status_code
                 return _stt_response_from_upstream(outcome.upstream_response)
-            direct = await post_uploads()
+            if wants_stream and native_stream and len(uploads) == 1:
+                receipt.metadata["status_code"] = 200
+                return await open_stream(
+                    prepared_source or stt_chunking.source_path(uploads[0][1]),
+                    "audio.wav" if prepared_source else (uploads[0][1].filename or "audio"),
+                )
+            if prepared_source is not None:
+                direct = await post_file(prepared_source, "audio.wav", "audio/wav")
+            else:
+                direct = await post_uploads()
             receipt.metadata["status_code"] = direct.status_code
-            return _stt_response_from_upstream(direct)
+            response = _stt_response_from_upstream(direct)
+            if wants_stream and not native_stream and direct.status_code == 200:
+                try:
+                    events = speech_stream.transcript_json_to_sse(json.loads(direct.body))
+                except (ValueError, TypeError):
+                    return response
+                return Response(
+                    content=b"".join(events),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache"},
+                )
+            return response
         finally:
-            await cleanup.aclose()
-            if cleanup.failed and sys.exc_info()[0] is None:
-                raise stt_chunking.SttCleanupFailure("STT cleanup failed")
+            if not cleanup_deferred:
+                await cleanup.aclose()
+                if cleanup.failed and sys.exc_info()[0] is None:
+                    raise stt_chunking.SttCleanupFailure("STT cleanup failed")
 
     async with owner:
         try:

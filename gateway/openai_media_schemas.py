@@ -138,6 +138,14 @@ def _multipart_audio_input_schema(*, translation: bool = False) -> JsonObjectSch
                 "enum": ["json", "text", "srt", "verbose_json", "vtt"],
             },
             "temperature": {"type": "number"},
+            "stream": {
+                "type": "boolean",
+                "description": (
+                    "true: reply with server-sent events (transcript.text.delta, then "
+                    "transcript.text.done). Streaming engines send deltas while decoding; "
+                    "others send the whole text in one delta."
+                ),
+            },
         },
         "additionalProperties": True,
     }
