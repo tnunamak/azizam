@@ -61,6 +61,22 @@ class ProxyWiringTests(unittest.TestCase):
             bad = self.client.post("/sdapi/v1/txt2img", json={"prompt": "x", "enable_hr": True})
             self.assertEqual(bad.status_code, 422)
 
+    def test_stored_assets_are_signed_and_readable_only_by_their_owner(self) -> None:
+        from starlette.requests import Request
+
+        request = Request({"type": "http", "method": "POST", "path": "/mcp", "query_string": b"", "scheme": "https",
+                           "headers": [(b"host", b"gw.example"), (b"x-forwarded-proto", b"https")], "client": ("127.0.0.1", 1)})
+        owner = proxy.AuthContext(identity=proxy._identity_for("owner-a", "test"))
+        other = proxy.AuthContext(identity=proxy._identity_for("owner-b", "test"))
+        png = b"\x89PNG\r\n\x1a\n" + b"adapter-test-bytes"
+        stored = proxy._mcp_store_asset(request, owner, png, "img", ".png")
+        self.assertTrue(stored["url"].startswith("https://gw.example/v1/assets/img_"))
+        self.assertIn("sig=", stored["url"])
+        self.assertEqual(stored["media_type"], "image/png")
+        self.assertEqual(proxy._mcp_read_asset(request, owner, stored["asset_id"]), png)
+        self.assertIsNone(proxy._mcp_read_asset(request, other, stored["asset_id"]))
+        self.assertIsNone(proxy._mcp_read_asset(request, owner, "img_" + "0" * 64))
+
     def test_the_adapters_are_listed_in_llms_txt(self) -> None:
         text = self.client.get("/llms.txt").text
         self.assertIn("/mcp", text)
