@@ -19466,6 +19466,13 @@ async def list_models(request: Request):
             continue
         data.append(alias_entry)
 
+    # OpenAI's Model schema requires `created`. Gateway-native workflow models
+    # do not have a source creation time, so use the conventional zero value
+    # rather than omitting a required field or claiming they were created now.
+    for item in data:
+        if isinstance(item, dict) and type(item.get("created")) is not int:
+            item["created"] = 0
+
     data, policy_metadata = await _filter_model_list_for_profile(data, auth_context)
 
     # Annotate each model entry with a description sourced from roles: or
