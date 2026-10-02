@@ -4805,22 +4805,28 @@ async def proxy_stt_request(
                 """Decode the upload to 16 kHz mono WAV, the only input audio.cpp engines accept."""
                 destination = workspace / "normalized-16k.wav"
                 cleanup.add("normalized_wav", lambda: destination.unlink(missing_ok=True))
-                await stt_chunking.run_media_command(
-                    [
-                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                        "-i", os.fspath(stt_chunking.source_path(upload)),
-                        "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le",
-                        os.fspath(destination),
-                    ],
-                    timeout_seconds=execution.timeout_seconds,
-                    cancellation_waiters=waiters,
-                    deadline_at=deadline_at,
-                    on_cancel=signal_cancellation,
-                    max_output_bytes=execution.max_media_output_bytes,
-                )
+                try:
+                    await stt_chunking.run_media_command(
+                        [
+                            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                            "-i", os.fspath(stt_chunking.source_path(upload)),
+                            "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le",
+                            os.fspath(destination),
+                        ],
+                        timeout_seconds=execution.timeout_seconds,
+                        cancellation_waiters=waiters,
+                        deadline_at=deadline_at,
+                        on_cancel=signal_cancellation,
+                        max_output_bytes=execution.max_media_output_bytes,
+                    )
+                except stt_chunking.SttMediaCommandFailed as error:
+                    # ffmpeg ran and refused the file: the caller sent something that is not audio.
+                    raise stt_chunking.SttInvalidAudio("STT input is not readable audio") from error
                 size = destination.stat().st_size if destination.exists() else 0
-                if size <= 44 or size > execution.max_decoded_bytes:
-                    raise stt_chunking.SttSetupFailure("STT input could not be decoded to WAV")
+                if size <= 44:
+                    raise stt_chunking.SttInvalidAudio("STT input holds no decodable audio")
+                if size > execution.max_decoded_bytes:
+                    raise stt_chunking.SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
                 return destination
 
             async def open_stream(path: Path, filename: str) -> Response:
@@ -4963,6 +4969,14 @@ async def proxy_stt_request(
         except ModelCompatibilityError as error:
             owner.report(status="failed", reason="failed")
             return model_compatibility_error(error)
+        except stt_chunking.SttInvalidAudio:
+            owner.report(status="failed", reason="failed")
+            return openai_error_response(
+                "Audio file might be corrupted or unsupported",
+                status_code=400,
+                param="file",
+                code="invalid_value",
+            )
         except stt_chunking.SttChunkResponseError:
             owner.report(status="failed", reason="failed")
             return _stt_error("STT backend returned a chunk response that cannot be merged.", status_code=502, code="invalid_stt_chunk_response")

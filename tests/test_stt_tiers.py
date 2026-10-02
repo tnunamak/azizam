@@ -185,6 +185,41 @@ class SttStreamingTests(SttCase):
         self.assertEqual(struct.unpack("<HI", riff[22:28]), (1, 16000))
 
 
+class SttUnreadableUploadTests(SttCase):
+    """A file the decoder cannot read is the caller's mistake: 400 invalid_request_error, never 5xx."""
+
+    def _assert_unreadable_audio_is_a_400(self, resp) -> None:
+        self.assertEqual(resp.status_code, 400, resp.text)
+        error = resp.json()["error"]
+        self.assertEqual(error["type"], "invalid_request_error")
+        self.assertEqual(error["param"], "file")
+        self.assertIn("corrupted or unsupported", error["message"])
+
+    def test_a_decoder_refusal_is_a_400_not_a_502(self) -> None:
+        seen = self.use_upstream(lambda r: httpx.Response(200, json={"text": "never"}))
+        refusal = stt_chunking_failure()
+        with patch.object(proxy.stt_chunking, "run_media_command", side_effect=refusal):
+            resp = self._post([("model", "stt-fast")], audio=b"this is not audio", filename="notes.txt")
+        self._assert_unreadable_audio_is_a_400(resp)
+        self.assertEqual(seen, [], "the engine must never see an upload ffmpeg could not read")
+        self.assertNotIn("x-vivid-fallback", resp.headers)
+
+    @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg is required")
+    def test_a_text_file_sent_as_whisper_1_audio_is_a_400(self) -> None:
+        seen = self.use_upstream(lambda r: httpx.Response(200, json={"text": "never"}))
+        for model in ("whisper-1", "stt-fast"):
+            with self.subTest(model=model):
+                resp = self._post([("model", model)], audio=b"just some text, not audio\n" * 40, filename="notes.txt")
+                self._assert_unreadable_audio_is_a_400(resp)
+        self.assertEqual(seen, [])
+
+
+def stt_chunking_failure() -> Exception:
+    from gateway import stt_chunking
+
+    return stt_chunking.SttMediaCommandFailed("STT media command failed")
+
+
 class SttRuntimeFallbackTests(SttCase):
     """A tier falls back when the first engine fails while serving, not only when it will not start."""
 

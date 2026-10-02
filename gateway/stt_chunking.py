@@ -128,6 +128,14 @@ class SttSetupFailure(SttExecutionError):
     """Media setup failed before a downstream chunk attempt started."""
 
 
+class SttInvalidAudio(SttExecutionError):
+    """The uploaded file is not audio the decoder can read (the caller's input, not a server fault)."""
+
+
+class SttMediaCommandFailed(SttSetupFailure):
+    """A local media utility ran and exited non-zero: its input could not be read."""
+
+
 class SttBackendTimeout(SttExecutionError):
     """The selected backend did not complete one bounded request in time."""
 
@@ -661,7 +669,7 @@ async def run_media_command(
         except asyncio.TimeoutError as error:
             raise SttSetupFailure("STT media command timed out") from error
         if process.returncode != 0:
-            raise SttSetupFailure("STT media command failed")
+            raise SttMediaCommandFailed("STT media command failed")
         return stdout, stderr
     except (asyncio.CancelledError, SttCancelled, SttDeadlineExceeded, SttResponseLimitExceeded):
         raise
