@@ -174,6 +174,18 @@ class IdentityRouteTests(unittest.TestCase):
         self.assertEqual(r.json()["error"]["code"], "identity_backend_error")
 
 
+class PhotoLimitTests(unittest.TestCase):
+    def test_up_to_twelve_reference_photos_are_accepted(self) -> None:
+        client, _, _ = build([])
+        many = [("reference", (f"p{i}.png", PHOTO, "image/png")) for i in range(identity_api.MAX_PHOTOS)]
+        people = json.dumps([{"label": "a", "images": list(range(identity_api.MAX_PHOTOS))}])
+        r = client.post(identity_api.LIKENESS_PATH, files=many + [("candidate", ("c.png", GOOD, "image/png"))], data={"people": people})
+        self.assertEqual(r.status_code, 200, r.text)
+        too_many = many + [("reference", ("x.png", PHOTO, "image/png"))]
+        r = client.post(identity_api.LIKENESS_PATH, files=too_many + [("candidate", ("c.png", GOOD, "image/png"))])
+        self.assertEqual(r.status_code, 400)
+
+
 class PeopleParsingTests(unittest.TestCase):
     def test_images_list_and_repeated_labels_merge_into_one_person(self) -> None:
         people = identity_api.parse_people([

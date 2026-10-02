@@ -29,7 +29,7 @@ from gateway.likeness import LikenessError
 LIKENESS_PATH = "/gateway/v1/faces/likeness"
 IDENTITY_PATH = "/gateway/v1/images/identity"
 MAX_PART_BYTES = 64 * 1024 * 1024
-MAX_PHOTOS = 6
+MAX_PHOTOS = 12
 
 
 class FaceServiceClient:
