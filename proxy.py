@@ -12356,6 +12356,8 @@ async def lifespan(app: FastAPI):
     metrics_task = None
     try:
         metrics_store.init_db()
+        # The full integrity scan takes seconds on a large file; keep it off the startup path.
+        asyncio.get_running_loop().run_in_executor(None, metrics_store.verify_integrity, metrics_store.DB_PATH)
         metrics_task = asyncio.create_task(metrics_sampler.sampler_loop())
         print(f"[proxy] Metrics sampler started (db={metrics_store.DB_PATH})", flush=True)
     except Exception as e:  # noqa: BLE001

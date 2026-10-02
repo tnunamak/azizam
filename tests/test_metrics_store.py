@@ -114,6 +114,56 @@ class TestMetricsStore(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_init_db_does_not_scan_the_whole_file(self) -> None:
+        """Startup must stay O(1): the full integrity scan is a separate, background call."""
+        import sqlite3
+        from unittest.mock import patch
+
+        statements: list[str] = []
+        real_connect = sqlite3.connect
+
+        class Tracing(sqlite3.Connection):
+            def execute(self, sql, *args):  # type: ignore[override]
+                statements.append(str(sql))
+                return super().execute(sql, *args)
+
+        with patch.object(sqlite3, "connect", lambda *a, **k: real_connect(*a, factory=Tracing, **k)):
+            metrics_store.init_db(self.db)
+        self.assertFalse([s for s in statements if "integrity_check" in s or "quick_check" in s], statements)
+
+    def test_verify_integrity_passes_on_a_sound_file(self) -> None:
+        self.assertIsNone(metrics_store.verify_integrity(self.db))
+        self.assertFalse(metrics_store._integrity_marker(self.db).exists())
+
+    def test_a_damaged_file_found_in_the_background_is_replaced_at_next_start(self) -> None:
+        conn = metrics_store.open_writer(self.db)
+        try:
+            metrics_store.record_samples(conn, [(int(time.time()), "x", "", float(i)) for i in range(5000)])
+            conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+        # Overwrite a data page in the middle of the file: the header and schema stay readable.
+        size = self.db.stat().st_size
+        with open(self.db, "r+b") as handle:
+            handle.seek(size // 2)
+            handle.write(b"\xff" * 4096)
+        problem = metrics_store.verify_integrity(self.db)
+        self.assertIsNotNone(problem)
+        self.assertTrue(metrics_store._integrity_marker(self.db).exists())
+        # The live file is untouched until the next start.
+        self.assertTrue(self.db.exists())
+        metrics_store.init_db(self.db)
+        self.assertFalse(metrics_store._integrity_marker(self.db).exists())
+        self.assertEqual(len(list(self.db.parent.glob("metrics.db.broken-*"))), 1)
+        self.assertIsNone(metrics_store.verify_integrity(self.db))
+
+    def test_a_file_that_is_not_a_database_is_replaced_at_startup(self) -> None:
+        self.db.write_bytes(b"this is not an sqlite database" * 200)
+        metrics_store.init_db(self.db)
+        self.assertEqual(len(list(self.db.parent.glob("metrics.db.broken-*"))), 1)
+        self.assertIsNone(metrics_store.verify_integrity(self.db))
+
     def test_prune_old(self) -> None:
         conn = metrics_store.open_writer(self.db)
         try:

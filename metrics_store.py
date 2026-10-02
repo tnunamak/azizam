@@ -85,40 +85,94 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _integrity_marker(path: Path) -> Path:
+    return path.with_name(f"{path.name}.integrity-failed")
+
+
+def _move_broken_aside(path: Path, reason: object) -> None:
+    broken = path.with_name(f"{path.name}.broken-{int(time.time())}")
+    print(f"[metrics_store] DB corrupt ({reason}); moving aside to {broken}", flush=True)
+    try:
+        shutil.move(str(path), str(broken))
+    except Exception as mv_err:  # noqa: BLE001
+        print(f"[metrics_store] failed to move broken db: {mv_err}", flush=True)
+        try:
+            path.unlink()
+        except Exception:
+            pass
+    # A WAL left behind by the broken file must not be replayed into the new one.
+    for suffix in ("-wal", "-shm"):
+        try:
+            path.with_name(path.name + suffix).unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+
 def init_db(path: Path = DB_PATH) -> None:
-    """Create the data dir, run the schema, integrity-check, replace if broken."""
+    """Create the data dir and run the schema; replace the file if it is unusable.
+
+    This runs on the gateway's startup path, so it does only constant-time checks: the schema
+    statements fail on a file whose header or schema pages are broken. The full scan
+    (``PRAGMA integrity_check``, ~12 s on a 346 MB file) is ``verify_integrity``, which the caller
+    runs in a background thread. When that scan finds damage it leaves a marker file; the next
+    ``init_db`` sees the marker and moves the broken file aside before opening it.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if path.exists():
+    marker = _integrity_marker(path)
+    if marker.exists():
         try:
-            test = sqlite3.connect(str(path), timeout=5.0)
-            try:
-                _apply_pragmas(test)
-                row = test.execute("PRAGMA integrity_check").fetchone()
-                if not row or row[0] != "ok":
-                    raise sqlite3.DatabaseError(
-                        f"integrity_check returned: {row[0] if row else 'empty'}"
-                    )
-            finally:
-                test.close()
-        except sqlite3.DatabaseError as e:
-            broken = path.with_name(f"{path.name}.broken-{int(time.time())}")
-            print(f"[metrics_store] DB corrupt ({e}); moving aside to {broken}", flush=True)
-            try:
-                shutil.move(str(path), str(broken))
-            except Exception as mv_err:  # noqa: BLE001
-                print(f"[metrics_store] failed to move broken db: {mv_err}", flush=True)
-                try:
-                    path.unlink()
-                except Exception:
-                    pass
+            reason = marker.read_text().strip() or "integrity_check failed on a previous run"
+        except OSError:
+            reason = "integrity_check failed on a previous run"
+        if path.exists():
+            _move_broken_aside(path, reason)
+        marker.unlink(missing_ok=True)
 
-    conn = sqlite3.connect(str(path), timeout=5.0)
+    for attempt in (1, 2):
+        try:
+            conn = sqlite3.connect(str(path), timeout=5.0)
+            try:
+                _apply_pragmas(conn)
+                _exec_schema(conn)
+            finally:
+                conn.close()
+            return
+        except sqlite3.OperationalError:
+            raise  # locked, unreadable or out of space: not evidence that the file is damaged
+        except sqlite3.DatabaseError as e:
+            if attempt == 2 or not path.exists():
+                raise
+            _move_broken_aside(path, e)
+
+
+def verify_integrity(path: Path = DB_PATH) -> Optional[str]:
+    """Run the full ``PRAGMA integrity_check``. Slow: call it off the event loop.
+
+    Returns None when the file is sound, else the first problem found. A failure also writes
+    ``<db>.integrity-failed`` so the next ``init_db`` replaces the file. The live file is never
+    swapped here: the sampler holds a writer connection to it.
+    """
     try:
-        _apply_pragmas(conn)
-        _exec_schema(conn)
-    finally:
-        conn.close()
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+        try:
+            row = conn.execute("PRAGMA integrity_check").fetchone()
+        finally:
+            conn.close()
+        problem = None if row and row[0] == "ok" else f"integrity_check returned: {row[0] if row else 'empty'}"
+    except sqlite3.OperationalError:
+        return None  # a busy or missing file is not evidence of damage
+    except sqlite3.DatabaseError as e:
+        problem = str(e)
+    if problem is not None:
+        print(f"[metrics_store] {problem}; it will be moved aside at the next start", flush=True)
+        try:
+            _integrity_marker(path).write_text(problem)
+        except OSError as e:
+            print(f"[metrics_store] could not write integrity marker: {e}", flush=True)
+    return problem
 
 
 def open_writer(path: Optional[Path] = None) -> sqlite3.Connection:
