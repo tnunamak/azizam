@@ -737,6 +737,9 @@ model_aliases:
     # Engines are concrete backends. An engine is usable when its `service`
     # exists and is enabled in the service registry; `planned: true` engines are
     # listed for discovery only. Every engine id is also a valid `model`.
+    # Engine data keys: streaming (answers with incremental PCM when asked),
+    # native_sample_rate (Hz of that PCM; the gateway resamples to OpenAI's
+    # 24 kHz), voice_map (OpenAI voice name -> the engine's voice), voices.
     engines:
       omnivoice:
         service: tts
@@ -746,28 +749,38 @@ model_aliases:
       supertonic:
         service: tts-supertonic
         model: supertonic
-        planned: true
-        placement: "audio.cpp, CPU or GPU0 (~1.2 GB), on-demand"
+        streaming: true
+        native_sample_rate: 44100
+        placement: "audio.cpp on GPU0 (~1.2 GB while loaded; weights unload after 10 min idle), on-demand unit"
         default_voice: F1
-        # voice_map entries are provisional until the engine is deployed and its voice list is checked.
-        voice_map: {alloy: F1, ash: M1, ballad: M2, cedar: M3, coral: F2, echo: M4, fable: M5, marin: F3, nova: F4, onyx: M1, sage: F5, shimmer: F2, verse: M2}
+        voices: [F1, F2, F3, F4, F5, M1, M2, M3, M4, M5]
+        # Chosen by gender and measured pitch/brightness against OpenAI's voice descriptions
+        # (see ~/.tmp/media-refresh/speech-tiers/REPORT.md). Preset voices only, no cloning.
+        voice_map: {alloy: F1, marin: F1, coral: F3, nova: F2, sage: F5, shimmer: F4, ash: M3, echo: M4, ballad: M4, cedar: M2, fable: M1, verse: M1, onyx: M5}
         description: "Supertonic realtime engine (bake-off: 49 ms first audio)"
       kokoro:
         service: tts-kokoro
         model: kokoro
-        planned: true
-        placement: "Python server, GPU0 (~1.5 GB), on-demand"
+        streaming: true
+        native_sample_rate: 24000
+        placement: "Python server on GPU0 (~1.7 GB while running; exits after 15 min idle), on-demand unit"
         default_voice: af_heart
-        voice_map: {alloy: af_alloy, ash: am_onyx, ballad: am_michael, cedar: am_puck, coral: af_bella, echo: am_echo, fable: bm_fable, marin: af_sky, nova: af_nova, onyx: am_onyx, sage: af_sarah, shimmer: af_heart, verse: am_adam}
-        description: "Kokoro quality engine (bake-off: 123 ms first audio, best quality balance)"
+        voices: [af_alloy, af_aoede, af_bella, af_heart, af_jessica, af_kore, af_nicole, af_nova, af_river, af_sarah, af_sky, am_adam, am_echo, am_eric, am_fenrir, am_liam, am_michael, am_onyx, am_puck, am_santa, bf_alice, bf_emma, bf_isabella, bf_lily, bm_daniel, bm_fable, bm_george, bm_lewis]
+        # Chosen by gender and measured pitch/brightness against OpenAI's voice descriptions
+        # (see ~/.tmp/media-refresh/speech-tiers/REPORT.md). Preset voices only, no cloning.
+        voice_map: {alloy: af_alloy, ash: am_michael, ballad: am_puck, cedar: am_adam, coral: af_sky, echo: am_echo, fable: bm_fable, marin: af_bella, nova: af_nova, onyx: am_onyx, sage: af_river, shimmer: af_heart, verse: am_liam}
+        description: "Kokoro quality engine (bake-off: best quality balance, UTMOS 3.83, round-trip WER 3.1%)"
     stable:
-      # Initially every tier resolves to OmniVoice; tiers split automatically as
-      # their first candidate gets deployed. Order is a policy decision.
+      # Order is a policy decision: the first deployed engine wins.
+      # `tts` and `tts-quality` keep OmniVoice (cloned OpenAI identities) first until
+      # Tim's blind listening test (~/media-refresh-samples/tts-bakeoff.html) picks a winner.
       tts: [omnivoice]
       tts-realtime: [supertonic, omnivoice]
-      tts-quality: [kokoro, omnivoice]
+      tts-quality: [omnivoice, kokoro]
     openai:
-      - {match: "tts-1", to: tts-realtime}
+      # tts-1 stays on the default engine so existing clients keep their voice
+      # (Daisy sends tts-1). Re-point it at tts-realtime to make tts-1 the fast tier.
+      - {match: "tts-1", to: tts}
       - {match: "tts-1-hd", to: tts-quality}
       - {match: "gpt-4o*-tts*", to: tts}
       - {match: "tts-*", to: tts}

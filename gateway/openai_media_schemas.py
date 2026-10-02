@@ -80,6 +80,15 @@ def _audio_speech_request_schema() -> JsonObjectSchema:
                 "default": "wav",
                 "description": "Audio encoding for synthesized speech.",
             },
+            "stream_format": {
+                "type": "string",
+                "enum": ["audio", "sse"],
+                "description": (
+                    "audio: chunked audio bytes. sse: speech.audio.delta events. "
+                    "Engines that synthesize incrementally send audio while speaking "
+                    "(response_format=pcm streams by default); others answer once."
+                ),
+            },
             "speed": {"type": "number"},
             "instructions": {"type": "string"},
             "language": {"type": "string"},
@@ -100,6 +109,7 @@ AUDIO_SPEECH_OPENAPI: JsonObjectSchema = {
                 "audio/flac": {"schema": {"type": "string", "format": "binary"}},
                 "audio/wav": {"schema": {"type": "string", "format": "binary"}},
                 "audio/pcm": {"schema": {"type": "string", "format": "binary"}},
+                "text/event-stream": {"schema": {"type": "string"}},
             },
         },
         **_common_error_responses(),

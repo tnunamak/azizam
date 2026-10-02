@@ -70,6 +70,7 @@ from gateway import (
     video_media_jobs,
 )
 from gateway import stable_aliases
+from gateway import speech_stream
 from gateway import stt_chunking
 from gateway.alias_policy import (
     AliasPolicyResolutionError,
@@ -3754,6 +3755,108 @@ def _engine_voice(engine: Mapping[str, Any], requested_voice: str) -> str:
     return voice_map.get(key) or str(engine.get("default_voice") or requested_voice)
 
 
+def _service_has_managed_lifecycle(service_id: str) -> bool:
+    lifecycle = ((config.get("backends") or {}).get(service_id) or {}).get("lifecycle")
+    driver = str((lifecycle or {}).get("driver") or "external").strip().lower() if isinstance(lifecycle, Mapping) else "external"
+    return driver != "external"
+
+
+async def _ensure_speech_service_ready(service_id: str, *, label: str) -> Response | None:
+    """Start an on-demand speech service through its lifecycle driver.
+
+    Always-on (``external``) services are not probed. For a managed service a
+    single health GET decides whether the unit is up; only a down service pays
+    the ``systemctl start`` + health poll in ``ensure_target``.
+    """
+    if not _service_has_managed_lifecycle(service_id):
+        return None
+    from gateway.lifecycle_drivers import _poll_health
+
+    bcfg = (config.get("backends") or {}).get(service_id) or {}
+    if await _poll_health(bcfg, 0.0):
+        return None
+    if await ensure_target(service_id, None):
+        return None
+    return Response(
+        content=json.dumps({"error": {
+            "message": f"{label} could not be started.",
+            "type": "service_unavailable",
+            "code": "backend_unavailable",
+            "service": service_id,
+        }}),
+        status_code=503,
+        media_type="application/json",
+        headers={"Retry-After": "5"},
+    )
+
+
+def _tts_error(message: str, status_code: int) -> Response:
+    return Response(
+        content=json.dumps({"error": {"message": message, "type": "api_error"}}),
+        status_code=status_code,
+        media_type="application/json",
+    )
+
+
+async def _stream_tts_upstream(
+    *,
+    url: str,
+    headers: Mapping[str, str],
+    body: bytes,
+    stream_format: str,
+    response_format: str,
+    native_rate: int,
+) -> Response:
+    """Forward an engine's PCM stream to the client while it is still synthesizing.
+
+    ``stream_format`` is ``audio`` (chunked audio in ``response_format``) or
+    ``sse`` (``speech.audio.delta`` events). An upstream error status is
+    returned as a normal response before any streaming starts.
+    """
+    client = httpx.AsyncClient(timeout=httpx.Timeout(TTS_TIMEOUT, connect=10))
+    upstream = None
+    try:
+        upstream = await client.send(client.build_request("POST", url, headers=headers, content=body), stream=True)
+        if not 200 <= upstream.status_code < 300:
+            content = await upstream.aread()
+            return Response(
+                content=content,
+                status_code=upstream.status_code,
+                media_type=upstream.headers.get("content-type", "application/json"),
+            )
+    except httpx.TimeoutException:
+        await client.aclose()
+        return _tts_error("TTS request timeout", 504)
+    except httpx.ConnectError:
+        await client.aclose()
+        return _tts_error(f"TTS backend unavailable at {url}", 502)
+    except Exception as e:  # noqa: BLE001
+        await client.aclose()
+        return _tts_error(f"TTS proxy error: {e}", 502)
+
+    async def frames():
+        try:
+            source = speech_stream.align_samples(upstream.aiter_raw())
+            if stream_format == "sse" or speech_stream.needs_transcode(native_rate, response_format):
+                source = speech_stream.transcode_pcm_stream(
+                    source, src_rate=native_rate, response_format=response_format
+                )
+            if stream_format == "sse":
+                source = speech_stream.pcm_to_sse(source)
+            async for chunk in source:
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    media_type = "text/event-stream" if stream_format == "sse" else TTS_RESPONSE_MEDIA_TYPES[response_format]
+    return StreamingResponse(
+        frames(),
+        media_type=media_type,
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Response:
     """Forward TTS request to TTS backend."""
     if not TTS_ENABLED:
@@ -3773,6 +3876,9 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
 
     # Map voice in request body
     requested_response_format = "wav"
+    stream_format: str | None = None
+    stream_mode: str | None = None  # "audio" | "sse" | None (buffered)
+    native_rate = speech_stream.OPENAI_PCM_RATE
     try:
         body_json = json.loads(body)
         response_format = str(body_json.get("response_format", "") or "wav").lower()
@@ -3784,6 +3890,15 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
                 code="unsupported_response_format",
             )
         requested_response_format = response_format
+        if body_json.get("stream_format") is not None:
+            stream_format = str(body_json["stream_format"]).lower()
+            if stream_format not in {"audio", "sse"}:
+                return openai_error_response(
+                    "stream_format must be audio or sse.",
+                    status_code=400,
+                    param="stream_format",
+                    code="unsupported_stream_format",
+                )
 
         requested_model = body_json.get("model", "tts-1")
         try:
@@ -3807,18 +3922,44 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
         else:
             body_json["voice"] = _engine_voice(engine, requested_voice)
         body_json["model"] = model_resolution.effective_model or TTS_BACKEND_MODEL
-        body_json["response_format"] = "wav"
+
+        engine_streams = engine is not None and bool_from_config(engine.get("streaming"), False)
+        if engine_streams:
+            native_rate = int(engine.get("native_sample_rate") or speech_stream.OPENAI_PCM_RATE)
+            if stream_format == "sse" or stream_format == "audio" or requested_response_format == "pcm":
+                stream_mode = stream_format or "audio"
+        if stream_mode:
+            # Engines of this kind speak one contract: raw PCM, chunked.
+            body_json["response_format"] = "pcm"
+            body_json["stream_format"] = "audio"
+        else:
+            body_json["response_format"] = "wav"
+            body_json.pop("stream_format", None)
         body = json.dumps(body_json).encode()
         pop_header(headers, "content-type")
         headers["content-type"] = "application/json"
     except (json.JSONDecodeError, AttributeError):
         pass
 
+    not_ready = await _ensure_speech_service_ready(tts_service_id, label="TTS engine")
+    if not_ready is not None:
+        return not_ready
+
     _tts_host = host_for_capability("audio.speech") or (TTS_HOST if TTS_ENABLED else None) or TTS_HOST
     if tts_service_id != "tts":
         _engine_service = (config.get("backends") or {}).get(tts_service_id) or {}
         _tts_host = f"http://{_engine_service.get('host')}:{_engine_service.get('port')}"
     url = f"{_tts_host}/v1/audio/speech"
+
+    if stream_mode:
+        return await _stream_tts_upstream(
+            url=url,
+            headers=headers,
+            body=body,
+            stream_format=stream_mode,
+            response_format=requested_response_format,
+            native_rate=native_rate,
+        )
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(TTS_TIMEOUT, connect=10)) as client:
@@ -3853,6 +3994,15 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
                     )
             elif 200 <= resp.status_code < 300:
                 content_type = TTS_RESPONSE_MEDIA_TYPES.get(requested_response_format, content_type)
+            if 200 <= resp.status_code < 300 and stream_format == "sse":
+                # Engine cannot stream: still answer in the SSE shape, as one delta.
+                async def one_delta():
+                    yield content
+                return StreamingResponse(
+                    speech_stream.pcm_to_sse(one_delta()),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache"},
+                )
             return Response(
                 content=content,
                 status_code=resp.status_code,
@@ -3860,23 +4010,11 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
             )
 
     except httpx.TimeoutException:
-        return Response(
-            content=json.dumps({"error": {"message": "TTS request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json"
-        )
+        return _tts_error("TTS request timeout", 504)
     except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"TTS backend unavailable at {_tts_host}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+        return _tts_error(f"TTS backend unavailable at {_tts_host}", 502)
     except Exception as e:
-        return Response(
-            content=json.dumps({"error": {"message": f"TTS proxy error: {str(e)}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+        return _tts_error(f"TTS proxy error: {str(e)}", 502)
 
 
 # =============================================================================
@@ -14209,6 +14347,34 @@ async def llms_txt(request: Request):
     return Response(content=body, media_type="text/plain; charset=utf-8")
 
 
+def _speech_engine_voices() -> dict[str, Any]:
+    """Voices of every deployed non-OmniVoice speech engine, keyed by engine id.
+
+    ``voices`` maps each OpenAI voice name to the engine's own voice;
+    ``native_voices`` are the ids an engine accepts directly.
+    """
+    section = (config.get("model_aliases") or {}).get("speech") or {}
+    available = _alias_engine_available_for("speech")
+    out: dict[str, Any] = {}
+    for engine_id, spec in (section.get("engines") or {}).items():
+        if not isinstance(spec, Mapping) or not spec.get("voice_map") or not available(str(engine_id), spec):
+            continue
+        voice_map = {str(k).lower(): str(v) for k, v in spec["voice_map"].items()}
+        out[str(engine_id).lower()] = {
+            "model": spec.get("model"),
+            "service": spec.get("service"),
+            "default_voice": spec.get("default_voice"),
+            "voices": [
+                {"voice_id": name, "mapped_to": native, **{
+                    k: v for k, v in CANONICAL_TTS_VOICES.get(name, {}).items()
+                }}
+                for name, native in sorted(voice_map.items())
+            ],
+            "native_voices": list(spec.get("voices") or sorted(set(voice_map.values()))),
+        }
+    return out
+
+
 @app.get("/openai/v1/voices", openapi_extra=VOICES_LIST_OPENAPI)
 @app.get("/openai/v1/audio/voices", openapi_extra=VOICES_LIST_OPENAPI)
 @app.get("/v1/voices", openapi_extra=VOICES_LIST_OPENAPI)
@@ -14242,7 +14408,7 @@ async def list_voices(request: Request):
         })
     # Canonical voices first, then aliases and language presets.
     voices.sort(key=lambda v: (v["voice_id"] not in CANONICAL_TTS_VOICES, v["alias"], v["voice_id"]))
-    return {"default_voice": DEFAULT_TTS_VOICE, "voices": voices}
+    return {"default_voice": DEFAULT_TTS_VOICE, "voices": voices, "engines": _speech_engine_voices()}
 
 
 @app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)

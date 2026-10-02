@@ -233,12 +233,15 @@ class ShippedConfigTests(unittest.TestCase):
                 self.assertEqual(res.engine, {"speech": "omnivoice", "transcriptions": "parakeet"}[op])
 
     def test_realtime_tiers_split_when_their_engine_is_deployed(self):
-        res = sa.resolve_alias(ALIASES, "speech", "tts-1", engine_available=_all_up)
+        res = sa.resolve_alias(ALIASES, "speech", "tts-realtime", engine_available=_all_up)
         self.assertEqual(res.engine, "supertonic")
-        res = sa.resolve_alias(ALIASES, "speech", "tts-1-hd", engine_available=_all_up)
+        # Until Tim's blind listening test, the plain and quality names stay on OmniVoice,
+        # and so does tts-1 (Daisy sends it and keeps its cloned voice).
+        for name in ("tts", "tts-1", "tts-1-hd", "tts-quality", "gpt-4o-mini-tts"):
+            res = sa.resolve_alias(ALIASES, "speech", name, engine_available=_all_up)
+            self.assertEqual(res.engine, "omnivoice", name)
+        res = sa.resolve_alias(ALIASES, "speech", "kokoro", engine_available=_all_up)
         self.assertEqual(res.engine, "kokoro")
-        res = sa.resolve_alias(ALIASES, "speech", "tts", engine_available=_all_up)
-        self.assertEqual(res.engine, "omnivoice")
         res = sa.resolve_alias(ALIASES, "transcriptions", "stt-realtime", engine_available=_all_up)
         self.assertEqual(res.engine, "nemotron-streaming")
 
@@ -418,11 +421,11 @@ class SpeechEngineRoutingTests(unittest.TestCase):
         sent = self._speak("tts-realtime", "Nova")
         self.assertEqual(sent["url"], "http://127.0.0.1:8010/v1/audio/speech")
         self.assertEqual(sent["body"]["model"], "supertonic")
-        self.assertEqual(sent["body"]["voice"], "F4")
+        self.assertEqual(sent["body"]["voice"], "F2")
 
     def test_native_voice_and_unknown_voice(self):
         self.assertEqual(self._speak("supertonic", "M3")["body"]["voice"], "M3")
-        self.assertEqual(self._speak("tts-1", "no-such-voice")["body"]["voice"], "F1")
+        self.assertEqual(self._speak("tts-realtime", "no-such-voice")["body"]["voice"], "F1")
 
     def test_tts_alias_keeps_omnivoice_identity_voices(self):
         sent = self._speak("tts", "nova")

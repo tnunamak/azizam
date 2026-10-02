@@ -1,0 +1,135 @@
+"""TTS tiers: on-demand engine start, PCM/SSE streaming, engine voices."""
+
+from __future__ import annotations
+
+import base64
+import json
+import struct
+import unittest
+from unittest.mock import patch
+
+import httpx
+
+from gateway import speech_stream
+
+from tests.speech_tier_helpers import HAVE_FFMPEG, RouteCase, _Chunks, _wav_bytes
+
+
+class TtsLifecycleTests(RouteCase):
+    def _speak(self, **extra):
+        payload = {"model": "tts-realtime", "voice": "shimmer", "input": "hello", "response_format": "wav", **extra}
+        return self.client.post("/v1/audio/speech", json=payload)
+
+    def test_down_engine_is_started_through_its_lifecycle_driver(self) -> None:
+        self.health.return_value = False
+        self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        self.assertEqual(self._speak().status_code, 200)
+        self.ensure.assert_awaited_once_with("tts-supertonic", None)
+
+    def test_healthy_engine_is_not_restarted(self) -> None:
+        self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        self.assertEqual(self._speak().status_code, 200)
+        self.ensure.assert_not_awaited()
+
+    def test_engine_that_will_not_start_is_a_503_with_retry_after(self) -> None:
+        self.health.return_value = False
+        self.ensure.return_value = False
+        resp = self._speak()
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.json()["error"]["code"], "backend_unavailable")
+        self.assertEqual(resp.headers["retry-after"], "5")
+
+    def test_always_on_default_service_is_never_probed(self) -> None:
+        self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        resp = self.client.post("/v1/audio/speech", json={"model": "tts", "voice": "nova", "input": "hi"})
+        self.assertEqual(resp.status_code, 200)
+        self.health.assert_not_awaited()
+        self.ensure.assert_not_awaited()
+
+
+class TtsStreamingTests(RouteCase):
+    def _post(self, **extra):
+        payload = {"model": "tts-realtime", "voice": "shimmer", "input": "hello", **extra}
+        return self.client.post("/v1/audio/speech", json=payload)
+
+    def test_pcm_is_resampled_and_chunked_with_the_pcm_content_type(self) -> None:
+        if not HAVE_FFMPEG:
+            self.skipTest("ffmpeg is required")
+        pcm = struct.pack("<h", 2500) * 44100
+        seen = self.use_upstream(
+            lambda r: httpx.Response(200, stream=_Chunks([pcm[i : i + 3001] for i in range(0, len(pcm), 3001)]),
+                                     headers={"content-type": "application/octet-stream"})
+        )
+        resp = self._post(response_format="pcm")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers["content-type"], "audio/pcm")
+        self.assertAlmostEqual(len(resp.content) / 2, 24000, delta=1200)
+        sent = json.loads(seen[0].content)
+        self.assertEqual(
+            {k: sent[k] for k in ("model", "voice", "response_format", "stream_format")},
+            {"model": "supertonic", "voice": "F4", "response_format": "pcm", "stream_format": "audio"},
+        )
+
+    def test_native_rate_pcm_is_forwarded_without_transcoding(self) -> None:
+        self.cfg["model_aliases"]["speech"]["engines"]["supertonic"]["native_sample_rate"] = 24000
+        chunks = [b"\x01\x00" * 100, b"\x02\x00" * 100]
+        self.use_upstream(lambda r: httpx.Response(200, stream=_Chunks(chunks)))
+        with patch.object(speech_stream, "transcode_pcm_stream") as transcode:
+            resp = self._post(response_format="pcm")
+        transcode.assert_not_called()
+        self.assertEqual(resp.content, b"".join(chunks))
+
+    def test_sse_stream_format_emits_audio_delta_events(self) -> None:
+        if not HAVE_FFMPEG:
+            self.skipTest("ffmpeg is required")
+        pcm = struct.pack("<h", 2500) * 4410
+        self.use_upstream(lambda r: httpx.Response(200, stream=_Chunks([pcm])))
+        resp = self._post(response_format="pcm", stream_format="sse")
+        self.assertEqual(resp.headers["content-type"], "text/event-stream; charset=utf-8")
+        events = [json.loads(line[6:]) for line in resp.text.split("\n\n") if line.startswith("data: ")]
+        self.assertEqual(events[0]["type"], "speech.audio.delta")
+        self.assertEqual(events[-1]["type"], "speech.audio.done")
+        audio = b"".join(base64.b64decode(e["audio"]) for e in events[:-1])
+        self.assertAlmostEqual(len(audio) / 2, 2400, delta=300)
+
+    def test_wav_without_stream_format_stays_buffered(self) -> None:
+        seen = self.use_upstream(lambda r: httpx.Response(200, content=_wav_bytes(44100, 1), headers={"content-type": "audio/wav"}))
+        resp = self._post(response_format="wav")
+        self.assertEqual(resp.headers["content-type"], "audio/wav")
+        sent = json.loads(seen[0].content)
+        self.assertEqual((sent["response_format"], "stream_format" in sent), ("wav", False))
+        self.assertIn("content-length", resp.headers)
+
+    def test_engine_error_status_is_returned_before_any_streaming(self) -> None:
+        self.use_upstream(lambda r: httpx.Response(400, json={"error": {"message": "bad voice"}}))
+        resp = self._post(response_format="pcm")
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["message"], "bad voice")
+
+    def test_engine_that_cannot_stream_still_answers_an_sse_request(self) -> None:
+        self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        resp = self.client.post(
+            "/v1/audio/speech",
+            json={"model": "tts", "voice": "nova", "input": "hi", "response_format": "wav", "stream_format": "sse"},
+        )
+        events = [json.loads(line[6:]) for line in resp.text.split("\n\n") if line.startswith("data: ")]
+        self.assertEqual([e["type"] for e in events], ["speech.audio.delta", "speech.audio.done"])
+        self.assertEqual(base64.b64decode(events[0]["audio"]), b"RIFFwav")
+
+    def test_bad_stream_format_is_a_coded_400(self) -> None:
+        resp = self._post(stream_format="carrier-pigeon")
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["code"], "unsupported_stream_format")
+
+    def test_voices_route_lists_deployed_engine_voices(self) -> None:
+        body = self.client.get("/v1/audio/voices").json()
+        engine = body["engines"]["supertonic"]
+        self.assertEqual(engine["default_voice"], "F1")
+        by_name = {v["voice_id"]: v for v in engine["voices"]}
+        self.assertEqual(by_name["shimmer"]["mapped_to"], "F4")
+        self.assertEqual(by_name["onyx"]["gender"], "male")
+        self.assertEqual(engine["native_voices"][0], "F1")
+
+
+if __name__ == "__main__":
+    unittest.main()
