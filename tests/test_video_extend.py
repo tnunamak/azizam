@@ -327,9 +327,60 @@ class ExtensionRouteTests(RemixReplaceBase):
         self.assertIsNone(r.json()["remixed_from_video_id"])
         self.assertEqual(self.comfy.uploads[0][1], b"clip")
 
+    def test_sdk_zero_byte_upload_named_by_video_id_extends_that_video(self) -> None:
+        """openai-python's videos.extend treats `video` as a file part only: the {"id": ...}
+        form raises client-side (extract_files rejects a dict). A zero-byte upload named
+        `<video id>.mp4` is therefore how an SDK caller extends by id."""
+        r = self.client.post("/v1/videos/extensions", data={"prompt": "continue", "seconds": "8"},
+                             files={"video": (f"{SOURCE_ID}.mp4", b"", "video/mp4")})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["extended_from_video_id"], SOURCE_ID)
+        self.assertEqual(r.json()["model"], "ltx-2.5")  # the source's model, as for the JSON form
+        self.assertEqual(self.comfy.uploads[0][1], SOURCE_BYTES)  # the stored video, not the empty part
+
+    def test_an_empty_upload_not_named_by_a_video_id_is_still_rejected(self) -> None:
+        r = self.client.post("/v1/videos/extensions", data={"prompt": "continue", "seconds": "8"},
+                             files={"video": ("clip.mp4", b"", "video/mp4")})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(self.comfy.uploads, [])
+
+    def test_the_empty_upload_shortcut_is_not_available_on_other_video_fields(self) -> None:
+        r = self.client.post("/v1/videos/edits", data={"prompt": "x"},
+                             files={"video": (f"{SOURCE_ID}.mp4", b"", "video/mp4")})
+        self.assertNotEqual(r.status_code, 200, r.text)
+
+    def _sdk(self):
+        import openai
+
+        return openai.OpenAI(base_url="http://testserver/v1", api_key="test", http_client=self.client, max_retries=0)
+
+    @unittest.skipUnless(hasattr(__import__("openai").OpenAI(api_key="x").videos, "extend"), "installed openai SDK has no videos.extend")
+    def test_the_real_sdk_extends_by_id_and_parses_the_result(self) -> None:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            video = self._sdk().videos.extend(
+                video=(f"{SOURCE_ID}.mp4", b"", "video/mp4"), prompt="continue", seconds="8")
+        self.assertEqual(video.id, NEW_ID)
+        self.assertEqual((video.object, video.status, video.progress), ("video", "queued", 0))
+        self.assertEqual(video.remixed_from_video_id, SOURCE_ID)
+        self.assertEqual(video.size, "960x512")
+        self.assertEqual(video.prompt, "continue")
+
+    @unittest.skipUnless(hasattr(__import__("openai").OpenAI(api_key="x").videos, "extend"), "installed openai SDK has no videos.extend")
+    def test_the_real_sdk_extends_an_uploaded_video(self) -> None:
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            video = self._sdk().videos.extend(video=("clip.mp4", b"clip", "video/mp4"), prompt="continue", seconds="4")
+        self.assertEqual((video.id, video.status), (NEW_ID, "queued"))
+        self.assertEqual(self.comfy.uploads[0][1], b"clip")
+
     def test_sdk_multipart_shape_with_bracketed_video_id(self) -> None:
-        """openai-python's videos.extend sends multipart with `video[id]`, plus
-        gateway extras as bracketed fields."""
+        """A hand-written multipart client may send `video[id]`, plus gateway extras as
+        bracketed fields. (openai-python cannot: it sends `video` as a file part.)"""
         r = self.client.post("/v1/videos/extensions", data={
             "prompt": "continue", "seconds": "8", "video[id]": SOURCE_ID, "context_seconds": "2"})
         self.assertEqual(r.status_code, 200, r.text)

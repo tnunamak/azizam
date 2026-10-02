@@ -569,8 +569,10 @@ Three ways in, from most to least control:
 ```python
 # 1. Extend a finished video (Sora's shape). The result is source + new footage.
 v = client.videos.create_and_poll(model="ltx-2.5", prompt="a cyclist on a coast road", seconds=8)
-v2 = client.videos.extend(video={"id": v.id}, prompt="she climbs into the pines", seconds="8",
-                          extra_body={"context_seconds": 1.0})
+# openai-python 3.x sends `video` as a file part only (`video={"id": ...}` raises client-side), so
+# name a zero-byte upload after the video id. The gateway reads it as that id.
+v2 = client.videos.extend(video=(f"{v.id}.mp4", b"", "video/mp4"), prompt="she climbs into the pines",
+                          seconds="8", extra_body={"context_seconds": 1.0})
 v2 = client.videos.poll(v2.id)       # v2.seconds is the stitched total, v2.remixed_from_video_id == v.id
 
 # 2. Storyboard: one request, one prompt and length per shot (gateway extension on /v1/videos).
@@ -584,7 +586,7 @@ client.videos.create(model="ltx-2.5", prompt="a slow aerial over a glacier", sec
 ```
 
 `POST /v1/videos/extensions` takes `{"video": {"id": ...}, "prompt": ..., "seconds": N}` as JSON or
-multipart (`video[id]`, or an uploaded file in `video`). `seconds` is the length of the NEW footage
+multipart (`video[id]`, an uploaded file in `video`, or a zero-byte `video` file named `<video id>.mp4`, which is the form openai-python can send). `seconds` is the length of the NEW footage
 (the prompt describes only the new action); the resource's `seconds` is the stitched total, and
 `total_seconds` repeats it as a number. `remixed_from_video_id` is the source id (the OpenAI
 spec has no extension field), and `extended_from_video_id` repeats it. Fields: `model`, `seed`,

@@ -11199,7 +11199,7 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
             501, "Video extension is not configured on this gateway. Set videos.extend_workflow "
             "in proxy_config.yml to enable it.", code="video_extend_not_configured")
     try:
-        body = await _read_video_request_body(request)
+        body = await _read_video_request_body(request, id_reference_fields=("video",))
     except _VideoFormParseError as exc:
         return _json_error(400, str(exc))
     video = body.pop("video", None)
@@ -11800,8 +11800,15 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
 VIDEO_REMIX_PUBLIC_MODEL = "video-remix"
 
 
-async def _read_video_request_body(request: Request) -> dict[str, Any]:
+async def _read_video_request_body(
+    request: Request, *, id_reference_fields: tuple[str, ...] = ()
+) -> dict[str, Any]:
     """Read a JSON or multipart body for the remix/edit routes into a dict.
+
+    ``id_reference_fields`` names file fields that may carry a video id instead of bytes: a
+    zero-byte upload whose filename is ``<video id>`` or ``<video id>.<ext>`` becomes that id.
+    openai-python's ``videos.extend`` sends ``video`` as a file part only (its ``{"id": ...}``
+    form fails client-side), so this is the one way an SDK caller can extend by id.
 
     Raises _VideoFormParseError on a body that is not an object.
     """
@@ -11816,6 +11823,10 @@ async def _read_video_request_body(request: Request) -> dict[str, Any]:
             for name, value in form.multi_items():
                 if hasattr(value, "read") and hasattr(value, "filename"):
                     raw = await value.read()
+                    stem = Path(value.filename or "").stem
+                    if not raw and name in id_reference_fields and stem.startswith(VIDEO_ID_PREFIX):
+                        items.append((name, stem))
+                        continue
                     mime = getattr(value, "content_type", None) or "application/octet-stream"
                     items.append((name, "data:" + mime + ";base64," + base64.b64encode(raw).decode("ascii")))
                 else:
