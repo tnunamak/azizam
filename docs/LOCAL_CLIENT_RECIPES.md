@@ -652,6 +652,11 @@ resource, the cap, the failure error and the progress are the same as for LTX. W
   change. A prompt that opens on a different arrangement of people renders as a sum of both.
   The model has no memory beyond the pinned second: restate what must not change in the prompt
   or in `state_ledger`.
+- Measured on the 3090 (2026-10-02, 960x544): 5 s + 5 s direct 430 s (cold load); a two-shot
+  20 s storyboard through the API 965 s (about 7 min per 10 s segment, the second segment is
+  longer because 22 context frames are sampled too); a 10 s extension 572 s. Peak GPU0 22.4 GB
+  of 24.5; host RAM is tight (about 108 of 124 GB used while rendering). No frame-difference jump
+  at the joins; the extension join (the lossy path) shows a small bump. Run under `bg_run`.
 - License: the MiniMax H3 Community License excludes use in the US, EU, UK and South Korea
   (accepted for this personal stack).
 - Needs the `ComfyUI-H3-Motion-Context` custom node (pinned commit in `docs/long-video-design.md`).
