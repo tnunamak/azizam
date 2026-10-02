@@ -461,7 +461,7 @@ class TestSeedCapabilityPinning(unittest.TestCase):
     def test_audio_transcriptions_capability_pool_is_stt_backend(self) -> None:
         result = self._backends_for("audio.transcriptions")
         self.assertEqual(result[0], "stt")
-        self.assertEqual(sorted(result), ["stt", "stt-canary", "stt-nemotron"])
+        self.assertEqual(sorted(result), ["stt", "stt-canary", "stt-diarize", "stt-nemotron"])
 
     def test_audio_translations_pool_is_empty_for_current_config(self) -> None:
         """Current stt does not declare audio.translations → empty pool → legacy fallback."""
