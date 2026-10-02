@@ -180,6 +180,7 @@ async def transcode_pcm_stream(
                 pass
 
     feeder = asyncio.create_task(feed())
+    finished = False
     try:
         while True:
             data = await stdout.read(16384)
@@ -187,8 +188,15 @@ async def transcode_pcm_stream(
                 break
             yield data
         await feeder
+        finished = True
     finally:
         feeder.cancel()
+        if finished and process.returncode is None:
+            # Output ended normally: ffmpeg is exiting on its own; give it a moment instead of killing it.
+            try:
+                await asyncio.wait_for(asyncio.shield(process.wait()), 5)
+            except asyncio.TimeoutError:
+                pass
         if process.returncode is None:
             try:
                 process.kill()
