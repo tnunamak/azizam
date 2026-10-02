@@ -5,7 +5,7 @@ Two native routes, one CPU sidecar.
 | Route | What it does | Cost |
 |---|---|---|
 | `POST /gateway/v1/faces/likeness` | Scores the faces in `candidate` against the people in the `reference` photos. | CPU, about 2 s warm |
-| `POST /gateway/v1/images/identity` | Puts the people from the reference photos into a new scene. Runs up to N seeds, scores each, returns the best with its scores. | GPU, about 2-3 min per attempt |
+| `POST /gateway/v1/images/identity` | Puts the people from the reference photos into a new scene. Runs up to N seeds, scores each, refines people who still fail, returns the best with its scores. Async media job by default. | GPU, about 2-3 min per attempt |
 | `POST /v1/images/edits` with `model=image-identity` | Same pipeline as the route above. Reference photos are the `image[]` parts. Options go in `extensions["com.vividfish.workflow"]`. | same |
 
 Both are typed in `/openapi.json`, listed in `/gateway/v1/workflows` and `/gateway/v1/capabilities`
@@ -16,17 +16,60 @@ They use the `openai.images` / `image.edit` policy, so a key that may edit image
 
 A reference-edit model keeps a face only when it sees a roomy, sharp head per person and the whole
 photo, and each input is tagged `<imageN>` in the prompt. With 150 px face tiles and free-text
-references it invents a similar-looking stranger. The gateway therefore:
+references it invents a similar-looking stranger. The embeddings the likeness check uses do NOT
+generate anything; they only score a finished picture. The picture comes from Qwen-Image 2.1
+multi-reference edit, which is given the reference photos as images. The gateway:
 
-1. detects faces in the original photo (or uses the `box` you give);
-2. crops a roomy square head per person from the **original** pixels and scales it to 896 px;
-3. sends photo + heads to Qwen-Image 2.1 multi-reference edit, every input tagged `<imageN>`;
-4. scores the result against the real faces and repeats with the next seed until every person meets
-   the threshold (default 3 attempts, at most 8);
-5. returns the best attempt by worst-person score.
+1. detects faces in the original photos (or uses the `box` you give);
+2. crops roomy square heads from the ORIGINAL pixels and scales them to 896 px;
+3. sends the heads (and, optionally, the whole photo as a style canvas) to Qwen-Image 2.1 multi-reference
+   edit, every input tagged `<imageN>`;
+4. scores each result against the real faces and repeats with the next seed until every person meets the
+   threshold (default 3 attempts, at most 8), keeping the best by (extra faces, facing, worst person, mean);
+5. **refines** any person still below the match threshold in its own pass (below);
+6. returns the best picture with the scores, the attempts, the refinements and any warnings.
 
-A head-swap LoRA pass (BFS head V1.1) after step 3 was tested and lowered both scores (adult 0.605 to
-0.51, infant 0.48 to 0.35), so there is no swap pass.
+### Several reference photos per person
+
+`people[].images` lists every photo of a person: `{"label":"grandma","images":[{"image":0,"box":[x1,y1,x2,y2]},3,4]}`.
+Entries that repeat a label merge. The first photo is the anchor (give a box when it holds several
+faces). In a later photo without a box the gateway picks the face that looks like the anchor (ArcFace
+similarity above 0.25, 0.15 for infants); a photo with nobody who matches is skipped and reported in
+`warnings[]` (`reference_skipped`). References are ranked by size x detector score x frontal pose; the best
+`max_refs_per_person` (default 3, at most 5; Qwen-Image 2.1 takes 10 images in total) go to the generator.
+Every photo is used for scoring: `pooling=best` compares with the closest photo, `pooling=mean` averages
+(`match.per_reference` lists each). Mark a photo `generate:false` to use it for scoring only (sunglasses,
+profile, tiny face).
+
+### Per-person refinement
+
+One attempt tends to get one face right and the other wrong. After composing, each person below the match
+threshold (`refine=auto`; `all` refines everyone, `off` skips) gets a pass: the whole picture is edited with
+only that person's references ("the right person in <image1> (a baby) must become the person shown in
+<image2>..., keep every other person, pose, clothing, lighting and background"). The result is kept only if
+that person's score rises by at least 0.03 and nobody else's falls by more than 0.03 and no extra face
+appears. `refinements[]` records every pass with the scores before and after and `accepted`.
+A crop-and-paste head refinement was tried first and dropped: the edit model re-poses and re-sizes the head,
+so the pasted face sat next to the old one.
+
+### Pose versus likeness
+
+Profile views and foreheads touching remove the features ArcFace needs; a three-quarter view keeps them.
+`pose_policy=likeness` (default) rewrites "profile", "side view", "foreheads touching", "nose to nose",
+"cheek to cheek" to a three-quarter view with the heads close, adds a sentence asking for visible faces with
+both eyes, and returns `warnings[].code == "pose_rewritten"`. `pose_policy=as_written` keeps your words and
+warns (`pose_risks_likeness`). A result head turned past |yaw| 0.45 gets a note and a `profile_result` warning.
+
+### Async
+
+`mode=auto` (default) returns `202` and a media job unless `attempts=1` and `refine=off`. Poll
+`GET /gateway/v1/media/jobs/{id}` (`status`, `progress` 0-100), then `GET .../content` for the picture and
+the scores. The job waits for ComfyUI up to `identity.max_wait_s` (3600) instead of the 300 s image timeout,
+so a prompt queued behind a long video is not cancelled. Jobs live in memory: a gateway restart fails them
+("submit it again"). `mode=sync` keeps the connection open for the whole run. The `/v1/images/edits` alias
+stays synchronous unless `extensions["com.vividfish.workflow"].mode` is `async`.
+
+A head-swap LoRA pass (BFS head V1.1) was also tested and lowered scores, so there is no swap pass.
 
 ### A ComfyUI input bug this work found
 
