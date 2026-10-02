@@ -298,7 +298,7 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
         except (IdentityError, LikenessError) as exc:
             return error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None))
         except (httpx.HTTPError, RuntimeError) as exc:
-            return error(502, "face_service_error", f"face service failed: {exc}")
+            return error(502, "face_service_error", f"face service failed: {exc or type(exc).__name__}")
 
     async def identity_route(request: Request):
         auth = guard(request, IDENTITY_PATH)
@@ -330,7 +330,7 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
         except (IdentityError, LikenessError) as exc:
             return error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None))
         except (httpx.HTTPError, RuntimeError) as exc:
-            return error(502, "identity_backend_error", f"identity workflow failed: {exc}")
+            return error(502, "identity_backend_error", f"identity workflow failed: {exc or type(exc).__name__}")
 
     async def run_scene(request: Request, auth: Any, req: SceneRequest, response_format: str) -> Response:
         """Shared by the native route and the /v1/images/edits alias."""

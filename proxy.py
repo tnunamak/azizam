@@ -7952,7 +7952,7 @@ async def _identity_edit_alias(
     except (TypeError, ValueError) as exc:
         return identity_api.error(400, "invalid_option", f"invalid identity option: {exc}", param="extensions")
     except (httpx.HTTPError, RuntimeError) as exc:
-        return identity_api.error(502, "identity_backend_error", f"identity workflow failed: {exc}")
+        return identity_api.error(502, "identity_backend_error", f"identity workflow failed: {exc or type(exc).__name__}")
 
 
 async def proxy_comfy_edit_request(
