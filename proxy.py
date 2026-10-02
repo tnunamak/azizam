@@ -10663,6 +10663,13 @@ def _parse_chain_options(body: Mapping[str, Any]) -> dict[str, Any]:
 def _parse_chain_shots(body: Mapping[str, Any], *, default_seconds: float) -> list[tuple[str, float]]:
     """Return [(prompt, seconds)] from `shots`, or from `prompt` + `seconds`."""
     shots = body.get("shots")
+    if isinstance(shots, str):
+        # multipart clients can send the list as a JSON string
+        try:
+            shots = json.loads(shots)
+        except ValueError:
+            raise video_extend.PlanError("shots must be a JSON list of {prompt, seconds} objects",
+                                         code="invalid_shots", param="shots") from None
     if shots is None:
         prompt = body.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():

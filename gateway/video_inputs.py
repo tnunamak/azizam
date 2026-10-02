@@ -145,12 +145,26 @@ def parse_bracket_form(items: Iterable[tuple[str, Any]]) -> dict[str, Any]:
     rejected with ValueError.
     """
     out: dict[str, Any] = {}
+    # `list[][field]` (the SDK's form for a list of objects, e.g. `shots`): the
+    # i-th occurrence of a field belongs to the i-th object. The SDK emits all
+    # values of one field before the next field, so grouping is by occurrence.
+    seen_in_list: dict[tuple[str, str], int] = {}
     for name, value in items:
         match = _BRACKET_KEY.match(name)
         if not match:
             out[name] = value
             continue
         path = [match.group(1), *re.findall(r"\[([^\[\]]*)\]", match.group(2))]
+        if len(path) == 3 and path[1] == "" and path[2]:
+            index = seen_in_list.get((path[0], path[2]), 0)
+            seen_in_list[(path[0], path[2])] = index + 1
+            items_list = out.setdefault(path[0], [])
+            if not isinstance(items_list, list):
+                raise ValueError(f"form field {name} conflicts with a scalar field")
+            while len(items_list) <= index:
+                items_list.append({})
+            items_list[index][path[2]] = value
+            continue
         if any(not part for part in path):
             raise ValueError(f"unsupported form field name: {name}")
         node = out

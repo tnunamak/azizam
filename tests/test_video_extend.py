@@ -400,6 +400,23 @@ class CreateLongVideoTests(RemixReplaceBase):
         self.assertAlmostEqual(r.json()["total_seconds"], 25, delta=0.4)
         self.assertEqual(r.json()["segments"], 4)
 
+    def test_sdk_multipart_shots_are_regrouped(self) -> None:
+        """openai-python sends shots as `shots[][prompt]` x N then `shots[][seconds]` x N."""
+        r = self.client.post("/v1/videos", data=[
+            ("model", "video-long"), ("prompt", ""),
+            ("shots[][prompt]", "a"), ("shots[][prompt]", "b"),
+            ("shots[][seconds]", "5"), ("shots[][seconds]", "4")])
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual([self.graph[f"s{i}_text"]["inputs"]["text"] for i in range(2)], ["a", "b"])
+        self.assertEqual(r.json()["segments"], 2)
+
+    def test_shots_as_a_json_string(self) -> None:
+        r = self.client.post("/v1/videos", data={
+            "model": "video-long", "prompt": "", "shots": json.dumps([{"prompt": "a", "seconds": 3}])})
+        self.assertEqual(r.status_code, 200, r.text)
+        r = self.client.post("/v1/videos", data={"model": "video-long", "prompt": "", "shots": "not json"})
+        self.assertEqual(r.json()["error"]["code"], "invalid_shots")
+
     def test_native_length_still_uses_the_template_graph(self) -> None:
         r = self._create(model="ltx-2.5", prompt="short", seconds=5)
         self.assertEqual(r.status_code, 200, r.text)

@@ -90,8 +90,9 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /openai/v1/audio/generate`, `GET /openai/v1/audio/models` | Gateway native | Music/SFX/voice generation; not an OpenAI SDK-compatible audio endpoint. |
 | `GET/POST /openai/v1/assistants`, `/files`, `/batches`, `/fine_tuning/*`, `/realtime/*` | OpenAI compatibility stubs | Registered compatibility routes; return `unsupported_operation`. |
 | `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | Submit/poll/download. |
-| `GET /openai/v1/videos` | OpenAI-shaped video | List video jobs *submitted by the calling API key* via this route since the gateway process last restarted (`limit`, `after`, `order`). No durable store -- same statelessness as retrieve/content. |
+| `GET /openai/v1/videos` | OpenAI-shaped video | List video jobs *submitted by the calling API key* via this route (`limit`, `after`, `order`). Job records are persisted for 14 days and survive a restart. |
 | `DELETE /openai/v1/videos/{id}` | OpenAI-shaped video | Cancels a queued/running job (ComfyUI `/api/jobs/{id}/cancel`) before tombstoning it; a `409` means cancellation couldn't be confirmed, not that the job survived. Scoped to the owning API key -- all four of status/content/list/delete are. |
+| `POST /openai/v1/videos/extensions` | OpenAI-shaped video (Sora's extend) | Add footage to a completed video; the result is the source plus the new segment. `501 video_extend_not_configured` if `videos.extend_workflow` is unset. See "Long video". |
 | `POST /openai/v1/videos/{id}/remix`, `POST /openai/v1/videos/edits` | OpenAI-shaped video | Remix a completed or uploaded video with a new prompt (Bernini-R). `501 video_remix_not_configured` if `videos.remix_workflow` is unset. See "Remix and character replace". |
 | `GET /v1/status` | Admin | Operational status; requires admin auth. |
 | `POST /anthropic/v1/messages` | Anthropic Messages | Translator over chat completions with SSE streaming; `/v1/messages` remains a legacy convenience route. |
@@ -477,8 +478,8 @@ The gateway peak-normalizes it to -1 dBFS (the raw model output is quiet; set
 `"model": "tangoflux"` for the previous SFX model.
 
 Video generation. The default model is LTX-2.5 (`ltx-2.5`, also `sora-2`, `sora-2-pro`,
-and any request without `model`). MiniMax H3 is `minimax-h3`. Clips of 2-50 s use
-`ltx-2.5-long` (`video-long`). LTX-2.3 is retired: every `ltx-2.3*` name still works and
+and any request without `model`). MiniMax H3 is `minimax-h3`. Clips longer than 10 s, storyboards
+(`shots`) and extensions use the long-video chain (`ltx-2.5-long`, `video-long`; see "Long video"). LTX-2.3 is retired: every `ltx-2.3*` name still works and
 points at the LTX-2.5 workflow for its role (see the table below).
 
 ```bash
@@ -516,7 +517,7 @@ Retired LTX-2.3 names (kept so old clients work):
 | `ltx-2.3`, `ltx-2.3-distilled`, `ltx-2.3-22b`, `video-ltx-2.3-distilled` | `video-ltx-2.5-t2v` | `input_reference` still switches to image-to-video |
 | `ltx-2.3-fast`, `ltx-2.3-distilled-fast`, `ltx-2.3-pure-distilled`, `video-ltx-2.3-pure-distilled` | `video-ltx-2.5-t2v` | `video-fast` is the stable name |
 | `ltx-2.3-detail`, `video-ltx-2.3-detail` | `video-ltx-2.5-t2v` | request `size: 1280x704` for the highest detail |
-| `ltx-2.3-long`, `ltx-2.3-long-form`, `video-ltx-2.3-long` | `video-ltx-2.5-long` | 2-50 s, chunked; `video-long` is the stable name |
+| `ltx-2.3-long`, `ltx-2.3-long-form`, `video-ltx-2.3-long` | `video-ltx-2.5-long` | long-video chain (see "Long video"); `video-long` is the stable name |
 
 Differences from LTX-2.3: width and height snap to multiples of 64 (`ltx-2.5-long`: 32);
 the LTX-2.3 `steps`, `stage1_cfg`, and `stage2_cfg` workflow controls no longer exist (the
@@ -524,10 +525,13 @@ LTX-2.5 distilled model has a fixed 8-step schedule at CFG 1), so sending them r
 400 `invalid_workflow_extension`. `ltx-2.5-long` output size follows the 16:9 placeholder
 frame (default about 960x512) and is single-stage, with no x2 upscale.
 
-List video jobs submitted by the calling API key via this route since the
-gateway process last restarted (no durable store, same statelessness as
-retrieve/content -- and the same ownership scoping status/content/delete
-already have: a different API key's jobs never appear here):
+List video jobs submitted by the calling API key via this route. Records are
+stored in `media_jobs.db` (table `video_job_records`) and kept 14 days, so ids
+and their owner survive a gateway restart. Status, content, list, delete, remix,
+edit and extend are all scoped to the owning key: another key's id, and any id
+the gateway has no record of (never made here, expired, or made before records
+were stored), returns `404 video_id not found` (unless auth is disabled). A
+different API key's jobs never appear in the list:
 
 ```bash
 curl -s "http://127.0.0.1:5000/v1/videos?limit=10&order=desc" \
@@ -547,6 +551,77 @@ for a job that may keep rendering:
 curl -s -X DELETE "http://127.0.0.1:5000/v1/videos/$VIDEO_ID" \
   -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
 ```
+
+### Long video
+
+LTX-2.5 makes about 10 s in one pass. Longer video is built in segments: each new
+segment is conditioned on the last second of the video so far (a latent guide on
+`context_seconds`, so motion carries across the join, not one frame), with its own
+prompt. All segments of one request run as one ComfyUI job, so the video id,
+status, progress, content and delete work as for any video. Output is single-stage
+(about 960x512 by default, no x2 upscale), 24 fps, with audio. Total length (source
+included) is capped by `videos.max_total_seconds` (default 40): past it you get
+`400 video_total_length_exceeded`, because quality drops with every added segment.
+Measured: a 24 s, three-prompt chain took 310 s on the 3090 (about 100 s per 8 s).
+
+Three ways in, from most to least control:
+
+```python
+# 1. Extend a finished video (Sora's shape). The result is source + new footage.
+v = client.videos.create_and_poll(model="ltx-2.5", prompt="a cyclist on a coast road", seconds=8)
+v2 = client.videos.extend(video={"id": v.id}, prompt="she climbs into the pines", seconds="8",
+                          extra_body={"context_seconds": 1.0})
+v2 = client.videos.poll(v2.id)       # v2.seconds is the stitched total, v2.remixed_from_video_id == v.id
+
+# 2. Storyboard: one request, one prompt and length per shot (gateway extension on /v1/videos).
+client.videos.create(model="video-long", prompt="", seconds=None, extra_body={"shots": [
+    {"prompt": "a lone cyclist on a coast road, golden hour", "seconds": 8},
+    {"prompt": "the road climbs into pine forest", "seconds": 8},
+    {"prompt": "she coasts down into a white village", "seconds": 8}]})
+
+# 3. Sugar: a plain long `seconds`. The prompt is reused for every segment.
+client.videos.create(model="ltx-2.5", prompt="a slow aerial over a glacier", seconds=24)
+```
+
+`POST /v1/videos/extensions` takes `{"video": {"id": ...}, "prompt": ..., "seconds": N}` as JSON or
+multipart (`video[id]`, or an uploaded file in `video`). `seconds` is the length of the NEW footage
+(the prompt describes only the new action); the resource's `seconds` is the stitched total, and
+`total_seconds` repeats it as a number. `remixed_from_video_id` is the source id (the OpenAI
+spec has no extension field), and `extended_from_video_id` repeats it. Fields: `model`, `seed`,
+`size` (default: the source's size), `negative_prompt`, `context_seconds` (0.34-4, default 1; the
+overlap taken from the end of the source), and under
+`extensions.com.vividfish.workflow`: `state_ledger`, `context_strength` (0-1, default 0.9).
+`input_reference` and `shots` are not accepted on extensions. A segment is at most 8 s
+(`videos.chain_segment_seconds`); a longer request is split into near-equal segments with
+the same prompt. Frame counts are multiples of 8, so the result can differ from the request
+by a fraction of a second (`X-Duration-Adjusted`). The source needs at least
+`8 * ceil(context_seconds * fps / 8) + 1` frames (33 at the default).
+
+`shots` on `POST /v1/videos` is a list of 1-12 `{prompt, seconds}` objects (each at least 1 s).
+Omit top-level `seconds`, or make it match the sum. The first shot is a normal text-to-video
+(or image-to-video with `input_reference`) segment. `shots` works with `ltx-2.5`, `video-long`,
+`ltx-2.5-long` and the old `ltx-2.3-long*` names; other models return `400 long_video_not_supported`.
+`seconds` above a model's native length does the same on `ltx-2.5`.
+
+Failure: the job fails as a whole and no partial video is kept (a truncated clip is
+never returned as the result). The error says where it stopped:
+`{"code": "video_generation_failed", "message": "segment 3 of 4 failed (2 finished); ...",
+"failed_segment": 3, "segments_completed": 2, "segments_total": 4, "completed_seconds": 14.04}`.
+While running, `segments_completed` and `segments_total` are on the resource and `progress`
+spans all segments. To keep finished work, send shorter chains and extend (each is its own video).
+
+Strategy that works with these limits:
+
+- Use native length (`ltx-2.5`, up to 10 s) when one shot is enough; it is the best quality.
+- Extend with the overlap for one continuous action; keep `context_seconds` at 1-2 s.
+- Use `shots` when the content changes (new place, new action): give every shot its own prompt.
+  A single prompt over 24 s makes the model hold the first scene.
+- Split at rest beats: end a shot where the subject slows or pauses, so the next prompt
+  starts from a natural rest state. A join in mid-motion is where drift shows.
+- Experimental `state_ledger` (text, up to 8000 chars) is put in front of every segment prompt.
+  Use it to restate what must not change (character, clothing, place, light). Its effect is not
+  measured; treat it as a prompt aid, not a guarantee.
+- Past about 40 s every system drifts (backgrounds first). Finish and cut, or start a new video.
 
 ### Remix and character replace
 
@@ -1130,7 +1205,7 @@ an exact model or settings. Unknown names pass through unchanged.
 | | `image-edit-fast` (also `image-fast`) | `flux2-klein-4b-edit` | |
 | Video | `video` | `video-ltx-2.5-t2v`; `input_reference` switches to image-to-video | `sora-2`, `sora-2-pro`, `sora*` |
 | | `video-fast` | `video-ltx-2.5-t2v` (same graph as `video`) | |
-| | `video-long` | `video-ltx-2.5-long` (2-50 s) | |
+| | `video-long` | `video-ltx-2.5-long` (code-built chain, up to `videos.max_total_seconds`, default 40 s) | |
 | | `video-remix` | `video-bernini-r-remix`; needs `extensions...source_video`; also what `/v1/videos/{id}/remix` runs | |
 | | `character-replace` | `video-scail-2-replace`; needs `extensions...source_video` and `reference_image` | |
 | TTS | `tts` | Chatterbox Turbo (GPU0, on demand), then OmniVoice. The 13 OpenAI voice names are fixed cloned identities, and `voice: {"id": "voice_..."}` selects a user-created voice | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
