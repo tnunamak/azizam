@@ -12,6 +12,7 @@ import asyncio
 import json
 import statistics
 import inspect
+from dataclasses import replace
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import Any
@@ -21,6 +22,8 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability
+from gateway.local_capabilities import build_local_capabilities
+from gateway.service_registry import runtime_backend_from_service
 
 CatalogProvider = Callable[[Request], Mapping[str, Any] | Response | Awaitable[Mapping[str, Any] | Response]]
 
@@ -88,6 +91,40 @@ def create_models_catalog_router(
         )
 
     return router
+
+
+def registered_model_capabilities(service_records: Mapping[str, Any]) -> list[Capability]:
+    """Project declared service models onto their existing protocol capabilities.
+
+    Generic endpoint capabilities have no model ID. Bind explicit registry model
+    rows before policy evaluation so restricted profiles can see their models.
+    No upstream discovery, secrets, or engine-specific assumptions are needed.
+    """
+    out: list[Capability] = []
+    for service_id, service in _services_mapping(service_records).items():
+        if not service.get("enabled", True):
+            continue
+        config = service.get("config") if isinstance(service.get("config"), Mapping) else service
+        models = config.get("models")
+        if isinstance(models, Mapping):
+            models = [{"id": key, **(dict(value) if isinstance(value, Mapping) else {})}
+                      for key, value in models.items()]
+        if not isinstance(models, list):
+            continue
+        capabilities = build_local_capabilities(
+            {}, backends={service_id: runtime_backend_from_service(service)},
+            enabled_flags={"llm": True, "embeddings": True, "tts": True, "stt": True,
+                           "images": False, "videos": False, "audio": False},
+        )
+        for model in models:
+            if not isinstance(model, Mapping):
+                continue
+            model_id = model.get("model_group") or model.get("public") or model.get("id")
+            if not model_id:
+                continue
+            out.extend(replace(capability, model=str(model_id))
+                       for capability in capabilities if capability.model is None)
+    return out
 
 
 def build_models_catalog(
@@ -721,6 +758,9 @@ def _service_model_metadata(service_records: Mapping[str, Any]) -> dict[str, Map
     for service_id, service in services.items():
         config = service.get("config") if isinstance(service.get("config"), Mapping) else service
         models = config.get("models") if isinstance(config, Mapping) else None
+        if isinstance(models, Mapping):
+            models = [{"id": key, **(dict(value) if isinstance(value, Mapping) else {})}
+                      for key, value in models.items()]
         if not isinstance(models, list):
             continue
         for record in models:

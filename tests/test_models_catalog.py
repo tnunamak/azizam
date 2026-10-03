@@ -16,11 +16,26 @@ from gateway.models_catalog import (  # noqa: E402
     auth_contexts_from_user_snapshot,
     build_models_catalog,
     create_models_catalog_router,
+    registered_model_capabilities,
     probe_service_health,
 )
 
 
 class ModelsCatalogBuildTests(unittest.TestCase):
+    def test_registered_models_bind_generic_capabilities_without_legacy_engines(self) -> None:
+        services = {"services": {
+            "capture-engine": {"enabled": True, "capabilities": ["chat", "completions"],
+                               "config": {"models": [{"model_group": "demo-chat", "upstream_model": "private-id"}]}},
+            "disabled": {"enabled": False, "capabilities": ["chat"],
+                         "config": {"models": [{"model_group": "hidden"}]}},
+        }}
+        capabilities = registered_model_capabilities(services)
+        self.assertEqual({cap.model for cap in capabilities}, {"demo-chat"})
+        self.assertEqual({cap.intent for cap in capabilities}, {"chat.completions", "text.completions"})
+        self.assertEqual({cap.backend for cap in capabilities}, {"capture-engine"})
+        catalog = build_models_catalog(capabilities=capabilities, service_records=services)
+        self.assertEqual([row["id"] for row in catalog["models"]], ["demo-chat"])
+
     def test_alias_rows_use_target_capability_and_receipt_timing(self) -> None:
         catalog = build_models_catalog(
             alias_views={

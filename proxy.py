@@ -154,6 +154,7 @@ from gateway.models_catalog import (
     auth_contexts_from_user_snapshot,
     build_models_catalog,
     create_models_catalog_router,
+    registered_model_capabilities,
     probe_service_health,
 )
 from gateway import engine_quarantine
@@ -14317,8 +14318,10 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         service_records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
     except Exception:  # noqa: BLE001
         service_records = {}
+    registered_capabilities = registered_model_capabilities(service_records)
     capability_sets = [
-        _gateway_capabilities_for_auth_context(auth_context)
+        [*_gateway_capabilities_for_auth_context(auth_context),
+         *(_capability_for_profile(capability, auth_context) for capability in registered_capabilities)]
         for auth_context in auth_contexts
     ]
     visible_service_ids = {
