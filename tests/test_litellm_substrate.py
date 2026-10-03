@@ -272,6 +272,8 @@ def test_remote_openrouter_models_are_provider_prefixed() -> None:
         "model": "openrouter/anthropic/claude-sonnet-4.5",
         "api_base": "https://openrouter.ai/api/v1",
         "api_key": "os.environ/OPENROUTER_API_KEY",
+        "num_retries": 0,
+        "max_retries": 0,
     }
 
 

@@ -642,7 +642,9 @@ class TestSpendReservations(unittest.TestCase):
 
         with self.assertRaises(BudgetExceeded):
             reserve_provider_spend(
-                profile(),
+                profile().with_overrides(
+                    remote=RemoteProviderPolicy(providers=frozenset({"openrouter"}))
+                ),
                 provider(
                     id="openrouter",
                     config={"spend_caps_usd": {"daily": "0.01"}},
@@ -674,7 +676,9 @@ class TestSpendReservations(unittest.TestCase):
 
         with self.assertRaises(BudgetExceeded):
             reserve_provider_spend(
-                profile(),
+                profile().with_overrides(
+                    remote=RemoteProviderPolicy(providers=frozenset({"openrouter"}))
+                ),
                 provider(
                     id="openrouter",
                 ),
