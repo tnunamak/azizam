@@ -101,6 +101,21 @@ test("empty provider status offers connection review without promising provider 
   await expect(configure).toHaveAttribute("href", "/ui/engines/");
 });
 
+test("Status offers a local action when no remote providers are configured", async ({
+  page,
+}) => {
+  await page.route("**/admin/api/providers", (route) =>
+    route.fulfill({ json: { providers: [] } }),
+  );
+  await page.goto("/ui/status/");
+  await expect(
+    page.getByText("No remote providers are configured.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Review connections", exact: true }),
+  ).toHaveAttribute("href", "/ui/engines/");
+});
+
 test("legacy email names remain contact details on People and in search", async ({
   page,
 }) => {
@@ -176,11 +191,9 @@ test("personal access app hides only its exact generated email-based name", asyn
   );
 
   await page.goto("/ui/apps/");
-  const card = page
-    .locator("article")
-    .filter({
-      has: page.getByRole("heading", { name: "Personal access", exact: true }),
-    });
+  const card = page.locator("article").filter({
+    has: page.getByRole("heading", { name: "Personal access", exact: true }),
+  });
   await expect(
     card.getByRole("heading", { name: "Personal access", exact: true }),
   ).toBeVisible();

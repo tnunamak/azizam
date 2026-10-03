@@ -882,9 +882,14 @@ export function StatusClient() {
               ))}
             </div>
           ) : (
-            <p className="text-muted-foreground text-sm">
-              No providers are reported by the provider status API.
-            </p>
+            <div className="space-y-3">
+              <p className="text-muted-foreground text-sm">
+                No remote providers are configured.
+              </p>
+              <Button type="button" variant="outline" size="sm" asChild>
+                <Link href="/engines">Review connections</Link>
+              </Button>
+            </div>
           )}
         </Section>
       )}
