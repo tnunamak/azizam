@@ -14220,6 +14220,24 @@ async def user_portal(request: Request):
     return RedirectResponse("/", status_code=302)
 
 
+from gateway.home_api import create_home_router
+
+app.include_router(create_home_router(
+    store=ADMIN_STORE,
+    receipts_path=lambda: receipt_store.DB_PATH,
+    require_session=_require_user_session,
+    require_action=_require_user_action_header,
+    csrf_token=_csrf_token_for_oidc_session,
+    default_profile_id=_default_profile_id_for_session,
+    inherited_profile_id_for_app=_inherited_profile_id_for_app,
+    capabilities=lambda identity: _gateway_capabilities_for_auth_context(AuthContext(identity=identity)),
+    aliases=_gateway_aliases_provider,
+    public_base_url=lambda request: _public_base_url(request),
+    status_provider=lambda: status_endpoint.get_cached_status(config),
+    admin_auth=ADMIN_AUTH,
+))
+
+
 @app.get("/me/api/session", include_in_schema=False)
 async def user_portal_session(request: Request):
     session = _oidc_session_from_request(request)
