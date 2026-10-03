@@ -159,6 +159,7 @@ export default function UsagePage() {
   const { data, isPending, isFetching, isError, refetch } = useQuery({
     queryKey: ["usage", "summary", person],
     queryFn: () => fetchUsageSummary(person),
+    retry: false,
   });
   const hasUsage = Boolean(
     data && (data.requests > 0 || data.mediaCount > 0 || data.receipts.length),
@@ -300,7 +301,7 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         value={formatNumber(summary.mediaCount)}
         detail="Images, video and audio"
       />
-      <Card className="border-0 bg-transparent shadow-none md:col-span-3">
+      <Card className="border-0! bg-transparent! shadow-none! md:col-span-3">
         <CardHeader>
           <CardTitle>Capability sparklines</CardTitle>
           <CardDescription>Requests by capability this month</CardDescription>
@@ -347,7 +348,7 @@ function MetricCard({
   detail: string;
 }) {
   return (
-    <Card className="border-0 bg-transparent shadow-none">
+    <Card className="border-0! bg-transparent! shadow-none!">
       <CardHeader className="flex-row items-center gap-3 space-y-0">
         <span className="bg-muted inline-flex size-10 shrink-0 items-center justify-center rounded-lg">
           <Icon aria-hidden="true" className="text-muted-foreground size-5" />
@@ -373,7 +374,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
     days.some((day) => (day.byCapability[capability] ?? 0) > 0),
   );
   return (
-    <Card className="border-0 bg-transparent shadow-none">
+    <Card className="border-0! bg-transparent! shadow-none!">
       <CardHeader>
         <CardTitle>Requests by day</CardTitle>
         <CardDescription>Stacked by capability</CardDescription>
@@ -464,7 +465,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
 
 function ModelTable({ rows }: { rows: UsageModel[] }) {
   return (
-    <Card className="border-0 bg-transparent shadow-none">
+    <Card className="border-0! bg-transparent! shadow-none!">
       <CardHeader>
         <CardTitle>Models</CardTitle>
         <CardDescription>Requests, duration and measured cost</CardDescription>
@@ -533,7 +534,7 @@ function ReceiptsList({
   loading: boolean;
 }) {
   return (
-    <Card className="border-0 bg-transparent shadow-none">
+    <Card className="border-0! bg-transparent! shadow-none!">
       <CardHeader>
         <CardTitle>Receipts</CardTitle>
         <CardDescription>

@@ -16,8 +16,8 @@ const seededSummary = {
     { date: "2026-10-02", chat: 1, embeddings: 1 },
   ],
   by_model: [
-    { model: "demo-chat", requests: 2, remote_spend: 0.01 },
-    { model: "image", requests: 1, remote_spend: 0.013 },
+    { model: "demo-chat", capability: "chat", requests: 2, remote_spend: 0.01 },
+    { model: "image", capability: "image", requests: 1, remote_spend: 0.013 },
   ],
   receipts: [
     {

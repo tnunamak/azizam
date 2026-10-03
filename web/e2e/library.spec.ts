@@ -78,16 +78,16 @@ for (const mode of ["light", "dark"] as const) {
       await expect(
         page.getByText("A clean product render", { exact: false }),
       ).toBeVisible();
-      await page.getByLabel("Kind").click();
-      await page.getByRole("option", { name: "Images" }).click();
-      expect(mediaRequests.at(-1)).toContain("kind=image");
-      await page.getByLabel("Search prompts").fill("desk");
-      await expect.poll(() => mediaRequests.at(-1) ?? "").toContain("q=desk");
       await auditPage(page);
       await page.screenshot({
         path: `test-results/screens/library-grid-${mode}-${width}.png`,
         fullPage: true,
       });
+      await page.getByLabel("Kind").click();
+      await page.getByRole("option", { name: "Images" }).click();
+      expect(mediaRequests.at(-1)).toContain("kind=image");
+      await page.getByLabel("Search prompts").fill("desk");
+      await expect.poll(() => mediaRequests.at(-1) ?? "").toContain("q=desk");
       await page
         .getByRole("button", { name: /A clean product render/ })
         .click();
