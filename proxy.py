@@ -12712,6 +12712,13 @@ def mount_web_ui(target_app: FastAPI, directory: Path = WEB_UI_DIR) -> bool:
     return True
 
 
+@app.get("/ui", include_in_schema=False)
+async def _web_ui_root_redirect(request: Request):
+    """`/ui` (no slash) is what people type; the static mount only matches `/ui/...`."""
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(url=f"/ui/{query}", status_code=308)
+
+
 WEB_UI_MOUNTED = mount_web_ui(app)
 
 _PROTOCOL_ROUTE_REGISTRY = (
