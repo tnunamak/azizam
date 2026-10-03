@@ -51,6 +51,12 @@ def settle(condition, timeout: float = 3.0) -> None:
         time.sleep(0.01)
 
 
+def finish(ws, upstream) -> None:
+    """Close from the client and wait for the relay to end, so the test client has nothing left to cancel."""
+    ws.close()
+    settle(lambda: upstream.closed)
+
+
 class RealtimeRouteCase(unittest.TestCase):
     def setUp(self) -> None:
         cfg = dict(proxy.config)
@@ -80,14 +86,16 @@ class RelayTests(RealtimeRouteCase):
             ws.send_text('{"type":"session.update"}')
             ws.send_bytes(b"\x02")
             settle(lambda: len(self.upstream.sent) == 2)
+            finish(ws, self.upstream)
         self.assertEqual(self.upstream.sent, ['{"type":"session.update"}', b"\x02"])
         self.assertEqual(self.connect.await_args.args[0], "ws://127.0.0.1:8765/v1/realtime?model=gpt-realtime")
-        settle(lambda: self.upstream.closed)
+        self.assertTrue(self.upstream.closed)
 
     def test_openai_prefixed_path_works(self) -> None:
         with self.client.websocket_connect("/openai/v1/realtime") as ws:
             ws.send_text("x")
             settle(lambda: self.upstream.sent == ["x"])
+            finish(ws, self.upstream)
         self.connect.assert_awaited_once()
 
     def test_realtime_subprotocol_is_echoed_and_the_key_subprotocol_is_not(self) -> None:
@@ -97,6 +105,7 @@ class RelayTests(RealtimeRouteCase):
             self.assertEqual(ws.accepted_subprotocol, "realtime")
             ws.send_text("x")
             settle(lambda: self.upstream.sent == ["x"])
+            finish(ws, self.upstream)
 
     def test_upstream_close_code_reaches_the_client(self) -> None:
         self.upstream = FakeUpstream(frames=["bye"], end_code=1008)
@@ -110,6 +119,7 @@ class RelayTests(RealtimeRouteCase):
         with self.client.websocket_connect("/v1/realtime") as ws:
             ws.send_text("x")
             settle(lambda: self.upstream.sent == ["x"])
+            finish(ws, self.upstream)
         self.ensure.assert_awaited_once()
         self.assertEqual(self.ensure.await_args.args[0], "realtime")
 
@@ -150,6 +160,7 @@ class RefusalTests(RealtimeRouteCase):
             with self.client.websocket_connect("/v1/realtime") as ws:
                 ws.send_text("x")
                 settle(lambda: self.upstream.sent == ["x"])
+                finish(ws, self.upstream)
         self.assertEqual([c.args[1] for c in enforce.call_args_list], list(proxy._REALTIME_POLICY_PATHS))
 
     def test_unconfigured_service_is_a_503(self) -> None:
