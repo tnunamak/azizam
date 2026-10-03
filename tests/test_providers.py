@@ -1095,6 +1095,7 @@ class TestCosts(unittest.TestCase):
             model_info={
                 "input_cost_per_token": 0.000003,
                 "output_cost_per_token": 0.000015,
+                "cache_creation_input_token_cost": 0.00000375,
                 "cache_creation_input_token_cost_above_1hr": 0.000006,
             },
             cost="0.060015",

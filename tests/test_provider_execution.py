@@ -856,6 +856,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                         "cache_creation_input_token_cost_above_1hr": 0.000006,
                     }))
             response, _ = await self._execute(send=send)
+            self.assertEqual(response.status_code, 200)
             await _body(response)
 
         self.assertEqual(len(self.receipts), 1)
