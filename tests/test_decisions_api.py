@@ -118,7 +118,7 @@ def _fixture(name: str) -> dict:
 H = {"authorization": "Bearer good"}
 
 
-class TestClientTransport:
+class GatewaySdkTransport:
     def __init__(self, client, httpx2_module):
         self.client = client
         self.httpx2 = httpx2_module
@@ -479,7 +479,7 @@ def test_reserved_openai_decisions_can_call_injected_passthrough(env):
 def test_official_typesafe_sdk_works_offline_against_facade(env):
     typesafe_sdk = pytest.importorskip("typesafe_sdk")
     httpx2 = pytest.importorskip("httpx2")
-    transport = TestClientTransport(env.client, httpx2)
+    transport = GatewaySdkTransport(env.client, httpx2)
     http_client = httpx2.Client(transport=transport, base_url="http://gateway.test/typesafe")
 
     with typesafe_sdk.TypeSafeClient(api_key="good", base_url="http://gateway.test/typesafe", http_client=http_client) as client:

@@ -130,9 +130,9 @@ def test_existing_only_plan_never_starts_service():
     real = httpx.AsyncClient
     profile = SimpleNamespace(target_policy=SimpleNamespace(activation="existing_only"))
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(503, json={})))):
-        with pytest.raises(DecisionsError) as error:
-            asyncio.run(rt.dispatch(None, profile, BODY, "r"))
-    assert error.value.status == 529 and error.value.headers["retry-after"] == "5"
+        result = asyncio.run(rt.dispatch(None, profile, BODY, "r"))
+    assert result.status_code == 529 and result.headers["retry-after"] == "5"
+    assert result.fallback_reasons == ("small:overloaded",)
     ensure.assert_not_called()
 
 
@@ -175,3 +175,14 @@ def test_default_bootstrap_aliases_use_cpu_on_demand():
         assert resolved.engine_spec["placement"] == "cpu"
         assert resolved.engine_spec["residency"] == "on_demand"
         assert cfg["backends"][resolved.service]["lifecycle"]["driver"] == "systemd"
+
+
+def test_exhausted_fallback_retains_attempt_receipt_context():
+    rt = runtime()
+    real = httpx.AsyncClient
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(529, json={"error": {"message": "Busy"}})))):
+        result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": "decide-quality"}, "r"))
+    assert result.status_code == 529
+    assert result.fallback_reasons == ("large:overloaded", "small:overloaded")
+    assert result.backend == "small"
+    assert result.engine is None and result.resolved_model is None

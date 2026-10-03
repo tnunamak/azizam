@@ -34,7 +34,7 @@ class DecisionRuntime:
             result = resolve_alias(self.config().get("model_aliases"), "decisions", lookup,
                                    engine_available=self.available)
         except AliasUnavailableError as exc:
-            raise DecisionsError(529, exc.code, str(exc)) from exc
+            raise DecisionsError(529, exc.code, str(exc), headers={"retry-after": "5"}) from exc
         if result is None or result.engine is None:
             raise DecisionsError(422, "invalid_model", "This decision model is not configured.", param="model")
         return result
@@ -116,10 +116,12 @@ class DecisionRuntime:
         candidates = [(resolved.engine, resolved.service)] + list(resolved.fallbacks)
         fallbacks = [f"{name}:not_deployed" for name in resolved.skipped_engines]
         deadline = time.monotonic() + 15
+        last_service_id = None
         section = self.config().get("model_aliases", {}).get("decisions", {}).get("engines", {})
         for engine_id, service_id in candidates:
             if time.monotonic() >= deadline:
                 break
+            last_service_id = service_id
             if not await asyncio.to_thread(self.authorize, auth, body["model"], service_id):
                 raise DecisionsError(403, "permission_denied", "Your access plan does not allow this decision model.")
             service = self.config().get("backends", {}).get(service_id, {})
@@ -166,4 +168,9 @@ class DecisionRuntime:
                                           resolved_model=payload.get("model"), engine=engine,
                                           headers={"retry-after": response.headers["retry-after"]} if "retry-after" in response.headers else {},
                                           fallback_reasons=tuple(fallbacks))
-        raise DecisionsError(529, "overloaded", "The local decision engines are starting or unavailable.", headers={"retry-after": "5"})
+        return DecisionDispatchResult(
+            {"error": {"message": "The local decision engines are starting or unavailable.",
+                       "type": "server_error", "code": "overloaded"}},
+            status_code=529, headers={"retry-after": "5"},
+            backend=last_service_id, fallback_reasons=tuple(fallbacks),
+        )

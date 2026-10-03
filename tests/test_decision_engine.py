@@ -111,7 +111,7 @@ def test_build_response_for_choice_score_and_noul() -> None:
     assert out["answers"]["risk"]["type"] == "score"
     assert out["answers"]["risk"]["score"] == pytest.approx(1.0)
     assert out["answers"]["risk"]["legend"] == {"0": "low", "1": "medium", "2": "high"}
-    assert out["answers"]["risk"]["probabilities"] == {"0": pytest.approx(0.252268), "1": pytest.approx(0.495463), "2": pytest.approx(0.252268)}
+    assert out["answers"]["risk"]["probabilities"] == {"0": pytest.approx(0.252268678711), "1": pytest.approx(0.495462642578), "2": pytest.approx(0.252268678711)}
     assert out["answers"]["allowed"]["type"] == "noul"
     assert out["answers"]["allowed"]["noul"] > 0.86
     assert "confidence" not in out["answers"]["allowed"]
