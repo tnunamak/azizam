@@ -328,6 +328,7 @@ from gateway.protocols import anthropic as anthropic_protocol
 from gateway.protocols import ollama as ollama_protocol
 from gateway import provider_execution, providers
 from gateway.provider_admin import create_provider_admin_router, provider_ledger_spending_snapshot
+from gateway.providers import provider_lookup
 
 # =============================================================================
 # Configuration
@@ -13197,6 +13198,15 @@ def _capability_for_profile(
     protocol: str | None = None,
 ) -> Capability:
     profile = _profile_for_auth_context(auth_context)
+    remote_provider_id = None
+    if "remote" in capability.tags:
+        provider = provider_lookup(ADMIN_STORE.get_service_registry(), capability.backend)
+        if provider is None:
+            return replace(capability, policy_available=False, policy_reasons=("Provider configuration is unavailable.",))
+        remote_provider_id = provider.id
+        provider_policy = ADMIN_STORE.get_provider_admin_state().get("providers", {}).get(provider.id, {})
+        if "allowed_plans" in provider_policy and profile.id not in (provider_policy["allowed_plans"] or []):
+            return replace(capability, policy_available=False, policy_reasons=("Provider is not allowed by this access plan.",))
     return capability_with_policy_view(
         capability,
         profile,
@@ -13210,7 +13220,7 @@ def _capability_for_profile(
             capability_trust_tier=capability.trust_tier,
             capability_resource_tier=capability.resource_tier,
             capability_tags=capability.tags,
-            remote_provider=(capability.backend if "remote" in capability.tags else None),
+            remote_provider=remote_provider_id,
         ),
     )
 

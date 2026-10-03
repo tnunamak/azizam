@@ -21,14 +21,15 @@ DEFAULT_KEY_FILE = "provider-secrets.key"
 
 
 @contextmanager
-def provider_creation_lock(db_path: Path):
-    """Serialize provisioning across gateway workers before touching secrets.
+def provider_mutation_lock(db_path: Path):
+    """Serialize provider registry/policy/secret mutations across workers.
 
-    Registry CAS alone cannot protect the secret/policy writes that precede it.
-    Hold this only for synchronous local writes, never across a provider call.
+    Registry CAS alone cannot protect the secret and provider-policy writes
+    around create/remove/key/model/caps/plans changes. Hold this only for
+    synchronous local writes, never across request-body reads or provider calls.
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    path = db_path.parent / ".provider-creation.lock"
+    path = db_path.parent / ".provider-mutation.lock"
     fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)

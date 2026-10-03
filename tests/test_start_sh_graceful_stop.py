@@ -228,6 +228,9 @@ class StartScriptGracefulStopTests(unittest.TestCase):
             assert "sk-two" not in text
             assert "sk-one" not in stderr
             assert "sk-two" not in stderr
+            child_stderr = Path(str(log) + ".err").read_text(encoding="utf-8")
+            assert "sk-one" not in child_stderr
+            assert "sk-two" not in child_stderr
 
 
 if __name__ == "__main__":

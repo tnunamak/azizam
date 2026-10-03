@@ -198,7 +198,7 @@ def create_provider_admin_router(
             return ctx
         try:
             body = await _read_json_body(request)
-            with secret_store.provider_creation_lock(_admin_db_path(store)):
+            with secret_store.provider_mutation_lock(_admin_db_path(store)):
                 service = provider_configuration.provider_service_from_body(body)
                 expected_generation = _expected_registry_generation(store, body)
                 provider_id = service_registry.canonical_provider_id(service["id"])
@@ -335,20 +335,21 @@ def create_provider_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            _require_provider(store, provider_id)
             body = await _read_json_body(request)
             secret_value = str(body.get("api_key") or "").strip()
             if not secret_value:
                 raise _RouteError(status.HTTP_400_BAD_REQUEST, "missing_provider_key", "api_key is required")
-            secret_id = _current_provider_secret_id(store, provider_id)
-            if not secret_id:
-                raise _RouteError(status.HTTP_409_CONFLICT, "env_key_provider", "This provider uses an environment-variable key. Switch it to gateway-stored keys before rotating in the UI.")
-            status_row = secret_store.put_provider_secret(
-                secret_id,
-                secret_value,
-                db_path=_admin_db_path(store),
-            ).to_dict()
-            _clear_provider_connection_state(store, provider_id, actor=ctx)
+            with secret_store.provider_mutation_lock(_admin_db_path(store)):
+                _require_provider(store, provider_id)
+                secret_id = _current_provider_secret_id(store, provider_id)
+                if not secret_id:
+                    raise _RouteError(status.HTTP_409_CONFLICT, "env_key_provider", "This provider uses an environment-variable key. Switch it to gateway-stored keys before rotating in the UI.")
+                status_row = secret_store.put_provider_secret(
+                    secret_id,
+                    secret_value,
+                    db_path=_admin_db_path(store),
+                ).to_dict()
+                _clear_provider_connection_state(store, provider_id, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
         except ValueError:
@@ -361,12 +362,13 @@ def create_provider_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            _require_provider(store, provider_id)
-            secret_id = _current_provider_secret_id(store, provider_id)
-            if not secret_id:
-                raise _RouteError(status.HTTP_409_CONFLICT, "env_key_provider", "This provider uses an environment-variable key. Remove the environment reference from provider settings.")
-            status_row = secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store)).to_dict()
-            _clear_provider_connection_state(store, provider_id, actor=ctx)
+            with secret_store.provider_mutation_lock(_admin_db_path(store)):
+                _require_provider(store, provider_id)
+                secret_id = _current_provider_secret_id(store, provider_id)
+                if not secret_id:
+                    raise _RouteError(status.HTTP_409_CONFLICT, "env_key_provider", "This provider uses an environment-variable key. Remove the environment reference from provider settings.")
+                status_row = secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store)).to_dict()
+                _clear_provider_connection_state(store, provider_id, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
         return JSONResponse(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
@@ -427,36 +429,37 @@ def create_provider_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            _require_provider(store, provider_id)
             body = await _read_json_body(request)
-            registry = store.get_service_registry()
-            service_id, service = _service_for_provider(registry, provider_id)
-            merged = dict(service)
-            config = dict(merged.get("config") if isinstance(merged.get("config"), Mapping) else {})
-            config["models"] = provider_configuration.model_records_from_body(
-                body,
-                service_registry.canonical_provider_id(provider_id),
-            )
-            incoming_price = provider_configuration.price_config_from_body(
-                body,
-                service_registry.canonical_provider_id(provider_id),
-            )
-            merged_price = _merge_provider_price_config(
-                config.get("price") if isinstance(config.get("price"), Mapping) else {},
-                incoming_price,
-            )
-            if merged_price:
-                config["price"] = merged_price
-            provider_configuration._validate_enabled_model_prices(config["models"], merged_price)
-            config["model_policy_schema_version"] = service_registry.MODEL_POLICY_SCHEMA_VERSION
-            merged["config"] = config
-            record = store.update_service(
-                service_id=service_id,
-                data=_provider_service_to_store_form(merged),
-                actor=ctx,
-                expected_generation=_expected_registry_generation(store, body),
-            )
-            provider = _one_provider_payload(store, effective_spending_provider, provider_id)
+            with secret_store.provider_mutation_lock(_admin_db_path(store)):
+                _require_provider(store, provider_id)
+                registry = store.get_service_registry()
+                service_id, service = _service_for_provider(registry, provider_id)
+                merged = dict(service)
+                config = dict(merged.get("config") if isinstance(merged.get("config"), Mapping) else {})
+                config["models"] = provider_configuration.model_records_from_body(
+                    body,
+                    service_registry.canonical_provider_id(provider_id),
+                )
+                incoming_price = provider_configuration.price_config_from_body(
+                    body,
+                    service_registry.canonical_provider_id(provider_id),
+                )
+                merged_price = _merge_provider_price_config(
+                    config.get("price") if isinstance(config.get("price"), Mapping) else {},
+                    incoming_price,
+                )
+                if merged_price:
+                    config["price"] = merged_price
+                provider_configuration._validate_enabled_model_prices(config["models"], merged_price)
+                config["model_policy_schema_version"] = service_registry.MODEL_POLICY_SCHEMA_VERSION
+                merged["config"] = config
+                record = store.update_service(
+                    service_id=service_id,
+                    data=_provider_service_to_store_form(merged),
+                    actor=ctx,
+                    expected_generation=_expected_registry_generation(store, body),
+                )
+                provider = _one_provider_payload(store, effective_spending_provider, provider_id)
         except _RouteError as exc:
             return exc.as_response()
         except provider_configuration.ProviderConfigurationError as exc:
@@ -472,23 +475,24 @@ def create_provider_admin_router(
             return ctx
         try:
             body = await _read_json_body_or_empty(request)
-            registry = store.get_service_registry()
-            service_id, service = _service_for_provider(registry, provider_id)
-            record = store.remove_service(
-                service_id=service_id,
-                actor=ctx,
-                expected_generation=_expected_registry_generation(store, body),
-            )
-            _sync_profile_remote_provider_grants(store, provider_id, [], actor=ctx)
-            state = store.get_provider_admin_state()
-            providers = state.get("providers") if isinstance(state.get("providers"), dict) else {}
-            providers.pop(service_registry.canonical_provider_id(provider_id), None)
-            state["providers"] = providers
-            store.update_provider_admin_state(data=state, actor=ctx)
-            config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
-            secret_id = str(config.get("api_key_secret_id") or "").strip()
-            if secret_id:
-                secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store))
+            with secret_store.provider_mutation_lock(_admin_db_path(store)):
+                registry = store.get_service_registry()
+                service_id, service = _service_for_provider(registry, provider_id)
+                record = store.remove_service(
+                    service_id=service_id,
+                    actor=ctx,
+                    expected_generation=_expected_registry_generation(store, body),
+                )
+                _sync_profile_remote_provider_grants(store, provider_id, [], actor=ctx)
+                state = store.get_provider_admin_state()
+                providers = state.get("providers") if isinstance(state.get("providers"), dict) else {}
+                providers.pop(service_registry.canonical_provider_id(provider_id), None)
+                state["providers"] = providers
+                store.update_provider_admin_state(data=state, actor=ctx)
+                config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+                secret_id = str(config.get("api_key_secret_id") or "").strip()
+                if secret_id:
+                    secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store))
         except _RouteError as exc:
             return exc.as_response()
         except admin_store.OperatorSettingsGenerationConflict:
@@ -502,13 +506,14 @@ def create_provider_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            _require_provider(store, provider_id)
             body = await _read_json_body(request)
-            state = store.get_provider_admin_state()
-            provider_state = _provider_state_for_update(state, provider_id)
-            provider_state["caps"] = _normalize_caps(body)
-            store.update_provider_admin_state(data=state, actor=ctx)
-            provider = _one_provider_payload(store, effective_spending_provider, provider_id)
+            with secret_store.provider_mutation_lock(_admin_db_path(store)):
+                _require_provider(store, provider_id)
+                state = store.get_provider_admin_state()
+                provider_state = _provider_state_for_update(state, provider_id)
+                provider_state["caps"] = _normalize_caps(body)
+                store.update_provider_admin_state(data=state, actor=ctx)
+                provider = _one_provider_payload(store, effective_spending_provider, provider_id)
         except _RouteError as exc:
             return exc.as_response()
         return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider})
@@ -519,12 +524,13 @@ def create_provider_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            _require_provider(store, provider_id)
-            state = store.get_provider_admin_state()
-            provider_state = _provider_state_for_update(state, provider_id)
-            provider_state.pop("caps", None)
-            store.update_provider_admin_state(data=state, actor=ctx)
-            provider = _one_provider_payload(store, effective_spending_provider, provider_id)
+            with secret_store.provider_mutation_lock(_admin_db_path(store)):
+                _require_provider(store, provider_id)
+                state = store.get_provider_admin_state()
+                provider_state = _provider_state_for_update(state, provider_id)
+                provider_state.pop("caps", None)
+                store.update_provider_admin_state(data=state, actor=ctx)
+                provider = _one_provider_payload(store, effective_spending_provider, provider_id)
         except _RouteError as exc:
             return exc.as_response()
         return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider})
@@ -535,15 +541,16 @@ def create_provider_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            _require_provider(store, provider_id)
             body = await _read_json_body(request)
-            allowed = _normalize_allowed_plans(body, _profile_ids(store))
-            state = store.get_provider_admin_state()
-            provider_state = _provider_state_for_update(state, provider_id)
-            provider_state["allowed_plans"] = allowed
-            store.update_provider_admin_state(data=state, actor=ctx)
-            _sync_profile_remote_provider_grants(store, provider_id, allowed, actor=ctx)
-            provider = _one_provider_payload(store, effective_spending_provider, provider_id)
+            with secret_store.provider_mutation_lock(_admin_db_path(store)):
+                _require_provider(store, provider_id)
+                allowed = _normalize_allowed_plans(body, _profile_ids(store))
+                state = store.get_provider_admin_state()
+                provider_state = _provider_state_for_update(state, provider_id)
+                provider_state["allowed_plans"] = allowed
+                store.update_provider_admin_state(data=state, actor=ctx)
+                _sync_profile_remote_provider_grants(store, provider_id, allowed, actor=ctx)
+                provider = _one_provider_payload(store, effective_spending_provider, provider_id)
         except _RouteError as exc:
             return exc.as_response()
         return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider})

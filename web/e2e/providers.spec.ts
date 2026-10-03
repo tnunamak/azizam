@@ -110,6 +110,9 @@ async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
   let savedModels = false;
   let savedCaps = false;
   let savedPlans = false;
+  await page.route("**/__provider-test-flags", (route: Route) =>
+    route.fulfill({ json: { savedModels, savedCaps, savedPlans } }),
+  );
   await page.route("**/admin/api/profiles", (route: Route) =>
     route.fulfill({ json: plans }),
   );
@@ -187,9 +190,6 @@ async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
       return route.fulfill({
         json: { provider: seededProviders.providers[0] },
       });
-    }
-    if (path === "/__provider-test-flags") {
-      return route.fulfill({ json: { savedModels, savedCaps, savedPlans } });
     }
     if (path !== "/admin/api/providers") return route.continue();
     if (route.request().method() === "POST") {
@@ -472,7 +472,9 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     await expect(
       page.getByRole("columnheader", { name: "Input $/M" }),
     ).toBeVisible();
-    await expect(page.getByRole("cell", { name: "3.000000" })).toBeVisible();
+    await expect(
+      page.getByRole("cell", { name: /^3(?:\.000000)?$/ }),
+    ).toBeVisible();
 
     const denied = await request.post("/openai/v1/chat/completions", {
       headers: { authorization: `Bearer ${credential.api_key}` },

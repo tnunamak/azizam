@@ -4,6 +4,8 @@ import os
 import sys
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from decimal import Decimal
 from contextlib import closing
@@ -17,7 +19,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import admin_store, service_registry  # noqa: E402
+from gateway import admin_store, service_registry, secret_store  # noqa: E402
 from gateway.admin_api import AdminAuthError, AdminContext  # noqa: E402
 from gateway.provider_admin import (  # noqa: E402
     PROVIDER_ADMIN_SETTING_KEY,
@@ -282,6 +284,83 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(provider["key_status"]["state"], "set")
         self.assertTrue(provider["key_status"]["api_key_env"].startswith("AI_GATEWAY_PROVIDER_SECRET_"))
         self.assertNotIn("sk-", response.text)
+
+
+    def test_remove_recreate_mutation_lock_preserves_replacement_secret(self) -> None:
+        store = FakeProviderAdminStore()
+        store.registry["services"]["openrouter"]["config"].pop("api_key_env", None)
+        store.registry["services"]["openrouter"]["config"]["api_key_secret_id"] = "provider:openrouter:api_key"
+        secret_store.put_provider_secret(
+            "provider:openrouter:api_key",
+            "sk-original-openrouter",
+            db_path=store.path,
+        )
+        client = _client(store)
+        delete_entered = threading.Event()
+        release_delete = threading.Event()
+        original_delete = secret_store.delete_provider_secret
+
+        def blocking_delete(secret_id: str, *, db_path: Path):
+            delete_entered.set()
+            self.assertTrue(release_delete.wait(5), "test did not release blocked delete")
+            return original_delete(secret_id, db_path=db_path)
+
+        delete_result: dict[str, object] = {}
+        create_result: dict[str, object] = {}
+
+        def delete_provider() -> None:
+            delete_result["response"] = client.request(
+                "DELETE",
+                "/admin/api/providers/openrouter",
+                headers={"authorization": "Bearer admin"},
+                json={},
+            )
+
+        def create_provider() -> None:
+            create_result["response"] = client.post(
+                "/admin/api/providers",
+                headers={"authorization": "Bearer admin"},
+                json={
+                    "preset_id": "openrouter",
+                    "api_key": "sk-replacement-openrouter",
+                    "models": [
+                        {
+                            "id": "anthropic/claude-sonnet",
+                            "price": {
+                                "input_usd_per_million_tokens": "3",
+                                "output_usd_per_million_tokens": "15",
+                            },
+                        }
+                    ],
+                    "allowed_plans": ["builders"],
+                },
+            )
+
+        with patch.object(secret_store, "delete_provider_secret", blocking_delete):
+            delete_thread = threading.Thread(target=delete_provider)
+            create_thread = threading.Thread(target=create_provider)
+            delete_thread.start()
+            self.assertTrue(delete_entered.wait(5), "remove did not reach secret deletion")
+            create_thread.start()
+            time.sleep(0.05)
+            self.assertNotIn("response", create_result)
+            release_delete.set()
+            delete_thread.join(5)
+            create_thread.join(5)
+
+        self.assertFalse(delete_thread.is_alive())
+        self.assertFalse(create_thread.is_alive())
+        self.assertEqual(delete_result["response"].status_code, 200)
+        self.assertEqual(create_result["response"].status_code, 201)
+        self.assertEqual(
+            secret_store.get_provider_secret("provider:openrouter:api_key", db_path=store.path),
+            "sk-replacement-openrouter",
+        )
+        self.assertIn("openrouter", store.registry["services"])
+        self.assertEqual(
+            store.provider_admin_state["providers"]["openrouter"]["allowed_plans"],
+            ["builders"],
+        )
 
     def test_set_rotate_and_delete_provider_key_never_returns_secret_value(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
