@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -42,6 +42,15 @@ class FakeUpstream:
         self.closed = True
 
 
+def settle(condition, timeout: float = 3.0) -> None:
+    """Wait for the relay task. TestClient cancels the app the moment its ``with`` block exits."""
+    deadline = time.monotonic() + timeout
+    while not condition():
+        if time.monotonic() > deadline:
+            raise AssertionError("the relay did not reach the expected state")
+        time.sleep(0.01)
+
+
 class RealtimeRouteCase(unittest.TestCase):
     def setUp(self) -> None:
         cfg = dict(proxy.config)
@@ -70,13 +79,15 @@ class RelayTests(RealtimeRouteCase):
             self.assertEqual(ws.receive_bytes(), b"\x00\x01")
             ws.send_text('{"type":"session.update"}')
             ws.send_bytes(b"\x02")
+            settle(lambda: len(self.upstream.sent) == 2)
         self.assertEqual(self.upstream.sent, ['{"type":"session.update"}', b"\x02"])
         self.assertEqual(self.connect.await_args.args[0], "ws://127.0.0.1:8765/v1/realtime?model=gpt-realtime")
-        self.assertTrue(self.upstream.closed)
+        settle(lambda: self.upstream.closed)
 
     def test_openai_prefixed_path_works(self) -> None:
-        with self.client.websocket_connect("/openai/v1/realtime"):
-            pass
+        with self.client.websocket_connect("/openai/v1/realtime") as ws:
+            ws.send_text("x")
+            settle(lambda: self.upstream.sent == ["x"])
         self.connect.assert_awaited_once()
 
     def test_realtime_subprotocol_is_echoed_and_the_key_subprotocol_is_not(self) -> None:
@@ -84,6 +95,8 @@ class RelayTests(RealtimeRouteCase):
             "/v1/realtime", subprotocols=["realtime", "openai-insecure-api-key.sk-x", "openai-beta.realtime-v1"]
         ) as ws:
             self.assertEqual(ws.accepted_subprotocol, "realtime")
+            ws.send_text("x")
+            settle(lambda: self.upstream.sent == ["x"])
 
     def test_upstream_close_code_reaches_the_client(self) -> None:
         self.upstream = FakeUpstream(frames=["bye"], end_code=1008)
@@ -94,8 +107,9 @@ class RelayTests(RealtimeRouteCase):
         self.assertEqual(caught.exception.code, 1008)
 
     def test_service_is_started_on_demand(self) -> None:
-        with self.client.websocket_connect("/v1/realtime"):
-            pass
+        with self.client.websocket_connect("/v1/realtime") as ws:
+            ws.send_text("x")
+            settle(lambda: self.upstream.sent == ["x"])
         self.ensure.assert_awaited_once()
         self.assertEqual(self.ensure.await_args.args[0], "realtime")
 
@@ -133,8 +147,9 @@ class RefusalTests(RealtimeRouteCase):
 
     def test_all_three_routes_the_service_calls_are_checked(self) -> None:
         with patch.object(proxy, "_enforce_runtime_route_policy", return_value=None) as enforce:
-            with self.client.websocket_connect("/v1/realtime"):
-                pass
+            with self.client.websocket_connect("/v1/realtime") as ws:
+                ws.send_text("x")
+                settle(lambda: self.upstream.sent == ["x"])
         self.assertEqual([c.args[1] for c in enforce.call_args_list], list(proxy._REALTIME_POLICY_PATHS))
 
     def test_unconfigured_service_is_a_503(self) -> None:
