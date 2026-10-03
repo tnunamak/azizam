@@ -101,7 +101,12 @@ const stepLabels: Record<string, string> = {
 
 function HomeLoading() {
   return (
-    <div aria-label="Loading Home" aria-busy="true" className="space-y-8">
+    <div
+      role="status"
+      aria-label="Loading Home"
+      aria-busy="true"
+      className="space-y-8"
+    >
       <Skeleton className="h-8 w-56" />
       <div className="space-y-4">
         <Skeleton className="h-5 w-40" />
@@ -370,7 +375,11 @@ function Connect({ home }: { home: HomeSnapshot }) {
                 {recipe.description}
               </p>
               {loadingKeyAccess ? (
-                <div aria-label="Loading key access" aria-busy="true">
+                <div
+                  role="status"
+                  aria-label="Loading key access"
+                  aria-busy="true"
+                >
                   <Skeleton className="h-24 w-full" />
                 </div>
               ) : model ? (
@@ -752,6 +761,7 @@ export default function HomePage() {
           <Connect home={home} />
           {isOwner && setupPending ? (
             <div
+              role="status"
               aria-label="Loading setup progress"
               aria-busy="true"
               className="space-y-3"

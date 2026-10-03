@@ -266,6 +266,13 @@ test("Home shows a loading skeleton until the real snapshot arrives", async ({
   });
   await page.goto(homePath);
   await expect(page.getByLabel("Loading Home")).toBeVisible();
+  const serious = (await new AxeBuilder({ page }).analyze()).violations.filter(
+    (v) => ["serious", "critical"].includes(v.impact ?? ""),
+  );
+  expect(
+    serious,
+    "Loading Home must be accessible while its API is pending",
+  ).toEqual([]);
   release();
   await expect(
     page.getByRole("tab", { name: "Open WebUI", exact: true }),

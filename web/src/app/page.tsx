@@ -18,7 +18,7 @@ export default function LandingPage() {
     <div className="space-y-8">
       <PageHeader title="Home" answer="Here’s how to use your AI." />
       {viewer.isPending || viewer.data?.authenticated ? (
-        <div aria-label="Loading Home" aria-busy="true">
+        <div role="status" aria-label="Loading Home" aria-busy="true">
           <Skeleton className="h-48 w-full" />
         </div>
       ) : viewer.isError ? (

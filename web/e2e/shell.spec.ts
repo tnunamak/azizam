@@ -129,7 +129,14 @@ test("member shell hides owner controls and makes no owner API calls", async ({
   page,
 }) => {
   // Built-in member invitation APIs are not present in this foundation lane.
-  // Change only the session boundary; keep every other route/API real.
+  // Keep the member identity consistent across session and Home snapshots.
+  // Owner APIs remain real so any unexpected request fails this assertion.
+  const member = {
+    id: "member-fixture",
+    name: "Test member",
+    email: "member@example.test",
+    role: "member",
+  };
   const ownerCalls: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname.startsWith("/admin/api/"))
@@ -140,16 +147,27 @@ test("member shell hides owner controls and makes no owner API calls", async ({
       json: {
         authenticated: true,
         csrf_token: "member-fixture",
-        user: {
-          id: "member-fixture",
-          name: "Test member",
-          email: "member@example.test",
-          role: "member",
-        },
+        user: member,
         apps: [],
       },
     }),
   );
+  await page.route("**/me/api/home", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      json: {
+        ...(await response.json()),
+        user: member,
+        apps: [],
+        receipts: [],
+        capabilities: [],
+        aliases: [],
+        credential_aliases: {},
+        new_app_aliases: [],
+      },
+    });
+  });
   await page.goto("/ui/");
   await expect(
     page.getByRole("button", { name: "Account menu" }),
