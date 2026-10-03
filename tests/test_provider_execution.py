@@ -993,15 +993,24 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                     "0.035035000",
                 )
                 statuses = []
-                for _ in range(10):
-                    response, _ = await self._execute(send=AsyncMock(side_effect=lambda *_a, **_k: stream_response()))
+                denied_codes = []
+                denied_sends = []
+                for index in range(10):
+                    send = AsyncMock(side_effect=lambda *_a, **_k: stream_response())
+                    response, _ = await self._execute(send=send)
                     statuses.append(response.status_code)
-                    await _body(response)
+                    body = await _body(response)
+                    if index > 0:
+                        denied_sends.append(send)
+                        denied_codes.append(json.loads(body.decode())["error"]["code"])
             finally:
                 if callable(cache_clear):
                     cache_clear()
 
-        self.assertEqual(statuses, [200, *([403] * 9)])
+        self.assertEqual(statuses, [200, *([402] * 9)])
+        self.assertEqual(denied_codes, ["budget_exceeded"] * 9)
+        for send in denied_sends:
+            send.assert_not_called()
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute(
                 "SELECT status, actual_usd FROM provider_spend ORDER BY id"
@@ -1011,6 +1020,70 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             ).fetchone()[0]
         self.assertEqual(rows, [("settled", "0.035035000")])
         self.assertEqual(f"{total:.9f}", "0.035035000")
+
+    async def test_stream_search_assembly_failure_keeps_actual_cost_unknown(self) -> None:
+        self.provider = ProviderRef(
+            id="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            protocols=("openai",),
+            api_key_env="OPENROUTER_API_KEY",
+            cost_class="paid-remote",
+            price={
+                "input_usd_per_million_tokens": "2.50",
+                "output_usd_per_million_tokens": "10.00",
+                "cost_model": "openai/gpt-4o-search-preview",
+                "dimensions": {"search": {"enabled": True}},
+            },
+            config={
+                "models": [{"id": "openai/gpt-4o-search-preview"}],
+                "litellm_model": "openai/gpt-4o-search-preview",
+            },
+        )
+        self.body = {
+            "model": "openrouter/openai/gpt-4o-search-preview",
+            "messages": [{"role": "user", "content": "search"}],
+            "max_tokens": 1,
+            "stream": True,
+        }
+        send = AsyncMock(
+            return_value=(
+                _Client(),
+                _Response(
+                    headers={"content-type": "text/event-stream"},
+                    chunks=[
+                        (
+                            b'data: {"id":"chatcmpl-search","object":"chat.completion.chunk",'
+                            b'"created":1,"model":"openai/gpt-4o-search-preview",'
+                            b'"choices":[{"index":0,"delta":{"role":"assistant","content":"answer"}}]}\n\n'
+                        ),
+                        (
+                            b'data: {"id":"chatcmpl-search","object":"chat.completion.chunk",'
+                            b'"created":1,"model":"openai/gpt-4o-search-preview",'
+                            b'"choices":[{"index":0,"delta":{"annotations":[{"type":"url_citation",'
+                            b'"url_citation":{"url":"https://example.test","title":"Example",'
+                            b'"start_index":0,"end_index":6}}]}}]}\n\n'
+                        ),
+                        (
+                            b'data: {"id":"chatcmpl-search","object":"chat.completion.chunk",'
+                            b'"created":1,"model":"openai/gpt-4o-search-preview",'
+                            b'"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":1,"total_tokens":11}}\n\n'
+                        ),
+                        b"data: [DONE]\n\n",
+                    ],
+                ),
+            )
+        )
+
+        with patch("litellm.main.stream_chunk_builder", side_effect=RuntimeError("assembly failed")):
+            response, _ = await self._execute(send=send)
+            await _body(response)
+
+        self.assertEqual(response.status_code, 200)
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute(
+                "SELECT status, actual_usd FROM provider_spend ORDER BY id"
+            ).fetchall()
+        self.assertEqual(rows, [("reserved", None)])
 
     async def test_paid_defaults_reject_implicit_search_online_realtime_billing(self) -> None:
         cases = [
@@ -1029,6 +1102,13 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 },
             ),
             (
+                "online-bare-model-name",
+                {
+                    "models": [{"id": "openai/gpt-4o-online-preview"}],
+                    "body_model": "openrouter/openai/gpt-4o-online-preview",
+                },
+            ),
+            (
                 "realtime-model-name",
                 {
                     "models": [{"id": "openai/gpt-4o-realtime-preview"}],
@@ -1041,6 +1121,14 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                     "models": [{"id": "openai/gpt-4.1-mini"}],
                     "body_model": "openrouter/openai/gpt-4.1-mini",
                     "price_extra": {"search_context_cost_per_query": {"search_context_size_medium": 0.035}},
+                },
+            ),
+            (
+                "search-cost-model-alias",
+                {
+                    "models": [{"id": "openai/gpt-4.1-mini"}],
+                    "body_model": "openrouter/openai/gpt-4.1-mini",
+                    "price_extra": {"cost_model": "openai/gpt-4o-search-preview"},
                 },
             ),
         ]

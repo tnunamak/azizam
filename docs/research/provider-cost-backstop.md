@@ -260,3 +260,17 @@ Expected behavior:
 - Stale/incomplete local SDK catalog: the helper returns unknown, leaving the reservation open.
 
 This preserves the “actual provider or SDK oracle only” decision while closing the specific silent-underbill failure mode.
+
+## Round-5 streaming search accounting
+
+The independent review reproduced ten sequential mocked streams from a declared search model under a $0.01 daily cap. The gateway retained only usage-bearing events, losing the earlier citation annotation. Each call therefore settled token cost $0.000035, releasing its concurrency slot. The complete responses priced by the pinned SDK totaled $0.350350.
+
+The new test-first hermetic regression independently compared a complete `ModelResponse` with citation annotations against the handler's streamed result. The SDK oracle returns $0.035035 for ten prompt tokens, one completion token, and one search charge using the test catalog snapshot. Before implementation, all ten requests returned 200. Default guards also admitted search/realtime model names and a search-price table without a declared dimension.
+
+Local primary source inspected: LiteLLM 1.86.2 `litellm/main.py:7487` (`stream_chunk_builder`) and `litellm/litellm_core_utils/streaming_chunk_builder_utils.py` (`ChunkProcessor`). The builder collects `delta.annotations` across chunks into the final message, combines provider-specific search/citation metadata, and assembles tool, reasoning, audio, and image content. Its base-response construction requires chunk identity, object, creation time, model, choices, and assistant role metadata. Gateway normalization supplies missing envelope defaults while retaining received fields.
+
+Settlement must use this complete SDK assembly, overlaid with the original merged provider usage. SDK-generated token counts cannot substitute for missing vendor usage. Failed, malformed, truncated, or oversized assembly must retain unknown cost and the open reservation rather than price a partial response. Stream bytes remain unchanged for the client.
+
+The second defense is generic billing-dimension data: names and selected price-table indicators for search, online, or realtime require matching declarations in `price.dimensions`. This adds no vendor or engine-specific parser.
+
+No vendor calls, credential reads, or new web research were used for this investigation.

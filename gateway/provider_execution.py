@@ -6,6 +6,8 @@ with an explicit registry model, a gateway identity and a budget reservation.
 from __future__ import annotations
 
 import json
+import re
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -119,6 +121,8 @@ _PAID_CALLER_ROUTING_FIELDS = frozenset(
         "router_settings_override",
     }
 )
+_STREAM_ASSEMBLY_MAX_BYTES = 8 * 1024 * 1024
+_BILLING_WORD_RE = re.compile(r"(?:^|[_:/.-])(search|online|realtime)(?=$|[_:/.-])")
 
 
 def _prepare_paid_litellm_payload(
@@ -189,6 +193,10 @@ def _paid_priced_outbound_payload(
     if unsupported_modifier is not None:
         return paid_option_unsupported_response(unsupported_modifier)
 
+    unsupported_billing_name = _unsupported_billing_name(payload.get("model"), provider)
+    if unsupported_billing_name is not None:
+        return paid_option_unsupported_response(unsupported_billing_name)
+
     unsupported_nested_dimension = _unsupported_nested_paid_dimension(payload, provider)
     if unsupported_nested_dimension is not None:
         return paid_option_unsupported_response(unsupported_nested_dimension)
@@ -231,6 +239,68 @@ def _dimension_declared(dimensions: set[str], *names: str) -> bool:
     return bool(dimensions & normalized)
 
 
+def _dimension_declared_for_word(dimensions: set[str], word: str) -> bool:
+    aliases = [
+        word,
+        f"model_modifier:{word}",
+        f"model_modifier_{word}",
+        f"model_suffix:{word}",
+        f"model_suffix_{word}",
+    ]
+    return _dimension_declared(dimensions, *aliases)
+
+
+def _price_for_public_model(provider: providers.ProviderRef, model: object) -> Mapping[str, Any]:
+    if not isinstance(model, str):
+        return provider.price
+    models = provider.price.get("models")
+    if isinstance(models, Mapping):
+        override = models.get(model)
+        if isinstance(override, Mapping):
+            merged = dict(provider.price)
+            merged.update(override)
+            return merged
+    return provider.price
+
+
+def _billing_words(value: object) -> set[str]:
+    if not isinstance(value, str):
+        return set()
+    normalized = value.strip().lower().replace("-", "_")
+    return {match.group(1) for match in _BILLING_WORD_RE.finditer(normalized)}
+
+
+def _price_key_candidates(value: object) -> list[str]:
+    keys: list[str] = []
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if key in {"dimensions", "models"}:
+                continue
+            keys.append(str(key))
+            keys.extend(_price_key_candidates(child))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            keys.extend(_price_key_candidates(item))
+    return keys
+
+
+def _unsupported_billing_name(model: object, provider: providers.ProviderRef) -> str | None:
+    dimensions = _provider_price_dimensions(provider, model)
+    current_price = _price_for_public_model(provider, model)
+    candidates: list[object] = [
+        model,
+        current_price.get("cost_model"),
+        provider.price.get("cost_model"),
+        provider.config.get("cost_model"),
+        provider.config.get("litellm_model"),
+    ]
+    candidates.extend(_price_key_candidates(current_price))
+    for word in {word for candidate in candidates for word in _billing_words(candidate)}:
+        if not _dimension_declared_for_word(dimensions, word):
+            return word
+    return None
+
+
 def _unsupported_model_modifier(model: object, provider: providers.ProviderRef) -> str | None:
     if not isinstance(model, str) or ":" not in model:
         return None
@@ -243,6 +313,7 @@ def _unsupported_model_modifier(model: object, provider: providers.ProviderRef) 
         modifier_name = _normalize_dimension_name(modifier)
         if not _dimension_declared(
             dimensions,
+            modifier_name,
             f"model_modifier:{modifier_name}",
             f"model_modifier_{modifier_name}",
             f"model_suffix:{modifier_name}",
@@ -322,6 +393,57 @@ def _merge_usage(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str,
         else:
             merged[key] = value
     return merged
+
+
+def _normalise_stream_event(event: Mapping[str, Any], *, model: str, request_id: str, created: int) -> dict[str, Any]:
+    out = dict(event)
+    out.setdefault("id", request_id)
+    out.setdefault("object", "chat.completion.chunk")
+    out.setdefault("created", created)
+    out.setdefault("model", model)
+    out.setdefault("choices", [])
+    choices = out.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, Mapping):
+            first_out = dict(first)
+            delta = first_out.get("delta")
+            if isinstance(delta, Mapping):
+                delta_out = dict(delta)
+                delta_out.setdefault("role", "assistant")
+                first_out["delta"] = delta_out
+            choices = [first_out, *choices[1:]]
+            out["choices"] = choices
+    return out
+
+
+def _assembled_stream_body(
+    chunks: list[Mapping[str, Any]],
+    *,
+    model: str,
+    merged_usage: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if not chunks or not merged_usage:
+        return None
+    try:
+        from litellm.main import stream_chunk_builder  # type: ignore[import-not-found]
+        assembled = stream_chunk_builder(chunks=list(chunks))
+    except Exception:
+        return None
+    if assembled is None:
+        return None
+    try:
+        if hasattr(assembled, "model_dump"):
+            body = assembled.model_dump()
+        elif isinstance(assembled, Mapping):
+            body = dict(assembled)
+        else:
+            return None
+    except Exception:
+        return None
+    body["model"] = str(body.get("model") or model)
+    body["usage"] = dict(merged_usage)
+    return body
 
 
 def _model_declared(provider: providers.ProviderRef, model: str) -> bool:
@@ -467,24 +589,55 @@ async def execute_paid_litellm(
                 pending = b""
                 final_body: dict[str, Any] = {}
                 merged_usage: dict[str, Any] = {}
+                assembled_chunks: list[dict[str, Any]] = []
+                assembly_failed = False
+                assembled_bytes = 0
+                created = int(time.time())
                 try:
                     async for chunk in response.aiter_bytes():
                         pending += chunk
                         while b"\n" in pending:
                             line, pending = pending.split(b"\n", 1)
                             if line.startswith(b"data:"):
-                                try:
-                                    event = json.loads(line[5:])
-                                except (ValueError, UnicodeError):
+                                data = line[5:].strip()
+                                if data == b"[DONE]":
                                     continue
-                                if isinstance(event, Mapping) and isinstance(event.get("usage"), Mapping):
-                                    final_body = dict(event)
+                                try:
+                                    event = json.loads(data)
+                                except (ValueError, UnicodeError):
+                                    assembly_failed = True
+                                    continue
+                                if not isinstance(event, Mapping):
+                                    assembly_failed = True
+                                    continue
+                                assembled_bytes += len(data)
+                                if assembled_bytes > _STREAM_ASSEMBLY_MAX_BYTES:
+                                    assembly_failed = True
+                                elif not assembly_failed:
+                                    assembled_chunks.append(
+                                        _normalise_stream_event(
+                                            event,
+                                            model=model,
+                                            request_id=receipt.request_id,
+                                            created=created,
+                                        )
+                                    )
+                                if isinstance(event.get("usage"), Mapping):
                                     merged_usage = _merge_usage(merged_usage, event["usage"])
                         if len(pending) > 2 * 1024 * 1024:
+                            assembly_failed = True
                             pending = b""
                         yield chunk
-                    if merged_usage:
-                        final_body["usage"] = merged_usage
+                    if pending.strip():
+                        assembly_failed = True
+                    if not assembly_failed:
+                        assembled = _assembled_stream_body(
+                            assembled_chunks,
+                            model=model,
+                            merged_usage=merged_usage,
+                        )
+                        if assembled is not None:
+                            final_body = assembled
                     finish(final_body)
                     owner.report(status="succeeded", reason="completed")
                 finally:

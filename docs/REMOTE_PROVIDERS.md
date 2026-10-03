@@ -100,6 +100,12 @@ overrides. For example, `price.dimensions.cache_control: true` or
 Unbounded input estimates still fail closed when a cap requires a bound.
 These declarations do not turn reservations into final bills.
 
+Model names and selected price-table indicators for `search`, `online`, or
+`realtime` also require the matching `price.dimensions` declaration. This
+includes implicit search models that enable billing without a request option.
+For example, `price.dimensions.search: true` permits a search model; its full
+response must still provide enough information for actual-cost settlement.
+
 ## Admin API
 
 The Providers UI uses:
@@ -122,7 +128,11 @@ counts both `reserved` and `settled` rows so concurrent requests cannot exceed
 the available reservation budget by racing each other. Settlement prefers
 provider-reported `usage.cost`; otherwise LiteLLM calculates cost from the
 full typed response and usage, including cache, reasoning, and other billing
-details. Streaming usage fields are merged across events before calculation.
+details. Streaming settlement uses LiteLLM's complete assembled response, retaining
+annotations, citations, and other response metadata as well as merged provider
+usage. Missing usage or incomplete assembly leaves cost unknown; a malformed
+or oversized stream cannot settle from a partial response. The client still
+receives the original stream bytes.
 Streaming headers cannot establish final cost before generation completes.
 Unknown usage extensions or missing required SDK price metadata leave cost
 unknown. The SDK catalog must include rates for reported cache reads and
