@@ -67,6 +67,7 @@ def provider_service_from_body(body: Mapping[str, Any]) -> dict[str, Any]:
         "litellm_provider": preset.litellm_provider,
         "auth": dict(preset.auth),
         "auth_test": dict(preset.auth_test),
+        **({"generation_stats": dict(preset.generation_stats)} if preset.generation_stats else {}),
         "model_listing": dict(preset.model_listing),
         "docs_url": preset.docs_url,
         "key_url": preset.key_url,
@@ -74,6 +75,8 @@ def provider_service_from_body(body: Mapping[str, Any]) -> dict[str, Any]:
         "recommendations": [dict(row) for row in preset.recommendations],
         "models": model_records_from_body(body, provider_id),
     }
+    if isinstance(config.get("generation_stats"), dict) and isinstance(config["generation_stats"].get("cost_path"), list):
+        config["generation_stats"]["cost_path"] = list(config["generation_stats"]["cost_path"])
     if config["models"]:
         config["model_policy_schema_version"] = service_registry.MODEL_POLICY_SCHEMA_VERSION
     price = price_config_from_body(body, provider_id)

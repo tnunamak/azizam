@@ -12,6 +12,7 @@ import {
   Fish,
   KeyRound,
   Loader2,
+  MinusCircle,
   MoreHorizontal,
   Plus,
   RefreshCw,
@@ -99,6 +100,9 @@ interface ProviderRecord {
   models: ProviderModel[];
   spendToday?: number | null;
   spendMonth?: number | null;
+  spendStatus?: string;
+  pendingReconciliationCount: number | null;
+  needsReconciliation: boolean;
   capDaily?: number | null;
   capMonthly?: number | null;
   plans: string[];
@@ -109,6 +113,9 @@ interface ProviderRecord {
 interface GlobalProviderState {
   spendToday?: number | null;
   spendMonth?: number | null;
+  spendStatus?: string;
+  pendingReconciliationCount: number | null;
+  needsReconciliation: boolean;
   capDaily?: number | null;
   capMonthly?: number | null;
 }
@@ -117,6 +124,26 @@ interface TestResult {
   ok: boolean;
   message: string;
   models: ProviderModel[];
+}
+
+interface ReconciliationRow {
+  id: number;
+  provider: string;
+  profileId: string;
+  status: string;
+  estimatedUsd: number | null;
+  actualUsd: number | null;
+  estimatedUsdText: string;
+  actualUsdText: string;
+  costSource: string;
+  createdAt: number | null;
+  settledAt: number | null;
+  requestId: string;
+  generationId: string;
+}
+
+interface ReconciliationPayload {
+  reconciliations: ReconciliationRow[];
 }
 
 function text(value: unknown, fallback = ""): string {
@@ -148,9 +175,55 @@ function money(value: number | null | undefined): string {
     : "Not measured yet";
 }
 
-function totalMoney(values: Array<number | null | undefined>): string {
-  if (values.some((value) => value == null)) return "Not measured yet";
-  return money(values.reduce<number>((sum, value) => sum + (value ?? 0), 0));
+function countOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.trunc(value)
+    : 0;
+}
+
+function preciseUsd(
+  value: string,
+  fallback: number | null | undefined,
+): string {
+  const trimmed = value.trim();
+  if (trimmed) return `$${trimmed}`;
+  return money(fallback);
+}
+
+function pendingCountFromSpend(
+  spendObj: Record<string, unknown>,
+): number | null {
+  return "pending_reconciliation_count" in spendObj
+    ? countOrZero(spendObj.pending_reconciliation_count)
+    : null;
+}
+
+function needsReconciliationFromSpend(
+  spendObj: Record<string, unknown>,
+): boolean {
+  return (
+    text(spendObj.status, "") === "needs_reconciliation" ||
+    countOrZero(spendObj.pending_reconciliation_count) > 0
+  );
+}
+
+function reconciliationLabel(count: number | null | undefined): string {
+  if (count == null || count === 0) return "Charges need reconciliation";
+  return `${count} charge${count === 1 ? " needs" : "s need"} reconciliation`;
+}
+
+function decimalInputValid(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(trimmed)) {
+    return false;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && parsed >= 0;
+}
+
+function formatIdentity(value: string): string {
+  return value || "Not recorded";
 }
 
 function priceNumber(value: string): number | null {
@@ -364,6 +437,9 @@ function mapProviders(raw: unknown): ProviderRecord[] {
       spendMonth: numberOrNull(
         spendObj.monthly_usd ?? row.spend_month_usd ?? row.spend_usd,
       ),
+      spendStatus: text(spendObj.status, "known"),
+      pendingReconciliationCount: pendingCountFromSpend(spendObj),
+      needsReconciliation: needsReconciliationFromSpend(spendObj),
       capDaily: numberOrNull(capsObj.daily_usd ?? row.cap_daily_usd),
       capMonthly: numberOrNull(
         capsObj.monthly_usd ?? row.cap_monthly_usd ?? row.cap_usd,
@@ -398,8 +474,40 @@ function mapGlobal(raw: unknown): GlobalProviderState {
   return {
     spendToday: numberOrNull(spendObj.daily_usd),
     spendMonth: numberOrNull(spendObj.monthly_usd),
+    spendStatus: text(spendObj.status, "known"),
+    pendingReconciliationCount: pendingCountFromSpend(spendObj),
+    needsReconciliation: needsReconciliationFromSpend(spendObj),
     capDaily: numberOrNull(capsObj.daily_usd),
     capMonthly: numberOrNull(capsObj.monthly_usd),
+  };
+}
+
+function mapReconciliations(raw: unknown): ReconciliationPayload {
+  const obj =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const rows = Array.isArray(obj.reconciliations) ? obj.reconciliations : [];
+  return {
+    reconciliations: rows.map((item) => {
+      const row =
+        item && typeof item === "object"
+          ? (item as Record<string, unknown>)
+          : {};
+      return {
+        id: Number(row.id),
+        provider: text(row.provider, ""),
+        profileId: text(row.profile_id, ""),
+        status: text(row.status, "unknown"),
+        estimatedUsd: nonnegativeNumberOrNull(row.estimated_usd),
+        actualUsd: nonnegativeNumberOrNull(row.actual_usd),
+        estimatedUsdText: text(row.estimated_usd, ""),
+        actualUsdText: text(row.actual_usd, ""),
+        costSource: text(row.cost_source, "unknown"),
+        createdAt: numberOrNull(row.created_at),
+        settledAt: numberOrNull(row.settled_at),
+        requestId: text(row.request_id, ""),
+        generationId: text(row.generation_id, ""),
+      };
+    }),
   };
 }
 
@@ -580,6 +688,26 @@ function DetailCard({
           Reachability checked <RelativeTime ts={provider.checkedAt} />.
         </p>
       )}
+      {provider.needsReconciliation && (
+        <div className="border-warning/30 bg-warning/10 mt-4 rounded-lg border p-3 text-sm">
+          <div className="font-medium">
+            {reconciliationLabel(provider.pendingReconciliationCount)}
+          </div>
+          <p className="text-muted-foreground mt-1">
+            Spend totals include estimates until an owner records the verified
+            provider charge. Reconcile before removing this provider.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => onAction("reconcile", provider)}
+          >
+            Reconcile charges
+          </Button>
+        </div>
+      )}
       <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1fr]">
         <div className="space-y-3">
           <SpendBar
@@ -592,6 +720,11 @@ function DetailCard({
             spent={provider.spendMonth}
             cap={provider.capMonthly}
           />
+          {provider.needsReconciliation && (
+            <p className="text-muted-foreground text-xs">
+              Totals include estimated charges that are not final bills.
+            </p>
+          )}
         </div>
         <div className="rounded-lg border p-3">
           <h3 className="text-sm font-medium">Enabled models</h3>
@@ -728,10 +861,22 @@ function DetailCard({
               </>
             )}
             <DropdownMenuItem
-              variant="destructive"
-              onClick={() => onAction("remove", provider)}
+              variant={provider.needsReconciliation ? undefined : "destructive"}
+              onClick={() =>
+                provider.needsReconciliation
+                  ? onAction("reconcile", provider)
+                  : onAction("remove", provider)
+              }
             >
-              <Trash2 aria-hidden="true" /> Remove provider
+              {provider.needsReconciliation ? (
+                <>
+                  <MinusCircle aria-hidden="true" /> Reconcile before removing
+                </>
+              ) : (
+                <>
+                  <Trash2 aria-hidden="true" /> Remove provider
+                </>
+              )}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -863,6 +1008,177 @@ function DetailCard({
         </div>
       )}
     </article>
+  );
+}
+
+function ReconciliationDialog({
+  provider,
+  open,
+  onOpenChange,
+}: {
+  provider: ProviderRecord | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [amounts, setAmounts] = useState<Record<number, string>>({});
+  const encoded = provider ? encodeURIComponent(provider.id) : "";
+  const { data, error, isError, isFetching, refetch } = useQuery({
+    queryKey: ["providers", provider?.id, "reconciliation"],
+    queryFn: () =>
+      adminFetch<unknown>(
+        `/admin/api/providers/${encoded}/reconciliation`,
+      ).then(mapReconciliations),
+    enabled: open && provider !== null,
+    retry: false,
+  });
+  const settle = useMutation({
+    mutationFn: ({ id, actualUsd }: { id: number; actualUsd: string }) =>
+      adminFetch(`/admin/api/providers/${encoded}/reconciliation/${id}`, {
+        method: "POST",
+        body: { actual_usd: actualUsd.trim() },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      await refetch();
+    },
+    onError: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      await refetch();
+    },
+  });
+  const rows = data?.reconciliations ?? [];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Reconcile provider charges</DialogTitle>
+          <DialogDescription>
+            Record verified charges from {provider?.name ?? "the provider"}.
+            Estimates are shown for matching only; they are not final bills.
+          </DialogDescription>
+        </DialogHeader>
+        {isFetching ? (
+          <div role="status" className="text-muted-foreground text-sm">
+            Loading reconciliation rows…
+          </div>
+        ) : isError ? (
+          <div role="alert" className="text-danger text-sm">
+            {error instanceof Error
+              ? error.message
+              : "Reconciliation rows could not be loaded."}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3 block"
+              onClick={() => refetch()}
+            >
+              Refresh reconciliation
+            </Button>
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            No pending provider charges need reconciliation.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            {rows.map((row) => {
+              const value = amounts[row.id] ?? "";
+              const valid = decimalInputValid(value);
+              return (
+                <div key={row.id} className="rounded-lg border p-3">
+                  <h3 className="text-sm font-medium">Charge #{row.id}</h3>
+                  <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                    <div>
+                      <span className="text-muted-foreground">Estimate</span>
+                      <div className="font-medium">
+                        {preciseUsd(row.estimatedUsdText, row.estimatedUsd)}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Cost source</span>
+                      <div className="font-medium">{row.costSource}</div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Request ID</span>
+                      <div className="font-mono text-xs break-all">
+                        {formatIdentity(row.requestId)}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">
+                        Generation ID
+                      </span>
+                      <div className="font-mono text-xs break-all">
+                        {formatIdentity(row.generationId)}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Profile</span>
+                      <div className="font-mono text-xs break-all">
+                        {formatIdentity(row.profileId)}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Created</span>
+                      <div>
+                        {row.createdAt == null ? (
+                          "Not recorded"
+                        ) : (
+                          <RelativeTime ts={row.createdAt} />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto]">
+                    <label className="space-y-2 text-sm font-medium">
+                      Verified actual charge in USD
+                      <Input
+                        inputMode="decimal"
+                        aria-label={`Verified actual charge for reconciliation ${row.id}`}
+                        placeholder="0.00"
+                        value={value}
+                        onChange={(event) =>
+                          setAmounts((draft) => ({
+                            ...draft,
+                            [row.id]: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <Button
+                      className="self-end"
+                      disabled={!valid || settle.isPending}
+                      onClick={() =>
+                        settle.mutate({ id: row.id, actualUsd: value })
+                      }
+                    >
+                      Record actual
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {settle.error && (
+          <div role="alert" className="text-danger text-sm">
+            {settle.error instanceof Error
+              ? settle.error.message
+              : "Reconciliation failed."}
+          </div>
+        )}
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => refetch()}>
+            Refresh
+          </Button>
+          <Button type="button" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1439,9 +1755,25 @@ function GlobalCapsEditor({
           </p>
         </div>
         <div className="text-muted-foreground text-sm">
-          Month: {money(global.spendMonth)}
+          Month:{" "}
+          {global.spendMonth == null
+            ? "Not measured yet"
+            : money(global.spendMonth)}
+          {global.needsReconciliation ? " estimated" : ""}
         </div>
       </div>
+      {global.needsReconciliation && (
+        <div className="border-warning/30 bg-warning/10 mt-4 rounded-lg border p-3 text-sm">
+          <div className="font-medium">
+            {reconciliationLabel(global.pendingReconciliationCount)}
+          </div>
+          <p className="text-muted-foreground mt-1">
+            Provider totals include estimates. Final spend and remaining budget
+            are unknown until an owner reconciles the matching receipt,
+            provider, and reservation IDs.
+          </p>
+        </div>
+      )}
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
         <label className="space-y-2 text-sm font-medium">
           Daily cap{" "}
@@ -1478,6 +1810,9 @@ export default function ProvidersPage() {
     action: "delete-key" | "remove";
     provider: ProviderRecord;
   } | null>(null);
+  const [reconcileTarget, setReconcileTarget] = useState<ProviderRecord | null>(
+    null,
+  );
   const queryClient = useQueryClient();
   const {
     data: providersData,
@@ -1522,6 +1857,11 @@ export default function ProvidersPage() {
         });
       }
       if (name === "remove") {
+        if (provider.needsReconciliation) {
+          throw new Error(
+            "Reconcile pending provider charges before removing this provider.",
+          );
+        }
         return adminFetch(`/admin/api/providers/${encoded}`, {
           method: "DELETE",
           body: { expected_generation: null },
@@ -1673,7 +2013,7 @@ export default function ProvidersPage() {
               <RefreshCw aria-hidden="true" /> Retry providers
             </Button>
           </div>
-        ) : records.length === 0 ? (
+        ) : records.length === 0 && !globalState.needsReconciliation ? (
           <ProviderEmptyState onAdd={() => setAddOpen(true)} />
         ) : (
           <div className="space-y-5">
@@ -1688,11 +2028,23 @@ export default function ProvidersPage() {
               <div className="rounded-xl border p-4">
                 <DollarSign className="text-primary size-5" />
                 <div className="mt-3 text-2xl font-semibold">
-                  {totalMoney(records.map((row) => row.spendMonth))}
+                  {globalState.spendMonth == null
+                    ? "Not measured yet"
+                    : money(globalState.spendMonth)}
                 </div>
                 <p className="text-muted-foreground text-sm">
                   Remote spend this month
+                  {globalState.needsReconciliation
+                    ? " (includes estimates)"
+                    : ""}
                 </p>
+                {(globalState.needsReconciliation ||
+                  records.some((row) => row.needsReconciliation)) && (
+                  <p className="text-warning mt-2 text-xs">
+                    Includes estimates pending reconciliation; final spend is
+                    unknown.
+                  </p>
+                )}
               </div>
               <div className="rounded-xl border p-4">
                 <CreditCard className="text-primary size-5" />
@@ -1738,15 +2090,17 @@ export default function ProvidersPage() {
                     savePlans.mutate({ provider: providerRecord, allowedPlans })
                   }
                   onAction={(name, providerRecord) =>
-                    name === "delete-key" || name === "remove"
-                      ? setConfirmTarget({
-                          action: name,
-                          provider: providerRecord,
-                        })
-                      : action.mutate({
-                          action: name,
-                          provider: providerRecord,
-                        })
+                    name === "reconcile"
+                      ? setReconcileTarget(providerRecord)
+                      : name === "delete-key" || name === "remove"
+                        ? setConfirmTarget({
+                            action: name,
+                            provider: providerRecord,
+                          })
+                        : action.mutate({
+                            action: name,
+                            provider: providerRecord,
+                          })
                   }
                 />
               ))}
@@ -1781,6 +2135,11 @@ export default function ProvidersPage() {
         onOpenChange={setAddOpen}
         catalog={catalogRows}
         plans={planRows}
+      />
+      <ReconciliationDialog
+        provider={reconcileTarget}
+        open={reconcileTarget !== null}
+        onOpenChange={(open) => !open && setReconcileTarget(null)}
       />
       <ConfirmDialog
         open={confirmTarget !== null}

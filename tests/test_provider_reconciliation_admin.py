@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
+from gateway import admin_store
 from gateway.provider_admin import create_provider_admin_router
 from test_provider_admin import FakeProviderAdminStore, _auth
 
@@ -172,6 +173,103 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         )
         self.assertEqual(followup.status_code, 200)
         self.assertEqual(followup.json(), {"reconciliations": []})
+
+
+
+
+    def test_remove_with_absent_explicit_ledger_does_not_create_ledger(self) -> None:
+        absent_ledger = Path(self.tmpdir.name) / "absent-provider-spend.db"
+        app = FastAPI()
+        app.include_router(
+            create_provider_admin_router(self.store, auth=_auth, ledger_path=absent_ledger)
+        )
+        client = TestClient(app)
+
+        removed = client.delete(
+            "/admin/api/providers/openrouter",
+            headers={"authorization": "Bearer admin"},
+        )
+
+        self.assertEqual(removed.status_code, 200)
+        self.assertFalse(absent_ledger.exists())
+        self.assertNotIn("openrouter", self.store.registry["services"])
+
+    def test_owner_can_reconcile_historical_row_after_provider_was_removed(self) -> None:
+        self.store.registry["services"].pop("openrouter")
+
+        listed = self.client.get(
+            "/admin/api/providers/openrouter/reconciliation",
+            headers={"authorization": "Bearer admin"},
+        )
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()["reconciliations"][0]["id"], 1)
+
+        admin_store.init_db(self.store.path)
+        settled = self.client.post(
+            "/admin/api/providers/openrouter/reconciliation/1",
+            headers={"authorization": "Bearer admin"},
+            json={"actual_usd": "0.03"},
+        )
+        self.assertEqual(settled.status_code, 200)
+        self.assertEqual(settled.json()["reconciliation"]["status"], "settled")
+
+    def test_remove_rejects_provider_with_reconciliation_then_allows_after_owner_settlement(self) -> None:
+        blocked = self.client.delete(
+            "/admin/api/providers/openrouter",
+            headers={"authorization": "Bearer admin"},
+        )
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.json()["error"]["code"], "provider_spend_pending")
+        self.assertIn("openrouter", self.store.registry["services"])
+
+        admin_store.init_db(self.store.path)
+        settled = self.client.post(
+            "/admin/api/providers/openrouter/reconciliation/1",
+            headers={"authorization": "Bearer admin"},
+            json={"actual_usd": "0.03"},
+        )
+        self.assertEqual(settled.status_code, 200)
+
+        removed = self.client.delete(
+            "/admin/api/providers/openrouter",
+            headers={"authorization": "Bearer admin"},
+        )
+        self.assertEqual(removed.status_code, 200)
+        self.assertNotIn("openrouter", self.store.registry["services"])
+
+    def test_remove_rejects_provider_with_reserved_inflight_charge(self) -> None:
+        with sqlite3.connect(self.ledger_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO provider_spend
+                (provider, profile_id, status, estimated_usd, actual_usd, cost_source,
+                 created_at, settled_at, request_id, generation_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "openrouter-canonical",
+                    "builders",
+                    "reserved",
+                    "0.050000000",
+                    None,
+                    "pre-dispatch",
+                    1_700_000_040,
+                    None,
+                    "req_reserved",
+                    None,
+                ),
+            )
+            conn.commit()
+
+        blocked = self.client.delete(
+            "/admin/api/providers/openrouter-canonical",
+            headers={"authorization": "Bearer admin"},
+        )
+
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.json()["error"]["code"], "provider_spend_pending")
+        self.assertIn("reserved", blocked.json()["error"]["message"])
+        self.assertIn("openrouter-service", self.store.registry["services"])
 
     def test_reconcile_rejects_unknown_provider_mismatch_and_invalid_amount(self) -> None:
         missing_provider = self.client.get(

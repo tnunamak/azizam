@@ -8,14 +8,14 @@ knows how to issue one configured GET request and read one configured JSON path.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
 
-from gateway.providers import Cost, ProviderRef, USD_QUANTUM
+from gateway import admin_store
+from gateway.providers import Cost, ProviderRef, USD_QUANTUM, resolve_provider_api_key
 
 DEFAULT_STATS_TIMEOUT = httpx.Timeout(10.0)
 
@@ -57,7 +57,7 @@ async def lookup_generation_cost(
         response = await active_client.get(
             _join_url(provider.base_url, path),
             params={id_param: generation_id},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=_provider_auth_headers(provider, token),
             follow_redirects=False,
         )
         if response.status_code != 200:
@@ -115,14 +115,24 @@ def _stats_cost_path(config: Mapping[str, Any]) -> tuple[str, ...] | None:
 
 
 def _provider_token(provider: ProviderRef) -> str | None:
-    if not provider.api_key_env:
-        return None
-    value = os.environ.get(provider.api_key_env)
-    if value is None:
-        return None
-    value = value.strip()
+    value = resolve_provider_api_key(provider, db_path=admin_store.DB_PATH)
+    value = value.strip() if isinstance(value, str) else ""
     return value or None
 
+
+
+def _provider_auth_headers(provider: ProviderRef, token: str) -> dict[str, str]:
+    auth = provider.config.get("auth") if isinstance(provider.config, Mapping) else None
+    header = "Authorization"
+    prefix = "Bearer"
+    if isinstance(auth, Mapping):
+        configured_header = str(auth.get("header") or "").strip()
+        if configured_header:
+            header = configured_header
+        configured_prefix = str(auth.get("prefix") if auth.get("prefix") is not None else "Bearer").strip()
+        prefix = configured_prefix
+    value = f"{prefix} {token}".strip() if prefix else token
+    return {header: value}
 
 def _join_url(base_url: str, path: str) -> str:
     return f"{str(base_url).rstrip('/')}{path}"

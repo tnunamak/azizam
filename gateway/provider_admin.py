@@ -268,11 +268,12 @@ def create_provider_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            _require_provider(store, provider_id)
             rows = provider_core.list_provider_reconciliations(
                 path=ledger_path,
                 provider_id=provider_id,
             )
+            if not rows:
+                _require_provider(store, provider_id)
         except _RouteError as exc:
             return exc.as_response()
         except sqlite3.Error:
@@ -296,7 +297,6 @@ def create_provider_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            _require_provider(store, provider_id)
             body = await _read_json_body(request)
             row = provider_core.reconcile_provider_spend(
                 reservation_id,
@@ -484,6 +484,7 @@ def create_provider_admin_router(
             with secret_store.provider_mutation_lock(_admin_db_path(store)):
                 registry = store.get_service_registry()
                 service_id, service = _service_for_provider(registry, provider_id)
+                _ensure_provider_has_no_pending_spend(provider_id, ledger_path)
                 record = store.remove_service(
                     service_id=service_id,
                     actor=ctx,
@@ -595,6 +596,55 @@ def create_provider_admin_router(
 
     return router
 
+
+
+def _ensure_provider_has_no_pending_spend(provider_id: str, path: Path) -> None:
+    counts = _provider_pending_spend_counts(provider_id, path)
+    if not counts:
+        return
+    parts = []
+    for status_name in ("reserved", "needs_reconciliation"):
+        count = counts.get(status_name, 0)
+        if count:
+            parts.append(f"{count} {status_name}")
+    detail = ", ".join(parts) or "pending"
+    raise _RouteError(
+        status.HTTP_409_CONFLICT,
+        "provider_spend_pending",
+        f"Provider {service_registry.canonical_provider_id(provider_id)!r} has {detail} charge(s). Reconcile or wait for pending provider charges before removing it.",
+    )
+
+
+def _provider_pending_spend_counts(provider_id: str, path: Path) -> dict[str, int]:
+    try:
+        path.stat()
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        raise _RouteError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "provider_ledger_unavailable",
+            "provider spend ledger is unavailable",
+        ) from None
+    try:
+        provider_core.ensure_ledger(path)
+        with closing(sqlite3.connect(path)) as conn:
+            rows = conn.execute(
+                """
+                SELECT status, COUNT(*)
+                FROM provider_spend
+                WHERE lower(provider) = ? AND status IN ('reserved', 'needs_reconciliation')
+                GROUP BY status
+                """,
+                (service_registry.canonical_provider_id(provider_id),),
+            ).fetchall()
+    except sqlite3.Error:
+        raise _RouteError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "provider_ledger_unavailable",
+            "provider spend ledger is unavailable",
+        ) from None
+    return {str(row[0]): int(row[1] or 0) for row in rows}
 
 def provider_ledger_spending_snapshot(
     *, path: Path | None = None, now: int | None = None

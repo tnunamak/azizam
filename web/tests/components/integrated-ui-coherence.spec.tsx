@@ -64,7 +64,11 @@ describe("integrated UI coherence", () => {
               name: "OpenRouter",
               enabled: true,
               reachable: true,
-              key_status: { state: "set", source: "secret_store", suffix: "4f2a" },
+              key_status: {
+                state: "set",
+                source: "secret_store",
+                suffix: "4f2a",
+              },
               spend: { daily_usd: 1.25, monthly_usd: 1.25, status: "measured" },
               caps: { daily_usd: 10, monthly_usd: 10 },
               catalog: { base_url: "" },
@@ -98,6 +102,42 @@ describe("integrated UI coherence", () => {
     await waitFor(() =>
       expect(screen.queryByText("OPENROUTER_API_KEY")).toBeNull(),
     );
+  });
+
+  it("shows reconciliation state without inventing a pending count", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          providers: [
+            {
+              id: "openrouter",
+              name: "OpenRouter",
+              enabled: true,
+              reachable: true,
+              key_status: {
+                state: "set",
+                source: "secret_store",
+                suffix: "4f2a",
+              },
+              spend: {
+                daily_usd: 1.25,
+                monthly_usd: 1.25,
+                status: "needs_reconciliation",
+              },
+              caps: { daily_usd: 10, monthly_usd: 10 },
+              models: [],
+            },
+          ],
+        }),
+      ),
+    );
+    renderWithQuery(<ProvidersPage />);
+    expect(
+      await screen.findByText("Charges need reconciliation"),
+    ).toBeVisible();
+    expect(screen.queryByText("1 charge need reconciliation")).toBeNull();
+    expect(screen.getByText(/final spend is unknown/i)).toBeVisible();
   });
 
   it("does not call unknown or disabled providers Starting", async () => {

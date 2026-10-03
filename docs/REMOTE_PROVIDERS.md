@@ -194,6 +194,8 @@ The Providers UI uses:
 - `PUT /admin/api/providers/{provider}/caps`
 - `DELETE /admin/api/providers/{provider}/caps`
 - `PUT /admin/api/providers/{provider}/allowed-plans`
+- `GET /admin/api/providers/{provider}/reconciliation`
+- `POST /admin/api/providers/{provider}/reconciliation/{reservation_id}`
 - `PUT /admin/api/providers/-/global-caps`
 - `DELETE /admin/api/providers/-/global-caps`
 
@@ -229,15 +231,31 @@ A cap can be exceeded by at most the actual cost of requests already in flight w
 
 The Providers admin API includes this guarantee. Once settled spend reaches
 a window cap, new paid requests are denied even when their estimate is zero.
-Paid concurrency is limited per provider across all access plans and gateway
-processes sharing the ledger. The default is two open reservations; set a
+Paid concurrency is limited per provider across all access plans in the gateway
+process. Recovery follows the gateway's single-process deployment: separate
+gateway processes must not share one ledger. The default is two open reservations; set a
 positive integer `config.concurrency_limit` on the provider record to change
 it. The admin API projects the same effective value.
 
-Unknown actual cost retains the reservation and its concurrency slot until
-reconciliation. Disconnects and transport failures do not establish a zero
-bill. A successful settlement or a known pre-dispatch release frees the slot;
-an unresolved reservation cannot be replaced with another paid request.
+Unknown final cost moves the charge to `needs_reconciliation`. Disconnects and
+transport failures do not establish a zero bill. Affected provider, plan, or
+global window caps deny new admissions with HTTP 402 and
+`provider_needs_reconciliation` until the actual bill is known. The barrier
+survives restarts and window changes. Unrelated caps remain usable; uncapped
+calls retain the unknown charge without acquiring a budget barrier. Only
+in-flight `reserved` rows consume concurrency slots.
+
+The provider detail shows **Needs reconciliation** and an owner action to list
+pending charges. Enter the actual USD amount verified against the provider's
+records; a verified zero is allowed. The request estimate is shown separately
+and is never filled into the actual amount field. Settling a charge refreshes
+provider and global totals. Removal is blocked while charges remain unsettled.
+The owner API also permits reconciliation of pending ledger rows for a provider
+that was already removed. This preserves recovery for older removals or a
+request that raced with removal. Use the provider ID and reservation ID from
+the original receipt; the detail UI lists currently configured providers.
+See [Unknown provider charges](ops/PROVIDER_RECONCILIATION.md) for the API,
+crash recovery, receipt links, and automatic generation-metadata lookup.
 
 Set the OpenRouter key's own credit limit equal to the gateway cap as a
 provider-side backstop. The admin API recommends key-level credit limits for
@@ -255,7 +273,9 @@ them in the same SQLite transaction that inserts the reservation.
 
 The Providers UI spend totals are a read-only projection over `provider_spend`.
 If the ledger is absent or unreadable, the UI reports spend as unknown.  An
-empty readable ledger reports zero spend.
+empty readable ledger reports zero spend. Totals with pending reconciliation
+include estimates and are marked incomplete; they are not final bills or
+remaining-budget guarantees.
 
 Completion estimates include prompt batches and generated candidates
 (`n` and `best_of`). For paid chat execution, estimation uses the normalized
@@ -278,6 +298,8 @@ cap enforcement.
 ## Error Semantics
 
 - Missing provider key or denied access plan: fail before the provider call.
+- An unknown charge affecting a window cap: `402 provider_needs_reconciliation`;
+  the owner must reconcile the actual bill before that cap can admit again.
 - Provider 401 or 403: return gateway `502 provider_auth_failed`.
 - Provider timeout: return `504 provider_timeout`.
 - LiteLLM upstream timeout responses (HTTP 408): return `504 provider_timeout`.

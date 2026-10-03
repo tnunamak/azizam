@@ -39,6 +39,7 @@ class ProviderPreset:
     key_url: str
     billing_dimensions: tuple[str, ...]
     auth_test: Mapping[str, str]
+    generation_stats: Mapping[str, Any] | None = None
     recommendations: tuple[Mapping[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +56,7 @@ class ProviderPreset:
             "key_url": self.key_url,
             "billing_dimensions": list(self.billing_dimensions),
             "auth_test": dict(self.auth_test),
+            **({"generation_stats": _copy_generation_stats(self.generation_stats)} if self.generation_stats else {}),
             "recommendations": [dict(row) for row in self.recommendations],
         }
 
@@ -107,6 +109,7 @@ def normalize_provider_preset(raw: Mapping[str, Any], *, source: Path | str = "<
         if not isinstance(raw["auth_test"], Mapping):
             raise ValueError(f"{source}: auth_test must be a mapping")
         _validate_listing_spec(raw["auth_test"], source)
+    generation_stats = _normalize_generation_stats(raw.get("generation_stats"), source)
     if not isinstance(listing.get("prices", {}), Mapping):
         raise ValueError(f"{source}: model_listing.prices must be a mapping")
     for rule in listing.get("prices", {}).values():
@@ -143,6 +146,7 @@ def normalize_provider_preset(raw: Mapping[str, Any], *, source: Path | str = "<
         key_url=str(raw.get("key_url") or "").strip(),
         billing_dimensions=tuple(str(item) for item in raw.get("billing_dimensions") or ()),
         auth_test=dict(raw.get("auth_test") if isinstance(raw.get("auth_test"), Mapping) else {}),
+        generation_stats=generation_stats,
         recommendations=tuple(
             dict(item) for item in raw.get("recommendations") or () if isinstance(item, Mapping)
         ),
@@ -171,3 +175,32 @@ def _validate_listing_spec(spec: Mapping[str, Any], source: Path | str) -> None:
         for key, value in headers.items()
     ):
         raise ValueError(f"{source}: invalid model-listing headers")
+
+
+def _normalize_generation_stats(value: object, source: Path | str) -> dict[str, Any] | None:
+    if value in (None, {}):
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{source}: generation_stats must be a mapping")
+    path = str(value.get("path") or "").strip()
+    if not path.startswith("/") or path.startswith("//") or any(char in path for char in "?#\r\n"):
+        raise ValueError(f"{source}: invalid generation_stats.path")
+    id_param = str(value.get("id_param") or "").strip()
+    if not id_param or not re.fullmatch(r"[A-Za-z_][0-9A-Za-z_.-]*", id_param):
+        raise ValueError(f"{source}: invalid generation_stats.id_param")
+    raw_cost_path = value.get("cost_path")
+    if not isinstance(raw_cost_path, list) or not raw_cost_path:
+        raise ValueError(f"{source}: generation_stats.cost_path must be a non-empty list")
+    cost_path = [str(part).strip() for part in raw_cost_path]
+    if not all(cost_path) or any(any(char in part for char in "\r\n") for part in cost_path):
+        raise ValueError(f"{source}: invalid generation_stats.cost_path")
+    return {"path": path, "id_param": id_param, "cost_path": cost_path}
+
+
+def _copy_generation_stats(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    out = dict(value)
+    if isinstance(out.get("cost_path"), list):
+        out["cost_path"] = list(out["cost_path"])
+    return out

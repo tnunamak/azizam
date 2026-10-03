@@ -43,7 +43,9 @@ def provider_models():
 @app.post("/provider/v1/chat/completions")
 async def chat(request: Request):
     body = await request.json()
-    return {
+    messages = body.get("messages") or []
+    content = " ".join(str((message or {}).get("content", "")) for message in messages if isinstance(message, dict))
+    response = {
         "id": f"chatcmpl-demo-{time.time_ns()}",
         "object": "chat.completion",
         "created": int(time.time()),
@@ -53,5 +55,7 @@ async def chat(request: Request):
             "message": {"role": "assistant", "content": "Your gateway is connected. This is a demonstration response from the isolated capture engine."},
             "finish_reason": "stop",
         }],
-        "usage": {"prompt_tokens": 18, "completion_tokens": 22, "total_tokens": 40},
     }
+    if "force_unknown_usage" not in content:
+        response["usage"] = {"prompt_tokens": 18, "completion_tokens": 22, "total_tokens": 40, "cost": "0.000100000"}
+    return response

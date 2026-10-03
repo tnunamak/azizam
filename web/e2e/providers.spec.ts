@@ -1,4 +1,10 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type Page,
+  type Route,
+} from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
 const catalog = {
@@ -61,7 +67,12 @@ const seededProviders = {
         suffix: "4f2a",
         updated_at: Math.floor(Date.now() / 1000) - 172800,
       },
-      spend: { daily_usd: 1.2, monthly_usd: 14.5, status: "measured" },
+      spend: {
+        daily_usd: 1.2,
+        monthly_usd: 14.5,
+        status: "needs_reconciliation",
+        pending_reconciliation_count: 1,
+      },
       caps: { daily_usd: 5, monthly_usd: 50 },
       allowed_plans: [],
       recommendations: [
@@ -110,8 +121,10 @@ async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
   let savedModels = false;
   let savedCaps = false;
   let savedPlans = false;
+  let reconciled = false;
+  let reconciled42 = false;
   await page.route("**/__provider-test-flags", (route: Route) =>
-    route.fulfill({ json: { savedModels, savedCaps, savedPlans } }),
+    route.fulfill({ json: { savedModels, savedCaps, savedPlans, reconciled } }),
   );
   await page.route("**/admin/api/profiles", (route: Route) =>
     route.fulfill({ json: plans }),
@@ -153,6 +166,74 @@ async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
               price_output: "",
             },
           ],
+        },
+      });
+    }
+    if (path === "/admin/api/providers/openrouter/reconciliation") {
+      expect(route.request().method()).toBe("GET");
+      return route.fulfill({
+        json: {
+          reconciliations: reconciled
+            ? []
+            : [
+                ...(reconciled42
+                  ? []
+                  : [
+                      {
+                        id: 42,
+                        provider: "openrouter",
+                        profile_id: "paid",
+                        status: "needs_reconciliation",
+                        estimated_usd: "0.015",
+                        actual_usd: null,
+                        cost_source: "estimated",
+                        created_at: 1710000000,
+                        settled_at: null,
+                        request_id: "req_pending_42_abcdefghijklmnopqrstuvwxyz",
+                        generation_id:
+                          "gen_pending_42_abcdefghijklmnopqrstuvwxyz",
+                      },
+                    ]),
+                {
+                  id: 43,
+                  provider: "openrouter",
+                  profile_id: "paid",
+                  status: "needs_reconciliation",
+                  estimated_usd: "0.000001234",
+                  actual_usd: null,
+                  cost_source: "estimated",
+                  created_at: 1710000001,
+                  settled_at: null,
+                  request_id: "req_pending_43",
+                  generation_id: "gen_pending_43",
+                },
+              ],
+        },
+      });
+    }
+    if (path === "/admin/api/providers/openrouter/reconciliation/42") {
+      reconciled42 = true;
+      expect(route.request().method()).toBe("POST");
+      expect(route.request().postDataJSON()).toEqual({
+        actual_usd: "0.000001234",
+      });
+      return route.fulfill({
+        json: {
+          reconciliation: {
+            id: 42,
+            status: "settled",
+            actual_usd: "0.000001234",
+          },
+        },
+      });
+    }
+    if (path === "/admin/api/providers/openrouter/reconciliation/43") {
+      reconciled = true;
+      expect(route.request().method()).toBe("POST");
+      expect(route.request().postDataJSON()).toEqual({ actual_usd: "0" });
+      return route.fulfill({
+        json: {
+          reconciliation: { id: 43, status: "settled", actual_usd: "0.00" },
         },
       });
     }
@@ -329,8 +410,67 @@ test("providers detail edits models caps and plans through real admin paths", as
     savedModels: true,
     savedCaps: true,
     savedPlans: true,
+    reconciled: false,
   });
 });
+
+test("providers reconcile pending charges before removal", async ({ page }) => {
+  await routeProviders(page, "seeded");
+  await page.goto("/ui/providers/");
+  await expect(page.getByText("1 charge needs reconciliation")).toBeVisible();
+  await page.getByRole("button", { name: "Reconcile charges" }).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "req_pending_42_abcdefghijklmnopqrstuvwxyz",
+  );
+  await expect(page.getByRole("dialog")).toContainText(
+    "gen_pending_42_abcdefghijklmnopqrstuvwxyz",
+  );
+  await expect(page.getByText("$0.015")).toBeVisible();
+  await expect(page.getByText("$0.000001234")).toBeVisible();
+  const firstActual = page.getByLabel(
+    "Verified actual charge for reconciliation 42",
+  );
+  await expect(firstActual).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Record actual" }).first(),
+  ).toBeDisabled();
+  await firstActual.fill("0.000001234");
+  await page.getByRole("button", { name: "Record actual" }).first().click();
+  await expect(page.getByText("Charge #42")).toBeHidden();
+  const zeroActual = page.getByLabel(
+    "Verified actual charge for reconciliation 43",
+  );
+  await expect(zeroActual).toHaveValue("");
+  await zeroActual.fill("0");
+  const zeroButton = page
+    .getByRole("button", { name: "Record actual" })
+    .first();
+  await expect(zeroButton).toBeEnabled();
+  await zeroButton.click();
+  await expect(
+    page.getByText("No pending provider charges need reconciliation."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Done" }).click();
+  const flags = await page.evaluate(() =>
+    fetch("/__provider-test-flags").then((response) => response.json()),
+  );
+  expect(flags.reconciled).toBe(true);
+});
+
+for (const theme of ["light", "dark"] as const) {
+  test(`providers reconciliation dialog: ${theme} 390`, async ({ page }) => {
+    await setViewport(page, theme, 390);
+    await routeProviders(page, "seeded");
+    await page.goto("/ui/providers/");
+    await expect(page.getByText("1 charge needs reconciliation")).toBeVisible();
+    await inspect(page, `providers-reconciliation-card-${theme}-390`);
+    await page.getByRole("button", { name: "Reconcile charges" }).click();
+    await expect(page.getByRole("dialog")).toContainText(
+      "req_pending_42_abcdefghijklmnopqrstuvwxyz",
+    );
+    await inspect(page, `providers-reconciliation-dialog-${theme}-390`);
+  });
+}
 
 test("providers add OpenRouter and keep paid access gated", async ({
   page,
@@ -388,6 +528,57 @@ test("providers add OpenRouter and keep paid access gated", async ({
   });
 });
 
+async function clearOpenRouterProvider(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+) {
+  const pending = await request
+    .get("/admin/api/providers/openrouter/reconciliation")
+    .catch(() => null);
+  if (pending && pending.status() === 200) {
+    const body = await pending.json();
+    for (const row of body.reconciliations ?? []) {
+      await request
+        .post(`/admin/api/providers/openrouter/reconciliation/${row.id}`, {
+          headers,
+          data: { actual_usd: "0" },
+        })
+        .catch(() => undefined);
+    }
+  }
+  await request
+    .put("/admin/api/providers/openrouter/allowed-plans", {
+      headers,
+      data: { allowed_plans: [] },
+    })
+    .catch(() => undefined);
+  await request
+    .delete("/admin/api/providers/openrouter/key", {
+      headers,
+      data: {},
+    })
+    .catch(() => undefined);
+}
+
+async function removeSeededOpenRouterProvider(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+) {
+  const response = await request.delete("/admin/api/providers/openrouter", {
+    headers,
+    data: { expected_generation: null },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  const providers = await request.get("/admin/api/providers");
+  expect(providers.status()).toBe(200);
+  const body = await providers.json();
+  expect(
+    (body.providers ?? []).some(
+      (provider: { id?: string }) => provider.id === "openrouter",
+    ),
+  ).toBe(false);
+}
+
 test("providers real backend OpenRouter journey keeps paid access denied until allowed", async ({
   page,
   request,
@@ -404,6 +595,10 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
   let app: { id: string } | undefined;
   let observerApp: { id: string } | undefined;
   try {
+    await clearOpenRouterProvider(request, headers);
+    await removeSeededOpenRouterProvider(request, headers);
+    const port = Number(new URL(baseURL!).port);
+
     const profileResponse = await request.post("/admin/api/profiles", {
       headers,
       data: {
@@ -462,7 +657,6 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     expect(keyResponse.status()).toBe(201);
     const { credential } = await keyResponse.json();
 
-    const port = Number(new URL(baseURL!).port);
     await page.goto("/ui/providers/");
     await page.getByRole("button", { name: "Add provider" }).first().click();
     await page.getByLabel("Search providers").fill("openrouter");
@@ -470,11 +664,9 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     await page
       .getByLabel("Provider base URL")
       .fill(`http://127.0.0.1:${port + 1}/provider/v1`);
-    await page
-      .getByLabel("Provider API key")
-      .fill("sk-or-isolated-browser-test");
+    await page.getByLabel("Provider API key").fill("sk-test-openrouter");
     await page.getByRole("button", { name: "Gateway check" }).click();
-    await expect(page.getByText(/model/i).first()).toBeVisible();
+    await expect(page.getByText(/Listed 1 models?/)).toBeVisible();
     await page.getByRole("button", { name: "Next" }).click();
     await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
     await expect(page.getByLabel("Claude Sonnet 4.5 input price")).toHaveValue(
@@ -493,6 +685,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     await expect(
       page.getByRole("heading", { name: "OpenRouter" }),
     ).toBeVisible();
+    await expect(page.getByText("sk-test-openrouter")).toHaveCount(0);
     await expect(
       page.getByRole("cell", { name: "Claude Sonnet 4.5" }),
     ).toBeVisible();
@@ -507,10 +700,13 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     ).toBeVisible();
     const providerList = await request.get("/admin/api/providers");
     expect(providerList.status()).toBe(200);
-    expect(await providerList.json()).toMatchObject({
+    const providerPayload = await providerList.json();
+    expect(JSON.stringify(providerPayload)).not.toContain("sk-test-openrouter");
+    expect(providerPayload).toMatchObject({
       providers: [
         {
           id: "openrouter",
+          key_status: { state: "set", source: "secret_store" },
           models: [
             {
               name: "Claude Sonnet 4.5",
@@ -522,6 +718,17 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
           ],
         },
       ],
+    });
+    const registryAfterSave = await request.get(
+      "/admin/api/operator/service-registry",
+    );
+    expect(registryAfterSave.status()).toBe(200);
+    const savedService = (await registryAfterSave.json()).service_registry
+      .services.openrouter;
+    expect(savedService.config).toMatchObject({
+      host: "127.0.0.1",
+      port: port + 1,
+      base_path: "/provider/v1",
     });
 
     const denied = await request.post("/openai/v1/chat/completions", {
@@ -573,19 +780,89 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       },
     });
     expect(allowed.status(), await allowed.text()).toBe(200);
+
+    const unknownUsage = await request.post("/openai/v1/chat/completions", {
+      headers: { authorization: `Bearer ${credential.api_key}` },
+      data: {
+        model: "openrouter/anthropic/claude-sonnet-4.5",
+        messages: [{ role: "user", content: "force_unknown_usage" }],
+        max_tokens: 100,
+      },
+    });
+    expect(unknownUsage.status(), await unknownUsage.text()).toBe(200);
+
+    const pendingResponse = await request.get(
+      "/admin/api/providers/openrouter/reconciliation",
+    );
+    expect(pendingResponse.status()).toBe(200);
+    const pending = await pendingResponse.json();
+    expect(pending.reconciliations.length).toBeGreaterThan(0);
+    const pendingId = pending.reconciliations[0].id;
+
+    const blocked = await request.post("/openai/v1/chat/completions", {
+      headers: { authorization: `Bearer ${credential.api_key}` },
+      data: {
+        model: "openrouter/anthropic/claude-sonnet-4.5",
+        messages: [{ role: "user", content: "blocked until reconcile" }],
+        max_tokens: 100,
+      },
+    });
+    const blockedText = await blocked.text();
+    expect(blocked.status(), blockedText).toBe(402);
+    expect(JSON.parse(blockedText)).toMatchObject({
+      error: { code: "provider_needs_reconciliation" },
+    });
+
+    await page.goto("/ui/providers/");
+    await expect(
+      page.getByRole("button", { name: "Reconcile charges" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Reconcile charges" }).click();
+    await expect(page.getByRole("dialog")).toContainText(String(pendingId));
+    const actualCharge = page.getByLabel(
+      new RegExp(`Verified actual charge for reconciliation ${pendingId}`),
+    );
+    await expect(actualCharge).toHaveValue("");
+    await actualCharge.fill("0.000001234");
+    const reconcilePost = page.waitForResponse(
+      (response) =>
+        response
+          .url()
+          .includes(
+            `/admin/api/providers/openrouter/reconciliation/${pendingId}`,
+          ) && response.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Record actual" }).click();
+    const reconcileResponse = await reconcilePost;
+    expect(reconcileResponse.status()).toBe(200);
+    expect(await reconcileResponse.json()).toMatchObject({
+      reconciliation: { status: "settled", actual_usd: "0.000001234" },
+    });
+    await expect(
+      page.getByText("No pending provider charges need reconciliation."),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Done" }).click();
+
+    const afterReconcile = await request.get(
+      "/admin/api/providers/openrouter/reconciliation",
+    );
+    expect(afterReconcile.status()).toBe(200);
+    expect(await afterReconcile.json()).toMatchObject({ reconciliations: [] });
+
+    const unblocked = await request.post("/openai/v1/chat/completions", {
+      headers: { authorization: `Bearer ${credential.api_key}` },
+      data: {
+        model: "openrouter/anthropic/claude-sonnet-4.5",
+        messages: [{ role: "user", content: "hello again" }],
+        max_tokens: 100,
+      },
+    });
+    expect(unblocked.status(), await unblocked.text()).toBe(200);
   } finally {
-    await request
-      .put("/admin/api/providers/openrouter/allowed-plans", {
-        headers,
-        data: { allowed_plans: [] },
-      })
-      .catch(() => undefined);
-    await request
-      .delete("/admin/api/providers/openrouter", {
-        headers,
-        data: { expected_generation: null },
-      })
-      .catch(() => undefined);
+    await clearOpenRouterProvider(request, headers);
+    await removeSeededOpenRouterProvider(request, headers).catch(
+      () => undefined,
+    );
     if (app?.id) {
       await request
         .delete(`/admin/api/apps/${app.id}`, { headers })

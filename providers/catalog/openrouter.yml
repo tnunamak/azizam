@@ -21,6 +21,12 @@ model_listing:
 auth_test:
   method: GET
   path: /key
+generation_stats:
+  path: /generation
+  id_param: id
+  cost_path:
+    - data
+    - total_cost
 docs_url: https://openrouter.ai/docs
 key_url: https://openrouter.ai/settings/keys
 billing_dimensions:
