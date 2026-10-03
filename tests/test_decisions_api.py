@@ -273,19 +273,6 @@ def test_systemone_request_validation_errors_use_typesafe_detail_envelope(env):
         assert isinstance(item["type"], str) and item["type"]
 
 
-@pytest.mark.parametrize(
-    "patch,param,needle",
-    [
-        ({"model": ""}, "model", "model must be a non-empty string"),
-        ({"state": 3}, "state", "state must be a string"),
-        ({"questions": {}}, "questions", "questions must be a non-empty object"),
-        ({"questions": {"q": {"type": "maybe", "instructions": "x"}}}, "questions.q.type", "question type"),
-        ({"questions": {"q": {"type": "choice", "instructions": "x", "criteria": {"a": "A"}}}}, "questions.q.criteria", "2 to 255"),
-    ],
-)
-
-
-
 def test_validation_detail_loc_preserves_arbitrary_question_and_option_keys(env):
     body = _fixture("typesafe_systemone_noul.json")["request"]
     body["questions"] = {
@@ -332,6 +319,16 @@ def test_required_field_detail_distinguishes_absent_from_invalid_present_values(
     assert resp.json()["detail"][0]["type"] != "missing"
 
 
+@pytest.mark.parametrize(
+    "patch,param,needle",
+    [
+        ({"model": ""}, "model", "model must be a non-empty string"),
+        ({"state": 3}, "state", "state must be a string"),
+        ({"questions": {}}, "questions", "questions must be a non-empty object"),
+        ({"questions": {"q": {"type": "maybe", "instructions": "x"}}}, "questions.q.type", "question type"),
+        ({"questions": {"q": {"type": "choice", "instructions": "x", "criteria": {"a": "A"}}}}, "questions.q.criteria", "2 to 255"),
+    ],
+)
 def test_validation_errors_are_typesafe_shaped_and_do_not_call_backend(env, patch, param, needle):
     body = _fixture("typesafe_systemone_noul.json")["request"]
     body.update(patch)
