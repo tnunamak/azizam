@@ -504,7 +504,7 @@ function DefaultsSection() {
   return (
     <Section
       title="Defaults"
-      description="The access plan and personal app options for people who join."
+      description="The default access plan and personal app options."
     >
       {isPending ? (
         <Loading />
@@ -560,8 +560,8 @@ function DefaultsForm({
       >
         <Field
           id="default-plan"
-          label="Access plan for new people"
-          help="Specific identity rules still apply. No default plan grants no universal access."
+          label="Default access plan"
+          help="Applies to everyone without a more specific identity rule, including existing people. No default plan adds no universal grant."
         >
           <Select value={plan} onValueChange={setPlan}>
             <SelectTrigger id="default-plan" className="w-full">

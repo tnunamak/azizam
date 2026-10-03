@@ -205,7 +205,7 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   expect((await mediaSaved).status()).toBe(200);
   await page.reload();
   await expect(page.getByLabel("Maximum queued jobs")).toHaveValue("7");
-  await page.getByLabel("Access plan for new people").click();
+  await page.getByLabel("Default access plan").click();
   await page.getByRole("option", { name: "Local chat", exact: true }).click();
   const planSaved = page.waitForResponse(
     (r) =>
@@ -215,7 +215,7 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   await page.getByRole("button", { name: "Save default plan" }).click();
   expect((await planSaved).status()).toBe(200);
   await page.reload();
-  await expect(page.getByLabel("Access plan for new people")).toContainText(
+  await expect(page.getByLabel("Default access plan")).toContainText(
     "Local chat",
   );
   await page.getByLabel("Issuer URL").fill("https://login.example.test");

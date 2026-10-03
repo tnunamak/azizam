@@ -59,6 +59,9 @@ def test_instance_save_reload_and_audit(settings):
     {"name": ""}, {"theme_default": "automatic"}, {"base_url": "javascript:alert(1)"},
     {"base_url": "https://user:password@host.test"}, {"base_url": "https://host.test?token=secret"},
     {"base_url": "https://host.test/v1"},
+    {"base_url": "https://host .test"}, {"base_url": "https://host.test\n"},
+    {"base_url": "https://ho\tst.test"}, {"base_url": "https://host.test\x00"},
+    {"base_url": "https://host.test\x7f"}, {"base_url": " https://host.test"},
     {"name": 42}, {"bootstrap": True},
 ])
 def test_instance_invalid_input_leaves_no_setting(settings, change):
