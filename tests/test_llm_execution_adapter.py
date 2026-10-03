@@ -729,6 +729,19 @@ class RequestDisconnectWatcherTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LiteLlmRoutingOverrideTransportTests(unittest.IsolatedAsyncioTestCase):
+    def test_router_overrides_are_stripped_for_all_supported_json_encodings(self) -> None:
+        from gateway.backends.llm_execution import LlmExecutionRequest, sanitize_litellm_execution_request
+
+        for encoding in ("utf-8-sig", "utf-16", "utf-32"):
+            with self.subTest(encoding=encoding):
+                request = LlmExecutionRequest(
+                    method="POST", url="http://litellm.test/v1/chat/completions",
+                    headers={"content-type": "application/json"}, read_timeout=5.0,
+                    body=json.dumps({"model": "local-chat", "fallbacks": ["openrouter/paid-chat"]}).encode(encoding),
+                )
+                outbound = sanitize_litellm_execution_request(request)
+                self.assertNotIn("fallbacks", json.loads(outbound.body))
+
     async def test_send_request_strips_caller_litellm_router_overrides(self) -> None:
         import gateway.backends.llm_execution as llm_execution_module
         from gateway.backends.llm_execution import LlmExecutionRequest
