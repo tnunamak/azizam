@@ -138,3 +138,17 @@ test("anonymous legacy engine bookmark signs in and keeps its selection", async 
     await context.close();
   }
 });
+
+test("legacy Profiles bookmark selects Access plans", async ({ page }) => {
+  await page.goto("/admin/profiles?profile=local-chat");
+  await expect(page).toHaveURL(/\/ui\/people\/\?/);
+  const destination = new URL(page.url());
+  expect(destination.searchParams.get("profile")).toBe("local-chat");
+  expect(destination.searchParams.get("tab")).toBe("plans");
+  await expect(
+    page.getByRole("tab", { name: "Access plans", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("button", { name: "New access plan", exact: true }),
+  ).toBeVisible();
+});

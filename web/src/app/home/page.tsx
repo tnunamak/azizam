@@ -374,7 +374,12 @@ function Connect({ home }: { home: HomeSnapshot }) {
               className="min-w-0 p-5 sm:p-6"
             >
               <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-                <h3 className="text-base font-semibold">Connect {name}</h3>
+                <div>
+                  <h3 className="text-base font-semibold">Connect {name}</h3>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    Untested recipe
+                  </p>
+                </div>
                 <a
                   className="text-primary inline-flex min-h-11 items-center gap-1 text-sm underline underline-offset-4"
                   href={recipe.docs}
@@ -456,10 +461,10 @@ function Connect({ home }: { home: HomeSnapshot }) {
             ) : (
               <PlugZap aria-hidden="true" />
             )}
-            {testing ? "Testing…" : "Test connection"}
+            {testing ? "Checking…" : "Gateway check"}
           </Button>
           <p className="text-muted-foreground text-xs">
-            One real request. Declared local chat, or a model catalog check.
+            One gateway request. This does not test the client app.
           </p>
         </div>
         {testResult && (
