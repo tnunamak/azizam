@@ -32,6 +32,14 @@ connect another compatible service without a vendor-specific code change.
 Catalog files are provisioning data; saved service records remain the runtime
 source of truth. Missing model-list prices mean unknown, not free.
 
+Decision providers follow the same rule. A provider with the
+`typesafe-systemone` protocol uses its configured provider prefix and enabled
+model list; it need not be named `typesafe`. There is no implicit vendor model
+default. Existing provisioning can declare `default_models` explicitly.
+OpenAI-shaped decision passthrough requires one enabled provider with the
+`decisions` capability and a compatible protocol. Ambiguous configuration
+fails closed. Both paths support encrypted key references.
+
 ## Key custody and threat model
 
 The provider secret store encrypts values with AES-256-GCM and a fresh nonce

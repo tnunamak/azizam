@@ -1362,6 +1362,7 @@ async def call_openai_json(
     content: bytes | None = None,
     timeout: float = 15.0,
     client: httpx.AsyncClient | None = None,
+    admin_db_path: Path | None = None,
 ) -> tuple[dict[str, Any], Cost, Usage, Mapping[str, str], bytes, int]:
     """Call an OpenAI-compatible provider JSON endpoint without LiteLLM.
 
@@ -1372,7 +1373,7 @@ async def call_openai_json(
     redacted JSON.
     """
 
-    api_key = os.environ.get(provider.api_key_env or "")
+    api_key = resolve_provider_api_key(provider, db_path=admin_db_path)
     if not api_key:
         raise ProviderKeyMissing(f"provider {provider.id!r} key is missing")
     close_client = client is None

@@ -769,6 +769,10 @@ def validate_provider_secret_refs(
                     inline_keys.append(path)
                 elif is_secret_key(key) and is_secret_reference_key(key):
                     suffix_ok = key.lower().endswith("_env") or key.lower().endswith("_secret_id")
+                    # Optional reference fields may be unset when the other
+                    # custody mode supplies the required credential reference.
+                    if suffix_ok and item in (None, ""):
+                        continue
                     env_ok = key.lower().endswith("_env") and isinstance(item, str) and ENV_VAR_NAME_RE.fullmatch(item)
                     secret_id_ok = key.lower().endswith("_secret_id") and isinstance(item, str) and item.strip()
                     if not suffix_ok or not (env_ok or secret_id_ok):

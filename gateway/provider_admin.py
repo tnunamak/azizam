@@ -403,8 +403,7 @@ def create_provider_admin_router(
             return _RouteError(status.HTTP_404_NOT_FOUND, "provider_not_found", f"provider {provider_id!r} was not found").as_response()
         with secret_store.provider_mutation_lock(_admin_db_path(store)):
             _, service = _service_for_provider(store.get_service_registry(), provider_id)
-            config = dict(service.get("config") or {})
-            config.setdefault("provider_id", service_registry.canonical_provider_id(provider_id))
+            config = _provider_probe_config(service, provider_id)
             key_fingerprint = _provider_key_fingerprint(config, _admin_db_path(store))
         try:
             secret_id = str(config.get("api_key_secret_id") or "")
@@ -569,9 +568,10 @@ def create_provider_admin_router(
             return ctx
         try:
             body = await _read_json_body(request)
-            state = store.get_provider_admin_state()
-            state["global_caps"] = _normalize_caps(body)
-            store.update_provider_admin_state(data=state, actor=ctx)
+            with secret_store.provider_mutation_lock(_admin_db_path(store)):
+                state = store.get_provider_admin_state()
+                state["global_caps"] = _normalize_caps(body)
+                store.update_provider_admin_state(data=state, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
         return JSONResponse(
@@ -584,9 +584,10 @@ def create_provider_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        state = store.get_provider_admin_state()
-        state["global_caps"] = {}
-        store.update_provider_admin_state(data=state, actor=ctx)
+        with secret_store.provider_mutation_lock(_admin_db_path(store)):
+            state = store.get_provider_admin_state()
+            state["global_caps"] = {}
+            store.update_provider_admin_state(data=state, actor=ctx)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=_providers_payload(store, effective_spending_provider),
@@ -796,6 +797,12 @@ def _project_provider(
     }
 
 
+def _provider_probe_config(service: Mapping[str, Any], provider_id: str) -> dict[str, Any]:
+    config = dict(service.get("config") if isinstance(service.get("config"), Mapping) else {})
+    config.setdefault("provider_id", service_registry.canonical_provider_id(provider_id))
+    return config
+
+
 def _provider_key_fingerprint(config: Mapping[str, Any], db_path: Path) -> tuple[Any, ...]:
     config_revision = hashlib.sha256(
         json.dumps(config, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
@@ -820,7 +827,7 @@ def _saved_provider_probe_still_current(
         _service_id, service = _service_for_provider(store.get_service_registry(), provider_id)
     except _RouteError:
         return False
-    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    config = _provider_probe_config(service, provider_id)
     return _provider_key_fingerprint(config, _admin_db_path(store)) == key_fingerprint
 
 

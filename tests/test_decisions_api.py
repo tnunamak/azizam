@@ -700,6 +700,39 @@ def test_backend_response_must_match_request_shape_and_domains(env, mutate):
     assert resp.json()["error"]["code"] == "decision_backend_error"
 
 
+
+
+def test_remote_error_receipt_context_comes_from_selected_model_not_name_prefix():
+    fakes = FakeDeps()
+
+    def models_for(_auth, _profile):
+        return [DecisionModel(id="acme-decisions/decider", backend="acme-decisions", backend_kind="provider", cost_class="paid-remote", remote=True)]
+
+    async def dispatch(_auth, _profile, _body, _request_id):
+        raise DecisionsError(403, "model_not_allowed", "Denied", param="model")
+
+    app = FastAPI()
+    register_decision_routes(
+        app,
+        DecisionsApiDeps(
+            authenticate=fakes.authenticate,
+            profile_for=fakes.profile_for,
+            models_for=models_for,
+            dispatch=dispatch,
+            record_receipt=fakes.record_receipt,
+        ),
+    )
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body = {**body, "model": "acme-decisions/decider"}
+
+    resp = TestClient(app).post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 403
+    receipt = fakes.receipts[-1][1]
+    assert receipt.remote is True
+    assert receipt.backend == "acme-decisions"
+    assert receipt.cost_source == "unknown"
+
 def test_sync_dependency_returning_awaitable_is_awaited(env):
     async def models_result():
         return [DecisionModel(id="decide", root="decider-2b-v11")]
