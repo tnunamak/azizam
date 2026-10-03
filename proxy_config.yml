@@ -1245,7 +1245,7 @@ model_aliases:
         placement: cpu
         residency: on_demand
         description: "Local fast decisions"
-        max_state_tokens: 32768
+        max_state_tokens: 4096
         context_tokens: 4096
         max_options: 255
         max_levels: 10
@@ -1256,7 +1256,7 @@ model_aliases:
         placement: cpu
         residency: on_demand
         description: "Local quality decisions"
-        max_state_tokens: 32768
+        max_state_tokens: 4096
         context_tokens: 4096
         max_options: 255
         max_levels: 10

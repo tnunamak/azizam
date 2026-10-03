@@ -64,6 +64,8 @@ The local routing deadline is 15 seconds across lifecycle startup and free
 fallback attempts. Starting/unavailable engines return 529 with Retry-After;
 the TypeSafe SDK can retry. Invalid requests return 422 before dispatch.
 The model context is configured to 4096 tokens; engine tokenization must reject
-an oversized prompt before inference. A wider context requires an explicit
-operator configuration change. There is no streaming or packed dependent-row
+an oversized prompt before inference. Local discovery advertises at most 4096
+state tokens as an upper bound; question and rubric overhead reduce the usable
+state budget within that context. A wider context requires an explicit operator
+configuration change. There is no streaming or packed dependent-row
 mode in the gateway contract.

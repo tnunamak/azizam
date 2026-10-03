@@ -174,6 +174,7 @@ def test_default_bootstrap_aliases_use_cpu_on_demand():
         resolved = resolve_alias(cfg["model_aliases"], "decisions", alias)
         assert resolved.engine_spec["placement"] == "cpu"
         assert resolved.engine_spec["residency"] == "on_demand"
+        assert resolved.engine_spec["max_state_tokens"] <= resolved.engine_spec["context_tokens"] == 4096
         assert cfg["backends"][resolved.service]["lifecycle"]["driver"] == "systemd"
 
 
