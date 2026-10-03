@@ -1,0 +1,108 @@
+# People and built-in accounts
+
+Owners manage People, Invites and Access plans at `/ui/people/`. Existing
+profiles remain the policy model and use the existing profile CRUD and
+`POST /admin/api/policy/simulate` APIs. The Home, Settings and Status pages
+are unchanged by this feature.
+
+## Account flow
+
+1. The owner creates an invitation with a stored profile, expiry and optional
+   email restriction. A pending invitation can be copied again or revoked.
+2. The invitee opens `/ui/invite/#token=...`. They create an email/password
+   account, or sign in with the configured OIDC provider and accept using
+   their signed-in identity. Targeted OIDC invites require a verified email.
+3. Acceptance atomically assigns the access plan, creates a personal App and
+   API key, consumes the invitation and records an audit event. All existing
+   Apps and keys of an OIDC invitee receive the invitation's plan as well.
+4. The browser shows the new key once. After saving it, the member continues
+   to Home. Keys use the existing runtime authentication and policy paths.
+
+New passwords require 12–1,024 characters and use scrypt. Existing local-owner
+PBKDF2 passwords still work. Login attempts have persistent per-email and
+per-IP limits. Browser sessions reuse the existing signed cookie and CSRF
+mechanism. No provider token is stored in a browser cookie.
+
+Invitation tokens are derived from random link IDs with a domain-separated
+HMAC of the persistent browser signing key. Only their SHA-256 hashes are
+stored in the database. This lets an authorized owner copy a pending link
+again without storing its bearer token. Changing the signing key prevents
+copying existing links; links already shared retain their original expiry
+and one-use checks. Password-reset tokens are independent random values and
+are shown only when the owner creates the reset link.
+
+## JSON interface
+
+All account responses use `Cache-Control: no-store`. Owner mutations require
+the existing `x-ai-gateway-csrf` token from `/admin/api/session` for browser
+sessions. Bearer credentials follow existing admin authentication. Ordinary
+members and administrators cannot use the owner-only People/invitation APIs.
+
+| Endpoint | Result / request |
+| --- | --- |
+| `GET /auth/api/options` | Available built-in/OIDC methods; signed-in OIDC identity and its CSRF token when present |
+| `POST /auth/api/login` | `{email,password}`; sets browser session, returns Home destination |
+| `GET /auth/api/invite?token=...` | Invitation email, expiry and existing access plan |
+| `POST /auth/api/invite/accept` | `{token,email,name,password}` for built-in; omit password and send session CSRF for OIDC |
+| `POST /auth/api/password-reset` | `{token,password}`; consumes reset link and invalidates earlier sessions |
+| `GET /admin/api/people` | People, assigned plan, last active, builtin/protected/role flags, profiles |
+| `PATCH /admin/api/people/{id}` | `{profile_id?,disabled?}`; updates member policy or availability |
+| `DELETE /admin/api/people/{id}` | Removes member from People and revokes access |
+| `POST /admin/api/people/{id}/reset` | `{expires_in:3600}`; generates a built-in password reset link |
+| `GET /admin/api/invites` | Invitation metadata and profiles, never raw tokens |
+| `POST /admin/api/invites` | `{profile_id,email?,expires_in}`; invitation metadata and private link |
+| `GET /admin/api/invites/{id}/link` | Recover the same pending invitation link; expired/used/revoked links fail |
+| `DELETE /admin/api/invites/{id}` | Revoke pending invitation |
+| `GET /admin/api/operator/sign-in` | Current effective sign-in choices |
+| `PUT /admin/api/operator/sign-in` | `{mode:"built-in"}`, `{mode:"oidc"}` or `{mode:"both"}` |
+
+The sign-in choice lives in `operator_settings.sign_in` in admin.db and
+applies without restart. OIDC must be configured before selecting `oidc` or
+`both` explicitly. The Settings lane can use these APIs without changing the
+account implementation. The default permits built-in sign-in and exposes
+OIDC when its existing configuration is enabled.
+
+## Revocation and ownership
+
+Changing a member's plan updates every owned App and key, including explicit
+key policy overrides. Disabling an account revokes its keys and browser
+sessions and disables its Apps. Enabling it permits fresh sign-in and new
+keys; old keys and sessions remain revoked. Owner/admin accounts are
+protected from member-management actions.
+
+Removal retains a tombstone so an old OIDC identity cannot return and recover
+access. It deletes the password verifier and revokes Apps, keys, reset links
+and sessions while preserving historical attribution. It is not physical
+personal-data erasure. Password reset invalidates earlier browser sessions,
+but does not rotate runtime API keys.
+
+Receipt/job ownership is independent of profile visibility. New media jobs
+carry the authenticated App ID and key hash through job updates. Legacy
+runtime keys also receive trusted key-hash attribution, so new queued jobs
+remain accessible before assets exist. Store ownership filters run before
+list limits, and get/events/cancel/content check the same ownership rule.
+Client and admin views do not expose owner key hashes.
+
+**Upgrade behavior:** historical records without trusted App/key attribution
+are excluded from scoped lists and return 404 on scoped detail access.
+Old client-supplied parent receipt IDs, labels and asset references cannot
+establish who submitted a job. They are not used to manufacture ownership.
+Already-issued complete signed asset URLs retain their existing capability
+semantics and expiry. Explicit auth-disabled gateways retain unscoped access.
+
+## Deployment and limits
+
+No new environment variable, dependency or registry entry is required.
+Account tables are created additively in the existing admin database during
+boot. New job/receipt attribution uses their existing JSON storage. Build
+and deploy the static export with the Python code; use the documented safe
+restart procedure at deployment. This lane does not restart any service.
+Sign-in and invitation responses use the saved instance name from Settings,
+with the same bootstrap defaults as discovery; name changes apply immediately.
+
+Monthly request usage is `null` until a complete monthly measurement source
+exists. The diagnostic receipt store retains 14 days, so the UI says
+“Not measured yet”. Access-plan cards do not fabricate a requests/day limit
+or claim that cloud fallback permission is a paid-provider spending policy.
+Optional passkeys are deferred because no WebAuthn library is in the locked
+dependencies. Links are shared by the owner; email delivery is not added.

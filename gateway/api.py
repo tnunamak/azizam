@@ -64,6 +64,7 @@ MediaJobEventLister = Callable[..., list[dict[str, Any]]]
 MediaJobEventAppender = Callable[..., int]
 MediaJobCanceler = Callable[..., dict[str, Any] | None]
 MediaJobSubmitter = Callable[..., Any]
+RecordAuthorizer = Callable[[Request, str, Mapping[str, Any]], bool]
 
 DEFAULT_AUDIENCE = "client"
 
@@ -149,12 +150,16 @@ def _build_receipt_providers(
         audience: str,
         limit: int,
         app_profile: str | None = None,
+        app_ids: list[str] | None = None,
+        owner_key_hashes: list[str] | None = None,
         since_s: int | None = None,
     ) -> list[dict[str, Any]]:
         return _receipt_store.recent(
             limit=limit,
             audience=audience,
             app_profile=app_profile,
+            app_ids=app_ids,
+            owner_key_hashes=owner_key_hashes,
             since_s=since_s,
             path=store_path,
         )
@@ -213,6 +218,8 @@ def _build_media_job_providers(
         audience: str,
         limit: int,
         app_profile: str | None = None,
+        app_ids: list[str] | None = None,
+        owner_key_hashes: list[str] | None = None,
         status: str | None = None,
         since_s: int | None = None,
     ) -> list[dict[str, Any]]:
@@ -220,6 +227,8 @@ def _build_media_job_providers(
             limit=limit,
             audience=audience,
             app_profile=app_profile,
+            app_ids=app_ids,
+            owner_key_hashes=owner_key_hashes,
             status=status,
             since_s=since_s,
             path=store_path,
@@ -288,6 +297,8 @@ def create_gateway_router(
     media_job_canceler: MediaJobCanceler | None = None,
     media_job_submitter: MediaJobSubmitter | None = None,
     media_job_store_path: str | Path | None = None,
+    record_authorizer: RecordAuthorizer | None = None,
+    record_scope_provider: Callable[[Request], dict[str, Any]] | None = None,
     aliases_provider: Callable[[str | None], dict[str, Any]] | None = None,
     alias_resolver: Callable[[str, str], dict[str, Any]] | None = None,
     prefix: str = "/gateway/v1",
@@ -309,8 +320,13 @@ def create_gateway_router(
       provided, the receipt endpoints return empty lists / protocol-shaped
       404s.
 
-    Callers wiring real auth should pass a resolver that consults the
-    authenticated profile and policy decision.
+    Callers wiring real auth must also pass ``record_authorizer``. Audience
+    filtering controls field disclosure, not ownership. The authorizer sees
+    internal records and the request, and must fail closed for unattributed
+    records. It is invoked before reads and mutations of receipts/media jobs.
+    ``record_scope_provider`` passes trusted App/key allow-lists to list
+    providers so ownership is applied before their limit. Custom list providers
+    must accept these scope fields when this callback is configured.
     """
     resolve_audience = audience_resolver or _default_audience_resolver
     receipt_getter, receipt_lister = _build_receipt_providers(
@@ -336,6 +352,48 @@ def create_gateway_router(
     )
 
     router = APIRouter(prefix=prefix, tags=["gateway-discovery"])
+
+    def scoped_record(
+        getter: ReceiptGetter | None,
+        record_id: str,
+        request: Request,
+        kind: str,
+        audience: str,
+    ) -> dict[str, Any] | None:
+        if getter is None:
+            return None
+        if record_authorizer is not None:
+            internal = getter(record_id, audience="internal")
+            if internal is None or not record_authorizer(request, kind, internal):
+                return None
+        return getter(record_id, audience=audience)
+
+    def scoped_rows(
+        rows: list[dict[str, Any]],
+        getter: ReceiptGetter | None,
+        request: Request,
+        kind: str,
+        audience: str,
+    ) -> list[dict[str, Any]]:
+        if record_authorizer is None:
+            return rows
+        id_field = "request_id" if kind == "receipt" else "job_id"
+        allowed: list[dict[str, Any]] = []
+        for row in rows:
+            if not record_authorizer(request, kind, row):
+                continue
+            # Re-read at the caller's audience: ownership needs internal
+            # attribution, which must never appear in a client response.
+            visible = scoped_record(getter, str(row[id_field]), request, kind, audience)
+            if visible is not None:
+                allowed.append(visible)
+        return allowed
+
+    def job_not_found(job_id: str) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=_error_payload("media_job_not_found", f"media job {job_id!r} not found"),
+        )
 
     @router.get("/workflows")
     def list_workflows(request: Request) -> JSONResponse:
@@ -436,12 +494,14 @@ def create_gateway_router(
             else:
                 rows = list(
                     receipt_lister(
-                        audience=audience,
+                        audience="internal" if record_authorizer else audience,
                         limit=limit,
                         app_profile=app_profile,
                         since_s=since_s,
+                        **(record_scope_provider(request) if record_scope_provider else {}),
                     )
                 )
+                rows = scoped_rows(rows, receipt_getter, request, "receipt", audience)
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
         return JSONResponse(
@@ -457,11 +517,7 @@ def create_gateway_router(
     def get_receipt(request_id: str, request: Request) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
         try:
-            row = (
-                None
-                if receipt_getter is None
-                else receipt_getter(request_id, audience=audience)
-            )
+            row = scoped_record(receipt_getter, request_id, request, "receipt", audience)
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
         if row is None:
@@ -515,6 +571,14 @@ def create_gateway_router(
                 return _internal_error(audience, exc)
             if submitted is not None:
                 return submitted
+        if record_authorizer is not None and not record_authorizer(request, "media_job", {}):
+            # The executable submitter derives ownership from authentication.
+            # A raw store write would let a scoped caller forge attribution.
+            # Explicit auth-disabled operation retains its unscoped store API.
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=_error_payload("unsupported_media_job", "Media job intent is not supported"),
+            )
         if media_job_creator is None:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -562,13 +626,15 @@ def create_gateway_router(
             else:
                 rows = list(
                     media_job_lister(
-                        audience=audience,
+                        audience="internal" if record_authorizer else audience,
                         limit=limit,
                         app_profile=app_profile,
                         status=job_status,
                         since_s=since_s,
+                        **(record_scope_provider(request) if record_scope_provider else {}),
                     )
                 )
+                rows = scoped_rows(rows, media_job_getter, request, "media_job", audience)
         except ValueError as exc:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -593,11 +659,7 @@ def create_gateway_router(
     def get_media_job(job_id: str, request: Request) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
         try:
-            row = (
-                None
-                if media_job_getter is None
-                else media_job_getter(job_id, audience=audience)
-            )
+            row = scoped_record(media_job_getter, job_id, request, "media_job", audience)
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
         if row is None:
@@ -624,11 +686,7 @@ def create_gateway_router(
     ) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
         try:
-            row = (
-                None
-                if media_job_getter is None
-                else media_job_getter(job_id, audience=audience)
-            )
+            row = scoped_record(media_job_getter, job_id, request, "media_job", audience)
             if row is None:
                 return JSONResponse(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -703,6 +761,10 @@ def create_gateway_router(
                 ),
             )
         try:
+            if record_authorizer is not None and scoped_record(
+                media_job_getter, job_id, request, "media_job", audience
+            ) is None:
+                return job_not_found(job_id)
             event_id = media_job_event_appender(
                 job_id, event_type, event_payload, audience=audience
             )
@@ -757,6 +819,10 @@ def create_gateway_router(
                 )
             reason = raw_reason
         try:
+            if record_authorizer is not None and scoped_record(
+                media_job_getter, job_id, request, "media_job", audience
+            ) is None:
+                return job_not_found(job_id)
             updated = media_job_canceler(job_id, audience=audience, reason=reason)
         except ValueError as exc:
             return JSONResponse(

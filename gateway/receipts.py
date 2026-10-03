@@ -184,6 +184,7 @@ class RouteReceipt:
     updated_at_ms: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     _started_at: float = field(default_factory=perf_counter, repr=False)
+    owner_key_hash: str | None = None
 
     def accept_input(self, name: str) -> None:
         if name not in self.accepted_inputs:
@@ -266,6 +267,7 @@ class RouteReceipt:
             "intent": self.intent,
             "app_profile": self.app_profile,
             "app_id": self.app_id,
+            "owner_key_hash": self.owner_key_hash,
             "api_key_name": self.api_key_name,
             "requested_model": self.requested_model,
             "resolved_model": self.resolved_model,
@@ -298,6 +300,7 @@ class RouteReceipt:
             return data
         if audience == "admin":
             data = dict(data)
+            data.pop("owner_key_hash", None)
             metadata = data.pop("metadata", None)
             data.update(sanitize_admin_metadata(metadata))
             return data

@@ -521,6 +521,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "job_id": "job_runtime_policy",
             "intent": "image.generate",
             "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "owner_key_hash": proxy.hash_api_key(RAW_KEY),
         }
         payload = {"created": 123, "data": [{"url": "https://example.test/i.png"}]}
 
@@ -550,6 +551,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "job_id": "job_audio_policy",
             "intent": "music.generate",
             "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "owner_key_hash": proxy.hash_api_key(RAW_KEY),
             "assets": [{
                 "asset_id": "aud_" + "a" * 64,
                 "media_type": "audio/mpeg",
@@ -580,6 +582,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "job_id": "job_audio_policy",
             "intent": "music.generate",
             "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "owner_key_hash": proxy.hash_api_key(RAW_KEY),
             "assets": [{"asset_id": "aud_" + "a" * 64}],
         }
 

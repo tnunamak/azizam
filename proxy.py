@@ -136,7 +136,6 @@ from gateway.admin_render import render_admin_dashboard
 from gateway.local_owner import (
     hash_password as local_hash_password,
     load_or_create_signing_key as local_load_signing_key,
-    verify_password as local_verify_password,
 )
 from gateway.setup_render import render_setup_page
 from gateway.admin_runtime import (
@@ -1884,6 +1883,9 @@ def _admin_role_for_user_id(user_id: str) -> str:
 
 def _default_profile_id_for_session(session) -> str | None:
     user_id = str(getattr(session, "subject", "") or "")
+    account_profile = accounts.profile_for_user(user_id, path=ADMIN_STORE.path)
+    if account_profile:
+        return account_profile
     oidc_access = _stored_oidc_access_names_for_user(user_id)
     return _default_profile_id_for_user(
         email=str(getattr(session, "email", "") or ""),
@@ -1902,6 +1904,9 @@ def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
     user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
     if user is None or not is_human_user_record(user):
         return None
+    account_profile = accounts.profile_for_user(owner_user_id, path=ADMIN_STORE.path)
+    if account_profile:
+        return account_profile
     oidc_access = _stored_oidc_access_names_for_user(owner_user_id)
     return _default_profile_id_for_user(
         email=str(user.get("email") or ""),
@@ -4700,6 +4705,7 @@ def _stt_receipt(
         backend=service_id,
         app_profile=profile.id,
         app_id=auth_context.identity.app_id if auth_context.identity else None,
+        owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         visibility=profile.status_visibility.level,
     )
@@ -13230,6 +13236,24 @@ def _gateway_audience_resolver(request: Request) -> str:
     return discovery_audience_for_profile(_profile_for_auth_context(auth_context))
 
 
+def _gateway_record_scope(request: Request) -> dict[str, Any]:
+    identity = _auth_context_from_scope(request).identity
+    if not AUTH_ENABLED and identity is None:
+        return {}
+    return {"app_ids": [identity.app_id] if identity and identity.app_id else [],
+            "owner_key_hashes": [identity.key_hash] if identity else []}
+
+
+def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str, Any]) -> bool:
+    from gateway.record_ownership import owns_record
+    auth_context = _auth_context_from_scope(request)
+    identity = auth_context.identity
+    return owns_record(
+        kind, record, app_id=identity.app_id if identity else None, key_hash=identity.key_hash if identity else None,
+        unrestricted=not AUTH_ENABLED and identity is None,
+    )
+
+
 async def _gateway_media_job_submitter(
     *,
     request: Request,
@@ -13432,6 +13456,8 @@ app.include_router(
         asset_url_ttl_s=IMAGE_SIGNED_URL_TTL,
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
+        record_authorizer=_gateway_record_authorizer,
+        record_scope_provider=_gateway_record_scope,
     )
 )
 
@@ -13699,6 +13725,8 @@ async def _identity_submit_job(
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         metadata={"mode": "async_identity", "attempts": req.attempts, "photos": len(req.photos)},
     )
+    job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
+    job.app_id = auth_context.identity.app_id if auth_context.identity else None
     media_jobs.create(job, path=media_jobs.DB_PATH)
     shim = _identity_request_shim(request)
     task = asyncio.create_task(_run_identity_job(job.job_id, shim, auth_context, req, response_format))
@@ -13859,8 +13887,12 @@ def _resolved_admin_oidc_config() -> tuple[Any, Mapping[str, Any]]:
 
 
 def _effective_admin_oidc_config():
-    """Return the parsed effective OIDC config for runtime authentication."""
-    return _resolved_admin_oidc_config()[0]
+    """Return OIDC configuration with the owner's sign-in choice applied."""
+    cfg = _resolved_admin_oidc_config()[0]
+    setting = admin_store.get_operator_setting("sign_in", path=ADMIN_STORE.path)
+    if setting and setting["value"].get("mode") == "built-in":
+        return replace(cfg, enabled=False)
+    return cfg
 
 
 def _merged_admin_oidc_config_candidate(db_value: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -13979,6 +14011,8 @@ def _safe_admin_return_to(value: str | None, *, default: str = "/admin") -> str:
         return value
     if value.startswith("/admin"):
         return value
+    if value in {"/ui/", "/ui/invite/", "/ui/sign-in/"}:
+        return value
     if value == "/ui/admin" or value.startswith("/ui/admin/"):
         return value
     return default
@@ -14041,10 +14075,13 @@ def _oidc_session_from_request(request: Request):
     if not raw:
         return None
     try:
-        return decode_session_cookie(
+        session = decode_session_cookie(
             raw,
             signing_key=signing_key,
         )
+        if not accounts.session_allowed(session.subject, session.session_id, path=ADMIN_STORE.path):
+            return None
+        return session
     except SessionError:
         return None
 
@@ -14190,6 +14227,46 @@ app.include_router(build_setup_api_router(lambda request: {
     "oidc_enabled": _effective_admin_oidc_config().enabled,
     "can_recover": bool(_browser_admin_session_signing_key()),
 }))
+
+
+from gateway import accounts
+from gateway.accounts_api import create_account_router
+
+accounts.initialize(ADMIN_STORE.path)
+app.include_router(create_account_router(
+    path_provider=lambda: ADMIN_STORE.path,
+    auth=ADMIN_AUTH,
+    session_reader=lambda request: _oidc_session_from_request(request),
+    cookie_provider=_browser_admin_cookie_config,
+    signing_key_provider=_browser_admin_session_signing_key,
+    oidc_provider=lambda: {"enabled": _resolved_admin_oidc_config()[0].enabled},
+    instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
+))
+
+
+@app.middleware("http")
+async def _account_session_revocation(request: Request, call_next):
+    # Login routes must accept a revoked cookie so the person can sign in again.
+    public_auth = (request.url.path.startswith("/auth/api/")
+                   or request.url.path in {"/admin/login", "/admin/oidc/callback", "/me/logout", "/admin/logout"}
+                   or request.url.path.startswith("/ui/sign-in")
+                   or request.url.path.startswith("/ui/invite"))
+    if not public_auth:
+        key = _browser_admin_session_signing_key()
+        cookie = _browser_admin_cookie_config()
+        raw = request.cookies.get(cookie.name)
+        if key and raw:
+            try:
+                session = decode_session_cookie(raw, signing_key=key)
+            except SessionError:
+                session = None
+            if session and not accounts.session_allowed(session.subject, session.session_id, path=ADMIN_STORE.path):
+                response = JSONResponse({"error": {"code": "session_revoked", "message": "Sign in again to continue."}}, status_code=401)
+                if "/api/" not in request.url.path and not request.url.path.startswith("/gateway/"):
+                    response = RedirectResponse("/ui/sign-in/", status_code=303)
+                response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)
+                return response
+    return await call_next(request)
 
 
 @app.get("/me/login", include_in_schema=False)
@@ -15869,6 +15946,8 @@ def _issue_browser_admin_session(
         role=role,
         cookie=cookie,
     )
+    accounts.initialize(ADMIN_STORE.path)
+    accounts.register_session(user_id, session.session_id, int(session.expires_at), path=ADMIN_STORE.path)
     response = RedirectResponse(redirect_to, status_code=303)
     response.set_cookie(
         cookie.name,
@@ -16018,6 +16097,14 @@ async def setup_local_login(request: Request):
             status_code=400,
         )
 
+    from gateway.accounts_api import signin_options
+    if not signin_options(ADMIN_STORE.path, {"enabled": _resolved_admin_oidc_config()[0].enabled})["built_in"]:
+        return JSONResponse({"error": {"code": "builtin_disabled", "message": "Use the identity provider to sign in."}}, status_code=403)
+    try:
+        accounts.initialize(ADMIN_STORE.path)
+        accounts.throttle(request.client.host if request.client else "unknown", email, path=ADMIN_STORE.path)
+    except accounts.AccountError as exc:
+        return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status)
     user = admin_store.find_user_by_email(
         email, issuer=_LOCAL_OWNER_ISSUER, path=ADMIN_STORE.path
     )
@@ -16031,7 +16118,7 @@ async def setup_local_login(request: Request):
     verifier_row = admin_store.get_local_password_verifier(
         str(user["id"]), path=ADMIN_STORE.path
     )
-    if verifier_row is None or not local_verify_password(
+    if verifier_row is None or not accounts.verify_password(
         password, str(verifier_row.get("verifier") or "")
     ):
         return await _setup_page_response(
@@ -16249,6 +16336,10 @@ async def admin_oidc_callback(request: Request):
             display_name=str(claims.get("name") or claims.get("email") or ""),
             path=ADMIN_STORE.path,
         )
+        accounts.record_oidc_verification(str(user["id"]), claims.get("email_verified") is True, path=ADMIN_STORE.path)
+        account_state = accounts.access(str(user["id"]), path=ADMIN_STORE.path)
+        if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
+            return JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403)
         oidc_access_names = access_names_from_oidc_claims(
             claims,
             client_id=cfg.client_id,
@@ -16276,7 +16367,7 @@ async def admin_oidc_callback(request: Request):
             )
         if _user_self_service_enabled() and _auto_create_personal_app_enabled():
             label = user.get("email") or user.get("display_name") or user["id"]
-            default_profile_id = _default_profile_id_for_user(
+            default_profile_id = accounts.profile_for_user(str(user["id"]), path=ADMIN_STORE.path) or _default_profile_id_for_user(
                 email=str(user.get("email") or ""),
                 role=role,
                 oidc_groups=oidc_access_names["oidc_group"],
@@ -16311,6 +16402,7 @@ async def admin_oidc_callback(request: Request):
             role=role,
             cookie=cfg.cookie,
         )
+        accounts.register_session(str(user["id"]), session.session_id, int(session.expires_at), path=ADMIN_STORE.path)
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         response.set_cookie(
             cfg.cookie.name,
@@ -17218,6 +17310,7 @@ def start_image_route_receipt(
         backend="comfyui",
         api_key_name=key_name,
         app_id=app_id,
+        owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
         app_profile=profile.id,
         visibility=profile.status_visibility.level,
     )
@@ -19948,6 +20041,8 @@ async def _submit_audio_media_job(
             request=request,
             auth_context=auth_context,
         )
+        job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
+        job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
         _delete_audio_media_job_payload(job.job_id)
@@ -20487,6 +20582,8 @@ async def _submit_video_media_job(
             request=request,
             auth_context=auth_context,
         )
+        job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
+        job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
         _delete_video_media_job_payload(job.job_id)
@@ -20711,6 +20808,8 @@ async def gateway_image_generations_media_job(request: Request):
             request=request,
             auth_context=auth_context,
         )
+        job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
+        job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
         _delete_image_media_job_payload(job.job_id)
@@ -20767,6 +20866,8 @@ async def gateway_media_job_content(job_id: str, request: Request):
     if preflight_response is not None:
         return preflight_response
     job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+    if job is not None and not _gateway_record_authorizer(request, "media_job", job):
+        return JSONResponse({"error": {"code": "media_job_not_found", "message": "Media job not found."}}, status_code=404)
     # Signed URLs minted below carry the delivery mode: the GET's own query
     # override, else the choice made when the job was submitted, else the
     # caller's profile default.
@@ -24331,6 +24432,7 @@ async def create_response(request: Request):
             intent="chat.responses",
             app_profile=profile.id,
             app_id=auth_context.identity.app_id if auth_context.identity else None,
+            owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
             api_key_name=auth_context.identity.name if auth_context.identity else None,
             requested_model=(str(req_body["model"]) if isinstance(req_body.get("model"), str) else None),
             resolved_model=(str(cc_body["model"]) if isinstance(cc_body.get("model"), str) else None),
@@ -25008,6 +25110,7 @@ def _start_litellm_route_receipt(
         requested_model=requested_model,
         app_profile=profile.id,
         app_id=auth_context.identity.app_id if auth_context.identity else None,
+        owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         visibility=profile.status_visibility.level,
     )
@@ -25332,6 +25435,7 @@ async def _forward_current_loaded_openai_request(
         parent_request_id=request_id if is_internal_hop else None,
         app_profile=None if is_internal_hop else profile.id,
         app_id=None if is_internal_hop or auth_context.identity is None else auth_context.identity.app_id,
+        owner_key_hash=None if is_internal_hop or auth_context.identity is None else auth_context.identity.key_hash,
         api_key_name=None if is_internal_hop or auth_context.identity is None else auth_context.identity.name,
         visibility="internal" if is_internal_hop else profile.status_visibility.level,
         stream=bool(body_for_backend.get("stream")),
@@ -26536,6 +26640,7 @@ def _native_passthrough_receipt(
     if auth_context.identity is not None:
         receipt.app_profile = auth_context.identity.profile.id
         receipt.app_id = auth_context.identity.app_id
+        receipt.owner_key_hash = auth_context.identity.key_hash
         receipt.api_key_name = auth_context.identity.name
         receipt.visibility = auth_context.identity.profile.status_visibility.level
     receipt.metadata.update({
@@ -26910,6 +27015,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             backend=target_service,
             app_profile=(auth_context.identity.profile.id if auth_context.identity is not None else None),
             app_id=auth_context.identity.app_id if auth_context.identity is not None else None,
+            owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
             api_key_name=auth_context.identity.name if auth_context.identity is not None else None,
             requested_model=(str(_native_shape_body.get("model")) if _native_shape_body and _native_shape_body.get("model") else None),
             visibility=(auth_context.identity.profile.status_visibility.level if auth_context.identity is not None else "internal"),
