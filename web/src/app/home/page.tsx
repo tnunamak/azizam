@@ -863,7 +863,11 @@ export default function HomePage() {
           description="Get your connection settings and connect the apps you already use."
           action={
             <Button asChild>
-              <Link href="/sign-in/">Sign in</Link>
+              <a
+                href={`/ui/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/ui/home/" : window.location.pathname + window.location.search)}`}
+              >
+                Sign in
+              </a>
             </Button>
           }
         />

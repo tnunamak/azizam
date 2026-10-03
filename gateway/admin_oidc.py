@@ -45,9 +45,9 @@ import hmac
 import json
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, MutableMapping, Protocol
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
 
 __all__ = [
     "AdminRole",
@@ -76,6 +76,8 @@ __all__ = [
     "session_from_claims",
     "validate_oidc_stored_override",
     "validate_id_token_claims",
+    "safe_browser_return_to",
+    "oidc_config_for_public_base",
 ]
 
 
@@ -94,6 +96,35 @@ class IDTokenClaimsError(ValueError):
 
 class SessionError(ValueError):
     """Raised when a session cookie is malformed, tampered with, or expired."""
+
+
+def safe_browser_return_to(value: str | None, *, default: str = "/ui/home/") -> str:
+    """Keep product return destinations local, including their query and fragment."""
+    if not value or not value.startswith("/"):
+        return default
+    decoded = unquote(value)
+    if decoded.startswith("//") or "\\" in decoded or any(ord(c) < 32 or ord(c) == 127 for c in decoded):
+        return default
+    try:
+        target = urlsplit(value)
+    except ValueError:
+        return default
+    if target.netloc or target.scheme:
+        return default
+    if target.path in {"/", "/me", "/status", "/status/raw", "/setup", "/admin", "/ui"}:
+        return value
+    if target.path.startswith(("/ui/", "/admin/")):
+        return value
+    return default
+
+
+def oidc_config_for_public_base(config: OIDCConfig, public_base_url: str | None) -> OIDCConfig:
+    """Use the configured public origin while preserving the registered callback path."""
+    if not public_base_url:
+        return config
+    origin = urlsplit(public_base_url)
+    callback = urlsplit(config.redirect_uri)
+    return replace(config, redirect_uri=urlunsplit((origin.scheme, origin.netloc, callback.path, callback.query, "")))
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +541,7 @@ class StateRecord:
     pkce_verifier: str
     created_at: float
     return_to: str = "/"
+    redirect_uri: str = ""
 
 
 def record_state(
@@ -518,6 +550,7 @@ def record_state(
     nonce: str,
     pkce_verifier: str,
     return_to: str = "/",
+    redirect_uri: str = "",
     state: str | None = None,
     now: float | None = None,
 ) -> StateRecord:
@@ -528,6 +561,7 @@ def record_state(
         pkce_verifier=pkce_verifier,
         created_at=now if now is not None else time.time(),
         return_to=return_to,
+        redirect_uri=redirect_uri,
     )
     store[record.state] = record
     return record

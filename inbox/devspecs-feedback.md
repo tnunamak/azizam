@@ -59,3 +59,8 @@
 
 - Useful: `ds tldr` and `ds recent` returned workflow guidance and the merged shell/account/settings boundaries.
 - Rough edge: a three-slice task creation returned no task ID or progress during a minute of waiting. After I terminated that process, it reported “task index preflight failed before repository mutation” and “Repository files written: no.” No shared index state was removed; integration continued from the brief and repository evidence.
+
+## 2026-10-03 — browser cutover lane
+
+- Useful: `ds tldr` and `ds recent` returned workflow guidance and the gateway integration boundaries.
+- Rough edge: three-slice task creation returned no task ID or progress after several minutes. I canceled it; it reported “task index preflight failed before repository mutation” and “Repository files written: no.” No shared index state was changed. Continued from the complete brief and source evidence.

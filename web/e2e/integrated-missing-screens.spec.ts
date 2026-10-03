@@ -1,6 +1,5 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { writeFile } from "node:fs/promises";
 
 const themes = ["light", "dark"] as const;
 const widths = [1440, 390] as const;
@@ -30,7 +29,7 @@ async function waitSettled(page: Page) {
   await expect(page.getByLabel(/Loading/i)).toHaveCount(0);
 }
 
-async function inspect(page: Page, file: string, legacy = false) {
+async function inspect(page: Page, file: string) {
   await waitSettled(page);
   expect(
     await page.evaluate(
@@ -55,51 +54,7 @@ async function inspect(page: Page, file: string, legacy = false) {
         failureSummary,
       })),
     }));
-  if (legacy) {
-    // These retained pages are outside the redesigned UI wave. Capture their
-    // existing accessibility defects for handoff without changing legacy UI.
-    await writeFile(
-      `test-results/screens/${file}.a11y.json`,
-      JSON.stringify(violations, null, 2),
-    );
-  } else {
-    expect(violations).toEqual([]);
-  }
-}
-
-function emptyAdminValue(value: unknown): unknown {
-  if (Array.isArray(value)) return [];
-  if (!value || typeof value !== "object") return value;
-  const object = value as Record<string, unknown>;
-  const next: Record<string, unknown> = {};
-  for (const [key, childValue] of Object.entries(object)) {
-    if (
-      [
-        "apps",
-        "credentials",
-        "keys",
-        "records",
-        "profiles",
-        "users",
-        "services",
-        "service_records",
-        "mappings",
-        "people",
-        "invites",
-        "providers",
-      ].includes(key)
-    ) {
-      next[key] = [];
-    } else if (
-      ["app", "profile", "user", "service"].includes(key) &&
-      childValue
-    ) {
-      next[key] = {};
-    } else {
-      next[key] = emptyAdminValue(childValue);
-    }
-  }
-  return next;
+  expect(violations).toEqual([]);
 }
 
 async function mockApps(page: Page, state: "empty" | "error") {
@@ -153,25 +108,6 @@ async function mockProviders(page: Page, state: "seeded" | "empty" | "error") {
   });
 }
 
-async function mockAdminCompatibility(page: Page, state: "empty" | "error") {
-  await page.route("**/admin/api/**", async (route: Route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path.endsWith("/session")) return route.continue();
-    if (state === "error") {
-      return route.fulfill({
-        status: 503,
-        json: { error: { message: "Unavailable for this test" } },
-      });
-    }
-    const response = await route.fetch();
-    const contentType = response.headers()["content-type"] ?? "";
-    if (!contentType.includes("application/json"))
-      return route.fulfill({ response });
-    const actual = await response.json();
-    return route.fulfill({ response, json: emptyAdminValue(actual) });
-  });
-}
-
 for (const theme of themes) {
   for (const width of widths) {
     for (const state of states) {
@@ -219,39 +155,6 @@ for (const theme of themes) {
           ).toBeVisible();
         }
         await inspect(page, `providers-${state}-${theme}-${width}`);
-      });
-
-      for (const [name, route] of [
-        ["admin-overview", "/ui/admin/"],
-        ["admin-apps", "/ui/admin/apps/"],
-        ["admin-audit", "/ui/admin/audit/"],
-        ["admin-profiles", "/ui/admin/profiles/"],
-        ["admin-services", "/ui/admin/services/"],
-        ["admin-settings", "/ui/admin/settings/"],
-        ["admin-status", "/ui/admin/status/"],
-        ["admin-users", "/ui/admin/users/"],
-      ] as const) {
-        test(`${name} compatibility screenshot ${state}: ${theme} ${width}`, async ({
-          page,
-        }) => {
-          await setViewport(page, theme, width);
-          if (state !== "seeded") await mockAdminCompatibility(page, state);
-          await page.goto(route);
-          await inspect(page, `${name}-${state}-${theme}-${width}`, true);
-        });
-      }
-    }
-
-    for (const [name, route] of [
-      ["admin-profiles-p1v-fixture", "/ui/admin/profiles/p1v-fixture/"],
-      ["admin-status-p1v-fixture", "/ui/admin/status/p1v-fixture/"],
-    ] as const) {
-      test(`${name} static fixture screenshot n-a: ${theme} ${width}`, async ({
-        page,
-      }) => {
-        await setViewport(page, theme, width);
-        await page.goto(route);
-        await inspect(page, `${name}-n-a-${theme}-${width}`, true);
       });
     }
   }

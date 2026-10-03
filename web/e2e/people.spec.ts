@@ -108,7 +108,7 @@ async function mock(page: Page, state: State) {
           : { profiles: state === "empty" ? [] : [plan] },
     }),
   );
-  await page.route("**/auth/api/options", (route) =>
+  await page.route("**/auth/api/options*", (route) =>
     route.fulfill({
       status: state === "error" ? 503 : 200,
       json:
@@ -495,7 +495,7 @@ test("people lane OIDC invitation resumes its private token and accepts with ses
   await page.addInitScript(() =>
     sessionStorage.setItem("gateway-invitation", "oidc-resume-token"),
   );
-  await page.route("**/auth/api/options", (route) =>
+  await page.route("**/auth/api/options*", (route) =>
     route.fulfill({
       json: {
         ...signIn,

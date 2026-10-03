@@ -11,19 +11,27 @@ import { PRODUCT_NAME } from "@/lib/product";
 import { authFetch, continueTo, type SignInOptions } from "./auth-api";
 
 export default function SignInPage() {
+  const [returnTo, setReturnTo] = useState("/ui/home/");
   const {
     data: optionsData,
     isPending: optionsIsPending,
     isError: optionsIsError,
     refetch: optionsRefetch,
   } = useQuery({
-    queryKey: ["auth", "options"],
-    queryFn: () => authFetch<SignInOptions>("/auth/api/options"),
+    queryKey: ["auth", "options", returnTo],
+    queryFn: () =>
+      authFetch<SignInOptions>(
+        `/auth/api/options?return_to=${encodeURIComponent(returnTo)}`,
+      ),
   });
   const [reset, setReset] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   useEffect(() => {
+    setReturnTo(
+      new URLSearchParams(window.location.search).get("return_to") ||
+        "/ui/home/",
+    );
     setReset(
       new URLSearchParams(window.location.hash.slice(1)).get("reset") || "",
     );
@@ -35,7 +43,11 @@ export default function SignInPage() {
             token: reset,
             password,
           })
-        : authFetch<{ next: string }>("/auth/api/login", { email, password }),
+        : authFetch<{ next: string }>("/auth/api/login", {
+            email,
+            password,
+            return_to: returnTo,
+          }),
     onSuccess: (data) => {
       setPassword("");
       setReset("");

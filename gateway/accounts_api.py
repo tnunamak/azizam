@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hmac
 from typing import Callable, Literal
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.routing import APIRoute
@@ -13,7 +13,7 @@ from starlette.responses import JSONResponse
 from gateway import accounts, admin_store
 from gateway.settings_api import instance_settings
 from gateway.admin_api import _require_admin
-from gateway.admin_oidc import encode_session_cookie, session_from_claims, csrf_token_for_session
+from gateway.admin_oidc import encode_session_cookie, session_from_claims, csrf_token_for_session, safe_browser_return_to
 
 
 class _AccountRoute(APIRoute):
@@ -40,6 +40,7 @@ class _Body(BaseModel):
 class Login(_Body):
     email: str
     password: str
+    return_to: str | None = None
 
 
 class Accept(_Body):
@@ -127,7 +128,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
     @router.get("/auth/api/options")
     def get_options(request: Request):
         result = options()
-        result["oidc_url"] = "/admin/login?return_to=/ui/"
+        result["oidc_url"] = "/admin/login?" + urlencode({"return_to": safe_browser_return_to(request.query_params.get("return_to"))})
         session = session_reader(request)
         if session:
             user = admin_store.get_user(session.subject, path=path_provider())
@@ -142,7 +143,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if not options()["built_in"]:
             raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
         user = accounts.login(body.email, body.password, request.client.host if request.client else "unknown", path=path_provider())
-        return issue(user, {"next": "/ui/"})
+        return issue(user, {"next": safe_browser_return_to(body.return_to)})
 
     @router.get("/auth/api/invite")
     def inspect(token: str = ""):

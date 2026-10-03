@@ -42,12 +42,8 @@ def assert_authenticated_admin_dashboard(
             proxy, "WEB_UI_MOUNTED", web_ui_mounted
         ):
             dashboard = client.get("/admin", follow_redirects=False)
-            if web_ui_mounted:
-                test_case.assertEqual(dashboard.status_code, 302, dashboard.text)
-                test_case.assertEqual(dashboard.headers["location"], "/ui/admin/")
-            else:
-                test_case.assertEqual(dashboard.status_code, 200, dashboard.text)
-                test_case.assertIn("AI Gateway Admin", dashboard.text)
+            test_case.assertEqual(dashboard.status_code, 302, dashboard.text)
+            test_case.assertEqual(dashboard.headers["location"], "/ui/home/")
 
 
 class ProxyAdminIntegrationTests(unittest.TestCase):
@@ -2311,13 +2307,13 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 303, response.text)
         self.assertIn(proxy.ADMIN_AUTH.cookie.name, response.headers.get("set-cookie", ""))
-        self.assertEqual(response.headers["location"], "/ui/admin/")
+        self.assertEqual(response.headers["location"], "/ui/home/")
         self.assertEqual(admin_store.list_users(path=self.db), [])
         # A service-account recovery session landing on /setup is bounced to
         # the admin console, not to a fake user portal.
         bounced = self.client.get("/setup", follow_redirects=False)
         self.assertEqual(bounced.status_code, 303)
-        self.assertEqual(bounced.headers["location"], "/ui/admin/")
+        self.assertEqual(bounced.headers["location"], "/ui/home/")
         # The operator console is still reachable deliberately for recovery.
         console = self.client.get("/setup?operator=1")
         self.assertEqual(console.status_code, 200, console.text)
@@ -2327,11 +2323,11 @@ class SetupRouteIntegrationTests(unittest.TestCase):
     def test_admin_section_aliases_require_auth_and_redirect_signed_in_admin(self) -> None:
         unauth = self.client.get("/admin/services", follow_redirects=False)
         self.assertEqual(unauth.status_code, 302, unauth.text)
-        self.assertEqual(unauth.headers["location"], "/setup")
+        self.assertEqual(unauth.headers["location"], "/login?return_to=%2Fadmin%2Fservices")
 
         direct_ui = self.client.get("/ui/admin/services/", follow_redirects=False)
         self.assertEqual(direct_ui.status_code, 302, direct_ui.text)
-        self.assertEqual(direct_ui.headers["location"], "/setup")
+        self.assertEqual(direct_ui.headers["location"], "/login?return_to=%2Fui%2Fadmin%2Fservices%2F")
 
         admin_key, _, _ = create_admin_service_account_key(
             "section-owner",
@@ -2356,27 +2352,27 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             with self.subTest(section=section):
                 response = self.client.get(f"/admin/{section}", follow_redirects=False)
                 self.assertEqual(response.status_code, 302, response.text)
-                self.assertEqual(response.headers["location"], f"/ui/admin/{section}/")
+                self.assertEqual(response.headers["location"], proxy.admin_destination(f"/admin/{section}"))
         for path, expected in (
             (
                 "/admin/status?service=svc_123&source=attention",
-                "/ui/admin/status/?service=svc_123&source=attention",
+                "/ui/status/?service=svc_123&source=attention",
             ),
             (
                 "/admin/status/?service=svc_123&source=attention",
-                "/ui/admin/status/?service=svc_123&source=attention",
+                "/ui/status/?service=svc_123&source=attention",
             ),
             (
                 "/admin/services?service=tts",
-                "/ui/admin/services/?service=tts",
+                "/ui/engines/?service=tts",
             ),
             (
                 "/admin/apps?app=app_123",
-                "/ui/admin/apps/?app=app_123",
+                "/ui/apps/?app=app_123",
             ),
             (
                 "/admin/audit?event=evt_123",
-                "/ui/admin/audit/?event=evt_123",
+                "/ui/activity/?event=evt_123",
             ),
         ):
             with self.subTest(path=path):
