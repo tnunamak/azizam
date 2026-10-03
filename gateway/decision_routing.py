@@ -191,8 +191,9 @@ class DecisionRuntime:
             except httpx.HTTPError:
                 fallbacks.append(f"{service_id}:unavailable")
                 continue
-            if response.status_code in (503, 529):
-                fallbacks.append(f"{service_id}:overloaded")
+            if response.status_code in (503, 504, 529):
+                reason = "deadline_exceeded" if response.status_code == 504 else "overloaded"
+                fallbacks.append(f"{service_id}:{reason}")
                 continue
             try:
                 payload = response.json()

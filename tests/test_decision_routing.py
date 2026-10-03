@@ -262,3 +262,12 @@ def test_dispatch_deadline_bounds_total_response_time(monkeypatch):
         result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
     assert result.status_code == 529
     assert cancelled == [True]
+
+
+def test_engine_deadline_response_is_retryable_and_preserves_reason():
+    rt = runtime()
+    real = httpx.AsyncClient
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(504, json={"error": {"code": "deadline_exceeded"}})))):
+        result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
+    assert result.status_code == 529
+    assert result.fallback_reasons == ("small:deadline_exceeded",)
