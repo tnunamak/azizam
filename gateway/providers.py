@@ -1295,8 +1295,6 @@ def _configured_usage_cost(provider: ProviderRef, body: Mapping[str, Any]) -> De
     price = price_for_provider_model(provider, model)
     if _has_unsupported_owned_rates(price):
         return None
-    input_rate = _decimal_or_none(price.get("input_usd_per_million_tokens", price.get("input_per_million_usd")))
-    output_rate = _decimal_or_none(price.get("output_usd_per_million_tokens", price.get("output_per_million_usd")))
     inputs = _usage_token_count(usage, "prompt_tokens", "input_tokens")
     outputs = _usage_token_count(usage, "completion_tokens", "output_tokens")
     if inputs is None or outputs is None:

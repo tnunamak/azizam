@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from decimal import Decimal
 
 import httpx
@@ -355,7 +356,7 @@ def test_env_provider_key_refuses_missing_origin_metadata(monkeypatch):
     monkeypatch.setenv("PROVIDER_STATS_KEY", "env-key")
     config = dict(_provider().config)
     config.pop("credential_origin", None)
-    provider = _provider(config=config)
+    provider = replace(_provider(), config=config)
 
     assert resolve_provider_api_key(provider) == ""
 
