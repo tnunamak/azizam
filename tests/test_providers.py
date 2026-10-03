@@ -1051,10 +1051,11 @@ class TestCosts(unittest.TestCase):
             "usage": {"input_tokens": 10000, "output_tokens": 1},
         }
 
-        self.assertEqual(
-            extract_provider_cost(ref, body=input_output).usd,
-            extract_provider_cost(ref, body=prompt_completion).usd,
-        )
+        input_output_cost = extract_provider_cost(ref, body=input_output)
+        prompt_completion_cost = extract_provider_cost(ref, body=prompt_completion)
+
+        self.assertEqual(input_output_cost.usd, Decimal("0.030015000"))
+        self.assertEqual(prompt_completion_cost.usd, Decimal("0.030015000"))
 
     def test_incomplete_sdk_cache_price_catalog_returns_unknown(self) -> None:
         fake = _fake_litellm(

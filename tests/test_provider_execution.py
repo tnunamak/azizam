@@ -855,9 +855,16 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                     prices.enter_context(patch.dict(row, {
                         "cache_creation_input_token_cost_above_1hr": 0.000006,
                     }))
-            response, _ = await self._execute(send=send)
-            self.assertEqual(response.status_code, 200)
-            await _body(response)
+            cache_clear = getattr(litellm.get_model_info, "cache_clear", None)
+            if callable(cache_clear):
+                cache_clear()
+            try:
+                response, _ = await self._execute(send=send)
+                self.assertEqual(response.status_code, 200)
+                await _body(response)
+            finally:
+                if callable(cache_clear):
+                    cache_clear()
 
         self.assertEqual(len(self.receipts), 1)
         self.assertEqual(self.receipts[0].cost["usd"], "0.060015000")
