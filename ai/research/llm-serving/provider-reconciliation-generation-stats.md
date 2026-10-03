@@ -2,7 +2,7 @@
 
 Date: 2026-10-03
 
-Scope: capture the provider-generation metadata evidence used for the generic reconciliation lookup. This lane is prohibited from writing to the external research corpus, so this note lives in the worktree under `docs/research/`.
+Scope: capture the provider-generation metadata evidence used for the generic reconciliation lookup. This lane is prohibited from writing to the external research corpus, so this note lives in the worktree under `ai/research/llm-serving/`.
 
 ## Sources Checked
 

@@ -182,10 +182,15 @@ def _error_result(
     provider: providers.ProviderRef | None,
     model: str,
     reconciliation_status: str | None = None,
+    ledger_path: Path | None = None,
 ) -> DecisionDispatchResult:
     headers = {"x-gateway-request-id": request_id, "x-gateway-remote": "1", **error.headers}
     if provider is not None:
         headers["x-gateway-provider"] = provider.id
+    pending = None
+    if provider is not None and ledger_path is not None and ledger_path.exists():
+        pending = next((row for row in providers.list_provider_reconciliations(
+            path=ledger_path, provider_id=provider.id) if row.get("request_id") == request_id), None)
     return DecisionDispatchResult(
         body=error.body(),
         status_code=error.status,
@@ -195,7 +200,8 @@ def _error_result(
         remote=True,
         cost_usd=None,
         cost_source=UNKNOWN_COST_SOURCE,
-        reconciliation_status=reconciliation_status,
+        reservation_id=pending["id"] if pending else None,
+        reconciliation_status="needs_reconciliation" if pending else reconciliation_status,
     )
 
 
@@ -301,7 +307,7 @@ async def systemone(
             request_id=request_id,
             provider=provider,
             model=requested_model,
-            reconciliation_status="needs_reconciliation",
+            ledger_path=ledger_path,
         )
     except providers.ProviderError as exc:
         return _error_result(
@@ -309,7 +315,7 @@ async def systemone(
             request_id=request_id,
             provider=provider,
             model=requested_model,
-            reconciliation_status="needs_reconciliation" if isinstance(exc, providers.ProviderTimeout) else None,
+            ledger_path=ledger_path,
         )
     cost_usd = str(cost.usd) if cost.usd is not None else None
     headers = {

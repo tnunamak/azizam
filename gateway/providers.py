@@ -717,6 +717,8 @@ async def call_typesafe_systemone(
         raise ProviderTimeout("provider request timed out") from exc
     except httpx.HTTPError as exc:
         raise ProviderUpstreamError("remote provider request failed") from exc
+    except (ValueError, UnicodeError) as exc:
+        raise ProviderUpstreamError("remote provider returned invalid JSON") from exc
     except (ProviderAuthFailed, ProviderRateLimited):
         release_provider_spend(reservation, path=ledger_path)
         raise

@@ -166,7 +166,11 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows, [("needs_reconciliation", "req-ts-unknown")])
 
     async def test_typesafe_timeout_result_marks_reconciliation_needed(self) -> None:
-        async def timeout_call(*_args, **_kwargs):
+        async def timeout_call(provider, profile, body, **kwargs):
+            reservation = execution.providers.reserve_provider_spend(profile, provider,
+                execution.providers.Cost(Decimal("0.001"), "price-table", provider.id), path=kwargs["ledger_path"])
+            execution.providers.identify_provider_spend(reservation, request_id=kwargs["request_id"], path=kwargs["ledger_path"])
+            execution.providers.settle_provider_spend(reservation, None, path=kwargs["ledger_path"])
             raise execution.providers.ProviderTimeout("provider request timed out")
 
         registry = _registry(models=[{"id": "typesafe/jev-latest"}])
@@ -186,6 +190,7 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status_code, 504)
         self.assertEqual(result.reconciliation_status, "needs_reconciliation")
+        self.assertIsNotNone(result.reservation_id)
 
     async def test_openai_unknown_cost_response_links_receipt_and_marks_reconciliation(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
