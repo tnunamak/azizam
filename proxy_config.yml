@@ -506,6 +506,26 @@ backends:
         unit: rerank-cpu.service
         health_endpoint: /health
         health_timeout_s: 90
+  realtime:
+    name: speech-to-speech
+    host: 127.0.0.1
+    port: 8021
+    health_endpoint: /v1/pool
+    timeout: 120
+    # Higher number = lower priority: nothing else serves realtime, but the on-demand services stay behind the always-on ones.
+    priority: 200
+    role: standby
+    note: "OpenAI Realtime (WebSocket) served by Hugging Face speech-to-speech on CPU (Silero VAD, Smart Turn). Its STT, LLM and TTS slots call this gateway's own routes. Started by the gateway lifecycle driver; the gateway relays /v1/realtime to it."
+    capabilities:
+      - realtime
+    managed: false
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: speech-to-speech.service
+        health_endpoint: /v1/pool
+        health_timeout_s: 120
   embeddings:
     name: nomic-embed-text-v1.5 CPU
     native_passthrough: true

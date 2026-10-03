@@ -45,11 +45,13 @@ from urllib.parse import parse_qs, parse_qsl, quote, urlencode
 
 import httpx
 import yaml
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, WebSocket
 from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import FormData
 from starlette.requests import ClientDisconnect
+from websockets.asyncio.client import connect as ws_connect
+from websockets.exceptions import WebSocketException
 
 # Local: status dashboard backend.
 import status_endpoint
@@ -76,6 +78,7 @@ from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_met
 from gateway import video_subject
 from gateway import video_job_records
 from gateway.showcase import build_showcase_router, is_public_showcase_path
+from gateway import realtime_proxy
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import speech_stream
@@ -16915,6 +16918,68 @@ async def rerank_v2(request: Request):
 async def rerank_root(request: Request):
     """Jina and TEI style root path."""
     return await _handle_rerank(request, "/rerank")
+
+
+# ---------------------------------------------------------------------------
+# Realtime: WebSocket relay to the sibling Realtime service (gateway/realtime_proxy.py)
+# ---------------------------------------------------------------------------
+
+_REALTIME_SERVICE_ID = "realtime"
+# A Realtime session listens, thinks and speaks, so a key needs all three routes the service calls.
+_REALTIME_POLICY_PATHS = ("/v1/audio/transcriptions", "/v1/chat/completions", "/v1/audio/speech")
+
+
+async def _deny_realtime(websocket: WebSocket, response: Response) -> None:
+    """Refuse the upgrade with a normal HTTP answer, which is what SDKs and curl can read."""
+    try:
+        await websocket.send_denial_response(response)
+    except RuntimeError:  # server without the denial extension: a bare close is still a 403
+        await websocket.close(code=1008)
+
+
+def _realtime_policy_denial(auth_context: AuthContext) -> Response | None:
+    for path in _REALTIME_POLICY_PATHS:
+        denied = _enforce_runtime_route_policy(auth_context, path)
+        if denied is not None:
+            return denied
+    return None
+
+
+async def _handle_realtime(websocket: WebSocket) -> None:
+    offered = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
+    subprotocol_key = realtime_proxy.key_from_subprotocols(offered)
+    if subprotocol_key and not get_client_api_key_from_headers(websocket.headers):
+        websocket.scope["headers"] = [*websocket.scope["headers"], (b"authorization", f"Bearer {subprotocol_key}".encode())]
+    auth_context = authenticate_request(websocket, "/v1/realtime")
+    if isinstance(auth_context, Response):
+        return await _deny_realtime(websocket, auth_context)
+    denied = _realtime_policy_denial(auth_context)
+    if denied is not None:
+        return await _deny_realtime(websocket, denied)
+
+    service = (config.get("backends") or {}).get(_REALTIME_SERVICE_ID)
+    if not service or not service.get("port"):
+        return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
+    if await _ensure_speech_service_ready(_REALTIME_SERVICE_ID, label="Realtime service") is not None:
+        return await _deny_realtime(websocket, _tts_error("The Realtime service could not be started.", 503, "backend_unavailable"))
+
+    url = realtime_proxy.upstream_url(str(service.get("host") or "127.0.0.1"), int(service["port"]), dict(websocket.query_params))
+    try:
+        upstream = await ws_connect(
+            url, max_size=realtime_proxy.MAX_FRAME_BYTES, compression=None, open_timeout=10, ping_interval=20, ping_timeout=60,
+        )
+    except (OSError, TimeoutError, WebSocketException) as exc:
+        print(f"[proxy] Realtime service refused the session: {type(exc).__name__}", flush=True)
+        return await _deny_realtime(websocket, _tts_error("The Realtime service did not accept the session.", 503, "realtime_unavailable"))
+    await websocket.accept(subprotocol=realtime_proxy.accepted_subprotocol(offered))
+    await realtime_proxy.relay(websocket, upstream)
+
+
+@app.websocket("/openai/v1/realtime")
+@app.websocket("/v1/realtime")
+async def realtime_v1(websocket: WebSocket):
+    """OpenAI Realtime over WebSocket, served by the sibling speech-to-speech service."""
+    await _handle_realtime(websocket)
 
 
 # Map image route paths to canonical intents for receipt construction.
