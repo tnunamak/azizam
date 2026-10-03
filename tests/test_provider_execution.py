@@ -169,7 +169,11 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                         {
                             "model": "openrouter/openai/gpt-4.1-mini",
                             "choices": [],
-                            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+                            "usage": {
+                                "cost": "0.000123",
+                                "prompt_tokens": 3,
+                                "completion_tokens": 2,
+                            },
                         }
                     ).encode(),
                 ),

@@ -490,17 +490,17 @@ def extract_provider_cost(
             reported = _decimal_or_none(usage.get("cost"))
             if reported is not None:
                 return Cost(reported, "provider-reported", provider.id, provider.cost_class)
+            sdk_cost = _litellm_full_usage_cost(
+                _litellm_cost_model(provider, body),
+                body,
+                provider.price.get("usage_price_requirements"),
+            )
+            if sdk_cost is not None:
+                return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
+            return Cost(None, "unknown", provider.id, provider.cost_class)
     header_cost = _decimal_or_none(headers.get("x-litellm-response-cost"))
     if header_cost is not None and not stream:
         return Cost(header_cost, "litellm", provider.id, provider.cost_class)
-    if body is not None and isinstance(body.get("usage"), Mapping):
-        sdk_cost = _litellm_full_usage_cost(
-            _litellm_cost_model(provider, body),
-            body,
-            provider.price.get("usage_price_requirements"),
-        )
-        if sdk_cost is not None:
-            return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
     return Cost(None, "unknown", provider.id, provider.cost_class)
 
 

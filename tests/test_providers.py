@@ -1091,6 +1091,60 @@ class TestCosts(unittest.TestCase):
         self.assertIsNone(cost.usd)
         self.assertEqual(cost.source, "unknown")
 
+    def test_incomplete_sdk_cache_price_catalog_with_header_still_returns_unknown(self) -> None:
+        fake = _fake_litellm(
+            model_info={"input_cost_per_token": 0.000003},
+            cost="0.000015",
+        )
+        previous = sys.modules.get("litellm")
+        sys.modules["litellm"] = fake
+        try:
+            ref = provider(id="openrouter", price={"cost_model": "anthropic/test"})
+            cost = extract_provider_cost(
+                ref,
+                body={
+                    "model": "openrouter/anthropic/test",
+                    "usage": {
+                        "prompt_tokens": 10000,
+                        "completion_tokens": 1,
+                        "prompt_tokens_details": {
+                            "cache_creation_tokens": 10000,
+                            "cache_creation_token_details": {
+                                "ephemeral_1h_input_tokens": 10000,
+                            },
+                        },
+                    },
+                },
+                headers={"x-litellm-response-cost": "0.000015"},
+            )
+        finally:
+            if previous is None:
+                sys.modules.pop("litellm", None)
+            else:
+                sys.modules["litellm"] = previous
+
+        self.assertIsNone(cost.usd)
+        self.assertEqual(cost.source, "unknown")
+
+    def test_unknown_usage_extension_with_header_still_returns_unknown(self) -> None:
+        ref = provider(id="openrouter", price={"cost_model": "anthropic/test"})
+
+        cost = extract_provider_cost(
+            ref,
+            body={
+                "model": "openrouter/anthropic/test",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 1,
+                    "future_billable_units": 3,
+                },
+            },
+            headers={"x-litellm-response-cost": "0.000015"},
+        )
+
+        self.assertIsNone(cost.usd)
+        self.assertEqual(cost.source, "unknown")
+
     def test_complete_sdk_cache_price_catalog_accepts_sdk_oracle_cost(self) -> None:
         fake = _fake_litellm(
             model_info={
