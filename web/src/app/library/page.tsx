@@ -1,2 +1,613 @@
-import { PlaceholderPage } from '@/components/shell/placeholder-page';
-export default function Page() { return <PlaceholderPage title="Library" answer="Everything I've made." description="Your images, videos and audio will appear here, with prompts and download options." />; }
+"use client";
+
+import { useMemo, useState } from "react";
+import NextImage from "next/image";
+import {
+  useMutation,
+  useInfiniteQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import {
+  AudioLines,
+  CalendarDays,
+  Copy,
+  Download,
+  ExternalLink,
+  ImageIcon,
+  Search,
+  Trash2,
+  Video,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { cn } from "@/lib/cn";
+import { formatAbsoluteUTC, formatRelativeTime } from "@/lib/format";
+import { PageHeader } from "@/components/product/page-header";
+import { ErrorState } from "@/components/product/error-state";
+import { EmptyState } from "@/components/product/empty-state";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useViewer } from "@/components/shell/session";
+
+type MediaKind = "image" | "video" | "audio";
+type DateFilter = "all" | "7d" | "30d" | "90d";
+
+interface MediaAsset {
+  asset_id: string;
+  kind: MediaKind;
+  prompt: string;
+  model: string;
+  created_at: number | string | null;
+  download_url?: string | null;
+  workflow_download_url?: string | null;
+  media_type?: string;
+  width?: number | null;
+  height?: number | null;
+  generation_ms?: number | null;
+  workflow?: string | Record<string, unknown> | null;
+  seed?: string | number | null;
+  duration_s?: number | null;
+  owner_name?: string | null;
+}
+
+interface MediaResponse {
+  assets: MediaAsset[];
+  next_cursor?: string | null;
+  models?: string[];
+}
+
+function isMediaKind(value: string): value is MediaKind {
+  return value === "image" || value === "video" || value === "audio";
+}
+
+function kindIcon(kind: MediaKind) {
+  if (kind === "video") return Video;
+  if (kind === "audio") return AudioLines;
+  return ImageIcon;
+}
+
+function kindLabel(kind: MediaKind) {
+  return kind[0].toUpperCase() + kind.slice(1);
+}
+
+function buildMediaPath(filters: {
+  kind: string;
+  model: string;
+  date: DateFilter;
+  search: string;
+  owner: string;
+}) {
+  const params = new URLSearchParams({ limit: "40" });
+  if (isMediaKind(filters.kind)) params.set("kind", filters.kind);
+  if (filters.model !== "all") params.set("model", filters.model);
+  if (filters.date !== "all") {
+    const days = Number.parseInt(filters.date, 10);
+    params.set(
+      "start",
+      new Date(Date.now() - days * 86400000).toISOString().slice(0, 10),
+    );
+  }
+  if (filters.search.trim()) params.set("q", filters.search.trim());
+  if (filters.owner === "everyone") params.set("scope", "everyone");
+  return `/me/api/media?${params.toString()}`;
+}
+
+async function mediaRequest<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(path, { credentials: "same-origin", ...init });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok)
+    throw new Error(
+      payload?.error?.message ?? "Library data could not be loaded. Try again.",
+    );
+  return payload as T;
+}
+
+function relative(ts: MediaAsset["created_at"]) {
+  return ts ? formatRelativeTime(ts) : "Not measured yet";
+}
+
+function absolute(ts: MediaAsset["created_at"]) {
+  return ts ? formatAbsoluteUTC(ts) : undefined;
+}
+
+function AudioWaveform() {
+  return (
+    <div className="bg-muted/60 text-muted-foreground flex h-28 items-center justify-center gap-2 rounded-lg p-4 text-sm">
+      <AudioLines className="size-5" aria-hidden />
+      Audio preview unavailable
+    </div>
+  );
+}
+
+function Preview({
+  asset,
+  large = false,
+}: {
+  asset: MediaAsset;
+  large?: boolean;
+}) {
+  const src = asset.download_url ?? null;
+  const Icon = kindIcon(asset.kind);
+  if (asset.kind === "image" && src)
+    return (
+      <NextImage
+        unoptimized
+        width={asset.width ?? 1024}
+        height={asset.height ?? 768}
+        src={src}
+        alt={asset.prompt || "Generated image"}
+        className={cn(
+          "h-full w-full",
+          large ? "rounded-lg object-contain" : "object-cover",
+        )}
+      />
+    );
+  if (asset.kind === "video" && src)
+    return (
+      <video
+        src={src}
+        preload="metadata"
+        className={cn(
+          "h-full w-full",
+          large ? "rounded-lg object-contain" : "object-cover",
+        )}
+        controls={large}
+        muted={!large}
+      />
+    );
+  if (asset.kind === "audio")
+    return large && src ? (
+      <audio
+        controls
+        src={src}
+        aria-label="Generated audio"
+        className="w-full"
+      />
+    ) : (
+      <AudioWaveform />
+    );
+  return (
+    <div className="bg-muted/60 text-muted-foreground flex h-full min-h-40 items-center justify-center rounded-lg">
+      <Icon className="size-8" aria-hidden />
+    </div>
+  );
+}
+
+function AssetCard({
+  asset,
+  onOpen,
+}: {
+  asset: MediaAsset;
+  onOpen: (asset: MediaAsset) => void;
+}) {
+  const Icon = kindIcon(asset.kind);
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(asset)}
+      className="group bg-card hover:border-primary/50 focus-visible:ring-ring/50 w-full break-inside-avoid overflow-hidden rounded-xl border text-left shadow-xs transition focus-visible:ring-[3px] focus-visible:outline-none"
+      aria-label={`Open ${asset.prompt || kindLabel(asset.kind)}`}
+    >
+      <div
+        className={cn(
+          "bg-muted relative",
+          asset.kind === "image" ? "aspect-[4/3]" : "aspect-video",
+        )}
+      >
+        <Preview asset={asset} />
+        <Badge
+          variant="secondary"
+          className="bg-background/90 absolute top-2 left-2 gap-1 backdrop-blur"
+        >
+          <Icon className="size-3" />
+          {kindLabel(asset.kind)}
+        </Badge>
+        {asset.duration_s ? (
+          <Badge
+            variant="secondary"
+            className="bg-background/90 absolute right-2 bottom-2"
+          >
+            {Math.round(asset.duration_s)} s
+          </Badge>
+        ) : null}
+      </div>
+      <div className="space-y-2 p-3">
+        <p className="line-clamp-2 text-sm font-medium">
+          {asset.prompt || "Untitled generation"}
+        </p>
+        <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
+          <span className="truncate">{asset.model || "Unknown model"}</span>
+          <time title={absolute(asset.created_at)}>
+            {relative(asset.created_at)}
+          </time>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+export default function LibraryPage() {
+  const viewer = useViewer();
+  const queryClient = useQueryClient();
+  const [kind, setKind] = useState("all");
+  const [model, setModel] = useState("all");
+  const [date, setDate] = useState<DateFilter>("all");
+  const [search, setSearch] = useState("");
+  const [owner, setOwner] = useState("mine");
+  const [selected, setSelected] = useState<MediaAsset | null>(null);
+  const [confirming, setConfirming] = useState<MediaAsset | null>(null);
+  const filters = { kind, model, date, search, owner };
+  const mediaPath = buildMediaPath(filters);
+  const {
+    data,
+    isLoading,
+    isError,
+    isFetching,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey: ["library", filters],
+    initialPageParam: "",
+    queryFn: ({ pageParam }) =>
+      mediaRequest<MediaResponse>(
+        mediaPath +
+          (pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""),
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    retry: false,
+  });
+  const assets = useMemo(
+    () =>
+      (data?.pages.flatMap((page) => page.assets) ?? []).filter((item) =>
+        isMediaKind(item.kind),
+      ),
+    [data?.pages],
+  );
+  const models = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...(data?.pages[0]?.models ?? []),
+          ...assets.map((asset) => asset.model).filter(Boolean),
+        ]),
+      ).sort(),
+    [assets, data?.pages],
+  );
+  const deleteMutation = useMutation({
+    mutationFn: async (asset: MediaAsset) => {
+      const session = await mediaRequest<{ csrf_token: string }>(
+        "/me/api/session",
+      );
+      return mediaRequest(
+        `/me/api/media/${encodeURIComponent(asset.asset_id)}`,
+        {
+          method: "DELETE",
+          headers: {
+            "x-ai-gateway-user-action": "1",
+            "x-ai-gateway-csrf": session.csrf_token,
+          },
+        },
+      );
+    },
+    onSuccess: () => {
+      toast.success("Deleted from your library.");
+      setSelected(null);
+      void queryClient.invalidateQueries({ queryKey: ["library"] });
+    },
+    onError: (error) =>
+      toast.error(
+        error instanceof Error ? error.message : "Delete failed. Try again.",
+      ),
+  });
+  return (
+    <main>
+      <PageHeader
+        title="Library"
+        answer="Everything I’ve made."
+        description="Browse your images, video and audio with provenance and download actions."
+      />
+      <section
+        aria-label="Library filters"
+        className="mb-6 grid gap-3 md:grid-cols-[minmax(12rem,1fr)_repeat(4,max-content)]"
+      >
+        <label className="relative block min-w-0">
+          <span className="sr-only">Search prompts</span>
+          <Search
+            className="text-muted-foreground pointer-events-none absolute top-3.5 left-3 size-4"
+            aria-hidden
+          />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search prompts"
+            className="pl-9"
+          />
+        </label>
+        <Select value={kind} onValueChange={setKind}>
+          <SelectTrigger aria-label="Kind" className="w-full md:w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All kinds</SelectItem>
+            <SelectItem value="image">Images</SelectItem>
+            <SelectItem value="video">Video</SelectItem>
+            <SelectItem value="audio">Audio</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={model} onValueChange={setModel}>
+          <SelectTrigger aria-label="Model" className="w-full md:w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All models</SelectItem>
+            {models.map((m) => (
+              <SelectItem key={m} value={m}>
+                {m}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={date}
+          onValueChange={(value) => setDate(value as DateFilter)}
+        >
+          <SelectTrigger aria-label="Date" className="w-full md:w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any time</SelectItem>
+            <SelectItem value="7d">Last 7 days</SelectItem>
+            <SelectItem value="30d">Last 30 days</SelectItem>
+            <SelectItem value="90d">Last 90 days</SelectItem>
+          </SelectContent>
+        </Select>
+        {["owner", "superadmin"].includes(viewer.role) ? (
+          <Select value={owner} onValueChange={setOwner}>
+            <SelectTrigger aria-label="Owner" className="w-full md:w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mine">Mine</SelectItem>
+              <SelectItem value="everyone">Everyone’s</SelectItem>
+            </SelectContent>
+          </Select>
+        ) : null}
+      </section>
+      {owner === "everyone" ? (
+        <p className="border-warning/30 bg-warning/10 text-muted-foreground mb-4 rounded-lg border px-3 py-2 text-sm">
+          Showing everyone’s media. Access through this owner view is audited.
+        </p>
+      ) : null}
+      {isLoading ? (
+        <div
+          role="status"
+          aria-label="Loading library"
+          aria-busy="true"
+          className="columns-1 gap-4 sm:columns-2 xl:columns-3"
+        >
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton
+              key={index}
+              className="mb-4 h-64 break-inside-avoid rounded-xl"
+            />
+          ))}
+        </div>
+      ) : null}
+      {isError ? (
+        <ErrorState
+          message="Your library could not be loaded. Try again."
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
+      ) : null}
+      {!isLoading && !isError && assets.length === 0 ? (
+        <EmptyState
+          icon={CalendarDays}
+          title="No media yet"
+          description={
+            kind !== "all" || model !== "all" || date !== "all" || search
+              ? "No media matches these filters. Try another kind, date or prompt."
+              : "Images, videos and audio you generate will appear here with the prompt, model, workflow and download links."
+          }
+          action={
+            <Button asChild variant="outline">
+              <a href="/ui/try/">Make something</a>
+            </Button>
+          }
+        />
+      ) : null}
+      {!isLoading && !isError && assets.length > 0 ? (
+        <div className="columns-1 gap-4 sm:columns-2 xl:columns-3">
+          {assets.map((asset) => (
+            <div key={asset.asset_id} className="mb-4">
+              <AssetCard asset={asset} onOpen={setSelected} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {hasNextPage && !isError ? (
+        <div className="mt-6 flex justify-center">
+          <Button
+            variant="outline"
+            disabled={isFetchingNextPage}
+            onClick={() => void fetchNextPage()}
+          >
+            {isFetchingNextPage ? "Loading more…" : "Load more"}
+          </Button>
+        </div>
+      ) : null}
+      <Sheet
+        open={Boolean(selected)}
+        onOpenChange={(open) => !open && setSelected(null)}
+      >
+        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+          {selected ? (
+            <>
+              <SheetHeader>
+                <SheetTitle>{selected.prompt || "Generated media"}</SheetTitle>
+                <SheetDescription>
+                  {kindLabel(selected.kind)} made with{" "}
+                  {selected.model || "an unknown model"}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="space-y-5 px-4 pb-4">
+                <div className="bg-muted overflow-hidden rounded-lg border">
+                  <Preview asset={selected} large />
+                </div>
+                <div className="grid gap-3 text-sm sm:grid-cols-2">
+                  <Detail
+                    label="Model"
+                    value={selected.model || "Not measured yet"}
+                  />
+                  <Detail
+                    label="Created"
+                    value={relative(selected.created_at)}
+                    title={absolute(selected.created_at)}
+                  />
+                  <Detail
+                    label="Seed"
+                    value={selected.seed ?? "Not measured yet"}
+                  />
+                  <Detail
+                    label="Size"
+                    value={
+                      selected.width && selected.height
+                        ? `${selected.width} × ${selected.height} px`
+                        : "Not measured yet"
+                    }
+                  />
+                  <Detail
+                    label="Generation time"
+                    value={
+                      selected.generation_ms == null
+                        ? "Not measured yet"
+                        : `${(selected.generation_ms / 1000).toFixed(1)} s`
+                    }
+                  />
+                  {selected.owner_name ? (
+                    <Detail label="Owner" value={selected.owner_name} />
+                  ) : null}
+                </div>
+                <section>
+                  <h2 className="mb-2 text-sm font-medium">Prompt</h2>
+                  <p className="bg-muted/30 rounded-lg border p-3 text-sm">
+                    {selected.prompt || "Not recorded"}
+                  </p>
+                </section>
+                <section>
+                  <h2 className="mb-2 text-sm font-medium">Workflow</h2>
+                  <pre className="bg-muted/30 max-h-40 overflow-auto rounded-lg border p-3 text-xs whitespace-pre-wrap">
+                    {selected.workflow
+                      ? typeof selected.workflow === "string"
+                        ? selected.workflow
+                        : JSON.stringify(selected.workflow, null, 2)
+                      : "Not recorded"}
+                  </pre>
+                </section>
+                <div className="flex flex-wrap gap-2">
+                  <Button asChild variant="outline">
+                    <a
+                      href={
+                        selected.download_url ??
+                        `/me/api/media/${encodeURIComponent(selected.asset_id)}/download`
+                      }
+                      download
+                    >
+                      <Download />
+                      Download
+                    </a>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={!selected.prompt}
+                    onClick={() => {
+                      void navigator.clipboard
+                        .writeText(selected.prompt || "")
+                        .then(
+                          () => toast.success("Prompt copied."),
+                          () =>
+                            toast.error(
+                              "Prompt could not be copied. Select the text to copy it.",
+                            ),
+                        );
+                    }}
+                  >
+                    <Copy />
+                    Copy prompt
+                  </Button>
+                  {selected.workflow_download_url ? (
+                    <Button asChild variant="outline">
+                      <a href={selected.workflow_download_url} download>
+                        <ExternalLink /> Open in ComfyUI
+                      </a>
+                    </Button>
+                  ) : null}
+                  {owner === "mine" ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => setConfirming(selected)}
+                    >
+                      <Trash2 />
+                      Delete
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </>
+          ) : null}
+        </SheetContent>
+      </Sheet>
+      <ConfirmDialog
+        open={Boolean(confirming)}
+        onOpenChange={(open) => !open && setConfirming(null)}
+        title="Delete this media item?"
+        description="This removes it from your library. Existing downloaded copies are not affected."
+        confirmLabel="Delete"
+        onConfirm={async () => {
+          if (confirming) await deleteMutation.mutateAsync(confirming);
+        }}
+      />
+    </main>
+  );
+}
+
+function Detail({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: unknown;
+  title?: string;
+}) {
+  return (
+    <dl className="rounded-lg border p-3">
+      <dt className="text-muted-foreground text-xs">{label}</dt>
+      <dd className="mt-1 truncate text-sm font-medium" title={title}>
+        {String(value)}
+      </dd>
+    </dl>
+  );
+}
