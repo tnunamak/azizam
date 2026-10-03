@@ -552,7 +552,7 @@ test("workflow multipart guided fields include file, numeric edits, and preserve
   await expect(page.locator("pre").filter({ hasText: "curl" })).toContainText(
     "Turn this source into a crisp launch clip.",
   );
-  await expect(page.getByText("colorGrade", { exact: false })).toBeVisible();
+  await expect(page.locator("pre").filter({ hasText: "curl" })).toContainText("colorGrade=teal");
 });
 
 test("workflow guided validation blocks missing, range, enum, and invalid JSON inputs", async ({
