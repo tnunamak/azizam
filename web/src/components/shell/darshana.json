@@ -1,0 +1,36 @@
+{
+  "title": "Gateway shell audit fixes",
+  "url": "http://127.0.0.1:18180/ui/",
+  "start": "/home/",
+  "authScript": "../../../e2e/darshana-auth.mjs",
+  "authStorage": "../../../test-results/shell-darshana-auth.json",
+  "crawl": {
+    "include": [
+      "^/ui/(home|models|workflows|try|library|usage|apps|status|engines|providers|people|activity|settings)/?$"
+    ],
+    "exclude": ["logout", "sign-out", "delete"],
+    "maxPages": 15,
+    "extraRoutes": [
+      "/home/",
+      "/models/",
+      "/workflows/",
+      "/try/",
+      "/library/",
+      "/usage/",
+      "/apps/",
+      "/status/",
+      "/engines/",
+      "/providers/",
+      "/people/",
+      "/activity/",
+      "/settings/"
+    ]
+  },
+  "capture": {
+    "themes": ["light", "dark"],
+    "viewports": ["desktop", "mobile"],
+    "delay": 1200
+  },
+  "outputs": ["html", "images"],
+  "outputDir": "/home/tnunamak/.tmp/gw-product/darshana/gw-fix-shell/round-2"
+}

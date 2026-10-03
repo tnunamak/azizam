@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ThemeProvider, useTheme } from "next-themes";
 import { toast } from "sonner";
@@ -132,9 +132,9 @@ function AccountMenu() {
         <Button
           variant="ghost"
           className="max-w-full sm:w-full sm:justify-start"
-          aria-label="Account menu"
+          aria-label={`Account menu: ${viewer.name}`}
         >
-          <Avatar className="size-7">
+          <Avatar className="size-7" aria-hidden="true">
             <AvatarFallback>
               {viewer.name.slice(0, 1).toUpperCase()}
             </AvatarFallback>
@@ -589,6 +589,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [railOpen, setRailOpen] = useState(false);
+  const navigationInvoker = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -692,7 +693,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               <Link
                 href="/"
                 className="mb-8 flex min-h-11 items-center gap-3 px-3 font-semibold"
-                aria-label={`${PRODUCT_NAME} Home`}
+                aria-label={`${PRODUCT_NAME}${instanceData?.service?.name ? ` ${instanceData.service.name}` : ""} Home`}
               >
                 <Fish className="text-primary size-5 shrink-0" />
                 <span className="shell-nav-label min-w-0">
@@ -706,8 +707,13 @@ function Shell({ children }: { children: React.ReactNode }) {
               </Link>
               <Button
                 variant="ghost"
-                onClick={() => setRailOpen(true)}
+                onClick={(event) => {
+                  navigationInvoker.current = event.currentTarget;
+                  setRailOpen(true);
+                }}
                 aria-label="Expand navigation"
+                aria-haspopup="dialog"
+                aria-expanded={railOpen}
                 className="mb-4 lg:hidden"
               >
                 <MoreHorizontal />
@@ -718,12 +724,15 @@ function Shell({ children }: { children: React.ReactNode }) {
                   variant="ghost"
                   className="justify-start"
                   onClick={() => setCommandOpen(true)}
-                  aria-label="Open command palette"
+                  aria-label="Search"
                 >
                   <Search />
                   <span className="shell-nav-label">
                     Search
-                    <span className="text-muted-foreground ml-12 text-xs">
+                    <span
+                      aria-hidden="true"
+                      className="text-muted-foreground ml-12 text-xs"
+                    >
                       ⌘K
                     </span>
                   </span>
@@ -784,7 +793,16 @@ function Shell({ children }: { children: React.ReactNode }) {
                     </Link>
                   );
                 })}
-              <button className="mobile-tab" onClick={() => setMoreOpen(true)}>
+              <button
+                type="button"
+                className="mobile-tab"
+                aria-haspopup="dialog"
+                aria-expanded={moreOpen}
+                onClick={(event) => {
+                  navigationInvoker.current = event.currentTarget;
+                  setMoreOpen(true);
+                }}
+              >
                 <MoreHorizontal />
                 More
               </button>
@@ -803,6 +821,11 @@ function Shell({ children }: { children: React.ReactNode }) {
           <SheetContent
             side={moreOpen ? "bottom" : "left"}
             className="max-h-[90dvh] overflow-y-auto"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              // Search hands focus to its own dialog instead of the sheet invoker.
+              if (!commandOpen) navigationInvoker.current?.focus();
+            }}
           >
             <SheetHeader>
               <SheetTitle>Explore your gateway</SheetTitle>
