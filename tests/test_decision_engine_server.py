@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import socket
 import sys
@@ -537,8 +538,8 @@ def test_disconnect_during_first_row_stops_later_rows():
         worker = threading.Thread(target=_raw_post_wait_then_close, args=(base_url, "/v1/systemone", _multirow_body(), scorer.first_entered))
         worker.start()
         assert scorer.first_entered.wait(timeout=2)
-        scorer.release_first.set()
         worker.join(timeout=2)
+        scorer.release_first.set()
 
     assert scorer.calls == [0]
 
@@ -651,7 +652,7 @@ def test_main_exits_nonzero_when_owned_child_exits_after_ready(monkeypatch):
     monkeypatch.setattr(server, "parse_args", lambda: SimpleNamespace(port=0, llama_port=0, model="/fake", model_id="decider", ctx=4, residency="on_demand"))
     monkeypatch.setattr(server, "start_llama", lambda _args, current_process=None: {"process": proc, "engine": "cpu", "placement": "cpu"})
     monkeypatch.setattr(server, "LlamaServerClient", lambda **_kwargs: UsageScorer())
-    monkeypatch.setattr(server, "ThreadingHTTPServer", FakeHTTPServer)
+    monkeypatch.setattr(server, "DecisionThreadingHTTPServer", FakeHTTPServer)
 
     with pytest.raises(SystemExit) as excinfo:
         server.main()
@@ -925,3 +926,67 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
 
     assert got_eof.is_set()
     assert time.perf_counter() - started < 0.5
+
+
+def test_decision_http_server_uses_daemon_request_threads() -> None:
+    assert server.DecisionThreadingHTTPServer.daemon_threads is True
+
+
+def test_pid_owns_listener_detects_current_process_listener() -> None:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    try:
+        port = listener.getsockname()[1]
+        assert server._pid_owns_listener(os.getpid(), port) is True
+        assert server._pid_owns_listener(99999999, port) is False
+    finally:
+        listener.close()
+
+
+def test_cancellable_post_rechecks_cancel_after_connect_before_post(monkeypatch) -> None:
+    cancel = threading.Event()
+    sent: list[str] = []
+
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.closed = False
+            self.shutdown_called = False
+
+        def shutdown(self, _how):
+            self.shutdown_called = True
+
+        def close(self):
+            self.closed = True
+
+    fake_socket = FakeSocket()
+
+    class FakeConnection:
+        def __init__(self, _host, _port, timeout=None):
+            self.sock = None
+
+        def connect(self):
+            self.sock = fake_socket
+            cancel.set()
+
+        def putrequest(self, method, path):
+            sent.append(f"{method} {path}")
+
+        def close(self):
+            fake_socket.close()
+
+    monkeypatch.setattr(server.http.client, "HTTPConnection", FakeConnection)
+
+    with pytest.raises(server.DecisionCancelled):
+        server._post_json_cancellable(
+            "http://127.0.0.1:18024",
+            "/completion",
+            {},
+            deadline=time.monotonic() + 15,
+            cancel_check=cancel.is_set,
+        )
+
+    assert sent == []
+    assert fake_socket.shutdown_called
+    assert fake_socket.closed

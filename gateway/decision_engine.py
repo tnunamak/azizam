@@ -100,7 +100,7 @@ def parse_request(body: Any) -> DecisionRequest:
                 f"questions.{key}.instructions must be non-empty when present.",
                 param=f"questions.{key}.instructions",
             )
-        if instructions is None and not _has_meaningful_criteria(kind, options, legend):
+        if instructions is None and not _has_meaningful_criteria(kind, criteria, options, legend):
             raise DecisionInputError(
                 f"questions.{key}.instructions must be supplied unless criteria describe the question.",
                 param=f"questions.{key}.instructions",
@@ -131,9 +131,22 @@ def _question_text(question: DecisionQuestion) -> str:
     return _text(question.instructions)
 
 
-def _has_meaningful_criteria(kind: str, options: tuple[str, ...], legend: tuple[str, ...] | None) -> bool:
+def _has_meaningful_criteria(
+    kind: str,
+    criteria: Any,
+    options: tuple[str, ...],
+    legend: tuple[str, ...] | None,
+) -> bool:
     if kind == "score":
         return bool(legend) and any(bool(item.strip()) for item in legend)
+    if kind == "noul":
+        if not isinstance(criteria, Mapping):
+            return False
+        values = (
+            criteria.get("false", criteria.get(False)),
+            criteria.get("true", criteria.get(True)),
+        )
+        return any(value not in (None, "") and bool(_text(value).strip()) for value in values)
     return bool(options) and any(bool(option.strip()) for option in options)
 
 

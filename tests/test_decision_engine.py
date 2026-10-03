@@ -258,3 +258,25 @@ def test_parse_accepts_nullable_choice_instructions_with_all_null_criteria() -> 
     )
 
     assert req.questions[0].options == ("left", "right")
+
+
+def test_parse_rejects_noul_without_instructions_or_descriptive_criteria() -> None:
+    for question in (
+        {"type": "noul"},
+        {"type": "noul", "instructions": None},
+        {"type": "noul", "instructions": None, "criteria": {"false": None, "true": None}},
+    ):
+        with pytest.raises(decision_engine.DecisionInputError, match="instructions"):
+            decision_engine.parse_request({"questions": {"q": question}})
+
+
+def test_parse_accepts_nullable_noul_instructions_with_one_descriptive_criterion() -> None:
+    req = decision_engine.parse_request(
+        {
+            "questions": {
+                "q": {"type": "noul", "instructions": None, "criteria": {"false": None, "true": "Applies"}},
+            },
+        }
+    )
+
+    assert req.questions[0].options == ("no", "yes: Applies")

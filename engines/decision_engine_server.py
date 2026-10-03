@@ -38,6 +38,10 @@ DEFAULT_REQUEST_TIMEOUT_S = 15.0
 MIN_UPSTREAM_TIMEOUT_S = 0.001
 
 
+class DecisionThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+
 @dataclass(frozen=True)
 class PromptQuestion:
     text: str
@@ -272,6 +276,7 @@ def _post_json_cancellable(
         _raise_if_stopped(effective_deadline, cancel_check)
         conn.connect()
         owned_socket["sock"] = conn.sock
+        _raise_if_stopped(effective_deadline, cancel_check)
         conn.putrequest("POST", path)
         conn.putheader("Host", f"{parsed.hostname}:{parsed.port}")
         conn.putheader("Content-Type", "application/json")
@@ -523,7 +528,7 @@ def _socket_disconnected(sock: socket.socket) -> bool:
 
 def main() -> int:
     args = parse_args()
-    server: ThreadingHTTPServer | None = None
+    server: DecisionThreadingHTTPServer | None = None
     current_process: dict[str, subprocess.Popen[Any] | None] = {"process": None}
     stopping = {"value": False}
 
@@ -553,7 +558,7 @@ def main() -> int:
         Handler.placement = llama["placement"]
         Handler.residency = args.residency
         Handler.llama_process = llama["process"]
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+        server = DecisionThreadingHTTPServer(("127.0.0.1", args.port), Handler)
 
         def monitor_child() -> None:
             llama["process"].wait()
