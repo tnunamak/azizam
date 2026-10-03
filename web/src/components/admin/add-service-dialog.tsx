@@ -135,7 +135,7 @@ export function AddServiceDialogContent({
     event.preventDefault();
     setFormError(null);
     const next: Partial<Record<"name" | "base_url" | "preset", string>> = {};
-    if (!form.name.trim()) next.name = "Enter a service name.";
+    if (!form.name.trim()) next.name = "Enter an engine name.";
     if (!form.base_url.trim())
       next.base_url = "Enter a base URL including its scheme.";
     if (!presets.some((preset) => preset.id === form.preset)) {
@@ -143,7 +143,7 @@ export function AddServiceDialogContent({
     }
     setFieldErrors(next);
     if (Object.keys(next).length) {
-      setFormError("Fix the highlighted fields before adding the service.");
+      setFormError("Fix the highlighted fields before adding the engine.");
       return;
     }
     save.mutate();
@@ -277,7 +277,7 @@ export function AddServiceDialogContent({
               <Input
                 value={form.name}
                 onChange={set("name")}
-                placeholder="e.g. my-service"
+                placeholder="e.g. my-engine"
                 disabled={save.isPending}
                 autoFocus
               />

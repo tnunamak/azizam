@@ -54,7 +54,7 @@ function AddServiceFixture() {
   );
 }
 
-describe("Services add dialog", () => {
+describe("Engines add dialog", () => {
   it("fails if Radix reports a missing dialog description", async () => {
     const failure = (args: unknown[]) => {
       if (args.some((arg) => String(arg).includes("Missing `Description`"))) {
@@ -79,13 +79,13 @@ describe("Services add dialog", () => {
     const form = (
       screen.getByRole("button", { name: "Add engine" }) as HTMLButtonElement
     ).form;
-    if (!form) throw new Error("Expected the add-service form");
+    if (!form) throw new Error("Expected the add-engine form");
     fireEvent.submit(form);
 
     const summary = await screen.findByRole("alert");
     await waitFor(() => expect(summary).toHaveFocus());
     expect(summary).toHaveTextContent(
-      "Fix the highlighted fields before adding the service.",
+      "Fix the highlighted fields before adding the engine.",
     );
     expect(
       screen.getByText("Select an available engine preset."),
