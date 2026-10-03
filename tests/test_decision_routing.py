@@ -271,3 +271,38 @@ def test_engine_deadline_response_is_retryable_and_preserves_reason():
         result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
     assert result.status_code == 529
     assert result.fallback_reasons == ("small:deadline_exceeded",)
+
+
+def test_allowed_local_tag_agrees_for_discovery_and_direct_dispatch(monkeypatch):
+    import proxy
+    from gateway.policy import AppProfile, CapabilitySelector
+    from gateway.runtime_auth import RuntimeIdentity
+    monkeypatch.setattr(proxy, "config", config())
+    auth = proxy.AuthContext(RuntimeIdentity("local", "hash", profile=AppProfile(
+        id="local", allow=CapabilitySelector(tags=frozenset({"local"})),
+    )))
+    for name in ("decide", "small", "small-v1", "jev-latest"):
+        cap = proxy.DECISION_RUNTIME.capability_for(name, "small")
+        assert proxy._capability_for_profile(cap, auth).policy_available is True
+        assert proxy._decision_authorized(auth, name, "small") is True
+
+
+def test_fallback_authorization_uses_fallback_engine_metadata(monkeypatch):
+    import proxy
+    from gateway.policy import AppProfile, CapabilitySelector
+    from gateway.runtime_auth import RuntimeIdentity
+    import time
+    monkeypatch.setattr(proxy, "config", config())
+    rt = proxy.DECISION_RUNTIME
+    monkeypatch.setattr(rt, "observed", {"large": (time.monotonic(), "gpu"), "small": (time.monotonic(), "cpu")})
+    ensure = AsyncMock(return_value=None)
+    monkeypatch.setattr(rt, "ensure_ready", ensure)
+    auth = proxy.AuthContext(RuntimeIdentity("gpu", "hash", profile=AppProfile(
+        id="gpu", allow=CapabilitySelector(tags=frozenset({"engine:gpu"})),
+    )))
+    real = httpx.AsyncClient
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(529, json={"error": {"code": "overloaded"}})))):
+        with pytest.raises(DecisionsError) as error:
+            asyncio.run(rt.dispatch(auth, auth.identity.profile, {**BODY, "model": "decide-quality"}, "r"))
+    assert error.value.status == 403
+    ensure.assert_awaited_once_with("large")
