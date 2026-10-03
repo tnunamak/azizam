@@ -26,11 +26,12 @@ test("real registry journey preserves disabled state and unknown config through 
     .getByRole("button", { name: "Add engine", exact: true })
     .first()
     .click();
-  const add = page.getByRole("dialog", { name: "Add service", exact: true });
-  await add.getByLabel(/^Provider/).selectOption("openai-compatible");
+  const add = page.getByRole("dialog", { name: "Add engine", exact: true });
+  await add.getByRole("combobox", { name: "Preset" }).click();
+  await page.getByRole("option", { name: /OpenAI.?compatible/i }).click();
   await add.getByLabel(/^Name/).fill("Journey engine");
   await add.getByLabel(/^Base URL/).fill(`http://127.0.0.1:${enginePort}/v1`);
-  await add.getByRole("button", { name: "Add service", exact: true }).click();
+  await add.getByRole("button", { name: "Add engine", exact: true }).click();
   await expect(add).not.toBeVisible();
 
   const registry = async (): Promise<RegistryResponse> => {

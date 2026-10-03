@@ -3,7 +3,13 @@ import AxeBuilder from "@axe-core/playwright";
 
 const homePath = "/ui/home/";
 const homeApi = "**/me/api/home";
+const mediaApi = "**/me/api/media?limit=5";
 const setupApi = "**/admin/api/setup-progress";
+
+async function chooseRecipeKey(page: Page, optionName: string | RegExp) {
+  await page.getByRole("combobox", { name: "Key for these settings" }).click();
+  await page.getByRole("option", { name: optionName }).click();
+}
 
 async function inspectHome(page: Page, name: string) {
   await page.evaluate(() => document.fonts.ready);
@@ -78,16 +84,30 @@ for (const theme of ["light", "dark"] as const) {
           await page.route(setupApi, (route) =>
             route.fulfill({ json: { complete: true, steps: [] } }),
           );
+          await page.route(mediaApi, (route) =>
+            route.fulfill({ json: { assets: [], next_cursor: null } }),
+          );
         }
         if (state === "seeded") {
-          await page.route(setupApi, async (route) => {
-            const response = await route.fetch();
-            const actual = await response.json();
-            await route.fulfill({
-              response,
-              json: { ...actual, complete: true },
-            });
-          });
+          await page.route(mediaApi, (route) =>
+            route.fulfill({
+              json: {
+                assets: [
+                  {
+                    asset_id: "home-recorded-image",
+                    kind: "image",
+                    prompt: "A recorded image from your gateway",
+                    model: "image",
+                    created_at: Date.now() / 1000 - 60,
+                  },
+                ],
+                next_cursor: null,
+              },
+            }),
+          );
+          await page.route(setupApi, (route) =>
+            route.fulfill({ json: { complete: true, steps: [] } }),
+          );
         }
         if (state === "error") {
           await page.route(homeApi, (route) =>
@@ -121,9 +141,7 @@ for (const theme of ["light", "dark"] as const) {
             (app: { name: string }) => app.name === "Browser test app",
           );
           expect(seededApp?.credentials.length).toBeGreaterThan(0);
-          await page
-            .getByLabel("Key for these settings", { exact: true })
-            .selectOption(seededApp.credentials[0].id);
+          await chooseRecipeKey(page, /Browser test app/);
           await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
             "fast",
           );
@@ -164,13 +182,19 @@ for (const theme of ["light", "dark"] as const) {
               page.getByRole("heading", { name: "Recent", exact: true }),
             ).toBeVisible();
           }
-          // There is no media-list API in this lane: Home must not invent a gallery.
           await expect(
             page.getByRole("heading", {
               name: "Recent creations",
               exact: true,
             }),
-          ).toHaveCount(0);
+          ).toBeVisible();
+          if (state === "seeded") {
+            await expect(
+              page.getByText("A recorded image from your gateway", {
+                exact: true,
+              }),
+            ).toBeVisible();
+          }
         }
         await inspectHome(page, `${state}-${theme}-${width}`);
 
@@ -211,9 +235,7 @@ test("all ten client recipes fit a phone and remain accessible", async ({
     (app: { name: string }) => app.name === "Browser test app",
   );
   expect(seededApp?.credentials.length).toBeGreaterThan(0);
-  await page
-    .getByLabel("Key for these settings", { exact: true })
-    .selectOption(seededApp.credentials[0].id);
+  await chooseRecipeKey(page, /Browser test app/);
   await expect(page.getByRole("tabpanel").locator("pre")).toContainText("fast");
   for (const name of [
     "Open WebUI",
@@ -500,8 +522,8 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       "Minted key is shown once",
     ).toBe(true);
     await expect(
-      page.getByLabel("Key for these settings", { exact: true }),
-    ).toHaveValue(credential.id);
+      page.getByRole("combobox", { name: "Key for these settings" }),
+    ).toContainText("New key");
     await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
       "fast",
     );
@@ -530,9 +552,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       }, secret),
       "Home must not persist or redisplay the key",
     ).toBeFalsy();
-    await page
-      .getByLabel("Key for these settings", { exact: true })
-      .selectOption(credential.id);
+    await chooseRecipeKey(page, /Open WebUI/);
 
     const before = await (
       await request.get("/me/api/activity?limit=100")
@@ -684,14 +704,16 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     ).toBe(true);
     expect(snapshot.new_app_aliases).toEqual([]);
     await page.goto(homePath);
-    const selector = page.getByLabel("Key for these settings", { exact: true });
-    await expect(selector).toHaveValue("new");
+    const selector = page.getByRole("combobox", {
+      name: "Key for these settings",
+    });
+    await expect(selector).toContainText("New app");
     await expect(
       page.getByText("No chat model is available to this key yet", {
         exact: true,
       }),
     ).toBeVisible();
-    await selector.selectOption(broader.id);
+    await chooseRecipeKey(page, /Browser test app/);
     await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
       "fast",
     );
@@ -708,7 +730,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     const minted = await mintedResponse;
     expect(minted.status()).toBe(201);
     const { credential } = await minted.json();
-    await expect(selector).toHaveValue(credential.id);
+    await expect(selector).toContainText("New key");
     await expect(
       page.getByText("No chat model is available to this key yet", {
         exact: true,

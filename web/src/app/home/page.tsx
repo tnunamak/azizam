@@ -5,12 +5,15 @@ import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpRight,
+  AudioLines,
   Check,
   Circle,
+  ImageIcon,
   KeyRound,
   Loader2,
   PlugZap,
   ShieldCheck,
+  Video,
 } from "lucide-react";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
@@ -41,6 +44,7 @@ import {
   type ConnectionResult,
   type HomeCapability,
   type HomeAlias,
+  type HomeCreation,
   type HomeSnapshot,
   type SetupProgress,
 } from "./home-api";
@@ -640,78 +644,184 @@ function Capabilities({
     </section>
   );
 }
-function Recent({ home }: { home: HomeSnapshot }) {
+function CreationPreview({ creation }: { creation: HomeCreation }) {
+  const label =
+    creation.kind === "video"
+      ? "Video"
+      : creation.kind === "audio"
+        ? "Audio"
+        : "Image";
+  const Icon =
+    creation.kind === "video"
+      ? Video
+      : creation.kind === "audio"
+        ? AudioLines
+        : ImageIcon;
   return (
-    <section aria-labelledby="recent-heading">
-      <div className="flex items-center justify-between gap-3">
-        <h2 id="recent-heading" className="text-lg font-semibold">
-          Recent
-        </h2>
-        <Link
-          className="text-primary inline-flex min-h-11 items-center text-sm underline underline-offset-4"
-          href="/usage/"
-        >
-          View usage
-        </Link>
+    <Link
+      href="/library/"
+      className="border-border hover:bg-muted focus-visible:ring-ring flex min-w-0 gap-3 rounded-lg border p-3 focus-visible:ring-2"
+    >
+      <div className="bg-muted flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md">
+        {creation.kind === "image" && creation.download_url ? (
+          // Recent uses the Library API's signed thumbnail-capable download URL.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={creation.download_url}
+            alt=""
+            loading="lazy"
+            className="size-full object-cover"
+          />
+        ) : (
+          <Icon aria-hidden="true" className="text-muted-foreground size-5" />
+        )}
       </div>
-      {!home.receipts.length ? (
-        <EmptyState
-          title="Your first request starts here"
-          description="Requests from your connected apps will appear here with their result and time."
-          action={
-            <Button variant="outline" asChild>
-              <Link href="/try/">Try a request</Link>
-            </Button>
-          }
-        />
-      ) : (
-        <ul className="divide-border divide-y">
-          {home.receipts.slice(0, 5).map((receipt) => {
-            const duration = receipt.latency_ms ?? receipt.elapsed_ms;
-            return (
-              <li key={receipt.request_id}>
-                <a
-                  href={`/r/${encodeURIComponent(receipt.request_id)}`}
-                  className="hover:bg-muted focus-visible:ring-ring flex min-h-16 flex-wrap items-center justify-between gap-3 rounded-lg px-1 py-4 focus-visible:ring-2"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium break-words">
-                      {receipt.requested_model ?? receipt.intent ?? "Request"}
-                    </p>
-                    <p className="text-muted-foreground mt-1 text-xs">
-                      <RelativeTime
-                        ts={
-                          receipt._stored_at ??
-                          (receipt.accepted_at_ms != null
-                            ? receipt.accepted_at_ms / 1000
-                            : null)
-                        }
-                        fallback="Time not recorded"
-                      />
-                    </p>
-                  </div>
-                  <div className="text-muted-foreground flex flex-wrap gap-3 text-xs">
-                    <span>
-                      {receipt.status === "succeeded" ||
-                      receipt.status === "completed"
-                        ? "Succeeded"
-                        : receipt.status === "failed"
-                          ? "Failed"
-                          : (receipt.status ?? "Result not recorded")}
-                    </span>
-                    <span className="tabular-nums">
-                      {duration != null
-                        ? `${Math.round(duration)} ms`
-                        : "Not measured yet"}
-                    </span>
-                    <ArrowUpRight aria-hidden="true" className="size-4" />
-                  </div>
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{label}</p>
+        <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
+          {creation.prompt || creation.model || "No prompt recorded"}
+        </p>
+        <p className="text-muted-foreground mt-1 text-xs">
+          <RelativeTime
+            ts={creation.created_at ?? null}
+            fallback="Time not recorded"
+          />
+        </p>
+      </div>
+    </Link>
+  );
+}
+
+function Recent({ home }: { home: HomeSnapshot }) {
+  const {
+    data: creations,
+    isPending: creationsPending,
+    isError: creationsError,
+  } = useQuery({
+    queryKey: ["library", "home-recent-creations"],
+    queryFn: homeApi.creations,
+  });
+  const recentCreations = creations?.assets ?? [];
+  return (
+    <section aria-labelledby="recent-heading" className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 id="recent-heading" className="text-lg font-semibold">
+            Recent
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Your latest creations and requests.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Link
+            className="text-primary inline-flex min-h-11 items-center text-sm underline underline-offset-4"
+            href="/library/"
+          >
+            View library
+          </Link>
+          <Link
+            className="text-primary inline-flex min-h-11 items-center text-sm underline underline-offset-4"
+            href="/usage/"
+          >
+            View usage
+          </Link>
+        </div>
+      </div>
+      <section aria-labelledby="recent-creations-heading" className="space-y-3">
+        <h3 id="recent-creations-heading" className="text-base font-semibold">
+          Recent creations
+        </h3>
+        {creationsPending ? (
+          <div
+            role="status"
+            aria-label="Loading recent creations"
+            aria-busy="true"
+            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
+          >
+            {[0, 1, 2, 3, 4].map((item) => (
+              <Skeleton key={item} className="h-24 w-full" />
+            ))}
+          </div>
+        ) : creationsError ? (
+          <p role="alert" className="text-muted-foreground text-sm">
+            Recent creations could not be loaded.
+          </p>
+        ) : recentCreations.length ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {recentCreations.map((creation) => (
+              <CreationPreview key={creation.asset_id} creation={creation} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-muted-foreground text-sm">
+            Creations from image, video and audio requests will appear here.
+          </p>
+        )}
+      </section>
+      <section aria-labelledby="recent-requests-heading" className="space-y-3">
+        <h3 id="recent-requests-heading" className="text-base font-semibold">
+          Recent requests
+        </h3>
+        {!home.receipts.length ? (
+          <EmptyState
+            title="Your first request starts here"
+            description="Requests from your connected apps will appear here with their result and time."
+            action={
+              <Button variant="outline" asChild>
+                <Link href="/try/">Try a request</Link>
+              </Button>
+            }
+          />
+        ) : (
+          <ul className="divide-border divide-y">
+            {home.receipts.slice(0, 5).map((receipt) => {
+              const duration = receipt.latency_ms ?? receipt.elapsed_ms;
+              return (
+                <li key={receipt.request_id}>
+                  <a
+                    href={`/r/${encodeURIComponent(receipt.request_id)}`}
+                    className="hover:bg-muted focus-visible:ring-ring flex min-h-16 flex-wrap items-center justify-between gap-3 rounded-lg px-1 py-4 focus-visible:ring-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium break-words">
+                        {receipt.requested_model ?? receipt.intent ?? "Request"}
+                      </p>
+                      <p className="text-muted-foreground mt-1 text-xs">
+                        <RelativeTime
+                          ts={
+                            receipt._stored_at ??
+                            (receipt.accepted_at_ms != null
+                              ? receipt.accepted_at_ms / 1000
+                              : null)
+                          }
+                          fallback="Time not recorded"
+                        />
+                      </p>
+                    </div>
+                    <div className="text-muted-foreground flex flex-wrap gap-3 text-xs">
+                      <span>
+                        {receipt.status === "succeeded" ||
+                        receipt.status === "completed"
+                          ? "Succeeded"
+                          : receipt.status === "failed"
+                            ? "Failed"
+                            : (receipt.status ?? "Result not recorded")}
+                      </span>
+                      <span className="tabular-nums">
+                        {duration != null
+                          ? `${Math.round(duration)} ms`
+                          : "Not measured yet"}
+                      </span>
+                      <ArrowUpRight aria-hidden="true" className="size-4" />
+                    </div>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
     </section>
   );
 }

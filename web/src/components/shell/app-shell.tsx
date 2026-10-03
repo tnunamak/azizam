@@ -80,6 +80,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorState } from "@/components/product/error-state";
+import { PageHeader } from "@/components/product/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
 
@@ -526,21 +527,44 @@ function Shell({ children }: { children: React.ReactNode }) {
   const content = publicPage ? (
     children
   ) : sessionPending ? (
-    <div aria-label="Loading your account" className="flex flex-col gap-4">
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label="Loading your account"
+      className="flex flex-col gap-4"
+    >
       <Skeleton className="h-8 w-48" />
       <Skeleton className="h-4 w-72 max-w-full" />
       <Skeleton className="mt-8 h-40 w-full" />
     </div>
   ) : sessionError ? (
-    <ErrorState
-      message="Your account could not be loaded. Check your connection and try again."
-      onRetry={() => {
-        void refreshSession();
-      }}
-      retrying={sessionRefreshing}
-    />
+    <>
+      <PageHeader
+        title={
+          destinations.find(
+            (d) => currentPath === canonicalDestinationPath(d.href),
+          )?.title ?? "Your gateway"
+        }
+      />
+      <ErrorState
+        message="Your account could not be loaded. Check your connection and try again."
+        onRetry={() => {
+          void refreshSession();
+        }}
+        retrying={sessionRefreshing}
+      />
+    </>
   ) : ownerPage && !viewer?.admin ? (
-    <ErrorState message="This page is available to gateway owners and admins. Sign in with an owner account to continue." />
+    <>
+      <PageHeader
+        title={
+          destinations.find(
+            (d) => currentPath === canonicalDestinationPath(d.href),
+          )?.title ?? "Your gateway"
+        }
+      />
+      <ErrorState message="This page is available to gateway owners and admins. Sign in with an owner account to continue." />
+    </>
   ) : (
     children
   );

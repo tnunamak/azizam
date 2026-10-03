@@ -537,81 +537,100 @@ test("people lane OIDC invitation resumes its private token and accepts with ses
 });
 
 test("people lane real invitation creates an account, app and working key, then revokes access", async ({
-  page,
+  browser,
+  baseURL,
   request,
 }) => {
-  const session = await (await request.get("/admin/api/session")).json();
-  const headers = { "x-ai-gateway-csrf": session.actor.csrf_token };
-  const profiles = await (await request.get("/admin/api/profiles")).json();
-  const local = profiles.profiles.find(
-    (p: { name: string }) => p.name === "Local chat",
-  );
-  expect(local).toBeTruthy();
-  const result = await request.post("/admin/api/invites", {
-    headers,
-    data: {
-      profile_id: local.id,
-      email: "real-browser-member@example.test",
-      expires_in: 86400,
-    },
+  const memberContext = await browser.newContext({
+    baseURL,
+    storageState: { cookies: [], origins: [] },
   });
-  expect(result.ok()).toBe(true);
-  const created = await result.json();
-  const recovered = await request.get(
-    `/admin/api/invites/${created.invite.id}/link`,
-  );
-  expect(recovered.ok()).toBe(true);
-  expect((await recovered.json()).url).toBe(created.url);
-  await page.goto(created.url);
-  await page.getByLabel("Your name").fill("Real browser member");
-  await page
-    .getByLabel("Password", { exact: true })
-    .fill("Real browser acceptance password");
-  const acceptedResponse = page.waitForResponse((r) =>
-    r.url().endsWith("/auth/api/invite/accept"),
-  );
-  await page
-    .getByRole("button", { name: "Create account", exact: true })
-    .click();
-  const accepted = await (await acceptedResponse).json();
-  await expect(
-    page.getByRole("heading", { name: "Your account is ready" }),
-  ).toBeVisible();
-  expect(
-    (
-      await request.get("/openai/v1/models", {
-        headers: { authorization: `Bearer ${accepted.credential.api_key}` },
-      })
-    ).ok(),
-  ).toBe(true);
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page).toHaveURL(/\/ui\/$/);
-  const member = await page.request.get("/me/api/session");
-  const memberData = await member.json();
-  expect(memberData.authenticated).toBe(true);
-  expect(memberData.user.email).toBe("real-browser-member@example.test");
-  expect(
-    memberData.apps.some(
-      (app: { name: string }) => app.name === "My first app",
-    ),
-  ).toBe(true);
-  const ownerPeople = await (await request.get("/admin/api/people")).json();
-  const added = ownerPeople.people.find(
-    (p: { email: string }) => p.email === "real-browser-member@example.test",
-  );
-  expect(added).toBeTruthy();
-  const removed = await request.delete(`/admin/api/people/${added.id}`, {
-    headers,
-  });
-  expect(removed.ok()).toBe(true);
-  expect(
-    (
-      await request.get("/openai/v1/models", {
-        headers: { authorization: `Bearer ${accepted.credential.api_key}` },
-      })
-    ).status(),
-  ).toBe(401);
-  expect((await page.request.get("/me/api/session")).status()).toBe(401);
+  const memberPage = await memberContext.newPage();
+  try {
+    const session = await (await request.get("/admin/api/session")).json();
+    const headers = { "x-ai-gateway-csrf": session.actor.csrf_token };
+    const profiles = await (await request.get("/admin/api/profiles")).json();
+    const local = profiles.profiles.find(
+      (p: { name: string }) => p.name === "Local chat",
+    );
+    expect(local).toBeTruthy();
+    const result = await request.post("/admin/api/invites", {
+      headers,
+      data: {
+        profile_id: local.id,
+        email: "real-browser-member@example.test",
+        expires_in: 86400,
+      },
+    });
+    expect(result.ok()).toBe(true);
+    const created = await result.json();
+    const recovered = await request.get(
+      `/admin/api/invites/${created.invite.id}/link`,
+    );
+    expect(recovered.ok()).toBe(true);
+    expect((await recovered.json()).url).toBe(created.url);
+    await memberPage.goto(created.url);
+    await memberPage.getByLabel("Your name").fill("Real browser member");
+    await memberPage
+      .getByLabel("Password", { exact: true })
+      .fill("Real browser acceptance password");
+    const acceptedResponse = memberPage.waitForResponse((r) =>
+      r.url().endsWith("/auth/api/invite/accept"),
+    );
+    await memberPage
+      .getByRole("button", { name: "Create account", exact: true })
+      .click();
+    const accepted = await (await acceptedResponse).json();
+    await expect(
+      memberPage.getByRole("heading", { name: "Your account is ready" }),
+    ).toBeVisible();
+    expect(
+      (
+        await request.get("/openai/v1/models", {
+          headers: { authorization: `Bearer ${accepted.credential.api_key}` },
+        })
+      ).ok(),
+    ).toBe(true);
+    await memberPage.getByRole("button", { name: "I’ve saved it" }).click();
+    await expect(memberPage).toHaveURL(/\/ui\/$/);
+    const member = await memberContext.request.get("/me/api/session");
+    const memberData = await member.json();
+    expect(memberData.authenticated).toBe(true);
+    expect(memberData.user.email).toBe("real-browser-member@example.test");
+    expect(
+      memberData.apps.some(
+        (app: { name: string }) => app.name === "My first app",
+      ),
+    ).toBe(true);
+    const ownerPeople = await (await request.get("/admin/api/people")).json();
+    const added = ownerPeople.people.find(
+      (p: { email: string }) => p.email === "real-browser-member@example.test",
+    );
+    expect(added).toBeTruthy();
+    const removed = await request.delete(`/admin/api/people/${added.id}`, {
+      headers,
+    });
+    expect(removed.ok()).toBe(true);
+    expect(
+      (
+        await request.get("/openai/v1/models", {
+          headers: { authorization: `Bearer ${accepted.credential.api_key}` },
+        })
+      ).status(),
+    ).toBe(401);
+    let revokedMemberSession =
+      await memberContext.request.get("/me/api/session");
+    if (revokedMemberSession.status() === 401) {
+      revokedMemberSession = await memberContext.request.get("/me/api/session");
+    }
+    expect(revokedMemberSession.status()).toBe(200);
+    const revokedMemberData = await revokedMemberSession.json();
+    expect(revokedMemberData.authenticated).toBe(false);
+    expect(revokedMemberData.user).toBeUndefined();
+    expect(revokedMemberData.apps).toEqual([]);
+  } finally {
+    await memberContext.close();
+  }
 });
 
 test("people lane protects owner actions and explains permanent key revocation", async ({

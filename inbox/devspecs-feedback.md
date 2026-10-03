@@ -54,3 +54,8 @@
 
 - Useful: `ds tldr` and `ds recent` returned workflow guidance and the shell foundation boundary.
 - Rough edge: task creation waited on another index writer without returning a task ID. I canceled it. Retrying with `--no-refresh --index=false` also returned no task output after more than a minute; I terminated that process and continued from the complete lane brief. These flags did not provide a bounded path around the index wait.
+
+## 2026-10-03 — UI integration lane
+
+- Useful: `ds tldr` and `ds recent` returned workflow guidance and the merged shell/account/settings boundaries.
+- Rough edge: a three-slice task creation returned no task ID or progress during a minute of waiting. After I terminated that process, it reported “task index preflight failed before repository mutation” and “Repository files written: no.” No shared index state was removed; integration continued from the brief and repository evidence.

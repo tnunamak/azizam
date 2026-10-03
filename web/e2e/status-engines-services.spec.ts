@@ -438,11 +438,12 @@ test("engines add, edit, toggle, and remove use existing APIs safely", async ({
   await page.goto("/ui/engines/");
 
   await page.getByRole("button", { name: "Add engine" }).first().click();
-  const addDialog = page.getByRole("dialog", { name: "Add service" });
-  await addDialog.getByLabel("Provider").selectOption("openai-compatible");
+  const addDialog = page.getByRole("dialog", { name: "Add engine" });
+  await addDialog.getByRole("combobox", { name: "Preset" }).click();
+  await page.getByRole("option", { name: /OpenAI.?compatible/i }).click();
   await addDialog.getByLabel("Name").fill("Added engine");
   await addDialog.getByLabel("Base URL").fill("http://127.0.0.1:18083/v1");
-  await addDialog.getByRole("button", { name: "Add service" }).click();
+  await addDialog.getByRole("button", { name: "Add engine" }).click();
   await expect(page.getByText("Engine added")).toBeVisible();
 
   const chatCard = page

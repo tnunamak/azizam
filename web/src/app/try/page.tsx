@@ -10,17 +10,16 @@ import {
 } from "react";
 import {
   AudioLines,
-  Bot,
+  MessageSquare,
   Copy,
-  FileAudio,
+  GitBranch,
   Image as ImageIcon,
   KeyRound,
   Loader2,
   Mic,
   Pause,
   Play,
-  Sigma,
-  Sparkles,
+  Layers,
 } from "lucide-react";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
@@ -85,13 +84,13 @@ const DEFAULTS: Record<TryTab, { model: string; prompt: string }> = {
 const TAB_ITEMS: Array<{
   value: TryTab;
   label: string;
-  icon: typeof Bot;
+  icon: typeof MessageSquare;
   help: string;
 }> = [
   {
     value: "chat",
     label: "Chat",
-    icon: Bot,
+    icon: MessageSquare,
     help: "Send one message and read one answer.",
   },
   {
@@ -109,19 +108,19 @@ const TAB_ITEMS: Array<{
   {
     value: "transcribe",
     label: "Transcribe",
-    icon: FileAudio,
+    icon: Mic,
     help: "Upload or record audio and get text.",
   },
   {
     value: "decide",
     label: "Decide",
-    icon: Sparkles,
+    icon: GitBranch,
     help: "Ask System One to choose from options.",
   },
   {
     value: "embed",
     label: "Embed",
-    icon: Sigma,
+    icon: Layers,
     help: "Create a vector and inspect its shape.",
   },
 ];
@@ -884,7 +883,7 @@ export default function TryPage() {
               <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                 <form
                   onSubmit={(event) => void run(tab.value, event)}
-                  className="bg-card space-y-4 rounded-xl border p-5"
+                  className="bg-card min-w-0 space-y-4 rounded-xl border p-5"
                 >
                   <div>
                     <h2 className="flex items-center gap-2 font-semibold">
@@ -1238,9 +1237,16 @@ function ModelSelect({
   return (
     <Select
       value={value}
-      onValueChange={onChange}
+      onValueChange={(next) => {
+        // Catalog updates can reset the Select's hidden form input. A model
+        // must keep its selected identifier rather than accept that empty value.
+        if (next) onChange(next);
+      }}
     >
-      <SelectTrigger aria-label="Model" className="w-full">
+      <SelectTrigger
+        aria-label="Model"
+        className="w-full min-w-0 overflow-hidden [&_[data-slot=select-value]]:min-w-0"
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
