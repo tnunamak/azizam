@@ -31,7 +31,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { api, createQueryClient } from "@/lib/api";
-import { destinations, PRODUCT_NAME } from "@/lib/product";
+import {
+  canonicalDestinationPath,
+  destinations,
+  PRODUCT_NAME,
+} from "@/lib/product";
 import { gatewayHealthLabel } from "@/lib/gateway-health";
 import { useOwnerAlert } from "./use-owner-alert";
 import { Button } from "@/components/ui/button";
@@ -235,7 +239,8 @@ function Nav({
               .map((item) => {
                 const Icon = icons[item.title];
                 const active =
-                  pathname.replace(/\/$/, "") === item.href.replace(/\/$/, "");
+                  canonicalDestinationPath(pathname) ===
+                  canonicalDestinationPath(item.href);
                 return (
                   <Tooltip key={item.href}>
                     <TooltipTrigger asChild>
@@ -513,8 +518,10 @@ function Shell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", handler);
   }, []);
   const publicPage = publicPages.some((route) => pathname.startsWith(route));
+  const currentPath = canonicalDestinationPath(pathname);
   const ownerPage = destinations.some(
-    (d) => d.group === "Gateway" && pathname.replace(/\/$/, "") === d.href,
+    (d) =>
+      d.group === "Gateway" && currentPath === canonicalDestinationPath(d.href),
   );
   const content = publicPage ? (
     children

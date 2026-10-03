@@ -2,6 +2,11 @@ import identity from "../../../gateway/product_identity.json";
 
 export const PRODUCT_NAME = identity.name;
 
+export function canonicalDestinationPath(path: string): string {
+  const normalized = path.replace(/^\/ui(?=\/|$)/, "").replace(/\/$/, "");
+  return normalized === "" || normalized === "/home" ? "/" : normalized;
+}
+
 // Next adds /ui automatically to Link hrefs. These are application paths.
 export const destinations = [
   {

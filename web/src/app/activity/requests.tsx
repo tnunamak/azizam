@@ -6,6 +6,13 @@ import { ArrowRight, ReceiptText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Sheet,
   SheetContent,
   SheetHeader,
@@ -108,19 +115,24 @@ export function Requests() {
           <label htmlFor="request-person" className="block text-sm font-medium">
             Person
           </label>
-          <select
-            id="request-person"
-            className="border-input bg-background h-11 max-w-full rounded-lg border px-3 text-sm"
-            value={person}
-            onChange={(event) => setPerson(event.target.value)}
+          <Select
+            value={person || "everyone"}
+            onValueChange={(value) =>
+              setPerson(value === "everyone" ? "" : value)
+            }
           >
-            <option value="">Everyone</option>
-            {people.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id="request-person" className="w-[180px] max-w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="everyone">Everyone</SelectItem>
+              {people.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <Button
           variant="outline"

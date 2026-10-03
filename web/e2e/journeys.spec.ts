@@ -11,7 +11,8 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", asy
     .first()
     .click();
   await page.getByLabel("App name", { exact: true }).fill(name);
-  await page.getByLabel("Client", { exact: true }).selectOption("Python");
+  await page.getByRole("combobox", { name: "Client", exact: true }).click();
+  await page.getByRole("option", { name: "Python", exact: true }).click();
   const mintedResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/me/api/apps/") &&
@@ -84,7 +85,8 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", asy
   const filterRequest = page.waitForResponse((response) =>
     response.url().includes("action_prefix=app."),
   );
-  await page.getByLabel("Change type").selectOption("app.");
+  await page.getByRole("combobox", { name: "Change type" }).click();
+  await page.getByRole("option", { name: "Apps", exact: true }).click();
   const filtered = await (await filterRequest).json();
   expect(filtered.records.length).toBeGreaterThan(0);
   expect(

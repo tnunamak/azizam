@@ -65,17 +65,19 @@ describe("Services add dialog", () => {
     vi.spyOn(console, "error").mockImplementation((...args) => failure(args));
 
     render(<AddServiceFixture />);
-    await screen.findByRole("option", { name: "OpenAI compatible" });
+    expect(
+      await screen.findByRole("dialog", { name: "Add engine" }),
+    ).toBeVisible();
   });
 
-  it("marks Provider as required and focuses the validation summary", async () => {
+  it("marks Preset as required and focuses the validation summary", async () => {
     render(<AddServiceFixture />);
 
-    await screen.findByRole("option", { name: "OpenAI compatible" });
-    expect(screen.getByRole("combobox", { name: /Provider/ })).toBeRequired();
+    const preset = await screen.findByRole("combobox", { name: /Preset/ });
+    expect(preset).toBeRequired();
 
     const form = (
-      screen.getByRole("button", { name: "Add service" }) as HTMLButtonElement
+      screen.getByRole("button", { name: "Add engine" }) as HTMLButtonElement
     ).form;
     if (!form) throw new Error("Expected the add-service form");
     fireEvent.submit(form);
@@ -86,7 +88,7 @@ describe("Services add dialog", () => {
       "Fix the highlighted fields before adding the service.",
     );
     expect(
-      screen.getByText("Select an available provider preset."),
+      screen.getByText("Select an available engine preset."),
     ).toBeVisible();
   });
 });

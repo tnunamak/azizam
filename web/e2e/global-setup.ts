@@ -84,6 +84,9 @@ export default async function seed(config: FullConfig) {
   const result = await completion.json();
   if (!result.choices?.[0]?.message?.content)
     throw new Error("Seeded engine did not return a completion");
-  await api.storageState({ path: "test-results/auth.json" });
+  const storagePath = config.projects[0].use.storageState;
+  if (typeof storagePath !== "string")
+    throw new Error("Browser tests require a storage-state file path");
+  await api.storageState({ path: storagePath });
   await api.dispose();
 }

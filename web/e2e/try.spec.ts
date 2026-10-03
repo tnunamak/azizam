@@ -35,6 +35,7 @@ test("try creates a session key, runs public chat, and links a receipt", async (
   const response = await chatResponse;
   const receiptId = response.headers()["x-ai-gateway-receipt-id"] ?? "";
   expect(receiptId).not.toBe("");
+  expect(response.headers()["x-ai-gateway-request-id"]).toBe(receiptId);
   expect(response.ok()).toBe(true);
   await expect(page.getByText("Chat result", { exact: true })).toBeVisible();
   await expect(

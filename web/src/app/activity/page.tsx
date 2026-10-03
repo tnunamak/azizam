@@ -8,6 +8,13 @@ import { api, type AuditEntry } from "@/lib/api";
 import { auditDescription, auditTargetName } from "@/lib/audit-description";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Sheet,
@@ -116,18 +123,21 @@ export default function ActivityPage() {
               >
                 Change type
               </label>
-              <select
-                id="audit-category"
-                className="border-input bg-background h-10 max-w-full rounded-lg border px-3 text-sm"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
+              <Select
+                value={category || "all"}
+                onValueChange={(value) => setCategory(value === "all" ? "" : value)}
               >
-                {categories.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="audit-category" className="w-[180px] max-w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((item) => (
+                    <SelectItem key={item.value || "all"} value={item.value || "all"}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <label
@@ -136,25 +146,29 @@ export default function ActivityPage() {
               >
                 Person
               </label>
-              <select
-                id="audit-person"
-                className="border-input bg-background h-10 max-w-full rounded-lg border px-3 text-sm"
-                value={actor}
-                onChange={(e) => {
-                  setActor(e.target.value);
-                  setActorInput(e.target.value);
+              <Select
+                value={actor || "everyone"}
+                onValueChange={(value) => {
+                  const next = value === "everyone" ? "" : value;
+                  setActor(next);
+                  setActorInput(next);
                 }}
               >
-                <option value="">Everyone</option>
-                {actors.map(([id, label]) => (
-                  <option key={id} value={id}>
-                    {label}
-                  </option>
-                ))}
-                {actor && !actors.some(([id]) => id === actor) && (
-                  <option value={actor}>Selected person</option>
-                )}
-              </select>
+                <SelectTrigger id="audit-person" className="w-[180px] max-w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="everyone">Everyone</SelectItem>
+                  {actors.map(([id, label]) => (
+                    <SelectItem key={id} value={id}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                  {actor && !actors.some(([id]) => id === actor) && (
+                    <SelectItem value={actor}>Selected person</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
             </div>
             <Button
               variant="outline"

@@ -25,7 +25,7 @@ export default defineConfig({
   ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,
-    storageState: "./test-results/auth.json",
+    storageState: `./test-results/auth-${port}.json`,
     headless: true,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",

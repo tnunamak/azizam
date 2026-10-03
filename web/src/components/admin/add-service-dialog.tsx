@@ -19,10 +19,16 @@ import {
   Field,
   IncidentBanner,
   Input,
-  Select,
   Skeleton,
   toast,
 } from "@/components/ui";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type ServiceFormState = {
   name: string;
@@ -31,7 +37,12 @@ type ServiceFormState = {
   api_key_env: string;
 };
 
-type TestProbe = { ok: boolean; status: number | null; error: string; url: string };
+type TestProbe = {
+  ok: boolean;
+  status: number | null;
+  error: string;
+  url: string;
+};
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -68,7 +79,12 @@ export function AddServiceDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {open && <AddServiceDialogContent onOpenChange={onOpenChange} onSaved={onSaved} />}
+      {open && (
+        <AddServiceDialogContent
+          onOpenChange={onOpenChange}
+          onSaved={onSaved}
+        />
+      )}
     </Dialog>
   );
 }
@@ -81,14 +97,21 @@ export function AddServiceDialogContent({
   onOpenChange: (open: boolean) => void;
   onSaved: (registry: ServiceRegistry) => void;
 }) {
-  const { data, error, isPending: loading, refetch } = useQuery({
+  const {
+    data,
+    error,
+    isPending: loading,
+    refetch,
+  } = useQuery({
     queryKey: queryKeys.servicePresets,
     queryFn: api.services.presets,
   });
   const presets = data?.presets ?? [];
   const [form, setForm] = useState<ServiceFormState>(emptyFormState);
   const [formError, setFormError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<"name" | "base_url" | "preset", string>>>({});
+  const [fieldErrors, setFieldErrors] = useState<
+    Partial<Record<"name" | "base_url" | "preset", string>>
+  >({});
   const [probe, setProbe] = useState<TestProbe | null>(null);
   const [testing, setTesting] = useState(false);
   const errorSummaryRef = useRef<HTMLParagraphElement>(null);
@@ -104,7 +127,7 @@ export function AddServiceDialogContent({
   });
 
   function set(key: keyof ServiceFormState) {
-    return (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    return (event: React.ChangeEvent<HTMLInputElement>) =>
       setForm((current) => ({ ...current, [key]: event.target.value }));
   }
 
@@ -113,9 +136,10 @@ export function AddServiceDialogContent({
     setFormError(null);
     const next: Partial<Record<"name" | "base_url" | "preset", string>> = {};
     if (!form.name.trim()) next.name = "Enter a service name.";
-    if (!form.base_url.trim()) next.base_url = "Enter a base URL including its scheme.";
+    if (!form.base_url.trim())
+      next.base_url = "Enter a base URL including its scheme.";
     if (!presets.some((preset) => preset.id === form.preset)) {
-      next.preset = "Select an available provider preset.";
+      next.preset = "Select an available engine preset.";
     }
     setFieldErrors(next);
     if (Object.keys(next).length) {
@@ -129,7 +153,9 @@ export function AddServiceDialogContent({
     setTesting(true);
     setProbe(null);
     try {
-      setProbe(await api.services.testConnection({ base_url: form.base_url.trim() }));
+      setProbe(
+        await api.services.testConnection({ base_url: form.base_url.trim() }),
+      );
     } catch (err) {
       toast.error("Test failed", { description: errorMessage(err) });
     } finally {
@@ -141,37 +167,178 @@ export function AddServiceDialogContent({
     return (
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add service</DialogTitle>
-          <DialogDescription>Loading the service presets required to configure this service.</DialogDescription>
+          <DialogTitle>Add engine</DialogTitle>
+          <DialogDescription>
+            Loading the presets required to configure this engine.
+          </DialogDescription>
         </DialogHeader>
-        <DialogBody><div className="flex flex-col gap-3" aria-busy="true"><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div></DialogBody>
+        <DialogBody>
+          <div className="flex flex-col gap-3" aria-busy="true">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        </DialogBody>
       </DialogContent>
     );
   }
   if (error) {
     return (
-      <DialogContent><DialogHeader><DialogTitle>Add service</DialogTitle><DialogDescription>Service presets could not be loaded. No preset has been selected.</DialogDescription></DialogHeader><DialogBody><IncidentBanner tone="bad" title="Could not load service presets" detail={errorMessage(error)} actions={<Button size="sm" onClick={() => void refetch()}>Retry</Button>} /></DialogBody></DialogContent>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add engine</DialogTitle>
+          <DialogDescription>
+            Engine presets could not be loaded. No preset has been selected.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          <IncidentBanner
+            tone="bad"
+            title="Could not load engine presets"
+            detail={errorMessage(error)}
+            actions={
+              <Button size="sm" onClick={() => void refetch()}>
+                Retry
+              </Button>
+            }
+          />
+        </DialogBody>
+      </DialogContent>
     );
   }
   if (!presets.length) {
     return (
-      <DialogContent><DialogHeader><DialogTitle>Add service</DialogTitle><DialogDescription>The gateway has not supplied a service preset to select.</DialogDescription></DialogHeader><DialogBody><EmptyOperationalState title="No service presets available" detail="Add or restore a preset through the gateway configuration, then try again." /></DialogBody></DialogContent>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add engine</DialogTitle>
+          <DialogDescription>
+            The gateway has not supplied an engine preset to select.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          <EmptyOperationalState
+            title="No engine presets available"
+            detail="Add or restore a preset through the gateway configuration, then try again."
+          />
+        </DialogBody>
+      </DialogContent>
     );
   }
   return (
     <DialogContent>
       <DialogForm onSubmit={handleSubmit}>
-        <DialogHeader><DialogTitle>Add service</DialogTitle><DialogDescription>Register an upstream service. Select one API-supplied preset before entering its connection details. Changes apply live — no restart needed.</DialogDescription></DialogHeader>
-        <DialogBody><div className="flex flex-col gap-4">
-          {formError && <p ref={errorSummaryRef} role="alert" tabIndex={-1} className="text-vf-small text-vf-bad">{formError}</p>}
-          <Field label="Provider" required help="Choose an API-supplied preset to pre-fill its declared defaults." error={fieldErrors.preset}><Select value={form.preset} onChange={set("preset")} disabled={save.isPending} required><option value="" disabled>Select a preset</option>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</Select></Field>
-          <Field label="Name" required error={fieldErrors.name}><Input value={form.name} onChange={set("name")} placeholder="e.g. my-service" disabled={save.isPending} autoFocus /></Field>
-          <Field label="Base URL" required help="Full URL including scheme, host, port, and path." error={fieldErrors.base_url}><Input value={form.base_url} onChange={set("base_url")} placeholder="http://127.0.0.1:8000/v1" disabled={save.isPending} /></Field>
-          <Field label="API key env var" help="Name of an environment variable on the gateway host — never the key itself."><Input value={form.api_key_env} onChange={set("api_key_env")} placeholder="e.g. SERVICE_API_KEY" disabled={save.isPending} /></Field>
-          <Button type="button" size="sm" variant="secondary" loading={testing} disabled={!form.base_url} onClick={() => void handleTest()}>Test connection</Button>
-          {probe && <div className="rounded-vf-md flex items-center gap-2 border px-3 py-2 text-sm"><span>{probe.ok ? `Connected (HTTP ${probe.status ?? "ok"}) — ${probe.url}` : probe.error || "Connection failed"}</span></div>}
-        </div></DialogBody>
-        <DialogFooter><Button variant="ghost" onClick={() => onOpenChange(false)} disabled={save.isPending}>Cancel</Button><Button type="submit" variant="primary" loading={save.isPending}>Add service</Button></DialogFooter>
+        <DialogHeader>
+          <DialogTitle>Add engine</DialogTitle>
+          <DialogDescription>
+            Register an upstream engine. Select one API-supplied preset before
+            entering its connection details. Changes apply live — no restart
+            needed.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          <div className="flex flex-col gap-4">
+            {formError && (
+              <p
+                ref={errorSummaryRef}
+                role="alert"
+                tabIndex={-1}
+                className="text-vf-small text-vf-bad"
+              >
+                {formError}
+              </p>
+            )}
+            <Field
+              label="Preset"
+              required
+              help="Choose an API-supplied preset to pre-fill its declared defaults."
+              error={fieldErrors.preset}
+            >
+              <Select
+                value={form.preset}
+                onValueChange={(value) =>
+                  setForm((current) => ({ ...current, preset: value }))
+                }
+                disabled={save.isPending}
+                required
+              >
+                <SelectTrigger aria-label="Preset">
+                  <SelectValue placeholder="Select a preset" />
+                </SelectTrigger>
+                <SelectContent>
+                  {presets.map((preset) => (
+                    <SelectItem key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Name" required error={fieldErrors.name}>
+              <Input
+                value={form.name}
+                onChange={set("name")}
+                placeholder="e.g. my-service"
+                disabled={save.isPending}
+                autoFocus
+              />
+            </Field>
+            <Field
+              label="Base URL"
+              required
+              help="Full URL including scheme, host, port, and path."
+              error={fieldErrors.base_url}
+            >
+              <Input
+                value={form.base_url}
+                onChange={set("base_url")}
+                placeholder="http://127.0.0.1:8000/v1"
+                disabled={save.isPending}
+              />
+            </Field>
+            <Field
+              label="API key env var"
+              help="Name of an environment variable on the gateway host — never the key itself."
+            >
+              <Input
+                value={form.api_key_env}
+                onChange={set("api_key_env")}
+                placeholder="e.g. SERVICE_API_KEY"
+                disabled={save.isPending}
+              />
+            </Field>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              loading={testing}
+              disabled={!form.base_url}
+              onClick={() => void handleTest()}
+            >
+              Test connection
+            </Button>
+            {probe && (
+              <div className="rounded-vf-md flex items-center gap-2 border px-3 py-2 text-sm">
+                <span>
+                  {probe.ok
+                    ? `Connected (HTTP ${probe.status ?? "ok"}) — ${probe.url}`
+                    : probe.error || "Connection failed"}
+                </span>
+              </div>
+            )}
+          </div>
+        </DialogBody>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            disabled={save.isPending}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" loading={save.isPending}>
+            Add engine
+          </Button>
+        </DialogFooter>
       </DialogForm>
     </DialogContent>
   );

@@ -69,9 +69,12 @@ for (const theme of ["light", "dark"] as const) {
             ),
           ).toEqual([]);
           await page.keyboard.press("Escape");
-          const options = page.locator("#request-person option");
-          expect(await options.count()).toBeGreaterThan(1);
-          await page.locator("#request-person").selectOption({ index: 1 });
+          await page
+            .getByRole("combobox", { name: "Person", exact: true })
+            .click();
+          const options = page.getByRole("option");
+          await expect(options.nth(1)).toBeVisible();
+          await options.nth(1).click();
           await expect(
             page.getByRole("button", { name: /Request details:/ }).first(),
           ).toBeVisible();
