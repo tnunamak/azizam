@@ -206,6 +206,9 @@ test("try catalog maps exact capability intents to the right tabs", async ({
         schema_version: 1,
         object: "models.catalog",
         aliases: [
+          catalogRow("completion-only", "text.completions"),
+          catalogRow("edit-only", "image.edit"),
+          catalogRow("music-only", "audio.generate"),
           catalogRow("chat", "chat.completions", {
             locality: "remote",
             provider: "OpenRouter",
@@ -226,6 +229,18 @@ test("try catalog maps exact capability intents to the right tabs", async ({
   await expect(page.getByLabel("Model", { exact: true })).toContainText(
     "Remote · OpenRouter · Paid · $0.01/request",
   );
+  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+    "completion-only",
+  );
+  await page.getByRole("tab", { name: "Image", exact: true }).click();
+  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+    "edit-only",
+  );
+  await page.getByRole("tab", { name: "Speech", exact: true }).click();
+  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+    "music-only",
+  );
+  await page.getByRole("tab", { name: "Chat", exact: true }).click();
 
   await page.getByRole("tab", { name: "Transcribe" }).click();
   await expect(page.getByLabel("Model", { exact: true })).toContainText(

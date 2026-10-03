@@ -689,8 +689,16 @@ export default function ModelsClient() {
           {groupedAliases.length === 0 ? (
             <EmptyState
               icon={Search}
-              title={modelRows.length ? "No stable aliases match these filters" : "No models match these filters"}
-              description={modelRows.length ? "Expand All models below to use a model directly." : "Clear the search or turn on another price filter."}
+              title={
+                modelRows.length
+                  ? "No stable aliases match these filters"
+                  : "No models match these filters"
+              }
+              description={
+                modelRows.length
+                  ? "Expand All models below to use a model directly."
+                  : "Clear the search or turn on another price filter."
+              }
             />
           ) : (
             groupedAliases.map((group) => (

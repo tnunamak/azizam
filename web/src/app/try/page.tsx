@@ -121,11 +121,8 @@ const TAB_ITEMS: Array<{
 
 const INTENT_TABS: Record<string, TryTab> = {
   "chat.completions": "chat",
-  "text.completions": "chat",
   "image.generate": "image",
-  "image.edit": "image",
   "speech.synthesis": "speech",
-  "audio.generate": "speech",
   "speech.transcription": "transcribe",
   "audio.transcription": "transcribe",
   "text.embeddings": "embed",
